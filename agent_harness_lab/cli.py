@@ -36,6 +36,9 @@ def evaluator():
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in ('bank', 'experiment', 'sandbox-check'):
+        from agent_harness_lab.evaluation.cli import main as evaluation_main
+        return evaluation_main(argv)
     commands = {'mine': assets() / 'skills/harness-evaluation/scripts/mine_traces.py',
                 'evaluate': assets() / 'skills/harness-evaluation/scripts/run_evaluation.py'}
     tool_commands = {'diagnose': 'diagnose.py', 'benchmark': 'benchmark_models.py'}
@@ -56,7 +59,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog='ahl', description=__doc__)
     parser.add_argument('--version', action='version', version=version())
     sub = parser.add_subparsers(dest='command', required=True)
-    for name in ('mine', 'diagnose', 'evaluate', 'benchmark', 'skills'):
+    for name in ('mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'experiment', 'sandbox-check'):
         sub.add_parser(name, help=f'{name} tools; use ahl {name} --help')
     for name in ('analyze', 'improve', 'watch'):
         command = sub.add_parser(name, help={'analyze': 'Discover project evidence and failure candidates',

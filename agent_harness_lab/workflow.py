@@ -413,6 +413,11 @@ trials. The parent checks grader controls, freezes inputs, executes both version
         protected[evaluation] = runner.digest(evaluation)
         protected[frozen] = runner.digest(frozen)
         trials = evaluated['trials']
+        from agent_harness_lab.promotion.policy import legacy_coverage
+        if not legacy_coverage(json.loads(manifest_path.read_text()), trials):
+            result['status'] = 'incomplete'
+            result['reason'] = 'missing_or_duplicate_trials'
+            break
         write_json(output / f'feedback-{attempt}.json', dict(inputs_unchanged=evaluated['inputs_unchanged'],
             trials=[t for t in trials if t['split'] != 'heldout']))
         candidate_pass = all(t['status'] == 'passed' for t in trials if t['version'] == 'candidate')
@@ -421,10 +426,12 @@ trials. The parent checks grader controls, freezes inputs, executes both version
         improvement = any(t['status'] == 'failed' for t in trials
                           if t['version'] == 'baseline' and t['split'] == 'development')
         if evaluated['inputs_unchanged'] and candidate_pass and controls_pass and improvement:
-            if runner.digest(baseline) != baseline_hash:
-                raise ValueError('Baseline changed; nothing was applied')
-            result['changed_files'] = adopt(args.project, baseline, frozen, original, proposed)
-            result['status'] = 'applied'
+            if any(file_state(args.project / name) != value for name, value in original.items()):
+                raise ValueError('Project harness changed during evaluation; recommendation is stale')
+            result['status'] = 'inconclusive'
+            result['recommendation'] = 'candidate_requires_independent_certification'
+            result['blocked_prerequisites'] = ['role_isolation', 'audited_task_lineage',
+                                               'repeated_final_evaluation', 'effective_runtime_verification']
             break
         if candidate_pass and controls_pass and evaluated['inputs_unchanged']:
             result['status'] = 'no_change'
