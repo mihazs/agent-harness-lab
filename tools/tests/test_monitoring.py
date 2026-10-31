@@ -110,3 +110,15 @@ class MonitoringTests(unittest.TestCase):
         self.assertFalse(state.eligible(record, 'f', 'c', 100, 3, 100))
         self.args.watch_budget = 0
         with self.assertRaises(ValueError): watch(self.args)
+
+    def test_improve_runtime_exceptions_keep_shared_nonzero_status_contract(self):
+        for error in (TimeoutError('synthetic budget'),ConnectionError('synthetic outage')):
+            with patch('agent_harness_lab.workflow._improve',side_effect=error):
+                self.assertEqual(main(['improve',str(self.root)]),1)
+
+    def test_corrupt_configuration_or_clock_cannot_reenable_paid_work(self):
+        path=self.root/'checkpoint.json'
+        for key,value in (('configuration',{}),('last_attempt',float('nan')),('checkpoint_version',2.0),('run_id',[])):
+            record=state.new('f','c'); record[key]=value
+            path.write_text(json.dumps(record))
+            with self.assertRaises(ValueError): state.load(path)
