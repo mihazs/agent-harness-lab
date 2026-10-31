@@ -1,141 +1,220 @@
-# Harness Improver
+# Agent Harness Lab
 
-Project-agnostic skills and tools for diagnosing agent workflows and evaluating
-improvements against observable outcomes. Requires Python 3.11+; the miner and
-tests use the standard library. Agent trials additionally require an authenticated
-Codex CLI and its existing runtime configuration.
+**Find recurring agent failures. Test the fix. Keep what works.**
 
-## What lives here
+Two reusable skills and a small set of local tools for improving agent instructions,
+workflows, and skills with observable evidence.
 
-- `skills/harness-self-improvement`: diagnosis across distinct failure mechanisms,
-  candidate selection, adoption and coverage-based completion.
-- `skills/harness-evaluation`: paired execution, process mining, learning-method
-  selection, independent graders and transfer checks.
-- `tools/link_skills.py`: reversible global installation using directory symlinks.
+Use it when an agent repeats the same mistakes, spends too long rediscovering a
+routine, loses the objective between steps, or follows instructions that no longer
+match the code. Turn those observations into a focused experiment before adding
+another rule to your harness.
 
-The skills describe when to use process counts, trace clustering, sentence
-embeddings, uncertainty sampling and trajectory credit assignment. They do not
-install ML models or train a model automatically. Primary academic sources and
-their practical limits are in
-[evidence-to-design.md](skills/harness-evaluation/references/evidence-to-design.md).
+[Install](#install-the-skills) · [Try it](#try-it-with-your-agent) ·
+[Tools](#try-the-tools) · [Research](#research-and-current-status) ·
+[Contribute](CONTRIBUTING.md)
 
-## Check
+## What you get
+
+| Skill | Use it to |
+| --- | --- |
+| **harness-self-improvement** | Diagnose distinct failure mechanisms, propose small repairs, test candidates, and account for unresolved issues. |
+| **harness-evaluation** | Compare baseline and candidate behavior with frozen graders, successful controls, regressions, and unseen tasks. |
+
+The accompanying tools mine recurring event sequences, report evidence gaps, run
+paired agent trials, and compare optional local incident classifiers. The default
+Python tools use the standard library. No hosted model is required for offline
+trace analysis.
+
+## Install the skills
+
+From the project where you want to use the skills:
 
 ```sh
-python -m unittest discover -s skills/harness-evaluation/scripts -p 'test_*.py'
-python -m unittest discover -s tools/tests -p 'test_*.py'
+npx skills add mihazs/agent-harness-lab --skill '*'
 ```
 
-## Mine normalized events
+Choose your coding agent when prompted. Install **both** skills: they reference
+one another. Add `-g` for installation across projects. The installer is the
+[open-source skills CLI](https://github.com/vercel-labs/skills), which requires
+Node.js 22.20 or later and supports multiple agent environments.
 
-Prepare redacted JSONL with `case_id`, `event_id` and `activity`. Optional fields
-are `root_case_id`, `actor` and timezone-aware ISO `timestamp`. Parent/child lineage
-must be verified upstream. The miner ignores extra fields; it is not a sanitizer.
+For updates or removal, use that CLI's `skills check`, `skills update`, and
+`skills remove` commands. It manages installation separately from this repository.
+
+### Prefer Python and a local checkout?
+
+Requires Git and Python 3.11+. This route links both skills to the checkout:
+
+```sh
+git clone https://github.com/mihazs/agent-harness-lab.git
+cd agent-harness-lab
+python3 tools/link_skills.py
+```
+
+The default destination is `~/.agents/skills`. To select another skill directory:
+
+```sh
+python3 tools/link_skills.py --destination "$HOME/.claude/skills"
+```
+
+Keep the checkout in place. Editing it updates the linked skills immediately;
+`git pull --ff-only` retrieves upstream updates. Existing same-name directories
+are backed up below `~/.local/state/harness-improver/backups`; the installer prints
+the backup location. Foreign symlinks and non-directory files are refused.
+Rerunning an unchanged installation is a no-op.
+
+To uninstall, remove only links still pointing to this checkout, then restore any
+original directories from the printed backup location. Preserve intervening changes.
+
+## Try it with your agent
+
+After installation, start a fresh agent session in your project and ask:
+
+> Use harness-self-improvement to investigate this recurring failure: [describe
+> the observed failure]. Preserve unrelated work. Reproduce the issue, compare
+> baseline and candidate, and report the evidence and remaining limitations.
+
+For an existing candidate:
+
+> Use harness-evaluation to compare these baseline and candidate instructions.
+> Freeze the acceptance checks before scoring, include a successful control and
+> a regression, and reserve a fresh task for transfer testing.
+
+Provide a concrete failure, relevant code, and redacted evidence you are authorized
+to analyze. The skills guide the agent; they do not configure telemetry or start a
+background service. Actual agent trials need a working agent runtime. The bundled
+runner currently targets an authenticated Codex CLI and retains its existing
+configuration and hooks.
+
+## How improvement works
+
+1. **Observe:** identify recurring sequences, failed outcomes, corrections, and
+   missing evidence. Distinguish task failures from tool or evaluator defects.
+2. **Explain:** connect each proposed repair to a mechanism and an observable
+   acceptance check. Compare failed cases with successful controls.
+3. **Experiment:** execute baseline and candidate with comparable budgets and
+   independent graders. Keep held-out feedback out of candidate refinement.
+4. **Adopt or reject:** retain supported changes, reject regressions, and report
+   what is unresolved. A tie does not demonstrate an improvement.
+
+Repeated behavior is a lead to investigate. Fewer tool calls count as a benefit
+only when completion and required checks remain intact. New instructions and
+new skills must earn their place through observed outcomes.
+
+## Try the tools
+
+Clone the repository first if you installed only the skills. All commands below
+run from the checkout and require Python 3.11+.
+
+### See a diagnosis without providing private data
+
+```sh
+python3 tools/diagnose.py --events examples/events.jsonl --output artifacts/first-diagnosis
+```
+
+Open `artifacts/first-diagnosis/report.md` for the readable report or
+`findings.json` for machine-readable results. The synthetic example contains three
+cases with the same `inspect → validate` sequence. The report identifies that
+recurrence and makes missing evidence visible; it does not label the sequence a
+failure. Output directories must be new, so choose another name to rerun.
+
+### Mine your own redacted events
+
+Each JSONL row needs `case_id`, `event_id`, and `activity`. Optional fields include
+`root_case_id`, `actor`, and a timezone-aware ISO `timestamp`.
 
 ```json
-{"case_id":"case-1","event_id":"1","activity":"validate","actor":"tool"}
-{"case_id":"case-1","event_id":"2","activity":"stop","actor":"agent"}
+{"case_id":"example","event_id":"1","activity":"validate","actor":"tool"}
+{"case_id":"example","event_id":"2","activity":"stop","actor":"agent"}
 ```
 
 ```sh
-python skills/harness-evaluation/scripts/mine_traces.py events.jsonl --exclude unknown
+python3 skills/harness-evaluation/scripts/mine_traces.py events.jsonl --exclude unknown
+python3 tools/diagnose.py --events events.jsonl --output artifacts/diagnosis
 ```
 
-Output separates raw adjacency from filtered, run-collapsed projections and counts
-independent root-case support. Stops do not imply success; edges do not prove
-causality. Read the [diagnosis method](skills/harness-evaluation/references/trace-diagnosis.md)
-before interpreting large histories.
+The miner separates raw adjacency from filtered, run-collapsed projections.
+Diagnosis adds recurring short sequences, evidence coverage, and duplicate
+observations when the necessary fingerprints exist. Inputs must already be
+redacted: these tools are not sanitizers. Stops do not prove success, sequence
+counts do not establish causation, and reported root lineage requires verification.
+Diagnosis defaults to a 100,000-event limit and refuses silent truncation.
 
-## Evaluate changes
+See the [operational criteria](skills/harness-evaluation/references/trace-diagnosis.md)
+for input details and interpretation.
 
-Use the [execution contract](skills/harness-evaluation/references/execution.md).
-Snapshot baseline and candidate skills outside active skill discovery, freeze
-fixtures and external graders, then run:
+### Run a paired agent evaluation
+
+Prepare skill snapshots, fixtures, and external graders using the
+[execution contract](skills/harness-evaluation/references/execution.md):
 
 ```sh
-python skills/harness-evaluation/scripts/run_evaluation.py \
+python3 skills/harness-evaluation/scripts/run_evaluation.py \
   --manifest /path/to/manifest.json \
   --baseline /path/to/baseline --candidate /path/to/candidate \
   --output /path/to/new-results
 ```
 
-Each task runs in a fresh workspace. Trials are sequential and timeout-bounded;
-interruption kills and reaps the owned child process group. Inherited tools and
-hooks remain active. This is cooperative fixture isolation, not a security or
-network sandbox. Do not use real credentials or production mutations in fixtures.
+Each trial gets a fresh workspace. Execution is sequential and timeout-bounded;
+interruption terminates and reaps the owned child process group. Isolation is
+cooperative, not a security or network sandbox. Do not put real credentials or
+production mutations in fixtures.
 
-## Link global skills
+### Optional: compare local classifiers
 
-```sh
-python tools/link_skills.py
-```
-
-The default destination is `~/.agents/skills`. Existing same-name directories move
-to a unique backup below `~/.local/state/harness-improver/backups`; foreign symlinks
-are rejected. Rerunning is a no-op. Keep this checkout in place while the global
-skills point to it. To undo installation, inspect the two links, remove only links
-still pointing to this checkout, and move the corresponding backed-up directories
-back into the global destination. Preserve intervening changes.
-
-Keep private traces, evaluation outputs and generated workspaces outside the skill
-tree; an ignored `artifacts/` directory is available for local results. Do not
-commit them. No project-specific infrastructure rules belong in these skills.
-
-## Diagnose traces offline
+Use a virtual environment for the optional ML dependencies:
 
 ```sh
-python tools/diagnose.py --events redacted-events.jsonl --output artifacts/diagnosis
-python tools/benchmark_models.py --help
-```
-
-Diagnosis reports evidence coverage, recurring short sequences and duplicate
-observations. It does not infer task success, wasted calls, or instruction
-staleness from repetition alone. Inputs must already be redacted. Native Codex
-and ai-memory exports can be normalized as metadata; missing information stays
-unknown. Outputs refuse overwrite and default to a 100,000-event bound.
-
-Optional local classifier experiments use `pip install '.[ml]'`. Models must be
-provided locally; no hosted inference is required. See the benchmark's help for
-its labeled JSONL contract. Keep related root cases in one split. Sparse or
-unverifiable labels cannot support reliability claims. Learned methods remain
-experimental until they outperform the simpler baseline on held-out evidence.
-
-## Contributing and governance
-
-See [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md),
-[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md), and [LICENSE](LICENSE).
-This project is maintained by repository owner @mihazs. Contributions are reviewed
-through pull requests. Published research motivates hypotheses; retained executable
-comparisons determine adoption. The default tools have no third-party dependencies;
-optional ML dependencies are isolated from ordinary tests.
-
-## Status and evidence limits
-
-Experimental, version 0.1.0. Pattern discovery is implemented; proving necessity,
-causal responsibility, instruction staleness, and extracted-skill utility still
-requires reviewed contracts and outcome-preserving interventions. The tools do
-not infer those judgments from frequency or model confidence. See
-[research grounding](skills/harness-evaluation/references/evidence-to-design.md)
-and [operational criteria](skills/harness-evaluation/references/trace-diagnosis.md).
-
-No hosted model receives private history by default. Downloaded model files and
-private evaluation data belong under ignored `artifacts/`, never in the skills.
-
-### Reproduce a local adapter smoke check
-
-```sh
-python tools/diagnose.py --events examples/events.jsonl --output artifacts/example-diagnosis
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install '.[ml]'
+mkdir -p artifacts
 python examples/classifier_fixture.py > artifacts/classifier-fixture.jsonl
 python tools/benchmark_models.py artifacts/classifier-fixture.jsonl --method baseline
-# With the optional ML extra installed:
 python tools/benchmark_models.py artifacts/classifier-fixture.jsonl --method tfidf
 ```
 
-The fixture intentionally repeats an easy vocabulary across disjoint root IDs.
-Passing it proves adapter execution, not semantic generalization. Embeddings and
-NLI additionally require `--model-path /path/to/local/model`; NLI requires
-`--question 'The command failed.'`. Downloads are a separate setup step and never
-send the trace corpus to the model host. Real-history labels require verified
-contracts/outcomes; metadata alone does not supply them.
+Embedding and NLI methods require a local model directory via `--model-path`.
+NLI also needs an atomic `--question`. Run `python tools/benchmark_models.py --help`
+for the input contract and options. Keep related root cases in one split.
+The synthetic fixture is deliberately easy: passing it verifies execution, not
+real-world accuracy. Unknown labels stay out of scored metrics, and insufficient
+calibration support produces abstention. No model is promoted on a smoke test.
 
-Executed checks and their limits are recorded in [initial validation](docs/validation.md).
+## Research and current status
+
+**Experimental, version 0.1.0.** Process mining, offline diagnosis, paired trials,
+and local classifier adapters are implemented. General improvements in task
+success or diagnostic accuracy have not been established.
+
+The methodology draws on process mining, sentence representations, selective
+prediction, calibration, and reflective prompt optimization. Each method must
+answer a concrete question and outperform a simpler baseline on relevant evidence.
+Research findings are hypotheses to test locally, not performance promises.
+
+- [Primary sources and their limits](skills/harness-evaluation/references/evidence-to-design.md)
+- [Diagnosis and measurement criteria](skills/harness-evaluation/references/trace-diagnosis.md)
+- [Executed validation and remaining gaps](docs/validation.md)
+
+## Privacy
+
+Keep analyzed-project identities, memory contents, raw traces, credentials, and
+history-derived findings out of commits and public issues. Use synthetic examples
+for reports you intend to publish. Local results, model files, and trial workspaces
+belong under ignored `artifacts/`; ignoring a directory does not sanitize its contents.
+
+## Contribute
+
+Bring a reproducible failure, a focused improvement, or a stronger falsifier.
+Contributions that simplify the harness while preserving useful behavior are welcome.
+
+```sh
+python3 -m unittest discover -s skills/harness-evaluation/scripts -p 'test_*.py'
+python3 -m unittest discover -s tools/tests -p 'test_*.py'
+```
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for verification expectations and
+[SUPPORT.md](SUPPORT.md) for questions. Report vulnerabilities privately through
+[SECURITY.md](SECURITY.md). Participation follows the
+[Code of Conduct](CODE_OF_CONDUCT.md). Licensed under [MIT](LICENSE).
