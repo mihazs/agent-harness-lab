@@ -232,6 +232,32 @@ else:
             self.assertTrue((self.root/'out'/t['version']/'case'/str(t['repetition'])/'workspace/artifact').is_file())
         self.assertFalse(data['automatic_promotion'])
 
+    def test_repeated_plan_cannot_override_caller_ceiling(self):
+        self.test_repeated_plan_runs_fresh_counterbalanced_trials()
+        import shutil
+        shutil.rmtree(self.root/'out')
+        manifest=json.loads((self.root/'manifest.json').read_text())
+        manifest['max_trials']=2
+        (self.root/'manifest.json').write_text(json.dumps(manifest))
+        result=subprocess.run([sys.executable,str(RUNNER),'--manifest',str(self.root/'manifest.json'),
+            '--baseline',str(self.root/'baseline'),'--candidate',str(self.root/'candidate'),
+            '--output',str(self.root/'out'),'--codex',str(self.fake)],capture_output=True,text=True)
+        self.assertEqual(result.returncode,2)
+        self.assertIn('caller trial ceiling',result.stderr)
+        self.assertFalse((self.root/'out/baseline').exists())
+
+    def test_nonfinite_limits_are_rejected_before_execution(self):
+        for value in (float('nan'), float('inf')):
+            with self.subTest(value=value):
+                (self.root/'manifest.json').write_text(json.dumps(dict(
+                    tasks=[dict(id='case', split='development',fixture='fixture',prompt='ok',grader=['true'])],
+                    timeout_seconds=value)))
+                result=subprocess.run([sys.executable,str(RUNNER),'--manifest',str(self.root/'manifest.json'),
+                    '--baseline',str(self.root/'baseline'),'--candidate',str(self.root/'candidate'),
+                    '--output',str(self.root/'out'),'--codex',str(self.fake)],capture_output=True,text=True)
+                self.assertEqual(result.returncode,2)
+                self.assertFalse((self.root/'out').exists())
+
 if __name__ == '__main__':
     unittest.main()
 

@@ -63,7 +63,7 @@ class ExperimentTests(unittest.TestCase):
         self.assertFalse(decision.automatic)
         harm = analyze(spec, records(spec, lambda t: t['version'] == 'baseline'))
         self.assertLess(harm['primary']['high'], 0)
-        self.assertNotEqual(harm['status'], 'supported')
+        self.assertEqual(harm['status'], 'rejected')
         smoke = replace(spec, profile='descriptive_smoke')
         self.assertEqual(decide(smoke, analyze(smoke, records(smoke))).status, 'inconclusive')
 
@@ -186,3 +186,22 @@ class CoverageTests(unittest.TestCase):
             with ThreadPoolExecutor(max_workers=2) as pool:
                 results=list(pool.map(lambda _: access(),range(2)))
             self.assertEqual(sorted(results),['bank','denied'])
+
+
+class IntegrityRootTests(unittest.TestCase):
+    def test_symlinked_ancestor_is_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); (root/'real/tree').mkdir(parents=True)
+            (root/'alias').symlink_to(root/'real',target_is_directory=True)
+            with self.assertRaises(ValueError): digest(root/'alias/tree')
+
+class PlanningTests(unittest.TestCase):
+    def test_precision_assumptions_do_not_authorize_extra_trials(self):
+        from agent_harness_lab.evaluation.planning import required_roots
+        wide=required_roots(.5,.05)
+        narrow=required_roots(.1,.05)
+        self.assertGreater(narrow['independent_roots'],wide['independent_roots'])
+        self.assertFalse(narrow['automatic_budget_change'])
+        self.assertEqual(narrow['power'],'not_estimated')
+        for args in ((.01,.05),(.1,.1),(float('nan'),0)):
+            with self.assertRaises(ValueError): required_roots(*args)

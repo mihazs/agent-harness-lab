@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -113,7 +114,7 @@ def evaluate(args):
         raise ValueError('task ids must be unique simple directory names')
     timeout = float(manifest.get('timeout_seconds', 180))
     budget = float(manifest.get('budget_seconds', 2700))
-    if timeout <= 0 or budget <= 0 or len(tasks) * 2 > int(manifest.get('max_trials', 24)):
+    if not math.isfinite(timeout) or not math.isfinite(budget) or timeout <= 0 or budget <= 0 or len(tasks) * 2 > int(manifest.get('max_trials', 24)):
         raise ValueError('invalid timeout/budget or trial limit exceeded')
     for root in versions.values():
         if output == root or output.is_relative_to(root) or root.is_relative_to(output):

@@ -25,7 +25,7 @@ def contained(root, value):
 
 def tree(root, max_files=1000, max_bytes=10 * 1024 * 1024):
     root = Path(root)
-    if root.is_symlink() or not root.is_dir():
+    if any(p.is_symlink() for p in (root, *root.absolute().parents)) or not root.is_dir():
         raise ValueError('input must be a regular directory')
     result, total = {}, 0
     for path in sorted(root.rglob('*')):

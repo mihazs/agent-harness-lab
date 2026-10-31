@@ -61,8 +61,9 @@ def analyze(spec, records):
         values += families[family]
         weights += [weight / len(families[family])] * len(families[family])
     primary = bound(values, weights, adjusted)
+    harmful = primary['high'] < -spec.family_margin or any(v['high'] < -spec.family_margin for v in family_results.values())
     passes = primary['low'] > spec.effect_margin and all(v['low'] >= -spec.family_margin for v in family_results.values())
-    return dict(status='supported' if passes else 'inconclusive', primary=primary, families=family_results,
-                reason='fixed_analysis_criteria_met' if passes else 'uncertainty_or_margin_not_met',
+    return dict(status='rejected' if harmful else 'supported' if passes else 'inconclusive', primary=primary, families=family_results,
+                reason='correctness_regression' if harmful else 'fixed_analysis_criteria_met' if passes else 'uncertainty_or_margin_not_met',
                 roots=len(roots), repetitions=spec.repeats, trials=len(records),
                 multiplicity='Bonferroni_primary_and_families', rare_harm_risk='not_established_by_zero_incidents')
