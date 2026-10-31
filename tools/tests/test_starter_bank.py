@@ -102,3 +102,53 @@ class StarterBankTests(unittest.TestCase):
                 run=subprocess.run([sys.executable,str(bundle/'grade.py.txt'),str(workspace),str(bundle/'expected.json')],capture_output=True,text=True)
                 self.assertEqual(run.returncode,1)
                 self.assertIs(json.loads(run.stdout)['outcome'],False)
+
+    def test_copied_source_must_match_frozen_bank_before_manifest_is_written(self):
+        import shutil
+        original=shutil.copytree
+        with tempfile.TemporaryDirectory() as folder:
+            output=Path(folder)/'export'
+            def tamper(source,target,*args,**kwargs):
+                result=original(source,target,*args,**kwargs)
+                if Path(target).name=='localization' and Path(target).parent.name=='fixtures':
+                    (Path(target)/'original.txt').write_text('changed during copying')
+                return result
+            with patch('agent_harness_lab.evaluation.bank_tools.shutil.copytree',side_effect=tamper):
+                with self.assertRaisesRegex(ValueError,'source changed'):
+                    export_manifest(BANK,output)
+            self.assertFalse((output/'manifest.json').exists())
+
+    def test_fake_agent_runs_exported_bank_with_typed_grades_and_no_promotion(self):
+        import subprocess,sys
+        fake_code='''#!/usr/bin/env python3
+import json,pathlib,sys
+if '--version' in sys.argv: print('synthetic-offline-agent-v1'); raise SystemExit(0)
+sys.stdin.read()
+w=pathlib.Path.cwd(); inputs=json.loads((w/'task.json').read_text())['inputs']
+if 'pairs' in inputs:
+ (w/'app/calc.py').write_text('def add(a,b): return a+b\\n')
+ result={'sums':[sum(pair) for pair in inputs['pairs']]}
+elif 'settings' in inputs: result={'settings':dict(inputs['settings'],enabled=True)}
+elif 'responses' in inputs: result={'records':next(r['records'] for r in reversed(inputs['responses']) if r['status']=='ok')}
+elif 'values' in inputs: result={'count':len(inputs['values'])}
+elif 'requests' in inputs: result={'selections':['calculator' if r.startswith('calculate ') else None for r in inputs['requests']]}
+elif 'queue' in inputs: result={'processed':inputs['processed']+inputs['queue'][inputs['cursor']:],'cursor':len(inputs['queue'])}
+else: result={'token_count':len(inputs['text'].split())}
+(w/'result.json').write_text(json.dumps(result))
+print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
+'''
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); export_manifest(BANK,root/'export')
+            (root/'baseline').mkdir(); (root/'candidate').mkdir()
+            binary=root/'fake-agent'; binary.write_text(fake_code); binary.chmod(0o700)
+            runner=ROOT/'skills/harness-evaluation/scripts/run_evaluation.py'
+            run=subprocess.run([sys.executable,str(runner),'--manifest',str(root/'export/manifest.json'),
+                '--baseline',str(root/'baseline'),'--candidate',str(root/'candidate'),'--output',str(root/'results'),
+                '--codex',str(binary)],capture_output=True,text=True)
+            self.assertEqual(run.returncode,0,run.stderr)
+            result=json.loads((root/'results/results.json').read_text())
+            self.assertEqual(len(result['trials']),14)
+            self.assertTrue(all(t['status']=='passed' and t['grader']['valid'] is True for t in result['trials']))
+            self.assertFalse(result['automatic_promotion'])
+            self.assertFalse(result['runtime']['effective_settings_verified'])
+            self.assertTrue(result['inputs_unchanged'])

@@ -39,6 +39,8 @@ def export_manifest(bank_path,output,max_trials=24):
         fixture=contained(bank_path.parent,task['fixture']); bundle=contained(bank_path.parent,task['grader_bundle'])
         target=output/'fixtures'/ident; grader=output/'graders'/ident
         shutil.copytree(fixture,target); shutil.copytree(bundle,grader)
+        if digest(target)!=task['fixture_digest'] or digest(grader)!=task['grader_digest']:
+            raise ValueError('source changed during bank export')
         materialize_sources(target)
         prompt=json.loads((target/'task.json').read_text())['prompt']
         tasks.append(dict(id=ident,root=task['root_id'],family=task['family'],split={'calibration':'regression','certification':'heldout','transfer':'heldout'}.get(task['partition'],'development'),
@@ -50,6 +52,8 @@ def export_manifest(bank_path,output,max_trials=24):
             if control['state'] in ('broken','partial','complete'):
                 controls.append(dict(task=ident,state=control['state'],fixture=str((grader/control['fixture']).relative_to(output))))
         bundles[ident]=dict(path=str(grader.relative_to(output)),digest=digest(grader))
+    if validate(bank_path)['bank_sha256']!=reviewed['bank_sha256']:
+        raise ValueError('bank changed during export')
     manifest=dict(schema_version=1,profile='descriptive_smoke',tasks=tasks,grader_self_tests=controls,
                   grader_bundles=bundles,max_trials=max_trials,budget_seconds=300,timeout_seconds=10,
                   bank_digest=reviewed['bank_sha256'],independence_verified=reviewed['certification_eligible'],automatic_promotion=False)
