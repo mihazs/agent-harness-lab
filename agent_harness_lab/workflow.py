@@ -4,6 +4,7 @@ import contextlib
 import hashlib
 import json
 import os
+import random
 from pathlib import Path
 import shutil
 import stat
@@ -14,6 +15,8 @@ import uuid
 
 from agent_harness_lab.evidence import collect
 from tools.diagnose import report
+from agent_harness_lab.monitoring.state import atomic_json, exit_code
+from agent_harness_lab.monitoring import state as checkpoint_state
 
 
 MAX_FILES = 1000
@@ -29,7 +32,7 @@ def identity(project):
 
 
 def write_json(path, value):
-    path.write_text(json.dumps(value, indent=2) + '\n')
+    atomic_json(path, value)
 
 
 def output_dir(args):
@@ -41,6 +44,7 @@ def output_dir(args):
         output = args.output.resolve()
         output.mkdir(parents=True, exist_ok=False, mode=0o700)
     output.chmod(0o700)
+    args._run_output = output
     write_json(output / 'workflow.json', {'status': 'collecting'})
     return output
 
@@ -266,47 +270,47 @@ def adopt(project, baseline, candidate, original, proposed):
     return changed
 
 
-def improve(args):
+def _improve(args):
     from agent_harness_lab.cli import assets, evaluator
     if args.timeout <= 0:
         raise ValueError('timeout must be positive')
     started = time.monotonic()
     remaining = lambda: args.timeout - (time.monotonic() - started)
     runner = evaluator()
-    with project_lock(args.project):
-        output = output_dir(args)
-        print(f'Private run artifacts: {output}', file=sys.stderr)
-        data = evidence(args, output)
-        prepare = output / 'preparation'
-        prepare.mkdir()
-        baseline, candidate = prepare / 'baseline', prepare / 'candidate'
-        original = snapshot(args.project, baseline)
-        shutil.copytree(baseline, candidate)
-        baseline_hash = runner.digest(baseline)
-        agent = args.agent
-        if agent == 'auto':
-            agent = 'codex' if shutil.which(args.codex) else 'claude'
-        binary = args.codex if agent == 'codex' else args.claude
-        if not shutil.which(binary):
-            raise ValueError('No selected agent CLI found; install/authenticate Codex or Claude Code')
-        plugin = prepare / '.harness-toolkit'
-        (plugin / '.claude-plugin').mkdir(parents=True)
-        write_json(plugin / '.claude-plugin/plugin.json', {'name': 'harness-toolkit'})
-        shutil.copytree(assets() / 'skills', plugin / 'skills')
-        used_heldout = set()
-        result = dict(status='evaluation_failed', output=str(output), changed_files=[], agent=agent)
-        protected = {}
-        for attempt in range(2):
-            if remaining() <= 0:
-                break
-            proposal_folder = prepare / f'proposal-{attempt}'
-            proposal_folder.mkdir()
-            proposal_path = proposal_folder / 'proposal.json'
-            evaluation = prepare / f'evaluation-{attempt}'
-            manifest_path = evaluation / 'manifest.json'
-            write_json(prepare / 'context.json', dict(project=str(args.project), baseline=str(baseline),
-                candidate=str(candidate), evaluation=str(proposal_folder), phase='candidate', attempt=attempt, focus=getattr(args, 'focus', None)))
-            prompt = f'''Load {plugin / 'skills/harness-self-improvement/SKILL.md'} and the sibling evaluation skill.
+    output = output_dir(args)
+    print(f'Private run artifacts: {output}', file=sys.stderr)
+    data = evidence(args, output)
+    prepare = output / 'preparation'
+    prepare.mkdir()
+    baseline, candidate = prepare / 'baseline', prepare / 'candidate'
+    original = snapshot(args.project, baseline)
+    shutil.copytree(baseline, candidate)
+    baseline_hash = runner.digest(baseline)
+    agent = args.agent
+    if agent == 'auto':
+        agent = 'codex' if shutil.which(args.codex) else 'claude'
+    binary = args.codex if agent == 'codex' else args.claude
+    if not shutil.which(binary):
+        raise ValueError('No selected agent CLI found; install/authenticate Codex or Claude Code')
+    plugin = prepare / '.harness-toolkit'
+    (plugin / '.claude-plugin').mkdir(parents=True)
+    write_json(plugin / '.claude-plugin/plugin.json', {'name': 'harness-toolkit'})
+    shutil.copytree(assets() / 'skills', plugin / 'skills')
+    used_heldout = set()
+    result = dict(status='evaluation_failed', output=str(output), changed_files=[], agent=agent)
+    protected = {}
+    for attempt in range(2):
+        if remaining() <= 0:
+            result['status'] = 'budget_exhausted'
+            break
+        proposal_folder = prepare / f'proposal-{attempt}'
+        proposal_folder.mkdir()
+        proposal_path = proposal_folder / 'proposal.json'
+        evaluation = prepare / f'evaluation-{attempt}'
+        manifest_path = evaluation / 'manifest.json'
+        write_json(prepare / 'context.json', dict(project=str(args.project), baseline=str(baseline),
+            candidate=str(candidate), evaluation=str(proposal_folder), phase='candidate', attempt=attempt, focus=getattr(args, 'focus', None)))
+        prompt = f'''Load {plugin / 'skills/harness-self-improvement/SKILL.md'} and the sibling evaluation skill.
 You are the preparation stage of ahl improve, not an interactive request for a failure description.
 Discover improvement candidates yourself from {output / 'analysis.json'}, baseline instructions,
 and read-only source inspection of {args.project}. An optional focus is {getattr(args, 'focus', None)!r};
@@ -326,48 +330,48 @@ and 20 task trials across two attempts.
 Write {proposal_path} as {{"status":"candidate","mechanisms":[...],"falsifiers":[...]}} when ready.
 The parent will reject incomplete/changed inputs, regressions, unsupported ties, and concurrent edits.
 '''
-            if attempt:
-                prompt += f'Inspect development/regression feedback at {output / "feedback-0.json"}; refine once. Do not read previous evaluation directories or held-out results.\n'
-            command = runner.agent_command(agent, binary, plugin, ('harness-evaluation', 'harness-self-improvement'))
-            if remaining() <= 0:
-                result['status'] = 'budget_exhausted'
-                break
-            run = runner.execute(command, prepare, remaining(), prompt)
-            (output / f'preparation-{attempt}.jsonl').write_text(run.pop('stdout'))
-            (output / f'preparation-{attempt}.stderr').write_text(run.pop('stderr'))
-            check = dict(run, stdout=(output / f'preparation-{attempt}.jsonl').read_text())
-            if runner.trace_result(check, agent)[0] != 'completed':
-                result['status'] = 'execution_error'
-                break
-            if any(runner.digest(path) != value for path, value in protected.items()):
-                raise ValueError('Preparation changed a previous frozen evaluation')
-            if runner.digest(baseline) != baseline_hash:
-                raise ValueError('Preparation modified the baseline; nothing was applied')
-            if not proposal_path.is_file():
-                result['status'] = 'invalid_proposal'
-                break
-            proposal = json.loads(proposal_path.read_text())
-            if not isinstance(proposal, dict):
-                raise ValueError('Proposal must be an object')
-            if proposal.get('status') == 'no_change':
-                result['status'] = 'no_change'
-                break
-            if proposal.get('status') != 'candidate':
-                raise ValueError('Proposal must declare candidate or no_change')
-            proposed = candidate_states(candidate, original)
-            if proposed == original:
-                result['status'] = 'no_change'
-                break
-            paths = original.keys() | proposed.keys()
-            frozen = output / f'candidate-{attempt}'
-            shutil.copytree(candidate, frozen)
-            if candidate_states(frozen, original) != proposed:
-                raise ValueError('Candidate changed while freezing it')
-            frozen_hash = runner.digest(frozen)
-            evaluation.mkdir()
-            write_json(evaluation / 'context.json', dict(project=str(args.project), baseline=str(baseline),
-                evaluation=str(evaluation), harness_paths=sorted(paths), phase='evaluation', attempt=attempt))
-            evaluation_prompt = f"""Load {plugin / 'skills/harness-evaluation/SKILL.md'}.
+        if attempt:
+            prompt += f'Inspect development/regression feedback at {output / "feedback-0.json"}; refine once. Do not read previous evaluation directories or held-out results.\n'
+        command = runner.agent_command(agent, binary, plugin, ('harness-evaluation', 'harness-self-improvement'))
+        if remaining() <= 0:
+            result['status'] = 'budget_exhausted'
+            break
+        run = runner.execute(command, prepare, remaining(), prompt)
+        (output / f'preparation-{attempt}.jsonl').write_text(run.pop('stdout'))
+        (output / f'preparation-{attempt}.stderr').write_text(run.pop('stderr'))
+        check = dict(run, stdout=(output / f'preparation-{attempt}.jsonl').read_text())
+        if runner.trace_result(check, agent)[0] != 'completed':
+            result['status'] = 'execution_error'
+            break
+        if any(runner.digest(path) != value for path, value in protected.items()):
+            raise ValueError('Preparation changed a previous frozen evaluation')
+        if runner.digest(baseline) != baseline_hash:
+            raise ValueError('Preparation modified the baseline; nothing was applied')
+        if not proposal_path.is_file():
+            result['status'] = 'invalid_proposal'
+            break
+        proposal = json.loads(proposal_path.read_text())
+        if not isinstance(proposal, dict):
+            raise ValueError('Proposal must be an object')
+        if proposal.get('status') == 'no_change':
+            result['status'] = 'no_change'
+            break
+        if proposal.get('status') != 'candidate':
+            raise ValueError('Proposal must declare candidate or no_change')
+        proposed = candidate_states(candidate, original)
+        if proposed == original:
+            result['status'] = 'no_change'
+            break
+        paths = original.keys() | proposed.keys()
+        frozen = output / f'candidate-{attempt}'
+        shutil.copytree(candidate, frozen)
+        if candidate_states(frozen, original) != proposed:
+            raise ValueError('Candidate changed while freezing it')
+        frozen_hash = runner.digest(frozen)
+        evaluation.mkdir()
+        write_json(evaluation / 'context.json', dict(project=str(args.project), baseline=str(baseline),
+            evaluation=str(evaluation), harness_paths=sorted(paths), phase='evaluation', attempt=attempt))
+        evaluation_prompt = f"""Load {plugin / 'skills/harness-evaluation/SKILL.md'}.
 You are an independent evaluation-construction session for an automatic harness improvement.
 Discover acceptance criteria from {output / 'analysis.json'}, the baseline {baseline}, and
 read-only source inspection of {args.project}. Do not inspect any candidate, proposal, prior
@@ -385,68 +389,131 @@ expectations stay outside agent-writable fixtures. Use fresh held-out inputs for
 Do not tune tests to the candidate; it is frozen and deliberately not supplied. Do not run model
 trials. The parent checks grader controls, freezes inputs, executes both versions and owns adoption.
 """
-            if remaining() <= 0:
-                result['status'] = 'budget_exhausted'
-                break
-            construction = runner.execute(command, evaluation, remaining(), evaluation_prompt)
-            (output / f'evaluation-construction-{attempt}.jsonl').write_text(construction.pop('stdout'))
-            (output / f'evaluation-construction-{attempt}.stderr').write_text(construction.pop('stderr'))
-            check = dict(construction, stdout=(output / f'evaluation-construction-{attempt}.jsonl').read_text())
-            if runner.trace_result(check, agent)[0] != 'completed':
-                result['status'] = 'execution_error'
-                break
-            if runner.digest(frozen) != frozen_hash or runner.digest(baseline) != baseline_hash:
-                raise ValueError('Evaluation construction changed frozen harness inputs')
-            validate_manifest(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout)
-            options = argparse.Namespace(manifest=str(manifest_path), baseline=str(baseline),
-                candidate=str(frozen), output=str(output / f'evaluation-{attempt}'),
-                agent=agent, codex=args.codex, claude=args.claude)
-            runner.evaluate(options)
-            evaluated = json.loads((Path(options.output) / 'results.json').read_text())
-            protected[evaluation] = runner.digest(evaluation)
-            protected[frozen] = runner.digest(frozen)
-            trials = evaluated['trials']
-            write_json(output / f'feedback-{attempt}.json', dict(inputs_unchanged=evaluated['inputs_unchanged'],
-                trials=[t for t in trials if t['split'] != 'heldout']))
-            candidate_pass = all(t['status'] == 'passed' for t in trials if t['version'] == 'candidate')
-            controls_pass = all(t['status'] == 'passed' for t in trials
-                                if t['version'] == 'baseline' and t['split'] == 'regression')
-            improvement = any(t['status'] == 'failed' for t in trials
-                              if t['version'] == 'baseline' and t['split'] == 'development')
-            if evaluated['inputs_unchanged'] and candidate_pass and controls_pass and improvement:
-                if runner.digest(baseline) != baseline_hash:
-                    raise ValueError('Baseline changed; nothing was applied')
-                result['changed_files'] = adopt(args.project, baseline, frozen, original, proposed)
-                result['status'] = 'applied'
-                break
-            if candidate_pass and controls_pass and evaluated['inputs_unchanged']:
-                result['status'] = 'no_change'
-                break
-        write_json(output / 'workflow.json', result)
-        return result
+        if remaining() <= 0:
+            result['status'] = 'budget_exhausted'
+            break
+        construction = runner.execute(command, evaluation, remaining(), evaluation_prompt)
+        (output / f'evaluation-construction-{attempt}.jsonl').write_text(construction.pop('stdout'))
+        (output / f'evaluation-construction-{attempt}.stderr').write_text(construction.pop('stderr'))
+        check = dict(construction, stdout=(output / f'evaluation-construction-{attempt}.jsonl').read_text())
+        if runner.trace_result(check, agent)[0] != 'completed':
+            result['status'] = 'execution_error'
+            break
+        if runner.digest(frozen) != frozen_hash or runner.digest(baseline) != baseline_hash:
+            raise ValueError('Evaluation construction changed frozen harness inputs')
+        validate_manifest(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout)
+        options = argparse.Namespace(manifest=str(manifest_path), baseline=str(baseline),
+            candidate=str(frozen), output=str(output / f'evaluation-{attempt}'),
+            agent=agent, codex=args.codex, claude=args.claude)
+        runner.evaluate(options)
+        evaluated = json.loads((Path(options.output) / 'results.json').read_text())
+        protected[evaluation] = runner.digest(evaluation)
+        protected[frozen] = runner.digest(frozen)
+        trials = evaluated['trials']
+        write_json(output / f'feedback-{attempt}.json', dict(inputs_unchanged=evaluated['inputs_unchanged'],
+            trials=[t for t in trials if t['split'] != 'heldout']))
+        candidate_pass = all(t['status'] == 'passed' for t in trials if t['version'] == 'candidate')
+        controls_pass = all(t['status'] == 'passed' for t in trials
+                            if t['version'] == 'baseline' and t['split'] == 'regression')
+        improvement = any(t['status'] == 'failed' for t in trials
+                          if t['version'] == 'baseline' and t['split'] == 'development')
+        if evaluated['inputs_unchanged'] and candidate_pass and controls_pass and improvement:
+            if runner.digest(baseline) != baseline_hash:
+                raise ValueError('Baseline changed; nothing was applied')
+            result['changed_files'] = adopt(args.project, baseline, frozen, original, proposed)
+            result['status'] = 'applied'
+            break
+        if candidate_pass and controls_pass and evaluated['inputs_unchanged']:
+            result['status'] = 'no_change'
+            break
+    write_json(output / 'workflow.json', result)
+    return result
+
+
+def _run_improvement(args):
+    """Persist truthful completion even when a run is interrupted or raises."""
+    if hasattr(args, '_run_output'):
+        del args._run_output
+    try:
+        return _improve(args)
+    except BaseException as exc:
+        # output_dir registers only this invocation's output on its Namespace.
+        status = ('interrupted' if isinstance(exc, KeyboardInterrupt) else
+                  'budget_exhausted' if isinstance(exc, TimeoutError) else
+                  'invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error')
+        result = dict(status=status, changed_files=[], failure_class='requires_intervention')
+        if isinstance(exc, ConnectionError):
+            result['failure_class'] = 'transient_infrastructure'
+        output = getattr(args, '_run_output', None)
+        if output:
+            result['output'] = str(output)
+            write_json(output / 'workflow.json', result)
+        if isinstance(exc, KeyboardInterrupt):
+            return result
+        if not isinstance(exc, Exception):
+            raise
+        raise
+
+
+def improve(args):
+    with project_lock(args.project):
+        return _run_improvement(args)
+
+
+def watch_configuration(args):
+    settings = {k: getattr(args, k, None) for k in ('agent', 'codex', 'claude', 'timeout', 'format',
+                'focus', 'max_attempts', 'retry_delay', 'watch_budget')}
+    for key in ('codex', 'claude'):
+        binary = shutil.which(getattr(args, key))
+        if binary:
+            info = Path(binary).stat()
+            settings[key] = [str(Path(binary).resolve()), info.st_size, info.st_mtime_ns]
+    return hashlib.sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()
 
 
 def watch(args):
-    if args.interval <= 0 or args.timeout <= 0:
-        raise ValueError('interval and timeout must be positive')
+    attempts = getattr(args, 'max_attempts', 3)
+    delay = getattr(args, 'retry_delay', 60)
+    budget = getattr(args, 'watch_budget', None)
+    budget = args.timeout if budget is None else budget
+    if args.interval <= 0 or args.timeout <= 0 or not 1 <= attempts <= 10 or not 1 <= delay <= 3600 or budget <= 0:
+        raise ValueError('invalid watch interval, timeout, attempt limit, retry delay or budget')
     checkpoint = state_root() / 'watch' / (identity(args.project) + '.json')
-    checkpoint.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    last = json.loads(checkpoint.read_text()).get('fingerprint') if checkpoint.exists() else None
     parent = args.output
     if parent is not None:
         parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    configuration = watch_configuration(args)
     try:
         while True:
-            fingerprint = collect(args.project, events=args.events, source_format=args.format)['fingerprint']
-            if fingerprint != last:
-                # Mark attempted evidence too: outages do not trigger a paid retry every poll.
-                last = fingerprint
-                write_json(checkpoint, {'fingerprint': fingerprint})
-                options = argparse.Namespace(**vars(args))
-                options.output = parent / ('run-' + uuid.uuid4().hex) if parent else None
-                print(json.dumps(improve(options)), flush=True)
-            if args.once:
-                return 0
+            # The same lock covers scheduling, execution and final checkpoint write.
+            with project_lock(args.project):
+                state = checkpoint_state.load(checkpoint)
+                fingerprint = collect(args.project, events=args.events, source_format=args.format)['fingerprint']
+                now = time.time()
+                if state and state['disposition'] == 'in_progress':
+                    state.update(disposition='interrupted', failure_class='requires_intervention')
+                    write_json(checkpoint, state)
+                if checkpoint_state.eligible(state, fingerprint, configuration, now, attempts, budget):
+                    if state is None or state['fingerprint'] != fingerprint or state['configuration'] != configuration:
+                        state = checkpoint_state.new(fingerprint, configuration)
+                    options = argparse.Namespace(**vars(args))
+                    options.output = parent / ('run-' + uuid.uuid4().hex) if parent else None
+                    options.timeout = min(args.timeout, budget - state['spent_seconds'])
+                    state.update(disposition='in_progress', last_attempt=now,
+                                 attempt_count=state['attempt_count'] + 1, run_id=uuid.uuid4().hex)
+                    write_json(checkpoint, state)
+                    started = time.monotonic()
+                    try:
+                        result = _run_improvement(options)
+                    except (ValueError, OSError, TypeError, KeyError) as exc:
+                        result = dict(status='invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error',
+                                      failure_class='transient_infrastructure' if isinstance(exc, ConnectionError) else 'requires_intervention')
+                    state = checkpoint_state.finish(state, result, time.time(), time.monotonic() - started, delay, random.random())
+                    write_json(checkpoint, state)
+                    print(json.dumps(result), flush=True)
+                status = state['disposition'] if state else 'incomplete'
+            if args.once or status == 'interrupted':
+                return exit_code(status)
             time.sleep(args.interval)
     except KeyboardInterrupt:
-        return 0
+        return exit_code('interrupted')

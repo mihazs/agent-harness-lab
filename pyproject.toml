@@ -12,8 +12,8 @@ ml = ["scikit-learn>=1.3", "sentence-transformers>=3", "transformers>=4.40", "to
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools]
-packages = ["agent_harness_lab", "tools"]
+[tool.setuptools.packages.find]
+include = ["agent_harness_lab*", "tools"]
 
 [project.scripts]
 ahl = "agent_harness_lab.cli:main"
