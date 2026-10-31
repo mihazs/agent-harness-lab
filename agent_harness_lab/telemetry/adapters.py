@@ -9,6 +9,8 @@ CAPABILITIES = {
 
 
 def correlate(records, max_pending=4096):
+    if type(max_pending) is not int or max_pending <= 0:
+        raise ValueError('pending-call limit must be positive')
     pending, finished = OrderedDict(), OrderedDict()
     for record in records:
         record = event(record)
@@ -27,7 +29,8 @@ def correlate(records, max_pending=4096):
                     tool = pending.pop(key)
                     if tool:
                         record.setdefault('tool_name', tool)
-                    record['capture_status'] = 'linked'
+                    if record['capture_status'] == 'unverified':
+                        record['capture_status'] = 'linked'
                 else:
                     record['capture_status'] = 'duplicate_result' if key in finished else 'unmatched_result'
                 finished[key] = None

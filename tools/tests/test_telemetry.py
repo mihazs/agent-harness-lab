@@ -74,3 +74,27 @@ class TelemetryTests(unittest.TestCase):
             with self.assertRaises(ValueError): Ledger(path, max_bytes=1).ingest([])
             path.write_bytes(before + b'{partial')
             with self.assertRaises(ValueError): ledger.ingest([])
+
+    def test_ledger_rejects_symlink_ancestors_hardlinks_and_fifos(self):
+        import os
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root/'real').mkdir()
+            (root/'link').symlink_to(root/'real', target_is_directory=True)
+            with self.assertRaises(ValueError): Ledger(root/'link/events').ingest([record()])
+            self.assertFalse((root/'real/events').exists())
+            file = root/'original'; file.write_text('')
+            os.link(file, root/'hardlink')
+            with self.assertRaises(ValueError): Ledger(root/'hardlink').ingest([record()])
+            self.assertEqual(file.read_text(), '')
+            os.mkfifo(root/'fifo')
+            with self.assertRaises(ValueError): Ledger(root/'fifo').ingest([record()])
+
+    def test_duplicate_event_coverage_is_not_erased_by_linking(self):
+        rows = [dict(session_id='s', id='a', payload=dict(type='function_call', call_id='c', name='read')),
+                dict(session_id='s', id='a', payload=dict(type='function_call_output', call_id='c'))]
+        result = list(normalize(rows, 'codex', 'p'))
+        self.assertEqual(result[1]['capture_status'], 'duplicate_event')
+        from agent_harness_lab.telemetry.adapters import correlate
+        for capacity in (0, -1, False):
+            with self.assertRaises(ValueError): list(correlate([], capacity))
