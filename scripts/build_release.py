@@ -22,6 +22,8 @@ def build(root, output):
     files = [root / name for name in ('ahl', 'LICENSE', 'README.md', 'package.json')]
     files += sorted((root / 'agent_harness_lab').rglob('*.py'))
     files += sorted((root / 'tools').glob('*.py'))
+    fixture_root = root / 'agent_harness_lab/evaluation/fixtures'
+    files += sorted(p for p in fixture_root.rglob('*') if p.is_file() and p.suffix in ('.json', '.py', '.txt') and '__pycache__' not in p.parts)
     for path in (root / 'skills').rglob('*'):
         if path.is_file() and '__pycache__' not in path.parts and not path.name.startswith('test_') and path.suffix in ('.md', '.py', '.yaml', '.json'):
             files.append(path)

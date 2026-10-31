@@ -153,9 +153,9 @@ def _evaluation_results(project, max_files, sources, fingerprint, caveats, budge
                 item = {k: trial[k] for k in ('task', 'version', 'status', 'usage') if k in trial}
                 for key in ('execution', 'grader'):
                     if isinstance(trial.get(key), dict):
-                        item[key] = {k: trial[key][k] for k in ('exit_code', 'timeout') if k in trial[key]}
+                        item[key] = {k: trial[key][k] for k in ('exit_code', 'timeout', 'valid', 'outcome', 'grader_id', 'grader_version') if k in trial[key]}
                 trial_metadata.append(item)
-        identity = {k: result[k] for k in ('manifest_sha256', 'versions', 'fixtures', 'inputs_unchanged') if k in result}
+        identity = {k: result[k] for k in ('manifest_sha256', 'versions', 'fixtures', 'inputs_unchanged', 'grader_bundle_digests', 'plan_digest') if k in result}
         identity['trials'] = trial_metadata
         fingerprint.update(str(path).encode() + b'\0' + json.dumps(identity, sort_keys=True).encode())
         sources.append(dict(path=str(path), format='evaluation', sha256=hashlib.sha256(raw).hexdigest()))
@@ -171,10 +171,12 @@ def _evaluation_results(project, max_files, sources, fingerprint, caveats, budge
                      and trial['status'] in ('passed', 'failed')
                      and (grade['exit_code'] == 0) == (trial['status'] == 'passed')
                      and grade.get('valid') is True and isinstance(grade.get('grader_id'), str)
-                     and isinstance(grade.get('grader_version'), str))
+                     and isinstance(grade.get('grader_version'), str)
+                     and type(grade.get('outcome')) is bool and grade['outcome'] == (trial['status'] == 'passed'))
             failures.append(dict(source=str(path), task=str(trial.get('task', 'unknown'))[:256],
                                  version=str(trial.get('version', 'unknown'))[:256],
-                                 status=trial['status'], evidence_level='observed_evaluation_status',
+                                 root_id=trial.get('root') if isinstance(trial.get('root'),str) and len(trial['root'])<=256 else None,
+                                 lineage_verified=False, status=trial['status'], evidence_level='observed_evaluation_status',
                                  outcome=('success' if trial['status'] == 'passed' else 'failure') if valid else 'unknown',
                                  outcome_provenance='executable_grader' if valid else 'unknown',
                                  grader_id=grade.get('grader_id') if valid else None,

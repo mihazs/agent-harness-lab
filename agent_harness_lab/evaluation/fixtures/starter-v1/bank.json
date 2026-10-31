@@ -1,0 +1,197 @@
+{
+  "schema_version": 1,
+  "separate_by": [
+    "root_id"
+  ],
+  "tasks": [
+    {
+      "task_id": "localization",
+      "root_id": "calculator",
+      "family": "localization",
+      "partition": "development",
+      "project_group": "synthetic-starter",
+      "time_group": "v1",
+      "fixture": "tasks/localization",
+      "fixture_digest": "b3d1c0381e45dcdd94608a692748692b033f87f9cf468f458b07b1229d9f1e42",
+      "grader_bundle": "graders/localization",
+      "grader_digest": "2f35432a2050dbf114029709451c294e213b580cbb6dd56e9df7843eb04042a2",
+      "grader_version": "v1",
+      "source_kind": "synthetic",
+      "source_ref": "scripts/build_synthetic_bank.py",
+      "permission": "approved",
+      "reviewer": "codex-self-review-controls-v1",
+      "review_status": "accepted",
+      "independence": "unverified",
+      "safety": [
+        "offline disposable data-only fixture",
+        "no model or production mutation"
+      ],
+      "artifacts": [
+        "result.json",
+        "original.txt"
+      ]
+    },
+    {
+      "task_id": "regression",
+      "root_id": "calculator",
+      "family": "regression",
+      "partition": "development",
+      "project_group": "synthetic-starter",
+      "time_group": "v1",
+      "fixture": "tasks/regression",
+      "fixture_digest": "00a4c798f2fe52d55b67e8a1fef65ce497ddabf312bc1f6a785f307e9a97690d",
+      "grader_bundle": "graders/regression",
+      "grader_digest": "4c09963ae8e1dabdd596c85710d3f0a08bcff1c4569d4b5522bf996caf4c5865",
+      "grader_version": "v1",
+      "source_kind": "synthetic",
+      "source_ref": "scripts/build_synthetic_bank.py",
+      "permission": "approved",
+      "reviewer": "codex-self-review-controls-v1",
+      "review_status": "accepted",
+      "independence": "unverified",
+      "safety": [
+        "offline disposable data-only fixture",
+        "no model or production mutation"
+      ],
+      "artifacts": [
+        "result.json",
+        "original.txt"
+      ]
+    },
+    {
+      "task_id": "tool-recovery",
+      "root_id": "recovery",
+      "family": "tool-recovery",
+      "partition": "development",
+      "project_group": "synthetic-starter",
+      "time_group": "v1",
+      "fixture": "tasks/tool-recovery",
+      "fixture_digest": "c093d1e7c20d69a8f09b2d2e25cbff0474efbf3251564f6bf4dac863f0ecde58",
+      "grader_bundle": "graders/tool-recovery",
+      "grader_digest": "7fd20a9d2b13e1db83c7f9ac9c4cc78713d91a6e16c020f0ac3bb4036b1fe7fb",
+      "grader_version": "v1",
+      "source_kind": "synthetic",
+      "source_ref": "scripts/build_synthetic_bank.py",
+      "permission": "approved",
+      "reviewer": "codex-self-review-controls-v1",
+      "review_status": "accepted",
+      "independence": "unverified",
+      "safety": [
+        "offline disposable data-only fixture",
+        "no model or production mutation"
+      ],
+      "artifacts": [
+        "result.json",
+        "original.txt"
+      ]
+    },
+    {
+      "task_id": "instruction-conflict",
+      "root_id": "conflict",
+      "family": "instruction-conflict",
+      "partition": "development",
+      "project_group": "synthetic-starter",
+      "time_group": "v1",
+      "fixture": "tasks/instruction-conflict",
+      "fixture_digest": "51b3e9a6b810c98320da1143774187407ea9032050950c9969465c2cce087bfe",
+      "grader_bundle": "graders/instruction-conflict",
+      "grader_digest": "d4ff48967762a3f7b3c39ab7a99f44530e132dcb3874658a5a5d9154f93ca28e",
+      "grader_version": "v1",
+      "source_kind": "synthetic",
+      "source_ref": "scripts/build_synthetic_bank.py",
+      "permission": "approved",
+      "reviewer": "codex-self-review-controls-v1",
+      "review_status": "accepted",
+      "independence": "unverified",
+      "safety": [
+        "offline disposable data-only fixture",
+        "no model or production mutation"
+      ],
+      "artifacts": [
+        "result.json",
+        "original.txt"
+      ]
+    },
+    {
+      "task_id": "skill-routing",
+      "root_id": "routing",
+      "family": "skill-routing",
+      "partition": "development",
+      "project_group": "synthetic-starter",
+      "time_group": "v1",
+      "fixture": "tasks/skill-routing",
+      "fixture_digest": "fa932fa57e94b369a15a0d518c8c624d0ba95b52491b1701771bfa2480f2ad84",
+      "grader_bundle": "graders/skill-routing",
+      "grader_digest": "2a134dba152c177b404408bf41ed029033bd54f95427cfc67d82f9262221d334",
+      "grader_version": "v1",
+      "source_kind": "synthetic",
+      "source_ref": "scripts/build_synthetic_bank.py",
+      "permission": "approved",
+      "reviewer": "codex-self-review-controls-v1",
+      "review_status": "accepted",
+      "independence": "unverified",
+      "safety": [
+        "offline disposable data-only fixture",
+        "no model or production mutation"
+      ],
+      "artifacts": [
+        "result.json",
+        "original.txt"
+      ]
+    },
+    {
+      "task_id": "resumption",
+      "root_id": "resumption",
+      "family": "resumption",
+      "partition": "development",
+      "project_group": "synthetic-starter",
+      "time_group": "v1",
+      "fixture": "tasks/resumption",
+      "fixture_digest": "edddd9ddb8bd96e6201b14215a09e333452cae747a67e11a48f877b64ccbc9ef",
+      "grader_bundle": "graders/resumption",
+      "grader_digest": "e7475e6088f1ece426fa031c9161e781e5f45d4c2ec22d63194ba14b58fa7732",
+      "grader_version": "v1",
+      "source_kind": "synthetic",
+      "source_ref": "scripts/build_synthetic_bank.py",
+      "permission": "approved",
+      "reviewer": "codex-self-review-controls-v1",
+      "review_status": "accepted",
+      "independence": "unverified",
+      "safety": [
+        "offline disposable data-only fixture",
+        "no model or production mutation"
+      ],
+      "artifacts": [
+        "result.json",
+        "original.txt"
+      ]
+    },
+    {
+      "task_id": "adversarial-input",
+      "root_id": "adversarial",
+      "family": "adversarial-input",
+      "partition": "development",
+      "project_group": "synthetic-starter",
+      "time_group": "v1",
+      "fixture": "tasks/adversarial-input",
+      "fixture_digest": "5967e2a12e8119c2da7d8e1b6633b6fb26cb75f5fb72f252fd24987a406ddb1b",
+      "grader_bundle": "graders/adversarial-input",
+      "grader_digest": "d81f1780a6b8a14af9ed3d1acbdb2227383282c02e94822226f466f9a76e8579",
+      "grader_version": "v1",
+      "source_kind": "synthetic",
+      "source_ref": "scripts/build_synthetic_bank.py",
+      "permission": "approved",
+      "reviewer": "codex-self-review-controls-v1",
+      "review_status": "accepted",
+      "independence": "unverified",
+      "safety": [
+        "offline disposable data-only fixture",
+        "no model or production mutation"
+      ],
+      "artifacts": [
+        "result.json",
+        "original.txt"
+      ]
+    }
+  ]
+}

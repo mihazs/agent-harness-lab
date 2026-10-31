@@ -1,0 +1,10 @@
+{
+  "prompt": "Add the new enabled flag while preserving every original settings entry in the result settings object. Preserve original.txt. Inputs are in task.json.",
+  "inputs": {
+    "settings": {
+      "theme": "dark",
+      "retries": 2
+    },
+    "new_flag": "enabled"
+  }
+}

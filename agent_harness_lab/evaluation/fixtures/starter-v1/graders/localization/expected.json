@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "result": {
+    "sums": [
+      5,
+      -3,
+      0
+    ]
+  },
+  "python_checks": {
+    "module": "app/calc.py",
+    "function": "add",
+    "inputs": [
+      [
+        2,
+        3
+      ],
+      [
+        -5,
+        2
+      ],
+      [
+        0,
+        0
+      ],
+      [
+        13,
+        -7
+      ],
+      [
+        -17,
+        -19
+      ]
+    ],
+    "outputs": [
+      5,
+      -3,
+      0,
+      6,
+      -36
+    ]
+  }
+}

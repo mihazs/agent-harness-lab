@@ -14,6 +14,10 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
 include = ["agent_harness_lab*", "tools"]
+namespaces = false
+
+[tool.setuptools.package-data]
+"agent_harness_lab.evaluation" = ["fixtures/**/*.json", "fixtures/**/*.py", "fixtures/**/*.txt"]
 
 [project.scripts]
 ahl = "agent_harness_lab.cli:main"

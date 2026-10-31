@@ -54,6 +54,25 @@ def execute(argv, cwd, timeout, stdin=None):
                     elapsed_seconds=time.monotonic() - start, timeout=False)
 
 
+
+def grading_status(grade, typed=False):
+    if grade['timeout'] or grade['exit_code'] is None:
+        return 'grader_error'
+    if not typed:
+        return 'passed' if grade['exit_code'] == 0 else 'failed'
+    try:
+        result=json.loads(grade['stdout'])
+        if (not isinstance(result,dict) or result.get('schema_version')!=1 or result.get('valid') is not True
+                or type(result.get('outcome')) is not bool
+                or any(not isinstance(result.get(k),str) or not 0<len(result[k])<=128 for k in ('grader_id','grader_version'))
+                or type(grade['exit_code']) is not int or grade['exit_code']!=(0 if result['outcome'] else 1)):
+            return 'grader_error'
+        grade.update({k:result[k] for k in ('valid','outcome','grader_id','grader_version')})
+        return 'passed' if result['outcome'] else 'failed'
+    except (ValueError,TypeError,KeyError):
+        return 'grader_error'
+
+
 def trace_result(run, agent="codex"):
     if run['timeout'] or run['exit_code'] != 0:
         return 'execution_error', None
@@ -153,6 +172,24 @@ def evaluate(args):
             file = (manifest_path.parent / arg).resolve()
             if file.is_file():
                 grader_files[str(file)] = hashlib.sha256(file.read_bytes()).hexdigest()
+    declared_bundles = manifest.get('grader_bundles', {})
+    frozen_bundles = {}
+    if declared_bundles:
+        checkout = Path(__file__).resolve().parents[3]
+        if (checkout / 'agent_harness_lab').is_dir():
+            sys.path.insert(0, str(checkout))
+        from agent_harness_lab.evaluation.integrity import contained, digest as bundle_digest
+        if set(declared_bundles) != set(ids):
+            raise ValueError('every task must declare its complete grader bundle')
+        for task_id, bundle in declared_bundles.items():
+            folder = contained(manifest_path.parent, bundle['path'])
+            if output==folder or output.is_relative_to(folder) or folder.is_relative_to(output):
+                raise ValueError('output and grader bundle must not overlap')
+            if any(folder == (manifest_path.parent / t['fixture']).resolve() or folder.is_relative_to((manifest_path.parent / t['fixture']).resolve()) or (manifest_path.parent / t['fixture']).resolve().is_relative_to(folder) for t in tasks):
+                raise ValueError('grader bundle cannot be inside a task fixture')
+            if bundle_digest(folder) != bundle['digest']:
+                raise ValueError('declared grader bundle integrity mismatch')
+            frozen_bundles[str(folder)] = bundle['digest']
     agent = args.agent
     binary = args.claude if agent == 'claude' else args.codex
     started = time.monotonic()
@@ -193,11 +230,14 @@ def evaluate(args):
         ordered = [dict(version=version, task=task['id'], repetition=0) for version in versions for task in tasks]
     results['profile'] = plan.profile if plan else 'descriptive_smoke'
     results['automatic_promotion'] = False
+    results['grader_bundle_digests'] = frozen_bundles
     for scheduled in ordered:
         version, task = scheduled['version'], next(t for t in tasks if t['id'] == scheduled['task'])
         root = versions[version]
         remaining = budget - (time.monotonic() - started)
         record = dict(scheduled, split=task['split'])
+        record.setdefault('root',task.get('root'))
+        record.setdefault('family',task.get('family'))
         if remaining <= 0:
             record['status'] = 'budget_exhausted'
             results['trials'].append(record)
@@ -252,8 +292,7 @@ def evaluate(args):
                 grader = [a.replace('{workspace}', str(workspace)).replace('{trace}', str(trace)) for a in task['grader']]
                 grade = execute(grader, manifest_path.parent, min(timeout, remaining))
                 record['grader'] = grade
-                record['status'] = ('grader_error' if grade['timeout'] or grade['exit_code'] is None
-                                    else 'passed' if grade['exit_code'] == 0 else 'failed')
+                record['status'] = grading_status(grade,typed=bool(frozen_bundles))
         results['trials'].append(record)
         (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
     results['elapsed_seconds'] = time.monotonic() - started
@@ -262,6 +301,8 @@ def evaluate(args):
                                    and hashlib.sha256(manifest_path.read_bytes()).hexdigest() == results['manifest_sha256']
                                    and all(Path(p).is_file() and hashlib.sha256(Path(p).read_bytes()).hexdigest() == h
                                            for p, h in grader_files.items()))
+    if frozen_bundles:
+        results['inputs_unchanged'] = results['inputs_unchanged'] and all(bundle_digest(Path(p)) == h for p, h in frozen_bundles.items())
     (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
     return 0 if results['inputs_unchanged'] and all(t['status'] == 'passed' for t in results['trials']) else 1
 
