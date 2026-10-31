@@ -4,6 +4,7 @@
 | --- | --- |
 | Try without credentials | [First diagnosis and full output](getting-started.md) |
 | Install or troubleshoot | [Installation](installation.md) |
+| Check readiness or initialize config | [Offline doctor and safe init](onboarding.md) |
 | Analyze a project, improve or monitor | [Workflows and CLI reference](workflows.md) |
 | Understand capture formats and provenance | [Telemetry](telemetry.md) |
 | Understand evaluation and safety gates | [Evaluation foundation](evaluation-foundation.md) |
