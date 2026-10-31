@@ -12,6 +12,7 @@
 ### Patch Changes
 
 - 82fe77e: Detect repeated observations across explicitly read-only calls with bounded state-aware caches. Persist watch attempts atomically, limit transient retries, preserve interrupted/corrupt checkpoints, and return truthful CLI exit codes for incomplete and blocked runs.
+- 10c1f55: Explain that diagnosis requires a fresh output path while preserving existing-output refusal and exit code 2.
 
 ## 0.2.0
 
