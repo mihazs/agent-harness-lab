@@ -1,0 +1,4 @@
+{"case_id":"synthetic-repeat","event_id":"1","activity":"tool_call","call_id":"call-1","tool_name":"read_file","tool_effect":"read_only","state_revision":"synthetic-state-1"}
+{"case_id":"synthetic-repeat","event_id":"2","activity":"tool_result","call_id":"call-1","tool_name":"read_file","input_fingerprint":"synthetic-input-1","result_fingerprint":"synthetic-result-1","state_revision":"synthetic-state-1"}
+{"case_id":"synthetic-repeat","event_id":"3","activity":"tool_call","call_id":"call-2","tool_name":"read_file","tool_effect":"read_only","state_revision":"synthetic-state-1"}
+{"case_id":"synthetic-repeat","event_id":"4","activity":"tool_result","call_id":"call-2","tool_name":"read_file","input_fingerprint":"synthetic-input-1","result_fingerprint":"synthetic-result-1","state_revision":"synthetic-state-1"}
