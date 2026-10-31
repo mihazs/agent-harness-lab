@@ -230,47 +230,25 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
 
 
 def adopt(project, baseline, candidate, original, proposed):
-    if candidate_states(candidate, original) != proposed:
-        raise ValueError('Evaluated candidate changed before adoption')
-    if any(file_state(baseline / name) != value for name, value in original.items()):
-        raise ValueError('Baseline changed before adoption')
-    changed = [name for name in sorted(original.keys() | proposed.keys()) if original.get(name) != proposed.get(name)]
-    for name in original.keys() | proposed.keys():
-        path = project / name
-        if any(p.is_symlink() for p in (path, *path.parents) if p.is_relative_to(project)):
-            raise ValueError('Target path crosses a symlink')
-        if file_state(path) != original.get(name):
-            raise ValueError('Project harness changed during evaluation; nothing was applied')
-    written = []
-    try:
-        for name in changed:
-            destination = project / name
-            destination.parent.mkdir(parents=True, exist_ok=True)
-            if name in proposed:
-                temp = destination.with_name(destination.name + '.ahl-' + uuid.uuid4().hex)
-                try:
-                    shutil.copy2(candidate / name, temp)
-                    if file_state(temp) != proposed[name]:
-                        raise ValueError('Candidate changed during adoption')
-                    if file_state(destination) != original.get(name):
-                        raise ValueError('Target changed during adoption')
-                    os.replace(temp, destination)
-                finally:
-                    temp.unlink(missing_ok=True)
-            else:
-                destination.unlink()
-            written.append(name)
-    except BaseException:
-        for name in reversed(written):
-            destination = project / name
-            if file_state(destination) != proposed.get(name):
-                continue
-            if name in original:
-                shutil.copy2(baseline / name, destination)
-            else:
-                destination.unlink(missing_ok=True)
-        raise
-    return changed
+    """Journal a directly authorized owned patch; behavioral controller is gated."""
+    from agent_harness_lab.promotion.journal import Journal, file_record
+    with project_lock(project):
+        if candidate_states(candidate, original) != proposed:
+            raise ValueError('Evaluated candidate changed before adoption')
+        names = sorted(original.keys() | proposed.keys())
+        before, after = {}, {}
+        for name in names:
+            if file_state(baseline / name) != original.get(name) or file_state(project / name) != original.get(name):
+                raise ValueError('Baseline/project changed before adoption')
+            if original.get(name) != proposed.get(name):
+                before[name] = file_record(baseline / name)
+                after[name] = file_record(candidate / name)
+        if not before:
+            return []
+        journal = Journal(project, state_root() / 'promotions' / identity(project))
+        transaction = journal.prepare(before, after, dict(source='directly_authorized_adopt_api'))
+        journal._execute(transaction['deployment'])
+        return sorted(before)
 
 
 def _improve(args):
