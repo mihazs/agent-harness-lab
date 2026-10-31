@@ -24,15 +24,15 @@ def check(root):
                 raise ValueError('unsafe index path')
             if mode not in (b'100644', b'100755'):
                 continue
-            if path.suffix != '.py' and str(path) not in ('.jscpd.json', '.jscpd-baseline.json'):
+            if path.suffix != '.py' and str(path) != '.jscpd.json':
                 continue
             target = snapshot/path
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(subprocess.check_output(['git', 'cat-file', 'blob', blob.decode('ascii')], cwd=root))
-        if not all((snapshot/name).is_file() for name in ('.jscpd.json', '.jscpd-baseline.json')):
-            raise ValueError('stage .jscpd.json and .jscpd-baseline.json before running the hook')
-        return subprocess.run([str(scanner), '--config', '.jscpd.json', '--baseline', '.jscpd-baseline.json',
-                               '--fail-on-new-clones', '--fail-on-empty', '--no-colors'],
+        if not (snapshot/'.jscpd.json').is_file():
+            raise ValueError('stage .jscpd.json before running the hook')
+        return subprocess.run([str(scanner), '--config', '.jscpd.json', '--exit-code', '1', '--threshold', '0',
+                               '--fail-on-empty', '--no-colors'],
                               cwd=snapshot, timeout=60).returncode
 
 

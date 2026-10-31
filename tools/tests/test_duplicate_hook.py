@@ -58,8 +58,6 @@ class DuplicateHookTests(GitRepoCase):
         (self.root/'.jscpd.json').write_text('{"path":["src"],"format":["python"],"minLines":5,"minTokens":50,"ignore":["**/tests/**"],"reporters":["silent"]}')
         (self.root/'node_modules/.bin').mkdir(parents=True)
         (self.root/'node_modules/.bin/jscpd').symlink_to(SCANNER)
-        subprocess.run([str(SCANNER), '--config', '.jscpd.json', '--baseline', '.jscpd-baseline.json',
-                        '--update-baseline', '--reporters', 'silent'], cwd=self.root, check=True, capture_output=True)
         for name in ('scripts/check_duplicates.py', '.githooks/pre-commit'):
             target = self.root/name; target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT/name, target)
@@ -78,7 +76,7 @@ class DuplicateHookTests(GitRepoCase):
         before = self.git('rev-parse', 'HEAD').stdout
         commit = self.git('-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '-qm', 'must fail')
         self.assertNotEqual(commit.returncode, 0)
-        self.assertIn('new clone', commit.stdout + commit.stderr)
+        self.assertIn('clone', commit.stdout + commit.stderr)
         self.assertEqual(self.git('rev-parse', 'HEAD').stdout, before)
         self.assertEqual(self.git('write-tree').stdout, staged)
         self.assertEqual(target.read_text(), 'answer = 42\n')

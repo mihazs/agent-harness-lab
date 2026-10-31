@@ -42,10 +42,10 @@ Git hook directory or custom hooks and reports an error instead of replacing the
 integrate the supplied hook explicitly if you already manage hooks elsewhere.
 No global Git settings or installed AHL runtime dependencies are changed.
 
-`npm run duplication:check` checks staged Python source against the committed
-`.jscpd-baseline.json`. Existing clone fingerprints are tolerated; new fingerprints
-block the commit. jscpd's fingerprint/count semantics define the gate, rather than
-a duplication-percentage allowance. `npm run duplication:report` reports all
+`npm run duplication:check` requires **zero clones** in staged Python source.
+Any clone blocks the commit, including pre-existing duplication. Refactor shared
+logic using DRY rather than adding a baseline or increasing a threshold.
+`npm run duplication:report` applies the same zero-clone rule to
 duplication in the working tree. Scans cover application code, tools, scripts and
 the evaluator runner, excluding tests, fixtures and examples; minimum clone size
 is five lines and 50 tokens.
@@ -53,10 +53,7 @@ is five lines and 50 tokens.
 The hook scans regular files copied directly from Git index blobs into a private
 temporary directory. It neither stashes edits nor creates Git worktrees, invokes
 checkout filters, changes the index, or includes unstaged repairs in its result.
-Reports stay local. Refreshing the baseline explicitly accepts current clones:
-review a full report first, then run
-`node_modules/.bin/jscpd --config .jscpd.json --baseline .jscpd-baseline.json --update-baseline`
-and review/stage the baseline change. Do not refresh it simply to pass a failed hook.
+Reports stay local. No clone baseline or duplication allowance is maintained.
 Python-only test runs still work without Node; executable hook tests are explicitly
 skipped when jscpd is not installed.
 
@@ -125,6 +122,11 @@ offered under the repository's MIT license. Maintainers can acknowledge contribu
 in PR/release notes without promising response times or outcomes.
 
 ## Versions and changelogs
+
+Every completed milestone must ship as a small release before starting the next
+milestone. Keep the Changeset, validation and release PR focused so completed work
+does not wait for unrelated features. A local commit or green PR is not a release;
+verify the published tag, archive, installer and checksums.
 
 Maintainers use Node.js 22+ for Changesets; users of GitHub release bundles do not
 need Node or a checkout. Run `npm ci` then `npm run changeset`, and commit the
