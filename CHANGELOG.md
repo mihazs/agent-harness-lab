@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.4.0
+
+### Minor Changes
+
+- d299507: Add explicit offline fixture-command execution to paired evaluations. Executors
+  receive only their fresh fixture and selected read-only harness; a separate
+  offline grader evaluates bounded artifact copies with a pristine oracle bundle.
+  Unsupported sandbox hosts block without host fallback. Export artifact allowlists
+  with task-bank manifests. This mode makes no model calls or automatic promotions.
+- 9c19d25: Add offline doctor checks, strict project configuration and preview-first init.
+  Creation is explicit, atomic and exclusive; diagnostics omit private file contents
+  and keep authentication and full isolation unverified. Configuration consumption
+  is currently limited to doctor/init and does not authorize runtime execution.
+
+### Patch Changes
+
+- 0544449: Add opt-in offline sandbox regrading for task-bank controls. Extract bounded
+  allowlisted artifacts into fresh read-only inputs, verify pristine oracle copies,
+  and reject malformed or inconsistent typed grades. Unsupported sandbox hosts
+  report blocked without host fallback. Include calculator source in its artifact
+  contract; behavioral promotion remains disabled.
+- bfef7d9: Reject writable sandbox workspaces that overlap read-only inputs. Bound combined
+  stdout/stderr capture, clean up workers when selector setup fails, and count
+  preflight work against the execution deadline. Share one wall-clock budget across
+  offline grader audits and preserve completed checks on timeout or exhaustion.
+- 9e8542f: Require zero production-source clones in jscpd working-tree and staged pre-commit
+  checks. Remove the clone baseline and share telemetry identity registration logic
+  without changing idempotence, conflict detection or retention behavior.
+
 ## 0.3.0
 
 ### Minor Changes
