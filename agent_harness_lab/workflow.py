@@ -69,7 +69,10 @@ def project_lock(project):
 
 
 def evidence(args, output):
-    data = collect(args.project, events=args.events, source_format=args.format)
+    from agent_harness_lab.telemetry.ledger import Ledger
+    events = []
+    data = collect(args.project, events=args.events, source_format=args.format, event_sink=events.append)
+    Ledger(output / 'events.v2.jsonl').ingest(events)
     write_json(output / 'analysis.json', data)
     (output / 'report.md').write_text(report(data['analysis']))
     return data

@@ -1,18 +1,18 @@
 """Collect bounded, project-scoped local evidence without exporting message bodies."""
 import hashlib
 import heapq
+import itertools
 import json
 import os
 from pathlib import Path
 
 from tools.diagnose import analyze, normalize
+from agent_harness_lab.telemetry.schema import FIELDS, event as telemetry_event
 
 MAX_RECORD_BYTES = 1024 * 1024
 MAX_READ_BYTES = 64 * 1024 * 1024
 MAX_READ_CHUNKS = 500000
-EVENT_FIELDS = ('case_id', 'event_id', 'activity', 'root_case_id', 'actor', 'timestamp',
-                'tool_name', 'call_id', 'input_fingerprint', 'result_fingerprint',
-                'state_revision', 'lineage_verified', 'contract_violation', 'contract_ref', 'outcome')
+EVENT_FIELDS = FIELDS
 FAILURES = {'failed', 'execution_error', 'invalid_trace', 'incomplete', 'grader_error', 'budget_exhausted'}
 
 
@@ -118,24 +118,6 @@ def _capture_candidates(root):
                     continue
 
 
-def _tool_error(row, source_format, event):
-    if event.get('activity') != 'tool_result':
-        return False
-    if source_format == 'claude':
-        message = row.get('message', {})
-        content = message.get('content', []) if isinstance(message, dict) else []
-        return isinstance(content, list) and any(
-            isinstance(block, dict) and block.get('type') == 'tool_result'
-            and block.get('tool_use_id') == event.get('call_id') and block.get('is_error') is True
-            for block in content)
-    if source_format == 'codex':
-        payload = row.get('payload', row)
-        output = payload.get('output') if isinstance(payload, dict) else None
-        code = output.get('exit_code') if isinstance(output, dict) else None
-        return type(code) is int and code != 0
-    return False
-
-
 def _evaluation_results(project, max_files, sources, fingerprint, caveats, budget):
     root = project / 'artifacts'
     paths = []
@@ -178,20 +160,35 @@ def _evaluation_results(project, max_files, sources, fingerprint, caveats, budge
         fingerprint.update(str(path).encode() + b'\0' + json.dumps(identity, sort_keys=True).encode())
         sources.append(dict(path=str(path), format='evaluation', sha256=hashlib.sha256(raw).hexdigest()))
         for trial in result['trials']:
-            if not isinstance(trial, dict) or trial.get('status') not in FAILURES:
+            if not isinstance(trial, dict) or trial.get('status') not in FAILURES | {'passed'}:
                 continue
+            grade = trial.get('grader', {})
+            execution = trial.get('execution', {})
+            valid = (result.get('inputs_unchanged') is True and isinstance(grade, dict)
+                     and type(grade.get('exit_code')) is int and not grade.get('timeout', True)
+                     and isinstance(execution, dict) and execution.get('exit_code') == 0
+                     and not execution.get('timeout', True)
+                     and trial['status'] in ('passed', 'failed')
+                     and (grade['exit_code'] == 0) == (trial['status'] == 'passed')
+                     and grade.get('valid') is True and isinstance(grade.get('grader_id'), str)
+                     and isinstance(grade.get('grader_version'), str))
             failures.append(dict(source=str(path), task=str(trial.get('task', 'unknown'))[:256],
                                  version=str(trial.get('version', 'unknown'))[:256],
-                                 status=trial['status'], evidence_level='observed_evaluation_status'))
+                                 status=trial['status'], evidence_level='observed_evaluation_status',
+                                 outcome=('success' if trial['status'] == 'passed' else 'failure') if valid else 'unknown',
+                                 outcome_provenance='executable_grader' if valid else 'unknown',
+                                 grader_id=grade.get('grader_id') if valid else None,
+                                 grader_version=grade.get('grader_version') if valid else None))
+
     return failures
 
 
-def collect(project, events=None, source_format='normalized', max_files=100, max_events=100000):
+def collect(project, events=None, source_format='normalized', max_files=100, max_events=100000, max_scan_files=2000, event_sink=None):
     """Return local evidence, not a claim of task success or a causal diagnosis."""
     project = Path(project).resolve()
     if not project.is_dir():
         raise ValueError('project must be an existing directory')
-    if max_files <= 0 or max_events <= 0:
+    if max_files <= 0 or max_events <= 0 or max_scan_files <= 0:
         raise ValueError('collection limits must be positive')
     if source_format not in ('normalized', 'codex', 'claude', 'ai-memory'):
         raise ValueError('unsupported evidence format')
@@ -210,11 +207,15 @@ def collect(project, events=None, source_format='normalized', max_files=100, max
                  (Path(os.environ.get('CLAUDE_CONFIG_DIR', str(Path.home() / '.claude'))) / 'projects', 'claude')]
         candidates = ((mtime, name, path, fmt) for root, fmt in roots
                       for mtime, name, path in _capture_candidates(root))
-        latest = heapq.nlargest(max_files + 1, candidates)
-        if len(latest) > max_files:
-            _warn(caveats, 'Capture discovery inspected only the latest file limit; older project history may be absent.')
-        for _, _, path, fmt in latest[:max_files]:
+        scanned = list(itertools.islice(candidates, max_scan_files + 1))
+        latest = heapq.nlargest(max_scan_files, scanned[:max_scan_files])
+        if len(scanned) > max_scan_files:
+            _warn(caveats, 'Capture discovery reached its separate scan-file limit; older project history may be absent.')
+        for _, _, path, fmt in latest:
             if _owned(path, project, caveats, budget):
+                if len(selected) >= max_files:
+                    _warn(caveats, 'Matching captures reached the accepted-file limit; project history is incomplete.')
+                    break
                 selected.append((path, fmt))
 
     def normalized_events():
@@ -223,54 +224,41 @@ def collect(project, events=None, source_format='normalized', max_files=100, max
             source_id = hashlib.sha256(str(path).encode()).hexdigest()[:16]
             source = dict(path=str(path), format=fmt, events=0)
             sources.append(source)
-            active = events is not None
-            session = None
-            accepted = 0
-            for row in _rows(path, caveats, source_digest, budget=budget):
-                cwd = _cwd(row)
-                if cwd is not None and events is None:
-                    active = _matches(cwd, project)
-                if not active:
-                    continue
-                if fmt == 'codex' and row.get('type') == 'session_meta':
-                    session = row.get('payload', {}).get('id', session)
-                if fmt == 'claude':
-                    session = row.get('sessionId', row.get('session_id', session))
-                if fmt in ('codex', 'claude') and isinstance(session, str) and session:
-                    row.setdefault('session_id', session)
-                accepted += 1
-                row.setdefault('id', str(accepted))
-                try:
-                    normalized = list(normalize([row], fmt, project='local'))
-                except (ValueError, TypeError, KeyError, AttributeError):
-                    _warn(caveats, 'Invalid native messages were skipped; evidence is incomplete.')
-                    continue
-                for event in normalized:
-                    # File-local cases keep event IDs unique; a native session still has one root.
-                    event = {k: event[k] for k in EVENT_FIELDS if k in event}
-                    case = event.get('case_id')
-                    if not isinstance(case, str) or not case or (fmt == 'normalized' and len(case) > 256):
-                        raise ValueError('invalid normalized case identity')
-                    event['case_id'] = hashlib.sha256((source_id + ':' + case).encode()).hexdigest()
-                    if fmt in ('codex', 'claude') and isinstance(session, str) and session:
-                        event['root_case_id'] = hashlib.sha256((fmt + ':' + session).encode()).hexdigest()
-                    if fmt != 'normalized':
-                        ident = str(event.get('event_id', row['id']))
-                        event['event_id'] = ident if len(ident) <= 256 else hashlib.sha256(ident.encode()).hexdigest()
-                    tool_error = _tool_error(row, fmt, event)
-                    fingerprint.update(json.dumps(dict(event=event, tool_error=tool_error), sort_keys=True).encode() + b'\n')
-                    source['events'] += 1
-                    if tool_error:
-                        errors.append(dict(kind='tool_error', status='observed_pattern',
-                            evidence=[dict(case_id=event['case_id'], event_id=event['event_id'])],
-                            explanation='Structured tool error observed; expected negative tests and recovery may explain it.'))
-                    yield event
+            def scoped_rows():
+                active = events is not None
+                for accepted, row in enumerate(_rows(path, caveats, source_digest, budget=budget), 1):
+                    cwd = _cwd(row)
+                    if cwd is not None and events is None:
+                        active = _matches(cwd, project)
+                    if active:
+                        row.setdefault('id', str(accepted))
+                        yield row
+            for event in normalize(scoped_rows(), fmt, project='local'):
+                event = telemetry_event(event)
+                case = event['case_id']
+                event['case_id'] = hashlib.sha256((source_id + ':' + case).encode()).hexdigest()
+                if fmt in ('codex', 'claude'):
+                    root = event.get('root_case_id', case)
+                    event['root_case_id'] = hashlib.sha256((fmt + ':' + root).encode()).hexdigest()
+                tool_error = event.get('execution_status') == 'error'
+                fingerprint.update(json.dumps(dict(event=event, tool_error=tool_error), sort_keys=True).encode() + b'\n')
+                source['events'] += 1
+                if tool_error:
+                    errors.append(dict(kind='tool_error', status='observed_pattern',
+                        evidence=[dict(case_id=event['case_id'], event_id=event['event_id'])],
+                        explanation='Structured tool error observed; expected negative tests and recovery may explain it.'))
+                if event_sink is not None:
+                    event_sink(event)
+                yield event
             source['sha256'] = source_digest.hexdigest()
 
     analysis = analyze(normalized_events(), max_events=max_events)
     analysis['findings'].extend(errors)
-    failures = [] if events is not None else _evaluation_results(project, max_files, sources, fingerprint, caveats, budget)
+    outcomes = [] if events is not None else _evaluation_results(project, max_files, sources, fingerprint, caveats, budget)
     if not selected:
         _warn(caveats, 'No matching local capture was found; absence of evidence is not success.')
-    return dict(analysis=analysis, evaluation_failures=failures, sources=sources,
+    failures = [record for record in outcomes if record['status'] in FAILURES]
+    successes = [record for record in outcomes if record['status'] == 'passed']
+    return dict(analysis=analysis, evaluation_failures=failures, evaluation_successes=successes,
+                evaluation_outcomes=outcomes, discovery_limits=dict(scan_files=max_scan_files, accepted_files=max_files), sources=sources,
                 fingerprint=fingerprint.hexdigest(), caveats=caveats)

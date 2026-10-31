@@ -9,58 +9,13 @@ try:
     from tools.observations import ObservationCache
 except ModuleNotFoundError:  # Direct python tools/diagnose.py entrypoint.
     from observations import ObservationCache
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
-def normalize(rows, source_format='normalized', project=None):
-    """Retain visible evidence only; unsupported capture remains explicitly unknown."""
-    session = project
-    for number, row in enumerate(rows, 1):
-        if source_format == 'normalized':
-            yield row
-            continue
-        if not isinstance(row, dict):
-            raise ValueError('export records must be objects')
-        if source_format == 'claude':
-            case = row.get('sessionId', row.get('session_id', session))
-            ident = str(row.get('uuid', row.get('id', number)))
-            message = row.get('message', {})
-            if not isinstance(message, dict):
-                raise ValueError('Claude message must be an object')
-            content = message.get('content', [])
-            if not isinstance(content, (list, str)):
-                raise ValueError('Claude content must be text or a block list')
-            blocks = content if isinstance(content, list) else []
-            tools = [(i, b) for i, b in enumerate(blocks)
-                     if isinstance(b, dict) and b.get('type') in ('tool_use', 'tool_result')]
-            for index, block in tools:
-                call = block['type'] == 'tool_use'
-                event = dict(case_id=case, event_id=f'{ident}:{index}',
-                             activity='tool_call' if call else 'tool_result',
-                             actor='agent' if call else 'tool',
-                             call_id=block.get('id') if call else block.get('tool_use_id'))
-                if call:
-                    event['tool_name'] = block.get('name')
-                if row.get('timestamp'):
-                    event['timestamp'] = row['timestamp']
-                yield event
-            if not tools:
-                yield dict(case_id=case, event_id=ident,
-                           activity=row.get('type', 'unknown'), actor='unknown')
-            continue
-        payload = row.get('payload', row)
-        if not isinstance(payload, dict):
-            raise ValueError('export payload must be an object')
-        kind = payload.get('type', row.get('kind', 'unknown'))
-        if row.get('type') == 'session_meta':
-            session = payload.get('id', session)
-        activity = {'function_call': 'tool_call', 'function_call_output': 'tool_result',
-                    'user-prompt': 'user_message', 'stop': 'turn_stop'}.get(kind, kind)
-        # Bodies can contain credentials; native exports provide metadata, not text labels.
-        yield {k: v for k, v in dict(case_id=row.get('session_id', session),
-               event_id=str(row.get('id', number)), activity=activity,
-               timestamp=row.get('timestamp', row.get('created_at')),
-               tool_name=payload.get('name'), call_id=payload.get('call_id'),
-               source_ref=f'{project}:{number}', actor='unknown').items() if v is not None}
+def normalize(rows, source_format='normalized', project=None, source_version=None):
+    from agent_harness_lab.telemetry.adapters import normalize as adapter
+    yield from adapter(rows, source_format, project, source_version)
 
 
 def analyze(rows, max_events=100000, *, observation_per_case=128, observation_total=4096, observation_max_age=1000):
@@ -90,7 +45,7 @@ def analyze(rows, max_events=100000, *, observation_per_case=128, observation_to
         seen.add((case, ident))
         counts[activity] += 1
         for key in ('tool_name', 'outcome', 'state_revision', 'lineage_verified'):
-            fields[key] += event.get(key) is not None
+            fields[key] += event.get(key) not in (None, 'unknown', 'unverified')
         ref = {'case_id': case, 'event_id': ident}
         windows[case].append(activity)
         for size in range(2, len(windows[case]) + 1):
