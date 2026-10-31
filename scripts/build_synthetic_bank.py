@@ -14,6 +14,13 @@ GRADER='''#!/usr/bin/env python3
 import json,sys,subprocess
 from pathlib import Path
 w,reference=Path(sys.argv[1]),Path(sys.argv[2])
+def equivalent(actual,expected):
+ if expected is None: return actual is None
+ if type(expected) is bool: return type(actual) is bool and actual==expected
+ if type(expected) in (int,float): return type(actual) in (int,float) and actual==expected
+ if isinstance(expected,list): return isinstance(actual,list) and len(actual)==len(expected) and all(equivalent(a,b) for a,b in zip(actual,expected))
+ if isinstance(expected,dict): return isinstance(actual,dict) and actual.keys()==expected.keys() and all(equivalent(actual[k],v) for k,v in expected.items())
+ return type(actual) is type(expected) and actual==expected
 try:
  expected=json.loads(reference.read_text())
  assert expected['schema_version']==1
@@ -22,13 +29,13 @@ except Exception:
  raise SystemExit(2)
 try:
  actual=json.loads((w/'result.json').read_text())
- accepted=isinstance(actual,dict) and all(actual.get(k)==v for k,v in expected['result'].items())
+ accepted=isinstance(actual,dict) and all(k in actual and equivalent(actual[k],v) for k,v in expected['result'].items())
  accepted=accepted and (w/'original.txt').read_text()=='preserve\\n'
  if expected.get('python_checks'):
   check=expected['python_checks']
   program="import runpy,json,sys; m=runpy.run_path(sys.argv[1]); f=m[sys.argv[2]]; print(json.dumps([f(*args) for args in json.loads(sys.argv[3])]))"
   run=subprocess.run([sys.executable,'-I','-c',program,str(w/check['module']),check['function'],json.dumps(check['inputs'])],capture_output=True,text=True,timeout=1,env={'PATH':'/usr/bin:/bin'})
-  accepted=accepted and run.returncode==0 and json.loads(run.stdout)==check['outputs']
+  accepted=accepted and run.returncode==0 and equivalent(json.loads(run.stdout),check['outputs'])
 except (OSError,ValueError,TypeError): accepted=False
 print(json.dumps(dict(schema_version=1,valid=True,grader_id='synthetic-artifacts',grader_version='v1',outcome=accepted)))
 raise SystemExit(0 if accepted else 1)

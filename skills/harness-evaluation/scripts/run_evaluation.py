@@ -62,7 +62,7 @@ def grading_status(grade, typed=False):
         return 'passed' if grade['exit_code'] == 0 else 'failed'
     try:
         result=json.loads(grade['stdout'])
-        if (not isinstance(result,dict) or result.get('schema_version')!=1 or result.get('valid') is not True
+        if (not isinstance(result,dict) or type(result.get('schema_version')) is not int or result.get('schema_version')!=1 or result.get('valid') is not True
                 or type(result.get('outcome')) is not bool
                 or any(not isinstance(result.get(k),str) or not 0<len(result[k])<=128 for k in ('grader_id','grader_version'))
                 or type(grade['exit_code']) is not int or grade['exit_code']!=(0 if result['outcome'] else 1)):

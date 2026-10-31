@@ -78,7 +78,7 @@ class StarterBankTests(unittest.TestCase):
         good=dict(schema_version=1,valid=True,outcome=True,grader_id='synthetic',grader_version='v1')
         self.assertEqual(runner.grading_status(grade(good),typed=True),'passed')
         self.assertEqual(runner.grading_status(grade(dict(good,outcome=False),1),typed=True),'failed')
-        for broken in (grade(dict(good,valid=False),1),grade(good,1),grade({'outcome':True}),grade(dict(good,outcome=None))):
+        for broken in (grade(dict(good,valid=False),1),grade(good,1),grade({'outcome':True}),grade(dict(good,outcome=None)),grade(dict(good,schema_version=True))):
             self.assertEqual(runner.grading_status(broken,typed=True),'grader_error')
 
     def test_source_materialization_cannot_escape_fixture(self):
@@ -87,3 +87,18 @@ class StarterBankTests(unittest.TestCase):
             root=Path(folder); (root/'source_files.json').write_text(json.dumps({'app/../../escape.py':'pass'}))
             with self.assertRaises(ValueError): materialize_sources(root)
             self.assertFalse((root.parent/'escape.py').exists())
+
+    def test_boolean_number_mutants_do_not_pass_semantic_grading(self):
+        import shutil,subprocess,sys
+        from agent_harness_lab.evaluation.bank_tools import materialize_sources
+        for task,mutant in [('regression',{'settings':{'theme':'dark','retries':2,'enabled':1}}),
+                            ('localization',{'sums':[5,-3,False]})]:
+            with tempfile.TemporaryDirectory() as folder:
+                workspace=Path(folder)/'work'; shutil.copytree(BANK.parent/'tasks'/task,workspace)
+                materialize_sources(workspace)
+                if task=='localization': (workspace/'app/calc.py').write_text('def add(a,b): return a+b\n')
+                (workspace/'result.json').write_text(json.dumps(mutant))
+                bundle=BANK.parent/'graders'/task
+                run=subprocess.run([sys.executable,str(bundle/'grade.py.txt'),str(workspace),str(bundle/'expected.json')],capture_output=True,text=True)
+                self.assertEqual(run.returncode,1)
+                self.assertIs(json.loads(run.stdout)['outcome'],False)
