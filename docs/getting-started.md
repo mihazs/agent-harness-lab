@@ -64,7 +64,8 @@ is meaningful for this single constructed example.
 ## Next optional steps
 
 `python3 -m agent_harness_lab bank --starter --list` inspects seven bundled synthetic
-tasks without agents. Their independence/review remains unverified for certification.
+tasks without agents. It exits 3 because independence/review remains unverified for
+certification; this is expected for the starter bank, not a setup failure.
 For native formats see [telemetry](telemetry.md); for authenticated paired work read
 [workflows](workflows.md) and [evaluation safeguards](evaluation-foundation.md).
 Use [troubleshooting](installation.md#common-setup-problems) or open a synthetic-only

@@ -164,4 +164,3 @@ captures, not the ai-memory server. The configured agent may inspect the selecte
 project's source/instructions and metadata as part of its task; it uses your existing
 inference configuration. The release builder includes tracked application files
 and skills only, excluding local artifacts and memory routing files.
-
