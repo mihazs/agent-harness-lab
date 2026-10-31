@@ -36,10 +36,10 @@ else: print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
         self.grader = self.root / 'grade.py'
         self.grader.write_text("import pathlib,sys; p=pathlib.Path(sys.argv[1]); assert (p/'artifact').read_text()=='done'; assert (p/'original').read_text()=='preserve'\n")
 
-    def run_case(self, mode='ok', grader=None, timeout=2, preload=True, skills=None, agent='codex'):
+    def run_case(self, mode='ok', grader=None, timeout=2, preload=True, skills=None, agent='codex', harness_paths=None):
         manifest = dict(tasks=[dict(id='case', split='development', fixture='fixture',
                                    prompt=mode, preload_skills=preload, grader=grader or [sys.executable, str(self.grader), '{workspace}'])],
-                        timeout_seconds=timeout, skills=skills or [])
+                        timeout_seconds=timeout, skills=skills or [], harness_paths=harness_paths or [])
         (self.root / 'manifest.json').write_text(json.dumps(manifest))
         result = subprocess.run([sys.executable, str(RUNNER), '--manifest', str(self.root / 'manifest.json'),
                                  '--baseline', str(self.root / 'baseline'), '--candidate', str(self.root / 'candidate'),
@@ -151,6 +151,14 @@ else:
                       {'type':'turn.completed'}):
             run=dict(timeout=False, exit_code=0, stdout=json.dumps(event))
             self.assertEqual(trace_result(run, 'claude')[0], 'incomplete')
+
+    def test_harness_context_is_injected_for_each_version(self):
+        (self.root/'baseline/AGENTS.md').write_text('baseline instructions')
+        (self.root/'candidate/AGENTS.md').write_text('candidate instructions')
+        result,data=self.run_case(harness_paths=['AGENTS.md'])
+        self.assertEqual(result.returncode,0,result.stderr)
+        for version in ('baseline','candidate'):
+            self.assertEqual((self.root/'out'/version/'case/workspace/AGENTS.md').read_text(),version+' instructions')
 
     def test_missing_input_directory_rejected(self):
         from run_evaluation import digest

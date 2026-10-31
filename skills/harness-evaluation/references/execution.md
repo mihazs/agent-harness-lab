@@ -109,3 +109,20 @@ The CLI contract was checked against [programmatic execution](https://code.claud
 [skill precedence](https://code.claude.com/docs/en/skills). Use a current Claude Code
 release supporting these flags. A missing binary or authentication is an execution
 limitation, not a passing model trial.
+
+## Automatic project instruction experiments
+
+`ahl improve` discovers its own targets and prepares a staged experiment. A manifest
+may name `harness_paths`: safe relative files copied from each version into its
+fresh fixture workspace. Missing version-side files remove that fixture path,
+allowing additions and deletions to be compared. These paths are distinct from the
+named skill/plugin injection mechanism; do not put graders or answers there.
+Known grader files inside a fixture are rejected before execution.
+
+The automatic controller requires development, regression and held-out tasks plus
+broken/partial/complete grader self-tests. Candidate preparation and evaluation construction use separate fresh sessions;
+the latter is not supplied the patch. It permits at most four planning sessions
+across two attempts and 20 task trials in one whole-run budget, with fresh held-out inputs on
+refinement. Frozen candidate bytes and the original target state are rechecked
+before adoption. These controls establish observed acceptance under cooperative
+conditions; they are not a proof that a generated grader captures all semantics.

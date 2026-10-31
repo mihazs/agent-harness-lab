@@ -74,6 +74,23 @@ def trace_result(run, agent="codex"):
         return 'invalid_trace', None
 
 
+def agent_command(agent, binary, plugin=None, skills=()):
+    if agent == 'claude':
+        argv = [binary, '--print', '--output-format', 'stream-json', '--verbose',
+                '--no-session-persistence']
+        if plugin is not None:
+            argv += ['--plugin-dir', str(plugin)]
+        return argv
+    disabled = [dict(path=str(home / skill), enabled=False) for skill in skills
+                for home in (Path.home() / '.agents/skills', Path.home() / '.codex/skills')
+                if (home / skill).exists()]
+    argv = [binary, 'exec', '--ephemeral', '--skip-git-repo-check',
+            '--sandbox', 'workspace-write', '--json', '-c', 'approval_policy="never"']
+    if disabled:
+        argv += ['-c', 'skills.config=' + json.dumps(disabled).replace(': ', ' = ')]
+    return argv + ['-']
+
+
 def evaluate(args):
     manifest_path = Path(args.manifest).resolve()
     manifest = json.loads(manifest_path.read_text())
@@ -81,6 +98,13 @@ def evaluate(args):
     output = Path(args.output).resolve()
     skills = manifest.get('skills', [])
     tasks = manifest['tasks']
+    harness_paths = manifest.get('harness_paths', [])
+    if not isinstance(harness_paths, list) or any(not isinstance(p, str) or not p or '\\' in p
+            or Path(p).is_absolute() or any(part in ('.', '..', '.git') for part in Path(p).parts)
+            for p in harness_paths):
+        raise ValueError('harness_paths must contain safe relative file paths')
+    if len(harness_paths) != len(set(harness_paths)):
+        raise ValueError('duplicate harness path')
     if not tasks or any(not isinstance(s, str) or not s or '/' in s or s in ('.', '..') for s in skills):
         raise ValueError('tasks must be nonempty and skill names must be simple directory names')
     ids = [t['id'] for t in tasks]
@@ -94,6 +118,10 @@ def evaluate(args):
         if output == root or output.is_relative_to(root) or root.is_relative_to(output):
             raise ValueError('output and version inputs must not overlap')
         digest(root)
+        for relative in harness_paths:
+            path = root / relative
+            if path.exists() and not path.is_file():
+                raise ValueError('harness_paths must name files')
         for skill in skills:
             if not (root / skill / 'SKILL.md').is_file():
                 raise ValueError(f'missing skill {root / skill}')
@@ -102,6 +130,13 @@ def evaluate(args):
         if output == fixture or output.is_relative_to(fixture) or fixture.is_relative_to(output):
             raise ValueError('output and fixture must not overlap')
         digest(fixture)
+        for argument in task['grader']:
+            if not isinstance(argument, str):
+                raise ValueError('grader arguments must be strings')
+            if '{workspace}' not in argument and '{trace}' not in argument:
+                program = (manifest_path.parent / argument).resolve()
+                if program.is_file() and program.is_relative_to(fixture):
+                    raise ValueError('grader programs must be outside fixture workspaces')
         if task['split'] not in ('development', 'regression', 'heldout'):
             raise ValueError('invalid split')
         if not task['grader'] or not all(isinstance(a, str) for a in task['grader']):
@@ -148,6 +183,16 @@ def evaluate(args):
             workspace = trial / 'workspace'
             fixture = (manifest_path.parent / task['fixture']).resolve()
             shutil.copytree(fixture, workspace)
+            for relative in harness_paths:
+                target = workspace / relative
+                if target.exists():
+                    if not target.is_file():
+                        raise ValueError('fixture harness path must be a file')
+                    target.unlink()
+                source = root / relative
+                if source.is_file():
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(source, target)
             loaded = []
             plugin = workspace / '.harness-trial'
             if agent == 'claude':
@@ -160,22 +205,11 @@ def evaluate(args):
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copytree(root / skill, target)
                 loaded.append(str(target / 'SKILL.md'))
-            disabled = []
-            for skill in skills:
-                for home in (Path.home() / '.agents/skills', Path.home() / '.codex/skills'):
-                    if (home / skill).exists():
-                        disabled.append(dict(path=str(home / skill), enabled=False))
-            argv = [args.codex, 'exec', '--ephemeral', '--skip-git-repo-check',
-                    '--sandbox', 'workspace-write', '--json', '-c', 'approval_policy="never"']
-            if agent == 'claude':
-                argv = [binary, '--print', '--output-format', 'stream-json', '--verbose',
-                        '--no-session-persistence', '--plugin-dir', str(plugin)]
-            elif disabled:
-                argv += ['-c', 'skills.config=' + json.dumps(disabled).replace(': ', ' = ')]
+            argv = agent_command(agent, binary, plugin if agent == 'claude' else None, skills)
             prompt = ('Load these exact evaluation skill files before the task: ' + ', '.join(loaded) + '\n' if loaded and task.get('preload_skills', True) else '')
+            if manifest.get('no_nested_agents', False):
+                prompt += 'Do not launch child agents or nested model trials; the parent owns the evaluation budget.\n'
             prompt += 'Operate only in this fixture workspace. Do not modify external files.\n' + task['prompt']
-            if agent == 'codex':
-                argv.append('-')
             record['injected_skill_hashes'] = {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in loaded}
             run = execute(argv, workspace, min(timeout, remaining), prompt)
             trace = trial / 'trace.jsonl'

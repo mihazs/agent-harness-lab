@@ -45,7 +45,7 @@ def install(source, destination, backup_root):
     return backup
 
 
-def main(argv=None):
+def main(argv=None, source=None):
     parser = argparse.ArgumentParser(description=__doc__)
     target = parser.add_mutually_exclusive_group()
     target.add_argument('--agent', choices=('codex', 'claude'), default='codex',
@@ -54,7 +54,7 @@ def main(argv=None):
     parser.add_argument('--backup-root', type=Path, default=Path.home() / '.local/state/harness-improver/backups')
     args = parser.parse_args(argv)
     destination = args.destination or Path.home() / ('.claude/skills' if args.agent == 'claude' else '.agents/skills')
-    backup = install(Path(__file__).resolve().parents[1] / 'skills', destination, args.backup_root)
+    backup = install(source or Path(__file__).resolve().parents[1] / 'skills', destination, args.backup_root)
     print(f'Linked skills. Previous directories: {backup}' if backup else 'Skill links already current.')
 
 

@@ -12,3 +12,16 @@ paired outcomes and limitations. Never commit private history or trial workspace
 Explain what changed, why, and the checks performed. Contributions are offered
 under the repository's MIT license. Maintainers review correctness, scope and
 verification before merging; no response-time guarantee is offered.
+
+## Versions and changelogs
+
+Maintainers use Node.js 22+ for Changesets; users of GitHub release bundles do not
+need Node or a checkout. Run `npm ci` then `npm run changeset`, and commit the
+changeset with each releasable change. Do not manually edit release versions.
+
+The version workflow creates a PR using `npm run version-packages`, which runs
+Changesets and synchronizes Python metadata. Merging that PR publishes the release
+archive, installer and SHA256SUMS through `npm run release`. Releases include only
+tracked application code and skills; never add private examples to those trees.
+Run the two README test suites before publication. Review Changesets-generated
+notes for privacy just like any other staged content.

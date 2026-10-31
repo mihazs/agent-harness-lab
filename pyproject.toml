@@ -1,6 +1,6 @@
 [project]
-name = "harness-improver"
-version = "0.1.0"
+name = "agent-harness-lab"
+version = "0.2.0"
 description = "Evidence-based agent harness diagnosis, process mining, and paired evaluation"
 requires-python = ">=3.11"
 dependencies = []
@@ -13,4 +13,14 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = []
+packages = ["agent_harness_lab", "tools"]
+
+[project.scripts]
+ahl = "agent_harness_lab.cli:main"
+
+[tool.setuptools.data-files]
+"share/agent-harness-lab/skills/harness-evaluation" = ["skills/harness-evaluation/SKILL.md"]
+"share/agent-harness-lab/skills/harness-evaluation/scripts" = ["skills/harness-evaluation/scripts/run_evaluation.py", "skills/harness-evaluation/scripts/mine_traces.py"]
+"share/agent-harness-lab/skills/harness-evaluation/references" = ["skills/harness-evaluation/references/execution.md", "skills/harness-evaluation/references/trace-diagnosis.md", "skills/harness-evaluation/references/evidence-to-design.md"]
+"share/agent-harness-lab/skills/harness-self-improvement" = ["skills/harness-self-improvement/SKILL.md"]
+"share/agent-harness-lab/skills/harness-self-improvement/agents" = ["skills/harness-self-improvement/agents/openai.yaml"]
