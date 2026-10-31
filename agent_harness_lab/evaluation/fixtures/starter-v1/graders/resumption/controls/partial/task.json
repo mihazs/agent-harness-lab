@@ -1,0 +1,16 @@
+{
+  "prompt": "Resume the queue after the recorded cursor without duplicating already completed IDs. Write the complete processed list and final cursor in result.json. Preserve original.txt. Inputs are in task.json.",
+  "inputs": {
+    "queue": [
+      "a",
+      "b",
+      "c",
+      "d"
+    ],
+    "processed": [
+      "a",
+      "b"
+    ],
+    "cursor": 2
+  }
+}

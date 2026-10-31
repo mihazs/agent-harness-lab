@@ -1,0 +1,9 @@
+{
+  "prompt": "Decision probe only: choose calculator for the arithmetic request and null for the unrelated greeting. Write selections in result.json. This does not establish actual skill activation. Preserve original.txt. Inputs are in task.json.",
+  "inputs": {
+    "requests": [
+      "calculate 2+3",
+      "hello"
+    ]
+  }
+}
