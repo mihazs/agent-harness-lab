@@ -71,7 +71,7 @@ class MonitoringTests(unittest.TestCase):
         self.assertFalse(state.eligible(record, 'f', 'c', 10000, 3, 100))
         record['spent_seconds'] = 0; record['attempt_count'] = 100
         state.finish(record, {'status': 'execution_error', 'failure_class': 'transient_infrastructure'}, 0, 1, 3600, 1)
-        self.assertLessEqual(record['retry_after'], 4500)
+        self.assertLessEqual(record['retry_after'], 3600)
 
     def test_corrupt_checkpoint_is_preserved_and_legacy_does_not_retry(self):
         path = self.root / 'checkpoint.json'
@@ -103,3 +103,10 @@ class MonitoringTests(unittest.TestCase):
         state.atomic_json(path, state.new('f', 'c'))
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
         self.assertEqual(state.load(path)['checkpoint_version'], 2)
+
+    def test_completed_disposition_cannot_retry_and_zero_budget_is_invalid(self):
+        record = state.new('f', 'c', disposition='no_change')
+        record['failure_class'] = 'transient_infrastructure'
+        self.assertFalse(state.eligible(record, 'f', 'c', 100, 3, 100))
+        self.args.watch_budget = 0
+        with self.assertRaises(ValueError): watch(self.args)

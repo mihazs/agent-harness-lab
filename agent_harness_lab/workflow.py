@@ -474,7 +474,8 @@ def watch_configuration(args):
 def watch(args):
     attempts = getattr(args, 'max_attempts', 3)
     delay = getattr(args, 'retry_delay', 60)
-    budget = getattr(args, 'watch_budget', None) or args.timeout
+    budget = getattr(args, 'watch_budget', None)
+    budget = args.timeout if budget is None else budget
     if args.interval <= 0 or args.timeout <= 0 or not 1 <= attempts <= 10 or not 1 <= delay <= 3600 or budget <= 0:
         raise ValueError('invalid watch interval, timeout, attempt limit, retry delay or budget')
     checkpoint = state_root() / 'watch' / (identity(args.project) + '.json')

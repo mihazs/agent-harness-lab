@@ -82,7 +82,8 @@ def eligible(state, fingerprint, configuration, now, attempts, budget):
         return False
     if state['configuration'] != configuration:
         return True
-    return (state['failure_class'] == 'transient_infrastructure'
+    return (exit_code(state['disposition']) == 1 and state['disposition'] != 'in_progress'
+            and state['failure_class'] == 'transient_infrastructure'
             and state['attempt_count'] < attempts
             and state['spent_seconds'] < budget and now >= state['retry_after'])
 
@@ -99,7 +100,7 @@ def finish(state, result, now, elapsed, base_delay, jitter):
     # Only an explicitly classified infrastructure failure authorizes a retry.
     if state['failure_class'] == 'transient_infrastructure' and exit_code(status) == 1:
         delay = min(3600, base_delay * 2 ** min(state['attempt_count'] - 1, 12))
-        state['retry_after'] = now + delay * (0.75 + 0.5 * jitter)
+        state['retry_after'] = now + min(3600, delay * (0.75 + 0.5 * jitter))
     else:
         state['retry_after'] = 0
         state['failure_class'] = state['failure_class'] or ('requires_intervention' if exit_code(status) else None)
