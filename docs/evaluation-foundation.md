@@ -51,6 +51,12 @@ workspace and role-allowed read-only inputs; clears inherited environment; and
 requests separate network/process/user namespaces, capability removal, process
 session cleanup and CPU/address-space/process/file/output/time limits. Input
 integrity is rechecked. No host home/config/socket is mounted.
+Writable workspaces must be disjoint from every declared read-only input; nested
+mounts of the same host tree are rejected before execution. Captured stdout and
+stderr share one byte allowance. Timeout, interruption and selector-registration
+failures trigger process-group cleanup, including children remaining in the group
+after their parent exits. Host process-control tests establish that behavior separately from the
+namespace containment tests, which still require a supported host.
 
 This is not a complete certified backend: aggregate disk/cgroup enforcement,
 pinned full execution-image/dependency identity, a narrow inference broker,
@@ -125,8 +131,16 @@ execution attestations remain in the private audit result.
 This mode currently supports the starter-style `grade.py.txt`/`expected.json`
 Python grader contract using `/usr/bin/python3` inside the namespace. It does not
 isolate a model run or provide inference access. Aggregate disk/cgroup bounds,
-pinned dependency images, parent-budget orchestration and full role integration
-remain pending. Mock-backend tests exercise extraction, typed grading and all 29
+pinned dependency images, whole-experiment parent-budget orchestration and full
+role integration remain pending. Offline audits now use one 300-second wall-clock
+admission deadline shared by validation, capability probing, materialization,
+extraction, oracle copying and all control executions. API callers can pass their
+remaining `budget_seconds`; individual subprocess limits are capped by what
+remains. Exhaustion and grader timeout reports retain completed checks and never
+claim all controls passed. In-process filesystem operations and cleanup are
+accounted for but cannot be preempted at an exact deadline; this is not an
+enforceable provider cost/token or aggregate CPU limit. Mock-backend tests
+exercise extraction, typed grading and all 29
 controls; they do not prove containment. The live test is explicitly skipped when
 the namespace probe fails. Neither audit mode authorizes promotion.
 

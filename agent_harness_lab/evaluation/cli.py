@@ -39,7 +39,7 @@ def main(argv):
                 result['task_index'] = [{k: t[k] for k in ('task_id', 'root_id', 'family', 'partition', 'review_status')}
                                         for t in json.loads(args.manifest.read_text())['tasks']]
             code = 0 if result['certification_eligible'] else 3
-            if args.audit and result['grader_audit']['status'] == 'blocked':
+            if args.audit and result['grader_audit']['status'] != 'controls_passed':
                 code = 3
         elif args.command == 'experiment':
             from .plan import ExperimentSpec

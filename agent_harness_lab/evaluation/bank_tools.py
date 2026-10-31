@@ -1,9 +1,11 @@
 """Credential-free task-bank export and frozen grader falsification controls."""
 import json
+import math
 from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 from .integrity import artifacts,contained,digest,tree
 from .task_bank import validate
 
@@ -64,7 +66,11 @@ def export_manifest(bank_path,output,max_trials=24):
 def regrade_artifacts(workspace, allowlist, bundle, expected_digest, backend, *, limits=None):
     """Worker must be stopped before extraction; never trust its claimed result."""
     import tempfile
+    from dataclasses import replace
     from .sandbox import Limits
+    started = time.monotonic()
+    limits = limits or Limits(seconds=5)
+    limits.validate()
     if digest(bundle) != expected_digest:
         raise ValueError('grader bundle integrity changed before regrading')
     extracted = artifacts(workspace, allowlist)
@@ -79,10 +85,13 @@ def regrade_artifacts(workspace, allowlist, bundle, expected_digest, backend, *,
             target = contained(fixture, name)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
+        remaining = limits.seconds - (time.monotonic() - started)
+        if remaining <= 0:
+            raise TimeoutError('regrading budget exhausted before launch')
         run = backend.run(['/usr/bin/python3', '-I', '/inputs/oracle/grade.py.txt',
                            '/inputs/fixture', '/inputs/oracle/expected.json'],
                           scratch, {'fixture': fixture, 'oracle': oracle}, 'grader',
-                          limits or Limits(seconds=5))
+                          replace(limits, seconds=remaining))
     if digest(bundle) != expected_digest or run.get('inputs_unchanged') is not True:
         raise ValueError('grader inputs changed during regrading')
     outcome = None
@@ -104,20 +113,33 @@ def regrade_artifacts(workspace, allowlist, bundle, expected_digest, backend, *,
                 outcome=outcome, execution=run, automatic_promotion=False)
 
 
-def audit_graders(bank_path, *, cooperative=False, sandbox=False):
+def audit_graders(bank_path, *, cooperative=False, sandbox=False, budget_seconds=300):
+    if type(budget_seconds) not in (int, float) or not math.isfinite(budget_seconds) or budget_seconds <= 0:
+        raise ValueError('invalid grader audit budget')
+    started = time.monotonic()
+    deadline = started + budget_seconds
     if cooperative and sandbox:
         raise ValueError('choose one grader execution mode')
     if not cooperative and not sandbox:
         raise ValueError('grader audit requires explicit cooperative or sandbox execution mode')
     bank_path=Path(bank_path); validate(bank_path)
+    result = dict(status='incomplete', checks=[], real_agent_trials='not_run', independence='unverified',
+                  execution_mode='sandbox' if sandbox else 'cooperative', automatic_promotion=False,
+                  budget_seconds=budget_seconds)
+    if time.monotonic() >= deadline:
+        return dict(result, status='budget_exhausted', elapsed_seconds=time.monotonic()-started)
     if sandbox:
         from .sandbox import SandboxBackend
         backend = SandboxBackend()
-        capability = backend.capability()
+        remaining = deadline-time.monotonic()
+        if remaining <= 0:
+            return dict(result, status='budget_exhausted', elapsed_seconds=time.monotonic()-started)
+        capability = backend.capability(seconds=min(3, remaining))
+        if time.monotonic() >= deadline:
+            return dict(result, status='budget_exhausted', capability=capability, elapsed_seconds=time.monotonic()-started)
         if capability['status'] != 'available':
-            return dict(status='blocked', capability=capability, checks=[],
-                        real_agent_trials='not_run', automatic_promotion=False)
-    tasks=json.loads(bank_path.read_text())['tasks']; results=[]
+            return dict(result, status='blocked', capability=capability, elapsed_seconds=time.monotonic()-started)
+    tasks=json.loads(bank_path.read_text())['tasks']; results=result['checks']
     for task in tasks:
         bundle=contained(bank_path.parent,task['grader_bundle']); frozen=digest(bundle)
         controls=json.loads((bundle/'controls.json').read_text())
@@ -129,20 +151,31 @@ def audit_graders(bank_path, *, cooperative=False, sandbox=False):
             import tempfile
             with tempfile.TemporaryDirectory() as folder:
                 workspace=Path(folder)/'work'; shutil.copytree(fixture,workspace); materialize_sources(workspace)
-                if sandbox:
-                    grade = regrade_artifacts(workspace, task['artifacts'], bundle, frozen, backend)
-                else:
-                    run=subprocess.run([sys.executable,str(bundle/'grade.py.txt'),str(workspace),str(bundle/'expected.json')],
-                        env={'PATH':'/usr/bin:/bin','PYTHONDONTWRITEBYTECODE':'1'},capture_output=True,text=True,timeout=5)
+                remaining = deadline-time.monotonic()
+                if remaining <= 0:
+                    return dict(result, status='budget_exhausted', elapsed_seconds=time.monotonic()-started)
+                try:
+                    if sandbox:
+                        from .sandbox import Limits
+                        grade = regrade_artifacts(workspace, task['artifacts'], bundle, frozen, backend,
+                                                  limits=Limits(seconds=min(5, remaining)))
+                    else:
+                        run=subprocess.run([sys.executable,str(bundle/'grade.py.txt'),str(workspace),str(bundle/'expected.json')],
+                            env={'PATH':'/usr/bin:/bin','PYTHONDONTWRITEBYTECODE':'1'},capture_output=True,text=True,timeout=min(5, remaining))
+                except (TimeoutError, subprocess.TimeoutExpired):
+                    return dict(result, status='budget_exhausted' if time.monotonic() >= deadline else 'grader_error',
+                                task=task['task_id'], control=control['state'], elapsed_seconds=time.monotonic()-started)
+            if time.monotonic() >= deadline:
+                return dict(result, status='budget_exhausted', elapsed_seconds=time.monotonic()-started)
             envelope = dict(valid=grade['outcome'] is not None,outcome=grade['outcome']) if sandbox else json.loads(run.stdout)
             expected=control['state'] in ('complete','alternative_valid')
             code = grade['execution']['exit_code'] if sandbox else run.returncode
             if envelope.get('valid') is not True or envelope.get('outcome') is not expected or code!=(0 if expected else 1):
                 raise ValueError('grader falsification failed: '+task['task_id']+'/'+control['state'])
-            result = dict(task=task['task_id'],control=control['state'],status='passed')
+            checked = dict(task=task['task_id'],control=control['state'],status='passed')
             if sandbox:
-                result['regrade'] = grade
-            results.append(result)
+                checked['regrade'] = grade
+            results.append(checked)
         if digest(bundle)!=frozen: raise ValueError('grader bundle mutated during audit')
-    return dict(status='controls_passed',checks=results,real_agent_trials='not_run',independence='unverified',
-                execution_mode='sandbox' if sandbox else 'cooperative',automatic_promotion=False)
+    return dict(result, status='controls_passed' if time.monotonic() < deadline else 'budget_exhausted',
+                elapsed_seconds=time.monotonic()-started)
