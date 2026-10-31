@@ -1,0 +1,8 @@
+{
+  "path": ["agent_harness_lab", "tools", "scripts", "skills/harness-evaluation/scripts", "install.py"],
+  "format": ["python"],
+  "minLines": 5,
+  "minTokens": 50,
+  "ignore": ["**/tests/**", "**/test_*.py", "**/fixtures/**", "**/examples/**", "**/__pycache__/**"],
+  "reporters": ["console"]
+}
