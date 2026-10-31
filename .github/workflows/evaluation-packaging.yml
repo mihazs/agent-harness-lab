@@ -25,6 +25,11 @@ jobs:
           cd /tmp
           /tmp/ahl-wheel-smoke/bin/ahl --help
           /tmp/ahl-wheel-smoke/bin/ahl research-simulate --tasks 10 --scenario delayed
+          set +e
+          /tmp/ahl-wheel-smoke/bin/ahl bank --starter --audit --cooperative-controls
+          bank_status=$?
+          set -e
+          test "$bank_status" -eq 3
       - name: Check versioned archive imports without a model account
         run: |
           mkdir /tmp/ahl-archive-smoke
@@ -32,3 +37,8 @@ jobs:
           cd /tmp/ahl-archive-smoke/agent-harness-lab-*
           python -m agent_harness_lab --help
           python -m agent_harness_lab research-simulate --tasks 10
+          set +e
+          python -m agent_harness_lab bank --starter --audit --cooperative-controls
+          bank_status=$?
+          set -e
+          test "$bank_status" -eq 3

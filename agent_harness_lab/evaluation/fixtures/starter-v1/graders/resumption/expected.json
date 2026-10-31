@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "result": {
+    "processed": [
+      "a",
+      "b",
+      "c",
+      "d"
+    ],
+    "cursor": 4
+  }
+}

@@ -205,3 +205,19 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(len(result['evaluation_successes']), 1)
         self.assertEqual(result['evaluation_successes'][0]['outcome'], 'unknown')
         self.assertEqual(result['evaluation_failures'], [])
+
+    def test_typed_grade_outcomes_keep_provenance_and_reject_contradictions(self):
+        path=self.project/'artifacts/typed/results.json'; path.parent.mkdir(parents=True)
+        trial=dict(task='synthetic',root='reported-root',version='candidate',status='passed',
+            execution=dict(exit_code=0,timeout=False),
+            grader=dict(exit_code=0,timeout=False,valid=True,outcome=True,grader_id='synthetic',grader_version='v1'))
+        result=dict(inputs_unchanged=True,trials=[trial])
+        path.write_text(json.dumps(result)); first=collect(self.project)
+        outcome=first['evaluation_successes'][0]
+        self.assertEqual(outcome['outcome'],'success')
+        self.assertEqual(outcome['outcome_provenance'],'executable_grader')
+        self.assertEqual(outcome['root_id'],'reported-root'); self.assertFalse(outcome['lineage_verified'])
+        trial['grader']['outcome']=False
+        path.write_text(json.dumps(result)); second=collect(self.project)
+        self.assertEqual(second['evaluation_successes'][0]['outcome'],'unknown')
+        self.assertNotEqual(first['fingerprint'],second['fingerprint'])
