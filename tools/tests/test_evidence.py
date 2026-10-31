@@ -186,3 +186,22 @@ class EvidenceTests(unittest.TestCase):
             path=self.write(self.home/'invalid.jsonl',[dict(case_id=case,event_id='1',activity='inspect')])
             with self.assertRaisesRegex(ValueError,'case identity'):
                 collect(self.project,events=path)
+
+    def test_unrelated_new_captures_do_not_consume_accepted_limit(self):
+        own = self.write(self.codex/'sessions/own.jsonl', self.codex_rows())
+        os.utime(own, (1, 1))
+        for i in range(5):
+            self.write(self.codex/f'sessions/foreign-{i}.jsonl', self.codex_rows(self.home/'other'))
+        result = collect(self.project, max_files=1, max_scan_files=10)
+        self.assertEqual(len(result['sources']), 1)
+        self.assertEqual(result['sources'][0]['path'], str(own))
+        self.assertTrue(collect(self.project, max_scan_files=1)['caveats'])
+
+    def test_success_controls_are_retained_without_invented_outcomes(self):
+        path = self.project/'artifacts/run/results.json'
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps({'trials': [dict(task='ok', version='baseline', status='passed')]}))
+        result = collect(self.project)
+        self.assertEqual(len(result['evaluation_successes']), 1)
+        self.assertEqual(result['evaluation_successes'][0]['outcome'], 'unknown')
+        self.assertEqual(result['evaluation_failures'], [])
