@@ -10,6 +10,7 @@
 | Check implemented/pending capabilities | [Controlled experiments](controlled-experiments.md) |
 | Inspect original smoke results | [Initial validation](validation.md) |
 | Develop, test and submit a PR | [Contributor guide](../CONTRIBUTING.md) |
+| Organize repository work and the GitHub Project | [Project operations](project-management.md) |
 | Understand methodology | [Scientific sources](../skills/harness-evaluation/references/evidence-to-design.md), [diagnosis criteria](../skills/harness-evaluation/references/trace-diagnosis.md), [execution contract](../skills/harness-evaluation/references/execution.md) |
 
 The initial validation page is a dated historical record, not a current suite count
