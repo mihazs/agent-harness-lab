@@ -38,12 +38,12 @@ def check(root):
     failures = []
     for name in filter(None, tracked):
         source = root / name
-        if not source.resolve().is_relative_to(root):
-            failures.append(f'{name}: Markdown source points outside the repository')
-            continue
         try:
+            if source.resolve() != source:
+                failures.append(f'{name}: Markdown source crosses a symlink')
+                continue
             text = source.read_text(encoding='utf-8')
-        except (OSError, UnicodeError) as error:
+        except (OSError, UnicodeError, RuntimeError) as error:
             failures.append(f'{name}: cannot read Markdown ({error.__class__.__name__})')
             continue
         for line, link in destinations(text):

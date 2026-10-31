@@ -33,7 +33,9 @@ files. It resolves inline links and images relative to their containing file,
 decodes URL-encoded paths, and ignores fragments, query strings, external URLs,
 code fences and simple same-line code spans. Missing destinations report the
 source file, line and link; the command exits nonzero. Paths outside the repository
-are rejected. Untracked Markdown and private artifacts are not scanned.
+are rejected. Markdown sources that cross symlinks are rejected before reading,
+so tracked aliases cannot expose untracked or ignored files. Untracked Markdown
+and private artifacts are not scanned.
 
 This is a file-existence check, not a general Markdown parser: reference-style
 links, HTML, multiline links, escaped delimiters, nested parentheses and heading

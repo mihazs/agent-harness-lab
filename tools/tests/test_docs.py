@@ -53,6 +53,22 @@ class DocsTests(unittest.TestCase):
         (self.root / '.gitignore').write_text('private.md\n')
         self.assertEqual(docs.check(self.root), [])
 
+    def test_tracked_symlink_cannot_read_ignored_private_markdown(self):
+        (self.root / '.gitignore').write_text('artifacts/\n')
+        (self.root / 'artifacts').mkdir()
+        (self.root / 'artifacts/private.md').write_text('[private](synthetic-secret.md)')
+        (self.root / 'alias.md').symlink_to('artifacts/private.md')
+        subprocess.run(['git', '-C', str(self.root), 'add', '--', 'alias.md'], check=True)
+        self.assertEqual(docs.check(self.root), [
+            'alias.md: Markdown source crosses a symlink'])
+
+    def test_source_symlink_loop_is_reported_without_a_traceback(self):
+        (self.root / 'loop.md').symlink_to('loop.md')
+        subprocess.run(['git', '-C', str(self.root), 'add', '--', 'loop.md'], check=True)
+        failures = docs.check(self.root)
+        self.assertEqual(len(failures), 1)
+        self.assertTrue(failures[0].startswith('loop.md: cannot read Markdown ('))
+
     def test_parent_and_symlink_escape_are_reported(self):
         self.track('README.md', '[outside](../outside.md)\n[link](escape/file.md)\n')
         (self.root / 'escape').symlink_to(self.root.parent, target_is_directory=True)
