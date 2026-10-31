@@ -99,3 +99,50 @@ class MonitorTests(unittest.TestCase):
         self.assertEqual(monitor('B',versions,events+[events[1]],policy,20)['verified_exposure'],1)
         self.assertEqual(monitor('B',versions,events+[dict(events[1],outcome=False)],policy,20)['state'],'conflict')
         with self.assertRaises(ValueError): monitor('B',versions,events,replace(policy,end=0),20)
+
+class ReviewJournalTests(unittest.TestCase):
+    def test_privileged_modes_and_conflicting_task_outcomes_are_rejected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'AGENTS.md'; path.write_text('fixture'); path.chmod(0o4644)
+            with self.assertRaises(ValueError): file_record(path)
+        policy=MonitorPolicy('v1',0,10,1)
+        event=dict(event_id='one',task_id='t',deployment='A',task_started=1,outcome=True,provenance='executable_grader')
+        result=monitor('A',{'t':'A'},[event,dict(event,event_id='two',outcome=False)],policy,20)
+        self.assertEqual(result['state'],'conflict')
+
+    def test_forged_privileged_snapshot_is_rejected_before_mutation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); (root/'project').mkdir(); path=root/'project/AGENTS.md'; path.write_text('before')
+            journal=Journal(root/'project',root/'private')
+            before=file_record(path); after=dict(before,mode=0o4644)
+            with self.assertRaises(ValueError): journal.prepare({'AGENTS.md':before},{'AGENTS.md':after})
+            self.assertEqual(path.read_text(),'before')
+            with self.assertRaises(ValueError): Journal(root/'project',root/'project/private')
+
+    def test_adopt_snapshot_race_and_manual_cli_rollback(self):
+        import shutil
+        from agent_harness_lab.workflow import adopt,snapshot,candidate_states
+        from agent_harness_lab.cli import main
+        import agent_harness_lab.promotion.journal as module
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder); project=root/'project'; project.mkdir(); (project/'AGENTS.md').write_text('before')
+            original=snapshot(project,root/'baseline'); shutil.copytree(root/'baseline',root/'candidate')
+            (root/'candidate/AGENTS.md').write_text('after'); proposed=candidate_states(root/'candidate',original)
+            original_reader=module.file_record
+            def mutate_then_read(path):
+                if path==root/'candidate/AGENTS.md': path.write_text('unevaluated')
+                return original_reader(path)
+            with patch('agent_harness_lab.workflow.state_root',return_value=root/'state'):
+                with patch.object(module,'file_record',side_effect=mutate_then_read):
+                    with self.assertRaisesRegex(ValueError,'while journaling'):
+                        adopt(project,root/'baseline',root/'candidate',original,proposed)
+                self.assertEqual((project/'AGENTS.md').read_text(),'before')
+                (root/'candidate/AGENTS.md').write_text('after')
+                self.assertEqual(adopt(project,root/'baseline',root/'candidate',original,proposed),['AGENTS.md'])
+                active=next((root/'state/promotions').glob('*/active.json'))
+                deployment=json.loads(active.read_text())['deployment']
+                with patch('builtins.print'):
+                    self.assertEqual(main(['promotion',str(project),'--deployment',deployment]),0)
+                    self.assertEqual((project/'AGENTS.md').read_text(),'after')
+                    self.assertEqual(main(['promotion',str(project),'--deployment',deployment,'--action','rollback']),0)
+                self.assertEqual((project/'AGENTS.md').read_text(),'before')

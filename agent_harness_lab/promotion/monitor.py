@@ -17,8 +17,9 @@ class MonitorPolicy:
 
 def monitor(deployment,task_versions,events,policy,now):
     policy.validate()
+    if type(now) not in (int,float) or not math.isfinite(now): raise ValueError('invalid monitor clock')
     import json
-    seen, tasks, outcomes, unknown, critical={},set(),[],0,False
+    seen, tasks, outcomes, unknown, critical={},{},[],0,False
     for event in events:
         signature=json.dumps(event,sort_keys=True)
         if event['event_id'] in seen:
@@ -29,12 +30,17 @@ def monitor(deployment,task_versions,events,policy,now):
         version=task_versions.get(event.get('task_id'))
         if version is None or event.get('deployment')!=version:
             unknown+=1; continue
-        if version!=deployment or not policy.start<=event['task_started']<policy.end: continue
+        started=event.get('task_started')
+        if type(started) not in (int,float) or not math.isfinite(started) or started>now:
+            unknown+=1; continue
+        if version!=deployment or not policy.start<=started<policy.end: continue
         if type(event.get('outcome')) is not bool or event.get('provenance')!='executable_grader':
             unknown+=1; continue
         if event['task_id'] in tasks:
+            if tasks[event['task_id']] != event['outcome']:
+                return dict(state='conflict',reason='contradictory_task_outcomes',automatic_rollback=False)
             unknown+=1; continue
-        tasks.add(event['task_id'])
+        tasks[event['task_id']]=event['outcome']
         outcomes.append(event['outcome'])
         critical|=event.get('critical') is True and event['outcome'] is False
     state='paused' if critical else 'observing' if now<policy.end or len(outcomes)<policy.min_exposure else 'stable'

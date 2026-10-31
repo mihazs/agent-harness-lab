@@ -16,14 +16,30 @@ def file_record(path):
     info=path.stat()
     if not stat.S_ISREG(info.st_mode) or info.st_nlink!=1 or info.st_size>10*1024*1024:
         raise ValueError('file type/link/size conflict')
+    if stat.S_IMODE(info.st_mode) & 0o7000:
+        raise ValueError('privileged harness modes are unsupported')
     raw=path.read_bytes()
     return dict(sha256=hashlib.sha256(raw).hexdigest(),mode=stat.S_IMODE(info.st_mode),
                 content=base64.b64encode(raw).decode())
 
 
+def validate_snapshot(record):
+    if record is None: return
+    if not isinstance(record,dict) or set(record)!={'sha256','mode','content'}:
+        raise ValueError('invalid snapshot envelope')
+    if type(record['mode']) is not int or not 0<=record['mode']<=0o777 or not isinstance(record['content'],str):
+        raise ValueError('invalid or privileged snapshot mode')
+    if len(record['content'])>14*1024*1024: raise ValueError('snapshot byte bound')
+    raw=base64.b64decode(record['content'],validate=True)
+    if len(raw)>10*1024*1024 or hashlib.sha256(raw).hexdigest()!=record['sha256']:
+        raise ValueError('snapshot integrity mismatch')
+
+
 class Journal:
     def __init__(self,project,folder):
         self.project=Path(project).resolve(); self.folder=Path(folder)
+        if self.folder.absolute().is_relative_to(self.project) or self.project.is_relative_to(self.folder.absolute()):
+            raise ValueError('private journal and project must not overlap')
         if any(p.is_symlink() for p in (self.folder,*self.folder.absolute().parents)):
             raise ValueError('journal path crosses a symlink')
         self.folder.mkdir(parents=True,exist_ok=True,mode=0o700)
@@ -32,14 +48,26 @@ class Journal:
     @property
     def active(self):
         path=self.folder/'active.json'
-        return json.loads(path.read_text())['deployment'] if path.exists() else None
+        if not path.exists(): return None
+        if path.is_symlink() or path.stat().st_size>1024: raise ValueError('unsafe active journal pointer')
+        deployment=json.loads(path.read_text())['deployment']
+        if not isinstance(deployment,str) or len(deployment)!=32 or any(c not in '0123456789abcdef' for c in deployment):
+            raise ValueError('invalid active deployment identifier')
+        return deployment
 
     def load(self,deployment):
         if not isinstance(deployment,str) or len(deployment)!=32 or any(c not in '0123456789abcdef' for c in deployment):
             raise ValueError('invalid deployment identifier')
         path=self.folder/(deployment+'.json')
         if path.is_symlink() or path.stat().st_size>30*1024*1024: raise ValueError('unsafe journal record')
-        return json.loads(path.read_text())
+        record=json.loads(path.read_text())
+        if record.get('schema_version')!=1 or record.get('deployment')!=deployment or record.get('kind') not in ('promotion','rollback') or record.get('status') not in ('prepared','applying','committed','conflict'):
+            raise ValueError('invalid journal envelope')
+        for mapping in (record['before'],record['after']):
+            if not isinstance(mapping,dict) or len(mapping)>1000: raise ValueError('invalid snapshot set')
+            for name,snapshot in mapping.items():
+                self.owned(name); validate_snapshot(snapshot)
+        return record
 
     def owned(self,name):
         relative(name)
@@ -53,6 +81,8 @@ class Journal:
     def prepare(self,before,after,metadata=None,kind='promotion'):
         names=sorted(before.keys()|after.keys())
         if not names or len(names)>1000: raise ValueError('invalid transaction size')
+        for mapping in (before,after):
+            for snapshot in mapping.values(): validate_snapshot(snapshot)
         for name in names:
             relative(name)
             self.owned(name)
@@ -114,7 +144,10 @@ class Journal:
         return record
 
     def preview_rollback(self,deployment):
-        record=self.load(deployment)
+        try:
+            record=self.load(deployment)
+        except ValueError:
+            return dict(status='conflict',reason='unsafe_record_or_current_path')
         if self.active!=deployment or record['status']!='committed':
             return dict(status='conflict',reason='deployment_not_active')
         try:

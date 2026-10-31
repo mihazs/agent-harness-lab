@@ -3,23 +3,30 @@
 
 def activation(*, injected=False, signal=None, provenance=None, evidence_ref=None):
     explicit=signal in ('read','invocation') and provenance=='native_field' and bool(evidence_ref)
-    return dict(available=bool(injected),activated=True if explicit else None,
+    return dict(available=True if injected or explicit else None,activated=True if explicit else None,
                 activation_evidence=evidence_ref if explicit else None,
                 missing_reason=None if explicit else 'runtime_activation_unobserved')
 
 
 def utility(records):
-    groups={}
+    groups={}; tasks={}; roots={}
     for record in records:
         condition=record['condition']
         if condition not in ('natural','preload','negative_routing','transfer'):
             raise ValueError('unknown routing condition')
-        group=groups.setdefault(condition,dict(tasks=0,verified_outcomes=0,successes=0,
+        group=groups.setdefault(condition,dict(tasks=0,roots=0,records=0,unknown_identity_records=0,verified_outcome_records=0,successes=0,
                                              observable_activations=0,critical_regressions=0))
-        group['tasks']+=1
+        group['records']+=1
+        task=record.get('task_id'); root=record.get('root_id')
+        if isinstance(task,str) and task:
+            tasks.setdefault(condition,set()).add(task); group['tasks']=len(tasks[condition])
+        else:
+            group['unknown_identity_records']+=1
+        if isinstance(root,str) and root:
+            roots.setdefault(condition,set()).add(root); group['roots']=len(roots[condition])
         group['observable_activations']+=record.get('activated') is True
         if type(record.get('outcome')) is bool and record.get('outcome_provenance')=='executable_grader':
-            group['verified_outcomes']+=1; group['successes']+=record['outcome']
+            group['verified_outcome_records']+=1; group['successes']+=record['outcome']
         group['critical_regressions']+=record.get('critical_regression') is True
     return dict(conditions=groups,causal_effect='requires_frozen_paired_experiment',
                 disposition='rejected' if any(g['critical_regressions'] for g in groups.values()) else 'uncertified',

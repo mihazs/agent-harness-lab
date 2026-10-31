@@ -33,7 +33,7 @@ class ExperimentalCliTests(unittest.TestCase):
     def test_benchmark_report_end_to_end_and_private_export_refusal(self):
         def record(source='synthetic'):
             runtime=dict(provider='local',runtime='fake',model_revision='synthetic',reasoning='none',
-                task_bank_revision='v1',sandbox_image='fixture',permissions='offline',harness_version='v1',effective_settings_verified=True)
+                task_bank_revision='v1',sandbox_image='fixture',permissions='offline',controller_version='v1',effective_settings_verified=True)
             return dict(baseline_runtime=runtime,candidate_runtime=runtime,status='not_run',execution_kind='fake_agent',
                 provenance=dict(source_kind=source,approved_publication=True,source_ref='synthetic fixture',derived_from_private=False))
         with tempfile.TemporaryDirectory() as folder:

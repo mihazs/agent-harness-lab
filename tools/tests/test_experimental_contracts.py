@@ -150,3 +150,30 @@ class BanditTests(unittest.TestCase):
             self.assertFalse(result['training_started'])
             self.assertEqual(len(result['results']),5)
             if scenario=='sparse': self.assertGreater(result['results']['thompson']['unknown_rewards'],0)
+
+class ReviewRegressionTests(unittest.TestCase):
+    def test_mutating_callback_cannot_reach_certification(self):
+        with tempfile.TemporaryDirectory() as folder:
+            certified=[]
+            def evaluate(c):
+                if c.changes: c.changes['AGENTS.md']='mutated after freeze'
+                return dict(safe=True,metrics={'correctness':1})
+            result=search(Path(folder)/'search.json',candidate('base',None),lambda i:candidate('patch','fixed'),
+                evaluate,lambda c:certified.append(c),Budget(6,1),['AGENTS.md'],enabled=True,variants=1)
+            self.assertEqual(certified,[])
+            self.assertEqual(result['rejections'][0]['reason'],'candidate_mutated_during_evaluation')
+
+    def test_tampered_error_metadata_and_mutable_authorization_are_rejected(self):
+        auth=Authorization('project',('read',),('structured-error-v1',),'v1')
+        original=dict(call_id='c',tool='read',status='error',payload={'code':'missing'})
+        transformed=normalize_error(original,auth)
+        transformed['error_metadata']['status']='success'
+        self.assertFalse(verify(original,transformed,auth))
+        with self.assertRaises(ValueError): Authorization('project',['read'],('structured-error-v1',),'v1')
+
+    def test_repeated_skill_observations_do_not_inflate_task_or_root_counts(self):
+        self.assertIsNone(activation()['available'])
+        self.assertTrue(activation(signal='read',provenance='native_field',evidence_ref='e')['available'])
+        record=dict(condition='natural',task_id='task',root_id='root',outcome=True,outcome_provenance='executable_grader')
+        group=utility([record,record])['conditions']['natural']
+        self.assertEqual((group['tasks'],group['roots'],group['records']),(1,1,2))

@@ -54,7 +54,7 @@ def require_identifiable(design, *, propensities_verified=False, overlap=False):
 def simulate(seed=7,tasks=200,scenario='stationary'):
     if type(tasks) is not int or not 1<=tasks<=10000 or scenario not in ('stationary','drift','sparse','delayed','harmful'):
         raise ValueError('invalid bounded simulation scenario')
-    arms=[PolicyArm('none','v1',True),PolicyArm('lexical','v1',True),PolicyArm('reviewed_rule','v1',True),
+    arms=[PolicyArm('none','v1',True),PolicyArm('lexical','v1',True),PolicyArm('reviewed_rule','v1',scenario!='harmful'),
           PolicyArm('unsafe','v1',False,False)]
     eligible=sorted(a.arm_id for a in arms if a.eligible())
     rng=random.Random(seed)

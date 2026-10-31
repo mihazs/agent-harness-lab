@@ -243,6 +243,9 @@ def adopt(project, baseline, candidate, original, proposed):
             if original.get(name) != proposed.get(name):
                 before[name] = file_record(baseline / name)
                 after[name] = file_record(candidate / name)
+                captured = (after[name]['sha256'], after[name]['mode']) if after[name] is not None else None
+                if captured != proposed.get(name):
+                    raise ValueError('Candidate changed while journaling; nothing was applied')
         if not before:
             return []
         journal = Journal(project, state_root() / 'promotions' / identity(project))
@@ -429,14 +432,14 @@ def _run_improvement(args):
         status = ('interrupted' if isinstance(exc, KeyboardInterrupt) else
                   'budget_exhausted' if isinstance(exc, TimeoutError) else
                   'invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error')
-        result = dict(status=status, changed_files=[], failure_class='requires_intervention')
+        result = dict(status=status, changed_files=[], failure_class='requires_intervention', error_type=type(exc).__name__)
         if isinstance(exc, ConnectionError):
             result['failure_class'] = 'transient_infrastructure'
         output = getattr(args, '_run_output', None)
         if output:
             result['output'] = str(output)
             write_json(output / 'workflow.json', result)
-        if isinstance(exc, KeyboardInterrupt):
+        if isinstance(exc, (KeyboardInterrupt, OSError)):
             return result
         if not isinstance(exc, Exception):
             raise

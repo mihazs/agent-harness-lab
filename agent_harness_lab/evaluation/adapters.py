@@ -12,6 +12,12 @@ class Authorization:
     adapter_ids: tuple
     version: str
 
+    def __post_init__(self):
+        if not self.project_fingerprint or not self.version or any(
+                not isinstance(items,tuple) or any(not isinstance(v,str) or not 0<len(v)<=128 for v in items)
+                for items in (self.tools,self.adapter_ids)):
+            raise ValueError('authorization must be immutable bounded controller metadata')
+
     @property
     def digest(self):
         return hashlib.sha256(repr(self).encode()).hexdigest()
@@ -20,6 +26,8 @@ class Authorization:
 def normalize_error(envelope, authorization, adapter_id='structured-error-v1'):
     if adapter_id not in authorization.adapter_ids or envelope.get('tool') not in authorization.tools:
         raise ValueError('adapter/tool not explicitly authorized')
+    if not isinstance(envelope.get('call_id'),str) or not 0<len(envelope['call_id'])<=128:
+        raise ValueError('invalid call identity')
     if set(envelope)!={'call_id','tool','status','payload'} or envelope['status'] not in ('success','error'):
         raise ValueError('malformed tool envelope')
     encoded=json.dumps(envelope,sort_keys=True,allow_nan=False)
@@ -35,8 +43,11 @@ def normalize_error(envelope, authorization, adapter_id='structured-error-v1'):
 
 
 def verify(original, transformed, authorization):
-    return (transformed.get('original')==original and transformed.get('authorization_digest')==authorization.digest
-            and transformed.get('adapter_id') in authorization.adapter_ids)
+    try:
+        expected=normalize_error(original,authorization,transformed.get('adapter_id'))
+        return expected==transformed
+    except (ValueError,TypeError,KeyError,AttributeError):
+        return False
 
 
 def runtime_capability(runtime,version):

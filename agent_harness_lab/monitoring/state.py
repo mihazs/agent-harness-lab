@@ -50,7 +50,7 @@ def load(path):
             raise ValueError()
         if 'checkpoint_version' not in value and set(value) == {'fingerprint'}:
             return new(value['fingerprint'], None, disposition='legacy_attempted')
-        if value['checkpoint_version'] != 2:
+        if type(value['checkpoint_version']) is not int or value['checkpoint_version'] != 2:
             raise ValueError()
         for key in ('attempt_count',):
             if type(value[key]) is not int or value[key] < 0:
@@ -62,6 +62,17 @@ def load(path):
             raise ValueError()
         for key in ('last_attempt', 'last_completed', 'last_success', 'failure_class', 'configuration', 'run_id'):
             if key not in value:
+                raise ValueError()
+        if not 0<len(value['fingerprint'])<=256:
+            raise ValueError()
+        if not isinstance(value['configuration'],str) and not (value['configuration'] is None and value['disposition']=='legacy_attempted'):
+            raise ValueError()
+        for key in ('last_attempt','last_completed','last_success'):
+            val=value[key]
+            if val is not None and (type(val) not in (int,float) or not math.isfinite(val) or val<0):
+                raise ValueError()
+        for key in ('failure_class','run_id'):
+            if value[key] is not None and (not isinstance(value[key],str) or not 0<len(value[key])<=128):
                 raise ValueError()
         return value
     except (ValueError, KeyError, TypeError, UnicodeError) as exc:

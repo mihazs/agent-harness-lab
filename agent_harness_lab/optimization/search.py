@@ -78,11 +78,20 @@ def search(path, baseline, propose, evaluate, certify, budget, allowed_files, *,
         if not budget.consume('development_trial',1,run_id+':trial:'+str(index)):
             state['status']='budget_exhausted'; save(); return state
         save()
+        frozen_digest=candidate.digest
         result=evaluate(candidate)
+        if candidate.digest!=frozen_digest:
+            state['rejections'].append(dict(candidate_id=candidate.candidate_id,reason='candidate_mutated_during_evaluation'))
+            state['stage']='development_rejected'
+            if index==0:
+                state['status']='blocked'; save(); return state
+            save(); continue
         state['candidates'].append(dict(candidate_id=candidate.candidate_id,digest=candidate.digest,
             parents=list(candidate.parents),record=asdict(candidate),safe=result.get('safe') is True,
             metrics=result.get('metrics',{}),evidence_scope='development_only'))
         state['stage']='development_complete'; save()
+    if not any(c['candidate_id']==baseline.candidate_id and c['safe'] for c in state['candidates']):
+        state['status']='blocked'; save(); return state
     choices=frontier(state['candidates'])
     # Ambiguous frontiers/ties keep the no-op; point estimates are not certification.
     best=next((c for c in choices if c['candidate_id']==baseline.candidate_id),None)

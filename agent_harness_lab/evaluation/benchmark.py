@@ -6,7 +6,7 @@ import json
 import math
 
 MATCH_FIELDS=('provider','runtime','model_revision','reasoning','task_bank_revision',
-              'sandbox_image','permissions','harness_version')
+              'sandbox_image','permissions','controller_version')
 
 
 def validate_pair(baseline,candidate,strict=True):

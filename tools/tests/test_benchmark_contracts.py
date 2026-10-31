@@ -4,7 +4,7 @@ from agent_harness_lab.evaluation.benchmark import validate_pair,public_export_a
 
 def runtime(model='synthetic'):
     return dict(provider='local',runtime='fake',model_revision=model,reasoning='none',task_bank_revision='v1',
-                sandbox_image='fixture-v1',permissions='offline',harness_version='v1',effective_settings_verified=True)
+                sandbox_image='fixture-v1',permissions='offline',controller_version='v1',effective_settings_verified=True)
 
 
 def record(model='synthetic',source='synthetic',status='not_run'):
@@ -43,3 +43,9 @@ class BenchmarkContracts(unittest.TestCase):
         self.assertIsNone(measured_cost({'input_tokens':100},prices))
         self.assertEqual(measured_cost({'input_tokens':2,'output_tokens':3},prices)['amount'],8)
         with self.assertRaises(ValueError): measured_cost({},dict(as_of='unknown'))
+
+    def test_treatment_harness_hashes_can_differ_within_matched_runtime(self):
+        baseline=runtime(); candidate=runtime()
+        baseline['harness_fingerprint']='baseline-hash'
+        candidate['harness_fingerprint']='candidate-hash'
+        self.assertEqual(validate_pair(baseline,candidate)['status'],'matched')
