@@ -25,3 +25,19 @@ archive, installer and SHA256SUMS through `npm run release`. Releases include on
 tracked application code and skills; never add private examples to those trees.
 Run the two README test suites before publication. Review Changesets-generated
 notes for privacy just like any other staged content.
+
+## Offline documentation links
+
+Run `python3 scripts/check_docs.py` to check local destinations in tracked `.md`
+files. It resolves inline links and images relative to their containing file,
+decodes URL-encoded paths, and ignores fragments, query strings, external URLs,
+code fences and simple same-line code spans. Missing destinations report the
+source file, line and link; the command exits nonzero. Paths outside the repository
+are rejected. Untracked Markdown and private artifacts are not scanned.
+
+This is a file-existence check, not a general Markdown parser: reference-style
+links, HTML, multiline links, escaped delimiters, nested parentheses and heading
+anchors are not validated. Use percent encoding or angle brackets for spaces;
+encode parentheses in file names. No network access or dependencies are needed.
+
+Focused tests: `python3 -m unittest discover -s tools/tests -p 'test_docs.py'`.
