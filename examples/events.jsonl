@@ -1,0 +1,6 @@
+{"case_id":"a","event_id":"1","activity":"inspect"}
+{"case_id":"a","event_id":"2","activity":"validate"}
+{"case_id":"b","event_id":"1","activity":"inspect"}
+{"case_id":"b","event_id":"2","activity":"validate"}
+{"case_id":"c","event_id":"1","activity":"inspect"}
+{"case_id":"c","event_id":"2","activity":"validate"}

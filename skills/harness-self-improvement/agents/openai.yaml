@@ -1,0 +1,6 @@
+interface:
+  display_name: "Harness self-improvement"
+  short_description: "Run evaluations and apply harness improvements"
+  default_prompt: "Use $harness-self-improvement to build and run evaluations, repair failures, and apply supported harness improvements without redundant confirmation."
+policy:
+  allow_implicit_invocation: true
