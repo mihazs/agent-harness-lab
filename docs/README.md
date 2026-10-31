@@ -16,3 +16,5 @@ The initial validation page is a dated historical record, not a current suite co
 or evidence of real-world effectiveness. Scientific work remains tracked in
 [issue #3](https://github.com/mihazs/agent-harness-lab/issues/3); community onboarding
 is tracked separately in [issue #25](https://github.com/mihazs/agent-harness-lab/issues/25).
+
+Maintainers: [growth plan and measurement](community-growth.md) · [publication drafts](launch-drafts.md).
