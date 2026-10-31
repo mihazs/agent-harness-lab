@@ -2,7 +2,7 @@
 
 **Find recurring agent failures. Test the fix. Keep what works.**
 
-Two reusable skills and a small set of local tools for improving agent instructions,
+Two reusable skills for **Claude Code and Codex**, plus local tools for improving agent instructions,
 workflows, and skills with observable evidence.
 
 Use it when an agent repeats the same mistakes, spends too long rediscovering a
@@ -34,10 +34,18 @@ From the project where you want to use the skills:
 npx skills add mihazs/agent-harness-lab --skill '*'
 ```
 
-Choose your coding agent when prompted. Install **both** skills: they reference
+Choose Claude Code or Codex when prompted. Install **both** skills: they reference
 one another. Add `-g` for installation across projects. The installer is the
 [open-source skills CLI](https://github.com/vercel-labs/skills), which requires
 Node.js 22.20 or later and supports multiple agent environments.
+
+To install directly for Claude Code in the current project:
+
+```sh
+npx skills add mihazs/agent-harness-lab --skill '*' --agent claude-code
+```
+
+In Claude Code, invoke `/harness-self-improvement` or `/harness-evaluation`.
 
 For updates or removal, use that CLI's `skills check`, `skills update`, and
 `skills remove` commands. It manages installation separately from this repository.
@@ -52,11 +60,14 @@ cd agent-harness-lab
 python3 tools/link_skills.py
 ```
 
-The default destination is `~/.agents/skills`. To select another skill directory:
+The default destination is `~/.agents/skills` for Codex. For Claude Code, install
+both skills into `~/.claude/skills`:
 
 ```sh
-python3 tools/link_skills.py --destination "$HOME/.claude/skills"
+python3 tools/link_skills.py --agent claude
 ```
+
+For another directory, pass `--destination /path/to/skills` instead of `--agent`.
 
 Keep the checkout in place. Editing it updates the linked skills immediately;
 `git pull --ff-only` retrieves upstream updates. Existing same-name directories
@@ -84,8 +95,10 @@ For an existing candidate:
 Provide a concrete failure, relevant code, and redacted evidence you are authorized
 to analyze. The skills guide the agent; they do not configure telemetry or start a
 background service. Actual agent trials need a working agent runtime. The bundled
-runner currently targets an authenticated Codex CLI and retains its existing
-configuration and hooks.
+runner supports an authenticated Claude Code or Codex CLI and retains the selected
+runtime's existing configuration and hooks. It never enables permission bypass.
+Contributors using Claude Code load the shared repository instructions through
+`CLAUDE.md`, which imports `AGENTS.md`.
 
 ## How improvement works
 
@@ -155,6 +168,23 @@ python3 skills/harness-evaluation/scripts/run_evaluation.py \
   --baseline /path/to/baseline --candidate /path/to/candidate \
   --output /path/to/new-results
 ```
+
+Codex is the default. Add `--agent claude` to the same command for Claude Code;
+use `--claude /path/to/claude` if the binary is not on your PATH. Keep the runtime
+fixed within a paired comparison. Claude trials load snapshot skills through a
+session-local plugin, under `/harness-trial:skill-name`, avoiding collisions with
+unqualified personal skill names. Existing ambient skills can still influence
+behavior; inspect traces before claiming the snapshot was used.
+
+Claude transcripts can also be diagnosed offline:
+
+```sh
+python3 tools/diagnose.py --format claude --project example/project \
+  --events redacted-transcript.jsonl --output artifacts/claude-diagnosis
+```
+
+Normalization preserves visible tool-call/result links, without exporting message
+bodies, tool inputs, or thinking blocks. A tool error does not imply task failure.
 
 Each trial gets a fresh workspace. Execution is sequential and timeout-bounded;
 interruption terminates and reaps the owned child process group. Isolation is

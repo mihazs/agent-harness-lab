@@ -50,7 +50,7 @@ mechanisms. Do not spend the entire budget repeatedly confirming easy passes.
 
 1. Inspect available runtime, authentication status, existing tests and fixtures.
    Reuse installed tools. The bundled [runner](scripts/run_evaluation.py) supports
-   Codex JSONL trials; read [the execution contract](references/execution.md) to use it.
+   Codex and Claude Code JSONL trials; read [the execution contract](references/execution.md) to use it.
 2. Freeze task inputs and graders before scoring. Start with the observed failure,
    an adjacent regression, and an unseen transfer case; separate development and
    held-out feedback. Synthetic cases must represent the failure mechanism, not

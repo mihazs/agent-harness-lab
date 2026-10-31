@@ -42,3 +42,18 @@ class DiagnosisTests(unittest.TestCase):
 
     def test_interleaving_does_not_create_sequences(self):
         self.assertEqual(d.analyze([event('a', 1), event('b', 1)])['recurring_sequences'], [])
+
+    def test_claude_tools_are_linked_without_content_or_thinking(self):
+        rows = [dict(type='assistant', uuid='a', sessionId='session', message={'content':[
+            {'type':'thinking','thinking':'PRIVATE'},
+            {'type':'tool_use','id':'call','name':'Read','input':{'path':'PRIVATE'}}]}),
+            dict(type='user', uuid='b', sessionId='session', message={'content':[
+            {'type':'tool_result','tool_use_id':'call','content':'PRIVATE','is_error':True}]}),
+            dict(type='assistant',uuid='c',sessionId='other',message={'content':'PRIVATE'})]
+        normalized=list(d.normalize(rows,'claude','synthetic'))
+        self.assertEqual([e['activity'] for e in normalized], ['tool_call','tool_result','assistant'])
+        self.assertEqual([e['call_id'] for e in normalized[:2]], ['call','call'])
+        self.assertEqual(normalized[0]['event_id'], 'a:1')
+        self.assertNotIn('PRIVATE', str(normalized))
+        self.assertEqual(d.analyze(normalized)['cases'], 2)
+        self.assertEqual(d.analyze(normalized)['findings'], [])

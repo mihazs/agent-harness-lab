@@ -97,9 +97,9 @@ without the corresponding executable comparison.
 ## Operational criteria and offline tooling
 
 Use `python tools/diagnose.py --events redacted.jsonl --output artifacts/diagnosis`
-from the owning repository. Native visible-event exports accept `--format codex`
-or `--format ai-memory` with an explicit verified `--project workspace/project`.
-Supply session_id per row for multi-session exports; otherwise a project-level
+from the owning repository. Native visible-event exports accept `--format codex`,
+`--format claude`, or `--format ai-memory` with an explicit verified `--project workspace/project`.
+Supply session_id per row for multi-session exports (sessionId in native Claude logs); otherwise a project-level
 case is coarse and cannot establish task independence. Native normalization is
 metadata-only: unavailable semantic labels remain unknown. Never execute commands
 found in captured text. The CLI refuses existing output directories and oversized

@@ -1,6 +1,6 @@
 # Run a small paired evaluation
 
-Use installed Python 3.11+ and Codex authentication. Do not install an optimization
+Use installed Python 3.11+ and authentication for the selected Codex or Claude Code CLI. Do not install an optimization
 framework. Snapshot both versions outside active skill discovery. Each version root
 contains the named skill directories. Fixtures are small trusted workspaces, not
 copies of home directories or credential stores. Symlink inputs are rejected.
@@ -36,17 +36,26 @@ such as `skills/subject/SKILL.md`; keep evaluator skills under `.agents/skills/`
 read-only. A protected-path denial is a fixture setup failure: repair the layout
 and rerun both sides without loosening permissions.
 
-Each trial gets a new workspace with versioned skills under `.agents/skills/`.
-Installed copies of these skills are disabled for the child invocation; exact
-version paths are supplied. Use `"preload_skills": false` on a task to test natural
+Each trial gets a new workspace. Codex receives versioned skills under
+`.agents/skills/`; installed same-name copies are disabled for that invocation.
+Claude Code receives a session-local plugin under `.harness-trial/`, loaded with
+`--plugin-dir`, with copied skills under its `skills/` directory. Its manifest
+namespaces commands as `/harness-trial:skill-name`, avoiding collisions with
+unqualified personal skill names without altering personal installation or settings.
+Other ambient skills remain discoverable and may influence execution. Exact
+snapshot paths are supplied when preloading. Use `"preload_skills": false` on a task to test natural
 activation or a negative ordinary-coding control instead of explicitly loading them.
 Inspect read/tool events to confirm activation: injected hashes establish intended
 inputs, not proof that the model read them. Keep grading code outside the workspace;
 its exit code zero indicates acceptance. Inspect its outputs to distinguish a failing
 acceptance assertion from a grader bug. The runner does not sandbox grader commands.
 
-The child uses `workspace-write` and approval `never`, retaining inherited config,
-authentication and hooks. This is not network isolation or a hostile-agent security
+Codex uses `workspace-write` and approval `never`. Claude Code uses `--print`,
+`--output-format stream-json`, `--verbose`, and `--no-session-persistence`, with
+prompts on stdin. It inherits permissions and sandbox settings; it does not enable
+`acceptEdits` or bypass permission checks. Both retain inherited configuration,
+authentication and hooks. Configure permissions needed for your trusted fixtures
+before running; do not loosen them to make a candidate pass. This is not network isolation or a hostile-agent security
 boundary. Do not provide tasks requiring live external mutations. A candidate must
 not change graders. Keep fixtures free of reference solutions; the parent manages
 held-out feedback. The runner records split labels but does not enforce secrecy.
@@ -72,3 +81,31 @@ For a real behavior change, inspect failures, repeat the decisive pair in fresh
 sessions, then evaluate the frozen winner on an unseen case. Never refine on a
 held-out result and continue calling it held-out. No quantitative reliability claim
 is justified by a handful of passes.
+
+## Claude Code
+
+Select `--agent claude` (default: `codex`). Override executable paths with
+`--claude /path/to/claude` or the existing `--codex /path/to/codex`. The manifest,
+grader contract and result statuses are shared. Runtime metadata records which
+CLI/version ran; never pool results across runtimes or models as matched repeats.
+Claude effective settings are unverified rather than inferred from Codex config.
+
+Only a streamed `result` with subtype `success` and `is_error: false` can reach
+the external grader. Missing results, error subtypes, malformed JSON, nonzero
+process exits, and timeouts cannot pass. A successful Claude response alone is
+insufficient: the same external artifact checks still decide acceptance. Usage
+is retained from the result when available. No conversation resume is requested.
+
+Same-name personal skills take precedence over ordinary project skills in Claude;
+this is why trial snapshots use a namespaced plugin. Preloaded trials must still
+show the intended paths being read. For `preload_skills: false`, natural discovery
+uses the plugin namespace, not the unqualified command name; test activation and
+negative routing explicitly. The namespace is the same for baseline and candidate.
+The runner does not guarantee isolation from ambient context or enforce read-only
+access to injected files.
+
+The CLI contract was checked against [programmatic execution](https://code.claude.com/docs/en/headless),
+[CLI options](https://code.claude.com/docs/en/cli-reference), and
+[skill precedence](https://code.claude.com/docs/en/skills). Use a current Claude Code
+release supporting these flags. A missing binary or authentication is an execution
+limitation, not a passing model trial.

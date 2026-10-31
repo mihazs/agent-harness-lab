@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute paired Codex tasks; zero grader exit means success, never model prose."""
+"""Execute paired Codex or Claude Code tasks; zero grader exit means success, never model prose."""
 import argparse
 import hashlib
 import json
@@ -52,13 +52,20 @@ def execute(argv, cwd, timeout, stdin=None):
                     elapsed_seconds=time.monotonic() - start, timeout=False)
 
 
-def trace_result(run):
+def trace_result(run, agent="codex"):
     if run['timeout'] or run['exit_code'] != 0:
         return 'execution_error', None
     try:
         events = [json.loads(line) for line in run['stdout'].splitlines() if line.strip()]
         if any(not isinstance(e, dict) for e in events):
             return 'invalid_trace', None
+        if agent == 'claude':
+            completed = [e for e in events if e.get('type') == 'result']
+            if (len(completed) != 1 or completed[0].get('subtype') != 'success'
+                    or completed[0].get('is_error') is not False
+                    or any(e.get('type') == 'error' for e in events)):
+                return 'incomplete', None
+            return 'completed', completed[0].get('usage')
         completed = [e for e in events if e.get('type') == 'turn.completed']
         if not completed or any(e.get('type') in ('turn.failed', 'error') for e in events):
             return 'incomplete', None
@@ -109,12 +116,14 @@ def evaluate(args):
             file = (manifest_path.parent / arg).resolve()
             if file.is_file():
                 grader_files[str(file)] = hashlib.sha256(file.read_bytes()).hexdigest()
+    agent = args.agent
+    binary = args.claude if agent == 'claude' else args.codex
     started = time.monotonic()
-    version_info = execute([args.codex, '--version'], manifest_path.parent, min(timeout, budget))
+    version_info = execute([binary, '--version'], manifest_path.parent, min(timeout, budget))
     config_path = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'config.toml'
     config = {}
     try:
-        raw_config = tomllib.loads(config_path.read_text())
+        raw_config = tomllib.loads(config_path.read_text()) if agent == 'codex' else {}
         config = {k: raw_config[k] for k in ('model', 'model_reasoning_effort')
                   if isinstance(raw_config.get(k), str)}
     except (OSError, ValueError):
@@ -124,9 +133,9 @@ def evaluate(args):
     results = dict(manifest_sha256=hashlib.sha256(manifest_path.read_bytes()).hexdigest(),
                    versions={k: digest(v) for k, v in versions.items()}, grader_files=grader_files,
                    fixtures={t['id']: digest((manifest_path.parent / t['fixture']).resolve()) for t in tasks}, trials=[],
-                   runtime={'codex_version': version_info['stdout'].strip()[:200] if version_info['exit_code'] == 0 else 'unavailable',
+                   runtime={'agent': agent, agent + '_version': version_info['stdout'].strip()[:200] if version_info['exit_code'] == 0 else 'unavailable',
                             'user_config_defaults': config, 'effective_settings_verified': False},
-                   isolation='cooperative trusted fixtures; workspace-write; inherited configuration/auth/hooks; no security or network isolation claim')
+                   isolation=('cooperative trusted fixtures; ' + ('workspace-write; ' if agent == 'codex' else 'inherited Claude permissions/sandbox; ') + 'inherited configuration/auth/hooks; no security or network isolation claim'))
     for version, root in versions.items():
         for task in tasks:
             remaining = budget - (time.monotonic() - started)
@@ -140,8 +149,12 @@ def evaluate(args):
             fixture = (manifest_path.parent / task['fixture']).resolve()
             shutil.copytree(fixture, workspace)
             loaded = []
+            plugin = workspace / '.harness-trial'
+            if agent == 'claude':
+                (plugin / '.claude-plugin').mkdir(parents=True)
+                (plugin / '.claude-plugin/plugin.json').write_text(json.dumps({'name': 'harness-trial'}))
             for skill in skills:
-                target = workspace / '.agents' / 'skills' / skill
+                target = ((plugin / 'skills') if agent == 'claude' else (workspace / '.agents/skills')) / skill
                 if target.exists():
                     shutil.rmtree(target)
                 target.parent.mkdir(parents=True, exist_ok=True)
@@ -154,11 +167,15 @@ def evaluate(args):
                         disabled.append(dict(path=str(home / skill), enabled=False))
             argv = [args.codex, 'exec', '--ephemeral', '--skip-git-repo-check',
                     '--sandbox', 'workspace-write', '--json', '-c', 'approval_policy="never"']
-            if disabled:
+            if agent == 'claude':
+                argv = [binary, '--print', '--output-format', 'stream-json', '--verbose',
+                        '--no-session-persistence', '--plugin-dir', str(plugin)]
+            elif disabled:
                 argv += ['-c', 'skills.config=' + json.dumps(disabled).replace(': ', ' = ')]
             prompt = ('Load these exact evaluation skill files before the task: ' + ', '.join(loaded) + '\n' if loaded and task.get('preload_skills', True) else '')
             prompt += 'Operate only in this fixture workspace. Do not modify external files.\n' + task['prompt']
-            argv.append('-')
+            if agent == 'codex':
+                argv.append('-')
             record['injected_skill_hashes'] = {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in loaded}
             run = execute(argv, workspace, min(timeout, remaining), prompt)
             trace = trial / 'trace.jsonl'
@@ -166,7 +183,8 @@ def evaluate(args):
             (trial / 'stderr.txt').write_text(run.pop('stderr'))
             record['execution'] = run
             check = {**run, 'stdout': trace.read_text()}
-            record['status'], record['usage'] = trace_result(check)
+            record['status'], record['usage'] = trace_result(check, agent)
+            record['skill_namespace'] = 'harness-trial' if agent == 'claude' else None
             if record['status'] == 'completed':
                 remaining = budget - (time.monotonic() - started)
                 if remaining <= 0:
@@ -193,7 +211,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('manifest', 'baseline', 'candidate', 'output'):
         parser.add_argument('--' + name, required=True)
-    parser.add_argument('--codex', default='codex')
+    parser.add_argument('--agent', choices=('codex', 'claude'), default='codex')
+    parser.add_argument('--codex', default='codex', help='Codex executable path')
+    parser.add_argument('--claude', default='claude', help='Claude Code executable path')
     args = parser.parse_args()
     try:
         return evaluate(args)

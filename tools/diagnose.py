@@ -16,6 +16,33 @@ def normalize(rows, source_format='normalized', project=None):
             continue
         if not isinstance(row, dict):
             raise ValueError('export records must be objects')
+        if source_format == 'claude':
+            case = row.get('sessionId', row.get('session_id', session))
+            ident = str(row.get('uuid', row.get('id', number)))
+            message = row.get('message', {})
+            if not isinstance(message, dict):
+                raise ValueError('Claude message must be an object')
+            content = message.get('content', [])
+            if not isinstance(content, (list, str)):
+                raise ValueError('Claude content must be text or a block list')
+            blocks = content if isinstance(content, list) else []
+            tools = [(i, b) for i, b in enumerate(blocks)
+                     if isinstance(b, dict) and b.get('type') in ('tool_use', 'tool_result')]
+            for index, block in tools:
+                call = block['type'] == 'tool_use'
+                event = dict(case_id=case, event_id=f'{ident}:{index}',
+                             activity='tool_call' if call else 'tool_result',
+                             actor='agent' if call else 'tool',
+                             call_id=block.get('id') if call else block.get('tool_use_id'))
+                if call:
+                    event['tool_name'] = block.get('name')
+                if row.get('timestamp'):
+                    event['timestamp'] = row['timestamp']
+                yield event
+            if not tools:
+                yield dict(case_id=case, event_id=ident,
+                           activity=row.get('type', 'unknown'), actor='unknown')
+            continue
         payload = row.get('payload', row)
         if not isinstance(payload, dict):
             raise ValueError('export payload must be an object')
@@ -122,7 +149,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--events', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--format', choices=('normalized', 'codex', 'ai-memory'), default='normalized')
+    parser.add_argument('--format', choices=('normalized', 'codex', 'claude', 'ai-memory'), default='normalized')
     parser.add_argument('--project', help='Verified workspace/project identity for native exports')
     parser.add_argument('--max-events', type=int, default=100000)
     args = parser.parse_args()
