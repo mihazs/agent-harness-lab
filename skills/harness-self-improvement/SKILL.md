@@ -7,6 +7,13 @@ description: Evaluate and improve agent instructions and skills when the user ex
 
 Complete the improvement loop: diagnose from evidence, construct an evaluation,
 execute baseline and candidate, repair failures, and apply supported improvements.
+A failure description or proposed candidate is optional. Discover improvement
+candidates from available traces, evaluation failures, current instructions and
+source contracts yourself. Do not require the user to identify what went wrong
+before beginning. An optional focus hint does not replace coverage of other
+material mechanisms. When capture is missing, investigate current behavior and
+mark historical recurrence unknown rather than inventing it.
+
 A request to improve the harness authorizes this reversible work within its named
 scope. Do not ask again to build tests, run local evaluations, refine a candidate,
 or apply an eligible edit. Missing evaluation infrastructure is work to do, not a
@@ -138,3 +145,17 @@ competing explanations, a responsible component, and a falsifiable outcome check
 Missing capture is a finding about evidence, not agent behavior. Measure required
 boundaries and completion before efficiency; neither fewer calls nor more skills
 is success. Check instruction removal and consolidation as well as additions.
+
+## Automatic CLI workflow
+
+When available, `ahl analyze` collects bounded project-scoped evidence without an
+agent, and `ahl improve` controls staging, evaluation and adoption. `ahl watch` is
+an optional foreground monitor; installation does not start it. See the CLI help
+for runtime selection and optional focus. Users need not provide a failure first.
+
+Inside an existing CLI-managed preparation run, follow its context.json and stage
+contract. Modify only its candidate/evaluation paths. Do not invoke improve/watch
+recursively or run nested model trials: the parent freezes graders, executes both
+versions, and owns adoption. Preserve prior frozen evaluations; refinement needs
+fresh held-out inputs. Project-local instruction and skill edits only; no global
+settings, permission changes, commits, publication, deployment or ai-memory reads.

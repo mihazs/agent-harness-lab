@@ -1,0 +1,13 @@
+{
+  "name": "agent-harness-lab",
+  "version": "0.2.0",
+  "private": true,
+  "scripts": {
+    "changeset": "changeset",
+    "version-packages": "changeset version && python3 scripts/sync_version.py",
+    "release": "python3 scripts/publish_release.py"
+  },
+  "devDependencies": {
+    "@changesets/cli": "3.0.3"
+  }
+}

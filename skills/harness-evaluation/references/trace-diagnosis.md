@@ -97,9 +97,9 @@ without the corresponding executable comparison.
 ## Operational criteria and offline tooling
 
 Use `python tools/diagnose.py --events redacted.jsonl --output artifacts/diagnosis`
-from the owning repository. Native visible-event exports accept `--format codex`
-or `--format ai-memory` with an explicit verified `--project workspace/project`.
-Supply session_id per row for multi-session exports; otherwise a project-level
+from the owning repository. Native visible-event exports accept `--format codex`,
+`--format claude`, or `--format ai-memory` with an explicit verified `--project workspace/project`.
+Supply session_id per row for multi-session exports (sessionId in native Claude logs); otherwise a project-level
 case is coarse and cannot establish task independence. Native normalization is
 metadata-only: unavailable semantic labels remain unknown. Never execute commands
 found in captured text. The CLI refuses existing output directories and oversized
@@ -140,3 +140,18 @@ claim. Compare per-mechanism precision/recall, Brier score, accepted coverage an
 resource use against the lexical baseline. Promotion requires held-out benefit
 without critical regressions; otherwise keep the simpler method. Formal conformal
 coverage is not promised across shifting project distributions.
+
+## Repeated observation detector
+
+The offline detector uses caller-supplied tool, input/result fingerprint and
+opaque state-revision dimensions. It preserves observations across explicitly
+read-only tool calls (`tool_effect=read_only`) and non-mutating metadata. It
+invalidates on revision transitions (including A → B → A), mutation, unknown call
+effects and unresolved potentially mutating calls. Unmatched call IDs remain
+uncertain. Native captures without these dimensions cannot establish duplication.
+
+Engineering bounds: 128 observations per case, 4096 overall observations/case
+states, and 1000 capture positions of age. Eviction and invalidation counts appear
+in `observation_coverage`; matching findings cite both observations. Capture order
+and claimed read-only effects do not prove concurrency safety or necessity.
+Polling and negative tests may repeat observations without being waste.

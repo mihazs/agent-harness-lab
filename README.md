@@ -1,220 +1,235 @@
 # Agent Harness Lab
 
-**Find recurring agent failures. Test the fix. Keep what works.**
+**Find what your agent needs to improve. Evaluate the repair. Review the evidence.**
 
-Two reusable skills and a small set of local tools for improving agent instructions,
-workflows, and skills with observable evidence.
+Agent Harness Lab discovers improvement candidates from local project traces,
+evaluation failures, and the project's own harness. It stages repairs, checks them
+against baseline behavior, and recommends candidate changes to project instructions
+and skills. Behavioral adoption is blocked pending independent certification safeguards. **You do not need to describe a failure first.**
 
-Use it when an agent repeats the same mistakes, spends too long rediscovering a
-routine, loses the objective between steps, or follows instructions that no longer
-match the code. Turn those observations into a focused experiment before adding
-another rule to your harness.
+Works with **Claude Code and Codex**. Includes an optional continuous monitor,
+release installer, and the `ahl` command. The default installation uses Python's
+standard library; Node.js is needed only by maintainers for Changesets.
 
-[Install](#install-the-skills) · [Try it](#try-it-with-your-agent) ·
-[Tools](#try-the-tools) · [Research](#research-and-current-status) ·
+[Install](#install-from-a-release) · [Automatic improvement](#automatic-improvement) ·
+[Continuous monitoring](#optional-continuous-monitoring) · [Commands](#commands) ·
 [Contribute](CONTRIBUTING.md)
 
-## What you get
+## Install from a release
 
-| Skill | Use it to |
+Requires Python 3.11+, a symlink-capable filesystem, and `~/.local/bin` on PATH.
+Run the installer from the latest GitHub release:
+
+```sh
+curl -fsSL https://github.com/mihazs/agent-harness-lab/releases/latest/download/install.py | python3 -
+```
+
+The installer downloads the versioned release archive, verifies its SHA-256 checksum,
+and installs **the CLI and both skills for Claude Code and Codex**. No Git checkout,
+pip environment, or Node.js installation is required. The release installer source
+is [install.py](install.py).
+
+```sh
+ahl --version
+ahl --help
+```
+
+To install for just one runtime, append `--agent claude` or `--agent codex` after
+`python3 -`. For a pinned release, append `--version 0.2.0`. Rerun the installer
+to upgrade. Owned release links are updated transactionally; existing ordinary
+skill directories are backed up. Foreign symlinks and unrelated `ahl` executables
+are refused rather than overwritten. Versioned application files live under
+`~/.local/share/agent-harness-lab/releases/`; the installer prints any backup path.
+
+Already downloaded the assets? Use the release's `install.py` with
+`--archive agent-harness-lab-VERSION.tar.gz --checksums SHA256SUMS`.
+`--root` and `--bin-dir` select alternative application/launcher locations.
+
+## Automatic improvement
+
+In your project, run:
+
+```sh
+ahl improve
+```
+
+Or point it at a project directory:
+
+```sh
+ahl improve /path/to/project --agent claude
+```
+
+The command automatically:
+
+1. **Collects evidence.** Finds bounded local captures whose recorded working
+   directory matches the exact project, and reads existing evaluation failures
+   under that project's `artifacts/` directory. It does not query ai-memory.
+2. **Identifies candidates.** Uses process analysis plus the selected agent to
+   inspect repeated routines, observed tool errors, failed evaluations, current
+   instructions, successful controls, and competing explanations. When capture is
+   absent, the agent can inspect current source/contracts; it must not invent history.
+3. **Stages repairs.** Copies project instructions and project-owned skills to
+   baseline/candidate snapshots. The preparation agent edits the candidate. A separate fresh session builds
+   isolated tasks and artifact graders from baseline/evidence, without the patch
+   in its prompt. A failure description is optional.
+4. **Checks the experiment.** Requires broken, partial, and complete grader controls,
+   development/regression/held-out tasks, and frozen evaluator inputs. Baseline and
+   candidate run under the same selected CLI. A failed candidate may be refined once
+   with fresh held-out inputs, within the shared resource ceiling.
+5. **Reports eligible candidates.** A descriptive comparison requires a reproduced baseline development failure,
+   passing candidate tasks, passing baseline regression controls, and unchanged inputs.
+   Behavioral candidates remain recommendations while role isolation, audited lineage,
+   repeated certification and effective runtime verification are unavailable.
+   Ties, incomplete results, and failed checks leave project files unchanged.
+
+An optional hint can focus the investigation without replacing discovery:
+
+```sh
+ahl improve --focus 'Look especially at repeated checks and recovery loops'
+```
+
+`--agent auto` chooses an available Codex CLI first, then Claude Code; specify
+`--agent codex` or `--agent claude` to pin the runtime. Authentication, model settings,
+permissions and hooks come from that runtime. Permission bypass is never enabled.
+The default whole-run budget is 45 minutes, with at most four planning sessions and
+20 task trials. Use `--timeout SECONDS` to set a smaller budget.
+
+Automatic adoption is limited to `AGENTS.md`, `CLAUDE.md`, project-local
+`.agents/skills/` and `.claude/skills/`, and an existing project-owned `skills/` tree.
+Symlinked/global skills and runtime permission settings are outside adoption scope.
+The command does not commit, publish, deploy, or install a background service.
+
+Private analysis, candidate snapshots, evaluator traces, and original files remain
+under the user state directory (`~/.local/state/agent-harness-lab/runs/` by default).
+The command prints the run directory and disposition. Use a new `--output` directory
+if you need another location; keep it out of version control.
+
+## Optional continuous monitoring
+
+```sh
+ahl watch /path/to/project --agent claude --interval 300
+```
+
+This foreground monitor performs an initial improvement pass, then checks evidence
+at the interval. It runs improvement again only when the accepted project evidence
+changes. Versioned checkpoints persist across restarts. Completed rejection/no-change runs
+are not repeated on unchanged evidence. Only explicitly classified transient
+infrastructure failures may retry, with backoff and at most three total attempts.
+Authentication, setup, interrupted and unknown failures require intervention or a
+relevant execution-configuration change. Legacy attempted fingerprints remain
+suppressed. Corrupt checkpoints stop monitoring and remain available for inspection. A per-project lock prevents overlapping improvement runs.
+Press Ctrl-C to stop. `--once` performs one check and exits.
+
+Each triggered pass can use the configured model and the same per-run time budget
+as `ahl improve`. Installation does not start monitoring. To rerun deliberately on
+unchanged evidence, use `ahl improve`; stale locks require checking the recorded PID
+before removing them. `--max-attempts` (1–10), `--retry-delay` (1–3600 seconds),
+and `--watch-budget` control retries; the default total execution allowance across
+attempts is the configured `--timeout`, not that allowance multiplied per retry.
+`watch --once` reports the last disposition even when no new run is eligible.
+Exit codes: 0 completed, 1 failed/incomplete (including budget exhaustion and
+interruption), 2 invalid input/setup, 3 inconclusive/blocked. Unknown statuses fail
+closed with exit code 1. These codes apply to `improve` as well.
+
+## Inspect before improving
+
+```sh
+ahl analyze /path/to/project
+```
+
+This runs local analysis and writes a report without starting an agent or changing
+project instructions. Native discovery is bounded and may miss older captures.
+Missing evidence, uncertain lineage and unknown outcomes are reported explicitly.
+
+You can also supply an explicit redacted input:
+
+```sh
+ahl analyze --events /path/to/events.jsonl --format normalized
+ahl improve --events /path/to/redacted-transcript.jsonl --format claude
+```
+
+Explicit input replaces automatic capture discovery. Supported formats are
+`normalized`, `codex`, `claude`, and `ai-memory` exports. Native normalization exports
+visible metadata rather than message bodies, arguments, results or thinking blocks.
+Inputs still require redaction; these tools are not general-purpose sanitizers.
+
+## Commands
+
+| Command | Purpose |
 | --- | --- |
-| **harness-self-improvement** | Diagnose distinct failure mechanisms, propose small repairs, test candidates, and account for unresolved issues. |
-| **harness-evaluation** | Compare baseline and candidate behavior with frozen graders, successful controls, regressions, and unseen tasks. |
+| `ahl improve [project]` | Discover issues, stage repairs, evaluate, and adopt eligible changes |
+| `ahl watch [project]` | Repeat improvement on changed evidence |
+| `ahl analyze [project]` | Automatically collect and analyze evidence without an agent |
+| `ahl diagnose --events FILE --output DIR` | Diagnose an explicit event file |
+| `ahl mine FILE` | Mine event transitions and recurring root-case support |
+| `ahl evaluate --manifest FILE --baseline DIR --candidate DIR --output DIR` | Execute a prepared baseline/candidate experiment |
+| `ahl benchmark FILE --method baseline` | Compare incident-classifier predictions |
+| `ahl skills --agent claude` | Link installed skills into a selected runtime's skill directory |
 
-The accompanying tools mine recurring event sequences, report evidence gaps, run
-paired agent trials, and compare optional local incident classifiers. The default
-Python tools use the standard library. No hosted model is required for offline
-trace analysis.
+Run `ahl COMMAND --help` for the complete options. Low-level evaluation supports
+`--agent claude` or `--agent codex`; preparation and evaluation never mix runtimes
+within a pair. CLI executables can be selected with `--claude` or `--codex`.
 
-## Install the skills
+The installed skills also work inside an existing agent session. They discover
+improvement candidates themselves; an incident description or proposed candidate
+is optional. In Claude Code their commands are `/harness-self-improvement` and
+`/harness-evaluation`. During a CLI-managed run, the controller owns execution and
+adoption; the skills must not launch recursive improvement controllers.
 
-From the project where you want to use the skills:
+## Evidence and limits
 
-```sh
-npx skills add mihazs/agent-harness-lab --skill '*'
-```
+**Experimental.** Automated preparation and descriptive evaluation are implemented;
+automatic behavioral adoption is blocked pending certification prerequisites; broad gains
+in agent success or real-world diagnostic accuracy have not been established.
+Graders are constructed in a separate session and falsified with controls, but
+remain cooperative code rather than independent semantic proof. Agent runtimes, inherited hooks, and graders are not a
+hostile-code security sandbox. Use trusted projects and synthetic test fixtures;
+keep production credentials and mutations out of evaluation tasks.
 
-Choose your coding agent when prompted. Install **both** skills: they reference
-one another. Add `-g` for installation across projects. The installer is the
-[open-source skills CLI](https://github.com/vercel-labs/skills), which requires
-Node.js 22.20 or later and supports multiple agent environments.
+Repetition alone does not establish waste. Tool errors can be expected negative
+tests. Fewer calls qualify as an improvement only when required behavior and
+completion remain intact. No model is promoted on an easy synthetic smoke test.
 
-For updates or removal, use that CLI's `skills check`, `skills update`, and
-`skills remove` commands. It manages installation separately from this repository.
-
-### Prefer Python and a local checkout?
-
-Requires Git and Python 3.11+. This route links both skills to the checkout:
-
-```sh
-git clone https://github.com/mihazs/agent-harness-lab.git
-cd agent-harness-lab
-python3 tools/link_skills.py
-```
-
-The default destination is `~/.agents/skills`. To select another skill directory:
-
-```sh
-python3 tools/link_skills.py --destination "$HOME/.claude/skills"
-```
-
-Keep the checkout in place. Editing it updates the linked skills immediately;
-`git pull --ff-only` retrieves upstream updates. Existing same-name directories
-are backed up below `~/.local/state/harness-improver/backups`; the installer prints
-the backup location. Foreign symlinks and non-directory files are refused.
-Rerunning an unchanged installation is a no-op.
-
-To uninstall, remove only links still pointing to this checkout, then restore any
-original directories from the printed backup location. Preserve intervening changes.
-
-## Try it with your agent
-
-After installation, start a fresh agent session in your project and ask:
-
-> Use harness-self-improvement to investigate this recurring failure: [describe
-> the observed failure]. Preserve unrelated work. Reproduce the issue, compare
-> baseline and candidate, and report the evidence and remaining limitations.
-
-For an existing candidate:
-
-> Use harness-evaluation to compare these baseline and candidate instructions.
-> Freeze the acceptance checks before scoring, include a successful control and
-> a regression, and reserve a fresh task for transfer testing.
-
-Provide a concrete failure, relevant code, and redacted evidence you are authorized
-to analyze. The skills guide the agent; they do not configure telemetry or start a
-background service. Actual agent trials need a working agent runtime. The bundled
-runner currently targets an authenticated Codex CLI and retains its existing
-configuration and hooks.
-
-## How improvement works
-
-1. **Observe:** identify recurring sequences, failed outcomes, corrections, and
-   missing evidence. Distinguish task failures from tool or evaluator defects.
-2. **Explain:** connect each proposed repair to a mechanism and an observable
-   acceptance check. Compare failed cases with successful controls.
-3. **Experiment:** execute baseline and candidate with comparable budgets and
-   independent graders. Keep held-out feedback out of candidate refinement.
-4. **Adopt or reject:** retain supported changes, reject regressions, and report
-   what is unresolved. A tie does not demonstrate an improvement.
-
-Repeated behavior is a lead to investigate. Fewer tool calls count as a benefit
-only when completion and required checks remain intact. New instructions and
-new skills must earn their place through observed outcomes.
-
-## Try the tools
-
-Clone the repository first if you installed only the skills. All commands below
-run from the checkout and require Python 3.11+.
-
-### See a diagnosis without providing private data
-
-```sh
-python3 tools/diagnose.py --events examples/events.jsonl --output artifacts/first-diagnosis
-```
-
-Open `artifacts/first-diagnosis/report.md` for the readable report or
-`findings.json` for machine-readable results. The synthetic example contains three
-cases with the same `inspect → validate` sequence. The report identifies that
-recurrence and makes missing evidence visible; it does not label the sequence a
-failure. Output directories must be new, so choose another name to rerun.
-
-### Mine your own redacted events
-
-Each JSONL row needs `case_id`, `event_id`, and `activity`. Optional fields include
-`root_case_id`, `actor`, and a timezone-aware ISO `timestamp`.
-
-```json
-{"case_id":"example","event_id":"1","activity":"validate","actor":"tool"}
-{"case_id":"example","event_id":"2","activity":"stop","actor":"agent"}
-```
-
-```sh
-python3 skills/harness-evaluation/scripts/mine_traces.py events.jsonl --exclude unknown
-python3 tools/diagnose.py --events events.jsonl --output artifacts/diagnosis
-```
-
-The miner separates raw adjacency from filtered, run-collapsed projections.
-Diagnosis adds recurring short sequences, evidence coverage, and duplicate
-observations when the necessary fingerprints exist. Inputs must already be
-redacted: these tools are not sanitizers. Stops do not prove success, sequence
-counts do not establish causation, and reported root lineage requires verification.
-Diagnosis defaults to a 100,000-event limit and refuses silent truncation.
-
-See the [operational criteria](skills/harness-evaluation/references/trace-diagnosis.md)
-for input details and interpretation.
-
-### Run a paired agent evaluation
-
-Prepare skill snapshots, fixtures, and external graders using the
-[execution contract](skills/harness-evaluation/references/execution.md):
-
-```sh
-python3 skills/harness-evaluation/scripts/run_evaluation.py \
-  --manifest /path/to/manifest.json \
-  --baseline /path/to/baseline --candidate /path/to/candidate \
-  --output /path/to/new-results
-```
-
-Each trial gets a fresh workspace. Execution is sequential and timeout-bounded;
-interruption terminates and reaps the owned child process group. Isolation is
-cooperative, not a security or network sandbox. Do not put real credentials or
-production mutations in fixtures.
-
-### Optional: compare local classifiers
-
-Use a virtual environment for the optional ML dependencies:
-
-```sh
-python3 -m venv .venv
-. .venv/bin/activate
-python -m pip install '.[ml]'
-mkdir -p artifacts
-python examples/classifier_fixture.py > artifacts/classifier-fixture.jsonl
-python tools/benchmark_models.py artifacts/classifier-fixture.jsonl --method baseline
-python tools/benchmark_models.py artifacts/classifier-fixture.jsonl --method tfidf
-```
-
-Embedding and NLI methods require a local model directory via `--model-path`.
-NLI also needs an atomic `--question`. Run `python tools/benchmark_models.py --help`
-for the input contract and options. Keep related root cases in one split.
-The synthetic fixture is deliberately easy: passing it verifies execution, not
-real-world accuracy. Unknown labels stay out of scored metrics, and insufficient
-calibration support produces abstention. No model is promoted on a smoke test.
-
-## Research and current status
-
-**Experimental, version 0.1.0.** Process mining, offline diagnosis, paired trials,
-and local classifier adapters are implemented. General improvements in task
-success or diagnostic accuracy have not been established.
-
-The methodology draws on process mining, sentence representations, selective
-prediction, calibration, and reflective prompt optimization. Each method must
-answer a concrete question and outperform a simpler baseline on relevant evidence.
-Research findings are hypotheses to test locally, not performance promises.
-
-- [Primary sources and their limits](skills/harness-evaluation/references/evidence-to-design.md)
+- [Primary scientific sources and their limits](skills/harness-evaluation/references/evidence-to-design.md)
 - [Diagnosis and measurement criteria](skills/harness-evaluation/references/trace-diagnosis.md)
-- [Executed validation and remaining gaps](docs/validation.md)
+- [Evaluation contract](skills/harness-evaluation/references/execution.md)
+- [Initial validation](docs/validation.md)
 
 ## Privacy
 
-Keep analyzed-project identities, memory contents, raw traces, credentials, and
-history-derived findings out of commits and public issues. Use synthetic examples
-for reports you intend to publish. Local results, model files, and trial workspaces
-belong under ignored `artifacts/`; ignoring a directory does not sanitize its contents.
+Analyzed-project identities, memory contents, raw traces, and history-derived
+findings must stay out of commits, releases and public issues. Use reproducible
+synthetic examples for public reports. Automatic collection reads scoped local
+captures, not the ai-memory server. The configured agent may inspect the selected
+project's source/instructions and metadata as part of its task; it uses your existing
+inference configuration. The release builder includes tracked application files
+and skills only, excluding local artifacts and memory routing files.
 
-## Contribute
+## Contribute and release
 
-Bring a reproducible failure, a focused improvement, or a stronger falsifier.
-Contributions that simplify the harness while preserving useful behavior are welcome.
+For development, clone the repository and run `./ahl`. Python tools remain usable
+without optional ML dependencies. Classifier experiments that need scikit-learn or
+local transformer models can install the optional `.[ml]` extra in a virtual environment.
 
 ```sh
 python3 -m unittest discover -s skills/harness-evaluation/scripts -p 'test_*.py'
 python3 -m unittest discover -s tools/tests -p 'test_*.py'
 ```
 
-Read [CONTRIBUTING.md](CONTRIBUTING.md) for verification expectations and
-[SUPPORT.md](SUPPORT.md) for questions. Report vulnerabilities privately through
-[SECURITY.md](SECURITY.md). Participation follows the
-[Code of Conduct](CODE_OF_CONDUCT.md). Licensed under [MIT](LICENSE).
+Versions and changelogs are managed by **Changesets**. For a releasable change:
+
+```sh
+npm ci
+npm run changeset
+```
+
+Commit the generated changeset with the change. CI opens a version PR that updates
+`package.json`, Python metadata and `CHANGELOG.md`. After that PR is merged, CI
+builds and publishes the versioned archive, installer and `SHA256SUMS` to GitHub
+Releases. Nothing is published to npm. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Read [SUPPORT.md](SUPPORT.md) for questions and [SECURITY.md](SECURITY.md) for private
+vulnerability reporting. Participation follows [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+Licensed under [MIT](LICENSE).
+
+See [evaluation contracts and remaining prerequisites](docs/evaluation-foundation.md) for repeated plans, task banks, isolation capability checks and promotion policy.

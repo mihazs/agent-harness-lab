@@ -1,0 +1,19 @@
+{
+  "prompt": "Repair app/calc.py add(a,b), preserving its public interface. Compute sums for the provided operand pairs; write result.json with a sums array. Preserve original.txt. Inputs are in task.json.",
+  "inputs": {
+    "pairs": [
+      [
+        2,
+        3
+      ],
+      [
+        -5,
+        2
+      ],
+      [
+        0,
+        0
+      ]
+    ]
+  }
+}

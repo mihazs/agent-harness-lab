@@ -1,0 +1,17 @@
+{
+  "prompt": "Read the synthetic response sequence; retain only the final accepted records in order. Write records in result.json. This tests final-state recovery, not authenticated tool use. Preserve original.txt. Inputs are in task.json.",
+  "inputs": {
+    "responses": [
+      {
+        "status": "temporary_error"
+      },
+      {
+        "status": "ok",
+        "records": [
+          3,
+          5
+        ]
+      }
+    ]
+  }
+}

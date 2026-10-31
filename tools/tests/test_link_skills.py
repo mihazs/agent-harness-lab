@@ -28,6 +28,15 @@ class LinkTests(unittest.TestCase):
             self.assertEqual((self.dest / name).resolve(), self.source / name)
         self.assertIsNone(links.install(self.source, self.dest, self.backups))
 
+    def test_claude_cli_installs_both_skills_without_touching_codex(self):
+        with patch.object(Path, 'home', return_value=self.root), patch('builtins.print'):
+            links.main(['--agent', 'claude'])
+        for name in links.NAMES:
+            link = self.root / '.claude/skills' / name
+            self.assertTrue(link.is_symlink())
+            self.assertTrue((link / 'SKILL.md').is_file())
+        self.assertFalse((self.root / '.agents').exists())
+
     def test_foreign_link_rejected_before_any_mutation(self):
         name = links.NAMES[-1]
         (self.dest / name / 'SKILL.md').unlink()

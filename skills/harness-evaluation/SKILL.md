@@ -46,11 +46,20 @@ repair pass the grader? Strengthen one test from the actual failure mechanism
 without encoding the solution. A tie closes that candidate, not unrelated
 mechanisms. Do not spend the entire budget repeatedly confirming easy passes.
 
+## Discover the evaluation target
+
+A user-provided failure or candidate is optional. Inspect analysis results,
+recurring patterns, failed evaluations and current contracts to identify what to
+test. Use `ahl analyze` for scoped evidence collection when available. Unknown
+capture remains a limitation, not success or proof of failure. In a CLI-managed
+run the parent owns model execution and adoption; prepare its requested frozen
+manifest and grader controls without launching recursive controllers.
+
 ## Construct and run
 
 1. Inspect available runtime, authentication status, existing tests and fixtures.
    Reuse installed tools. The bundled [runner](scripts/run_evaluation.py) supports
-   Codex JSONL trials; read [the execution contract](references/execution.md) to use it.
+   Codex and Claude Code JSONL trials; read [the execution contract](references/execution.md) to use it.
 2. Freeze task inputs and graders before scoring. Start with the observed failure,
    an adjacent regression, and an unseen transfer case; separate development and
    held-out feedback. Synthetic cases must represent the failure mechanism, not
