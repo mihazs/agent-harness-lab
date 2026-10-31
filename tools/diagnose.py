@@ -5,6 +5,10 @@ from collections import Counter, defaultdict, deque
 import hashlib
 import json
 from pathlib import Path
+try:
+    from tools.observations import ObservationCache
+except ModuleNotFoundError:  # Direct python tools/diagnose.py entrypoint.
+    from observations import ObservationCache
 
 
 def normalize(rows, source_format='normalized', project=None):
@@ -59,12 +63,12 @@ def normalize(rows, source_format='normalized', project=None):
                source_ref=f'{project}:{number}', actor='unknown').items() if v is not None}
 
 
-def analyze(rows, max_events=100000):
+def analyze(rows, max_events=100000, *, observation_per_case=128, observation_total=4096, observation_max_age=1000):
     counts, sequences = Counter(), defaultdict(set)
     windows = defaultdict(lambda: deque(maxlen=4))
-    seen, roots, last, findings = set(), {}, {}, []
+    seen, roots, findings = set(), {}, []
+    observations = ObservationCache(observation_per_case, observation_total, observation_max_age)
     fields = Counter()
-    eligible_observations = 0
     evidence = defaultdict(list)
     for number, event in enumerate(rows, 1):
         if number > max_events:
@@ -94,17 +98,9 @@ def analyze(rows, max_events=100000):
             sequences[pattern].add(root)
             if len(evidence[pattern]) < 3:
                 evidence[pattern].append(ref)
-        # Only caller-supplied, redacted fingerprints are accepted. No raw arguments leak.
-        signature = tuple(event.get(k) for k in ('tool_name', 'input_fingerprint',
-                                                 'result_fingerprint', 'state_revision'))
-        if activity == 'tool_result' and all(isinstance(v, str) and v for v in signature):
-            eligible_observations += 1
-            if last.get(case) == signature:
-                findings.append(dict(kind='duplicate_observation', status='observed_pattern',
-                    evidence=[ref], explanation='Same observation at the same recorded state; necessity is unverified.'))
-            last[case] = signature
-        else:
-            last.pop(case, None)
+        finding = observations.observe(event, number)
+        if finding:
+            findings.append(finding)
         if event.get('contract_violation') is True and event.get('contract_ref'):
             findings.append(dict(kind='contract_violation', status='observed_pattern',
                 evidence=[ref], contract_ref=event['contract_ref'],
@@ -115,7 +111,9 @@ def analyze(rows, max_events=100000):
     return dict(schema_version=1, events=n, cases=len(roots), reported_roots=len(set(roots.values())),
                 field_coverage={k: dict(known=fields[k], total=n) for k in
                                 ('tool_name', 'outcome', 'state_revision', 'lineage_verified')},
-                activities=dict(counts), eligible_observations=eligible_observations,
+                activities=dict(counts), eligible_observations=observations.coverage['eligible'],
+                observation_coverage=dict(observations.coverage),
+                observation_limits=dict(per_case=observation_per_case, total=observation_total, max_age=observation_max_age),
                 recurring_sequences=repeated, findings=findings,
                 deferred_mechanisms={
                     'tool_waste': 'Needs necessity contract or outcome-preserving intervention.',

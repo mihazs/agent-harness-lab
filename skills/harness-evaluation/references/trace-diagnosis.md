@@ -140,3 +140,18 @@ claim. Compare per-mechanism precision/recall, Brier score, accepted coverage an
 resource use against the lexical baseline. Promotion requires held-out benefit
 without critical regressions; otherwise keep the simpler method. Formal conformal
 coverage is not promised across shifting project distributions.
+
+## Repeated observation detector
+
+The offline detector uses caller-supplied tool, input/result fingerprint and
+opaque state-revision dimensions. It preserves observations across explicitly
+read-only tool calls (`tool_effect=read_only`) and non-mutating metadata. It
+invalidates on revision transitions (including A → B → A), mutation, unknown call
+effects and unresolved potentially mutating calls. Unmatched call IDs remain
+uncertain. Native captures without these dimensions cannot establish duplication.
+
+Engineering bounds: 128 observations per case, 4096 overall observations/case
+states, and 1000 capture positions of age. Eviction and invalidation counts appear
+in `observation_coverage`; matching findings cite both observations. Capture order
+and claimed read-only effects do not prove concurrency safety or necessity.
+Polling and negative tests may repeat observations without being waste.

@@ -1,0 +1,1 @@
+"""Private foreground monitoring state."""

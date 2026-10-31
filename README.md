@@ -111,14 +111,24 @@ ahl watch /path/to/project --agent claude --interval 300
 
 This foreground monitor performs an initial improvement pass, then checks evidence
 at the interval. It runs improvement again only when the accepted project evidence
-changes. Attempted fingerprints persist across restarts, so an unchanged failure
-is not retried every poll. A per-project lock prevents overlapping improvement runs.
+changes. Versioned checkpoints persist across restarts. Completed rejection/no-change runs
+are not repeated on unchanged evidence. Only explicitly classified transient
+infrastructure failures may retry, with backoff and at most three total attempts.
+Authentication, setup, interrupted and unknown failures require intervention or a
+relevant execution-configuration change. Legacy attempted fingerprints remain
+suppressed. Corrupt checkpoints stop monitoring and remain available for inspection. A per-project lock prevents overlapping improvement runs.
 Press Ctrl-C to stop. `--once` performs one check and exits.
 
 Each triggered pass can use the configured model and the same per-run time budget
 as `ahl improve`. Installation does not start monitoring. To rerun deliberately on
 unchanged evidence, use `ahl improve`; stale locks require checking the recorded PID
-before removing them.
+before removing them. `--max-attempts` (1–10), `--retry-delay` (1–3600 seconds),
+and `--watch-budget` control retries; the default total execution allowance across
+attempts is the configured `--timeout`, not that allowance multiplied per retry.
+`watch --once` reports the last disposition even when no new run is eligible.
+Exit codes: 0 completed, 1 failed/incomplete (including budget exhaustion and
+interruption), 2 invalid input/setup, 3 inconclusive/blocked. Unknown statuses fail
+closed with exit code 1. These codes apply to `improve` as well.
 
 ## Inspect before improving
 

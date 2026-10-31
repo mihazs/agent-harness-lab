@@ -74,6 +74,9 @@ def main(argv=None):
             command.add_argument('--timeout', type=int, default=2700, help='Whole improvement run budget in seconds')
         if name == 'watch':
             command.add_argument('--interval', type=int, default=300, help='Seconds between evidence checks')
+            command.add_argument('--max-attempts', type=int, default=3, help='Total transient infrastructure attempts per evidence/configuration')
+            command.add_argument('--retry-delay', type=int, default=60, help='Initial bounded backoff in seconds')
+            command.add_argument('--watch-budget', type=int, help='Total execution seconds per evidence/configuration (default: timeout)')
             command.add_argument('--once', action='store_true', help='Check once then exit')
     args = parser.parse_args(argv)
     from agent_harness_lab.workflow import analyze_project, improve, watch
@@ -90,7 +93,8 @@ def main(argv=None):
                 raise ValueError('timeout must be positive')
             result = improve(args)
         print(json.dumps(result, indent=2))
-        return 1 if result['status'] in ('execution_error', 'invalid_proposal', 'evaluation_failed', 'conflict') else 0
+        from agent_harness_lab.monitoring.state import exit_code
+        return exit_code(result['status'])
     except (ValueError, OSError, TypeError, KeyError) as exc:
         parser.exit(2, f'ahl: {exc}\n')
 

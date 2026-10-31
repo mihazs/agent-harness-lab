@@ -117,7 +117,7 @@ class WorkflowTests(unittest.TestCase):
                 with project_lock(self.project): pass
 
     def test_watch_remembers_unchanged_evidence_across_restarts(self):
-        with patch('agent_harness_lab.workflow.improve',return_value={'status':'no_change'}) as run, patch('builtins.print'):
+        with patch('agent_harness_lab.workflow._run_improvement',return_value={'status':'no_change'}) as run, patch('builtins.print'):
             watch(self.args()); watch(self.args())
             self.assertEqual(run.call_count,1)
 
