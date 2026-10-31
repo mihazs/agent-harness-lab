@@ -119,6 +119,8 @@ def main():
         args.output.mkdir(parents=True, exist_ok=False, mode=0o700)
         (args.output / 'findings.json').write_text(json.dumps(result, indent=2) + '\n')
         (args.output / 'report.md').write_text(report(result))
+    except FileExistsError:
+        parser.exit(2, f'diagnosis error: output directory {args.output} already exists; choose a fresh --output path. Existing directories are never overwritten or deleted.\n')
     except (ValueError, OSError, TypeError, KeyError) as exc:
         parser.exit(2, f'diagnosis error: {exc}\n')
 
