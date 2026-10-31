@@ -4,7 +4,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-from .integrity import contained,digest,tree
+from .integrity import artifacts,contained,digest,tree
 from .task_bank import validate
 
 
@@ -61,10 +61,62 @@ def export_manifest(bank_path,output,max_trials=24):
     return manifest
 
 
-def audit_graders(bank_path, *, cooperative=False):
-    if not cooperative:
-        raise ValueError('grader audit requires explicit trusted cooperative mode until sandbox integration is available')
+def regrade_artifacts(workspace, allowlist, bundle, expected_digest, backend, *, limits=None):
+    """Worker must be stopped before extraction; never trust its claimed result."""
+    import tempfile
+    from .sandbox import Limits
+    if digest(bundle) != expected_digest:
+        raise ValueError('grader bundle integrity changed before regrading')
+    extracted = artifacts(workspace, allowlist)
+    with tempfile.TemporaryDirectory() as folder:
+        root = Path(folder)
+        oracle, fixture, scratch = root/'oracle', root/'fixture', root/'scratch'
+        shutil.copytree(bundle, oracle)
+        if digest(oracle) != expected_digest:
+            raise ValueError('grader bundle changed during copying')
+        fixture.mkdir(); scratch.mkdir()
+        for name, data in extracted.items():
+            target = contained(fixture, name)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+        run = backend.run(['/usr/bin/python3', '-I', '/inputs/oracle/grade.py.txt',
+                           '/inputs/fixture', '/inputs/oracle/expected.json'],
+                          scratch, {'fixture': fixture, 'oracle': oracle}, 'grader',
+                          limits or Limits(seconds=5))
+    if digest(bundle) != expected_digest or run.get('inputs_unchanged') is not True:
+        raise ValueError('grader inputs changed during regrading')
+    outcome = None
+    if run.get('status') in ('completed', 'failed'):
+        try:
+            envelope = json.loads(run['stdout'])
+            if (type(envelope) is dict and type(envelope.get('schema_version')) is int
+                    and envelope['schema_version'] == 1 and envelope.get('valid') is True
+                    and type(envelope.get('outcome')) is bool
+                    and all(isinstance(envelope.get(k), str) and 0 < len(envelope[k]) <= 128
+                            for k in ('grader_id', 'grader_version'))
+                    and type(run.get('exit_code')) is int
+                    and run['exit_code'] == (0 if envelope['outcome'] else 1)
+                    and run['status'] == ('completed' if envelope['outcome'] else 'failed')):
+                outcome = envelope['outcome']
+        except (ValueError, TypeError, KeyError):
+            pass
+    return dict(status='grader_error' if outcome is None else ('passed' if outcome else 'failed'),
+                outcome=outcome, execution=run, automatic_promotion=False)
+
+
+def audit_graders(bank_path, *, cooperative=False, sandbox=False):
+    if cooperative and sandbox:
+        raise ValueError('choose one grader execution mode')
+    if not cooperative and not sandbox:
+        raise ValueError('grader audit requires explicit cooperative or sandbox execution mode')
     bank_path=Path(bank_path); validate(bank_path)
+    if sandbox:
+        from .sandbox import SandboxBackend
+        backend = SandboxBackend()
+        capability = backend.capability()
+        if capability['status'] != 'available':
+            return dict(status='blocked', capability=capability, checks=[],
+                        real_agent_trials='not_run', automatic_promotion=False)
     tasks=json.loads(bank_path.read_text())['tasks']; results=[]
     for task in tasks:
         bundle=contained(bank_path.parent,task['grader_bundle']); frozen=digest(bundle)
@@ -77,12 +129,20 @@ def audit_graders(bank_path, *, cooperative=False):
             import tempfile
             with tempfile.TemporaryDirectory() as folder:
                 workspace=Path(folder)/'work'; shutil.copytree(fixture,workspace); materialize_sources(workspace)
-                run=subprocess.run([sys.executable,str(bundle/'grade.py.txt'),str(workspace),str(bundle/'expected.json')],
-                    env={'PATH':'/usr/bin:/bin','PYTHONDONTWRITEBYTECODE':'1'},capture_output=True,text=True,timeout=5)
-            envelope=json.loads(run.stdout)
+                if sandbox:
+                    grade = regrade_artifacts(workspace, task['artifacts'], bundle, frozen, backend)
+                else:
+                    run=subprocess.run([sys.executable,str(bundle/'grade.py.txt'),str(workspace),str(bundle/'expected.json')],
+                        env={'PATH':'/usr/bin:/bin','PYTHONDONTWRITEBYTECODE':'1'},capture_output=True,text=True,timeout=5)
+            envelope = dict(valid=grade['outcome'] is not None,outcome=grade['outcome']) if sandbox else json.loads(run.stdout)
             expected=control['state'] in ('complete','alternative_valid')
-            if envelope.get('valid') is not True or envelope.get('outcome') is not expected or run.returncode!=(0 if expected else 1):
+            code = grade['execution']['exit_code'] if sandbox else run.returncode
+            if envelope.get('valid') is not True or envelope.get('outcome') is not expected or code!=(0 if expected else 1):
                 raise ValueError('grader falsification failed: '+task['task_id']+'/'+control['state'])
-            results.append(dict(task=task['task_id'],control=control['state'],status='passed'))
+            result = dict(task=task['task_id'],control=control['state'],status='passed')
+            if sandbox:
+                result['regrade'] = grade
+            results.append(result)
         if digest(bundle)!=frozen: raise ValueError('grader bundle mutated during audit')
-    return dict(status='controls_passed',checks=results,real_agent_trials='not_run',independence='unverified')
+    return dict(status='controls_passed',checks=results,real_agent_trials='not_run',independence='unverified',
+                execution_mode='sandbox' if sandbox else 'cooperative',automatic_promotion=False)

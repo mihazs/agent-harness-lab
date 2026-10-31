@@ -103,13 +103,33 @@ the function on additional inputs. Graders use a typed outcome envelope; invalid
 references, malformed envelopes, contradictory exit codes and missing outcomes are
 grader defects, not baseline task failures. Declared complete bundles (including
 reference data and controls) are hashed before execution and checked afterward.
-This detects changed declared inputs; clean-room regrading still requires #7.
+This detects changed declared inputs. The optional audit regrading path below
+advances #7; full task-runner integration still remains.
 
 `ahl bank --starter --list` validates and lists the pack. It exits 3 because task
 independence remains unverified. `--audit --cooperative-controls` explicitly runs
 the trusted synthetic grader controls with a minimal environment, without a model.
-This is cooperative diagnostic execution, not sandbox evidence; audits refuse to
-execute without that explicit mode until sandbox integration is available.
+This is cooperative diagnostic execution, not sandbox evidence. Alternatively,
+`ahl bank --starter --audit --sandbox-controls` probes the offline bubblewrap
+backend and returns an explicit `blocked` report (exit 3) when unavailable, without
+falling back to host execution. On a supported host, each control is materialized
+in a disposable worker directory, then only its declared bounded artifacts are
+copied to a fresh read-only grader input. A separately copied, hash-checked oracle
+bundle is mounted read-only; the grader gets a fresh scratch workspace, a cleared
+environment and no network. The calculator's allowlist includes its repaired
+source file as well as its structured result and preservation artifact. Claimed
+worker grades are ignored. Typed grades must agree with process status; timeout,
+output limits, malformed grades and changed inputs cannot pass. Per-control
+execution attestations remain in the private audit result.
+
+This mode currently supports the starter-style `grade.py.txt`/`expected.json`
+Python grader contract using `/usr/bin/python3` inside the namespace. It does not
+isolate a model run or provide inference access. Aggregate disk/cgroup bounds,
+pinned dependency images, parent-budget orchestration and full role integration
+remain pending. Mock-backend tests exercise extraction, typed grading and all 29
+controls; they do not prove containment. The live test is explicitly skipped when
+the namespace probe fails. Neither audit mode authorizes promotion.
+
 `--export NEW_DIRECTORY` writes a descriptive manifest with bounded fixtures,
 grader bundles, control paths, task/root identities and an explicit no-promotion
 flag. It never launches an agent. Source materialization is confined to declared
