@@ -8,6 +8,7 @@ from pathlib import Path
 import shutil
 import signal
 import subprocess
+import sys
 import time
 import tomllib
 
@@ -171,66 +172,89 @@ def evaluate(args):
                    runtime={'agent': agent, agent + '_version': version_info['stdout'].strip()[:200] if version_info['exit_code'] == 0 else 'unavailable',
                             'user_config_defaults': config, 'effective_settings_verified': False},
                    isolation=('cooperative trusted fixtures; ' + ('workspace-write; ' if agent == 'codex' else 'inherited Claude permissions/sandbox; ') + 'inherited configuration/auth/hooks; no security or network isolation claim'))
-    for version, root in versions.items():
-        for task in tasks:
+    plan = None
+    if 'experiment' in manifest:
+        checkout = Path(__file__).resolve().parents[3]
+        if (checkout / 'agent_harness_lab').is_dir():
+            sys.path.insert(0, str(checkout))
+        from agent_harness_lab.evaluation.plan import ExperimentSpec, schedule
+        plan = ExperimentSpec.parse(manifest['experiment'])
+        if {t[0] for t in plan.tasks} != {t['id'] for t in tasks}:
+            raise ValueError('experiment task set differs from manifest')
+        if (plan.baseline_hash, plan.candidate_hash) != (results['versions']['baseline'], results['versions']['candidate']):
+            raise ValueError('experiment harness hashes differ from inputs')
+        ordered = schedule(plan)
+        if len(ordered) > int(manifest.get('max_trials', 24)):
+            raise ValueError('repeated plan exceeds caller trial ceiling')
+        results['experiment'] = manifest['experiment']
+        results['plan_digest'] = plan.digest
+    else:
+        ordered = [dict(version=version, task=task['id'], repetition=0) for version in versions for task in tasks]
+    results['profile'] = plan.profile if plan else 'descriptive_smoke'
+    results['automatic_promotion'] = False
+    for scheduled in ordered:
+        version, task = scheduled['version'], next(t for t in tasks if t['id'] == scheduled['task'])
+        root = versions[version]
+        remaining = budget - (time.monotonic() - started)
+        record = dict(scheduled, split=task['split'])
+        if remaining <= 0:
+            record['status'] = 'budget_exhausted'
+            results['trials'].append(record)
+            continue
+        trial = output / version / task['id']
+        if plan:
+            trial = trial / str(scheduled['repetition'])
+        workspace = trial / 'workspace'
+        fixture = (manifest_path.parent / task['fixture']).resolve()
+        shutil.copytree(fixture, workspace)
+        for relative in harness_paths:
+            target = workspace / relative
+            if target.exists():
+                if not target.is_file():
+                    raise ValueError('fixture harness path must be a file')
+                target.unlink()
+            source = root / relative
+            if source.is_file():
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, target)
+        loaded = []
+        plugin = workspace / '.harness-trial'
+        if agent == 'claude':
+            (plugin / '.claude-plugin').mkdir(parents=True)
+            (plugin / '.claude-plugin/plugin.json').write_text(json.dumps({'name': 'harness-trial'}))
+        for skill in skills:
+            target = ((plugin / 'skills') if agent == 'claude' else (workspace / '.agents/skills')) / skill
+            if target.exists():
+                shutil.rmtree(target)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(root / skill, target)
+            loaded.append(str(target / 'SKILL.md'))
+        argv = agent_command(agent, binary, plugin if agent == 'claude' else None, skills)
+        prompt = ('Load these exact evaluation skill files before the task: ' + ', '.join(loaded) + '\n' if loaded and task.get('preload_skills', True) else '')
+        if manifest.get('no_nested_agents', False):
+            prompt += 'Do not launch child agents or nested model trials; the parent owns the evaluation budget.\n'
+        prompt += 'Operate only in this fixture workspace. Do not modify external files.\n' + task['prompt']
+        record['injected_skill_hashes'] = {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in loaded}
+        run = execute(argv, workspace, min(timeout, remaining), prompt)
+        trace = trial / 'trace.jsonl'
+        trace.write_text(run.pop('stdout'))
+        (trial / 'stderr.txt').write_text(run.pop('stderr'))
+        record['execution'] = run
+        check = {**run, 'stdout': trace.read_text()}
+        record['status'], record['usage'] = trace_result(check, agent)
+        record['skill_namespace'] = 'harness-trial' if agent == 'claude' else None
+        if record['status'] == 'completed':
             remaining = budget - (time.monotonic() - started)
-            record = dict(version=version, task=task['id'], split=task['split'])
             if remaining <= 0:
                 record['status'] = 'budget_exhausted'
-                results['trials'].append(record)
-                continue
-            trial = output / version / task['id']
-            workspace = trial / 'workspace'
-            fixture = (manifest_path.parent / task['fixture']).resolve()
-            shutil.copytree(fixture, workspace)
-            for relative in harness_paths:
-                target = workspace / relative
-                if target.exists():
-                    if not target.is_file():
-                        raise ValueError('fixture harness path must be a file')
-                    target.unlink()
-                source = root / relative
-                if source.is_file():
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(source, target)
-            loaded = []
-            plugin = workspace / '.harness-trial'
-            if agent == 'claude':
-                (plugin / '.claude-plugin').mkdir(parents=True)
-                (plugin / '.claude-plugin/plugin.json').write_text(json.dumps({'name': 'harness-trial'}))
-            for skill in skills:
-                target = ((plugin / 'skills') if agent == 'claude' else (workspace / '.agents/skills')) / skill
-                if target.exists():
-                    shutil.rmtree(target)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copytree(root / skill, target)
-                loaded.append(str(target / 'SKILL.md'))
-            argv = agent_command(agent, binary, plugin if agent == 'claude' else None, skills)
-            prompt = ('Load these exact evaluation skill files before the task: ' + ', '.join(loaded) + '\n' if loaded and task.get('preload_skills', True) else '')
-            if manifest.get('no_nested_agents', False):
-                prompt += 'Do not launch child agents or nested model trials; the parent owns the evaluation budget.\n'
-            prompt += 'Operate only in this fixture workspace. Do not modify external files.\n' + task['prompt']
-            record['injected_skill_hashes'] = {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in loaded}
-            run = execute(argv, workspace, min(timeout, remaining), prompt)
-            trace = trial / 'trace.jsonl'
-            trace.write_text(run.pop('stdout'))
-            (trial / 'stderr.txt').write_text(run.pop('stderr'))
-            record['execution'] = run
-            check = {**run, 'stdout': trace.read_text()}
-            record['status'], record['usage'] = trace_result(check, agent)
-            record['skill_namespace'] = 'harness-trial' if agent == 'claude' else None
-            if record['status'] == 'completed':
-                remaining = budget - (time.monotonic() - started)
-                if remaining <= 0:
-                    record['status'] = 'budget_exhausted'
-                else:
-                    grader = [a.replace('{workspace}', str(workspace)).replace('{trace}', str(trace)) for a in task['grader']]
-                    grade = execute(grader, manifest_path.parent, min(timeout, remaining))
-                    record['grader'] = grade
-                    record['status'] = ('grader_error' if grade['timeout'] or grade['exit_code'] is None
-                                        else 'passed' if grade['exit_code'] == 0 else 'failed')
-            results['trials'].append(record)
-            (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
+            else:
+                grader = [a.replace('{workspace}', str(workspace)).replace('{trace}', str(trace)) for a in task['grader']]
+                grade = execute(grader, manifest_path.parent, min(timeout, remaining))
+                record['grader'] = grade
+                record['status'] = ('grader_error' if grade['timeout'] or grade['exit_code'] is None
+                                    else 'passed' if grade['exit_code'] == 0 else 'failed')
+        results['trials'].append(record)
+        (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
     results['elapsed_seconds'] = time.monotonic() - started
     results['inputs_unchanged'] = (all(digest(p) == results['versions'][v] for v, p in versions.items())
                                    and all(digest((manifest_path.parent / t['fixture']).resolve()) == results['fixtures'][t['id']] for t in tasks)

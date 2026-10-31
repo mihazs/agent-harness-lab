@@ -1,11 +1,11 @@
 # Agent Harness Lab
 
-**Find what your agent needs to improve. Evaluate the repair. Apply what passes.**
+**Find what your agent needs to improve. Evaluate the repair. Review the evidence.**
 
 Agent Harness Lab discovers improvement candidates from local project traces,
 evaluation failures, and the project's own harness. It stages repairs, checks them
-against baseline behavior, and adopts eligible changes to project instructions
-and skills. **You do not need to describe a failure first.**
+against baseline behavior, and recommends candidate changes to project instructions
+and skills. Behavioral adoption is blocked pending independent certification safeguards. **You do not need to describe a failure first.**
 
 Works with **Claude Code and Codex**. Includes an optional continuous monitor,
 release installer, and the `ahl` command. The default installation uses Python's
@@ -76,9 +76,10 @@ The command automatically:
    development/regression/held-out tasks, and frozen evaluator inputs. Baseline and
    candidate run under the same selected CLI. A failed candidate may be refined once
    with fresh held-out inputs, within the shared resource ceiling.
-5. **Applies eligible changes.** Requires a reproduced baseline development failure,
+5. **Reports eligible candidates.** A descriptive comparison requires a reproduced baseline development failure,
    passing candidate tasks, passing baseline regression controls, and unchanged inputs.
-   Copies only allowed harness files after checking for concurrent source changes.
+   Behavioral candidates remain recommendations while role isolation, audited lineage,
+   repeated certification and effective runtime verification are unavailable.
    Ties, incomplete results, and failed checks leave project files unchanged.
 
 An optional hint can focus the investigation without replacing discovery:
@@ -177,7 +178,8 @@ adoption; the skills must not launch recursive improvement controllers.
 
 ## Evidence and limits
 
-**Experimental.** Automated preparation and adoption are implemented; broad gains
+**Experimental.** Automated preparation and descriptive evaluation are implemented;
+automatic behavioral adoption is blocked pending certification prerequisites; broad gains
 in agent success or real-world diagnostic accuracy have not been established.
 Graders are constructed in a separate session and falsified with controls, but
 remain cooperative code rather than independent semantic proof. Agent runtimes, inherited hooks, and graders are not a
@@ -229,3 +231,5 @@ Releases. Nothing is published to npm. See [CONTRIBUTING.md](CONTRIBUTING.md).
 Read [SUPPORT.md](SUPPORT.md) for questions and [SECURITY.md](SECURITY.md) for private
 vulnerability reporting. Participation follows [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
 Licensed under [MIT](LICENSE).
+
+See [evaluation contracts and remaining prerequisites](docs/evaluation-foundation.md) for repeated plans, task banks, isolation capability checks and promotion policy.

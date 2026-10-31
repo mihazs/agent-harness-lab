@@ -74,11 +74,12 @@ class WorkflowTests(unittest.TestCase):
         return argparse.Namespace(project=self.project,events=None,format='normalized',output=None,
             agent='codex',codex=str(self.agent),claude='missing',timeout=30,interval=1,once=True,focus=None)
 
-    def test_discovers_and_adopts_only_after_frozen_evaluation(self):
+    def test_cooperative_evaluation_recommends_without_adoption(self):
         result=improve(self.args())
-        self.assertEqual(result['status'],'applied')
-        self.assertEqual((self.project/'AGENTS.md').read_text(),'good\n')
-        self.assertEqual(result['changed_files'],['AGENTS.md'])
+        self.assertEqual(result['status'],'inconclusive')
+        self.assertEqual((self.project/'AGENTS.md').read_text(),'bad')
+        self.assertEqual(result['changed_files'],[])
+        self.assertIn('role_isolation',result['blocked_prerequisites'])
         data=json.loads((Path(result['output'])/'evaluation-0/results.json').read_text())
         self.assertTrue(data['inputs_unchanged'])
         self.assertIn('failed',[r['status'] for r in data['trials'] if r['version']=='baseline'])
@@ -95,7 +96,7 @@ class WorkflowTests(unittest.TestCase):
     def test_refines_once_using_new_heldout_inputs(self):
         (self.project/'mode').write_text('refine')
         result=improve(self.args())
-        self.assertEqual(result['status'],'applied')
+        self.assertEqual(result['status'],'inconclusive')
         self.assertTrue((Path(result['output'])/'evaluation-1/results.json').is_file())
         feedback=json.loads((Path(result['output'])/'feedback-0.json').read_text())
         self.assertTrue(all(t['split']!='heldout' for t in feedback['trials']))

@@ -206,8 +206,35 @@ else:
         self.assertEqual(data['trials'][0]['status'], 'grader_error')
 
 
+    def test_repeated_plan_runs_fresh_counterbalanced_trials(self):
+        import importlib.util
+        from dataclasses import asdict
+        sys.path.insert(0, str(RUNNER.parents[3]))
+        from agent_harness_lab.evaluation.plan import ExperimentSpec
+        spec=importlib.util.spec_from_file_location('synthetic_runner', RUNNER)
+        runner=importlib.util.module_from_spec(spec); spec.loader.exec_module(runner)
+        plan=ExperimentSpec('synthetic', (('case','root','family'),), 2, 13, 4, 2,
+                            .05, .1, .05, (('family',1),), runner.digest(self.root/'baseline'),
+                            runner.digest(self.root/'candidate'), 'grader', 'runtime')
+        manifest=dict(tasks=[dict(id='case',split='development',fixture='fixture',prompt='ok',
+                                  grader=[sys.executable,str(self.grader),'{workspace}'])],
+                      experiment=asdict(plan),max_trials=4,budget_seconds=10,timeout_seconds=2)
+        (self.root/'manifest.json').write_text(json.dumps(manifest))
+        result=subprocess.run([sys.executable,str(RUNNER),'--manifest',str(self.root/'manifest.json'),
+            '--baseline',str(self.root/'baseline'),'--candidate',str(self.root/'candidate'),
+            '--output',str(self.root/'out'),'--codex',str(self.fake)],capture_output=True,text=True)
+        self.assertEqual(result.returncode,0,result.stderr)
+        data=json.loads((self.root/'out/results.json').read_text())
+        self.assertEqual(len(data['trials']),4)
+        self.assertEqual(len({t['trial_id'] for t in data['trials']}),4)
+        self.assertEqual([t['version'] for t in data['trials']],['candidate','baseline','baseline','candidate'])
+        for t in data['trials']:
+            self.assertTrue((self.root/'out'/t['version']/'case'/str(t['repetition'])/'workspace/artifact').is_file())
+        self.assertFalse(data['automatic_promotion'])
+
 if __name__ == '__main__':
     unittest.main()
+
 
 
 class InterruptCleanupTests(unittest.TestCase):
