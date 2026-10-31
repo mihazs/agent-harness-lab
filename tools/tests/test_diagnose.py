@@ -1,5 +1,9 @@
 import importlib.util
+import json
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 
 spec = importlib.util.spec_from_file_location('diagnose', Path(__file__).parents[1] / 'diagnose.py')
@@ -12,6 +16,23 @@ def event(case, ident, **extra):
 
 
 class DiagnosisTests(unittest.TestCase):
+    def test_existing_output_directory_is_refused_with_fresh_path_guidance(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            events = root / 'events.jsonl'
+            events.write_text(json.dumps(event('a', 1)) + '\n')
+            output = root / 'existing'
+            output.mkdir()
+            sentinel = output / 'sentinel.txt'
+            sentinel.write_text('keep')
+            proc = subprocess.run([sys.executable, str(Path(__file__).parents[1] / 'diagnose.py'),
+                '--events', str(events), '--output', str(output)], capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 2, msg=proc.stderr)
+            self.assertIn('fresh', proc.stderr, msg=proc.stderr)
+            self.assertNotIn('Traceback', proc.stderr)
+            self.assertEqual(sorted(p.name for p in output.iterdir()), ['sentinel.txt'])
+            self.assertEqual(sentinel.read_text(), 'keep')
+
     def test_duplicate_observation_requires_state_and_is_not_waste(self):
         signature = dict(tool_name='read', input_fingerprint='i', result_fingerprint='r', state_revision='s')
         result = d.analyze([event('a', 1, **signature), event('a', 2, **signature)])
