@@ -67,6 +67,17 @@ of scope. `automatic_promotion=false` remains explicit even if an offline probe
 succeeds. The local namespace probe fails on this managed host, so its live
 containment-canary test is skipped and cannot be cited as security evidence.
 
+`ahl evaluate --agent offline` now integrates fixture-command execution with a
+separate grader namespace, selected-harness-only mounts, bounded artifact
+extraction, typed grades and the existing paired schedule. Unsupported hosts
+write a blocked report before task execution. This is diagnostic infrastructure;
+it does not invoke a model or orchestrate proposer/evaluator construction. See the
+[offline execution contract](../skills/harness-evaluation/references/execution.md#offline-executor-and-separate-grader-integration).
+The mock integration checks exercise both arms of all seven starter tasks, with
+broken baseline programs and complete candidate programs. Their outcomes establish
+runner wiring, not model quality or actual containment. A supported-host end-to-end
+test remains explicitly conditional on the real namespace probe.
+
 [Bubblewrap's upstream documentation](https://github.com/containers/bubblewrap)
 explains that application policy and the selected mounts determine the boundary;
 the installed binary alone is not a security policy.

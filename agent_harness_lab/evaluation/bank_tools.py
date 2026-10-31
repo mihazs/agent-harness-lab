@@ -46,7 +46,7 @@ def export_manifest(bank_path,output,max_trials=24):
         materialize_sources(target)
         prompt=json.loads((target/'task.json').read_text())['prompt']
         tasks.append(dict(id=ident,root=task['root_id'],family=task['family'],split={'calibration':'regression','certification':'heldout','transfer':'heldout'}.get(task['partition'],'development'),
-                          fixture=str(target.relative_to(output)),prompt=prompt,
+                          fixture=str(target.relative_to(output)),prompt=prompt,artifacts=list(task['artifacts']),
                           grader=[sys.executable,str(grader.resolve()/'grade.py.txt'),'{workspace}',str(grader.resolve()/'expected.json')]))
         audit=json.loads((grader/'controls.json').read_text())
         for control in audit:

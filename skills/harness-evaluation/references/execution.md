@@ -110,6 +110,48 @@ The CLI contract was checked against [programmatic execution](https://code.claud
 release supporting these flags. A missing binary or authentication is an execution
 limitation, not a passing model trial.
 
+## Offline executor and separate grader integration
+
+`ahl evaluate --agent offline --manifest MANIFEST --baseline BASELINE --candidate
+CANDIDATE --output NEW_DIRECTORY` runs controller-supplied fixture programs without
+calling a model or using agent configuration/authentication. This is an explicit
+offline integration mode for the executor/grader boundary, not a Codex/Claude
+inference adapter. The original agent modes retain their cooperative contract.
+
+Start with `ahl bank --starter --export NEW_DIRECTORY` to obtain frozen bundles,
+fixtures and artifact allowlists. Add `offline_executor` to each task, for example:
+
+```json
+"offline_executor": ["/usr/bin/python3", "-I", "/inputs/harness/solve.py"]
+```
+
+Each version directory supplies its own controller-selected `solve.py`. Commands
+are explicit argv arrays from the frozen manifest, not instructions parsed from
+task text. For every arm the executor receives a fresh writable fixture at `/work`
+and only that version's read-only harness at `/inputs/harness`. Do not include
+oracles, credentials, unrelated projects or certification sets in either input.
+Only the controller chooses mounts; candidate content cannot add them. This mode
+rejects `skills`/`harness_paths` injection and requires complete declared grader
+bundles plus the fixed `grade.py.txt`/`expected.json` Python grader contract from
+the exported bank. `/usr/bin/python3` in the offline namespace is used to grade,
+regardless of the host interpreter path in the export.
+
+After the executor stops, only declared bounded artifact files are extracted.
+A separate fresh offline namespace regrades them against a pristine copied oracle
+bundle. Executor output cannot supply its own grade. Executor timeout, changed
+inputs, malformed grades and extraction failures cannot pass; each trial retains
+its execution/grading evidence. No model usage is invented. Namespace capability
+failure writes `status=blocked` and exits 3 before any task command or host grader
+runs. There is no cooperative fallback. The existing whole-run wall-clock budget
+includes probing, task execution and regrading; in-process preparation is charged
+before dispatch, but is not preemptible at an exact deadline.
+
+This integration does not supply proposer/evaluator-author role orchestration,
+an inference broker, pinned dependency images or aggregate cgroup/disk bounds.
+Results remain descriptive and `automatic_promotion=false`. Mock execution tests
+exercise orchestration and final-state graders, not containment or model behavior.
+Live namespace tests are skipped explicitly on unsupported hosts.
+
 ## Automatic project instruction experiments
 
 `ahl improve` discovers its own targets and prepares a staged experiment. A manifest
