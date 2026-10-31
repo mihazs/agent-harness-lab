@@ -32,7 +32,7 @@ their track and `type: epic` without invented task priorities. Historical PRs
 without classification labels remain unclassified. Preserve `good first issue`,
 `help wanted`, `documentation`, `enhancement`, and existing workflow labels.
 
-### Label-to-field synchronization
+### Field and lifecycle synchronization
 
 Native Project workflows do not mirror arbitrary repository labels into custom
 fields. Use the foreground, standard-library synchronizer during maintainer triage:
@@ -40,7 +40,7 @@ fields. Use the foreground, standard-library synchronizer during maintainer tria
 ```sh
 gh auth status
 python3 scripts/sync_project.py          # preview
-python3 scripts/sync_project.py --apply  # apply label mirrors and PR snapshots
+python3 scripts/sync_project.py --apply  # apply mirrors, lifecycle status and PR snapshots
 python3 scripts/sync_project.py          # expect zero proposed changes
 ```
 
@@ -48,8 +48,12 @@ The script uses the authenticated GitHub CLI with `project` and repository acces
 It verifies the repository link, paginates Project items, skips other repositories
 and drafts, rejects conflicting labels and truncated label/field responses, and
 resolves actual field/option/item IDs. Removing a classification label clears its
-mirror. It does not change labels, Status, ownership, dates, estimates, issue
-state, PR state, workflows or repository settings. Review & CI is a snapshot;
+mirror. Lifecycle reconciliation sets completed issues and merged PRs to Done,
+closed non-completed issues and unmerged PRs to Backlog, reopened issues previously
+marked Done to Backlog, and open non-draft PRs to In Review unless manually Blocked.
+Draft PRs retain manual implementation status, but do not remain In Review/Done.
+Manual Ready/In Progress/Blocked issue states are preserved. It does not change
+labels, ownership, dates, estimates, issue state, PR state, workflows or repository settings. Review & CI is a snapshot;
 rerun after PR head/check/review updates and follow GitHub's live checks before
 merging. It distinguishes drafts, missing reviews, requested changes, approval,
 pending/failing/passing CI and the actual merge state without treating approval
@@ -131,42 +135,49 @@ interop contracts #37/#38, source architecture #42 and contributor issues #27/#2
 Ready denotes an available bounded slice, not full certification readiness or an
 assignment. #43–#47 and #58 retain their label priorities and roadmap phases.
 
-## Enabled native workflows
+## Native workflows
 
 | Workflow | Actual configuration |
 | --- | --- |
 | Auto-add to project | Repository `mihazs/agent-harness-lab`; filter `is:open`; new or updated issues and PRs |
 | Auto-add sub-issues | Add native sub-issues when a parent is in the Project |
 | Item added to project | Issues and PRs → Backlog |
-| Item closed | Issues only → Done |
+| Item closed | Disabled: native closure trigger cannot distinguish completed from not planned |
 | Pull request merged | PR → Done |
 | Item reopened | Issues and PRs → Backlog for evidence-based retriage |
 | Pull request linked to issue | Linked issue → In Review |
 
-**Disabled:** Auto-close issue, Auto-archive items, Code changes requested,
+**Disabled:** Item closed, Auto-close issue, Auto-archive items, Code changes requested,
 and Code review approved. Board movement cannot close issues. No auto-merge
 setting, CI definition, branch protection, deployment, paid evaluation or
 background job was enabled or changed.
 
-The close workflow has no completion-reason selector. When an issue is closed
-as not planned/duplicate, manually review its Status; Done must not imply its
-acceptance criteria shipped. Unmerged closed PRs are excluded from that workflow.
-Reopened PRs initially return to Backlog; triage them into In Review when
-appropriate. Native workflows cannot calculate dependency readiness.
+The native close workflow has no completion-reason selector, so it is disabled.
+Run the synchronizer after closures: only stateReason COMPLETED becomes Done;
+NOT_PLANNED or missing reasons remain Backlog. Unmerged closed PRs also remain
+Backlog. Reopened PRs initially return to Backlog through the native workflow;
+the synchronizer restores non-draft PRs to In Review while respecting manual
+Blocked status. Native workflows cannot calculate dependency readiness.
+Readiness remains a maintainer decision because a prerequisite may gate full
+certification while an independent useful slice can proceed. No heuristic
+dependency-to-Status automation is installed.
 
 Workflow enabled states and trigger/action settings were read back through the
 API and authenticated UI. The existing merge of PR #19 was observed during setup and its Project item
 automatically reached Done. No artificial issue closure/reopening or merge was
 performed to test event delivery. Label sync was executed against the real
 Project and a second run proposed zero changes. Other event delivery remains subject
-to GitHub processing; verify the first natural add/close/reopen event.
+to GitHub processing; verify the first natural add/reopen event. Synthetic
+lifecycle tests cover completion reasons, reopen, draft and unmerged PR states,
+plus pagination and rejection of conflicting labels before any write.
 
 ## Maintainer procedure and limitations
 
 1. Check open PRs before starting work; use linked PRs and Review & Release to
    avoid duplicate contributions.
 2. Apply authoritative classification labels, then run the synchronizer in
-   preview/apply/preview sequence. Resolve conflicts before applying.
+   preview/apply/preview sequence, including after closure or reopening. Resolve
+   conflicts before applying.
 3. Verify prerequisites against the issue's current scope. Move a bounded slice
    to Ready; move to In Progress only with actual implementation evidence.
 4. Inspect current-head checks, reviews and unresolved discussions before merge.

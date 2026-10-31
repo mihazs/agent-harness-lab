@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Refresh label mirrors and PR review/CI snapshots; no background work or status edits."""
+"""Refresh label mirrors, lifecycle status and PR snapshots; no background work."""
 import argparse
 import json
 import subprocess
@@ -45,6 +45,27 @@ def review_summary(pr):
     return f'{review}; CI {ci}; merge {pr["mergeStateStatus"]}'
 
 
+def lifecycle_status(content, current):
+    state = content['state']
+    if content['__typename'] == 'PullRequest':
+        if state == 'MERGED':
+            return 'Done'
+        if state == 'CLOSED':
+            return 'Backlog'
+        if state != 'OPEN':
+            raise ValueError('Unknown PR state')
+        if current == 'Blocked':
+            return current
+        if not content['isDraft']:
+            return 'In Review'
+        return 'Backlog' if current in (None, 'Done', 'In Review') else current
+    if state == 'CLOSED':
+        return 'Done' if content['stateReason'] == 'COMPLETED' else 'Backlog'
+    if state != 'OPEN':
+        raise ValueError('Unknown issue state')
+    return 'Backlog' if current in (None, 'Done') else current
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--apply', action='store_true', help='write changes (default: preview)')
@@ -70,7 +91,7 @@ def main():
           fieldValues(first:100){pageInfo{hasNextPage} nodes{
             ... on ProjectV2ItemFieldSingleSelectValue{name field{... on ProjectV2SingleSelectField{name}}}
             ... on ProjectV2ItemFieldTextValue{text field{... on ProjectV2Field{name}}}}}
-          content{... on Issue{repository{nameWithOwner} labels(first:100){nodes{name} pageInfo{hasNextPage}}}
+          content{__typename ... on Issue{state stateReason repository{nameWithOwner} labels(first:100){nodes{name} pageInfo{hasNextPage}}}
           ... on PullRequest{repository{nameWithOwner} labels(first:100){nodes{name} pageInfo{hasNextPage}}
             state isDraft reviewDecision mergeStateStatus commits(last:1){nodes{commit{statusCheckRollup{state}}}}}}}
         }}}}''', {'id': project['id'], 'cursor': cursor})['node']['items']
@@ -81,10 +102,11 @@ def main():
             if content['labels']['pageInfo']['hasNextPage'] or item['fieldValues']['pageInfo']['hasNextPage']:
                 raise ValueError('Item labels or values are truncated')
             desired = mirrored_values({l['name'] for l in content['labels']['nodes']})
-            if 'state' in content:
+            if content['__typename'] == 'PullRequest':
                 desired['Review & CI'] = review_summary(content) if content['state'] == 'OPEN' else None
             current = {v['field']['name']: v.get('name', v.get('text'))
                        for v in item['fieldValues']['nodes'] if 'field' in v}
+            desired['Status'] = lifecycle_status(content, current.get('Status'))
             for name, value in desired.items():
                 if current.get(name) == value:
                     continue
