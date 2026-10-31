@@ -1,161 +1,195 @@
 # GitHub Project operations — Agent Harness Lab
 
-This document defines the recommended GitHub Projects (v2) structure for
-[mihazs/agent-harness-lab](https://github.com/mihazs/agent-harness-lab).
-GitHub issues and PRs remain authoritative; a project card or CI success is
-not evidence of improved coding-agent outcomes.
+The live execution board is [Agent Harness Lab — Roadmap](https://github.com/users/mihazs/projects/3)
+(owner `mihazs`, Project **3**, node ID `PVT_kwHOADx7kc4Bpo2X`).
+It is linked to [mihazs/agent-harness-lab](https://github.com/mihazs/agent-harness-lab).
+The Project is private; repository issues and this guide remain accessible under
+their existing permissions. Visibility was not expanded.
 
-**Current scope:** repository issue/PR labels have been applied; this
-document does not itself create a Projects board, populate items, set fields,
-create views or enable workflows. Confirm the existing project before making
-project-level changes. Do not duplicate an already linked project.
+## Configured fields and classification
 
-## Applied issue-label taxonomy
-
-Labels were added without deleting existing contributor labels.
-
-| Axis | Values | Meaning |
+| Field | Type | Options / source |
 | --- | --- | --- |
-| Priority | `priority: P0`, `priority: P1`, `priority: P2`, `priority: P3` | P0 is a correctness/evidence prerequisite; P3 is optional research |
-| Track | `track: science` | Controlled evaluation, safety, algorithms |
-| Track | `track: data sources` | Native and third-party evidence ingestion |
-| Track | `track: product` | CLI, reporting, interoperability, campaigns |
-| Track | `track: community` | Documentation, onboarding, contributions |
-| Roadmap | `roadmap: now`, `roadmap: next`, `roadmap: later` | Relative sequence, **not** deadlines |
-| Type | `type: epic` | Coordination parent, not directly executable |
-| Workflow | `workflow: in-review`, `workflow: release-pending` | Linked PR review or release coordination |
+| Status | Single select | Backlog, Ready, In Progress, In Review, Blocked, Done |
+| Priority | Single select | P0, P1, P2, P3; mirrors `priority: P0`–`priority: P3` |
+| Workstream | Single select | Scientific Reliability, Data Sources, Product & DX, Community & Growth |
+| Roadmap | Single select | Now, Next, Later; mirrors `roadmap: now/next/later` |
+| Effort | Single select | XS, S, M, L, XL; currently unset |
+| Review & CI | Text | Current-head PR review decision, aggregate CI state and merge state |
 
-Maintain exactly one priority, one track and one roadmap label per open
-implementation task. Epics have a track and type but intentionally no
-implementation priority/roadmap. Keep `good first issue`, `help wanted`,
-`documentation` and `enhancement` labels intact.
+Workstream mirrors `track: science`, `track: data sources`, `track: product`,
+and `track: community`, respectively. Labels are authoritative; do not classify
+work by editing these three mirrored fields alone.
 
-The GitHub Projects `Status` field should describe actual activity; priority,
-track and roadmap already exist as issue labels and should **not** be duplicated
-into unsynchronized custom fields unless a future automation synchronizes them.
+Existing native Title, Assignees, Labels, Linked pull requests, Parent issue,
+Sub-issues progress, Milestone, Repository, Reviewers, Created, Updated and Closed
+fields are reused. There are no duplicate classification fields. No deadlines,
+assignments, estimates or milestones were invented. Iterations and optional
+start/target dates were omitted because no cadence or actual dates were established.
 
-## Existing portfolio
+Implementation tasks retain one priority, track and roadmap label. Epics retain
+their track and `type: epic` without invented task priorities. Historical PRs
+without classification labels remain unclassified. Preserve `good first issue`,
+`help wanted`, `documentation`, `enhancement`, and existing workflow labels.
 
-| Track | Epic | Execution notes |
-| --- | --- | --- |
-| Science | [#3](https://github.com/mihazs/agent-harness-lab/issues/3) | Start with role isolation #7, task bank #8 and paired runner #9; continue #10–#16; #17 is optional research |
-| Data sources | [#41](https://github.com/mihazs/agent-harness-lab/issues/41) | #42 source contract first; #44–#47 may progress on scoped primitives; #43 requires #42/OKF; #48–#53 are adapters/evidence; #58 handles correlations; #54–#57 expand providers |
-| Product | Issues #36–#39 | #36 onboarding works independently; #37 viewer consumes evaluated evidence; #38 interop preserves provenance; #39 campaigns depend on verified execution and budgets |
-| Community | [#25](https://github.com/mihazs/agent-harness-lab/issues/25) | #27–#31 contain bounded contributor work. Check linked PRs before assigning, closing or duplicating |
+### Label-to-field synchronization
 
-A `roadmap: now` label means **some** bounded work can begin; it does not
-claim every downstream integration is unblocked or that somebody is assigned.
-Do not conflate synthetic test completion with independent real-model certification.
-
-## Recommended existing-or-new GitHub Project
-
-- **Name:** Agent Harness Lab — Roadmap
-- **Description:** Evidence-driven science, source compatibility, DX, and community delivery.
-- **Repository:** only `mihazs/agent-harness-lab` unless a maintainer deliberately expands scope.
-- **Visibility:** review existing project permissions and the sensitivity of future
-  notes before choosing public; do not copy private project/session traces, memory,
-  derived findings or private aggregates into public fields or charts.
-
-### Status column policy
-
-Use the native Project Status field with the following options, when configurable.
-
-| Status | Enter when |
-| --- | --- |
-| Todo | Item is in the accepted backlog, not currently being executed |
-| Ready | A PR-sized slice is specified, required prerequisites can be met |
-| In progress | Actual implementation has begun |
-| In review | A real linked PR is open and awaiting review/CI/merge |
-| Blocked | A concrete unmet dependency/permission/runtime capability prevents the next slice |
-| Done | Issue closed or linked PR merged with relevant checks; never infer real-world improvement |
-
-Enable built-in **Item added -> Todo**, **issue closed -> Done**, and
-**PR merged -> Done** workflows. Avoid automatically closing GitHub issues from
-a card movement, enabling auto-merge, or invoking paid evaluation. Mark epics
-Done only after their tracked requirements are actually complete.
-
-### Saved views (create in the Project UI)
-
-These filters use GitHub Projects syntax. Quote labels containing spaces.
-
-| View | Layout/grouping | Filter |
-| --- | --- | --- |
-| Execution | Board; columns by Status | `is:open` |
-| Now | Table; sort/filter by priority label | `is:issue is:open label:"roadmap: now"` |
-| P0 gates | Table | `is:issue is:open label:"priority: P0"` |
-| Science | Table | `is:issue is:open label:"track: science"` |
-| Data Sources | Table | `is:issue is:open label:"track: data sources"` |
-| Product | Table | `is:issue is:open label:"track: product"` |
-| Community | Table | `is:issue is:open label:"track: community"` |
-| First contributions | Table | `is:issue is:open label:"good first issue"` |
-| Review & release | Table | `is:pr is:open` |
-| Completed | Table | `is:closed` |
-
-Set title, labels, status, assignee and linked PR as visible where supported.
-Do not assign people, estimates, dates, milestones or iterations without a
-real decision. A new task should first have evidence, owner (when available),
-acceptance criteria, a link to its epic and a small tested delivery slice.
-
-## Project backfill and future automation
-
-GitHub's built-in auto-add only processes **new or updated** items; it does not
-retroactively add every currently matching issue. Select and verify the actual
-Project number first. GitHub CLI project operations require an authorized
-`project` scope; authorize using GitHub's own authentication flow, never by
-pasting tokens in issues or chats.
+Native Project workflows do not mirror arbitrary repository labels into custom
+fields. Use the foreground, standard-library synchronizer during maintainer triage:
 
 ```sh
 gh auth status
-gh project list --owner mihazs
-gh project view PROJECT_NUMBER --owner mihazs
+python3 scripts/sync_project.py          # preview
+python3 scripts/sync_project.py --apply  # apply label mirrors and PR snapshots
+python3 scripts/sync_project.py          # expect zero proposed changes
 ```
 
-After verifying ownership and existing contents, a maintainer can link and
-backfill the correct Project:
+The script uses the authenticated GitHub CLI with `project` and repository access.
+It verifies the repository link, paginates Project items, skips other repositories
+and drafts, rejects conflicting labels and truncated label/field responses, and
+resolves actual field/option/item IDs. Removing a classification label clears its
+mirror. It does not change labels, Status, ownership, dates, estimates, issue
+state, PR state, workflows or repository settings. Review & CI is a snapshot;
+rerun after PR head/check/review updates and follow GitHub's live checks before
+merging. It distinguishes drafts, missing reviews, requested changes, approval,
+pending/failing/passing CI and the actual merge state without treating approval
+as passing CI. Rerun after concurrent label changes; there is no atomic
+cross-resource transaction or automatic schedule.
 
-```sh
-export PROJECT_NUMBER=YOUR_VERIFIED_PROJECT_NUMBER
-gh project link "$PROJECT_NUMBER" --owner mihazs --repo mihazs/agent-harness-lab
+## Status policy
 
-gh issue list --repo mihazs/agent-harness-lab --state all --limit 200 \
-  --json url --jq '.[].url' |
-  while IFS= read -r item_url; do
-    gh project item-add "$PROJECT_NUMBER" --owner mihazs --url "$item_url" || exit 1
-  done
+| Status | Evidence required |
+| --- | --- |
+| Backlog | Accepted work without a verified ready implementation slice; also reopened work awaiting triage |
+| Ready | A useful specified slice can proceed with satisfied prerequisites |
+| In Progress | Actual ongoing implementation supported by current evidence |
+| In Review | An actual open PR or linked implementation is awaiting review, checks or merge |
+| Blocked | A confirmed unmet prerequisite prevents the whole next useful slice |
+| Done | Issue completed or PR merged; this is delivery state, not measured model effectiveness |
 
-gh pr list --repo mihazs/agent-harness-lab --state open --limit 200 \
-  --json url --jq '.[].url' |
-  while IFS= read -r item_url; do
-    gh project item-add "$PROJECT_NUMBER" --owner mihazs --url "$item_url" || exit 1
-  done
-```
+Do not mark an issue In Progress because it has a detailed specification.
+A dependency can gate certification while offline interfaces or fixtures remain
+useful work. A native blocked-by link therefore does not automatically imply
+Blocked Status. Synthetic tests alone do not close live integration,
+independent grading or research acceptance criteria.
 
-GitHub returns the existing Project item when the same issue/PR has already
-been added. Review the count and failures before proceeding. Then in
-**Project -> Workflows**, configure **Auto-add to project** for this repository
-using an appropriate issue/PR filter, enable **Item added -> Todo** and the
-close/merge workflows. Do not auto-add unrelated repositories or create a
-second project unnecessarily.
+Initial verified inventory: **43 issues and 16 PRs**, all 59 represented once.
+All historical PRs were included, not just recently merged ones. Verified Status
+totals after the concurrent merge of PR #19: 27 Backlog, 10 Ready, 1 In Review,
+21 Done. Its existing merge process was not changed by Project setup. No issue acceptance criteria
+were rewritten or issues closed as part of Project organization.
 
-If there is no suitable existing project, create one through the authorized
-GitHub UI or GitHub CLI, then follow the same steps. The issue connector alone
-cannot verify/create Projects views or set their custom fields.
+## Saved views
 
-## Maintenance rules
+All ten views are saved in Project 3. Common displayed fields include title,
+Status, priority, workstream, roadmap, assignee, labels, linked PRs and parent.
 
-- Look up current issue/PR state and exact-head checks before editing Status;
-  queued, failed or skipped checks are not passing evidence.
-- Preserve the distinction between proposed change, validated synthetic API,
-  independently graded effect and actual release/adoption.
-- Link dependencies to the authoritative issues rather than duplicating backlog.
-- Do not publish private traces, project identities, user credentials, session
-  contents, memory data or private-derived statistics in the board.
-- Review `roadmap: now` periodically; promote tasks only after prerequisites
-  and implementation capacity are available.
-- Never claim a Project view or automation was created solely because its
-  configuration is documented here.
+| View | Layout / organization | Saved filter |
+| --- | --- | --- |
+| Execution Board | Board; columns in Status option order | `is:open` |
+| Roadmap | Table grouped by Workstream; no fabricated timeline | `is:open` |
+| Scientific Reliability | Table; prerequisite order, including epic #3 and completed foundations | `label:"track: science"` |
+| Data Sources | Table grouped by Roadmap; source foundations before dependent adapters | `label:"track: data sources"` |
+| Product & Developer Experience | Table; onboarding, viewer, interop and campaigns | `label:"track: product"` |
+| Community & Growth | Table; epic #25 and contributor work, preserving historical delivery | `label:"track: community"` |
+| Immediate Priorities | Table grouped by Priority; Priority ascending, then Status descending (Ready ahead of Backlog) | `is:open label:"roadmap: now"` |
+| Contributor Opportunities | Table; Status and linked PRs visible | `is:issue is:open label:"good first issue","help wanted"` |
+| Review & Release | Table; Review & CI snapshot visible alongside actual PR links | `is:pr is:open` |
+| Completed | Table; historical closed issues and PRs | `is:closed` |
+
+The Execution Board's open-only filter keeps completed cards out of active work;
+its Done column is intentionally empty. The Completed view retains historical
+work. A closed, unmerged PR is historical, not completed delivery: inspect its
+native state and Status rather than interpreting the view name as acceptance.
+Review & Release includes the release PR and all open PRs, including unlabeled PRs.
+
+## Epics and dependencies
+
+Native parent/sub-issue relationships preserve existing epic descriptions:
+
+- Scientific Reliability **#3**: #4–#17 (14 children).
+- Community & Growth **#25**: #27–#31 (5 children).
+- Data Source Compatibility **#41**: #42–#58 (17 children).
+
+There are 54 native blocked-by links from explicit prerequisites in issue
+descriptions. The scientific chain starts with completed provenance #6, isolation
+#7, task bank #8 and paired evaluation #9; routing #10 precedes skills/adapters
+and candidate optimization, followed by retrieval, monitoring, benchmarking and
+optional research. Conditional integrations are not made unconditional blockers.
+
+Data adapters with explicit source-contract prerequisites depend on #42.
+The existing native-session extension #44 retains its independent scope. The
+portable parser #47 precedes full OKF integration in #43, but #43's minimal
+read-only export/MCP slice need not wait for that optional full integration.
+#58 links to #42; its relevant importer requirements remain slice-specific rather
+than forcing every possible provider to ship first. No cyclic dependencies were
+found. Native dependency details are available on the linked issues; the Project
+shows parents and linked PRs without duplicating epic content.
+
+Early ready slices include #7/#8/#9/#10, independent onboarding #36, report and
+interop contracts #37/#38, source architecture #42 and contributor issues #27/#29.
+Ready denotes an available bounded slice, not full certification readiness or an
+assignment. #43–#47 and #58 retain their label priorities and roadmap phases.
+
+## Enabled native workflows
+
+| Workflow | Actual configuration |
+| --- | --- |
+| Auto-add to project | Repository `mihazs/agent-harness-lab`; filter `is:open`; new or updated issues and PRs |
+| Auto-add sub-issues | Add native sub-issues when a parent is in the Project |
+| Item added to project | Issues and PRs → Backlog |
+| Item closed | Issues only → Done |
+| Pull request merged | PR → Done |
+| Item reopened | Issues and PRs → Backlog for evidence-based retriage |
+| Pull request linked to issue | Linked issue → In Review |
+
+**Disabled:** Auto-close issue, Auto-archive items, Code changes requested,
+and Code review approved. Board movement cannot close issues. No auto-merge
+setting, CI definition, branch protection, deployment, paid evaluation or
+background job was enabled or changed.
+
+The close workflow has no completion-reason selector. When an issue is closed
+as not planned/duplicate, manually review its Status; Done must not imply its
+acceptance criteria shipped. Unmerged closed PRs are excluded from that workflow.
+Reopened PRs initially return to Backlog; triage them into In Review when
+appropriate. Native workflows cannot calculate dependency readiness.
+
+Workflow enabled states and trigger/action settings were read back through the
+API and authenticated UI. The existing merge of PR #19 was observed during setup and its Project item
+automatically reached Done. No artificial issue closure/reopening or merge was
+performed to test event delivery. Label sync was executed against the real
+Project and a second run proposed zero changes. Other event delivery remains subject
+to GitHub processing; verify the first natural add/close/reopen event.
+
+## Maintainer procedure and limitations
+
+1. Check open PRs before starting work; use linked PRs and Review & Release to
+   avoid duplicate contributions.
+2. Apply authoritative classification labels, then run the synchronizer in
+   preview/apply/preview sequence. Resolve conflicts before applying.
+3. Verify prerequisites against the issue's current scope. Move a bounded slice
+   to Ready; move to In Progress only with actual implementation evidence.
+4. Inspect current-head checks, reviews and unresolved discussions before merge.
+   Queued, cancelled, skipped or unknown checks are not passing evidence.
+5. Close only completed acceptance scope. Keep #7–#17 and the scientific epic
+   open while their independent integration/evaluation requirements remain.
+6. Backfill after imports or interrupted auto-add processing; compare paginated
+   repository issue/PR inventories to Project content IDs and check duplicates.
+7. Preserve completed cards rather than auto-archiving them. Review roadmap
+   phases and stale review snapshots during normal maintainer triage.
+8. Review dependencies for cycles after edits, and preserve unrelated work.
+   Save view changes explicitly and read them back; a changed browser URL alone
+   does not update the saved configuration.
+
+The Project is an execution index, not an effectiveness oracle. Missing capture,
+unknown lineage, untested isolation and inconclusive evaluations stay explicit.
+Never put private session bodies, memory-derived information, analyzed-project
+identities, credentials, private findings or private-derived aggregates in public
+issues, documentation, reports or Project fields.
+
+Documentation changes are maintained in PR #59 and require its normal review/CI;
+the Project exists independently of that PR being merged.
 
 References: [GitHub Projects quickstart](https://docs.github.com/en/issues/planning-and-tracking-with-projects/learning-about-projects/quickstart-for-projects),
 [Project filtering](https://docs.github.com/en/issues/planning-and-tracking-with-projects/customizing-views-in-your-project/filtering-projects),
-[Auto-add/backfill limits](https://docs.github.com/en/issues/planning-and-tracking-with-projects/automating-your-project/adding-items-automatically),
-[GitHub CLI project commands](https://cli.github.com/manual/gh_project).
+[Auto-add/backfill](https://docs.github.com/en/issues/planning-and-tracking-with-projects/automating-your-project/adding-items-automatically).
