@@ -46,7 +46,7 @@ python3 scripts/sync_project.py          # expect zero proposed changes
 
 The script uses the authenticated GitHub CLI with `project` and repository access.
 It verifies the repository link, paginates Project items, skips other repositories
-and drafts, rejects conflicting labels and truncated label/field responses, and
+and Project draft items, rejects conflicting labels and truncated label/field responses, and
 resolves actual field/option/item IDs. Removing a classification label clears its
 mirror. Lifecycle reconciliation sets completed issues and merged PRs to Done,
 closed non-completed issues and unmerged PRs to Backlog, reopened issues previously
@@ -149,8 +149,9 @@ assignment. #43–#47 and #58 retain their label priorities and roadmap phases.
 
 **Disabled:** Item closed, Auto-close issue, Auto-archive items, Code changes requested,
 and Code review approved. Board movement cannot close issues. No auto-merge
-setting, CI definition, branch protection, deployment, paid evaluation or
-background job was enabled or changed.
+setting, CI definition, deployment, paid evaluation or background job was enabled.
+The separately authorized review exception is documented below; mandatory CI and
+branch deletion/force-push protections remain enforced.
 
 The native close workflow has no completion-reason selector, so it is disabled.
 Run the synchronizer after closures: only stateReason COMPLETED becomes Done;
@@ -198,8 +199,28 @@ Never put private session bodies, memory-derived information, analyzed-project
 identities, credentials, private findings or private-derived aggregates in public
 issues, documentation, reports or Project fields.
 
-Documentation changes are maintained in PR #59 and require its normal review/CI;
-the Project exists independently of that PR being merged.
+## Repository merge policy
+
+[Main ruleset #26281458](https://github.com/mihazs/agent-harness-lab/rules/26281458)
+requires a pull request and four GitHub Actions checks: offline-packaging,
+test (3.11), test (3.12), and test (3.13). Deletion and force-push protections
+remain active. This ruleset has no bypass actors.
+
+[Main review approval #26291879](https://github.com/mihazs/agent-harness-lab/rules/26291879)
+separately requires one approving review, with a PR-only exception for user
+mihazs (GitHub user ID 3963793), explicitly requested by the maintainer.
+This native exception follows the **merging user**, not PR authorship: mihazs
+can also use it when merging another author's PR. Other users still need an
+approval. It does not exempt anyone from the checks or protections in Main.
+
+GitHub can still display REVIEW_REQUIRED on an otherwise passing PR. The
+eligible user can select the merge-time review bypass; do not interpret that
+as permission to ignore failed, pending or missing CI. No automatic merging is
+enabled by this policy. Self-review is not independent reviewer approval.
+
+The operating guide and foreground synchronizer are maintained with repository
+code through pull requests and required CI. The live Project is configured
+separately; a documentation change alone does not configure it.
 
 References: [GitHub Projects quickstart](https://docs.github.com/en/issues/planning-and-tracking-with-projects/learning-about-projects/quickstart-for-projects),
 [Project filtering](https://docs.github.com/en/issues/planning-and-tracking-with-projects/customizing-views-in-your-project/filtering-projects),
