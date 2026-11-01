@@ -185,6 +185,42 @@ checkpoint commit. Transport availability grants no inference or grading authori
 Native tests use synthetic wire responses; live TLS/provider behavior remains
 unverified. Remote connectors and CLI API configuration remain unavailable until
 provider-specific contracts and authorization checks are implemented.
+
+## Opt-in ai-memory MCP reads
+
+`sources.mcp.AiMemoryMCP` implements the documented stateless JSON variant of
+ai-memory Streamable HTTP. It is an explicit Python API, not a default discovery
+or CLI connection. Configure an HTTPS `/mcp` endpoint, exact workspace/project
+names, expected ai-memory server version and SHA-256 fingerprints of the reviewed
+`memory_query` and `memory_read_page` input schemas. The API SourceSpec must bind
+the endpoint fingerprint, project/workspace name fingerprints, matching server
+version, explicit enablement and configured authentication. Supply authorization
+in memory; the reader inspects no credential stores.
+
+Each bounded operation initializes protocol `2024-11-05`, verifies server name
+and version, discovers/pins the scoped tool schemas and calls only a whitelisted
+reader. Discovery is limited to five tool-list pages, with cycle/duplicate/schema
+checks. Server instructions and tool annotations grant no permissions. All tool
+calls send both workspace and project; global/scopes/cwd overrides and mutators
+are rejected. Query disables answer generation and global search, limits hits to
+20 and excludes supplemental global/profile results from its return value.
+Page reads require matching paths and refuse explicitly truncated bodies.
+
+TLS, byte limits, socket timeouts, cooperative deadlines, response cleanup,
+redirect refusal and no-retry behavior share the GET transport primitives. RPC
+IDs/errors, tool-level errors and non-JSON results fail closed with redacted public
+errors. Responses are untrusted private data returned in memory, not automatically
+written to a journal or injected into an agent. Server-side access counters may
+change on reads according to ai-memory behavior; no content mutation tool is used.
+
+This bounded mode supports JSON responses from stateless servers. SSE-only and
+stateful responses are unsupported; an explicitly requested initialization may
+create protocol session state before a stateful header is rejected. Full session
+lifecycle/SSE, remote CLI configuration, normalized journal facets, correlation
+and live-server verification remain open in #43. No server is contacted by package
+installation, constructor invocation, help or default source discovery. Native
+tests use synthetic wire responses; they establish client contracts, not live
+server efficacy or scientific independence.
 No source is enabled by installation. Tests use synthetic metadata; they establish
 contract validation, checkpoint behavior and a side-effect-free registry, not
 real-source compatibility, containment, diagnostic usefulness or certification.

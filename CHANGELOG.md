@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.0
+
+### Minor Changes
+
+- Add an opt-in stateless JSON MCP reader for ai-memory memory_query and memory_read_page. Require explicit scope/authentication and pinned server/tool schemas, reject mutators/global queries/stateful or SSE-only responses, bound discovery and payloads, and redact failures without retries. Reuse bounded HTTPS exchange logic with the existing GET transport. Remote CLI activation and normalized MCP journal ingestion remain pending.
+
 ## 0.10.0
 
 ### Minor Changes

@@ -13,6 +13,40 @@ class TransportError(ValueError):
     """Redacted transport failure; raw URLs, headers and bodies stay in memory."""
 
 
+def _json_exchange(origin, target, headers, *, timeout, deadline, max_bytes, body=None):
+    connection = http.client.HTTPSConnection(*origin,
+        timeout=min(timeout, deadline-time.monotonic()), context=ssl.create_default_context())
+    response = None
+    try:
+        connection.request('GET' if body is None else 'POST', target, body=body, headers=headers)
+        response = connection.getresponse()
+        if response.status != 200 or response.getheader('Content-Encoding', 'identity') != 'identity':
+            raise TransportError('unsupported HTTP status or encoding')
+        length = response.getheader('Content-Length')
+        if length is not None and (not length.isdecimal() or int(length) > max_bytes):
+            raise TransportError('response byte limit exceeded')
+        chunks, size = [], 0
+        while True:
+            if time.monotonic() >= deadline:
+                raise TransportError('collection deadline reached')
+            chunk = response.read1(min(65536, max_bytes-size+1))
+            if time.monotonic() >= deadline:
+                raise TransportError('collection deadline reached')
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > max_bytes:
+                raise TransportError('response byte limit exceeded')
+            chunks.append(chunk)
+        if length is not None and size != int(length):
+            raise TransportError('incomplete HTTP response')
+        return json.loads(b''.join(chunks), object_pairs_hook=unique_object), dict(response.getheaders()), size
+    finally:
+        if response is not None:
+            response.close()
+        connection.close()
+
+
 def endpoint(url):
     if not isinstance(url, str) or not url or len(url) > 8192 or any(ord(c) <= 32 or ord(c) >= 127 for c in url):
         raise TransportError('invalid HTTPS endpoint')
@@ -52,7 +86,7 @@ class JsonAPI:
             raise TransportError('pagination exceeded the configured endpoint')
         return parsed.path or '/', parsed.query
 
-    def pages(self, source, *, project_sha256, scope_sha256, decode, authorization=None):
+    def _authorize(self, source, *, project_sha256, scope_sha256, authorization):
         fingerprint(project_sha256); fingerprint(scope_sha256)
         if (not isinstance(source, SourceSpec) or not source.enabled or source.kind != 'api'
                 or source.identity_provenance == 'unverified' or source.root_sha256 != digest(self.base)
@@ -63,6 +97,9 @@ class JsonAPI:
                 raise TransportError('explicit authorization is required')
         elif authorization is not None:
             raise TransportError('authorization conflicts with the configured source')
+
+    def pages(self, source, *, project_sha256, scope_sha256, decode, authorization=None):
+        self._authorize(source, project_sha256=project_sha256, scope_sha256=scope_sha256, authorization=authorization)
         if not callable(decode):
             raise TransportError('an explicit provider page decoder is required')
         try:
@@ -82,46 +119,18 @@ class JsonAPI:
             headers = {'Accept': 'application/json', 'Accept-Encoding': 'identity'}
             if authorization is not None:
                 headers['Authorization'] = authorization
-            connection = http.client.HTTPSConnection(*self.origin,
-                timeout=min(self.timeout, deadline-time.monotonic()), context=ssl.create_default_context())
-            response = None
-            try:
-                connection.request('GET', target+('?' + query if query else ''), headers=headers)
-                response = connection.getresponse()
-                if response.status != 200 or response.getheader('Content-Encoding', 'identity') != 'identity':
-                    raise TransportError('unsupported HTTP status or encoding')
-                length = response.getheader('Content-Length')
-                if length is not None and (not length.isdecimal() or int(length) > self.max_bytes-used):
-                    raise TransportError('response byte limit exceeded')
-                chunks, size = [], 0
-                while True:
-                    if time.monotonic() >= deadline:
-                        raise TransportError('collection deadline reached')
-                    chunk = response.read1(min(65536, self.max_bytes-used-size+1))
-                    if time.monotonic() >= deadline:
-                        raise TransportError('collection deadline reached')
-                    if not chunk:
-                        break
-                    size += len(chunk)
-                    if used+size > self.max_bytes:
-                        raise TransportError('response byte limit exceeded')
-                    chunks.append(chunk)
-                if length is not None and size != int(length):
-                    raise TransportError('incomplete HTTP response')
-                used += size
-                page = decode(json.loads(b''.join(chunks), object_pairs_hook=unique_object), dict(response.getheaders()))
-                if not isinstance(page, dict) or set(page) != {'items', 'next'} or not isinstance(page['items'], list):
-                    raise TransportError('unsupported page envelope')
-                if len(output)+len(page['items']) > 10000:
-                    raise TransportError('record limit exceeded')
-                output.extend(page['items'])
-                if page['next'] is None:
-                    return tuple(output)
-                if not isinstance(page['next'], str) or not page['next']:
-                    raise TransportError('invalid pagination link')
-                url = urljoin(url, page['next'])
-            finally:
-                if response is not None:
-                    response.close()
-                connection.close()
+            value, response_headers, size = _json_exchange(self.origin, target+('?' + query if query else ''),
+                headers, timeout=self.timeout, deadline=deadline, max_bytes=self.max_bytes-used)
+            used += size
+            page = decode(value, response_headers)
+            if not isinstance(page, dict) or set(page) != {'items', 'next'} or not isinstance(page['items'], list):
+                raise TransportError('unsupported page envelope')
+            if len(output)+len(page['items']) > 10000:
+                raise TransportError('record limit exceeded')
+            output.extend(page['items'])
+            if page['next'] is None:
+                return tuple(output)
+            if not isinstance(page['next'], str) or not page['next']:
+                raise TransportError('invalid pagination link')
+            url = urljoin(url, page['next'])
         raise TransportError('pagination limit reached')
