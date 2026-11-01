@@ -19,6 +19,18 @@ tasks:
     desc: Run source contracts and checkpoint unittest cases
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_*.py"'
+  test:sources:github:live:
+    desc: Run explicitly selected public GitHub acceptance without credentials or captured fixtures
+    requires:
+      vars: [GITHUB_ENDPOINT, GITHUB_REPO_ID, GITHUB_ISSUE, GITHUB_PULL]
+    env:
+      AHL_TEST_GITHUB_LIVE: '1'
+      AHL_TEST_GITHUB_ENDPOINT: '{{.GITHUB_ENDPOINT}}'
+      AHL_TEST_GITHUB_REPO_ID: '{{.GITHUB_REPO_ID}}'
+      AHL_TEST_GITHUB_ISSUE: '{{.GITHUB_ISSUE}}'
+      AHL_TEST_GITHUB_PULL: '{{.GITHUB_PULL}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_github_live.py" -v'
   test:hooks:
     desc: Run native Lefthook and staged-index integration tests
     cmds:

@@ -501,15 +501,62 @@ Raw comment/code/message text is neither stored nor printed. Fingerprints remain
 private metadata rather than an anonymization guarantee. The reader emits no
 execution identities, inferred tombstones, causal labels or scientific independence.
 
-This first slice leaves thread resolution/outdated state unknown without native
-GraphQL evidence. Timeline events, CI/checks, per-commit file detail, commit comments,
-conditional/incremental/deletion handling, time windows and remote CLI integration
-remain open in #45/#42. An omitted comment is not proof of deletion or no defect.
+Version 1 leaves thread resolution/outdated state unknown without native GraphQL
+evidence and does not read timelines or CI/checks; the explicit profile below adds
+those reads. Per-commit file detail, commit comments, conditional/incremental/deletion
+handling, time windows and remote CLI integration remain open in #45/#42. An omitted
+comment is not proof of deletion or no defect.
 Readbacks limit head inconsistency but do not make multiple REST calls an atomic
 server snapshot. Native unittest fixtures cover the client contract using fake
 HTTPS responses; live GitHub compatibility, concurrency and diagnostic utility
 are not established by those fixtures. No source or server is contacted by install,
 help, constructor invocation or default discovery.
+
+### Selected timeline and CI detail profile
+
+`GitHubSelection(..., schema_version=2, details=("checks", "timeline"))` explicitly
+selects the additional surfaces. Details are unique, sorted capability names;
+select either or both. Use `selection.source_version` (`2026-03-10-v2`) in the
+SourceSpec and registry capability. The scope fingerprint includes the flags.
+The request API date remains `2026-03-10`. Version-1 selection serialization,
+fingerprints, provider version and request set remain unchanged; new reads are
+never enabled by upgrading the package alone.
+
+The timeline profile reads each selected issue/PR's
+[native timeline](https://docs.github.com/en/rest/issues/timeline). Supported stable
+event IDs retain parent, event type, actor/time, optional commit reference and a
+content fingerprint. Comment projections reuse their native comment record;
+review projections link only when normalized native parent and revision metadata
+match the captured review. Different projections do not imply independent roots.
+
+GitHub's [cross-reference event](https://docs.github.com/en/rest/using-the-rest-api/issue-event-types#cross-referenced)
+provides an explicit source issue but no stable event ID. The collector represents
+that native issue pair while leaving distinct occurrence identity unknown. A
+reference can link to an already selected issue only when repository URL, issue
+number and native ID agree. Foreign references remain fingerprinted and unlinked;
+the reader does not fetch their URLs. Unsupported or unidentified event forms,
+including forms without a supported native identity, remain hash-only
+`unmapped_timeline` diagnostics with partial coverage. They are not fabricated
+native events or inferred absence of a relationship.
+
+The checks profile reads [check runs](https://docs.github.com/en/rest/checks/runs#list-check-runs-for-a-git-reference)
+and [commit statuses](https://docs.github.com/en/rest/commits/statuses#list-commit-statuses-for-a-reference)
+for the captured full PR head SHA. Check-run IDs, suites/apps, status/conclusion
+and timestamps remain separate from commit-status IDs, contexts and descriptions.
+Names/descriptions/targets are fingerprints; external result URLs are never
+followed. Every check/status binds to its requested native head and selected
+repository. A successful CI state remains development-artifact process evidence,
+not a grader reference or verified task outcome.
+
+Check-run envelope totals must stay consistent across pages and match the listed
+records; malformed counts, truncation, foreign URLs and wrong heads reject the
+capture. GitHub's default latest-check filter and reference endpoint limits do not
+establish complete check history, so `latest_checks_only` remains explicit. All new
+calls share the original request/byte/deadline budgets, and final issue/PR/repository
+readbacks still gate the snapshot. HTTP denial and an unavailable detail surface
+cannot be reported as an empty successful check/review set. GraphQL thread
+resolution, per-commit files/comments, conditional/incremental/deletion handling,
+time windows and durable structured joins remain open.
 
 No source is enabled by installation. Tests use synthetic metadata; they establish
 contract validation, checkpoint behavior and a side-effect-free registry, not

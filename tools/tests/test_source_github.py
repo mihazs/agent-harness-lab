@@ -18,7 +18,7 @@ from agent_harness_lab.sources.store import SourceStore
 from agent_harness_lab.sources.transport import TransportError
 
 
-class GitHubSourceTests(unittest.TestCase):
+class GitHubFixture:
     def setUp(self):
         self.base = 'https://api.github.com/repos/synthetic-owner/synthetic-repository'
         self.path = '/repos/synthetic-owner/synthetic-repository'
@@ -83,6 +83,8 @@ class GitHubSourceTests(unittest.TestCase):
             self.assertNotIn(secret, rendered)
         return client, snapshot
 
+
+class GitHubSourceTests(GitHubFixture, unittest.TestCase):
     def test_explicit_capture_distinguishes_three_review_forms_and_never_grades_approval(self):
         client, snapshot = self.read()
         kinds = {r.record_type for r in snapshot.records}

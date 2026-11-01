@@ -41,9 +41,14 @@ class GitHubSelection(Contract):
     issues: tuple = ()
     pulls: tuple = ()
     schema_version: int = 1
+    details: tuple = ()
 
     def __post_init__(self):
-        self.validate((), {}); integer(self.repo_id, minimum=1)
+        if type(self.schema_version) is not int or self.schema_version not in (1, 2): raise ValueError('unsupported GitHub selection version')
+        integer(self.repo_id, minimum=1)
+        if (type(self.details) is not tuple or len(self.details) > 2 or any(d not in ('checks', 'timeline') for d in self.details)
+                or tuple(sorted(set(self.details))) != self.details or self.schema_version == 1 and self.details):
+            raise ValueError('invalid explicit GitHub details')
         for numbers in (self.issues, self.pulls):
             if type(numbers) is not tuple or len(numbers) > 10: raise ValueError('invalid GitHub selection')
             for number in numbers: integer(number, minimum=1)
@@ -52,9 +57,20 @@ class GitHubSelection(Contract):
 
     @classmethod
     def parse(cls, value):
-        if not isinstance(value, dict) or set(value) != set(cls.__dataclass_fields__): raise ValueError('invalid GitHub selection fields')
+        if not isinstance(value, dict): raise ValueError('invalid GitHub selection')
+        fields = set(cls.__dataclass_fields__)-({'details'} if value.get('schema_version') != 2 else set())
+        if set(value) != fields: raise ValueError('invalid GitHub selection fields')
         if not all(isinstance(value[k], (list, tuple)) for k in ('issues', 'pulls')): raise ValueError('invalid GitHub number collections')
-        return cls(**{**value, 'issues': tuple(value['issues']), 'pulls': tuple(value['pulls'])})
+        if 'details' in value and not isinstance(value['details'], (list, tuple)): raise ValueError('invalid GitHub details collection')
+        return cls(**{**value, 'issues': tuple(value['issues']), 'pulls': tuple(value['pulls']), 'details': tuple(value.get('details', ()))})
+
+    def to_dict(self):
+        value = super().to_dict()
+        if self.schema_version == 1: value.pop('details')
+        return value
+
+    @property
+    def source_version(self): return API_VERSION+'-v'+str(self.schema_version)
 
     @property
     def project_sha256(self): return digest(('github.repository', self.repo_id))
@@ -117,17 +133,25 @@ class GitHubAPI:
             following = int(values['page'])
         return following
 
-    def _list(self, suffix, state, key='id'):
-        page, result, seen = 1, [], set()
+    def _list(self, suffix, state, key='id', *, envelope=None):
+        page, result, seen, total = 1, [], set(), None
         while page is not None:
             value, headers = self._get(suffix+f'?per_page=100&page={page}', state)
+            if envelope is not None:
+                if envelope != 'check_runs' or not isinstance(value, dict): raise ValueError('unsupported GitHub listing envelope')
+                count = integer(value['total_count'])
+                if total is not None and total != count: raise ValueError('GitHub listing total changed')
+                total, value = count, value[envelope]
             if not isinstance(value, list) or len(value) > 100 or len(result)+len(value) > 10000:
                 raise ValueError('GitHub listing is malformed or excessive')
             for item in value:
-                if not isinstance(item, dict) or key not in item or digest(item[key]) in seen: raise ValueError('duplicate or missing GitHub listing identity')
-                seen.add(digest(item[key]))
+                if not isinstance(item, dict): raise ValueError('invalid GitHub listing item')
+                if key is not None:
+                    if key not in item or digest(item[key]) in seen: raise ValueError('duplicate or missing GitHub listing identity')
+                    seen.add(digest(item[key]))
             result.extend(value)
             page = self._next(headers.get('link'), suffix, page)
+        if total is not None and len(result) != total: raise ValueError('GitHub listing total is incomplete')
         return result
 
     def _repository(self, value):
@@ -193,14 +217,98 @@ class GitHubAPI:
                 resolved='unknown', outdated='unknown')
         return node
 
+    def _review(self, value, number, head, *, timeline=False):
+        self._url(value['pull_request_url'], f'/pulls/{number}')
+        status = value['state'].upper() if timeline else value['state']
+        if status not in ('APPROVED', 'CHANGES_REQUESTED', 'COMMENTED', 'DISMISSED', 'PENDING'): raise ValueError('unsupported GitHub review state')
+        return dict(parent_sha256=digest((self.selection.repo_id, 'pull', number)), state=status,
+            commit_sha256=commit_hash(value['commit_id']), body_sha256=text_hash(value['body']),
+            submitted_at=moment(value['submitted_at']), actor_sha256=self._actor(value['user']),
+            matches_head=None if value['commit_id'] is None or head is None else commit_hash(value['commit_id']) == head)
+
     def read(self, source):
         try:
-            if not isinstance(source, SourceSpec) or (source.provider, source.version) != ('github', SOURCE_VERSION): raise ValueError('unsupported GitHub source')
+            if not isinstance(source, SourceSpec) or (source.provider, source.version) != ('github', self.selection.source_version): raise ValueError('unsupported GitHub source')
             self.transport._authorize(source, project_sha256=self.selection.project_sha256,
                 scope_sha256=self.selection.sha256, authorization=self.authorization)
             return self._capture(source)
         except Exception:
             raise TransportError('GitHub capture blocked or incomplete; no automatic retry or checkpoint commit') from None
+
+    def _checks(self, sha, parent, state, emit, relations):
+        head = commit_hash(sha)
+        if head is None: raise ValueError('check capture requires a full head identity')
+        for run in self._list('/commits/'+sha+'/check-runs', state, envelope='check_runs'):
+            native = integer(run['id'], minimum=1); self._url(run['url'], '/check-runs/'+str(native))
+            if (run['head_sha'] != sha or run['status'] not in ('queued', 'in_progress', 'completed', 'waiting', 'requested', 'pending')
+                    or run['conclusion'] not in (None, 'action_required', 'cancelled', 'failure', 'neutral', 'success', 'skipped', 'stale', 'timed_out', 'startup_failure')):
+                raise ValueError('GitHub check head/status mismatch')
+            value = dict(head_sha256=head, name_sha256=text_hash(run['name'], required=True), status=run['status'],
+                conclusion=run['conclusion'], started_at=moment(run['started_at']), completed_at=moment(run['completed_at']),
+                suite_sha256=digest(integer(run['check_suite']['id'], minimum=1)),
+                app_sha256=digest(integer(run['app']['id'], minimum=1)) if run['app'] else None)
+            key = emit('github_check_run', native, value, value['started_at']); relations.add(('check_on', key, parent))
+        for status in self._list('/commits/'+sha+'/statuses', state):
+            self._url(status['url'], '/statuses/'+sha)
+            if status['state'] not in ('error', 'failure', 'pending', 'success'): raise ValueError('unsupported GitHub commit status')
+            value = dict(head_sha256=head, state=status['state'], context_sha256=text_hash(status['context'], required=True),
+                description_sha256=text_hash(status['description']), target_sha256=text_hash(status['target_url']),
+                created_at=moment(status['created_at']), updated_at=moment(status['updated_at']), actor_sha256=self._actor(status['creator']))
+            key = emit('github_commit_status', integer(status['id'], minimum=1), value, value['created_at'])
+            relations.add(('status_on', key, parent))
+
+    def _timeline(self, number, parent, issues, pulls, state, emit, nodes, relations):
+        unmapped = []
+        common = ('assigned', 'unassigned', 'closed', 'reopened', 'merged', 'referenced', 'connected', 'disconnected',
+            'labeled', 'unlabeled', 'milestoned', 'demilestoned', 'renamed', 'head_ref_force_pushed', 'head_ref_deleted',
+            'head_ref_restored', 'review_requested', 'review_request_removed', 'ready_for_review', 'convert_to_draft',
+            'base_ref_changed', 'locked', 'unlocked', 'pinned', 'unpinned', 'subscribed', 'unsubscribed')
+        for event in self._list(f'/issues/{number}/timeline', state, key=None):
+            kind = event.get('event')
+            if kind == 'cross-referenced':
+                if event['source']['type'] != 'issue': raise ValueError('unsupported GitHub reference origin')
+                origin = event['source']['issue']; native = integer(origin['id'], minimum=1); other = integer(origin['number'], minimum=1)
+                parsed, path = endpoint(origin['url'])
+                if ((parsed.hostname, parsed.port or 443) != self.transport.origin or parsed.query
+                        or re.fullmatch(r'/repos/[^/]+/[^/]+/issues/'+str(other), path) is None):
+                    raise ValueError('invalid GitHub native cross-reference')
+                local = path.casefold() == (self.transport.path+f'/issues/{other}').casefold()
+                value = dict(parent_sha256=parent, source_issue_sha256=digest(native), source_url_sha256=digest(('https://api.github.com', path.casefold())),
+                    source_scope='selected_repository' if local else 'foreign_repository', occurrence_identity='unknown',
+                    created_at=moment(event['created_at']), updated_at=moment(event['updated_at']), actor_sha256=self._actor(event['actor']))
+                key = emit('github_cross_reference', (parent, native, value['source_url_sha256']), value, value['created_at'])
+                relations.add(('timeline_on', key, parent))
+                if local and other in issues:
+                    if issues[other]['id_sha256'] != digest(native): raise ValueError('GitHub reference has conflicting native identity')
+                    relations.add(('references_issue', key, digest(('github_issue', self.selection.repo_id, native))))
+                continue
+            if kind not in (*common, 'commented', 'reviewed') or type(event.get('id')) is not int:
+                unmapped.append(dict(parent_sha256=parent, event_type_sha256=digest(kind), content_sha256=digest(event)))
+                continue
+            native = integer(event['id'], minimum=1)
+            value = dict(parent_sha256=parent, event=kind, created_at=moment(event.get('created_at', event.get('submitted_at'))),
+                actor_sha256=self._actor(event.get('actor', event.get('user'))), source_content_sha256=digest(event))
+            namespace = 'issue_event'
+            related = None
+            if kind == 'commented':
+                comment = self._comment(event, number)
+                related = emit('github_issue_comment', native, comment, comment['created_at']); namespace = 'comment'
+            elif kind == 'reviewed':
+                review = self._review(event, number, pulls.get(number, {}).get('head_sha256'), timeline=True)
+                namespace = 'review'
+                value.update(commit_sha256=commit_hash(event['commit_id']), body_sha256=text_hash(event['body']))
+                candidate = digest(('github_review', self.selection.repo_id, native))
+                if candidate in nodes:
+                    if nodes[candidate] != dict(kind='github_review', native_id_sha256=candidate, **review):
+                        raise ValueError('GitHub timeline review conflicts with captured parent/revision')
+                    related = candidate
+            else:
+                self._url(event['url'], '/issues/events/'+str(native))
+                value['commit_sha256'] = commit_hash(event.get('commit_id'))
+            key = emit('github_timeline_event', (namespace, native), value, value['created_at'])
+            relations.add(('timeline_on', key, parent))
+            if related is not None: relations.add(('timeline_comment' if kind == 'commented' else 'timeline_review', key, related))
+        return unmapped
 
     def _capture(self, source):
         state = dict(requests=0, used=0, deadline=time.monotonic()+self.transport.seconds)
@@ -211,7 +319,7 @@ class GitHubAPI:
             value = dict(kind=kind, native_id_sha256=key, **node)
             revision = digest(value)
             record = EvidenceRecord(source.source_key, key, revision, revision,
-                'contextual_assertion' if kind in ('github_issue', 'github_issue_comment', 'github_review_comment', 'github_review') else 'development_artifact',
+                'contextual_assertion' if kind in ('github_issue', 'github_issue_comment', 'github_review_comment', 'github_review', 'github_cross_reference') else 'development_artifact',
                 kind, collected, original_at=original, provenance='native_field', capture_completeness='partial')
             if key in records and records[key].revision_sha256 != revision: raise ValueError('conflicting GitHub native revision')
             records[key], nodes[key] = record, value
@@ -257,13 +365,7 @@ class GitHubAPI:
                 key = emit('github_commit', sha, value, value['committer_at']); relations.add(('commit_on', key, parent))
             review_keys = {}
             for review in self._list(f'/pulls/{number}/reviews', state):
-                self._url(review['pull_request_url'], f'/pulls/{number}')
-                if review['state'] not in ('APPROVED', 'CHANGES_REQUESTED', 'COMMENTED', 'DISMISSED', 'PENDING'): raise ValueError('unsupported GitHub review state')
-                value = dict(parent_sha256=digest((self.selection.repo_id, 'pull', number)),
-                    state=review['state'], commit_sha256=commit_hash(review['commit_id']),
-                    body_sha256=text_hash(review['body']), submitted_at=moment(review['submitted_at']),
-                    actor_sha256=self._actor(review['user']),
-                    matches_head=None if review['commit_id'] is None else commit_hash(review['commit_id']) == node['head_sha256'])
+                value = self._review(review, number, node['head_sha256'])
                 key = emit('github_review', integer(review['id'], minimum=1), value, value['submitted_at'])
                 review_keys[review['id']] = key
                 relations.add(('review_on', key, parent))
@@ -273,6 +375,11 @@ class GitHubAPI:
                 relations.add(('inline_on', key, parent))
                 if comment['pull_request_review_id'] in review_keys:
                     relations.add(('inline_review', key, review_keys[comment['pull_request_review_id']]))
+            if 'checks' in self.selection.details: self._checks(raw['head']['sha'], parent, state, emit, relations)
+        unmapped = []
+        if 'timeline' in self.selection.details:
+            for number, parent in issue_keys.items():
+                unmapped.extend(self._timeline(number, parent, issues, pulls, state, emit, nodes, relations))
         for number, before in issues.items():
             if self._issue(self._get(f'/issues/{number}', state)[0], number) != before: raise ValueError('GitHub issue changed during capture')
         for number, before in pulls.items():
@@ -281,8 +388,12 @@ class GitHubAPI:
         summary = dict(schema_version=1, api_version=API_VERSION, source_identity='repository_id_checked',
             repository=repository, nodes=[nodes[k] for k in sorted(nodes)], relations=sorted(relations),
             capture_completeness='partial', warnings=['selected_resources_only', 'thread_resolution_unknown', 'execution_binding_unknown'])
-        coverage = CoverageManifest(source.source_key, source.scope_sha256, source.scope_sha256, SOURCE_VERSION,
-            'github-rest-v1', (ScanBound('records', 10000, len(records)), ScanBound('pages', self.transport.max_pages, state['requests']),
+        if self.selection.schema_version == 2:
+            summary.update(detail_capabilities=self.selection.details, unmapped_timeline=unmapped)
+            if unmapped: summary['warnings'].append('timeline_event_identity_unknown')
+            if 'checks' in self.selection.details: summary['warnings'].append('latest_checks_only')
+        coverage = CoverageManifest(source.source_key, source.scope_sha256, source.scope_sha256, self.selection.source_version,
+            'github-rest-v'+str(self.selection.schema_version), (ScanBound('records', 10000, len(records)), ScanBound('pages', self.transport.max_pages, state['requests']),
             ScanBound('bytes', self.transport.max_bytes, state['used'])), gaps=('not_captured',), reported_completeness='partial')
         snapshot = Snapshot(digest(summary), tuple(records[k] for k in sorted(records)), ExecutionMetadata((), coverage))
         self.summary = summary
