@@ -213,6 +213,55 @@ missing-object remote denial, timeout cleanup and unchanged source contents/inde
 These checks establish the tested read policy, not general hostile-binary isolation
 or independently verified historical execution lineage.
 
+### Declared Codex project instruction inventory
+
+An optional `instruction_profile` in the Git selection enables bounded instruction
+discovery within the selected checkout. For the first documented capability contract:
+
+```json
+{
+  "schema_version": 1,
+  "runtime": "codex",
+  "version": "0.166.0",
+  "task_cwd": "src/task",
+  "fallback_filenames": ["TEAM.md"],
+  "project_doc_max_bytes": 32768
+}
+```
+
+The runtime/version, task location and configuration are caller declarations. The
+reader does not execute Codex, inspect its global configuration or establish that
+these settings were effective in any run. Other runtime/version combinations return
+an unsupported inventory instead of applying Codex precedence. This contract follows
+the [official instruction-discovery documentation](https://learn.chatgpt.com/docs/agent-configuration/agents-md),
+checked 2026-11-01; synthetic resolution tests are not native loading evidence.
+
+For the supported declaration, discovery examines each directory from the checkout
+root through `task_cwd`, considering `AGENTS.override.md`, `AGENTS.md` and the explicit
+fallback names in order. The first non-empty UTF-8 file is declared applicable;
+other non-empty candidates in that directory remain visible as shadowed. Selected
+files outside that directory chain are out of scope; unrecognized filenames within
+it remain unsupported. Parent and shadowing edges describe declared hierarchy,
+without resolving semantic contradictions in the text. Imports, path-scoped Claude
+rules, managed/global influence and hooks are outside this first profile.
+
+`GitExport.instructions` is a frozen `InstructionInventory`. Its fingerprint binds
+the profile, task cwd, all inspected file hashes/modes, missing-file states and the
+captured `HarnessSnapshot` fingerprint. Preview exposes only hashes and bounded
+metadata; import adds a fingerprinted development-artifact inventory record through
+the existing journal. No raw file text/path, applicability decision or discovery
+result grants permission to edit a file. Observed loading and ambient influence
+always remain unknown. A changed cwd, profile, HEAD, file content or mode invalidates
+the receipt. Consumers must also retain the enclosing source/project identity.
+
+The profile allows at most 32 cwd components, eight fallback basenames and a declared
+project instruction cap of 0–1 MiB. Files use the existing 1 MiB per-file and shared
+Git capture read/deadline bounds; non-UTF-8 files, links, nested repositories and
+submodule crossings fail the capture. The collector does not guess native partial
+file truncation: when selected non-empty files and separators exceed the declared
+byte cap, resolution is blocked and affected applicability remains unknown. A
+blocked or unsupported receipt is not a resolved effective instruction closure.
+
 ## ai-memory OKF project exports
 
 Select `local_file/ai-memory-okf/0.2` in the existing source declaration, with

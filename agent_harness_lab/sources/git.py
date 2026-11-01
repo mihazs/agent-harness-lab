@@ -10,6 +10,7 @@ import time
 from agent_harness_lab.config import read_json
 from agent_harness_lab.evaluation.integrity import contained, relative
 from .git_view import Folder, GitView, MAX_BYTES
+from .instructions import capture as capture_instructions, validate as validate_instruction_profile
 from .schema import EvidenceRecord, digest, fingerprint
 from .snapshot import LocalExport, Snapshot
 
@@ -75,7 +76,8 @@ class GitExport(LocalExport):
         descriptor = contained(self.manifest.parent, declaration['data'])
         selection = read_json(descriptor)
         fields = {'schema_version', 'checkout', 'git_dir', 'common_dir', 'harness_paths', 'max_commits'}
-        if not isinstance(selection, dict) or set(selection) != fields or type(selection['schema_version']) is not int or selection['schema_version'] != 1:
+        if (not isinstance(selection, dict) or set(selection) not in (fields, fields|{'instruction_profile'})
+                or type(selection['schema_version']) is not int or selection['schema_version'] != 1):
             raise ValueError('invalid Git selection descriptor')
         if digest(selection) != source.scope_sha256: raise ValueError('Git selection scope mismatch')
         for key in ('checkout', 'git_dir', 'common_dir'): relative(selection[key])
@@ -88,6 +90,8 @@ class GitExport(LocalExport):
                 raise ValueError('unsafe Git harness path')
         count = selection['max_commits']
         if type(count) is not int or not 1 <= count <= 100: raise ValueError('invalid Git history bound')
+        profile = selection.get('instruction_profile')
+        if 'instruction_profile' in selection: validate_instruction_profile(profile)
         deadline = time.monotonic()+10
         self.warnings, self.trees, self.algorithm = set(), {}, 'sha1'
         with Folder(self.manifest.parent, deadline) as folder, GitView(deadline) as view:
@@ -149,10 +153,7 @@ class GitExport(LocalExport):
                 rows.append(record('git_ref', name, digest(value), digest(value)))
             files = []
             for path in sorted(paths):
-                for ancestor in Path(path).parents:
-                    if str(ancestor) != '.' and folder.inspect(str(Path(checkout)/ancestor/'.git')) is not None:
-                        raise NotImplementedError('nested repositories are excluded from Git harness capture')
-                committed, mode = self.committed(head, path)
+                committed, mode = self.harness_file(head, checkout, path)
                 name = str(Path(checkout)/path)
                 data = folder.read(name, 1024*1024)
                 info = folder.inspect(name)
@@ -163,11 +164,17 @@ class GitExport(LocalExport):
             for file in files:
                 value = asdict(file)
                 rows.append(record('harness_file', file.path_sha256, digest(value), digest(value)))
+            instructions = None
+            if profile is not None:
+                self.harness_file(head, checkout, str(Path(profile['task_cwd'])/'AGENTS.md'))
+                instructions = capture_instructions(profile, folder, checkout, paths, git_harness_sha256=harness.sha256)
+                rows.append(record('instruction_inventory', 'project', instructions.sha256, instructions.sha256))
             folder.verify()
             if Folder.stamp(view.binary.stat()) != view.binary_stamp: raise ValueError('trusted Git binary changed')
             if read_json(descriptor) != selection or self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)[0] != source:
                 raise ValueError('Git selection changed during capture')
             self.harness = harness
+            self.instructions = instructions
             self.summary = dict(head_sha256=harness.head_sha256, branch_sha256=digest(branch) if branch else None,
                 commits=graph, refs=[dict(name_sha256=digest(n), target_sha256=digest(t.decode()), object_type=k) for n, t, k in valid_refs],
                 harness=asdict(harness), harness_sha256=harness.sha256, git_version=view.version,
@@ -175,7 +182,15 @@ class GitExport(LocalExport):
                 source_worktree_config_sha256=hashlib.sha256(worktree_config).hexdigest() if worktree_config is not None else None,
                 warnings=sorted(self.warnings|{'source_configuration_ignored', 'effective_settings_unknown', 'selected_paths_only'}),
                 network_used=False, capture_completeness='partial', source_identity='caller_declared')
+            if instructions is not None:
+                self.summary.update(instruction_inventory=asdict(instructions), instruction_inventory_sha256=instructions.sha256)
             return Snapshot(digest(self.summary), tuple(rows))
+
+    def harness_file(self, head, checkout, path):
+        for ancestor in Path(path).parents:
+            if str(ancestor) != '.' and self.folder.inspect(str(Path(checkout)/ancestor/'.git')) is not None:
+                raise NotImplementedError('nested repositories are excluded from Git harness capture')
+        return self.committed(head, path)
 
     def layout(self, checkout, git_dir, common):
         folder = self.folder

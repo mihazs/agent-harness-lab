@@ -262,6 +262,59 @@ class GitSourceTests(unittest.TestCase):
         self.assertEqual(before.observed_loading, 'unknown')
         self.assertNotEqual(before.files[0].content_sha256, collector.harness.files[0].content_sha256)
 
+    def instruction_profile(self, cwd='src/task'):
+        (self.repo/cwd).mkdir(parents=True, exist_ok=True)
+        self.selection['instruction_profile'] = dict(schema_version=1, runtime='codex', version='0.166.0',
+            task_cwd=cwd, fallback_filenames=[], project_doc_max_bytes=32768)
+        self.declare()
+
+    def test_optional_instruction_inventory_binds_declared_hierarchy_to_the_captured_harness(self):
+        self.instruction_profile()
+        (self.repo/'src/AGENTS.override.md').write_text('SYNTHETIC_NESTED_INSTRUCTION')
+        collector, first = self.read(); before = collector.instructions
+        self.assertEqual(before.git_harness_sha256, collector.harness.sha256)
+        self.assertEqual(collector.summary['instruction_inventory_sha256'], before.sha256)
+        active = {n.path_sha256 for n in before.nodes if n.applicability == 'declared_applicable'}
+        self.assertEqual(active, {digest('AGENTS.md'), digest('src/AGENTS.override.md')})
+        self.assertIn('instruction_inventory', {r.record_type for r in first.records})
+        (self.repo/'src/AGENTS.override.md').write_text('SYNTHETIC_NEW_INSTRUCTION')
+        newer = collector.read(self.source)
+        self.assertNotEqual(first.sha256, newer.sha256)
+        self.assertNotEqual(before.sha256, collector.instructions.sha256)
+        self.assertEqual(before.observed_loading, 'unknown')
+
+    def test_instruction_scope_cannot_cross_a_gitlink_or_nested_repository(self):
+        oid = self.git('rev-parse', 'HEAD').decode().strip()
+        self.git('update-index', '--add', '--cacheinfo', f'160000,{oid},vendor')
+        self.git('commit', '-m', 'SYNTHETIC_GITLINK')
+        self.instruction_profile('vendor/task')
+        (self.repo/'vendor/task/AGENTS.md').write_text('SYNTHETIC_FOREIGN')
+        original = Folder.read
+        def guarded(folder, name, *args):
+            self.assertNotEqual(name, 'repo/vendor/task/AGENTS.md')
+            return original(folder, name, *args)
+        with patch.object(Folder, 'read', guarded): self.assertEqual(self.invoke('preview')[0], 3)
+
+    def test_instruction_file_race_does_not_advance_an_existing_journal(self):
+        self.instruction_profile()
+        target = self.repo/'src/AGENTS.md'; target.write_text('SYNTHETIC_BEFORE')
+        cache = self.root/'instruction-journal.json'
+        self.assertEqual(self.invoke('import', '--cache', str(cache))[0], 0)
+        original, before = Folder.read, cache.read_bytes()
+        def change_after_read(folder, name, *args):
+            raw = original(folder, name, *args)
+            if name == 'repo/src/AGENTS.md': target.write_text('SYNTHETIC_CHANGED')
+            return raw
+        with patch.object(Folder, 'read', change_after_read):
+            self.assertEqual(self.invoke('import', '--cache', str(cache))[0], 2)
+        self.assertEqual(cache.read_bytes(), before)
+
+    def test_invalid_instruction_profile_is_rejected_before_running_git(self):
+        self.instruction_profile()
+        self.selection['instruction_profile']['task_cwd'] = '../outside'; self.declare()
+        with patch.object(GitView, 'run', side_effect=AssertionError('invalid profile must not run Git')):
+            self.assertEqual(self.invoke('preview')[0], 2)
+
     def test_tabs_newlines_and_pathspec_magic_in_file_names_remain_literal(self):
         name = 'strange\tname\n:(glob)*'
         (self.repo/name).write_text('SYNTHETIC_LITERAL_PATH'); self.commit()
