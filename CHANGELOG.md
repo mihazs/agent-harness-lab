@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.17.0
+
+### Minor Changes
+
+- Add an optional declared Codex project instruction inventory to offline Git captures. Fingerprint root and nested guidance, overrides, fallbacks, shadowing and task scope while preserving unknown loading and ambient state. Unsupported versions and ambiguous native truncation remain unresolved, and discovery grants no mutation authority.
+
 ## 0.16.0
 
 ### Minor Changes
