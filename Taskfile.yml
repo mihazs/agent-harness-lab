@@ -35,7 +35,7 @@ tasks:
   test:sources:codex:
     desc: Run native Codex source receipts, checkpoint admission and immutable history cases
     cmds:
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_codex.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_codex*.py" -v'
   test:sources:git:
     desc: Run synthetic native Git snapshots, graph, coverage and compatibility cases
     cmds:

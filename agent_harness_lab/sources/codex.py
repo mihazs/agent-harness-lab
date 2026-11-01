@@ -6,7 +6,7 @@ from ..telemetry.codex_rollout import MAX_BYTES, correlated, decode
 from .execution import CoverageManifest, ExecutionIdentity, ExecutionMetadata, IDENTITY_FIELDS, IdentityField, MissingField, RecordRef, ScanBound
 from .schema import EvidenceRecord, digest
 from .snapshot import LocalExport, Snapshot
-from .graph import EvidenceGraph
+from .graph import EvidenceGraph, JoinReceipt
 
 SOURCE_VERSION = '0.166.0-v1'
 PARSER_VERSION = 'codex-native-journal-v1'
@@ -72,8 +72,7 @@ class CodexCapture(LocalExport):
                 limit_reached=summary['input_records'] == limit, truncated=summary['partial_tail'])
             metadata = ExecutionMetadata(tuple(identities), coverage)
             metadata.validate(source, records)
-            graph = EvidenceGraph(source.source_key, source.project_sha256, source.scope_sha256, source.version,
-                tuple(RecordRef(r.source_sha256, r.native_id_sha256, r.revision_sha256) for r in records), ())
+            graph = relationships(source, events, records, revisions, folder.check)
             graph.validate(source, records)
             snapshot = Snapshot(sha256, tuple(records), metadata, graph, checkpoint_ready=not summary['partial_tail'])
             folder.check()
@@ -81,3 +80,29 @@ class CodexCapture(LocalExport):
             folder.verify()
             self.summary = dict(summary, checkpoint_ready=not summary['partial_tail'], source_identity='caller_declared')
             return snapshot
+
+
+def relationships(source, events, records, revisions, check):
+    pairs, nodes, groups = [], [], {}
+    for event, record in zip(events, records):
+        check()
+        ref = RecordRef(record.source_sha256, record.native_id_sha256, record.revision_sha256)
+        nodes.append(ref)
+        if (event['case_id'], event['event_id']) not in revisions: continue
+        pairs.append((event, ref))
+        if event['activity'] in ('tool_call', 'tool_result') and event.get('call_id') is not None:
+            key = (event['case_id'], event['call_id'])
+            groups.setdefault(key, {}).setdefault(event['activity'], []).append((event, ref))
+    header = next(ref for event, ref in pairs if event['activity'] == 'session_start')
+    def join(left, right, relation):
+        return JoinReceipt(left, right, relation, 'codex.native', 'codex-native-links-v1', (left, right), basis='native_fields')
+    joins = []
+    for event, ref in pairs:
+        check()
+        if ref != header: joins.append(join(ref, header, 'native_session_member'))
+    for group in groups.values():
+        check()
+        calls, results = group.get('tool_call', ()), group.get('tool_result', ())
+        if len(calls) == len(results) == 1 and results[0][0]['capture_status'] == 'linked':
+            joins.append(join(results[0][1], calls[0][1], 'tool_result_of'))
+    return EvidenceGraph(source.source_key, source.project_sha256, source.scope_sha256, source.version, tuple(nodes), tuple(joins))
