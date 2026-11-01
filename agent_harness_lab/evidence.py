@@ -196,8 +196,10 @@ def collect(project, events=None, source_format='normalized', max_files=100, max
         raise ValueError('unsupported evidence format')
     from .telemetry.adapters import CAPABILITIES
     from .telemetry.codex_rollout import VERSION as CODEX_NATIVE_VERSION
-    pinned = source_format == 'codex' and source_version == CODEX_NATIVE_VERSION
-    if source_root is not None and (not pinned or events is not None) or session is not None and source_root is None:
+    from .telemetry.claude_native import VERSION as CLAUDE_NATIVE_VERSION
+    codex_pinned = source_format == 'codex' and source_version == CODEX_NATIVE_VERSION
+    pinned = codex_pinned or source_format == 'claude' and source_version == CLAUDE_NATIVE_VERSION
+    if source_root is not None and (not codex_pinned or events is not None) or session is not None and source_root is None:
         raise ValueError('native source-root/session requires the explicit pinned Codex profile and excludes --events')
     if source_version is not None and (events is None and source_root is None or not pinned and source_version != CAPABILITIES.get(source_format, {}).get('version')):
         raise ValueError('source version requires an explicit supported capture')
@@ -246,7 +248,10 @@ def collect(project, events=None, source_format='normalized', max_files=100, max
                         row.setdefault('id', str(accepted))
                         yield row
             if pinned:
-                from .telemetry.codex_rollout import read
+                if source_format == 'claude':
+                    from .telemetry.claude_native import read
+                else:
+                    from .telemetry.codex_rollout import read
                 try:
                     if source_root is None: records, coverage, native_digest = read(path, project, max_records=min(max_events, 100000))
                     else:

@@ -45,6 +45,10 @@ tasks:
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_codex_rollout.py" -v'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_codex_discovery.py" -v'
+  test:captures:claude:
+    desc: Run pinned Claude native scope, privacy, response consistency and resource controls
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_claude_native.py" -v'
   test:sources:github:live:
     desc: Run explicitly selected public GitHub acceptance without credentials or captured fixtures
     requires:
@@ -124,6 +128,7 @@ tasks:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_*.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_codex_rollout.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_codex_discovery.py"'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_claude_native.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_sandbox_*.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_offline_evaluation.py"'
   install:wheel:

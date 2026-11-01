@@ -83,7 +83,7 @@ def main(argv=None):
         command.add_argument('--max-capture-scan', type=int, default=2000)
         command.add_argument('--max-events', type=int, default=100000)
         command.add_argument('--format', choices=('normalized', 'codex', 'claude', 'ai-memory'), default='normalized')
-        command.add_argument('--source-version', help='Explicit adapter contract for --events/--source-root, including codex-rollout-0.166.0')
+        command.add_argument('--source-version', help='Explicit adapter contract for --events/--source-root, including codex-rollout-0.166.0 and claude-jsonl-2.1.316')
         command.add_argument('--output', type=Path, help='New private output directory (default: user state directory)')
         if name == 'analyze':
             command.add_argument('--source-cache', type=Path, help='Explicit private source journal; metadata only, no collection')

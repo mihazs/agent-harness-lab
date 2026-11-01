@@ -28,6 +28,7 @@ outcome. Later certification must independently audit those graders.
 | --- | --- | --- | --- |
 | `codex-jsonl-v1` | Native call IDs; explicit structured exit errors | Unknown | Unknown |
 | `claude-jsonl-v1` | Tool blocks and `tool_use_id`; `is_error` | Unknown | Unknown |
+| `claude-jsonl-2.1.316` | Explicit native file, writer/UUID scope, parallel tool blocks, compaction and unambiguous response usage | Unknown | Unknown |
 | Normalized v1/v2 | Supplied metadata | Provenance-dependent | Supplied signal only |
 
 These names identify the tested JSONL contracts, not verified CLI release versions.
@@ -47,6 +48,87 @@ The existing 64 MiB input-read and event limits remain enforced.
 No real-model effectiveness experiment was run for this schema. Tests establish
 metadata/control-flow behavior only. No model weights, downloads, external ledger
 service or ML dependency is required.
+
+## Explicit Claude Code 2.1.316 file profile
+
+```sh
+ahl analyze PROJECT --events PRIVATE_SESSION.jsonl --format claude \
+  --source-version claude-jsonl-2.1.316
+```
+
+This opt-in profile consumes the native entry/block family described by Anthropic's
+[SDK 0.2.176 native reader](https://github.com/anthropics/claude-agent-sdk-python/blob/2146f9d8985513053e904b13200c8f744b36785a/src/claude_agent_sdk/_internal/sessions.py)
+and [parallel-tool fixtures](https://github.com/anthropics/claude-agent-sdk-python/blob/2146f9d8985513053e904b13200c8f744b36785a/tests/test_sessions.py),
+pinned at commit `2146f9d8985513053e904b13200c8f744b36785a`.
+That [SDK release](https://github.com/anthropics/claude-agent-sdk-python/releases/tag/v0.2.176)
+bundles CLI 2.1.316. The SDK is a wire-reference only: AHL neither imports it nor
+runs Claude. Native JSONL is internal; this profile validates consumed fields and
+supports one explicitly selected, consistently attributed writer per file.
+Synthetic fixtures validate the reader; no live CLI session was used.
+
+Attributable user/assistant/system/progress/attachment records require explicit
+`version: 2.1.316`, exact declared `cwd` matching `PROJECT`, `sessionId`, `uuid`,
+timezone timestamp and boolean `isSidechain`. Session/writer changes within a file
+reject. A sidechain also requires `agentId`; optional `teamName` participates in
+writer scoping. Metadata without a supported envelope contributes visible coverage
+gaps, not fabricated events. Incompatible provided versions or project labels
+reject. No directory name, timestamp, prompt text or filename establishes identity.
+The existing `claude-jsonl-v1` synthetic adapter remains supported. Root/session
+selection is currently the separate pinned Codex facility; Claude never falls back
+to a home scan when this explicit version is selected.
+
+Replay approved observations in physical file order, including branches, parallel
+tool results and pre-compaction history; do not reconstruct a preferred resume leaf.
+Tool-use/result IDs, `is_error`, text/reasoning block kinds, native compaction flags
+and reported response-stop markers map to metadata. Arguments, output, thinking,
+message text, paths and credentials are omitted. Known built-in tool names remain
+labels; other names are fingerprinted. Text such as "ERROR" does not supply a
+missing structured error flag. A `Skill` call does not prove skill activation.
+`isMeta` and `isCompactSummary` records cannot replay embedded tool blocks as new
+executions. Unsupported blocks/entry types and missing call IDs remain explicit.
+No textual cancellation or task-success label is inferred.
+
+`native_message_fingerprint` identifies the containing native UUID, while
+`native_parent_message_fingerprint` records its optional parent UUID in that same
+scope. Each normalized block has its own stable event ID. These are message-tree
+claims, not parent sessions or task roots. Main/sidechain writers stay distinct;
+root independence, parent-session identity and lineage remain unknown. Moving the
+file or editing omitted bodies preserves metadata identities and monitor
+fingerprints. Identical UUID observations deduplicate; incompatible approved UUID
+metadata rejects. Parent cycles are never followed.
+
+Assistant `message.model` becomes `reported_model_fingerprint`, preserving a native
+report without authenticating the served model or treating it as a requested alias.
+Response IDs and stop reasons are fingerprinted. Response facets use the actual
+supporting snapshot's timestamp/message metadata. A consistent native stop marker
+can produce `response_stop`; it does not mean the session or task completed.
+Unknown execution settings, memory injection, served version and outcomes stay
+unknown, including when native input supplies forged grading/activation labels.
+
+Only a complete, unambiguous native `message.usage` receipt with a response ID emits
+`input_tokens`/`output_tokens`, once per response. These are observed uncached
+counts; cache creation/read counts are validated but not added or priced. Repeated
+consistent snapshots do not add usage. Every known partial count and reported
+model participates in consistency checks: contradictory values withhold the facet
+and emit coverage, while separate incomplete snapshots cannot fabricate one
+complete measurement. Missing IDs/counts stay unattributed. This is neither a cost
+estimate nor proof of final billed usage.
+
+Pinned Codex and Claude files share guarded JSONL I/O: 64 MiB cumulative reads,
+1 MiB lines, at most 100,000 input/normalized records and a ten-second lifecycle.
+Claude permits at most 4,096 blocks per native row and checks event/facet expansion
+before allocation. A repeated UUID gets only its original bounded per-row temporary
+validation allowance; it does not consume unique output capacity again. Derived
+pending-call coverage is also subject to the final normalized limit. An uncommitted
+last line, even valid JSON, is omitted with partial coverage. Malformed complete
+lines, duplicate JSON keys, unsafe links, selected-input mutation, invalid counts
+or hard resource expiry reject before emitting any ledger events. The explicit
+profile does not create a source-journal checkpoint or resolve external histories.
+
+`task test:captures:claude` runs the synthetic profile cases. Both README suites
+and installed wheel/archive checks include them. Broader Claude discovery, optional
+sidecar-parent resolution, source-journal receipts and live runtime validation
+remain open in #44; none of the synthetic checks establish agent-performance gains.
 
 ## Explicit Codex 0.166.0 rollout profile
 

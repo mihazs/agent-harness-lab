@@ -1,37 +1,16 @@
 """Content-free projection of the pinned Codex 0.166.0 rollout wire format."""
-from datetime import datetime
-import hashlib
-import io
-import json
 from pathlib import Path
-import time
-from .adapters import correlate
 from .schema import event
-from ..evaluation.integrity import unique_object
+from .native import MAX_BYTES, MAX_LINE_BYTES, text, number, timestamp, invalid_constant, jsonl, correlated, guarded
 from ..sources.schema import digest
 
 VERSION = 'codex-rollout-0.166.0'
 UPSTREAM_COMMIT = '6ff1e1ca3b30fc8b914720681fcf5fe62e95f856'
-MAX_BYTES = 64*1024*1024
-MAX_LINE_BYTES = 1024*1024
 KNOWN_TOOLS = ('exec_command', 'write_stdin', 'apply_patch', 'shell', 'shell_command',
     'update_plan', 'view_image', 'request_user_input')
 ACTIVITIES = dict(turn_started='turn_start', turn_complete='turn_stop', turn_aborted='cancelled',
     context_compacted='compaction', user_message='user_message', agent_message='agent_message',
     agent_reasoning='reasoning', agent_reasoning_raw_content='reasoning')
-
-
-def text(value):
-    if not isinstance(value, str) or not 0 < len(value) <= 4096: raise ValueError('invalid native metadata string')
-    return value
-
-
-def number(value, maximum=2**63-1):
-    if type(value) is not int or not 0 <= value <= maximum: raise ValueError('invalid native metadata integer')
-    return value
-
-
-def invalid_constant(_): raise ValueError('nonfinite native JSON is unsupported')
 
 
 class Projection:
@@ -44,10 +23,7 @@ class Projection:
     def add(self, row, position):
         kind, payload = row.get('type'), row.get('payload')
         if not isinstance(kind, str) or not isinstance(payload, dict): raise ValueError('invalid native rollout envelope')
-        stamp = text(row.get('timestamp'))
-        try: parsed = datetime.fromisoformat(stamp)
-        except ValueError: raise ValueError('invalid native rollout timestamp') from None
-        if parsed.tzinfo is None: raise ValueError('native timestamp requires a timezone')
+        stamp = timestamp(row.get('timestamp'))
         if self.meta is None:
             if kind != 'session_meta' or payload.get('cli_version') != '0.166.0':
                 raise ValueError('unsupported native Codex version or missing session metadata')
@@ -153,52 +129,21 @@ class Projection:
 
 def decode(folder, name, project, max_records, *, revisions=None, claims=None):
     projection = Projection(project)
-    partial = False
-    raw = folder.read(name, max(0, MAX_BYTES-folder.bytes))
-    if raw is None: raise ValueError('native capture is unavailable')
-    stream = io.BytesIO(raw); count = 0
-    for position in range(max_records+1):
-        folder.check(); line = stream.readline(MAX_LINE_BYTES+1)
-        if not line: break
-        count += 1
-        if position == max_records or len(line) > MAX_LINE_BYTES: raise ValueError('native capture record budget exceeded')
-        if not line.endswith(b'\n'): partial = True; break
-        try:
-            row = json.loads(line, object_pairs_hook=unique_object, parse_constant=invalid_constant)
-            if not isinstance(row, dict): raise ValueError('invalid native rollout record')
-            before = len(projection.claims)
-            projection.add(row, position)
-            if len(projection.claims) > before:
-                projected = projection.claims[-1]; key = (projected['case_id'], projected['event_id'])
-                if revisions is not None: revisions[key] = digest(row)
-                if claims is not None: claims[key] = projected
-        except RecursionError: raise ValueError('native rollout nesting limit exceeded') from None
-        except (UnicodeError, json.JSONDecodeError): raise ValueError('invalid native rollout JSON') from None
+    def consume(row, position):
+        before = len(projection.claims)
+        projection.add(row, position)
+        if len(projection.claims) > before:
+            projected = projection.claims[-1]; key = (projected['case_id'], projected['event_id'])
+            if revisions is not None: revisions[key] = digest(row)
+            if claims is not None: claims[key] = projected
+    sha256, partial, count = jsonl(folder, name, max_records, consume)
     if projection.meta is None: raise ValueError('native capture has no complete session metadata')
     summary = dict(adapter_version=VERSION, upstream_commit=UPSTREAM_COMMIT, capture_completeness='partial', partial_tail=partial,
         inherited_records_skipped=projection.skipped, duplicates_skipped=projection.duplicates, unsupported_records=projection.unsupported,
         input_records=count,
         served_model='unknown', effective_settings='unknown', independence='unknown', outcome='unknown', source_read=True, network_used=False)
-    return tuple(projection.rows), summary, hashlib.sha256(raw).hexdigest()
-
-
-def correlated(records, check):
-    common = {k: records[0][k] for k in ('case_id', 'root_case_id', 'lineage_verified', 'capture_complete',
-        'source_format', 'source_version', 'runtime_fingerprint')}
-    for row in correlate(records):
-        check()
-        yield event({**common, **row})
-    check()
+    return tuple(projection.rows), summary, sha256
 
 
 def read(path, project, max_records=100000):
-    from ..config import supported
-    if not supported(): raise NotImplementedError('native capture requires safe filesystem APIs')
-    from ..sources.git_view import Folder
-    if type(max_records) is not int or not 0 < max_records <= 100000: raise ValueError('invalid native capture record limit')
-    path = Path(path).absolute()
-    with Folder(path.parent, time.monotonic()+10) as folder:
-        rows, summary, sha256 = decode(folder, path.name, project, max_records)
-        records = tuple(correlated(rows, folder.check))
-        folder.verify()
-    return records, summary, sha256
+    return guarded(path, project, decode, max_records)
