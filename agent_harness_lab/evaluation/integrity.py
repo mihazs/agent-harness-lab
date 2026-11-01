@@ -119,3 +119,7 @@ def artifacts_digest(root, allowlist):
     import json
     value = {name: hashlib.sha256(raw).hexdigest() for name, raw in artifacts(root, allowlist).items()}
     return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+
+
+def invalid_constant(value):
+    raise ValueError('nonfinite reproduction JSON number')

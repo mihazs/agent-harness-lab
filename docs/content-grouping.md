@@ -88,3 +88,7 @@ claim follows from the independently synthetic controls.
 Run `task test:sources:grouping` for native normalization, leakage, invalidation,
 parser, resource-bound and export tests. Installed wheel/archive source-test
 checks include the same cases.
+
+[Offline source-lineage review](source-lineage-review.md) records operator
+annotations over exact cached revisions without upgrading these lexical receipts
+or making native-authentication or independent-root claims.

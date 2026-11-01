@@ -5,8 +5,9 @@ import json
 import os
 from pathlib import Path
 import stat
-from agent_harness_lab.evaluation.integrity import read_regular, unique_object
+from agent_harness_lab.evaluation.integrity import read_regular
 from agent_harness_lab.monitoring.state import atomic_json
+from agent_harness_lab.private_journal import record_bytes
 from .schema import EvidenceRecord, ImportReceipt, SourceSpec, digest, fingerprint
 from .execution import ExecutionMetadata, capture_snapshot
 from .graph import EvidenceGraph
@@ -187,8 +188,15 @@ class SourceStore:
         if not os.path.lexists(self.path):
             if required: raise FileNotFoundError('selected private journal is missing')
             return self._empty_state()
+        return self.read_snapshot()[0]
+
+    def read_snapshot(self):
+        """Validate the exact returned bytes; callers never need to reopen the cache."""
+        self._safe_path()
         try:
-            return self._validate(json.loads(read_regular(self.path, self.max_bytes), object_pairs_hook=unique_object))
+            raw = read_regular(self.path, self.max_bytes)
+            value, _ = record_bytes(raw, self.max_bytes)
+            return self._validate(value), raw
         except (ValueError, TypeError, KeyError, RecursionError):
             raise ValueError('invalid metadata cache; preserved for inspection') from None
 

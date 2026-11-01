@@ -23,6 +23,18 @@ tasks:
     desc: Run native lexical grouping, revision and bank-exposure controls
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_grouping.py" -v'
+  test:sources:lineage:
+    desc: Run native frozen-cache and controller lineage review cases
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_lineage.py" -v'
+  test:sources:lineage:compat:
+    desc: Compare unchanged regression event bytes with an explicitly frozen baseline
+    requires:
+      vars: [BASELINE]
+    env:
+      AHL_LINEAGE_BASELINE_ROOT: '{{.BASELINE}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_lineage.py" -k journal_bytes -v'
   test:sources:graph:
     desc: Run native graph contracts, migrations and scoped source relationship cases
     cmds:

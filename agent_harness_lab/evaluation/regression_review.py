@@ -1,52 +1,21 @@
 """Private controller-observed case lifecycle; operator attestations are not auth."""
-from contextlib import contextmanager
-from datetime import datetime, timezone
-import fcntl
 import hashlib
 import json
 import math
 import os
 from pathlib import Path
 import secrets
-import stat
 import subprocess
 import tempfile
 import time
 from agent_harness_lab.monitoring.state import atomic_json
+from agent_harness_lab.private_journal import MAX_EVENTS, MAX_METADATA, PrivateJournal, encoded, record, sync_directory, write_bytes
 from .bank_tools import materialize_sources
-from .integrity import artifacts_digest, contained, copy_frozen, digest, read_regular, tree, unique_object
+from .integrity import artifacts_digest, contained, copy_frozen, digest, read_regular, tree
 from .regression_controls import containment, read_draft
 from .regression_replay import outcome_rows, read_spec, replay
-from .regressions import fields, invalid_constant, load, references, sha256, text
+from .regressions import fields, load, references, sha256, text
 from .task_bank import identifier
-
-MAX_EVENTS = 64
-MAX_METADATA = 256*1024
-
-
-def encoded(value):
-    return (json.dumps(value, sort_keys=True, indent=2, allow_nan=False)+'\n').encode()
-
-
-def record(path, limit=256*1024):
-    raw = read_regular(path, limit)
-    try: value = json.loads(raw, object_pairs_hook=unique_object, parse_constant=invalid_constant)
-    except RecursionError: raise ValueError('case metadata nesting limit exceeded') from None
-    if not isinstance(value, dict): raise ValueError('case metadata must be an object')
-    return value, hashlib.sha256(raw).hexdigest()
-
-
-def sync_directory(path):
-    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-    try: os.fsync(descriptor)
-    finally: os.close(descriptor)
-
-
-def write_bytes(path, raw):
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(descriptor, 'wb') as stream:
-        stream.write(raw); stream.flush(); os.fsync(stream.fileno())
-
 
 def transition(state, kind, target, previous_kind=None):
     if state is None: return kind == 'reported' and target == 'reported'
@@ -59,79 +28,9 @@ def transition(state, kind, target, previous_kind=None):
     return kind == target and target in ('quarantined', 'rejected', 'retired') and state not in ('rejected', 'retired', target)
 
 
-class ReviewStore:
+class ReviewStore(PrivateJournal):
     def __init__(self, root):
-        self.root = Path(root).absolute()
-        if '..' in self.root.parts: raise ValueError('case store path must be canonical')
-
-    @contextmanager
-    def locked(self, *, create=False):
-        if any(p.is_symlink() for p in (self.root, *self.root.parents)):
-            raise ValueError('case store crosses a symlink')
-        if create: self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        elif not self.root.is_dir(): raise ValueError('case store is not initialized')
-        info = self.root.stat()
-        if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
-            raise ValueError('case store must be an owner-only directory')
-        marker = self.root/'.store.json'
-        def validate_marker():
-            value, _ = record(marker, 4096)
-            if value != {'schema_version':1, 'format':'regression-review-store'} or type(value.get('schema_version')) is not int:
-                raise ValueError('unsupported controller case store')
-        if marker.exists() or marker.is_symlink(): validate_marker()
-        elif not create or any(p.name != '.lock' for p in self.root.iterdir()):
-            raise ValueError('case store is uninitialized or contains unrelated files')
-        descriptor = os.open(self.root/'.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
-        try:
-            info = os.fstat(descriptor)
-            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid() or info.st_mode & 0o077:
-                raise ValueError('unsafe case-store lock')
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            if marker.exists() or marker.is_symlink(): validate_marker()
-            elif create and not any(p.name != '.lock' for p in self.root.iterdir()):
-                atomic_json(marker, dict(schema_version=1, format='regression-review-store'))
-            else: raise ValueError('case store initialization changed')
-            yield
-        finally: os.close(descriptor)
-
-    def case(self, case_id):
-        sha256(case_id)
-        return contained(self.root, 'cases/'+case_id)
-
-    def history(self, case):
-        events = []
-        with os.scandir(case/'events') as entries:
-            paths = []
-            for index, entry in enumerate(entries):
-                if index >= 128: raise ValueError('case journal entry bound exceeded')
-                if not entry.name.startswith('.'): paths.append(Path(entry.path))
-        for index, path in enumerate(sorted(paths)):
-            if path.name != f'{index:04d}.json': raise ValueError('case journal gap or unknown entry')
-            event, identity = record(path)
-            fields(event, 'schema_version index previous_sha256 kind state payload recorded_at')
-            previous = events[-1] if events else None
-            if (type(event['schema_version']) is not int or event['schema_version'] != 1
-                    or type(event['index']) is not int or event['index'] != index
-                    or event['previous_sha256'] != (previous[1] if previous else None)
-                    or not isinstance(event['payload'], dict)
-                    or not transition(previous[0]['state'] if previous else None, event['kind'], event['state'], previous[0]['kind'] if previous else None)):
-                raise ValueError('invalid case journal chain/transition')
-            events.append((event, identity))
-        if not events: raise ValueError('case journal is empty')
-        return events
-
-    def append(self, case, events, kind, state, payload):
-        previous = events[-1] if events else None
-        if not transition(previous[0]['state'] if previous else None, kind, state, previous[0]['kind'] if previous else None):
-            raise ValueError('invalid case lifecycle transition')
-        if len(events) >= MAX_EVENTS: raise ValueError('case journal operation bound exceeded')
-        value = dict(schema_version=1, index=len(events), previous_sha256=previous[1] if previous else None,
-            kind=kind, state=state, payload=payload, recorded_at=datetime.now(timezone.utc).isoformat())
-        if len(encoded(value)) > MAX_METADATA: raise ValueError('complete case event exceeds metadata bound')
-        path = case/'events'/f'{len(events):04d}.json'
-        if path.exists(): raise ValueError('immutable case event already exists')
-        atomic_json(path, value)
-        events.append((value, hashlib.sha256(read_regular(path, 256*1024)).hexdigest()))
+        super().__init__(root, 'regression-review-store', transition)
 
     def opened(self, case_id):
         case = self.case(case_id); events = self.history(case)

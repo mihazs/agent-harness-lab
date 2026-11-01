@@ -18,8 +18,11 @@ from agent_harness_lab.config import read_json
 
 
 def main(argv):
+    if argv and argv[0] == 'lineage':
+        from .lineage import main as lineage_main
+        return lineage_main(argv[1:])
     parser = argparse.ArgumentParser(prog='ahl sources')
-    parser.add_argument('operation', nargs='?', default='probe', choices=('probe', 'preview', 'import', 'status', 'recheck'))
+    parser.add_argument('operation', nargs='?', default='probe', choices=('probe', 'preview', 'import', 'status', 'recheck', 'lineage'))
     parser.add_argument('--manifest')
     parser.add_argument('--project-sha256')
     parser.add_argument('--scope-sha256')

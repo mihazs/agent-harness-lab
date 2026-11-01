@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import re
-from .integrity import read_regular, unique_object
+from .integrity import invalid_constant, read_regular, unique_object
 from .task_bank import identifier
 
 DISPOSITIONS = {'reproduced', 'not_reproduced', 'environment_or_grader_defect',
@@ -37,10 +37,6 @@ def references(value):
         if entry['ref'] in seen:
             raise ValueError('duplicate reproduction reference')
         seen.add(entry['ref'])
-
-
-def invalid_constant(value):
-    raise ValueError('nonfinite reproduction JSON number')
 
 
 @dataclass(frozen=True)
