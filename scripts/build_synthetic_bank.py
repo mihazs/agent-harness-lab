@@ -11,7 +11,7 @@ from agent_harness_lab.evaluation.integrity import digest
 
 GRADER='''#!/usr/bin/env python3
 """Externally grade final structured artifacts, allowing extra valid fields."""
-import json,sys,subprocess
+import json,sys,subprocess,os
 from pathlib import Path
 w,reference=Path(sys.argv[1]),Path(sys.argv[2])
 def equivalent(actual,expected):
@@ -25,7 +25,7 @@ try:
  expected=json.loads(reference.read_text())
  assert expected['schema_version']==1
 except Exception:
- print(json.dumps(dict(schema_version=1,valid=False,grader_id='synthetic-artifacts',grader_version='v1',outcome=None,error='reference_invalid')))
+ print(json.dumps(dict(schema_version=1,valid=False,grader_id='synthetic-artifacts',grader_version='v2',outcome=None,error='reference_invalid')))
  raise SystemExit(2)
 try:
  actual=json.loads((w/'result.json').read_text())
@@ -34,10 +34,20 @@ try:
  if expected.get('python_checks'):
   check=expected['python_checks']
   program="import runpy,json,sys; m=runpy.run_path(sys.argv[1]); f=m[sys.argv[2]]; print(json.dumps([f(*args) for args in json.loads(sys.argv[3])]))"
-  run=subprocess.run([sys.executable,'-I','-c',program,str(w/check['module']),check['function'],json.dumps(check['inputs'])],capture_output=True,text=True,timeout=1,env={'PATH':'/usr/bin:/bin'})
+  argv=[sys.executable,'-I','-c',program,str(w/check['module']),check['function'],json.dumps(check['inputs'])]
+  if os.environ.get('AHL_SANDBOX_ROLE') == 'grader':
+   # Submitted code must never inherit the oracle mount or grader process namespace.
+   isolated=['/usr/bin/bwrap','--unshare-all','--unshare-user','--unshare-net','--die-with-parent',
+             '--new-session','--cap-drop','ALL','--clearenv','--setenv','PATH','/usr/bin:/bin']
+   for system in ('/usr','/bin','/lib','/lib64'):
+    if Path(system).exists(): isolated += ['--ro-bind',system,system]
+   argv[4]='/artifact/'+check['module']
+   argv=isolated+['--ro-bind',str(w),'/artifact','--proc','/proc','--dev','/dev','--tmpfs','/tmp',
+                  '--remount-ro','/','--chdir','/artifact','--']+argv
+  run=subprocess.run(argv,stdin=subprocess.DEVNULL,capture_output=True,text=True,timeout=1,env={'PATH':'/usr/bin:/bin'})
   accepted=accepted and run.returncode==0 and equivalent(json.loads(run.stdout),check['outputs'])
 except (OSError,ValueError,TypeError): accepted=False
-print(json.dumps(dict(schema_version=1,valid=True,grader_id='synthetic-artifacts',grader_version='v1',outcome=accepted)))
+print(json.dumps(dict(schema_version=1,valid=True,grader_id='synthetic-artifacts',grader_version='v2',outcome=accepted)))
 raise SystemExit(0 if accepted else 1)
 '''
 
@@ -90,7 +100,7 @@ def build(destination):
         tasks.append(dict(task_id=ident,root_id=root,family=ident,partition='development',
             project_group='synthetic-starter',time_group='v1',fixture=str(fixture.relative_to(destination)),
             fixture_digest=digest(fixture),grader_bundle=str(bundle.relative_to(destination)),grader_digest=digest(bundle),
-            grader_version='v1',source_kind='synthetic',source_ref='scripts/build_synthetic_bank.py',permission='approved',
+            grader_version='v2',source_kind='synthetic',source_ref='scripts/build_synthetic_bank.py',permission='approved',
             reviewer='codex-self-review-controls-v1',review_status='accepted',independence='unverified',
             safety=['offline disposable data-only fixture','no model or production mutation'],
             artifacts=['result.json','original.txt']+(['app/calc.py'] if ident=='localization' else [])))

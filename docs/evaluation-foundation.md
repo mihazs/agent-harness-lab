@@ -77,13 +77,29 @@ limit, not an exact total CPU-time budget; existing wall-clock limits still appl
 These controls follow the [kernel cgroup v2 interface](https://docs.kernel.org/admin-guide/cgroup-v2.html).
 
 Native synthetic control-file tests validate setup, pre-exec failure, accounting
-and cleanup failure handling; they do not establish kernel enforcement. To run
-the trusted resource canaries on a suitably delegated host, explicitly set
-`AHL_TEST_CGROUP_ROOT` for `task test:sandbox`. Those canaries bypass namespaces
-to test cgroups independently; existing namespace canaries remain separate.
-Without that opt-in, kernel resource tests are visibly skipped. The current
-unprivileged account has no delegated writable subtree, so aggregate enforcement
-has not been demonstrated locally.
+and cleanup failure handling; they do not establish kernel enforcement. Separate
+real kernel canaries are opt-in. On a Linux host with a systemd user manager, run
+`task test:sandbox:kernel`: it creates a disposable foreground user scope with
+memory/process/runtime ceilings and delegates cpu/memory/pids for that test only.
+The native fixture verifies scope identity and exclusive process membership,
+moves its controller to a leaf and enables child controllers inside that scope.
+Cleanup restores its layout; systemd collects the completed scope. No persistent
+unit, privileged service or production controller setting is changed. See
+[systemd delegation](https://www.freedesktop.org/software/systemd/man/latest/systemd.resource-control.html#Delegate=).
+
+Alternatively, explicitly set `AHL_TEST_CGROUP_ROOT` to an already-delegated
+subtree for `task test:sandbox`. No setup is performed on that supplied root.
+Default tests visibly skip these kernel checks. Explicit invocation fails on
+unsupported or misconfigured hosts. Namespace cases use real bubblewrap; resource
+cases separately bypass namespaces to isolate cgroup enforcement. All fixtures
+are synthetic. Checks cover role/file/environment/network boundaries, readonly
+inputs, artifact links, forged grades, process-session escape, OOM, output limits,
+timeouts, interruption cleanup and both arms of all seven offline starter tasks.
+
+The default probe can fail on a busy shared account because its `RLIMIT_NPROC`
+is per real user, not per trial. A successful bare namespace command does not
+establish that requested resource policy. The delegated canary command exercises
+the cgroup policy without raising the default limit or adding a runtime fallback.
 
 This is not a complete certified backend: aggregate disk quotas,
 pinned full execution-image/dependency identity, a narrow inference broker,
@@ -91,8 +107,20 @@ full construction/execution/regrading integration and the complete adversarial
 suite remain prerequisites for #7. Per-file rlimits are not aggregate disk quotas;
 per-user process limits alone are not cgroup guarantees. Host/kernel compromise is out
 of scope. `automatic_promotion=false` remains explicit even if an offline probe
-succeeds. The local namespace probe fails on this managed host, so its live
-containment-canary test is skipped and cannot be cited as security evidence.
+succeeds. Passing selected kernel canaries supports only those tested offline
+boundaries, not complete hostile-agent certification or model-backed isolation.
+
+Starter grader v2 closes an executable-artifact oracle-read bypass. In an isolated
+grader role, submitted Python checks run in a nested bubblewrap namespace with
+only readonly runtime libraries and extracted artifacts. It has separate process
+and network namespaces and no oracle mount; the pristine parent grader compares
+the returned values with its reference. A regression submits code that previously
+read the reference outputs and forged a passing check. The frozen grader version
+and digests change; old v1 results do not establish this boundary. The explicitly
+trusted cooperative diagnostic path still executes trusted controls directly.
+Isolated executable checks require `/usr/bin/bwrap` and nested user namespaces;
+unsupported execution cannot produce a passing check. This is a contract of the
+owned starter graders, not a guarantee about arbitrary caller-supplied graders.
 
 `ahl evaluate --agent offline` now integrates fixture-command execution with a
 separate grader namespace, selected-harness-only mounts, bounded artifact
