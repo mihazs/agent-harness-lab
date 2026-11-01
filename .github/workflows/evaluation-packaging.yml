@@ -15,6 +15,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+      - uses: arduino/setup-task@v3
+        with:
+          version: '3.54.0'
       - uses: actions/setup-python@v7
         with:
           python-version: '3.11'
@@ -22,37 +25,15 @@ jobs:
         with:
           node-version: 'latest'
           cache: npm
-      - run: npm ci
-      - run: npm run hooks:install
+      - run: task setup
       - name: Require zero source clones
-        run: npm run duplication:report
+        run: task duplication:report
       - name: Verify staged pre-commit enforcement
-        run: python -m unittest tools.tests.test_duplicate_hook -v
+        run: task test:hooks
       - name: Build tools only; no inference dependencies or credentials
-        run: python -m pip install setuptools==84.1.0 wheel==0.48.0
-      - run: python -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist/wheels
-      - run: python scripts/build_release.py --output dist/release
+        run: task setup:build
+      - run: task build
       - name: Clean wheel install and offline CLI smoke
-        run: |
-          python -m venv /tmp/ahl-wheel-smoke
-          /tmp/ahl-wheel-smoke/bin/pip install --no-index --no-deps dist/wheels/*.whl
-          cd /tmp
-          /tmp/ahl-wheel-smoke/bin/ahl --help
-          /tmp/ahl-wheel-smoke/bin/ahl research-simulate --tasks 10 --scenario delayed
-          set +e
-          /tmp/ahl-wheel-smoke/bin/ahl bank --starter --audit --cooperative-controls
-          bank_status=$?
-          set -e
-          test "$bank_status" -eq 3
+        run: task install:wheel test:wheel
       - name: Check versioned archive imports without a model account
-        run: |
-          mkdir /tmp/ahl-archive-smoke
-          tar -xzf dist/release/agent-harness-lab-*.tar.gz -C /tmp/ahl-archive-smoke
-          cd /tmp/ahl-archive-smoke/agent-harness-lab-*
-          python -m agent_harness_lab --help
-          python -m agent_harness_lab research-simulate --tasks 10
-          set +e
-          python -m agent_harness_lab bank --starter --audit --cooperative-controls
-          bank_status=$?
-          set -e
-          test "$bank_status" -eq 3
+        run: task test:archive

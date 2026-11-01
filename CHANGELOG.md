@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.0
+
+### Minor Changes
+
+- Add a bounded private metadata journal with atomic record/checkpoint commits, source-scoped revision idempotency, preserved tombstones and explicit supersession claims. Reject stale or cyclic cursors, conflicting revisions and cross-project cache use; report ambiguous filesystem commits for inspection. Keep unknown capture and grading authority unchanged. Centralize reusable development commands in Taskfile and replace standalone packaging smoke commands with native unittest cases shared by source, wheel and archive layouts.
+
 ## 0.6.0
 
 ### Minor Changes

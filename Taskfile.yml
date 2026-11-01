@@ -1,0 +1,117 @@
+version: '3'
+vars:
+  PYTHON: '{{default "python3" .PYTHON}}'
+tasks:
+  test:
+    desc: Run both native README test suites
+    cmds:
+      - task: test:tools
+      - task: test:evaluator
+  test:tools:
+    desc: Run application and tooling unittest cases
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_*.py"'
+  test:evaluator:
+    desc: Run evaluator unittest cases
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s skills/harness-evaluation/scripts -p "test_*.py"'
+  test:sources:
+    desc: Run source contracts and checkpoint unittest cases
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_*.py"'
+  test:hooks:
+    desc: Run native Lefthook and staged-index integration tests
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest tools.tests.test_duplicate_hook -v'
+  test:installed:
+    desc: Run native tests against an installed wheel or extracted archive
+    dir: '{{.LAYOUT_DIR}}'
+    requires:
+      vars: [LAYOUT_DIR, EXPECTED_PACKAGE_ROOT]
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_installed_layout.py"'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_*.py"'
+  install:wheel:
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m venv dist/wheel-env'
+      - dist/wheel-env/bin/python -m pip install --no-index --no-deps --force-reinstall dist/wheels/*.whl
+      - mkdir -p dist/wheel-cwd
+  test:wheel:
+    cmds:
+      - task: test:installed
+        vars:
+          PYTHON: '{{.ROOT_DIR}}/dist/wheel-env/bin/python'
+          LAYOUT_DIR: '{{.ROOT_DIR}}/dist/wheel-cwd'
+          EXPECTED_PACKAGE_ROOT: '{{.ROOT_DIR}}/dist/wheel-env'
+  test:archive:
+    vars:
+      PACKAGE_VERSION:
+        sh: '{{.PYTHON | shellQuote}} -m agent_harness_lab --version'
+    cmds:
+      - mkdir -p dist/archive
+      - 'tar -xzf {{printf "dist/release/agent-harness-lab-%s.tar.gz" .PACKAGE_VERSION | shellQuote}} -C dist/archive'
+      - task: test:installed
+        vars:
+          LAYOUT_DIR: '{{.ROOT_DIR}}/dist/archive/agent-harness-lab-{{.PACKAGE_VERSION}}'
+          EXPECTED_PACKAGE_ROOT: '{{.ROOT_DIR}}/dist/archive/agent-harness-lab-{{.PACKAGE_VERSION}}'
+  duplication:check:
+    desc: Require zero clones in the Git index
+    cmds:
+      - '{{.PYTHON | shellQuote}} scripts/check_duplicates.py'
+  duplication:report:
+    desc: Require zero clones in working source
+    cmds:
+      - node_modules/.bin/jscpd --config .jscpd.json --no-colors
+  setup:
+    desc: Install development dependencies and guarded Git hooks
+    cmds:
+      - npm ci
+      - task: hooks:install
+  venv:
+    desc: Create the local Python build environment
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m venv .venv'
+  setup:build:
+    desc: Install the existing pinned wheel build tools
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m pip install setuptools==84.1.0 wheel==0.48.0'
+  hooks:install:
+    desc: Install or migrate the owned Lefthook integration
+    cmds:
+      - '{{.PYTHON | shellQuote}} scripts/install_hooks.py'
+  build:
+    desc: Build the wheel and allowlisted release archive
+    cmds:
+      - task: build:wheel
+      - task: build:archive
+  build:wheel:
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m pip wheel . --no-deps --no-build-isolation --wheel-dir dist/wheels'
+  build:archive:
+    cmds:
+      - '{{.PYTHON | shellQuote}} scripts/build_release.py --output dist/release'
+  version:
+    cmds:
+      - npm run version-packages
+  changeset:
+    cmds:
+      - npm run changeset
+  release:
+    cmds:
+      - '{{.PYTHON | shellQuote}} scripts/publish_release.py'
+  release:verify:
+    desc: Download and verify the current public release using native acceptance tests
+    requires:
+      vars: [COMMIT]
+    vars:
+      PACKAGE_VERSION:
+        sh: '{{.PYTHON | shellQuote}} -m agent_harness_lab --version'
+    env:
+      AHL_RELEASE_DIR: '{{.ROOT_DIR}}/dist/published/v{{.PACKAGE_VERSION}}'
+      AHL_EXPECTED_COMMIT: '{{.COMMIT}}'
+    cmds:
+      - 'gh release download {{printf "v%s" .PACKAGE_VERSION | shellQuote}} --dir {{printf "dist/published/v%s" .PACKAGE_VERSION | shellQuote}} --clobber'
+      - '{{.PYTHON | shellQuote}} -m unittest tools.tests.test_published_release -v'

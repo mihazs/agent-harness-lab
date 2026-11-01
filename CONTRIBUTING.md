@@ -36,7 +36,7 @@ Do not start paid inference merely to validate documentation.
 
 ## Pre-commit duplication check
 
-Run `npm ci` followed by `npm run hooks:install` with the latest stable Node.js to
+Install [Task](https://taskfile.dev/docs/installation/) and use `task setup` with the latest stable Node.js to
 install pinned jscpd and Lefthook development dependencies and enable the
 `lefthook.yml` pre-commit job. Automatic npm lifecycle scripts are disabled so
 Lefthook's dependency postinstall cannot replace a foreign hook before the guard
@@ -58,7 +58,32 @@ temporary directory. It neither stashes edits nor creates Git worktrees, invokes
 checkout filters, changes the index, or includes unstaged repairs in its result.
 Reports stay local. No clone baseline or duplication allowance is maintained.
 Python-only test runs still work without Node; executable hook tests are explicitly
-skipped when jscpd or Lefthook is not installed.
+skipped when Task, jscpd or Lefthook is not installed.
+
+## Native tests and reusable commands
+
+Application tests live in `tools/tests/test_*.py`; evaluator tests live beside the
+owned evaluator in `skills/harness-evaluation/scripts/test_*.py`. Add discoverable
+unittest cases to these existing native suites. Put reusable commands in
+`Taskfile.yml`; do not create standalone smoke-test scripts under artifacts or
+other helper folders.
+
+`task test` runs both suites. `task test:sources` focuses source contracts and the
+checkpoint journal; `task test:hooks` runs the real Lefthook integration cases.
+CI uses the same tasks. `task build` builds wheel/archive artifacts with existing
+build tools; `task venv` and `task setup:build PYTHON=.venv/bin/python` prepare a
+local build environment. Select that interpreter with `task build
+PYTHON=.venv/bin/python` when the system interpreter has no build tools.
+
+`task install:wheel test:wheel` runs native acceptance and source tests against a
+clean wheel installation. `task test:archive` runs them against the extracted
+archive. The generic `test:installed` task accepts absolute `PYTHON`, `LAYOUT_DIR`
+and `EXPECTED_PACKAGE_ROOT` values for other installed environments. These tasks remove
+`PYTHONPATH` so source-tree imports cannot mask missing installed modules. Tests
+own their temporary fixtures and require no model accounts or inference packages.
+`task release:verify COMMIT=SHA` explicitly downloads this project's current public
+release and runs native checksum, archive-version and GitHub tag/target tests.
+These publication cases are skipped during ordinary offline tests.
 
 ## Architecture map
 
@@ -133,7 +158,7 @@ verify the published tag, archive, installer and checksums.
 
 Maintainers always use the latest stable Node.js for Changesets and jscpd; CI
 resolves `node-version: latest` from the current distribution. Release users do not
-need Node or a checkout. Run `npm ci`, `npm run hooks:install`, then `npm run changeset`, and commit the
+need Node or a checkout. Run `task setup`, then `task changeset`, and commit the
 changeset with each releasable change. Do not manually edit release versions.
 
 The version workflow creates a PR using `npm run version-packages`, which runs
