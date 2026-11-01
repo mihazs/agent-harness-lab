@@ -58,7 +58,8 @@ def export_manifest(bank_path,output,max_trials=24):
         raise ValueError('bank changed during export')
     manifest=dict(schema_version=1,profile='descriptive_smoke',tasks=tasks,grader_self_tests=controls,
                   grader_bundles=bundles,max_trials=max_trials,budget_seconds=300,timeout_seconds=10,
-                  bank_digest=reviewed['bank_sha256'],independence_verified=reviewed['certification_eligible'],automatic_promotion=False)
+                  bank_digest=reviewed['bank_sha256'],grouping_revision_sha256=reviewed['content_grouping']['revision_sha256'],
+                  independence_verified=reviewed['certification_eligible'],automatic_promotion=False)
     (output/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     return manifest
 
