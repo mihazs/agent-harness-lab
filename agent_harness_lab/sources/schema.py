@@ -94,6 +94,7 @@ class EvidenceRecord(Contract):
     collected_at: str
     original_at: str | None = None
     provenance: str = 'unknown'
+    trust_boundary: str = 'untrusted_data'
     capture_completeness: str = 'unknown'
     causal_status: str = 'unknown'
     independence: str = 'unknown'
@@ -103,6 +104,7 @@ class EvidenceRecord(Contract):
     def __post_init__(self):
         self.validate(('source_sha256', 'native_id_sha256', 'revision_sha256', 'content_sha256'), {
             'plane': PLANES, 'provenance': ('unknown', 'native_field', 'reviewed_annotation', 'model_hypothesis'),
+            'trust_boundary': ('untrusted_data',),
             'capture_completeness': ('unknown', 'partial', 'complete'),
             'causal_status': ('unknown', 'source_declared'),
             'independence': ('unknown', 'shared_lineage', 'reviewed'),

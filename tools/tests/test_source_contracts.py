@@ -23,6 +23,7 @@ class SourceContractsTests(unittest.TestCase):
         self.assertIsNone(self.record.original_at)
         self.assertEqual(self.record.capture_completeness, 'unknown')
         self.assertEqual(self.record.independence, 'unknown')
+        self.assertEqual(self.record.trust_boundary, 'untrusted_data')
         self.assertNotIn('outcome', self.record.to_dict())
 
     def test_mutable_source_settings_do_not_change_native_identity(self):
@@ -35,7 +36,8 @@ class SourceContractsTests(unittest.TestCase):
         for changes in ({'native_id_sha256': '/private/session'}, {'content_sha256': 'secret'},
                         {'record_type': '../escape'}, {'original_at': 'yesterday'},
                         {'collected_at': '2026-01-01T00:00:00'}, {'causal_status': 'proven'},
-                        {'plane': 'verified_success'}, {'provenance': 'executable_grader'}):
+                        {'plane': 'verified_success'}, {'provenance': 'executable_grader'},
+                        {'trust_boundary': 'trusted_instruction'}):
             with self.subTest(changes=changes), self.assertRaises(ValueError): replace(self.record, **changes)
         with self.assertRaises(ValueError): replace(self.source, read_only=False)
         with self.assertRaises(ValueError): replace(self.source, enabled=1)

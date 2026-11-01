@@ -23,6 +23,8 @@ causality and independence default to unknown. Source-declared or reviewed value
 remain attributed claims, not evidence of scientific independence. No contract
 accepts raw bodies, outcome labels or arbitrary extra keys. A grader reference is
 only a reference: verified outcomes still require the existing grading contract.
+Every record carries `trust_boundary: untrusted_data`; input cannot promote itself
+to an instruction or grading authority.
 Behavioral records may later reference normalized v2 events; memory assertions
 must never be converted into fabricated tool events.
 
