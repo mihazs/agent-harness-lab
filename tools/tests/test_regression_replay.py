@@ -184,6 +184,21 @@ class RegressionReplayTests(unittest.TestCase):
             self.assertEqual(self.run_replay(budget_seconds=1)['status'], 'budget_exhausted')
         self.backend.run.assert_not_called()
 
+    def test_internal_parent_deadline_narrows_without_expanding_or_accepting_nonfinite_values(self):
+        for invalid in (True, float('inf'), float('nan')):
+            with self.assertRaises(ValueError): self.run_replay(parent_deadline=invalid)
+        report = self.run_replay(parent_deadline=-1, budget_seconds=300)
+        self.assertEqual(report['status'], 'budget_exhausted'); self.backend.run.assert_not_called()
+        self.output = self.root/'new-output'; clock = [0]
+        def expensive(path):
+            result = digest(path)
+            if Path(path) == self.output/'inputs/before': clock[0] = 2
+            return result
+        with patch('agent_harness_lab.evaluation.regression_replay.time.monotonic', side_effect=lambda:clock[0]), \
+             patch('agent_harness_lab.evaluation.regression_replay.digest', side_effect=expensive):
+            self.assertEqual(self.run_replay(parent_deadline=100, budget_seconds=1)['status'], 'budget_exhausted')
+        self.backend.run.assert_not_called()
+
     def test_earlier_valid_requires_explicit_bound_snapshot_and_does_not_certify_temporal_regression(self):
         value = json.loads(self.spec.read_text())
         value['earlier_valid'] = dict(paths=value['after'], identities=json.loads(self.source.read_text())['after'],

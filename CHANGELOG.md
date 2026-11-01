@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.41.0
+
+### Minor Changes
+
+- Add a private controller-owned regression review lifecycle with exact declaration copies, real offline reproduction, sealed grader/artifact evidence and event-bound operator attestations. Preserve interrupted and unqualified attempts, reject stale/self/session-only positive reviews, quarantine tampered evidence, and bound journal capacity and encoded events before dispatch or writes. Keep bank admission, publication, authenticated independence and historical verification disabled or unestablished.
+
 ## 0.40.0
 
 ### Minor Changes

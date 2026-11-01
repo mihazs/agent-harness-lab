@@ -10,7 +10,7 @@ import time
 from types import SimpleNamespace
 from agent_harness_lab.monitoring.state import atomic_json
 from .bank_tools import materialize_sources
-from .integrity import artifacts, contained, digest, read_regular, unique_object
+from .integrity import artifacts_digest, contained, digest, read_regular, unique_object
 from .regression_controls import audit, containment, read_draft
 from .regressions import fields, invalid_constant, load, references, sha256
 
@@ -79,11 +79,15 @@ def outcome_rows(results, task, expected_image):
     return rows, None
 
 
-def replay(proposal_path, draft_path, spec_path, output, backend, *, budget_seconds=60):
+def replay(proposal_path, draft_path, spec_path, output, backend, *, budget_seconds=60, parent_deadline=None):
     started = time.monotonic()
     if type(budget_seconds) not in (int, float) or not math.isfinite(budget_seconds) or not 0 < budget_seconds <= 300:
         raise ValueError('replay budget must be positive and at most 300 seconds')
     deadline = started+budget_seconds
+    if parent_deadline is not None:
+        if type(parent_deadline) not in (int, float) or not math.isfinite(parent_deadline):
+            raise ValueError('replay parent deadline must be finite')
+        deadline = min(deadline, parent_deadline)
     proposal_path, draft_path, spec_path, output = (Path(p).absolute() for p in (proposal_path, draft_path, spec_path, output))
     if any('..' in p.parts for p in (proposal_path, draft_path, spec_path, output)):
         raise ValueError('replay paths must be canonical without parent traversal')
@@ -219,8 +223,7 @@ def replay(proposal_path, draft_path, spec_path, output, backend, *, budget_seco
                     workspace = phase_output/record['version']/record['task']/'workspace'
                     key = record['task']+'/'+record['version']
                     report['phases'][phase].setdefault('outcomes', {})[key] = dict(outcome=rows[(record['task'], record['version'])],
-                        artifacts_sha256=hashlib.sha256(json.dumps({name:hashlib.sha256(raw).hexdigest()
-                            for name, raw in artifacts(workspace, task.artifacts).items()}, sort_keys=True).encode()).hexdigest())
+                        artifacts_sha256=artifacts_digest(workspace, task.artifacts))
                 atomic_json(receipt, report)
             else:
                 aa, ab = observed['aa'], observed['ab']

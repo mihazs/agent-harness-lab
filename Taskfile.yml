@@ -125,6 +125,10 @@ tasks:
     desc: Run native regression reproduction contract tests
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_regression_*.py" -v'
+  test:evaluation:review:
+    desc: Run native private review-store lifecycle and evidence-integrity cases
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_regression_review.py" -v'
   test:sandbox:kernel:state:
     desc: Run the new working-state canary in a disposable delegated scope
     cmds:

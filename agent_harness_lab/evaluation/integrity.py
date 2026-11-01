@@ -79,6 +79,18 @@ def digest(root):
     return hashlib.sha256(json.dumps(tree(root), sort_keys=True).encode()).hexdigest()
 
 
+def copy_frozen(source, destination, expected):
+    import shutil
+    source, destination = Path(source).absolute(), Path(destination).absolute()
+    if any(p.is_symlink() for p in (destination, *destination.parents)):
+        raise ValueError('frozen copy destination crosses a symlink')
+    if source.is_relative_to(destination) or destination.is_relative_to(source):
+        raise ValueError('frozen copy source and destination overlap')
+    if digest(source) != expected: raise ValueError('frozen source integrity mismatch')
+    shutil.copytree(source, destination)
+    if digest(destination) != expected: raise ValueError('source changed during frozen copy')
+
+
 def artifacts(root, allowlist, max_bytes=1024 * 1024):
     if len(allowlist) > 100 or len(set(allowlist)) != len(allowlist):
         raise ValueError('invalid artifact allowlist')
@@ -101,3 +113,9 @@ def artifacts(root, allowlist, max_bytes=1024 * 1024):
                 raise ValueError('artifact changed during extraction')
             result[name] = data
     return result
+
+
+def artifacts_digest(root, allowlist):
+    import json
+    value = {name: hashlib.sha256(raw).hexdigest() for name, raw in artifacts(root, allowlist).items()}
+    return hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
