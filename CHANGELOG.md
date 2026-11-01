@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0
+
+### Minor Changes
+
+- Add explicit offline source probe, preview, import and status commands with version-gated registry dispatch. The local normalized-metadata export connector checks declared project/scope and root identity before reading bounded record data, freezes file snapshots and imports through atomic checkpoints. Default discovery enables no sources; provider APIs and native session formats remain pending.
+
 ## 0.7.0
 
 ### Minor Changes

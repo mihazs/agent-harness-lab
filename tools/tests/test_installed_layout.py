@@ -30,6 +30,11 @@ class InstalledLayoutTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout.strip(), version())
 
+    def test_default_source_discovery_enables_nothing(self):
+        result = self.invoke('sources')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['enabled_sources'], 0)
+
     def test_synthetic_research_requires_no_model_packages(self):
         result = self.invoke('research-simulate', '--tasks', '10', '--scenario', 'delayed')
         self.assertEqual(result.returncode, 0, result.stderr)
