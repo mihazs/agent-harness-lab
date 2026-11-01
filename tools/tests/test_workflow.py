@@ -181,3 +181,20 @@ class WorkflowTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_manifest(manifest,None,None,['AGENTS.md'],runner,lambda:10,set())
         runner.execute.assert_not_called()
+
+    def test_help_reflects_recommendation_only_boundary(self):
+        """Help output must not imply automatic behavioral adoption."""
+        import subprocess
+        for cmd in (['--help'], ['improve', '--help'], ['watch', '--help']):
+            result = subprocess.run(
+                [sys.executable, '-m', 'agent_harness_lab'] + cmd,
+                capture_output=True, text=True, timeout=10
+            )
+            self.assertEqual(result.returncode, 0, f"{cmd} failed: {result.stderr}")
+            out = (result.stdout + result.stderr).lower()
+            self.assertNotIn('adopt supported harness repairs', out)
+            self.assertNotIn('continuously improve', out)
+            if 'improve' in cmd or 'watch' in cmd:
+                self.assertIn('recommend', out)
+                self.assertTrue('no automatic adoption' in out or 'recommendation-only' in out or 'recommend' in out)
+
