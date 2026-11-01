@@ -29,7 +29,7 @@ else: result={'token_count':len(inputs['text'].split())}
 '''
 
 
-class OfflineEvaluationTests(unittest.TestCase):
+class OfflineFixture(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
@@ -63,6 +63,8 @@ class OfflineEvaluationTests(unittest.TestCase):
                     stdout=run.stdout, stderr=run.stderr, inputs_unchanged=True, elapsed_seconds=.001,
                     attestation={'backend': 'test-only-cooperative', 'role': role})
 
+
+class OfflineEvaluationTests(OfflineFixture):
     def test_both_arms_are_executed_and_regraded_without_model_calls(self):
         with patch.object(SandboxBackend, 'capability', return_value={'status': 'available'}), \
                 patch.object(SandboxBackend, 'run', side_effect=self.emulate) as launch, \

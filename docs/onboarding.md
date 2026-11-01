@@ -62,11 +62,37 @@ reject symlinks, hardlinks and non-regular files.
 
 ## Current integration boundary
 
-This stage implements schema, readiness, initialization and CLI/installed-layout
-behavior for #36. Only `doctor` and `init` currently consume `ahl.json`. Existing
-analysis/improvement/watch commands retain their explicit CLI behavior; the file
-does not authorize execution or expand scope. Effective-configuration consumption
-and provenance in actual execution, plus a verified harmless agent version/auth
-probe, remain unfinished. Initialization does not enforce execution budgets or
-permissions. These commands start no installation, login, inference, download,
-background service or schedule.
+`ahl evaluate --config /path/to/ahl.json` explicitly consumes configuration in
+addition to the existing required evaluation arguments. There is no automatic
+discovery. The config file's directory defines the project for relative bank paths.
+The run validates the selected bank's digest and compares requested task metadata,
+fixtures and complete oracle bundles against a pristine export. A manifest's
+claimed `bank_digest` alone is insufficient. Injected harness paths must be a
+subset of the configured allowlist; configured runs do not support named skill
+injection. Offline mounted harness trees may contain only allowlisted files.
+
+An offline profile permits only `--agent offline`, with its existing explicit
+fixture-command contract. A cooperative profile requires the requested agent to
+match the configuration and uses its explicitly configured executable. Conflicting
+executable overrides, unavailable binaries and unsupported isolated profiles block
+before runtime execution. Authentication, model settings and full containment
+remain unverified; configuration cannot enable automatic promotion.
+
+Configured seconds/trial caps can only lower the manifest's ceilings. Preflight,
+including bank export/comparison, consumes the same wall-clock budget. In-process
+filesystem preparation remains non-preemptible; these are admission/time limits,
+not provider cost/token or aggregate CPU enforcement. Trial counts refer to task
+executions, not metadata version checks or graders. Existing fixed paired planning
+must fit the reduced trial ceiling, and planned task/root/family identities must
+match the selected bank before probing. Private results include the declared
+config, canonical JSON digest, bank digest, requested runtime and applied ceilings.
+Configuration/bank changes stop later dispatch and invalidate the final result.
+Input hashes are frozen before any capability/version subprocess. Configured
+harness and fixture digests also cover file modes; changes during a version
+query cannot become a new accepted starting point for task execution.
+
+Existing analysis/improvement/watch commands still retain their explicit CLI
+behavior and do not consume `ahl.json`. Their configuration integration and a
+verified harmless agent version/authentication probe remain unfinished for #36.
+Initialization itself authorizes no execution or permission changes. Doctor/init
+start no installation, login, inference, download, background service or schedule.

@@ -165,12 +165,13 @@ else:
         with self.assertRaises(ValueError):
             digest(self.root / 'missing')
 
-    def test_changed_grader_invalidates_passing_result(self):
+    def test_changed_grader_invalidates_grade_and_stops_later_trials(self):
         self.grader.write_text("from pathlib import Path; p=Path(__file__); p.write_text(p.read_text()+'\\n# changed')\n")
         result, data = self.run_case()
         self.assertEqual(result.returncode, 1)
         self.assertFalse(data['inputs_unchanged'])
-        self.assertEqual([t['status'] for t in data['trials']], ['passed', 'passed'])
+        self.assertEqual([t['status'] for t in data['trials']], ['invalid_input', 'invalid_input'])
+        self.assertFalse((self.root/'out/candidate/case/workspace').exists())
         self.assertIn(str(self.grader), data['grader_files'])
 
     def test_nonzero_grader_rejects_successful_model(self):
