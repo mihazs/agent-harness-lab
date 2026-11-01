@@ -183,12 +183,12 @@ class NativeSourceTests(unittest.TestCase):
         self.assertFalse(self.cache.exists())
 
     def test_native_conversion_and_validation_remain_under_the_shared_deadline(self):
-        from agent_harness_lab.sources.codex import EvidenceRecord
+        from agent_harness_lab.sources.native import EvidenceRecord
         clock = [0]
         def delayed(*args, **kwargs):
             result = EvidenceRecord(*args, **kwargs); clock[0] = 11
             return result
-        with patch('agent_harness_lab.sources.codex.time.monotonic', side_effect=lambda: clock[0]), \
-             patch('agent_harness_lab.sources.codex.EvidenceRecord', delayed), self.assertRaises(TimeoutError):
+        with patch('agent_harness_lab.sources.native.time.monotonic', side_effect=lambda: clock[0]), \
+             patch('agent_harness_lab.sources.native.EvidenceRecord', delayed), self.assertRaises(TimeoutError):
             self.reader().read(self.source)
         self.assertFalse(self.cache.exists())

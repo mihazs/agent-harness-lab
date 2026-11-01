@@ -437,6 +437,72 @@ relationship contract as v1. Incremental byte-position capture, compressed/base
 history, Claude native version coverage and cross-source execution proofs remain
 open; no model calls or event-ledger emission occur during source operations.
 
+## Native Claude capture journals
+
+The explicit `local_file/claude-jsonl/2.1.316-v1` provider connects the pinned
+[Claude file profile](telemetry.md#explicit-claude-code-21316-file-profile) to the
+same private journal and registry. Its local declaration uses a selection file
+with exactly `schema_version`, `project`, `capture` and `max_records`, as in the
+Codex single-file example. Both paths are normalized relative paths under the
+declaration directory. Supply independently expected project/scope fingerprints;
+`scope_sha256` is `digest(selection)`. Use explicit enablement, source-declared
+identity and local filesystem authorization. No home/account/sidecar discovery or
+Claude execution occurs. Probe and cached status read no capture files.
+
+The source accepts one explicitly attributed native writer. Actual block/message
+observations receive exact canonical native-row revision fingerprints; omitted
+body edits add history without changing ordinary telemetry's metadata fingerprint.
+Two copies of the same native UUID with different raw revisions reject the batch,
+even when their approved metadata matches. Ordinary telemetry retains its existing
+body-insensitive duplicate behavior. Computed response facets and unmatched-call
+coverage remain derived records with unknown provenance, never additional native
+execution receipts. Stable call-based pending identities cannot be reassigned when
+another call resolves. Files, line sizes, input/normalized counts and the entire
+conversion/validation/revalidation lifecycle remain bounded.
+
+Each native message has at most one execution-identity subject, even when it
+contains multiple normalized blocks. Session ID, project/cwd, producer and version
+are declared claims. A native assistant's model report may appear as a **declared**
+`served_model` identifier in namespace `claude.reported_model`; it is not a verified
+served version, and cannot populate requested-model aliases. Source timestamps and
+the exact supporting record revision remain attached. Actual effective model,
+loaded harness/configuration, memory injection, task root, attempt, parent session
+and grader bindings remain unknown unless independently substantiated. Every
+current importer rejects verified execution fields. A current checkout change or
+late model report cannot rewrite old metadata or graph membership.
+
+The graph keeps native message membership and parent-UUID pointers separate from
+session lineage. Multi-block members reference their containing native message's
+representative record (`native_message_member`); one representative carries its
+native parent pointer (`native_message_parent`). Missing parents remain `unlinked`.
+Self/cyclic pointers remain literal data with no traversal or lineage inference;
+a reflexive pointer references its one evidence record once.
+Unambiguous native tool results can reference their one native call through the
+same bounded exact-ID logic as Codex. Derived facets get no native relationship
+edges. Message pointers, repeated text, shared session labels and source counts
+never establish independent roots or a task outcome.
+
+Explicit `sources recheck` uses only the exact built-in Claude reader and a fresh
+complete scoped capture. It compares current native relationships, preserves stale
+revisions and explicit conflicts, and clears caller-supplied historical intervals.
+It does not modify the journal or promote stored candidates. Native file-field
+consistency does not authenticate the producer, actual execution, lineage or model
+serving. File exports, reader subclasses and imported verified labels cannot
+provide that authority. A partial tail, failed/malformed read, hard limit, unsafe
+path or changed selection/input cannot create or advance a checkpoint or emit a
+recheck proof. Successful imports still have partial historical coverage.
+
+The mapping version is `claude-native-journal-v1`, with up to 10,000 input/source
+records and 1,000 identity subjects. `task test:sources:claude` runs native unittest
+controls; wheel/archive source checks include them. The source shares selection,
+file guards, revision mapping, identity wrapping and graph assembly with Codex.
+`task test:sources:native:compat BASELINE=FROZEN_CHECKOUT` compares both Codex preview
+contracts, including metadata/graph/checkpoint hashes, against an explicitly
+selected baseline. Ordinary test runs skip this optional frozen-baseline check.
+Native hooks/configuration are never executed. Broader Claude roots, sidecar
+relationships, incremental byte cursors, live wire validation and cross-source
+execution joins remain open in #42/#44/#58.
+
 ## Offline Git and selected harness metadata
 
 The `local_git/git/v1` provider uses the same explicit declaration, registry,

@@ -160,28 +160,28 @@ class NativeRootTests(unittest.TestCase):
         self.assertFalse(f.cache.exists())
 
     def test_selected_input_mutation_after_conversion_and_hard_record_limit_cannot_commit(self):
-        from agent_harness_lab.sources.codex import relationships
+        from agent_harness_lab.sources.native import relationships
         f = self.f; self.assertEqual(f.invoke('import')[0], 0); before = f.cache.read_bytes()
         def mutate(*args, **kwargs):
             result = relationships(*args, **kwargs)
             with self.primary.open('ab') as handle: handle.write(b'{}\n')
             return result
-        with patch('agent_harness_lab.sources.codex.relationships', mutate): self.assertEqual(f.invoke('import')[0], 2)
+        with patch('agent_harness_lab.sources.native.relationships', mutate): self.assertEqual(f.invoke('import')[0], 2)
         self.assertEqual(f.cache.read_bytes(), before)
         self.write('sessions/rollout-2026-a.jsonl'); self.select(max_records=5)
         self.assertEqual(f.invoke('preview')[0], 2); self.assertEqual(f.invoke('import')[0], 2)
         self.assertEqual(f.cache.read_bytes(), before)
 
     def test_conversion_and_selection_revalidation_remain_in_shared_root_lifecycle(self):
-        from agent_harness_lab.sources.codex import EvidenceRecord
+        from agent_harness_lab.sources.native import EvidenceRecord
         f = self.f; clock = [0]
         def delayed(*args, **kwargs):
             record = EvidenceRecord(*args, **kwargs); clock[0] = 11; return record
         with patch('agent_harness_lab.telemetry.codex_discovery.time.monotonic', side_effect=lambda: clock[0]), \
-             patch('agent_harness_lab.sources.codex.EvidenceRecord', delayed), self.assertRaises(TimeoutError):
+             patch('agent_harness_lab.sources.native.EvidenceRecord', delayed), self.assertRaises(TimeoutError):
             self.snapshot()
-        from agent_harness_lab.sources.codex import relationships
+        from agent_harness_lab.sources.native import relationships
         def mutate(*args, **kwargs):
             result = relationships(*args, **kwargs); f.descriptor.write_text('{}'); return result
-        with patch('agent_harness_lab.sources.codex.relationships', mutate): self.assertEqual(f.invoke('import')[0], 2)
+        with patch('agent_harness_lab.sources.native.relationships', mutate): self.assertEqual(f.invoke('import')[0], 2)
         self.assertFalse(f.cache.exists())
