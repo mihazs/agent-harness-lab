@@ -75,9 +75,15 @@ def main(argv=None):
             'improve': 'Discover, stage, evaluate, and adopt supported harness repairs',
             'watch': 'Continuously improve only when project evidence changes'}[name])
         command.add_argument('project', nargs='?', type=Path, default=Path.cwd())
-        command.add_argument('--events', type=Path, help='Optional explicit evidence instead of native capture discovery')
+        selection = command.add_mutually_exclusive_group()
+        selection.add_argument('--events', type=Path, help='Optional explicit evidence instead of native capture discovery')
+        selection.add_argument('--source-root', type=Path, help='Explicit native rollout directory; requires a pinned Codex profile')
+        command.add_argument('--session', help='Exact native thread ID within --source-root')
+        command.add_argument('--max-captures', type=int, default=100)
+        command.add_argument('--max-capture-scan', type=int, default=2000)
+        command.add_argument('--max-events', type=int, default=100000)
         command.add_argument('--format', choices=('normalized', 'codex', 'claude', 'ai-memory'), default='normalized')
-        command.add_argument('--source-version', help='Explicit adapter contract for --events, including codex-rollout-0.166.0')
+        command.add_argument('--source-version', help='Explicit adapter contract for --events/--source-root, including codex-rollout-0.166.0')
         command.add_argument('--output', type=Path, help='New private output directory (default: user state directory)')
         if name == 'analyze':
             command.add_argument('--source-cache', type=Path, help='Explicit private source journal; metadata only, no collection')

@@ -12,6 +12,8 @@ from ..sources.schema import digest
 
 VERSION = 'codex-rollout-0.166.0'
 UPSTREAM_COMMIT = '6ff1e1ca3b30fc8b914720681fcf5fe62e95f856'
+MAX_BYTES = 64*1024*1024
+MAX_LINE_BYTES = 1024*1024
 KNOWN_TOOLS = ('exec_command', 'write_stdin', 'apply_patch', 'shell', 'shell_command',
     'update_plan', 'view_image', 'request_user_input')
 ACTIVITIES = dict(turn_started='turn_start', turn_complete='turn_stop', turn_aborted='cancelled',
@@ -89,7 +91,7 @@ class Projection:
         record = dict(case_id=scoped(thread), root_case_id=scoped(root), lineage_verified=False,
             event_id=digest((thread, ('ordinal', ordinal) if ordinal is not None else ('line', position))),
             timestamp=stamp, activity='capture_coverage', capture_complete=False, source_format='codex', source_version=VERSION,
-            runtime_fingerprint=digest(('codex', '0.166.0')), capture_order=position)
+            runtime_fingerprint=digest(('codex', '0.166.0')), capture_order=ordinal if ordinal is not None else position)
         if kind == 'session_meta': record['activity'] = 'session_start'
         elif kind == 'turn_context':
             if Path(text(payload.get('cwd'))) != self.project: raise ValueError('native turn project mismatch')
@@ -121,7 +123,8 @@ class Projection:
                 if self.responses[response] != identity: raise ValueError('conflicting native response usage')
                 self.duplicates += 1; return
             self.responses[response] = identity
-            record.update(activity='response_usage', input_tokens=counts[0], output_tokens=counts[1])
+            record.update(activity='response_usage', input_tokens=counts[0], output_tokens=counts[1],
+                native_response_fingerprint=digest(('codex-response', str(self.project), thread, response)))
         elif kind == 'compacted': record['activity'] = 'compaction'
         elif kind == 'event_msg':
             item = payload.get('type')
@@ -142,32 +145,49 @@ class Projection:
         self.rows.append(event(record))
 
 
+def decode(folder, name, project, max_records):
+    projection = Projection(project)
+    partial = False
+    raw = folder.read(name, max(0, MAX_BYTES-folder.bytes))
+    if raw is None: raise ValueError('native capture is unavailable')
+    stream = io.BytesIO(raw); count = 0
+    for position in range(max_records+1):
+        folder.check(); line = stream.readline(MAX_LINE_BYTES+1)
+        if not line: break
+        count += 1
+        if position == max_records or len(line) > MAX_LINE_BYTES: raise ValueError('native capture record budget exceeded')
+        if not line.endswith(b'\n'): partial = True; break
+        try:
+            row = json.loads(line, object_pairs_hook=unique_object, parse_constant=invalid_constant)
+            if not isinstance(row, dict): raise ValueError('invalid native rollout record')
+            projection.add(row, position)
+        except RecursionError: raise ValueError('native rollout nesting limit exceeded') from None
+        except (UnicodeError, json.JSONDecodeError): raise ValueError('invalid native rollout JSON') from None
+    if projection.meta is None: raise ValueError('native capture has no complete session metadata')
+    summary = dict(adapter_version=VERSION, upstream_commit=UPSTREAM_COMMIT, capture_completeness='partial', partial_tail=partial,
+        inherited_records_skipped=projection.skipped, duplicates_skipped=projection.duplicates, unsupported_records=projection.unsupported,
+        input_records=count,
+        served_model='unknown', effective_settings='unknown', independence='unknown', outcome='unknown', source_read=True, network_used=False)
+    return tuple(projection.rows), summary, hashlib.sha256(raw).hexdigest()
+
+
+def correlated(records, check):
+    common = {k: records[0][k] for k in ('case_id', 'root_case_id', 'lineage_verified', 'capture_complete',
+        'source_format', 'source_version', 'runtime_fingerprint')}
+    for row in correlate(records):
+        check()
+        yield event({**common, **row})
+    check()
+
+
 def read(path, project, max_records=100000):
     from ..config import supported
     if not supported(): raise NotImplementedError('native capture requires safe filesystem APIs')
     from ..sources.git_view import Folder
     if type(max_records) is not int or not 0 < max_records <= 100000: raise ValueError('invalid native capture record limit')
-    path = Path(path).absolute(); projection = Projection(project)
-    partial = False
+    path = Path(path).absolute()
     with Folder(path.parent, time.monotonic()+10) as folder:
-        raw = folder.read(path.name, 64*1024*1024)
-        if raw is None: raise ValueError('native capture is unavailable')
-        stream = io.BytesIO(raw)
-        for position in range(max_records+1):
-            folder.check(); line = stream.readline(1024*1024+1)
-            if not line: break
-            if position == max_records or len(line) > 1024*1024: raise ValueError('native capture record budget exceeded')
-            if not line.endswith(b'\n'): partial = True; break
-            try: row = json.loads(line, object_pairs_hook=unique_object, parse_constant=invalid_constant)
-            except (ValueError, UnicodeError, RecursionError): raise ValueError('invalid native rollout JSON') from None
-            if not isinstance(row, dict): raise ValueError('invalid native rollout record')
-            projection.add(row, position)
-        if projection.meta is None: raise ValueError('native capture has no complete session metadata')
+        rows, summary, sha256 = decode(folder, path.name, project, max_records)
+        records = tuple(correlated(rows, folder.check))
         folder.verify()
-    common = {k: projection.rows[0][k] for k in ('case_id', 'root_case_id', 'lineage_verified', 'capture_complete',
-        'source_format', 'source_version', 'runtime_fingerprint')}
-    records = tuple(event({**common, **r}) for r in correlate(projection.rows))
-    summary = dict(adapter_version=VERSION, upstream_commit=UPSTREAM_COMMIT, capture_completeness='partial', partial_tail=partial,
-        inherited_records_skipped=projection.skipped, duplicates_skipped=projection.duplicates, unsupported_records=projection.unsupported,
-        served_model='unknown', effective_settings='unknown', independence='unknown', outcome='unknown', source_read=True, network_used=False)
-    return records, summary, hashlib.sha256(raw).hexdigest()
+    return records, summary, sha256

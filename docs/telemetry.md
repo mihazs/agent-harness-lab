@@ -65,7 +65,7 @@ It checks consumed metadata fields rather than deserializing every upstream cont
 field. Synthetic fixtures contain no real sessions. The version string describes
 the capture's producer claim; the reader does not authenticate that producer.
 
-The profile requires an explicit file, a matching `cli_version`, one session header
+The profile requires an explicit file or source root, a matching `cli_version`, one session header
 and exact declared session/turn cwd matching `PROJECT`. It never searches native
 stores, loads parent histories, runs Codex or contacts services. Existing default
 discovery and synthetic adapters keep their behavior. `--source-version` also
@@ -99,7 +99,7 @@ ordinals exclude inherited prefixes. Referenced base histories are not read, and
 their completeness remains unknown. A logical fork cutoff alone does not locate
 physical ownership: inherited legacy captures without an explicit physical
 boundary/base reject. Parent-history resolution, broader cwd/worktree reconciliation,
-compressed capture and bounded multi-file discovery remain open in #44/#58.
+compressed capture and source-journal execution receipts remain open in #44/#58.
 
 Safe POSIX reads reject links/special files, detect concurrent source changes and
 cap one file at 64 MiB, each line at 1 MiB, records at 100,000 (or the lower requested
@@ -110,3 +110,54 @@ conflicts and unavailable safe filesystem APIs fail explicitly. Capture remains
 partial, including after native completion. No source-journal cursor is advanced
 by this explicit analysis path. `task test:captures:codex` runs the native projection,
 privacy, ownership and CLI cases; wheel/archive tests exercise it after installation.
+
+### Bounded source-root and session selection
+
+```sh
+ahl analyze PROJECT --source-root NATIVE_ROOT --format codex \
+  --source-version codex-rollout-0.166.0 --session NATIVE_THREAD_ID \
+  --max-captures 100 --max-capture-scan 2000 --max-events 100000
+```
+
+The root is an explicitly authorized directory, including any selected active and
+archive subdirectories. It is mutually exclusive with `--events`; `--session`
+requires the root and matches an exact native thread `id`, not a root-session ID
+or filename. Omit it to include matching project captures within the bounds. Root
+selection requires the pinned Codex profile and never falls back to home discovery.
+Only uncompressed `rollout-*.jsonl` files qualify. Prompt indexes such as
+`history.jsonl` and compressed captures are not treated as transcripts.
+
+Discovery enumerates at most 10,000 filesystem entries and 64 levels, admits at
+most 2,000 candidate files and 100 matching captures, and shares a ten-second
+deadline checked during read, parse, correlation and final verification, a 64 MiB
+cumulative read allowance and a 100,000 input-record/event
+ceiling. Lower requested limits apply. The byte allowance includes bounded header
+prefix reads as well as full selected reads. Foreign-project and other-session
+headers are filtered before full reads and before consuming the accepted-file
+allowance. Unsupported/incomplete headers and skipped unsafe entries are counted;
+symlinks, hardlinks and special files are never followed/opened as captures.
+Candidates within the bounded scan use descending rollout-filename order; this
+admission order does not establish execution time or concurrency.
+
+Scan/accepted-file cutoffs are visible coverage limits. Hard read, record,
+filesystem and stability violations abort before any partial ledger is emitted.
+Foreign headers excluded after their stable prefix read are not dependencies of
+the selected-file snapshot. Every admitted file remains stable through final
+verification. No matching captures produces an explicit unknown-coverage warning,
+not a successful empty history. All source and per-file paths remain fingerprints.
+
+Active/archive copies and overlapping prefixes are merged by scoped native event
+identity before tool correlation. A result in a longer copy can satisfy a call
+from a shorter prefix without retaining a spurious unmatched-call observation.
+Paginated `capture_order` retains the native ordinal; legacy captures retain line
+order. Conflicting approved metadata/root claims reject the merge. Suppressed
+duplicate usage retains its ordinal claim for conflict detection.
+
+`native_response_fingerprint` identifies own-thread usage receipts. Repeated
+response IDs with consistent turn/root-turn/count metadata contribute usage once,
+including when repeated at different ordinals; conflicting usage rejects. Distinct
+thread identities remain separate despite matching text, and inherited parent
+usage is excluded rather than added to child usage. Root/parent declarations still
+do not prove independence or certify execution. The private source summary records
+per-file digests, limits, exclusions and duplicate counts; metadata-identical archive
+copies do not change the monitor's event fingerprint. No source cursor is advanced.

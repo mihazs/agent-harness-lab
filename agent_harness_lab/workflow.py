@@ -72,7 +72,9 @@ def evidence(args, output, source_context=None):
     from agent_harness_lab.telemetry.ledger import Ledger
     events = []
     data = collect(args.project, events=args.events, source_format=args.format, event_sink=events.append,
-        source_version=getattr(args, 'source_version', None))
+        source_version=getattr(args, 'source_version', None), source_root=getattr(args, 'source_root', None),
+        session=getattr(args, 'session', None), max_files=getattr(args, 'max_captures', 100),
+        max_scan_files=getattr(args, 'max_capture_scan', 2000), max_events=getattr(args, 'max_events', 100000))
     if source_context is not None: data['source_context'] = source_context
     Ledger(output / 'events.v2.jsonl').ingest(events)
     write_json(output / 'analysis.json', data)
