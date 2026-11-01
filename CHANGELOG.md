@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.20.0
+
+### Minor Changes
+
+- Add an explicit v2 GitHub selection for native timeline and CI/check evidence while preserving v1 scope and requests. Bind timeline projections and issue references to native parents/identities, retain unmapped forms as partial capture, and bind check runs/statuses to the captured PR head. CI success remains process evidence rather than a verified task grade.
+
 ## 0.19.0
 
 ### Minor Changes
