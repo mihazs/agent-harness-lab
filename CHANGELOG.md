@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.29.0
+
+### Minor Changes
+
+- Add explicit bounded native Codex source-root and exact thread selection with visible scan/capture limits. Filter headers before full reads, merge archive/prefix duplicates before correlation, and deduplicate response usage without hiding ordinal conflicts. Preserve unknown lineage and outcomes, shared read budgets, private paths and unchanged default discovery.
+
 ## 0.28.0
 
 ### Minor Changes

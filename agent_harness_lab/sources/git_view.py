@@ -22,6 +22,7 @@ class Folder:
     def __init__(self, root, deadline):
         self.root, self.deadline = Path(root).absolute(), deadline
         self.fd, self.bytes, self.entries, self.observed = None, 0, 0, {}
+        self.unsafe_entries = 0
 
     def __enter__(self):
         self.fd = os.open('/', os.O_RDONLY|os.O_DIRECTORY)
@@ -74,10 +75,10 @@ class Folder:
             return info
         finally: os.close(parent)
 
-    def read(self, name, maximum=65536):
+    def read(self, name, maximum=65536, *, prefix=False):
         info = self.inspect(name)
         if info is None: return None
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > maximum:
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not prefix and info.st_size > maximum:
             raise ValueError('Git input must be a bounded single-link regular file')
         parts = Path(name).parts; parent = self.directory(str(Path(*parts[:-1])))
         try: descriptor = os.open(parts[-1], os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK, dir_fd=parent)
@@ -87,16 +88,18 @@ class Folder:
             raw = bytearray()
             while True:
                 self.check()
-                block = os.read(descriptor, min(65536, maximum-len(raw)+1))
+                if prefix and len(raw) >= maximum: break
+                block = os.read(descriptor, min(65536, maximum-len(raw)+(0 if prefix else 1)))
                 if not block: break
                 raw.extend(block); self.bytes += len(block)
                 if len(raw) > maximum or self.bytes > MAX_BYTES: raise ValueError('Git input byte budget exceeded')
-            if len(raw) != info.st_size or self.stamp(os.fstat(descriptor)) != self.stamp(info):
+            expected = min(info.st_size, maximum) if prefix else info.st_size
+            if len(raw) != expected or self.stamp(os.fstat(descriptor)) != self.stamp(info):
                 raise ValueError('Git input changed during reading')
             return bytes(raw)
         finally: os.close(descriptor)
 
-    def walk(self, name, depth=0, *, excluded=()):
+    def walk(self, name, depth=0, *, excluded=(), skip_unsafe=False):
         self.check()
         if depth > 64: raise ValueError('Git directory depth exceeded')
         descriptor = self.directory(name)
@@ -109,8 +112,9 @@ class Folder:
                     path = str(Path(name)/entry.name)
                     if path in excluded: continue
                     info = entry.stat(follow_symlinks=False)
-                    if stat.S_ISDIR(info.st_mode): yield from self.walk(path, depth+1, excluded=excluded)
+                    if stat.S_ISDIR(info.st_mode): yield from self.walk(path, depth+1, excluded=excluded, skip_unsafe=skip_unsafe)
                     elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1: yield path
+                    elif skip_unsafe: self.unsafe_entries += 1
                     else: raise ValueError('Git input contains a link or special file')
         finally: os.close(descriptor)
 
