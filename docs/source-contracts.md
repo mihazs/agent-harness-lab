@@ -410,6 +410,40 @@ runs the native synthetic Git contract and compatibility cases. Historical execu
 binding, cross-provider reconciliation and independent proof persistence remain
 open in #46/#58.
 
+### Explicit local Git relationship recheck
+
+After importing a v2 Git capture, `ahl sources recheck` accepts the same explicit
+manifest, cache and expected project/scope fingerprints. It reads the captured
+graph at a fixed checkpoint, then performs a fresh capture through the built-in
+frozen-view Git reader. It does not change the source, configuration, journal or
+lock file. No network, model, credentials, repository hooks or checkout operation
+is authorized by the recheck.
+
+The resolver compares relation type and both exact source/native-ID/revision
+endpoints. Current captured commit, ref and harness/instruction-membership
+relationships can produce `verified` native-match receipts. This verifies the
+captured relationship only: harness membership does not certify instruction
+applicability, observed loading or runtime-effective settings. Reference-only
+objects remain candidates, even when their hashes appear in native parent/ref
+fields; missing object detail is not invented. Stale revisions and absent
+identities remain unlinked, explicit conflicts remain conflicted, and unrelated
+roots with identical file content do not establish ancestry.
+
+Only the exact built-in Git reader and explicit v2 profile can perform this
+recheck. Imported graph labels, custom reader classes, similar content and claimed
+historical validity intervals cannot provide proof. Unvalidated labels are replaced
+with fixed resolver metadata; original claims remain addressable by fingerprint.
+The report uses `git-native-recheck-v1`, reports `network_used: false` and retains
+unknown independent roots and unverified task outcomes. Its receipts have no
+verified historical interval and cannot be imported as a self-certified graph.
+The stored candidates and older checkpoints remain unchanged.
+
+GitHub and Git use one relation-comparison implementation after their separate
+built-in capture admissions. `task test:sources:recheck` runs native synthetic
+checks for both. These fixture checks establish current relationship validation;
+cross-source joins, persistent proof lifecycle and a reviewed diagnostic-utility
+study remain open in #58.
+
 ### Declared Codex project instruction inventory
 
 An optional `instruction_profile` in the Git selection enables bounded instruction
