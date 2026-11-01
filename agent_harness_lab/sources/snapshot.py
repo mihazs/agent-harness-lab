@@ -8,6 +8,7 @@ from agent_harness_lab.evaluation.integrity import contained, read_regular, uniq
 from .schema import EvidenceRecord, SourceSpec, digest, fingerprint
 from .store import native_metadata
 from .execution import ExecutionMetadata
+from .graph import EvidenceGraph
 
 
 @dataclass(frozen=True)
@@ -15,12 +16,16 @@ class Snapshot:
     sha256: str
     records: tuple
     metadata: ExecutionMetadata | None = None
+    graph: EvidenceGraph | None = None
 
     def __post_init__(self):
         fingerprint(self.sha256)
         if self.metadata is not None:
             if not isinstance(self.metadata, ExecutionMetadata): raise ValueError('snapshot requires typed execution metadata')
             ExecutionMetadata.parse(self.metadata.to_dict())
+        if self.graph is not None:
+            if not isinstance(self.graph, EvidenceGraph): raise ValueError('snapshot requires a typed evidence graph')
+            EvidenceGraph.parse(self.graph.to_dict())
         if type(self.records) is not tuple or len(self.records) > 10000:
             raise ValueError('invalid snapshot record bound')
         seen = {}
@@ -56,21 +61,25 @@ class LocalExport:
 
     def read(self, source):
         if (source.kind, source.provider, source.version) not in (
-                ('local_file', 'ahl-metadata', 'v1'), ('local_file', 'ahl-metadata', 'v2')):
+                ('local_file', 'ahl-metadata', 'v1'), ('local_file', 'ahl-metadata', 'v2'), ('local_file', 'ahl-metadata', 'v3')):
             raise ValueError('unsupported normalized export version')
         current, value = self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)
         if current != source or not current.enabled:
             raise ValueError('source declaration changed or is disabled')
         raw = read_regular(contained(self.manifest.parent, value['data']), 8*1024*1024)
         rows = json.loads(raw, object_pairs_hook=unique_object)
-        metadata = None
-        if source.version == 'v2':
-            if not isinstance(rows, dict) or set(rows) != {'schema_version', 'records', 'execution_metadata'} or type(rows['schema_version']) is not int or rows['schema_version'] != 2:
-                raise ValueError('invalid normalized v2 export')
-            metadata = ExecutionMetadata.parse(rows['execution_metadata'])
+        metadata = graph = None
+        if source.version in ('v2', 'v3'):
+            version = int(source.version[1:])
+            fields = {'schema_version', 'records', 'execution_metadata'} | ({'evidence_graph'} if version == 3 else set())
+            if not isinstance(rows, dict) or set(rows) != fields or type(rows['schema_version']) is not int or rows['schema_version'] != version:
+                raise ValueError('invalid normalized export envelope')
+            metadata = ExecutionMetadata.parse(rows['execution_metadata']) if version == 2 or rows['execution_metadata'] is not None else None
+            if version == 3 and rows['evidence_graph'] is not None: graph = EvidenceGraph.parse(rows['evidence_graph'])
             rows = rows['records']
         if not isinstance(rows, list) or len(rows) > 10000:
             raise ValueError('invalid normalized export')
         records = tuple(EvidenceRecord.parse(r) for r in rows)
         if metadata is not None: metadata.validate(source, records)
-        return Snapshot(hashlib.sha256(raw).hexdigest(), records, metadata)
+        if graph is not None: graph.validate(source, records)
+        return Snapshot(hashlib.sha256(raw).hexdigest(), records, metadata, graph)

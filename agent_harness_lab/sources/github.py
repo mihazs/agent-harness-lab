@@ -5,7 +5,8 @@ import json
 import re
 import time
 from urllib.parse import parse_qsl
-from .execution import CoverageManifest, ExecutionMetadata, ScanBound
+from .execution import CoverageManifest, ExecutionMetadata, RecordRef, ScanBound
+from .graph import EvidenceGraph, JoinReceipt
 from .schema import Contract, EvidenceRecord, SourceSpec, digest, timestamp
 from .snapshot import Snapshot
 from .transport import JsonAPI, TransportError, _json_exchange, endpoint
@@ -84,9 +85,10 @@ class GitHubSelection(Contract):
     commits: tuple = ()
 
     def __post_init__(self):
-        if type(self.schema_version) is not int or self.schema_version not in (1, 2, 3, 4): raise ValueError('unsupported GitHub selection version')
+        if type(self.schema_version) is not int or self.schema_version not in (1, 2, 3, 4, 5): raise ValueError('unsupported GitHub selection version')
         integer(self.repo_id, minimum=1)
-        allowed = ('checks', 'threads', 'timeline') if self.schema_version >= 3 else ('checks', 'timeline')
+        allowed = (('checks', 'graph', 'threads', 'timeline') if self.schema_version == 5 else
+            ('checks', 'threads', 'timeline') if self.schema_version >= 3 else ('checks', 'timeline'))
         if (type(self.details) is not tuple or len(self.details) > len(allowed) or any(d not in allowed for d in self.details)
                 or tuple(sorted(set(self.details))) != self.details or self.schema_version == 1 and self.details):
             raise ValueError('invalid explicit GitHub details')
@@ -105,8 +107,8 @@ class GitHubSelection(Contract):
     def parse(cls, value):
         if not isinstance(value, dict): raise ValueError('invalid GitHub selection')
         fields = set(cls.__dataclass_fields__)
-        if value.get('schema_version') not in (2, 3, 4): fields.remove('details')
-        if value.get('schema_version') != 4: fields.remove('commits')
+        if value.get('schema_version') not in (2, 3, 4, 5): fields.remove('details')
+        if value.get('schema_version') not in (4, 5): fields.remove('commits')
         if set(value) != fields: raise ValueError('invalid GitHub selection fields')
         if not all(isinstance(value[k], (list, tuple)) for k in ('issues', 'pulls')): raise ValueError('invalid GitHub number collections')
         if 'details' in value and not isinstance(value['details'], (list, tuple)): raise ValueError('invalid GitHub details collection')
@@ -642,6 +644,13 @@ class GitHubAPI:
             'github-rest-graphql-v1' if 'threads' in self.selection.details else 'github-rest-v'+str(self.selection.schema_version),
             (ScanBound('records', 10000, len(records)), ScanBound('pages', self.transport.max_pages, state['requests']),
             ScanBound('bytes', self.transport.max_bytes, state['used'])), gaps=('not_captured',), reported_completeness='partial')
-        snapshot = Snapshot(digest(summary), tuple(records[k] for k in sorted(records)), ExecutionMetadata((), coverage))
+        graph = None
+        if 'graph' in self.selection.details:
+            refs = {k: RecordRef(r.source_sha256, r.native_id_sha256, r.revision_sha256) for k, r in records.items()}
+            joins = tuple(JoinReceipt(refs[left], refs[right], relation, 'github.native', 'github-claims-v1',
+                (refs[left], refs[right]), basis='native_fields') for relation, left, right in sorted(relations))
+            graph = EvidenceGraph(source.source_key, source.project_sha256, source.scope_sha256, source.version, tuple(refs.values()), joins)
+            graph.validate(source, records.values())
+        snapshot = Snapshot(digest(summary), tuple(records[k] for k in sorted(records)), ExecutionMetadata((), coverage), graph)
         self.summary = summary
         return snapshot

@@ -12,19 +12,19 @@ REASONS = ('not_captured', 'not_observed', 'source_declaration', 'native_metadat
 
 def unpack(cls, value):
     if not isinstance(value, dict) or set(value) != set(cls.__dataclass_fields__):
-        raise ValueError('fields must match the execution metadata contract')
+        raise ValueError('fields must match the source metadata contract')
     return dict(value)
 
 
 def objects(value, cls, maximum):
     if not isinstance(value, (list, tuple)) or len(value) > maximum:
-        raise ValueError('invalid execution metadata collection')
+        raise ValueError('invalid source metadata collection')
     return tuple(cls.parse(v) for v in value)
 
 
 def frozen(value, cls, maximum):
     if type(value) is not tuple or len(value) > maximum or not all(isinstance(v, cls) for v in value):
-        raise ValueError('execution metadata requires bounded immutable collections')
+        raise ValueError('source metadata requires bounded immutable collections')
 
 
 @dataclass(frozen=True)
@@ -226,7 +226,10 @@ class ExecutionMetadata(Contract):
                     capture_completeness='unknown', execution_authorized=False)
 
 
-def capture_snapshot(source, snapshot_sha256, metadata):
+def capture_snapshot(source, snapshot_sha256, metadata, graph=None):
     fingerprint(snapshot_sha256)
-    if metadata is None or metadata.empty: return snapshot_sha256
-    return digest(('execution-metadata-v1', digest(source.to_dict()), snapshot_sha256, metadata.sha256))
+    if metadata is not None and not metadata.empty:
+        snapshot_sha256 = digest(('execution-metadata-v1', digest(source.to_dict()), snapshot_sha256, metadata.sha256))
+    if graph is not None:
+        snapshot_sha256 = digest(('evidence-graph-v1', digest(source.to_dict()), snapshot_sha256, graph.sha256))
+    return snapshot_sha256
