@@ -101,7 +101,7 @@ is per real user, not per trial. A successful bare namespace command does not
 establish that requested resource policy. The delegated canary command exercises
 the cgroup policy without raising the default limit or adding a runtime fallback.
 
-This is not a complete certified backend: a narrow inference broker,
+This is not a complete certified backend: inference isolation across all roles,
 full construction/execution/regrading integration and the complete adversarial
 suite remain prerequisites for #7. Per-file rlimits are not aggregate disk quotas;
 per-user process limits alone are not cgroup guarantees. Host/kernel compromise is out
@@ -255,6 +255,18 @@ Native agents remain cooperative and automatic promotion remains disabled.
 [Bubblewrap's upstream documentation](https://github.com/containers/bubblewrap)
 explains that application policy and the selected mounts determine the boundary;
 the installed binary alone is not a security policy.
+
+## Explicit controller inference
+
+Prepared `ahl evaluate --agent responses` runs can use a controller-owned fixed
+Responses endpoint, explicit private key-file/settings and mandatory cgroup,
+pinned-image and quota profiles. Model-requested argv commands run offline and
+complete bounded working snapshots stay in controller memory between commands.
+Only final declared artifacts reach the existing fresh grader. An unavailable
+boundary blocks before key loading; ambiguous requests and containment failures
+prevent further inference. This does not isolate `improve`'s proposer/evaluator
+construction or enable promotion. Native CLI modes remain cooperative.
+See the [settings, cap and state contract](../skills/harness-evaluation/references/execution.md#controller-owned-responses-executor).
 
 ## Offline validation and limits
 

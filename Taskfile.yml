@@ -112,6 +112,17 @@ tasks:
     desc: Run native preparation and inherited parent deadline controls
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_sandbox_deadline.py" -v'
+  test:evaluation:inference:
+    desc: Run synthetic controller inference, state and paired executor contracts
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_sandbox_inference.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_sandbox_working_state.py" -v'
+  test:sandbox:kernel:state:
+    desc: Run the new working-state canary in a disposable delegated scope
+    cmds:
+      - task: test:sandbox:kernel
+        vars:
+          KERNEL_TEST_FILTER: working_state
   test:sandbox:kernel:
     desc: Run native kernel canaries in a disposable foreground user scope (Linux/systemd)
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -124,7 +135,7 @@ tasks:
       AHL_TEST_CGROUP_ROOT: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=90 -- {{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_sandbox_kernel.py" -v'
+      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=90 -- {{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_sandbox_kernel.py" -k {{default "" .KERNEL_TEST_FILTER | shellQuote}} -v'
   bank:build:
     desc: Reproduce the bundled public synthetic bank and frozen grader digests
     cmds:

@@ -251,6 +251,27 @@ class StorageKernelTests(KernelFixture):
         options.setdefault('artifact_allowlist', [])
         return super().run_code(code, **options)
 
+    def test_working_state_retains_nonzero_edits_between_workers_and_discards_timeout_changes(self):
+        from agent_harness_lab.evaluation.working_state import WorkingState
+        (self.work/'empty').mkdir(); (self.work/'seed').write_text('original')
+        state = WorkingState(self.work,time.monotonic()+10)
+        def execute(code,seconds=5):
+            return self.backend.run(['/usr/bin/python3','-c',code],self.work,{},'executor',
+                                    Limits(seconds=seconds),working_state=state)
+        first = execute("from pathlib import Path; Path('empty').rmdir(); Path('seed').unlink(); Path('result').write_text('edited'); raise SystemExit(1)")
+        self.assertEqual(first['status'],'failed'); self.assertEqual(first['exit_code'],1)
+        self.assertTrue(first['attestation']['cgroup_v2']['empty_after_cleanup'])
+        self.assertIsNotNone(first['attestation']['storage_policy']['extracted'])
+        second = execute("from pathlib import Path; assert not Path('empty').exists(); assert not Path('seed').exists(); assert Path('result').read_text()=='edited'; Path('result').write_text('final')")
+        self.assert_complete(second)
+        before = state.snapshot
+        failed = execute("from pathlib import Path; import time; Path('result').write_text('partial'); time.sleep(30)",.5)
+        self.assertEqual(failed['status'],'timeout'); self.assertIs(state.snapshot,before)
+        self.assertTrue(failed['attestation']['cgroup_v2']['empty_after_cleanup'])
+        exported = state.export(['result'],self.root/'artifacts',time.monotonic()+5)
+        self.assertEqual((exported/'result').read_text(),'final')
+        self.assertEqual((self.work/'seed').read_text(),'original'); self.assertTrue((self.work/'empty').is_dir())
+
     def test_every_writable_volume_enforces_aggregate_capacity_without_leaking_setup_fds(self):
         code = "import errno,os,stat\nfor value in os.listdir('/proc/self/fd'):\n if int(value)>2:\n  try: info=os.fstat(int(value))\n  except OSError: continue\n  assert not stat.S_ISDIR(info.st_mode), 'setup handle leaked'\nfor path,cap in (('/work',32*1024*1024),('/tmp',16*1024*1024),('/dev/shm',16*1024*1024)):\n info=os.statvfs(path)\n assert info.f_blocks*info.f_frsize == cap\n denied=False\n for number in range(128):\n  try:\n   with open(path+'/'+str(number),'wb') as stream: stream.write(b'x'*(512*1024))\n  except OSError as error:\n   assert error.errno == errno.ENOSPC\n   denied=True; break\n assert denied, path+' exceeded aggregate quota'\n assert os.statvfs(path).f_bavail == 0\n for name in os.listdir(path): os.unlink(path+'/'+name)\nprint('all-volumes-bounded')\n"
         run = self.run_code(code)

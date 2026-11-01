@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.36.0
+
+### Minor Changes
+
+- Add an explicit controller-owned Responses executor for prepared paired evaluations. Keep credentials outside offline workers, require pinned-image/cgroup/storage profiles, preserve bounded working state in controller memory between commands, enforce shared request/tool/deadline caps, and regrade final allowlisted artifacts in fresh namespaces. Synthetic transport and real-kernel state controls validate the boundary; full proposer/evaluator orchestration, live API validation and automatic promotion remain pending.
+
 ## 0.35.1
 
 ### Patch Changes

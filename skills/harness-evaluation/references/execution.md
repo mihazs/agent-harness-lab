@@ -190,6 +190,82 @@ backend for controls and trial graders. An unavailable probe prevents agent
 execution. Full role isolation, credential-broker integration and independent
 certification remain pending; these modes cannot enable automatic promotion.
 
+## Controller-owned Responses executor
+
+`ahl evaluate --agent responses` adds an explicit controller-owned OpenAI Responses
+executor. It is separate from the cooperative Codex/Claude CLI modes. It currently
+supports prepared paired tasks, not proposer/evaluator construction in `improve`
+or `watch`. Full role orchestration and automatic promotion remain unavailable.
+
+Supply the manifest/version/output arguments above, plus all of:
+
+```sh
+--inference-settings /absolute/private/inference-settings.json \
+--cgroup-root /absolute/delegated/subtree \
+--image-root /absolute/private/rootfs --image-sha256 REVIEWED_SHA256 \
+--disk-bytes 67108864
+```
+
+The settings file has an exact versioned schema; no environment/default account
+or model discovery occurs. An example with explicit operator-selected caps is:
+
+```json
+{
+  "schema_version": 1,
+  "model": "operator-selected-model",
+  "credential_file": "/absolute/private/key.txt",
+  "max_requests": 40,
+  "max_tool_calls": 32,
+  "max_output_tokens": 512,
+  "max_request_bytes": 1048576,
+  "max_response_bytes": 1048576
+}
+```
+
+The key file must be an owner-only, single-link regular file outside worker views,
+runtime images and output directories. Keep settings/keys outside version control.
+The controller probes the selected boundary and admits all initial fixtures before
+reading the key. Missing/unsupported boundaries block; no native CLI or cooperative
+fallback is launched. Tasks require frozen grader bundles and explicit artifacts.
+Use version directories containing only the intended harness. Skill/harness-path
+injection and cooperative `--config` profiles are not supported in this mode.
+
+Inference goes only to `https://api.openai.com/v1/responses`. A trusted isolated
+Python controller child receives credentials through a private stdin pipe, with a
+cleared environment and no site startup hooks. It follows no redirects or proxy
+settings and exits before any worker command runs. The parent terminates stalled
+transport at its remaining deadline and never records provider error bodies or
+credentials. TLS/live API compatibility has not been exercised by synthetic tests.
+
+The model gets one strict `run(argv)` tool. All complete output items and arguments
+are checked before dispatch; hosted tools, unknown functions, duplicate IDs and
+malformed/incomplete replies abort. Each command runs offline with only its task
+state and selected readonly harness. Worker processes receive no broker token,
+credential file, provider socket or controller environment. Replies are replayed
+with encrypted reasoning and `store=false`, following the [Responses migration
+contract](https://developers.openai.com/api/docs/guides/migrate-to-responses).
+This setting alone is not a Zero Data Retention guarantee.
+
+Requests and tool reservations are capped across the entire paired run.
+`max_output_tokens` is per request; the whole-run reservation ceiling is
+`max_requests * max_output_tokens`. Byte limits bound each request/context and
+response frame. These are explicit execution caps, not a monetary limit or exact
+input-token plan. Reports separate reserved output from provider-reported usage.
+Ambiguous costed failures or containment failures stop further inference; no retry
+or cheaper-model fallback occurs. Preparation, transport, commands, snapshots and
+grading share the original wall-clock budget.
+
+Between commands, complete working state stays in controller memory: at most 100
+regular single-link files, 1 MiB contents, 100 directories, depth 64, 4096-byte paths
+and 64 KiB metadata. Capture occurs after worker cleanup through no-follow directory
+descriptors. Preserve ordinary modes, new files, empty directories and deletions;
+reject links, special files/mode bits and incomplete/oversized reads. Nonzero test
+commands retain valid edits for inspection. Timeout/resource/integrity failures
+never adopt partial state. Only terminal declared artifacts are staged and
+published together for fresh offline grading; a final model claim cannot pass a
+task. Synthetic transports establish orchestration; separately selected kernel
+canaries establish only their tested process/filesystem boundaries.
+
 ## Automatic project instruction experiments
 
 `ahl improve` discovers its own targets and prepares a staged experiment. A manifest
