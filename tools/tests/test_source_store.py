@@ -134,7 +134,7 @@ class SourceStoreTests(unittest.TestCase):
     def test_legacy_journal_migration_waits_for_successful_import(self):
         first = digest('legacy-snapshot')
         self.store.ingest(self.source, [self.record], cursor_after=first)
-        state = json.loads(self.store.path.read_bytes()); state['schema_version'] = 1; state.pop('snapshots')
+        state = json.loads(self.store.path.read_bytes()); state['schema_version'] = 1; state.pop('snapshots'); state.pop('captures')
         self.store.path.write_text(json.dumps(state)); original = self.store.path.read_bytes()
         self.assertIsNone(self.store.status(self.source)['snapshot_sha256'])
         self.assertEqual(self.store.path.read_bytes(), original)
@@ -143,7 +143,7 @@ class SourceStoreTests(unittest.TestCase):
         self.assertEqual(self.store.path.read_bytes(), original)
         receipt = self.store.ingest(self.source, [self.record], cursor_before=first, snapshot_sha256=first)
         self.assertNotEqual(receipt.cursor_after_sha256, first)
-        self.assertEqual(json.loads(self.store.path.read_bytes())['schema_version'], 2)
+        self.assertEqual(json.loads(self.store.path.read_bytes())['schema_version'], 3)
         self.assertEqual(self.store.status(self.source)['revisions'], 1)
         state = json.loads(self.store.path.read_bytes())
         self.assertNotIn(first, state['snapshots'][self.source.source_key]['history'])

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.18.0
+
+### Minor Changes
+
+- Add immutable content-free execution identity and declared coverage receipts through explicit normalized export v2, preview/status and atomic journal v3. Preserve v1 exports and v1/v2 journal history, bind metadata changes to new checkpoints and keep missing/conflicted identities explicit. Current collectors reject verified execution claims rather than trusting provenance labels.
+
 ## 0.17.0
 
 ### Minor Changes

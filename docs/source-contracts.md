@@ -43,6 +43,43 @@ proof nor authorizes execution. A future connector must verify Git remote or
 source-declared identity and permissions before reading, and must independently
 enforce filesystem/network boundaries.
 
+## Execution identity and declared coverage
+
+The optional immutable contracts in `sources.execution` accompany records without
+adding fields to strict v1 `SourceSpec`, `EvidenceRecord` or `ImportReceipt` objects:
+
+| Contract | Captured metadata |
+| --- | --- |
+| `RecordRef` | Source/native-record/revision fingerprints |
+| `IdentityField` | Field name, namespace, optional fingerprint, status, provenance, evidence references, observation/effective times and missing/conflict reason |
+| `ExecutionIdentity` | A subject record revision and at most one receipt per supported identity field |
+| `CoverageManifest` | Expected/observed scope, adapter/parser versions, scan bounds, missing fields, gap reasons, truncation/limit flags and reported completeness |
+| `ExecutionMetadata` | Up to 1,000 subject identities and an optional coverage manifest |
+
+Identity fields cover project/worktree, original task/root, session/parent, attempt,
+requested model alias, served model, runtime/version, effective harness/config,
+memory snapshot, code/PR head and grader revision. Each value is a namespaced
+fingerprint or explicit unknown; a requested alias never supplies a missing served
+version. Unknown fields carry `null`, not the fingerprint of an empty string.
+Conflicted fields carry distinct alternative fingerprints and no selected value.
+References must resolve to revisions in the same explicitly scoped source. A late
+import or changed current checkout cannot replace a historical field or its time.
+
+These receipts are claims. The field schema can represent `verified` for a future
+trusted execution verifier, but **every current export, registry and store import
+rejects verified execution fields**. A native/controller provenance label, source
+provider name or valid checksum cannot grant that capability. Existing Git and
+instruction-inventory captures do not establish which configuration an execution
+loaded. Native receipt mapping, verified joins and analyze/doctor integration
+remain open in #42/#44/#46/#58. No receipt authorizes execution or grading.
+
+Fields and collections use fixed bounds: 16 supported identity names, eight evidence
+references or conflict alternatives per field, five scan dimensions and enumerated
+missing/gap reasons. Timestamps require timezones, validity intervals must be ordered,
+and unknown keys or mutable collections are rejected. Coverage's
+`reported_completeness` is a source assertion; import completion and the public
+summary's `capture_completeness: unknown` remain separate from that assertion.
+
 ## Private checkpoint journal
 
 `SourceStore` in `agent_harness_lab.sources.store` stores already-normalized
@@ -70,17 +107,33 @@ deduplication still preserves the first attribution. This collector checkpoint i
 not a new native revision and does not establish a historical execution identity.
 Opaque pagination cursors keep the existing cycle and stale-writer checks.
 
-Journal schema 2 retains snapshot fingerprints against their collector checkpoints
+Journal schema 3 retains snapshot fingerprints against their collector checkpoints
 and distinguishes the currently observed snapshot from an opaque cursor. Returning
 to opaque mode preserves earlier associations but clears the current snapshot
 claim. Legacy cursor fingerprints are never retroactively relabeled as snapshots.
-Schema-1 journals remain readable; status does not rewrite them. The next successful import
+Schema-1 and schema-2 journals remain readable; status does not rewrite them. The next successful import
 atomically upgrades the journal, preserving records, source attribution,
 supersession claims and checkpoints. A snapshot import also records a new explicit
 snapshot observation; legacy associations remain unknown.
 Failed imports preserve the original bytes.
-Older AHL versions cannot read a schema-2 journal; keep the previous journal when
+Older AHL versions cannot read a schema-3 journal; keep the previous journal when
 rollback to an older client is required.
+
+Schema 3 adds capture metadata envelopes keyed by source and committed snapshot
+checkpoint. An envelope binds the source specification used at capture time, raw
+source snapshot fingerprint and immutable execution metadata. Nonempty metadata is
+included in the effective snapshot identity: a metadata-only change, parser upgrade
+or recurring earlier receipt creates a new chained checkpoint without inventing a
+new native record revision. Empty metadata preserves the prior snapshot identity.
+No different envelope may overwrite a checkpoint. Migration creates no historical
+identities for old imports, and records/metadata/cursors commit atomically.
+
+Pass typed metadata to `ingest(..., snapshot_sha256=..., metadata=...)`; this first
+metadata path requires snapshot mode. `capture(source, cursor)` returns immutable
+metadata for a specific committed checkpoint without reading the live source.
+`status` exposes a summary only for the active captured snapshot, keeping unknown
+fields and declared coverage distinct. Historical envelopes survive a return to
+opaque mode even though the current snapshot claim is cleared.
 
 The source/native-ID/revision tuple defines idempotency. Recollection timestamps
 do not create duplicate revisions; the first record and its source specification
@@ -132,6 +185,25 @@ code; there is no dynamic plugin loading or automatic source enablement.
 
 Provider-specific API transports, native formats, append offsets, analyze/doctor source
 integration and remote pagination remain open in #42 and provider issues.
+
+### Normalized export v2
+
+The additional `local_file/ahl-metadata/v2` capability keeps the declaration and
+record schemas at version 1. Its data payload contains exactly `schema_version: 2`,
+`records` (the same bounded v1 record list) and `execution_metadata` (a complete
+`ExecutionMetadata.to_dict()` object). The existing 8 MiB export bound applies to
+the entire payload. Use each contract's strict `parse`/`to_dict` methods; no raw
+native IDs, source bodies, private paths or credentials belong in these objects.
+Versions outside v1/v2 are rejected before normalized payload reads. v1 list exports
+remain supported and create no inferred execution metadata.
+
+Preview includes the bounded execution summary, original `snapshot_sha256` and
+`checkpoint_snapshot_sha256` that binds the source specification and nonempty
+metadata. Status's `snapshot_sha256` is that committed effective snapshot identity;
+`source_snapshot_sha256` retains the raw collector fingerprint. The registry and
+direct store validate source ownership, available evidence references and metadata
+claims before committing. No configured plugin or verification flag can promote
+an export assertion to verified execution evidence.
 
 ## Offline Git and selected harness metadata
 
