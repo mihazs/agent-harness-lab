@@ -11,6 +11,8 @@ from .store import SourceStore
 from .git import GitExport
 from .execution import capture_snapshot
 from .github_config import GitHubConfigured
+from .native import NativeCapture
+from .claude import ClaudeCapture, SOURCE_VERSION as CLAUDE_VERSION
 from .codex import CodexCapture, SOURCE_VERSION as CODEX_VERSION, ROOT_VERSION as CODEX_ROOT_VERSION
 from agent_harness_lab.config import read_json
 
@@ -40,6 +42,8 @@ def main(argv):
                 connector = OKFExport(args.manifest)
             elif source.provider == 'git':
                 connector = GitExport(args.manifest)
+            elif source.provider == 'claude-jsonl':
+                connector = ClaudeCapture(args.manifest)
             elif source.provider == 'codex-rollout':
                 connector = CodexCapture(args.manifest)
             registry = Registry()
@@ -51,6 +55,7 @@ def main(argv):
             registry.register(Capability('local_git', 'git', 'v2', ('development_artifact',)), connector)
             for version in (CODEX_VERSION, CODEX_ROOT_VERSION):
                 registry.register(Capability('local_file', 'codex-rollout', version, ('behavioral_event',)), connector)
+            registry.register(Capability('local_file', 'claude-jsonl', CLAUDE_VERSION, ('behavioral_event',)), connector)
             if isinstance(connector, GitHubConfigured):
                 registry.register(Capability('api', 'github', source.version, ('contextual_assertion', 'development_artifact')), connector)
             result = registry.probe(source, **scope)
@@ -69,7 +74,7 @@ def main(argv):
                     result['context_summary'] = connector.summary
                 elif isinstance(connector, GitExport):
                     result['git_summary'] = connector.summary
-                elif isinstance(connector, CodexCapture):
+                elif isinstance(connector, NativeCapture):
                     result['native_summary'] = connector.summary
                     result['checkpoint_ready'] = snapshot.checkpoint_ready
             elif args.operation in ('import', 'status', 'recheck'):

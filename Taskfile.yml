@@ -36,6 +36,18 @@ tasks:
     desc: Run native Codex source receipts, checkpoint admission and immutable history cases
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_codex*.py" -v'
+  test:sources:claude:
+    desc: Run native Claude source revisions, identity claims, graph and checkpoint cases
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_claude.py" -v'
+  test:sources:native:compat:
+    desc: Compare Codex file/root preview hashes with an explicitly frozen baseline
+    requires:
+      vars: [BASELINE]
+    env:
+      AHL_NATIVE_BASELINE_ROOT: '{{.BASELINE}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_native_compat.py" -v'
   test:sources:git:
     desc: Run synthetic native Git snapshots, graph, coverage and compatibility cases
     cmds:

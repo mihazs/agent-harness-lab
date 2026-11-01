@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.34.0
+
+### Minor Changes
+
+- Connect explicitly selected Claude native files to private source journals with exact row revision history, declared execution metadata, message membership and current-only relationship rechecks. Share bounded native journal machinery with Codex while preserving its preview hashes, block partial/failed checkpoints, and keep derived facets and unverified execution claims distinct.
+
 ## 0.33.0
 
 ### Minor Changes

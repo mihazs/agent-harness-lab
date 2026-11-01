@@ -3,6 +3,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from .github_config import GitHubConfigured
 from .git import GitExport
+from .claude import ClaudeCapture, SOURCE_VERSION as CLAUDE_VERSION
 from .codex import CodexCapture, SOURCE_VERSION as CODEX_VERSION, ROOT_VERSION as CODEX_ROOT_VERSION
 from .graph import EvidenceGraph, STATUSES
 from .schema import digest
@@ -18,6 +19,7 @@ def link_key(join): return join.relation, join.left.key, join.right.key if join.
 
 
 def recheck(source, connector, proposed):
+    if type(connector) is ClaudeCapture: return recheck_claude(source, connector, proposed)
     if type(connector) is CodexCapture: return recheck_codex(source, connector, proposed)
     if type(connector) is GitExport: return recheck_git(source, connector, proposed)
     return recheck_github(source, connector, proposed)
@@ -34,15 +36,23 @@ def recheck_git(source, connector, proposed):
 
 
 def recheck_codex(source, connector, proposed):
-    if type(connector) is not CodexCapture or not isinstance(proposed, EvidenceGraph):
-        raise NotImplementedError('native relationship recheck requires the built-in Codex reader')
+    return _native_recheck(source, connector, proposed, CodexCapture, 'codex-rollout', (CODEX_VERSION, CODEX_ROOT_VERSION), 'codex')
+
+
+def recheck_claude(source, connector, proposed):
+    return _native_recheck(source, connector, proposed, ClaudeCapture, 'claude-jsonl', (CLAUDE_VERSION,), 'claude')
+
+
+def _native_recheck(source, connector, proposed, reader, provider, versions, runtime):
+    if type(connector) is not reader or not isinstance(proposed, EvidenceGraph):
+        raise NotImplementedError('native relationship recheck requires the exact built-in reader')
     proposed._validate_refs(source, {r.key for r in proposed.nodes})
-    if (source.kind, source.provider) != ('local_file', 'codex-rollout') or source.version not in (CODEX_VERSION, CODEX_ROOT_VERSION):
-        raise NotImplementedError('native Codex recheck requires the pinned capture profile')
-    snapshot = CodexCapture.read(connector, source)
+    if (source.kind, source.provider) != ('local_file', provider) or source.version not in versions:
+        raise NotImplementedError('native recheck requires an explicit pinned capture profile')
+    snapshot = reader.read(connector, source)
     if not snapshot.checkpoint_ready: raise ValueError('partial native capture cannot verify current relationships')
     kinds = tuple({r.record_type for r in snapshot.records})
-    return _recheck(source, proposed, snapshot, kinds, 'codex.recheck', 'codex-native-recheck-v1', False)
+    return _recheck(source, proposed, snapshot, kinds, runtime+'.recheck', runtime+'-native-recheck-v1', False)
 
 
 def recheck_github(source, connector, proposed):

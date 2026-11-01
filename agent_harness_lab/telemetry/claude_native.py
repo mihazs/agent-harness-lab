@@ -12,9 +12,10 @@ KNOWN_TOOLS = ('Bash', 'Read', 'Write', 'Edit', 'MultiEdit', 'Glob', 'Grep', 'Ag
 
 
 class Projection:
-    def __init__(self, project, limit, check):
+    def __init__(self, project, limit, check, revisions=None):
         self.project, self.session, self.writer = Path(project), None, None
         self.limit, self.check = limit, check
+        self.revisions, self.raw_revisions = revisions, {}
         self.rows, self.seen, self.responses = [], {}, {}
         self.unsupported, self.duplicates, self.unattributed = 0, 0, 0
 
@@ -52,6 +53,9 @@ class Projection:
         for flag in ('isMeta', 'isCompactSummary'):
             if flag in row and type(row[flag]) is not bool: raise ValueError('invalid native Claude context flag')
         observations, usage, stop, response = [], None, None, None
+        raw_revision = digest(row) if self.revisions is not None else None
+        if ident in self.raw_revisions and self.raw_revisions[ident] != raw_revision:
+            raise ValueError('conflicting native Claude record revisions')
         previous = self.seen.get(ident)
         quota = previous[1] if previous is not None else self.limit-len(self.rows)
         def emit(activity, index=0, **metadata):
@@ -109,6 +113,10 @@ class Projection:
             if previous[0] != signature: raise ValueError('conflicting native Claude UUID metadata')
             self.duplicates += 1; return
         self.seen[ident] = (signature, len(observations))
+        if self.revisions is not None:
+            self.raw_revisions[ident] = raw_revision
+            for observation in observations:
+                self.revisions[(observation['case_id'], observation['event_id'])] = raw_revision
         self.rows.extend(observations)
         if response is not None:
             receipt = self.responses.setdefault(response, dict(base=dict(base), usage={}, stops={}, models=set()))
@@ -147,14 +155,14 @@ class Projection:
         return tuple(sorted(self.rows, key=lambda r: r['capture_order'])), conflicts
 
 
-def decode(folder, name, project, max_records):
-    projection = Projection(project, max_records, folder.check)
+def decode(folder, name, project, max_records, *, revisions=None):
+    projection = Projection(project, max_records, folder.check, revisions)
     sha256, partial, count = jsonl(folder, name, max_records, projection.add)
     rows, conflicts = projection.finish(folder.check)
     if len(rows) > max_records: raise ValueError('native Claude normalized event budget exceeded')
     summary = dict(adapter_version=VERSION, upstream_commit=UPSTREAM_COMMIT, capture_completeness='partial', partial_tail=partial,
         inherited_records_skipped=0, duplicates_skipped=projection.duplicates, unsupported_records=projection.unsupported,
-        input_records=count, conflicting_response_facets=conflicts, unattributed_usage_records=projection.unattributed,
+        input_records=count, session_sha256=projection.scoped('session', projection.session), conflicting_response_facets=conflicts, unattributed_usage_records=projection.unattributed,
         usage_semantics='observed_uncached_counts_only', served_model='unknown', effective_settings='unknown',
         independence='unknown', outcome='unknown', parent_session='unknown', source_read=True, network_used=False)
     return rows, summary, sha256
