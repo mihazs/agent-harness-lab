@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.33.0
+
+### Minor Changes
+
+- Add an explicit pinned Claude Code 2.1.316 native file profile with scoped writers, private block/message metadata, parallel tool correlation, compaction coverage and conservative response usage. Share guarded JSONL boundaries with Codex, enforce expansion limits before allocation, preserve duplicate UUID idempotence, and withhold conflicting or incomplete native response facets.
+
 ## 0.32.0
 
 ### Minor Changes
