@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.1
+
+### Patch Changes
+
+- Preserve an absent or null PR merge reference as unknown while retaining the reported merged state. Do not reject otherwise valid partial metadata or substitute the current head for an unavailable merge SHA.
+
 ## 0.19.0
 
 ### Minor Changes
