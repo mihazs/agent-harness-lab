@@ -77,6 +77,7 @@ def main(argv=None):
         command.add_argument('project', nargs='?', type=Path, default=Path.cwd())
         command.add_argument('--events', type=Path, help='Optional explicit evidence instead of native capture discovery')
         command.add_argument('--format', choices=('normalized', 'codex', 'claude', 'ai-memory'), default='normalized')
+        command.add_argument('--source-version', help='Explicit adapter contract for --events, including codex-rollout-0.166.0')
         command.add_argument('--output', type=Path, help='New private output directory (default: user state directory)')
         if name == 'analyze':
             command.add_argument('--source-cache', type=Path, help='Explicit private source journal; metadata only, no collection')
