@@ -101,8 +101,7 @@ is per real user, not per trial. A successful bare namespace command does not
 establish that requested resource policy. The delegated canary command exercises
 the cgroup policy without raising the default limit or adding a runtime fallback.
 
-This is not a complete certified backend: aggregate disk quotas,
-pinned full execution-image/dependency identity, a narrow inference broker,
+This is not a complete certified backend: aggregate disk quotas, a narrow inference broker,
 full construction/execution/regrading integration and the complete adversarial
 suite remain prerequisites for #7. Per-file rlimits are not aggregate disk quotas;
 per-user process limits alone are not cgroup guarantees. Host/kernel compromise is out
@@ -121,6 +120,49 @@ trusted cooperative diagnostic path still executes trusted controls directly.
 Isolated executable checks require `/usr/bin/bwrap` and nested user namespaces;
 unsupported execution cannot produce a passing check. This is a contract of the
 owned starter graders, not a guarantee about arbitrary caller-supplied graders.
+
+## Pinned offline runtime images
+
+An offline evaluation or sandbox probe can explicitly supply `--image-root ROOTFS
+--image-sha256 SHA256`. Both flags are required together. The rootfs is an already
+extracted, reviewed private directory; no image is downloaded, unpacked or enabled
+automatically. Obtain its content pin without executing image code using
+`task runtime:pin ROOTFS=/path/to/rootfs`. This filesystem-manifest hash is not an
+OCI registry digest and is never silently derived as an execution authorization.
+
+The root must be owned by the controller with mode 0700. Required regular
+directories are `usr`, `usr/bin`, `dev`, `proc`, `tmp`, `work`, `home`,
+`home/worker` and `inputs`. Supply the complete intended runtime, including
+`/usr/bin/true` for probing, the worker interpreter/libraries and
+`/usr/bin/bwrap` for the starter grader's nested checks. Missing dependencies
+remain execution failures, never a fallback to host runtime directories.
+Keep project files, oracles, credentials and other role data outside the image.
+
+Inspection binds every file's bytes, path membership, mode, numeric ownership,
+modification time, symlink target and extended attributes. It does not follow
+symlinks during inventory; escaping lexical links, hardlinks, special files and
+setuid/setgid entries are refused. Mount points must be real directories.
+The bounded profile permits 50,000 entries and 512 MiB of file/attribute data.
+No raw paths or file contents enter the runtime-image attestation.
+
+The backend mounts that rootfs readonly instead of host `/usr`/library trees.
+Role inputs get a separately populated readonly mount, with a disjoint writable
+workspace and private temporary storage. The image cannot overlap workspace,
+harness, fixture or oracle trees. Executors and pristine graders use the same
+requested image; nested checks inherit its pinned runtime libraries and launcher.
+Each worker verifies the expected pin before launch and after termination. A
+changed image fails closed; insufficient postflight budget produces an incomplete
+integrity result and cannot pass. Hashing consumes the caller's deadline, though
+blocking host filesystem I/O remains cooperatively bounded.
+
+Host kernel and outer bubblewrap remain trusted host components, not part of this
+image. Their behavior is not virtualized; the outer launcher hash is separately
+recorded. File access/change times and inode identities are not content identity,
+and a pin does not prove deterministic execution or protect a compromised host.
+Unpinned diagnostic mode remains labeled `runtime dependencies unpinned` and
+`automatic_promotion=false` remains universal. Kernel canaries exercise a private
+synthetic image, readonly execution, shared pins for both arms and pristine
+graders, and the nested Python checks across all seven starter tasks.
 
 `ahl evaluate --agent offline` now integrates fixture-command execution with a
 separate grader namespace, selected-harness-only mounts, bounded artifact

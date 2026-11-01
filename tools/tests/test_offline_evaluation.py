@@ -65,6 +65,16 @@ class OfflineFixture(unittest.TestCase):
 
 
 class OfflineEvaluationTests(OfflineFixture):
+    def test_runtime_image_flags_reach_both_roles_and_missing_pins_are_rejected(self):
+        self.args.image_root, self.args.image_sha256 = self.root/'runtime', 'a'*64
+        with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend', autospec=True) as backend:
+            backend.return_value.capability.return_value = {'status': 'available'}
+            backend.return_value.run.side_effect = self.emulate
+            self.assertEqual(self.runner.evaluate(self.args), 1)
+        backend.assert_called_once_with(cgroup_root=None, image_root=self.args.image_root, image_sha256='a'*64)
+        self.args.image_sha256 = None
+        with self.assertRaisesRegex(ValueError, 'supplied together'): self.runner.evaluate(self.args)
+
     def test_child_preparation_failure_remains_an_executor_or_grader_error(self):
         for role in ('executor', 'grader'):
             with self.subTest(role=role):

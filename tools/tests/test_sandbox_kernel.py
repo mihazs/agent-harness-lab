@@ -2,6 +2,9 @@
 from contextlib import contextmanager
 import os
 import json
+import re
+import shutil
+import subprocess
 from pathlib import Path
 import selectors
 import socket
@@ -15,6 +18,7 @@ from agent_harness_lab.evaluation.bank_tools import regrade_artifacts
 from agent_harness_lab.evaluation.cgroup import delegated
 from agent_harness_lab.evaluation.integrity import artifacts, digest
 from agent_harness_lab.evaluation.sandbox import Limits, SandboxBackend
+from agent_harness_lab.evaluation.image import MOUNT_DIRS, scan
 from test_offline_evaluation import OfflineFixture
 
 ENABLED = bool(os.environ.get('AHL_TEST_CGROUP_ROOT')) or os.environ.get('AHL_TEST_SYSTEMD_SCOPE') == '1'
@@ -187,6 +191,50 @@ class OfflineKernelTests(OfflineFixture, KernelFixture):
             for run in (trial['execution'], trial['grader']['execution']):
                 self.assertEqual(run['attestation']['backend'], 'bubblewrap-offline-v1')
                 self.assertTrue(run['attestation']['cgroup_v2']['empty_after_cleanup'])
+
+
+@unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
+class PinnedImageKernelTests(OfflineFixture, KernelFixture):
+    def test_pinned_image_is_used_by_executor_pristine_grader_and_nested_checks(self):
+        rootfs = self.root/'runtime'; rootfs.mkdir(mode=0o700)
+        for name in MOUNT_DIRS: (rootfs/name).mkdir(parents=True, exist_ok=True)
+        environment = {'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'}
+        stdlib = Path(subprocess.check_output(['/usr/bin/python3', '-I', '-c',
+            'import sysconfig; print(sysconfig.get_path("stdlib"))'], env=environment, text=True).strip())
+        shutil.copytree(stdlib, rootfs/stdlib.relative_to('/'), dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns('site-packages', '__pycache__', 'test', 'tests', 'ensurepip', 'idlelib', 'tkinter'))
+        binaries = [Path(p) for p in ('/usr/bin/python3', '/usr/bin/true', '/usr/bin/bwrap')]
+        extensions = list((stdlib/'lib-dynload').glob('*.so'))
+        libraries = subprocess.check_output(['ldd', *map(str, binaries+extensions)], env=environment, text=True)
+        dependencies = {Path(p) for p in re.findall(r'(/[^\s():]+)', libraries) if Path(p).is_file()}
+        for source in binaries+sorted(dependencies):
+            target = rootfs/source.relative_to('/'); target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+        (rootfs/'image-marker').write_text('SYNTHETIC_PINNED_IMAGE')
+        frozen = scan(rootfs)
+        backend = SandboxBackend(cgroup_root=self.cgroup_root, image_root=rootfs, image_sha256=frozen['sha256'])
+        scratch = self.root/'scratch'; scratch.mkdir()
+        code = '''from pathlib import Path
+assert Path('/image-marker').read_text() == 'SYNTHETIC_PINNED_IMAGE'
+assert not Path('/etc/os-release').exists()
+assert not Path('/inputs/oracle').exists()
+try: Path('/image-marker').write_text('changed'); raise AssertionError('image is writable')
+except OSError: pass
+'''
+        run = backend.run(['/usr/bin/python3', '-I', '-c', code], scratch, {}, 'executor', Limits(seconds=5))
+        self.assert_complete(run)
+        self.assertTrue(run['attestation']['runtime_image']['verified_after'])
+        self.args.cgroup_root = self.cgroup_root
+        self.args.image_root, self.args.image_sha256 = rootfs, frozen['sha256']
+        self.assertEqual(self.runner.evaluate(self.args), 1)
+        result = self.results()
+        self.assertEqual(len(result['trials']), 14)
+        for trial in result['trials']:
+            self.assertEqual(trial['status'], 'passed' if trial['version'] == 'candidate' else 'failed')
+            for execution in (trial['execution'], trial['grader']['execution']):
+                attested = execution['attestation']['runtime_image']
+                self.assertEqual(attested['sha256'], frozen['sha256'])
+                self.assertTrue(attested['verified_before'] and attested['verified_after'])
 
 
 @unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')

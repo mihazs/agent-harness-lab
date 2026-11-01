@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 from .cgroup import Cgroup
+from .image import RuntimeImage
 from .integrity import digest
 
 ROLES = {'proposer', 'evaluator_author', 'executor', 'grader'}
@@ -35,9 +36,12 @@ class Limits:
 
 class SandboxBackend:
     """Role mounts are controller-selected; candidate content is never policy."""
-    def __init__(self, binary='bwrap', *, cgroup_root=None):
+    def __init__(self, binary='bwrap', *, cgroup_root=None, image_root=None, image_sha256=None):
         self.binary = shutil.which(binary)
         self.cgroup_root = cgroup_root
+        if (image_root is None) != (image_sha256 is None):
+            raise ValueError('runtime image root and SHA-256 pin must be supplied together')
+        self.image = RuntimeImage(image_root, image_sha256) if image_root is not None else None
 
     def command(self, argv, workspace, inputs, role):
         if role not in ROLES or not argv or not all(isinstance(a, str) for a in argv):
@@ -51,9 +55,15 @@ class SandboxBackend:
                    '--new-session', '--cap-drop', 'ALL', '--clearenv', '--setenv', 'PATH', '/usr/bin:/bin',
                    '--setenv', 'HOME', '/home/worker', '--setenv', 'LANG', 'C.UTF-8']
         command += ['--setenv', 'AHL_SANDBOX_ROLE', role]
-        for system in ('/usr', '/bin', '/lib', '/lib64'):
-            if Path(system).exists():
-                command += ['--ro-bind', system, system]
+        if self.image:
+            for folder in (workspace, *map(Path, inputs.values())):
+                if folder.resolve().is_relative_to(self.image.root) or self.image.root.is_relative_to(folder.resolve()):
+                    raise ValueError('runtime image and role data must not overlap')
+            command += ['--ro-bind', str(self.image.root), '/', '--tmpfs', '/inputs']
+        else:
+            for system in ('/usr', '/bin', '/lib', '/lib64'):
+                if Path(system).exists():
+                    command += ['--ro-bind', system, system]
         command += ['--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--dir', '/home/worker',
                     '--bind', str(workspace), '/work']
         for name, folder in sorted(inputs.items()):
@@ -64,6 +74,8 @@ class SandboxBackend:
             if workspace.is_relative_to(folder) or folder.is_relative_to(workspace):
                 raise ValueError('writable workspace and readonly inputs must not overlap')
             command += ['--ro-bind', str(folder), '/inputs/' + name]
+        if self.image:
+            command += ['--remount-ro', '/inputs']
         return command + ['--remount-ro', '/', '--chdir', '/work', '--', *argv]
 
     def capability(self, *, seconds=3):
@@ -83,12 +95,15 @@ class SandboxBackend:
                     reason=None if available else 'namespace_probe_failed',
                     automatic_promotion=False,
                     cgroup_v2=run['attestation']['cgroup_v2'],
+                    runtime_image=run['attestation'].get('runtime_image'),
                     limitations=['no aggregate disk quota', 'inference broker not implemented']
+                        + ([] if self.image else ['runtime dependencies unpinned'])
                         + ([] if self.cgroup_root is not None else ['no aggregate cgroup controls']))
 
     def run(self, argv, workspace, inputs, role, limits=Limits()):
         limits.validate()
         start = time.monotonic()
+        image = self.image.verify(deadline=start+limits.seconds) if self.image else None
         command = self.command(argv, workspace, inputs, role)
         before = {name: digest(folder) for name, folder in inputs.items()}
         if time.monotonic() - start >= limits.seconds:
@@ -147,6 +162,13 @@ class SandboxBackend:
             finally:
                 poll.close()
         unchanged = all(digest(folder) == before[name] for name, folder in inputs.items())
+        if image:
+            image.update(verified_before=True, verified_after=False)
+            try:
+                self.image.verify(deadline=start+limits.seconds)
+                image['verified_after'] = True
+            except TimeoutError:
+                reason, unchanged = reason or 'timeout', False
         cgroup = group.report if group is not None else None
         if cgroup and (cgroup['events']['pids.events']['max'] or any(cgroup['events']['memory.events'][k] for k in ('max', 'oom', 'oom_kill'))):
             reason = reason or 'resource_limit'
@@ -159,4 +181,5 @@ class SandboxBackend:
                         input_digests=before, automatic_promotion=False,
                         resource_limits=asdict(limits),
                         cgroup_v2=cgroup,
+                        runtime_image=image,
                         aggregate_disk_bound_verified=False, inference_supported=False))

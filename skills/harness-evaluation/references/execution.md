@@ -138,6 +138,12 @@ Use `ahl sandbox-check --cgroup-root ...` to probe the exact requested boundary.
 See the [resource contract](../../../docs/evaluation-foundation.md#offline-sandbox-and-threat-model)
 for prerequisites, kernel-test limits and remaining certification safeguards.
 
+To pin worker dependencies, add `--image-root ROOTFS --image-sha256 SHA256` to the
+offline command. Inspect the pre-extracted private rootfs with
+`task runtime:pin ROOTFS=ROOTFS` before reviewing its pin. Both arms and pristine
+graders receive the same image. See the [runtime image contract](../../../docs/evaluation-foundation.md#pinned-offline-runtime-images)
+for mount points, bounds, integrity checks and trusted-host limits.
+
 Only the controller chooses mounts; candidate content cannot add them. This mode
 rejects `skills`/`harness_paths` injection and requires complete declared grader
 bundles plus the fixed `grade.py.txt`/`expected.json` Python grader contract from

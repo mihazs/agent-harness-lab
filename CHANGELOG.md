@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.13.0
+
+### Minor Changes
+
+- Add opt-in SHA-256-pinned extracted runtime images to offline executors and pristine graders. Inspect a bounded private rootfs without executing image code, bind its complete content/permission/ownership/mtime/link/xattr identity, reject unsafe files and role-data overlap, and verify integrity before and after each worker. Expose explicit image flags and a Taskfile pin command; unpinned diagnostics remain labeled and automatic promotion stays disabled.
+
 ## 0.12.1
 
 ### Patch Changes

@@ -44,6 +44,12 @@ tasks:
     desc: Reproduce the bundled public synthetic bank and frozen grader digests
     cmds:
       - '{{.PYTHON | shellQuote}} scripts/build_synthetic_bank.py'
+  runtime:pin:
+    desc: Inspect an explicitly supplied extracted rootfs without executing image code
+    requires:
+      vars: [ROOTFS]
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m agent_harness_lab.evaluation.image {{.ROOTFS | shellQuote}}'
   test:installed:
     desc: Run native tests against an installed wheel or extracted archive
     dir: '{{.LAYOUT_DIR}}'
