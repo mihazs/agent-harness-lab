@@ -133,7 +133,7 @@ verify the published tag, archive, installer and checksums.
 
 Maintainers always use the latest stable Node.js for Changesets and jscpd; CI
 resolves `node-version: latest` from the current distribution. Release users do not
-need Node or a checkout. Run `npm ci` then `npm run changeset`, and commit the
+need Node or a checkout. Run `npm ci`, `npm run hooks:install`, then `npm run changeset`, and commit the
 changeset with each releasable change. Do not manually edit release versions.
 
 The version workflow creates a PR using `npm run version-packages`, which runs
