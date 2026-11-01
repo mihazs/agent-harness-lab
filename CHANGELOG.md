@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.27.0
+
+### Minor Changes
+
+- Add explicit read-only relationship rechecks for the built-in local Git v2 reader. Verify exact current captured relationships while preserving stale revisions, missing identities, conflicts, reference-only targets and unknown execution loading. Share comparison logic with GitHub without changing its reader admission or report contract; leave sources and journals unchanged.
+
 ## 0.26.0
 
 ### Minor Changes

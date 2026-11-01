@@ -78,12 +78,12 @@ class Registry:
         return store.status(source)
 
     def recheck(self, source, store, **scope):
-        from .resolve import recheck_github
+        from .resolve import recheck
         _, connector = self._resolve(source, scope)
         store._bind(source)
         cursor = store.status(source)['cursor_sha256']
         proposed = store.graph(source, cursor)
         if proposed is None: raise NotImplementedError('no captured relationship graph to recheck')
-        result = recheck_github(source, connector, proposed)
+        result = recheck(source, connector, proposed)
         result['proposed_checkpoint_sha256'] = cursor
         return result

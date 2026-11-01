@@ -12,8 +12,8 @@ import tempfile
 import time
 import unittest
 import zlib
-from dataclasses import FrozenInstanceError
-from unittest.mock import patch
+from dataclasses import FrozenInstanceError, replace
+from unittest.mock import Mock, patch
 
 from agent_harness_lab.cli import main
 from agent_harness_lab.sources.git import GitExport, HarnessSnapshot
@@ -21,6 +21,8 @@ from agent_harness_lab.sources.git_view import Folder, GitView
 from agent_harness_lab.sources.schema import SourceSpec, digest
 from agent_harness_lab.sources.store import SourceStore
 from agent_harness_lab.sources.git_evidence import capture as capture_evidence
+from agent_harness_lab.sources import resolve
+from agent_harness_lab.sources.graph import EvidenceGraph, JoinReceipt
 
 
 @unittest.skipUnless(Path('/usr/bin/git').is_file(), 'explicit system Git is required')
@@ -523,6 +525,114 @@ class GitSourceTests(unittest.TestCase):
             with self.subTest(parents=parents), patch('agent_harness_lab.sources.git.capture_evidence', side_effect=admit) as admission:
                 self.assertEqual(self.invoke('preview')[0], 2)
                 admission.assert_called_once()
+
+    def recheck_store(self):
+        self.use_evidence_profile()
+        self.cache = self.root/'journal.json'
+        self.assertEqual(self.invoke('import', '--cache', str(self.cache))[0], 0)
+        return SourceStore(self.cache, project_sha256=self.source.project_sha256, scope_sha256=self.source.scope_sha256)
+
+    def test_git_recheck_verifies_exact_current_capture_without_network_or_any_source_mutation(self):
+        store = self.recheck_store()
+        before = {p.relative_to(self.root): (p.read_bytes(), p.stat().st_mode, p.stat().st_mtime_ns)
+            for p in self.root.rglob('*') if p.is_file()}
+        with patch.object(socket, 'socket', side_effect=AssertionError('no network')):
+            code, result = self.invoke('recheck', '--cache', str(self.cache))
+        self.assertEqual(code, 0); self.assertEqual(result['statuses']['verified'], 3)
+        self.assertFalse(result['network_used']); self.assertTrue(result['source_read'])
+        self.assertFalse(result['historical_interval_verified']); self.assertFalse(result['execution_authorized'])
+        self.assertFalse(result['task_outcomes_verified']); self.assertIsNone(result['independent_roots'])
+        self.assertEqual(result['resolver_version'], 'git-native-recheck-v1')
+        self.assertEqual(result['proposed_checkpoint_sha256'], store.status(self.source)['cursor_sha256'])
+        after = {p.relative_to(self.root): (p.read_bytes(), p.stat().st_mode, p.stat().st_mtime_ns)
+            for p in self.root.rglob('*') if p.is_file()}
+        self.assertEqual(before, after); self.assertEqual(store.graph(self.source).summary()['statuses']['verified'], 0)
+
+    def test_git_recheck_dirty_files_and_later_head_do_not_rebind_historical_harness(self):
+        store = self.recheck_store(); old_graph = store.graph(self.source); original = self.cache.read_bytes()
+        (self.repo/'AGENTS.md').write_text('SYNTHETIC_DIRTY')
+        code, result = self.invoke('recheck', '--cache', str(self.cache)); self.assertEqual(code, 0)
+        members = [r for r in result['results'] if r['receipt']['relation'] == 'harness_member']
+        self.assertEqual(members[0]['resolution_reason'], 'stale_revision')
+        self.assertEqual(members[0]['receipt']['status'], 'unlinked')
+        self.commit()
+        result = self.invoke('recheck', '--cache', str(self.cache))[1]
+        bases = [r for r in result['results'] if r['receipt']['relation'] == 'harness_based_on']
+        self.assertEqual(bases[0]['resolution_reason'], 'stale_revision')
+        self.assertEqual(self.cache.read_bytes(), original); self.assertEqual(store.graph(self.source), old_graph)
+
+    def test_git_recheck_unrelated_root_with_same_file_does_not_fabricate_old_ancestry(self):
+        self.recheck_store()
+        tree = self.git('rev-parse', 'HEAD^{tree}').decode().strip()
+        unrelated = self.git('commit-tree', tree, '-m', 'SYNTHETIC_UNRELATED').decode().strip()
+        self.git('update-ref', 'refs/heads/main', unrelated)
+        code, result = self.invoke('recheck', '--cache', str(self.cache)); self.assertEqual(code, 0)
+        bases = [r for r in result['results'] if r['receipt']['relation'] == 'harness_based_on']
+        self.assertEqual(bases[0]['resolution_reason'], 'missing_identity')
+        self.assertEqual(bases[0]['receipt']['status'], 'unlinked')
+        self.assertIsNone(result['independent_roots'])
+
+    def test_git_recheck_partial_parent_and_annotated_tag_targets_remain_candidates(self):
+        (self.repo/'AGENTS.md').write_text('SYNTHETIC_NEXT'); self.commit()
+        self.git('tag', '-a', 'synthetic-tag', '-m', 'SYNTHETIC_TAG')
+        self.selection['max_commits'] = 1; self.recheck_store()
+        code, result = self.invoke('recheck', '--cache', str(self.cache)); self.assertEqual(code, 0)
+        parent = next(r for r in result['results'] if r['receipt']['relation'] == 'commit_parent')
+        tag = next(r for r in result['results'] if r['receipt']['left']['native_id_sha256'] == digest(('git_ref', 'refs/tags/synthetic-tag')))
+        for row in (parent, tag):
+            self.assertEqual(row['receipt']['status'], 'candidate')
+            self.assertEqual(row['resolution_reason'], 'native_identity_unverified')
+        self.assertGreater(result['statuses']['verified'], 0)
+
+    def test_git_recheck_claim_labels_forged_relation_conflict_and_missing_target_never_verify(self):
+        store = self.recheck_store(); graph = store.graph(self.source)
+        member = next(j for j in graph.joins if j.relation == 'harness_member')
+        claims = (replace(member, relation='same_execution', namespace='SYNTHETIC_SECRET', resolver_version='SYNTHETIC_SECRET'),
+            replace(member, left=member.right, right=member.left),
+            replace(member, status='conflicted', reason='conflicting_evidence'),
+            replace(member, right=None, reason='missing_identity', status='unlinked'))
+        result = resolve.recheck_git(self.source, GitExport(self.manifest), replace(graph, joins=claims))
+        self.assertEqual(result['statuses']['verified'], 0); self.assertEqual(result['statuses']['candidate'], 2)
+        self.assertEqual(result['statuses']['conflicted'], 1); self.assertEqual(result['statuses']['unlinked'], 1)
+        self.assertNotIn('SYNTHETIC_SECRET', json.dumps(result))
+        self.assertTrue(all(r['receipt']['namespace'] == 'git.recheck' for r in result['results']))
+        self.assertEqual({r['claim_sha256'] for r in result['results']}, {j.sha256 for j in claims})
+
+    def test_git_recheck_refuses_fake_readers_foreign_graphs_and_old_profiles_before_git(self):
+        store = self.recheck_store(); graph = store.graph(self.source)
+        class ForeignReader(GitExport): pass
+        fake = Mock()
+        with patch('subprocess.Popen', side_effect=AssertionError('no Git for rejected recheck')):
+            for reader in (fake, ForeignReader(self.manifest)):
+                with self.assertRaises(NotImplementedError): resolve.recheck_git(self.source, reader, graph)
+            with self.assertRaises(ValueError):
+                resolve.recheck_git(self.source, GitExport(self.manifest), replace(graph, project_sha256=digest('foreign')))
+            legacy = replace(self.source, version='v1'); legacy_graph = replace(graph, adapter_version='v1')
+            with self.assertRaises(NotImplementedError): resolve.recheck_git(legacy, GitExport(self.manifest), legacy_graph)
+            self.assertEqual(self.invoke('recheck', '--cache', str(self.cache), '--project-sha256', digest('foreign'))[0], 2)
+            self.source = replace(self.source, enabled=False)
+            self.manifest.write_text(json.dumps(dict(schema_version=1, source=self.source.to_dict(), data='selection.json')))
+            self.assertEqual(self.invoke('recheck', '--cache', str(self.cache))[0], 3)
+        fake.read.assert_not_called()
+
+    def test_git_recheck_clears_claimed_history_and_cannot_persist_its_verified_report(self):
+        store = self.recheck_store(); graph = store.graph(self.source); original = self.cache.read_bytes()
+        member = next(j for j in graph.joins if j.relation == 'harness_member')
+        dated = replace(member, effective_from='2020-01-01T00:00:00Z', effective_until='2020-01-02T00:00:00Z')
+        result = resolve.recheck_git(self.source, GitExport(self.manifest), replace(graph, joins=(dated,)))
+        receipt = JoinReceipt.parse(result['results'][0]['receipt'])
+        self.assertEqual(receipt.status, 'verified'); self.assertIsNone(receipt.effective_from); self.assertIsNone(receipt.effective_until)
+        with self.assertRaises(ValueError):
+            store.ingest(self.source, (), cursor_before=store.status(self.source)['cursor_sha256'],
+                snapshot_sha256=digest('forged'), graph=replace(graph, joins=(receipt,)))
+        with self.assertRaises(ValueError): EvidenceGraph.parse(result)
+        self.assertEqual(self.cache.read_bytes(), original)
+
+    def test_git_recheck_changed_or_corrupt_source_returns_no_proof_and_preserves_checkpoint(self):
+        self.recheck_store(); original = self.cache.read_bytes()
+        (self.repo/'.git/HEAD').write_text('SYNTHETIC_INVALID_HEAD\n')
+        code, result = self.invoke('recheck', '--cache', str(self.cache))
+        self.assertEqual(code, 2); self.assertIsNone(result); self.assertEqual(self.cache.read_bytes(), original)
 
 
 if __name__ == '__main__': unittest.main()
