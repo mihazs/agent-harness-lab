@@ -3,6 +3,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from .github_config import GitHubConfigured
 from .git import GitExport
+from .codex import CodexCapture, SOURCE_VERSION as CODEX_VERSION
 from .graph import EvidenceGraph, STATUSES
 from .schema import digest
 
@@ -17,6 +18,7 @@ def link_key(join): return join.relation, join.left.key, join.right.key if join.
 
 
 def recheck(source, connector, proposed):
+    if type(connector) is CodexCapture: return recheck_codex(source, connector, proposed)
     if type(connector) is GitExport: return recheck_git(source, connector, proposed)
     return recheck_github(source, connector, proposed)
 
@@ -29,6 +31,18 @@ def recheck_git(source, connector, proposed):
         raise NotImplementedError('native Git recheck requires the explicit v2 graph profile')
     snapshot = GitExport.read(connector, source)
     return _recheck(source, proposed, snapshot, GIT_KINDS, 'git.recheck', 'git-native-recheck-v1', False)
+
+
+def recheck_codex(source, connector, proposed):
+    if type(connector) is not CodexCapture or not isinstance(proposed, EvidenceGraph):
+        raise NotImplementedError('native relationship recheck requires the built-in Codex reader')
+    proposed._validate_refs(source, {r.key for r in proposed.nodes})
+    if (source.kind, source.provider, source.version) != ('local_file', 'codex-rollout', CODEX_VERSION):
+        raise NotImplementedError('native Codex recheck requires the pinned capture profile')
+    snapshot = CodexCapture.read(connector, source)
+    if not snapshot.checkpoint_ready: raise ValueError('partial native capture cannot verify current relationships')
+    kinds = tuple({r.record_type for r in snapshot.records})
+    return _recheck(source, proposed, snapshot, kinds, 'codex.recheck', 'codex-native-recheck-v1', False)
 
 
 def recheck_github(source, connector, proposed):

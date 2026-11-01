@@ -60,7 +60,7 @@ class NativeSourceTests(unittest.TestCase):
         self.assertEqual(self.invoke('import')[0], 0)
         status = self.invoke('status')[1]
         self.assertEqual(status['revisions'], 6); self.assertEqual(status['execution_metadata']['identities'], 2)
-        self.assertEqual(status['evidence_graph']['joins'], 0)
+        self.assertEqual(status['evidence_graph']['joins'], 6)
         self.assertEqual(self.cache.stat().st_mode & 0o777, 0o600)
         self.assertNotIn('SYNTHETIC_SECRET', self.cache.read_text()); self.assertNotIn(str(self.root), self.cache.read_text())
 

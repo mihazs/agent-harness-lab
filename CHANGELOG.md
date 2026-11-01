@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.31.0
+
+### Minor Changes
+
+- Add revision-bound native Codex session membership and unambiguous tool-result relationships. Recheck only through the built-in scoped reader, reject partial files and forged proof sources, preserve stale/conflicted links and unknown execution identity, and leave journals unchanged.
+
 ## 0.30.0
 
 ### Minor Changes

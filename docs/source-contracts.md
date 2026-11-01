@@ -333,12 +333,33 @@ task root, grader outcome and independence remain unknown. Producer fields and
 labels cannot authenticate a runtime or upgrade themselves to verified evidence.
 
 Records, declared identity/coverage metadata and exact per-checkpoint membership
-nodes commit atomically through the existing schema-4 journal. The membership graph
-has no inferred joins. Append, edit and late import preserve old record revisions,
+nodes commit atomically through the existing schema-4 journal. Append, edit and
+late import preserve old record revisions,
 model declarations and checkpoint membership; identical re-imports are idempotent.
 This profile re-reads one bounded file; it does not claim a full-history byte cursor
 or journal multi-file discovery. Archive sources with different declared scopes
 remain separate observations until independently resolved.
+
+The same graph includes `candidate` native-file relationships: each actual native
+record belongs to its session header (`native_session_member`), and an unambiguous
+linked tool result references its one native call (`tool_result_of`). These use
+resolver `codex-native-links-v1` and exact endpoint revisions. Duplicate calls or
+results, missing IDs and out-of-order results do not get a tool-pair link. Derived
+unmatched-call coverage gets no native membership link. These associations describe
+what the selected file records; they do not authenticate the producer or establish
+an independent task root.
+
+Explicit `sources recheck` supports only the built-in pinned Codex reader. It
+re-reads and validates the current selection, requires a complete final line and
+compares exact current relationships through the shared resolver. A fresh native
+match can be reported `verified` with resolver `codex-native-recheck-v1`; edits
+invalidate old endpoint revisions, invented links stay candidates, and conflicts
+remain unresolved. Claimed historical intervals are cleared. The report changes
+neither the private journal nor its candidate receipts. Verified here means current
+native-file relationship only: execution identities remain declared, task outcomes
+and independent roots remain unknown. Imported labels, file-export substitutes and
+reader subclasses cannot supply verification authority. No network/model calls are
+used. A partial, malformed, unsupported or mutated native file produces no report.
 
 An uncommitted final line can be previewed as a complete prefix with
 `checkpoint_ready: false`. Registry import rejects that snapshot before creating
@@ -354,8 +375,8 @@ at most 10,000 selected input records/normalized source records and 1,000 execut
 subjects. Coverage `records` counts observed input lines; derived source coverage
 records are separately bounded. Coverage remains partial even at native stop.
 The parser mapping is `codex-native-journal-v1`; this is not execution certification.
-`task test:sources:codex` runs native scope, privacy, history, admission and failure
-controls; installed wheel/archive source tests include them. Root-batch journaling,
+`task test:sources:codex` runs native scope, privacy, history, relationship recheck,
+admission and failure controls; installed wheel/archive source tests include them. Root-batch journaling,
 incremental byte-position imports and verified cross-source execution joins remain
 open in #42/#44/#58. Explicit analysis still owns v2 event-ledger projection.
 
