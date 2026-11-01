@@ -18,6 +18,14 @@ oracle correction/invalidation and protected certification remain separate work.
   ceiling, effect/noninferiority margins, confidence, family weights and hashes.
   `schedule` produces replayable counterbalanced AB/BA pairs in fresh workspaces.
   Explicit repeated manifests must fit both their own and the caller's trial cap.
+  Their `grader_hash` must also match the verified, versioned oracle identity
+  before any execution probe. Compute it from the exported manifest with
+  `task experiment:oracle MANIFEST=/path/to/manifest.json` and freeze that value
+  in the plan. The identity covers complete bundle bytes/modes, grading argv and
+  declared artifact selection, including reference/control files. Relocating an unchanged oracle preserves
+  the identity; changing it requires a new plan and fresh trials for both arms.
+  Old trial IDs cannot satisfy the new schedule. Repeated plans without complete
+  bundles must be regenerated; legacy manifests without `experiment` are unchanged.
 - `TrialRecord` analysis requires the exact planned trial set, executable graded
   binary outcomes and matching provenance. Infrastructure errors stay unknown.
   Root means retain correlated repeats together. Independent roots are an explicit
@@ -35,7 +43,10 @@ oracle correction/invalidation and protected certification remain separate work.
   partitions, safety and artifact boundaries. Root leakage is always rejected;
   optional family/project/time separation and copied-fixture checks are enforced.
   Unknown semantic independence/review blocks certification eligibility. Public
-  tasks are explicitly not secret. Grader changes invalidate comparisons.
+  tasks are explicitly not secret. Grader integrity mismatches reject execution.
+  A historical oracle-correction/invalidation registry remains pending in #8;
+  this execution binding does not retroactively revoke an old report or
+  authenticate runtime/import dependencies outside the declared oracle.
 - A private controller-owned certification ledger reserves one final candidate and
   consumes access before exposing its bank. Search roles cannot request access.
   Concurrent access is single-use. API role checks require OS isolation; they are

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.44.1
+
+### Patch Changes
+
+- Bind repeated experiment plans to the actual complete grader bundles, grading arguments and artifact selection before execution. Changed oracles require a new plan and fresh baseline/candidate trial identities. Preserve descriptive legacy manifests; expose a Task command for computing the oracle pin. Historical comparison invalidation remains separate work.
+
 ## 0.44.0
 
 ### Minor Changes
