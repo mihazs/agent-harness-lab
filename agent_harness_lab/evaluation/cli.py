@@ -21,9 +21,10 @@ def main(argv):
     experiment = commands.add_parser('experiment', help='Analyze a frozen repeated paired experiment')
     experiment.add_argument('--spec', type=Path, required=True)
     experiment.add_argument('--records', type=Path, required=True)
-    regression = commands.add_parser('regression', help='Validate reproduction declarations or explicitly audit draft graders; no bank admission')
+    regression = commands.add_parser('regression', help='Validate declarations, audit draft graders or replay frozen snapshots; no bank admission')
     regression.add_argument('--proposal', type=Path, required=True)
     regression.add_argument('--draft', type=Path, help='Explicit frozen unreviewed TaskSpec/control descriptor to audit offline')
+    regression.add_argument('--replay', type=Path, help='Explicit matched recorded/minimized replay spec; requires --draft and the full profile')
     regression.add_argument('--output', type=Path, help='New private review-receipt directory; requires --draft')
     regression.add_argument('--cgroup-root', type=Path)
     regression.add_argument('--image-root', type=Path)
@@ -60,13 +61,17 @@ def main(argv):
                 if any(v is None for v in options):
                     raise ValueError('draft audits require output, cgroup, pinned image and private disk profiles')
                 from .sandbox import SandboxBackend
-                from .regression_controls import audit
                 backend = SandboxBackend(cgroup_root=args.cgroup_root, image_root=args.image_root,
                                          image_sha256=args.image_sha256, disk_bytes=args.disk_bytes)
-                result = audit(args.proposal, args.draft, args.output, backend, budget_seconds=args.budget_seconds)
-                code = 0 if result['status'] == 'grader_controls_passed' else (3 if result['status'] == 'blocked' else 1)
+                if args.replay:
+                    from .regression_replay import replay
+                    result = replay(args.proposal, args.draft, args.replay, args.output, backend, budget_seconds=args.budget_seconds)
+                else:
+                    from .regression_controls import audit
+                    result = audit(args.proposal, args.draft, args.output, backend, budget_seconds=args.budget_seconds)
+                code = 0 if result['status'] in ('grader_controls_passed', 'replay_completed') else (3 if result['status'] in ('blocked', 'unsupported') else 1)
             else:
-                if any(v is not None for v in options) or args.budget_seconds != 60:
+                if args.replay or any(v is not None for v in options) or args.budget_seconds != 60:
                     raise ValueError('control execution options require --draft')
                 from .regressions import validate as validate_regression
                 result = validate_regression(args.proposal)
