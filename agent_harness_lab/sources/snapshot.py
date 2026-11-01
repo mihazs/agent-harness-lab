@@ -17,9 +17,11 @@ class Snapshot:
     records: tuple
     metadata: ExecutionMetadata | None = None
     graph: EvidenceGraph | None = None
+    checkpoint_ready: bool = True
 
     def __post_init__(self):
         fingerprint(self.sha256)
+        if type(self.checkpoint_ready) is not bool: raise ValueError('invalid checkpoint admission state')
         if self.metadata is not None:
             if not isinstance(self.metadata, ExecutionMetadata): raise ValueError('snapshot requires typed execution metadata')
             ExecutionMetadata.parse(self.metadata.to_dict())
@@ -58,6 +60,18 @@ class LocalExport:
             raise ValueError('local exports require source-declared identity and local filesystem access')
         contained(self.manifest.parent, value['data'])
         return source, value
+
+    def selection(self, source):
+        current, declaration = self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)
+        if current != source or not source.enabled: raise ValueError('source declaration changed or is disabled')
+        descriptor = contained(self.manifest.parent, declaration['data'])
+        return descriptor, read_json(descriptor)
+
+    def verify_selection(self, source, descriptor, selection):
+        expected = dict(schema_version=1, source=source.to_dict(), data=str(descriptor.relative_to(self.manifest.parent)))
+        if (read_json(descriptor) != selection or
+                self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)[1] != expected):
+            raise ValueError('source selection changed during capture')
 
     def read(self, source):
         if (source.kind, source.provider, source.version) not in (

@@ -70,6 +70,7 @@ class Registry:
         store._bind(source, writing=True)
         before = store.status(source)['cursor_sha256']
         snapshot = self.preview(source, **scope)
+        if not snapshot.checkpoint_ready: raise ValueError('capture is not ready for a committed checkpoint')
         return store.ingest(source, snapshot.records, cursor_before=before, snapshot_sha256=snapshot.sha256,
             metadata=snapshot.metadata, graph=snapshot.graph)
 

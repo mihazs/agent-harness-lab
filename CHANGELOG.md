@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.30.0
+
+### Minor Changes
+
+- Connect explicitly selected native Codex captures to shared source journals with exact revision history, declared execution metadata, coverage and checkpoint membership. Keep partial-tail previews visible while blocking their import, preserve old model declarations and derived coverage identities, and revalidate scoped selections through the full bounded capture lifecycle.
+
 ## 0.29.0
 
 ### Minor Changes
