@@ -3,7 +3,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from .github_config import GitHubConfigured
 from .git import GitExport
-from .codex import CodexCapture, SOURCE_VERSION as CODEX_VERSION
+from .codex import CodexCapture, SOURCE_VERSION as CODEX_VERSION, ROOT_VERSION as CODEX_ROOT_VERSION
 from .graph import EvidenceGraph, STATUSES
 from .schema import digest
 
@@ -37,7 +37,7 @@ def recheck_codex(source, connector, proposed):
     if type(connector) is not CodexCapture or not isinstance(proposed, EvidenceGraph):
         raise NotImplementedError('native relationship recheck requires the built-in Codex reader')
     proposed._validate_refs(source, {r.key for r in proposed.nodes})
-    if (source.kind, source.provider, source.version) != ('local_file', 'codex-rollout', CODEX_VERSION):
+    if (source.kind, source.provider) != ('local_file', 'codex-rollout') or source.version not in (CODEX_VERSION, CODEX_ROOT_VERSION):
         raise NotImplementedError('native Codex recheck requires the pinned capture profile')
     snapshot = CodexCapture.read(connector, source)
     if not snapshot.checkpoint_ready: raise ValueError('partial native capture cannot verify current relationships')

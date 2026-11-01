@@ -1,6 +1,6 @@
 """Explicit bounded rollout discovery; headers filter scope before full reads."""
 from collections import defaultdict
-from contextlib import closing
+from contextlib import closing, contextmanager
 import json
 from pathlib import Path
 import time
@@ -10,6 +10,13 @@ from ..sources.schema import digest
 
 
 def scan(root, project, *, session=None, max_files=100, max_scan_files=2000, max_records=100000):
+    with capture(root, project, session=session, max_files=max_files, max_scan_files=max_scan_files,
+            max_records=max_records) as (records, summary, sha256, _):
+        return records, summary, sha256
+
+
+@contextmanager
+def capture(root, project, *, session=None, max_files=100, max_scan_files=2000, max_records=100000, revisions=None):
     from ..config import supported
     if not supported(): raise NotImplementedError('native discovery requires safe filesystem APIs')
     from ..sources.git_view import Folder
@@ -18,7 +25,7 @@ def scan(root, project, *, session=None, max_files=100, max_scan_files=2000, max
     if session is not None: text(session)
     root, project = Path(root).absolute(), Path(project)
     if not root.name: raise ValueError('select a bounded native source directory')
-    groups, responses, roots = defaultdict(dict), {}, {}
+    groups, responses, roots, admitted = defaultdict(dict), {}, {}, {}
     suppressed_usage = set()
     files, names, limits = [], [], []
     foreign = other_session = unsupported = headers = duplicates = consumed = 0
@@ -55,10 +62,22 @@ def scan(root, project, *, session=None, max_files=100, max_scan_files=2000, max
             if len(files) == max_files:
                 limits.append('accepted_files'); folder.observed.pop(name, None); break
             if consumed >= max_records: raise ValueError('native discovery record budget exceeded')
-            rows, coverage, sha256 = decode(folder, name, project, max_records-consumed)
+            native = {} if revisions is not None else None
+            claims = {}
+            rows, coverage, sha256 = decode(folder, name, project, max_records-consumed, revisions=native, claims=claims)
             consumed += coverage['input_records']
             files.append(dict(path_sha256=digest(str(Path(name).relative_to(root.name))), sha256=sha256,
                 projected_records=len(rows), coverage=coverage))
+            # Suppressed usage still makes an ordinal claim that other files must agree with.
+            for key, claim in claims.items():
+                folder.check()
+                if key in admitted and admitted[key] != claim:
+                    raise ValueError('conflicting native ordinal metadata across captures')
+                admitted[key] = claim
+                if revisions is not None:
+                    if key in revisions and revisions[key] != native[key]:
+                        raise ValueError('conflicting native record revisions across captures')
+                    revisions[key] = native[key]
             for row in rows:
                 case, ident = row['case_id'], row['event_id']
                 if case in roots and roots[case] != row['root_case_id']: raise ValueError('conflicting native session roots')
@@ -83,14 +102,14 @@ def scan(root, project, *, session=None, max_files=100, max_scan_files=2000, max
             for row in correlated(selected, folder.check):
                 if len(records) >= max_records: raise ValueError('native discovery event budget exceeded')
                 records.append(row)
-        folder.verify()
         discovery = dict(scanned_files=len(names), headers_read=headers, accepted_files=len(files), foreign_files=foreign,
             other_sessions=other_session, unsupported_headers=unsupported, unsafe_entries_skipped=folder.unsafe_entries,
             filesystem_entries=folder.entries, bytes_read=folder.bytes, input_records=consumed,
             max_files=max_files, max_scan_files=max_scan_files, max_records=max_records, reached_limits=limits)
-    totals = {key: sum(f['coverage'][key] for f in files) for key in ('inherited_records_skipped', 'duplicates_skipped', 'unsupported_records')}
-    totals['duplicates_skipped'] += duplicates
-    summary = dict(adapter_version=VERSION, upstream_commit=UPSTREAM_COMMIT, capture_completeness='partial',
-        partial_tail=any(f['coverage']['partial_tail'] for f in files), files=files, discovery=discovery,
-        served_model='unknown', effective_settings='unknown', independence='unknown', outcome='unknown', source_read=True, network_used=False, **totals)
-    return tuple(records), summary, digest([(f['path_sha256'], f['sha256']) for f in files])
+        totals = {key: sum(f['coverage'][key] for f in files) for key in ('inherited_records_skipped', 'duplicates_skipped', 'unsupported_records')}
+        totals['duplicates_skipped'] += duplicates
+        summary = dict(adapter_version=VERSION, upstream_commit=UPSTREAM_COMMIT, capture_completeness='partial',
+            partial_tail=any(f['coverage']['partial_tail'] for f in files), files=files, discovery=discovery,
+            served_model='unknown', effective_settings='unknown', independence='unknown', outcome='unknown', source_read=True, network_used=False, **totals)
+        yield tuple(records), summary, digest([(f['path_sha256'], f['sha256']) for f in files]), folder
+        folder.verify()

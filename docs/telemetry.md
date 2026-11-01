@@ -161,3 +161,9 @@ usage is excluded rather than added to child usage. Root/parent declarations sti
 do not prove independence or certify execution. The private source summary records
 per-file digests, limits, exclusions and duplicate counts; metadata-identical archive
 copies do not change the monitor's event fingerprint. No source cursor is advanced.
+
+Native source journaling can also use the explicit root profile described in
+[source contracts](source-contracts.md#explicit-bounded-root-journal). It reuses
+this discovery path with stricter raw revision consistency and checkpoint admission;
+ordinary telemetry keeps metadata-only body handling and response-usage counts.
+Suppressed duplicate usage still participates in cross-file ordinal consistency.

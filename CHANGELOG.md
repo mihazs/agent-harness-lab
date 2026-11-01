@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.32.0
+
+### Minor Changes
+
+- Journal explicitly scoped Codex roots through the shared bounded scanner, preserving per-thread membership and exact native revision history across active/archive copies. Block incomplete root checkpoints and conflicting native claims, including file-local suppressed usage ordinals, while retaining ordinary metadata-only telemetry and unknown execution outcomes.
+
 ## 0.31.0
 
 ### Minor Changes

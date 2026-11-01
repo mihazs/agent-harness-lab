@@ -37,7 +37,7 @@ def invalid_constant(_): raise ValueError('nonfinite native JSON is unsupported'
 class Projection:
     def __init__(self, project):
         self.project, self.meta = Path(project), None
-        self.rows, self.ordinals, self.responses = [], {}, {}
+        self.rows, self.claims, self.ordinals, self.responses = [], [], {}, {}
         self.skipped, self.duplicates, self.unsupported = 0, 0, 0
         self.last_ordinal = -1
 
@@ -92,6 +92,7 @@ class Projection:
             event_id=digest((thread, ('ordinal', ordinal) if ordinal is not None else ('line', position))),
             timestamp=stamp, activity='capture_coverage', capture_complete=False, source_format='codex', source_version=VERSION,
             runtime_fingerprint=digest(('codex', '0.166.0')), capture_order=ordinal if ordinal is not None else position)
+        suppressed = False
         if kind == 'session_meta':
             record['activity'] = 'session_start'
             for field, output in (('parent_thread_id', 'native_parent_thread_fingerprint'), ('forked_from_id', 'native_fork_parent_fingerprint')):
@@ -124,8 +125,8 @@ class Projection:
             identity = (text(payload.get('turn_id')), text(payload.get('root_turn_id')), counts)
             if response in self.responses:
                 if self.responses[response] != identity: raise ValueError('conflicting native response usage')
-                self.duplicates += 1; return
-            self.responses[response] = identity
+                self.duplicates += 1; suppressed = True
+            else: self.responses[response] = identity
             record.update(activity='response_usage', input_tokens=counts[0], output_tokens=counts[1],
                 native_response_fingerprint=digest(('codex-response', str(self.project), thread, response)))
         elif kind == 'compacted': record['activity'] = 'compaction'
@@ -145,10 +146,12 @@ class Projection:
                 if payload.get(field) is not None:
                     owner = root if field == 'root_turn_id' else thread
                     record['native_'+field.removesuffix('_id')+'_fingerprint'] = digest(('codex-'+field, str(self.project), owner, text(payload[field])))
-        self.rows.append(event(record))
+        observed = event(record)
+        self.claims.append(observed)
+        if not suppressed: self.rows.append(observed)
 
 
-def decode(folder, name, project, max_records, *, revisions=None):
+def decode(folder, name, project, max_records, *, revisions=None, claims=None):
     projection = Projection(project)
     partial = False
     raw = folder.read(name, max(0, MAX_BYTES-folder.bytes))
@@ -163,11 +166,12 @@ def decode(folder, name, project, max_records, *, revisions=None):
         try:
             row = json.loads(line, object_pairs_hook=unique_object, parse_constant=invalid_constant)
             if not isinstance(row, dict): raise ValueError('invalid native rollout record')
-            before = len(projection.rows)
+            before = len(projection.claims)
             projection.add(row, position)
-            if revisions is not None and len(projection.rows) > before:
-                projected = projection.rows[-1]
-                revisions[(projected['case_id'], projected['event_id'])] = digest(row)
+            if len(projection.claims) > before:
+                projected = projection.claims[-1]; key = (projected['case_id'], projected['event_id'])
+                if revisions is not None: revisions[key] = digest(row)
+                if claims is not None: claims[key] = projected
         except RecursionError: raise ValueError('native rollout nesting limit exceeded') from None
         except (UnicodeError, json.JSONDecodeError): raise ValueError('invalid native rollout JSON') from None
     if projection.meta is None: raise ValueError('native capture has no complete session metadata')
