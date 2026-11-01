@@ -2,10 +2,15 @@
 import json
 import os
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+import io
+from pathlib import Path
+import tempfile
 
 from agent_harness_lab.sources.github import GitHubAPI, GitHubSelection
 from agent_harness_lab.sources.schema import SourceSpec, digest
 from agent_harness_lab.sources.transport import TransportError
+from agent_harness_lab.cli import main
 
 
 @unittest.skipUnless(os.environ.get('AHL_TEST_GITHUB_LIVE') == '1', 'public GitHub acceptance requires explicit opt-in')
@@ -64,3 +69,35 @@ class GitHubLiveTests(unittest.TestCase):
         snapshot = self.capture(selection)
         self.assertTrue({'github_commit', 'github_commit_detail'} <= {r.record_type for r in snapshot.records})
         self.assertTrue(all(r.plane != 'grader_reference' for r in snapshot.records))
+
+    @unittest.skipUnless(os.environ.get('AHL_TEST_GITHUB_RECHECK') == '1', 'CLI recheck acceptance requires explicit opt-in')
+    def test_explicit_cli_native_relationship_recheck(self):
+        try:
+            selection = GitHubSelection(self.repo_id, pulls=(int(os.environ.get('AHL_TEST_GITHUB_PULL', '')),),
+                schema_version=5, details=('graph',))
+        except (ValueError, TypeError):
+            raise RuntimeError('explicit public GitHub PR number is required') from None
+        source = SourceSpec('api', 'github', selection.source_version, digest(self.endpoint),
+            selection.project_sha256, selection.sha256, identity_provenance='source_declared_id', enabled=True)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); manifest, cache = root/'source.json', root/'journal.json'
+            manifest.write_text(json.dumps(dict(schema_version=1, source=source.to_dict(), endpoint=self.endpoint,
+                selection=selection.to_dict(), limits=dict(max_pages=40))))
+            arguments = ['--manifest', str(manifest), '--cache', str(cache), '--project-sha256', source.project_sha256,
+                '--scope-sha256', source.scope_sha256]
+            def invoke(operation):
+                output, errors = io.StringIO(), io.StringIO()
+                with redirect_stdout(output), redirect_stderr(errors):
+                    code = main(['sources', operation, *arguments])
+                self.assertEqual(code, 0, 'explicit public CLI contract rejected')
+                self.assertFalse(errors.getvalue(), 'CLI contract must not emit source diagnostics')
+                result = json.loads(output.getvalue())
+                self.assertNotIn(self.endpoint, output.getvalue(), 'source endpoint must remain private')
+                return result
+            self.assertTrue(invoke('import')['network_used'])
+            before = cache.read_bytes()
+            result = invoke('recheck')
+            self.assertGreater(result['statuses']['verified'], 0)
+            self.assertFalse(result['task_outcomes_verified'])
+            self.assertIsNone(result['independent_roots'])
+            self.assertTrue(cache.read_bytes() == before, 'recheck must preserve the candidate journal')

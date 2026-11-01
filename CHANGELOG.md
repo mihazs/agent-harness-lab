@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.24.0
+
+### Minor Changes
+
+- Add explicit GitHub CLI configuration and a bounded live native-relationship recheck. Admit exact native source/ID/revision relationships through a fresh built-in capture, preserve stale/missing/conflicting uncertainty and unknown independence, and keep stored candidates unchanged. Probes/status remain offline; authorization is read only from an explicitly supplied file and is never persisted. Serialized proof labels cannot self-certify imported graphs or task outcomes.
+
 ## 0.23.0
 
 ### Minor Changes
