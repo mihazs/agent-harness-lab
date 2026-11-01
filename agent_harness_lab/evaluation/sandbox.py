@@ -1,5 +1,5 @@
 """Optional offline Linux role isolation. Never falls back to host execution."""
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import hashlib
 import math
 import os
@@ -43,6 +43,7 @@ class SandboxBackend:
             raise ValueError('bubblewrap is unavailable')
         # One explicit writable workspace; only controller-declared readonly inputs.
         digest(workspace)
+        workspace = Path(workspace).resolve()
         command = [self.binary, '--unshare-all', '--unshare-user', '--unshare-net', '--die-with-parent',
                    '--new-session', '--cap-drop', 'ALL', '--clearenv', '--setenv', 'PATH', '/usr/bin:/bin',
                    '--setenv', 'HOME', '/home/worker', '--setenv', 'LANG', 'C.UTF-8']
@@ -50,20 +51,27 @@ class SandboxBackend:
             if Path(system).exists():
                 command += ['--ro-bind', system, system]
         command += ['--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--dir', '/home/worker',
-                    '--bind', str(Path(workspace).resolve()), '/work']
+                    '--bind', str(workspace), '/work']
         for name, folder in sorted(inputs.items()):
             if name not in ('harness', 'fixture', 'oracle') or (name == 'oracle' and role != 'grader'):
                 raise ValueError('role cannot access this input')
             digest(folder)
-            command += ['--ro-bind', str(Path(folder).resolve()), '/inputs/' + name]
+            folder = Path(folder).resolve()
+            if workspace.is_relative_to(folder) or folder.is_relative_to(workspace):
+                raise ValueError('writable workspace and readonly inputs must not overlap')
+            command += ['--ro-bind', str(folder), '/inputs/' + name]
         return command + ['--remount-ro', '/', '--chdir', '/work', '--', *argv]
 
-    def capability(self):
+    def capability(self, *, seconds=3):
+        Limits(seconds=seconds).validate()
         if sys.platform != 'linux' or not self.binary:
             return dict(status='unsupported', reason='linux_bubblewrap_unavailable', automatic_promotion=False)
         import tempfile
         with tempfile.TemporaryDirectory() as folder:
-            run = self.run(['/usr/bin/true'], Path(folder), {}, 'grader', Limits(seconds=3))
+            try:
+                run = self.run(['/usr/bin/true'], Path(folder), {}, 'grader', Limits(seconds=seconds))
+            except TimeoutError:
+                return dict(status='unsupported', reason='namespace_probe_timeout', automatic_promotion=False)
         return dict(status='available' if run['exit_code'] == 0 else 'unsupported',
                     reason=None if run['exit_code'] == 0 else 'namespace_probe_failed',
                     automatic_promotion=False,
@@ -71,23 +79,26 @@ class SandboxBackend:
 
     def run(self, argv, workspace, inputs, role, limits=Limits()):
         limits.validate()
+        start = time.monotonic()
         command = self.command(argv, workspace, inputs, role)
         before = {name: digest(folder) for name, folder in inputs.items()}
+        if time.monotonic() - start >= limits.seconds:
+            raise TimeoutError('sandbox budget exhausted before launch')
         def constrain():
             resource.setrlimit(resource.RLIMIT_CPU, (math.ceil(limits.seconds), math.ceil(limits.seconds) + 1))
             for key, value in ((resource.RLIMIT_AS, limits.memory_bytes), (resource.RLIMIT_NPROC, limits.processes),
                                (resource.RLIMIT_FSIZE, limits.file_bytes), (resource.RLIMIT_NOFILE, 64),
                                (resource.RLIMIT_CORE, 0)):
                 resource.setrlimit(key, (value, value))
-        start, buffers, reason = time.monotonic(), [bytearray(), bytearray()], None
+        buffers, reason = [bytearray(), bytearray()], None
         with subprocess.Popen(command, cwd=workspace, env={'PATH': '/usr/bin:/bin'},
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 start_new_session=True, preexec_fn=constrain) as process:
             poll = selectors.DefaultSelector()
-            for index, pipe in enumerate((process.stdout, process.stderr)):
-                os.set_blocking(pipe.fileno(), False)
-                poll.register(pipe, selectors.EVENT_READ, index)
             try:
+                for index, pipe in enumerate((process.stdout, process.stderr)):
+                    os.set_blocking(pipe.fileno(), False)
+                    poll.register(pipe, selectors.EVENT_READ, index)
                 while poll.get_map():
                     remaining = limits.seconds - (time.monotonic() - start)
                     if remaining <= 0:
@@ -97,8 +108,9 @@ class SandboxBackend:
                         if not raw:
                             poll.unregister(key.fileobj)
                         else:
-                            buffers[key.data].extend(raw)
-                            if sum(map(len, buffers)) > limits.output_bytes:
+                            available = limits.output_bytes - sum(map(len, buffers))
+                            buffers[key.data].extend(raw[:available])
+                            if len(raw) > available:
                                 reason = 'output_limit'; break
                     if reason:
                         break
@@ -126,4 +138,5 @@ class SandboxBackend:
                     attestation=dict(backend='bubblewrap-offline-v1', role=role, network='none',
                         binary_sha256=hashlib.sha256(Path(self.binary).read_bytes()).hexdigest(),
                         input_digests=before, automatic_promotion=False,
+                        resource_limits=asdict(limits),
                         aggregate_disk_bound_verified=False, inference_supported=False))

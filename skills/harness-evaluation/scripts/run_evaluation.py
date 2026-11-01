@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Execute paired Codex or Claude Code tasks; zero grader exit means success, never model prose."""
+"""Execute paired agent or offline fixture tasks; external artifact grades decide success."""
 import argparse
 import hashlib
 import json
@@ -191,9 +191,31 @@ def evaluate(args):
                 raise ValueError('declared grader bundle integrity mismatch')
             frozen_bundles[str(folder)] = bundle['digest']
     agent = args.agent
+    offline = agent == 'offline'
+    backend = None
+    if offline:
+        if not frozen_bundles or skills or harness_paths:
+            raise ValueError('offline execution requires frozen grader bundles and a directly mounted harness, without skill injection')
+        from agent_harness_lab.evaluation.sandbox import SandboxBackend, Limits
+        from agent_harness_lab.evaluation.integrity import relative
+        from agent_harness_lab.evaluation.bank_tools import regrade_artifacts
+        for task in tasks:
+            command, allowed = task.get('offline_executor'), task.get('artifacts')
+            if (not isinstance(command, list) or not command
+                    or not all(isinstance(a, str) and a and '\0' not in a for a in command)
+                    or not isinstance(allowed, list) or not allowed or len(allowed) > 100
+                    or len(set(allowed)) != len(allowed)):
+                raise ValueError('offline tasks require an explicit executor argv and bounded artifact allowlist')
+            for name in allowed:
+                relative(name)
+            bundle = contained(manifest_path.parent, declared_bundles[task['id']]['path'])
+            if task['grader'] != [task['grader'][0], str(bundle/'grade.py.txt'), '{workspace}', str(bundle/'expected.json')]:
+                raise ValueError('offline execution supports only the frozen Python artifact grader contract')
+        backend = SandboxBackend()
     binary = args.claude if agent == 'claude' else args.codex
     started = time.monotonic()
-    version_info = execute([binary, '--version'], manifest_path.parent, min(timeout, budget))
+    capability = backend.capability(seconds=min(3, budget)) if offline else None
+    version_info = dict(exit_code=None, stdout='') if offline else execute([binary, '--version'], manifest_path.parent, min(timeout, budget))
     config_path = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'config.toml'
     config = {}
     try:
@@ -210,6 +232,18 @@ def evaluate(args):
                    runtime={'agent': agent, agent + '_version': version_info['stdout'].strip()[:200] if version_info['exit_code'] == 0 else 'unavailable',
                             'user_config_defaults': config, 'effective_settings_verified': False},
                    isolation=('cooperative trusted fixtures; ' + ('workspace-write; ' if agent == 'codex' else 'inherited Claude permissions/sandbox; ') + 'inherited configuration/auth/hooks; no security or network isolation claim'))
+    results['grader_bundle_digests'] = frozen_bundles
+    if offline:
+        results['runtime'] = dict(agent='offline', model_inference=False, effective_settings_verified=False,
+                                  capability=capability, commands={t['id']: t['offline_executor'] for t in tasks})
+        results['isolation'] = dict(executor='offline namespace with fixture and selected readonly harness',
+                                  grader='fresh namespace with extracted readonly artifacts and oracle',
+                                  full_certification=False)
+        results['automatic_promotion'] = False
+        if capability['status'] != 'available':
+            results.update(status='blocked', reason='offline_sandbox_unavailable', elapsed_seconds=time.monotonic()-started)
+            (output/'results.json').write_text(json.dumps(results, indent=2)+'\n')
+            return 3
     plan = None
     if 'experiment' in manifest:
         checkout = Path(__file__).resolve().parents[3]
@@ -230,7 +264,6 @@ def evaluate(args):
         ordered = [dict(version=version, task=task['id'], repetition=0) for version in versions for task in tasks]
     results['profile'] = plan.profile if plan else 'descriptive_smoke'
     results['automatic_promotion'] = False
-    results['grader_bundle_digests'] = frozen_bundles
     for scheduled in ordered:
         version, task = scheduled['version'], next(t for t in tasks if t['id'] == scheduled['task'])
         root = versions[version]
@@ -270,29 +303,59 @@ def evaluate(args):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(root / skill, target)
             loaded.append(str(target / 'SKILL.md'))
-        argv = agent_command(agent, binary, plugin if agent == 'claude' else None, skills)
+        argv = task['offline_executor'] if offline else agent_command(agent, binary, plugin if agent == 'claude' else None, skills)
         prompt = ('Load these exact evaluation skill files before the task: ' + ', '.join(loaded) + '\n' if loaded and task.get('preload_skills', True) else '')
         if manifest.get('no_nested_agents', False):
             prompt += 'Do not launch child agents or nested model trials; the parent owns the evaluation budget.\n'
         prompt += 'Operate only in this fixture workspace. Do not modify external files.\n' + task['prompt']
         record['injected_skill_hashes'] = {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in loaded}
-        run = execute(argv, workspace, min(timeout, remaining), prompt)
-        trace = trial / 'trace.jsonl'
+        remaining = budget - (time.monotonic() - started)
+        if remaining <= 0:
+            record['status'] = 'budget_exhausted'
+            results['trials'].append(record)
+            continue
+        if offline:
+            try:
+                run = backend.run(argv, workspace, {'harness': root}, 'executor', Limits(seconds=min(timeout, remaining)))
+            except (ValueError, OSError) as exc:
+                record.update(status='execution_error', error=str(exc))
+                results['trials'].append(record)
+                (output/'results.json').write_text(json.dumps(results, indent=2)+'\n')
+                continue
+            run['timeout'] = run['status'] == 'timeout'
+        else:
+            run = execute(argv, workspace, min(timeout, remaining), prompt)
+        trace = trial / ('stdout.txt' if offline else 'trace.jsonl')
         trace.write_text(run.pop('stdout'))
         (trial / 'stderr.txt').write_text(run.pop('stderr'))
         record['execution'] = run
         check = {**run, 'stdout': trace.read_text()}
-        record['status'], record['usage'] = trace_result(check, agent)
+        if offline:
+            record['status'] = 'completed' if (run['status'] == 'completed' and type(run['exit_code']) is int
+                                               and run['exit_code'] == 0 and run['inputs_unchanged'] is True) else 'execution_error'
+            record['usage'] = None
+        else:
+            record['status'], record['usage'] = trace_result(check, agent)
         record['skill_namespace'] = 'harness-trial' if agent == 'claude' else None
         if record['status'] == 'completed':
             remaining = budget - (time.monotonic() - started)
             if remaining <= 0:
                 record['status'] = 'budget_exhausted'
             else:
-                grader = [a.replace('{workspace}', str(workspace)).replace('{trace}', str(trace)) for a in task['grader']]
-                grade = execute(grader, manifest_path.parent, min(timeout, remaining))
-                record['grader'] = grade
-                record['status'] = grading_status(grade,typed=bool(frozen_bundles))
+                if offline:
+                    bundle = contained(manifest_path.parent, declared_bundles[task['id']]['path'])
+                    try:
+                        grade = regrade_artifacts(workspace, task['artifacts'], bundle, frozen_bundles[str(bundle)],
+                                                  backend, limits=Limits(seconds=min(timeout, remaining)))
+                        record['grader'] = grade
+                        record['status'] = grade['status']
+                    except (ValueError, OSError) as exc:
+                        record.update(status='grader_error', error=str(exc))
+                else:
+                    grader = [a.replace('{workspace}', str(workspace)).replace('{trace}', str(trace)) for a in task['grader']]
+                    grade = execute(grader, manifest_path.parent, min(timeout, remaining))
+                    record['grader'] = grade
+                    record['status'] = grading_status(grade,typed=bool(frozen_bundles))
         results['trials'].append(record)
         (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
     results['elapsed_seconds'] = time.monotonic() - started
@@ -311,7 +374,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('manifest', 'baseline', 'candidate', 'output'):
         parser.add_argument('--' + name, required=True)
-    parser.add_argument('--agent', choices=('codex', 'claude'), default='codex')
+    parser.add_argument('--agent', choices=('codex', 'claude', 'offline'), default='codex',
+                        help='offline executes explicit fixture commands without model inference and requires bubblewrap')
     parser.add_argument('--codex', default='codex', help='Codex executable path')
     parser.add_argument('--claude', default='claude', help='Claude Code executable path')
     args = parser.parse_args()

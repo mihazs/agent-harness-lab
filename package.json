@@ -1,13 +1,17 @@
 {
   "name": "agent-harness-lab",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "scripts": {
+    "prepare": "python3 scripts/install_hooks.py",
+    "duplication:check": "python3 scripts/check_duplicates.py",
+    "duplication:report": "jscpd --config .jscpd.json --no-colors",
     "changeset": "changeset",
     "version-packages": "changeset version && python3 scripts/sync_version.py",
     "release": "python3 scripts/publish_release.py"
   },
   "devDependencies": {
-    "@changesets/cli": "3.0.3"
+    "@changesets/cli": "3.0.3",
+    "jscpd": "5.4.2"
   }
 }

@@ -13,7 +13,9 @@ def main(argv):
     source.add_argument('--manifest', type=Path)
     source.add_argument('--starter',action='store_true',help='Use the bundled public synthetic starter bank')
     bank.add_argument('--audit',action='store_true',help='Falsify graders against frozen synthetic controls')
-    bank.add_argument('--cooperative-controls',action='store_true',help='Explicitly trust grader code for diagnostic-only local execution')
+    execution = bank.add_mutually_exclusive_group()
+    execution.add_argument('--cooperative-controls',action='store_true',help='Explicitly trust grader code for diagnostic-only local execution')
+    execution.add_argument('--sandbox-controls',action='store_true',help='Regrade bounded artifacts offline with bubblewrap; block if unavailable')
     bank.add_argument('--export',type=Path,help='Create a new descriptive manifest directory without running agents')
     bank.add_argument('--list', action='store_true')
     experiment = commands.add_parser('experiment', help='Analyze a frozen repeated paired experiment')
@@ -29,7 +31,7 @@ def main(argv):
             result = validate(args.manifest)
             if args.audit:
                 from .bank_tools import audit_graders
-                result['grader_audit']=audit_graders(args.manifest,cooperative=args.cooperative_controls)
+                result['grader_audit']=audit_graders(args.manifest,cooperative=args.cooperative_controls,sandbox=args.sandbox_controls)
             if args.export:
                 from .bank_tools import export_manifest
                 result['export']=dict(tasks=len(export_manifest(args.manifest,args.export)['tasks']),profile='descriptive_smoke')
@@ -37,6 +39,8 @@ def main(argv):
                 result['task_index'] = [{k: t[k] for k in ('task_id', 'root_id', 'family', 'partition', 'review_status')}
                                         for t in json.loads(args.manifest.read_text())['tasks']]
             code = 0 if result['certification_eligible'] else 3
+            if args.audit and result['grader_audit']['status'] != 'controls_passed':
+                code = 3
         elif args.command == 'experiment':
             from .plan import ExperimentSpec
             from .statistics import TrialRecord, analyze

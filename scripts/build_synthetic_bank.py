@@ -92,7 +92,8 @@ def build(destination):
             fixture_digest=digest(fixture),grader_bundle=str(bundle.relative_to(destination)),grader_digest=digest(bundle),
             grader_version='v1',source_kind='synthetic',source_ref='scripts/build_synthetic_bank.py',permission='approved',
             reviewer='codex-self-review-controls-v1',review_status='accepted',independence='unverified',
-            safety=['offline disposable data-only fixture','no model or production mutation'],artifacts=['result.json','original.txt']))
+            safety=['offline disposable data-only fixture','no model or production mutation'],
+            artifacts=['result.json','original.txt']+(['app/calc.py'] if ident=='localization' else [])))
     for path in destination.rglob('*'):
         path.chmod(0o755 if path.is_dir() else 0o644)
     for task in tasks:

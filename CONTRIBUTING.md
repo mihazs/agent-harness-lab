@@ -34,6 +34,29 @@ Python test suites. Use a fork if you do not have repository push access. Option
 ML experiments use `.[ml]` in a virtual environment and are outside the default path.
 Do not start paid inference merely to validate documentation.
 
+## Pre-commit duplication check
+
+Run `npm ci` with the latest stable Node.js to install the pinned jscpd development dependency
+and enable `.githooks/pre-commit` for this checkout. Setup preserves any existing
+Git hook directory or custom hooks and reports an error instead of replacing them;
+integrate the supplied hook explicitly if you already manage hooks elsewhere.
+No global Git settings or installed AHL runtime dependencies are changed.
+
+`npm run duplication:check` requires **zero clones** in staged Python source.
+Any clone blocks the commit, including pre-existing duplication. Refactor shared
+logic using DRY rather than adding a baseline or increasing a threshold.
+`npm run duplication:report` applies the same zero-clone rule to
+duplication in the working tree. Scans cover application code, tools, scripts and
+the evaluator runner, excluding tests, fixtures and examples; minimum clone size
+is five lines and 50 tokens.
+
+The hook scans regular files copied directly from Git index blobs into a private
+temporary directory. It neither stashes edits nor creates Git worktrees, invokes
+checkout filters, changes the index, or includes unstaged repairs in its result.
+Reports stay local. No clone baseline or duplication allowance is maintained.
+Python-only test runs still work without Node; executable hook tests are explicitly
+skipped when jscpd is not installed.
+
 ## Architecture map
 
 | Area | Files and responsibilities |
@@ -100,7 +123,13 @@ in PR/release notes without promising response times or outcomes.
 
 ## Versions and changelogs
 
-Maintainers use Node.js 22+ for Changesets; users of GitHub release bundles do not
+Every completed milestone must ship as a small release before starting the next
+milestone. Keep the Changeset, validation and release PR focused so completed work
+does not wait for unrelated features. A local commit or green PR is not a release;
+verify the published tag, archive, installer and checksums.
+
+Maintainers always use the latest stable Node.js for Changesets and jscpd; CI
+resolves `node-version: latest` from the current distribution. Release users do not
 need Node or a checkout. Run `npm ci` then `npm run changeset`, and commit the
 changeset with each releasable change. Do not manually edit release versions.
 

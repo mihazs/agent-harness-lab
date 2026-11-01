@@ -28,7 +28,8 @@
       ],
       "artifacts": [
         "result.json",
-        "original.txt"
+        "original.txt",
+        "app/calc.py"
       ]
     },
     {

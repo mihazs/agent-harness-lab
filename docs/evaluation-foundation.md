@@ -51,6 +51,12 @@ workspace and role-allowed read-only inputs; clears inherited environment; and
 requests separate network/process/user namespaces, capability removal, process
 session cleanup and CPU/address-space/process/file/output/time limits. Input
 integrity is rechecked. No host home/config/socket is mounted.
+Writable workspaces must be disjoint from every declared read-only input; nested
+mounts of the same host tree are rejected before execution. Captured stdout and
+stderr share one byte allowance. Timeout, interruption and selector-registration
+failures trigger process-group cleanup, including children remaining in the group
+after their parent exits. Host process-control tests establish that behavior separately from the
+namespace containment tests, which still require a supported host.
 
 This is not a complete certified backend: aggregate disk/cgroup enforcement,
 pinned full execution-image/dependency identity, a narrow inference broker,
@@ -60,6 +66,17 @@ per-user process limits are not cgroup guarantees. Host/kernel compromise is out
 of scope. `automatic_promotion=false` remains explicit even if an offline probe
 succeeds. The local namespace probe fails on this managed host, so its live
 containment-canary test is skipped and cannot be cited as security evidence.
+
+`ahl evaluate --agent offline` now integrates fixture-command execution with a
+separate grader namespace, selected-harness-only mounts, bounded artifact
+extraction, typed grades and the existing paired schedule. Unsupported hosts
+write a blocked report before task execution. This is diagnostic infrastructure;
+it does not invoke a model or orchestrate proposer/evaluator construction. See the
+[offline execution contract](../skills/harness-evaluation/references/execution.md#offline-executor-and-separate-grader-integration).
+The mock integration checks exercise both arms of all seven starter tasks, with
+broken baseline programs and complete candidate programs. Their outcomes establish
+runner wiring, not model quality or actual containment. A supported-host end-to-end
+test remains explicitly conditional on the real namespace probe.
 
 [Bubblewrap's upstream documentation](https://github.com/containers/bubblewrap)
 explains that application policy and the selected mounts determine the boundary;
@@ -103,13 +120,41 @@ the function on additional inputs. Graders use a typed outcome envelope; invalid
 references, malformed envelopes, contradictory exit codes and missing outcomes are
 grader defects, not baseline task failures. Declared complete bundles (including
 reference data and controls) are hashed before execution and checked afterward.
-This detects changed declared inputs; clean-room regrading still requires #7.
+This detects changed declared inputs. The optional audit regrading path below
+advances #7; full task-runner integration still remains.
 
 `ahl bank --starter --list` validates and lists the pack. It exits 3 because task
 independence remains unverified. `--audit --cooperative-controls` explicitly runs
 the trusted synthetic grader controls with a minimal environment, without a model.
-This is cooperative diagnostic execution, not sandbox evidence; audits refuse to
-execute without that explicit mode until sandbox integration is available.
+This is cooperative diagnostic execution, not sandbox evidence. Alternatively,
+`ahl bank --starter --audit --sandbox-controls` probes the offline bubblewrap
+backend and returns an explicit `blocked` report (exit 3) when unavailable, without
+falling back to host execution. On a supported host, each control is materialized
+in a disposable worker directory, then only its declared bounded artifacts are
+copied to a fresh read-only grader input. A separately copied, hash-checked oracle
+bundle is mounted read-only; the grader gets a fresh scratch workspace, a cleared
+environment and no network. The calculator's allowlist includes its repaired
+source file as well as its structured result and preservation artifact. Claimed
+worker grades are ignored. Typed grades must agree with process status; timeout,
+output limits, malformed grades and changed inputs cannot pass. Per-control
+execution attestations remain in the private audit result.
+
+This mode currently supports the starter-style `grade.py.txt`/`expected.json`
+Python grader contract using `/usr/bin/python3` inside the namespace. It does not
+isolate a model run or provide inference access. Aggregate disk/cgroup bounds,
+pinned dependency images, whole-experiment parent-budget orchestration and full
+role integration remain pending. Offline audits now use one 300-second wall-clock
+admission deadline shared by validation, capability probing, materialization,
+extraction, oracle copying and all control executions. API callers can pass their
+remaining `budget_seconds`; individual subprocess limits are capped by what
+remains. Exhaustion and grader timeout reports retain completed checks and never
+claim all controls passed. In-process filesystem operations and cleanup are
+accounted for but cannot be preempted at an exact deadline; this is not an
+enforceable provider cost/token or aggregate CPU limit. Mock-backend tests
+exercise extraction, typed grading and all 29
+controls; they do not prove containment. The live test is explicitly skipped when
+the namespace probe fails. Neither audit mode authorizes promotion.
+
 `--export NEW_DIRECTORY` writes a descriptive manifest with bounded fixtures,
 grader bundles, control paths, task/root identities and an explicit no-promotion
 flag. It never launches an agent. Source materialization is confined to declared
