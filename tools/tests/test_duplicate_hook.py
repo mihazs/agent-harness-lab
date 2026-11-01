@@ -19,7 +19,7 @@ def module(name):
     return result
 
 
-@unittest.skipUnless(SCANNER.is_file() and MANAGER.is_file(), 'npm ci required for executable Lefthook/jscpd integration checks')
+@unittest.skipUnless(SCANNER.is_file() and MANAGER.is_file() and shutil.which('task'), 'Task and npm ci required for executable Lefthook/jscpd integration checks')
 class GitRepoCase(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
@@ -29,6 +29,7 @@ class GitRepoCase(unittest.TestCase):
         (self.root/'node_modules/.bin').mkdir(parents=True)
         (self.root/'node_modules/.bin/lefthook').symlink_to(MANAGER)
         shutil.copy2(ROOT/'lefthook.yml', self.root/'lefthook.yml')
+        shutil.copy2(ROOT/'Taskfile.yml', self.root/'Taskfile.yml')
 
     def git(self, *args):
         return subprocess.run(['git', *args], cwd=self.root, capture_output=True, text=True)

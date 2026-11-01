@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import sys
 import uuid
-from .evaluation.integrity import contained, relative, read_regular
+from .evaluation.integrity import contained, relative, read_regular, unique_object
 
 
 def starter():
@@ -64,13 +64,8 @@ def supported():
 def read_json(path):
     if not supported():
         raise NotImplementedError('safe configuration I/O is unavailable')
-    def unique(pairs):
-        value = dict(pairs)
-        if len(value) != len(pairs):
-            raise ValueError()
-        return value
     try:
-        return json.loads(read_regular(path, 65536), object_pairs_hook=unique)
+        return json.loads(read_regular(path, 65536), object_pairs_hook=unique_object)
     except (ValueError, UnicodeError):
         raise ValueError('malformed or unsafe configuration JSON') from None
 

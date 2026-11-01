@@ -4,4 +4,4 @@ skip_lfs: true
 pre-commit:
   jobs:
     - name: zero-clones
-      run: python3 scripts/check_duplicates.py
+      run: task duplication:check

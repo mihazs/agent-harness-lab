@@ -5,6 +5,13 @@ from pathlib import Path, PurePosixPath
 import stat
 
 
+def unique_object(pairs):
+    value = dict(pairs)
+    if len(value) != len(pairs):
+        raise ValueError('duplicate JSON keys')
+    return value
+
+
 def read_regular(path, max_bytes):
     """Read one bounded, single-link file without following symlink ancestors."""
     path = Path(path)
