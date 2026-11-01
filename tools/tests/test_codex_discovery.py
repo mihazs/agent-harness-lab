@@ -88,6 +88,16 @@ class CodexDiscoveryTests(unittest.TestCase):
         other[-1]['payload']['usage']['input_tokens'] = 8; self.write('rollout-2026-b.jsonl', other)
         with self.assertRaises(ValueError): self.collect()
 
+    def test_file_local_usage_suppression_cannot_hide_another_files_ordinal_claim(self):
+        usage = dict(thread_id='synthetic-thread', session_id='synthetic-root', turn_id='turn', root_turn_id='root-turn',
+            response_id='response-one', usage=dict(input_tokens=7, output_tokens=3))
+        row6 = self.fixture.row('token_usage_record', usage, 6); row7 = self.fixture.row('token_usage_record', usage, 7)
+        self.write('rollout-2026-a.jsonl', self.rows+[row6, row7])
+        conflict = self.fixture.row('event_msg', dict(type='exec_command_end', call_id='SYNTHETIC_SECRET', exit_code=0), 7)
+        self.write('rollout-2026-b.jsonl', self.rows+[row6, conflict]); output = []
+        with self.assertRaises(ValueError): self.collect(event_sink=output.append)
+        self.assertEqual(output, [])
+
     def test_child_inherited_parent_usage_is_excluded_without_merging_child_identity(self):
         usage = dict(thread_id='synthetic-thread', session_id='synthetic-root', turn_id='turn', root_turn_id='root-turn',
             response_id='one-response', usage=dict(input_tokens=7, output_tokens=3))

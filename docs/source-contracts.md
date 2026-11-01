@@ -336,8 +336,8 @@ Records, declared identity/coverage metadata and exact per-checkpoint membership
 nodes commit atomically through the existing schema-4 journal. Append, edit and
 late import preserve old record revisions,
 model declarations and checkpoint membership; identical re-imports are idempotent.
-This profile re-reads one bounded file; it does not claim a full-history byte cursor
-or journal multi-file discovery. Archive sources with different declared scopes
+The v1 profile re-reads one bounded file; it does not claim a full-history byte
+cursor. The explicitly versioned root profile below shares multi-file discovery. Archive sources with different declared scopes
 remain separate observations until independently resolved.
 
 The same graph includes `candidate` native-file relationships: each actual native
@@ -376,9 +376,66 @@ subjects. Coverage `records` counts observed input lines; derived source coverag
 records are separately bounded. Coverage remains partial even at native stop.
 The parser mapping is `codex-native-journal-v1`; this is not execution certification.
 `task test:sources:codex` runs native scope, privacy, history, relationship recheck,
-admission and failure controls; installed wheel/archive source tests include them. Root-batch journaling,
-incremental byte-position imports and verified cross-source execution joins remain
+admission and failure controls; installed wheel/archive source tests include them. Incremental
+byte-position imports and verified cross-source execution joins remain
 open in #42/#44/#58. Explicit analysis still owns v2 event-ledger projection.
+
+### Explicit bounded root journal
+
+The separate `local_file/codex-rollout/0.166.0-v2` profile selects a bounded native
+root with the same declaration/expected project/scope checks. Its private selection
+JSON uses exactly these fields:
+
+```json
+{
+  "schema_version": 1,
+  "project": "project",
+  "source_root": "captures",
+  "session": null,
+  "max_files": 100,
+  "max_scan_files": 2000,
+  "max_records": 10000
+}
+```
+
+Use `session: null` for the declared project's accepted threads, or an exact native
+thread ID in this private descriptor. Both paths remain normalized relative paths
+under the declaration directory; `scope_sha256` is `digest(selection)`. No home or
+account discovery runs. The existing guarded root scanner selects only uncompressed
+`rollout-*.jsonl` files, including active/archive child directories, and checks
+bounded headers before full reads or the accepted-file allowance. Foreign projects
+and other selected threads remain excluded. Public summaries contain fingerprints
+and bounded counts, not paths, native IDs or bodies.
+
+Merge identical copies and overlapping prefixes before correlation. Each native
+thread keeps its own header membership and call/result namespace; matching text and
+shared declared root labels do not establish independent origins. Moving a capture
+within the selected root preserves native record history and old checkpoint graphs.
+A body-only edit versions its native record. Incompatible raw revisions at the same
+owned native ordinal across selected copies reject the entire journal batch; the
+adapter never chooses one file's body as authoritative. Even a locally suppressed
+usage record retains its ordinal claim, so a duplicate response cannot hide another
+file's incompatible event. Ordinary telemetry still compares approved metadata and
+counts each response once; journal admission additionally checks raw fingerprints.
+
+The entire root scan, correlation, record conversion, identity/graph validation,
+selection revalidation and final selected-file/directory verification share one
+bounded lifecycle. Limits remain 64 MiB cumulatively across header/full reads,
+1 MiB per line, ten seconds, 10,000 filesystem entries and depth 64. The descriptor
+caps accepted files at 100, candidate files at 2,000 and total input/normalized
+source records at 10,000; execution subjects remain capped at 1,000. The root
+mapping version is `codex-native-root-journal-v1`.
+
+Preview exposes `checkpoint_ready: false` for any selected partial tail, reached
+file/scan cutoff, unsupported header, skipped unsafe entry or empty accepted scan.
+Those previews can neither import nor recheck relationships. Hard resource errors,
+conflicting claims or concurrent selected-input/descriptor changes reject the
+operation. No incomplete batch can create or advance a checkpoint, and successful
+imports retain partial historical coverage. Private cached status reads no capture
+files. Root-profile recheck uses the same exact built-in reader and current-only
+relationship contract as v1. Incremental byte-position capture, compressed/base
+history, Claude native version coverage and cross-source execution proofs remain
+open; no model calls or event-ledger emission occur during source operations.
 
 ## Offline Git and selected harness metadata
 

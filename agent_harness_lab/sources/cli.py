@@ -11,7 +11,7 @@ from .store import SourceStore
 from .git import GitExport
 from .execution import capture_snapshot
 from .github_config import GitHubConfigured
-from .codex import CodexCapture, SOURCE_VERSION as CODEX_VERSION
+from .codex import CodexCapture, SOURCE_VERSION as CODEX_VERSION, ROOT_VERSION as CODEX_ROOT_VERSION
 from agent_harness_lab.config import read_json
 
 
@@ -49,7 +49,8 @@ def main(argv):
             registry.register(Capability('local_file', 'ai-memory-okf', '0.2', ('contextual_assertion',)), connector)
             registry.register(Capability('local_git', 'git', 'v1', ('development_artifact',)), connector)
             registry.register(Capability('local_git', 'git', 'v2', ('development_artifact',)), connector)
-            registry.register(Capability('local_file', 'codex-rollout', CODEX_VERSION, ('behavioral_event',)), connector)
+            for version in (CODEX_VERSION, CODEX_ROOT_VERSION):
+                registry.register(Capability('local_file', 'codex-rollout', version, ('behavioral_event',)), connector)
             if isinstance(connector, GitHubConfigured):
                 registry.register(Capability('api', 'github', source.version, ('contextual_assertion', 'development_artifact')), connector)
             result = registry.probe(source, **scope)
