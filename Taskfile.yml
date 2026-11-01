@@ -78,6 +78,10 @@ tasks:
     desc: Install the existing pinned wheel build tools
     cmds:
       - '{{.PYTHON | shellQuote}} -m pip install setuptools==84.1.0 wheel==0.48.0'
+  setup:okf:
+    desc: Install the optional YAML parser for OKF imports
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m pip install PyYAML==6.0.3'
   hooks:install:
     desc: Install or migrate the owned Lefthook integration
     cmds:

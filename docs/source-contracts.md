@@ -111,6 +111,51 @@ code; there is no dynamic plugin loading or automatic source enablement.
 Provider-specific API transports, native formats, append offsets, analyze/doctor source
 integration and remote pagination remain open in #42 and provider issues.
 
+## ai-memory OKF project exports
+
+Select `local_file/ai-memory-okf/0.2` in the existing source declaration, with
+`data` naming an explicitly authorized, extracted project bundle. Install the
+optional parser with `pip install 'agent-harness-lab[okf]'`; development and CI use
+`task setup:okf`. The default installation still has no runtime dependencies.
+This reader targets ai-memory's [documented OKF v0.2 format](https://github.com/akitaonrails/ai-memory/blob/1c506228b701f4496d3d9af6f00180749e0563d1/docs/okf.md)
+and the corresponding project exporter at that public source revision.
+The existing `--format ai-memory` capture option remains a legacy normalized-event
+alias; it does not parse these bundles. Select the OKF source provider explicitly.
+
+The declaration's project fingerprint must equal `digest(project_name)` from the
+bundle's `_meta.md`; root identity and independently supplied project/scope values
+are checked before concept reads. `index.md` must declare quoted `okf_version:
+"0.2"`. Project exports do not establish workspace ownership or remote
+authentication. The workspace scope is caller-attested in the explicit declaration;
+the caller must authorize that exported bundle independently. The reader never
+walks a parent workspace, queries SQLite, runs ai-memory, repairs data, starts a
+server or installs hooks.
+
+`OKFExport.pages` preserves supported YAML metadata (including unknown extension
+keys, generated actors, source citations, lifecycle fields and native identifiers)
+and body text in memory for authorized callers. YAML aliases, custom object tags,
+duplicate/non-text keys and malformed frontmatter are rejected. Native UTC/offset
+timestamps are retained; missing original timestamps stay unknown. Preview exposes
+only bounded counts of authorship, freshness and explicit lifecycle/review claims.
+Human attribution and a reviewed claim are not verified review. Neither memory
+retrieval/injection into an agent nor witnessed tool execution is inferred.
+
+Journal imports retain only source/page/revision/content fingerprints, normalized
+timestamps and contextual-assertion records. Raw text, paths, native IDs and parsed
+frontmatter are not persisted. Parsed metadata is available through the reader API;
+it is not yet stored as structured journal facets. History includes revisions
+observed through successive imports; Git history, native session correlation,
+handoffs/workstreams and MCP retrieval remain open in #43.
+
+Limits are 500 concepts, 2,000 directory entries, 256 KiB per concept, 16 KiB of
+frontmatter and 4 MiB of concept bytes per operation. Links/special files, nested
+scope manifests and project mismatches are refused. `.git`, `_pending`, reserved
+index/meta/log files and monthly `log-YYYY-MM.md` names are excluded; a conforming
+ordinary note using a monthly-ledger filename is also excluded in this first slice.
+Coverage remains unknown. Use an extracted static export for stable input; this is
+not an atomic snapshot of a concurrently edited wiki. Tests use synthetic bundles
+and do not read real memories or call models.
+
 ## Shared HTTPS transport
 
 `sources.transport.JsonAPI` supplies the shared GET transport for explicitly
