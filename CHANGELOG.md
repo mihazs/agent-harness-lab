@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.23.0
+
+### Minor Changes
+
+- Persist bounded, revision-bound relationship claims with atomic graph/execution metadata checkpoints. Add journal v4 with read-only migration from v1–v3, normalized export v3 and an opt-in GitHub v5 graph profile. Preserve old capture hashes and historical graphs, reject foreign/dangling references and self-certified verified/reviewed labels, and keep independence unknown pending explicit relationship resolution.
+
 ## 0.22.0
 
 ### Minor Changes

@@ -9,6 +9,7 @@ from agent_harness_lab.evaluation.integrity import read_regular, unique_object
 from agent_harness_lab.monitoring.state import atomic_json
 from .schema import EvidenceRecord, ImportReceipt, SourceSpec, digest, fingerprint
 from .execution import ExecutionMetadata, capture_snapshot
+from .graph import EvidenceGraph
 
 
 class CommitUncertain(ValueError):
@@ -86,7 +87,21 @@ class SourceStore:
             state = {**state, 'schema_version': 2, 'snapshots': {}}
         if state['schema_version'] == 2 and set(state) == fields|{'snapshots'}:
             state = {**state, 'schema_version': 3, 'captures': {}}
-        if state['schema_version'] != 3 or set(state) != fields|{'snapshots', 'captures'}:
+        if state['schema_version'] == 3 and set(state) == fields|{'snapshots', 'captures'}:
+            captures = state['captures']
+            if (not isinstance(captures, dict) or len(captures) > self.max_records
+                    or any(not isinstance(c, dict) or len(c) > self.max_records for c in captures.values())
+                    or sum(len(c) for c in captures.values()) > self.max_records):
+                raise ValueError('invalid legacy capture history')
+            migrated = {}
+            for key, history in captures.items():
+                migrated[key] = {}
+                for cursor, envelope in history.items():
+                    if not isinstance(envelope, dict) or set(envelope) != {'source_spec_sha256', 'snapshot_sha256', 'metadata'}:
+                        raise ValueError('invalid legacy capture envelope')
+                    migrated[key][cursor] = {**envelope, 'graph': None}
+            state = {**state, 'schema_version': 4, 'captures': migrated}
+        if state['schema_version'] != 4 or set(state) != fields|{'snapshots', 'captures'}:
             raise ValueError('unsupported metadata cache schema')
         if (state['project_sha256'], state['scope_sha256']) != (self.project, self.scope):
             raise ValueError('metadata cache belongs to another project/scope')
@@ -145,15 +160,18 @@ class SourceStore:
             if capture_count > self.max_records: raise ValueError('capture metadata history limit reached')
             for cursor, envelope in captures.items():
                 fingerprint(cursor)
-                if (not isinstance(envelope, dict) or set(envelope) != {'source_spec_sha256', 'snapshot_sha256', 'metadata'}
+                if (not isinstance(envelope, dict) or set(envelope) != {'source_spec_sha256', 'snapshot_sha256', 'metadata', 'graph'}
                         or cursor not in state['snapshots'].get(key, {}).get('history', {})):
                     raise ValueError('capture metadata requires a committed snapshot checkpoint')
                 spec = specifications.get(envelope['source_spec_sha256'])
                 if spec is None or spec.source_key != key: raise ValueError('capture source specification mismatch')
-                metadata = ExecutionMetadata.parse(envelope['metadata'])
-                if metadata.empty: raise ValueError('empty capture metadata must not relabel history')
-                metadata._validate_refs(spec, identities)
-                if capture_snapshot(spec, envelope['snapshot_sha256'], metadata) != state['snapshots'][key]['history'][cursor]:
+                metadata = ExecutionMetadata.parse(envelope['metadata']) if envelope['metadata'] is not None else None
+                graph = EvidenceGraph.parse(envelope['graph']) if envelope['graph'] is not None else None
+                if metadata is not None and metadata.empty or metadata is None and graph is None:
+                    raise ValueError('empty capture metadata must not relabel history')
+                if metadata is not None: metadata._validate_refs(spec, identities)
+                if graph is not None: graph._validate_refs(spec, identities)
+                if capture_snapshot(spec, envelope['snapshot_sha256'], metadata, graph) != state['snapshots'][key]['history'][cursor]:
                     raise ValueError('capture metadata checkpoint fingerprint mismatch')
         if len({tuple(e) for e in state['supersessions'] if isinstance(e, list) and all(isinstance(v, str) for v in e)}) != len(state['supersessions']):
             raise ValueError('invalid or duplicate supersession claims')
@@ -163,7 +181,7 @@ class SourceStore:
     def _read(self):
         self._safe_path()
         if not os.path.lexists(self.path):
-            return dict(schema_version=3, project_sha256=self.project, scope_sha256=self.scope,
+            return dict(schema_version=4, project_sha256=self.project, scope_sha256=self.scope,
                         sources={}, records=[], cursors={}, supersessions=[], snapshots={}, captures={})
         try:
             return self._validate(json.loads(read_regular(self.path, self.max_bytes), object_pairs_hook=unique_object))
@@ -185,17 +203,25 @@ class SourceStore:
                     source_read=False, execution_authorized=False)
         capture = state['captures'].get(key, {}).get(cursor) if snapshots['active'] else None
         if capture is not None:
-            result.update(source_snapshot_sha256=capture['snapshot_sha256'],
-                          execution_metadata=ExecutionMetadata.parse(capture['metadata']).summary())
+            result['source_snapshot_sha256'] = capture['snapshot_sha256']
+            if capture['metadata'] is not None: result['execution_metadata'] = ExecutionMetadata.parse(capture['metadata']).summary()
+            if capture['graph'] is not None: result['evidence_graph'] = EvidenceGraph.parse(capture['graph']).summary()
         return result
 
-    def capture(self, source, cursor=None):
+    def _capture_envelope(self, source, cursor):
         self._bind(source)
         state = self._read()
         if cursor is None: cursor = (state['cursors'].get(source.source_key) or [None])[-1]
         if cursor is not None: fingerprint(cursor)
-        envelope = state['captures'].get(source.source_key, {}).get(cursor)
-        return ExecutionMetadata.parse(envelope['metadata']) if envelope is not None else None
+        return state['captures'].get(source.source_key, {}).get(cursor)
+
+    def capture(self, source, cursor=None):
+        envelope = self._capture_envelope(source, cursor)
+        return ExecutionMetadata.parse(envelope['metadata']) if envelope is not None and envelope['metadata'] is not None else None
+
+    def graph(self, source, cursor=None):
+        envelope = self._capture_envelope(source, cursor)
+        return EvidenceGraph.parse(envelope['graph']) if envelope is not None and envelope['graph'] is not None else None
 
     def history(self, source, native_id_sha256):
         self._bind(source); fingerprint(native_id_sha256)
@@ -203,16 +229,19 @@ class SourceStore:
                 (entry['record']['source_sha256'], entry['record']['native_id_sha256']) ==
                 (source.source_key, native_id_sha256)]
 
-    def ingest(self, source, records, *, cursor_before=None, cursor_after=None, supersessions=(), snapshot_sha256=None, metadata=None):
+    def ingest(self, source, records, *, cursor_before=None, cursor_after=None, supersessions=(), snapshot_sha256=None, metadata=None, graph=None):
         self._bind(source, writing=True)
         if metadata is not None:
             if not isinstance(metadata, ExecutionMetadata): raise ValueError('capture metadata must use its versioned contract')
             metadata = ExecutionMetadata.parse(metadata.to_dict())
             if metadata.empty: metadata = None
         source_snapshot = snapshot_sha256
-        if metadata is not None:
-            if snapshot_sha256 is None: raise ValueError('execution metadata requires an explicit snapshot')
-            snapshot_sha256 = capture_snapshot(source, snapshot_sha256, metadata)
+        if graph is not None:
+            if not isinstance(graph, EvidenceGraph): raise ValueError('capture graph must use its versioned contract')
+            graph = EvidenceGraph.parse(graph.to_dict())
+        if metadata is not None or graph is not None:
+            if snapshot_sha256 is None: raise ValueError('capture metadata requires an explicit snapshot')
+            snapshot_sha256 = capture_snapshot(source, snapshot_sha256, metadata, graph)
         for cursor in (cursor_before, cursor_after):
             if cursor is not None:
                 fingerprint(cursor)
@@ -269,8 +298,11 @@ class SourceStore:
                         state['records'].append(dict(source_spec_sha256=spec_key, record=record.to_dict()))
                         imported += 1
                 if metadata is not None: metadata._validate_refs(source, set(existing))
+                if graph is not None: graph._validate_refs(source, set(existing))
                 if source_snapshot is not None:
-                    envelope = dict(source_spec_sha256=spec_key, snapshot_sha256=source_snapshot, metadata=metadata.to_dict()) if metadata is not None else None
+                    envelope = (dict(source_spec_sha256=spec_key, snapshot_sha256=source_snapshot,
+                        metadata=metadata.to_dict() if metadata is not None else None,
+                        graph=graph.to_dict() if graph is not None else None) if metadata is not None or graph is not None else None)
                     prior_capture = state['captures'].get(key, {}).get(cursor_after)
                     if prior_capture is not None and (envelope is None or digest(prior_capture) != digest(envelope)):
                         raise ValueError('capture metadata cannot overwrite a checkpoint')

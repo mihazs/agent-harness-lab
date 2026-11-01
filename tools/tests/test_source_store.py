@@ -143,7 +143,7 @@ class SourceStoreTests(unittest.TestCase):
         self.assertEqual(self.store.path.read_bytes(), original)
         receipt = self.store.ingest(self.source, [self.record], cursor_before=first, snapshot_sha256=first)
         self.assertNotEqual(receipt.cursor_after_sha256, first)
-        self.assertEqual(json.loads(self.store.path.read_bytes())['schema_version'], 3)
+        self.assertEqual(json.loads(self.store.path.read_bytes())['schema_version'], 4)
         self.assertEqual(self.store.status(self.source)['revisions'], 1)
         state = json.loads(self.store.path.read_bytes())
         self.assertNotIn(first, state['snapshots'][self.source.source_key]['history'])

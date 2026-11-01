@@ -62,6 +62,7 @@ class Registry:
             if record.source_sha256 != source.source_key or record.plane not in capability.planes:
                 raise ValueError('collector exceeded its source/evidence capability')
         if snapshot.metadata is not None: snapshot.metadata.validate(source, snapshot.records)
+        if snapshot.graph is not None: snapshot.graph.validate(source, snapshot.records)
         return snapshot
 
     def ingest(self, source, store, **scope):
@@ -69,7 +70,8 @@ class Registry:
         store._bind(source, writing=True)
         before = store.status(source)['cursor_sha256']
         snapshot = self.preview(source, **scope)
-        return store.ingest(source, snapshot.records, cursor_before=before, snapshot_sha256=snapshot.sha256, metadata=snapshot.metadata)
+        return store.ingest(source, snapshot.records, cursor_before=before, snapshot_sha256=snapshot.sha256,
+            metadata=snapshot.metadata, graph=snapshot.graph)
 
     def status(self, source, store, **scope):
         self._resolve(source, scope)

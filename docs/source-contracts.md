@@ -107,16 +107,16 @@ deduplication still preserves the first attribution. This collector checkpoint i
 not a new native revision and does not establish a historical execution identity.
 Opaque pagination cursors keep the existing cycle and stale-writer checks.
 
-Journal schema 3 retains snapshot fingerprints against their collector checkpoints
+Journal schema 4 retains snapshot fingerprints against their collector checkpoints
 and distinguishes the currently observed snapshot from an opaque cursor. Returning
 to opaque mode preserves earlier associations but clears the current snapshot
 claim. Legacy cursor fingerprints are never retroactively relabeled as snapshots.
-Schema-1 and schema-2 journals remain readable; status does not rewrite them. The next successful import
+Schema-1, schema-2 and schema-3 journals remain readable; status does not rewrite them. The next successful import
 atomically upgrades the journal, preserving records, source attribution,
 supersession claims and checkpoints. A snapshot import also records a new explicit
 snapshot observation; legacy associations remain unknown.
 Failed imports preserve the original bytes.
-Older AHL versions cannot read a schema-3 journal; keep the previous journal when
+Older AHL versions cannot read a schema-4 journal; keep the previous journal when
 rollback to an older client is required.
 
 Schema 3 adds capture metadata envelopes keyed by source and committed snapshot
@@ -134,6 +134,14 @@ metadata for a specific committed checkpoint without reading the live source.
 `status` exposes a summary only for the active captured snapshot, keeping unknown
 fields and declared coverage distinct. Historical envelopes survive a return to
 opaque mode even though the current snapshot claim is cleared.
+
+Schema 4 adds a nullable evidence graph alongside nullable execution metadata in
+the same capture envelope. A nonempty envelope must contain at least one of them.
+Old captures gain no graph or invented links; their effective snapshot/checkpoint
+hashes stay unchanged. A graph contributes its canonical fingerprint to the capture
+identity, so relationship-only edits and recurring prior graphs preserve distinct
+checkpoints without duplicating native record revisions. Records, both metadata
+facets and the cursor still commit in one atomic replacement.
 
 The source/native-ID/revision tuple defines idempotency. Recollection timestamps
 do not create duplicate revisions; the first record and its source specification
@@ -194,7 +202,7 @@ record schemas at version 1. Its data payload contains exactly `schema_version: 
 `ExecutionMetadata.to_dict()` object). The existing 8 MiB export bound applies to
 the entire payload. Use each contract's strict `parse`/`to_dict` methods; no raw
 native IDs, source bodies, private paths or credentials belong in these objects.
-Versions outside v1/v2 are rejected before normalized payload reads. v1 list exports
+Versions outside v1/v2/v3 are rejected before normalized payload reads. v1 list exports
 remain supported and create no inferred execution metadata.
 
 Preview includes the bounded execution summary, original `snapshot_sha256` and
@@ -204,6 +212,40 @@ metadata. Status's `snapshot_sha256` is that committed effective snapshot identi
 direct store validate source ownership, available evidence references and metadata
 claims before committing. No configured plugin or verification flag can promote
 an export assertion to verified execution evidence.
+
+### Normalized export v3 and relationship claims
+
+`local_file/ahl-metadata/v3` adds a payload with exactly `schema_version: 3`,
+`records`, `execution_metadata` and `evidence_graph`. The record/declaration schemas
+stay at version 1. Execution metadata and the graph may independently be null;
+otherwise use their strict `to_dict()` representations. The 8 MiB payload bound
+still applies. Old v1/v2 payloads retain their existing shapes and behavior.
+
+`sources.graph.EvidenceGraph` contains the source, project and scope fingerprints,
+adapter version, up to 10,000 exact `RecordRef` nodes and 20,000 `JoinReceipt`
+claims. A join names its relation, namespace, resolver version, both endpoints
+(with an explicit null for an unavailable target), bounded evidence references,
+status, basis, reason and nullable validity interval. All non-null endpoints and
+evidence must be graph members with existing revisions in the authorized source.
+Foreign sources/projects, dangling revisions, duplicate entries, unknown relation
+types and invalid intervals reject the capture. Canonical node/join ordering keeps
+reordered graphs idempotent. No raw IDs, source text, paths or credentials belong
+in these contracts.
+
+This persistence layer retains candidate, conflicted and unlinked claims. Native
+field and review labels cannot self-certify: claimed `verified`/`reviewed` joins are
+rejected through normalized export, Registry, direct ingestion and journal reads.
+Strong native/reviewed resolution, cross-source joining, grouping/deduplication,
+contradiction diagnosis and diagnostic-utility trials remain open in #58. A stored
+link is an investigation lead, not proof of a common cause or an independent task.
+`independent_roots` remains null and verification/execution authority stays false.
+
+Preview/status expose only bounded graph scope/version/hash/status summaries.
+`SourceStore.graph(source, cursor)` reads the immutable graph at a committed
+checkpoint without rereading the source; omitted cursors select the current
+checkpoint. Graph changes do not rewrite old endpoints, including after late
+imports or revisions. `task test:sources:graph` runs the native contract,
+migration, atomicity and GitHub mapping cases.
 
 ## Offline Git and selected harness metadata
 
@@ -494,9 +536,10 @@ conflicting native parents and malformed/limited responses fail without returnin
 a snapshot or advancing a checkpoint. There is no automatic retry.
 
 `GitHubAPI.summary` contains bounded hash-only nodes and native relationship
-metadata from the last successful capture. That graph stays in memory; structured
-relationship persistence and verified joins remain #58 work. The snapshot imports
-fingerprinted typed records and declared partial coverage through journal v3.
+metadata from the last successful capture. That graph stays in memory by default;
+the explicit v5 profile below persists revision-bound claims. Verified joins remain
+#58 work. The snapshot imports
+fingerprinted typed records and declared partial coverage through journal v4.
 Raw comment/code/message text is neither stored nor printed. Fingerprints remain
 private metadata rather than an anonymization guarantee. The reader emits no
 execution identities, inferred tombstones, causal labels or scientific independence.
@@ -608,7 +651,8 @@ it does not make a series of server reads atomic. Coverage remains partial.
 
 Only fingerprints and approved metadata enter the snapshot. Query variables,
 credentials, native IDs and raw comment text are not persisted. Structured joins
-still live only in the in-memory summary pending #58. Synthetic tests cover nested
+remain in memory unless the v5 graph profile is selected. Strong resolution remains
+#58 work. Synthetic tests cover nested
 pagination, exact cross-API identity, revision/state changes and atomic import
 failure; they do not establish live GraphQL compatibility or diagnostic utility.
 
@@ -643,7 +687,8 @@ metadata agrees. Relations to captured parents and selected PR head/base/merge
 references require exact SHAs; open-PR test-merge references remain separate from
 reported merged results. No revert/cherry-pick relationship is inferred from a
 message, and no comment or merge establishes a task outcome or independent root.
-Structured relationships remain in memory pending #58. Conditional requests,
+Structured relationships remain in memory unless the v5 graph profile is selected.
+Strong resolution remains #58 work. Conditional requests,
 incremental/tombstone reconciliation and time windows remain open in #45/#42.
 
 `task test:sources:github:commit:live` runs the native public-service acceptance
@@ -651,6 +696,23 @@ case only with explicit `GITHUB_ENDPOINT`, `GITHUB_REPO_ID` and `GITHUB_COMMIT`
 inputs. It uses no credentials and persists no response fixtures. Ordinary test
 discovery skips all live cases. Synthetic cases establish client behavior; they
 do not establish general provider compatibility or diagnostic effectiveness.
+
+### Opt-in durable GitHub relationship claims
+
+`GitHubSelection(..., schema_version=5, details=("graph",))` maps the existing
+native relationship inventory to exact source-record revisions and imports it
+through the shared graph contract. The flag changes authorized scope, uses no
+extra requests and composes with the existing checks/thread/timeline flags and
+explicit commit selection. Versions 1–4 retain their serialization and request
+sets and return no graph unless the new capability is selected.
+
+All emitted joins are candidates with a declared native-field basis; the collector
+does not claim independent relationship resolution. Imported edges preserve PR
+head/merge distinctions and specific review/comment revisions as investigation
+leads. Historical graphs remain attached to their captures, and source state
+changes cannot relabel an older graph. Structured relationships persist only with
+this explicit profile; ordinary summaries remain in memory. Strong joins and
+independent-root/grouping claims still require the #58 resolver and validation.
 
 No source is enabled by installation. Tests use synthetic metadata; they establish
 contract validation, checkpoint behavior and a side-effect-free registry, not

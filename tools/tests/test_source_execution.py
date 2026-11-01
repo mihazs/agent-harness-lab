@@ -141,7 +141,7 @@ class ExecutionIntegrationTests(unittest.TestCase):
         self.assertEqual(status['execution_metadata']['declared_coverage']['reported_completeness'], 'partial')
         self.assertEqual(self.store.capture(self.source), self.metadata)
         self.assertNotIn('SYNTHETIC_SECRET', self.store.path.read_text())
-        self.assertEqual(json.loads(self.store.path.read_text())['schema_version'], 3)
+        self.assertEqual(json.loads(self.store.path.read_text())['schema_version'], 4)
         legacy = replace(self.source, version='v1')
         self.manifest.write_text(json.dumps(dict(schema_version=1, source=legacy.to_dict(), data='records.json')))
         self.data.write_text(json.dumps([self.record.to_dict()]))
@@ -150,7 +150,7 @@ class ExecutionIntegrationTests(unittest.TestCase):
         self.assertEqual(snapshot.records, (self.record,))
 
     def test_unknown_normalized_export_version_is_rejected_before_reading_payload(self):
-        unsupported = replace(self.source, version='v3')
+        unsupported = replace(self.source, version='v4')
         with patch('agent_harness_lab.sources.snapshot.read_regular', side_effect=AssertionError('no payload read')):
             with self.assertRaises(ValueError): LocalExport(self.manifest).read(unsupported)
 
@@ -210,7 +210,7 @@ class ExecutionIntegrationTests(unittest.TestCase):
                 self.assertEqual(self.store.path.read_bytes(), original)
                 self.ingest(before=seed.cursor_after_sha256)
                 migrated = json.loads(self.store.path.read_text())
-                self.assertEqual(migrated['schema_version'], 3)
+                self.assertEqual(migrated['schema_version'], 4)
                 self.assertEqual(migrated['records'], state['records'])
                 self.assertEqual(migrated['cursors'][self.source.source_key][0], seed.cursor_after_sha256)
 

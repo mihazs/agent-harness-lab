@@ -36,6 +36,7 @@ def main(argv):
             registry = Registry()
             registry.register(Capability('local_file', 'ahl-metadata', 'v1', PLANES), connector)
             registry.register(Capability('local_file', 'ahl-metadata', 'v2', PLANES), connector)
+            registry.register(Capability('local_file', 'ahl-metadata', 'v3', PLANES), connector)
             registry.register(Capability('local_file', 'ai-memory-okf', '0.2', ('contextual_assertion',)), connector)
             registry.register(Capability('local_git', 'git', 'v1', ('development_artifact',)), connector)
             result = registry.probe(source, **scope)
@@ -46,8 +47,10 @@ def main(argv):
                 result.update(snapshot_sha256=snapshot.sha256, records=len(snapshot.records), source_read=True,
                               capture_completeness='unknown')
                 if snapshot.metadata is not None:
-                    result.update(execution_metadata=snapshot.metadata.summary(),
-                        checkpoint_snapshot_sha256=capture_snapshot(source, snapshot.sha256, snapshot.metadata))
+                    result['execution_metadata'] = snapshot.metadata.summary()
+                if snapshot.graph is not None: result['evidence_graph'] = snapshot.graph.summary()
+                if snapshot.metadata is not None or snapshot.graph is not None:
+                    result['checkpoint_snapshot_sha256'] = capture_snapshot(source, snapshot.sha256, snapshot.metadata, snapshot.graph)
                 if isinstance(connector, OKFExport):
                     result['context_summary'] = connector.summary
                 elif isinstance(connector, GitExport):
