@@ -78,8 +78,38 @@ limits do not impose a directory-wide disk quota on crash-orphaned temporary fil
 before retrying. A completed import batch leaves capture completeness unknown and
 cannot authorize execution or prove a verified outcome.
 
-Production connectors, source CLI and registry preview/import/status dispatch,
-native file snapshots and API pagination remain open in #42 and provider issues.
+## Explicit local export operations
+
+`ahl sources` reports zero enabled sources and performs no discovery. Select an
+export explicitly with `ahl sources probe|preview|import|status --manifest FILE
+--project-sha256 HASH --scope-sha256 HASH`. Import and status also require
+`--cache PRIVATE_FILE`. Exit 0 reports a completed requested operation, 2 rejects
+invalid input, and 3 reports a blocked capability/access requirement. Output is
+bounded JSON metadata; errors omit source contents and private paths.
+
+The bounded version-1 declaration contains exactly `schema_version`, `source`
+(a complete SourceSpec object) and `data` (a safe path relative to the declaration).
+The registered provider is `local_file/ahl-metadata/v1`, with `auth_mode: none` and
+`identity_provenance: source_declared_id`. The root fingerprint is `digest(str(root.resolve()))`
+using `sources.schema.digest`; project/scope fingerprints must match independently
+provided expected identities. The declaration is read before record data. It is
+local trusted configuration, not proof of remote authentication or Git ownership.
+No identity is inferred from directory names or timestamps.
+
+The data file is a JSON list of complete EvidenceRecord objects, limited to 8 MiB
+and 10,000 records. Only normalized metadata is supported; plaintext body fields,
+foreign source identities and conflicting revisions are rejected. Preview freezes
+one file read and reports its SHA-256 and count without writing a cache. Import
+uses the same snapshot contract and the journal's checkpoint comparison; failure
+leaves the prior checkpoint intact. Restoring an older snapshot is rejected as a
+checkpoint cycle; inspect/rotate the journal explicitly rather than erasing history.
+Status reads cache metadata without opening record data. Probe validates only the
+declaration and filesystem path metadata. Disabled/unsupported versions do not
+open record data. Registry collectors are registered explicitly by trusted Python
+code; there is no dynamic plugin loading or automatic source enablement.
+
+API transports, native provider formats, append offsets, analyze/doctor source
+integration and remote pagination remain open in #42 and provider issues.
 No source is enabled by installation. Tests use synthetic metadata; they establish
 contract validation, checkpoint behavior and a side-effect-free registry, not
 real-source compatibility, containment, diagnostic usefulness or certification.

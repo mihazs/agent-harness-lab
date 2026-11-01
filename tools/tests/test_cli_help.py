@@ -8,7 +8,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 COMMANDS = ('mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'experiment', 'sandbox-check',
-            'research-simulate', 'incident-search', 'promotion', 'benchmark-report', 'analyze', 'improve', 'watch', 'doctor', 'init')
+            'research-simulate', 'incident-search', 'promotion', 'benchmark-report', 'analyze', 'improve', 'watch', 'doctor', 'init', 'sources')
 
 
 class CliHelpTests(unittest.TestCase):

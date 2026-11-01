@@ -36,6 +36,9 @@ def evaluator():
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == 'sources':
+        from agent_harness_lab.sources.cli import main as source_main
+        return source_main(argv[1:])
     if argv and argv[0] in ('doctor', 'init'):
         from agent_harness_lab.onboarding import main as onboarding_main
         return onboarding_main(argv)
@@ -65,7 +68,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog='ahl', description=__doc__)
     parser.add_argument('--version', action='version', version=version())
     sub = parser.add_subparsers(dest='command', required=True)
-    for name in ('mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'experiment', 'sandbox-check', 'research-simulate', 'incident-search', 'promotion', 'benchmark-report', 'doctor', 'init'):
+    for name in ('mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'experiment', 'sandbox-check', 'research-simulate', 'incident-search', 'promotion', 'benchmark-report', 'doctor', 'init', 'sources'):
         sub.add_parser(name, help=f'{name} tools; use ahl {name} --help')
     for name in ('analyze', 'improve', 'watch'):
         command = sub.add_parser(name, help={'analyze': 'Discover project evidence and failure candidates',
