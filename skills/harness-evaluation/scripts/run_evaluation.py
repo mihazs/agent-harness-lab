@@ -119,6 +119,9 @@ def agent_command(agent, binary, plugin=None, skills=()):
 
 
 def evaluate(args):
+    cgroup_root = getattr(args, 'cgroup_root', None)
+    if cgroup_root is not None and args.agent != 'offline':
+        raise ValueError('cgroup resources currently require the offline executor')
     manifest_path = Path(args.manifest).resolve()
     manifest_bytes = manifest_path.read_bytes()
     manifest = json.loads(manifest_bytes.decode('utf-8'))
@@ -246,7 +249,7 @@ def evaluate(args):
             bundle = contained(manifest_path.parent, declared_bundles[task['id']]['path'])
             if task['grader'] != [task['grader'][0], str(bundle/'grade.py.txt'), '{workspace}', str(bundle/'expected.json')]:
                 raise ValueError('offline execution supports only the frozen Python artifact grader contract')
-        backend = SandboxBackend()
+        backend = SandboxBackend(cgroup_root=cgroup_root)
     plan = None
     if 'experiment' in manifest:
         application_modules()
@@ -370,7 +373,7 @@ def evaluate(args):
         if offline:
             try:
                 run = backend.run(argv, workspace, {'harness': root}, 'executor', Limits(seconds=min(timeout, remaining)))
-            except (ValueError, OSError) as exc:
+            except (ValueError, OSError, subprocess.SubprocessError) as exc:
                 record.update(status='execution_error', error=str(exc))
                 results['trials'].append(record)
                 (output/'results.json').write_text(json.dumps(results, indent=2)+'\n')
@@ -402,7 +405,7 @@ def evaluate(args):
                                                   backend, limits=Limits(seconds=min(timeout, remaining)))
                         record['grader'] = grade
                         record['status'] = grade['status']
-                    except (ValueError, OSError) as exc:
+                    except (ValueError, OSError, subprocess.SubprocessError) as exc:
                         record.update(status='grader_error', error=str(exc))
                 else:
                     grader = [a.replace('{workspace}', str(workspace)).replace('{trace}', str(trace)) for a in task['grader']]
@@ -427,6 +430,7 @@ def main():
                         help='offline executes explicit fixture commands without model inference and requires bubblewrap')
     parser.add_argument('--codex', default='codex', help='Codex executable path')
     parser.add_argument('--claude', default='claude', help='Claude Code executable path')
+    parser.add_argument('--cgroup-root', type=Path, help='Explicit predelegated cgroup v2 subtree for offline executor and grader resources')
     args = parser.parse_args()
     try:
         return evaluate(args)

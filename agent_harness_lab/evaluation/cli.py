@@ -21,7 +21,8 @@ def main(argv):
     experiment = commands.add_parser('experiment', help='Analyze a frozen repeated paired experiment')
     experiment.add_argument('--spec', type=Path, required=True)
     experiment.add_argument('--records', type=Path, required=True)
-    commands.add_parser('sandbox-check', help='Probe offline sandbox capability; never relax isolation')
+    sandbox = commands.add_parser('sandbox-check', help='Probe offline sandbox capability; never relax isolation')
+    sandbox.add_argument('--cgroup-root', type=Path, help='Explicit predelegated cgroup v2 subtree; fail closed if unavailable')
     args = parser.parse_args(argv)
     try:
         if args.command == 'bank':
@@ -52,7 +53,7 @@ def main(argv):
             code = 3
         else:
             from .sandbox import SandboxBackend
-            result = SandboxBackend().capability()
+            result = SandboxBackend(cgroup_root=args.cgroup_root).capability()
             code = 0 if result['status'] == 'available' else 3
         print(json.dumps(result, indent=2, allow_nan=False))
         return code
