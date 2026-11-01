@@ -7,8 +7,7 @@ from pathlib import Path
 import re
 import stat
 import time
-from agent_harness_lab.config import read_json
-from agent_harness_lab.evaluation.integrity import contained, relative
+from agent_harness_lab.evaluation.integrity import relative
 from .git_view import Folder, GitView, MAX_BYTES
 from .instructions import capture as capture_instructions, validate as validate_instruction_profile
 from .schema import EvidenceRecord, digest, fingerprint
@@ -72,10 +71,7 @@ class GitExport(LocalExport):
     def read(self, source):
         if (source.kind, source.provider) != ('local_git', 'git') or source.version not in ('v1', 'v2'):
             raise ValueError('unsupported Git source version')
-        current, declaration = self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)
-        if current != source or not source.enabled: raise ValueError('Git source changed or is disabled')
-        descriptor = contained(self.manifest.parent, declaration['data'])
-        selection = read_json(descriptor)
+        descriptor, selection = self.selection(source)
         fields = {'schema_version', 'checkout', 'git_dir', 'common_dir', 'harness_paths', 'max_commits'}
         if (not isinstance(selection, dict) or set(selection) not in (fields, fields|{'instruction_profile'})
                 or type(selection['schema_version']) is not int or selection['schema_version'] != 1):
@@ -172,8 +168,7 @@ class GitExport(LocalExport):
                 rows.append(record('instruction_inventory', 'project', instructions.sha256, instructions.sha256))
             folder.verify()
             if Folder.stamp(view.binary.stat()) != view.binary_stamp: raise ValueError('trusted Git binary changed')
-            if read_json(descriptor) != selection or self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)[0] != source:
-                raise ValueError('Git selection changed during capture')
+            self.verify_selection(source, descriptor, selection)
             self.harness = harness
             self.instructions = instructions
             self.summary = dict(head_sha256=harness.head_sha256, branch_sha256=digest(branch) if branch else None,

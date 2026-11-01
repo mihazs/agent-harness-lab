@@ -32,6 +32,10 @@ tasks:
     desc: Run private journal inventory and offline analyze/doctor context cases
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_context.py" -v'
+  test:sources:codex:
+    desc: Run native Codex source receipts, checkpoint admission and immutable history cases
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_codex.py" -v'
   test:sources:git:
     desc: Run synthetic native Git snapshots, graph, coverage and compatibility cases
     cmds:

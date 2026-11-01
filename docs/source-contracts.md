@@ -291,6 +291,74 @@ this context. `SourceStore.inventory()` and `sources.context.load(...)` provide
 the same offline metadata view, and `task test:sources:context` runs its native
 scope, privacy, lifecycle and reporting tests.
 
+## Native Codex capture journals
+
+The explicit `local_file/codex-rollout/0.166.0-v1` provider connects the pinned
+Codex reader to the shared registry and private source journal. It uses the existing
+local declaration format, with `data` naming a JSON selection descriptor:
+
+```json
+{
+  "schema_version": 1,
+  "project": "project",
+  "capture": "captures/rollout-example.jsonl",
+  "max_records": 10000
+}
+```
+
+Both paths are explicit, normalized relative paths under the declaration root.
+The project directory must exist, and the capture's declared session/turn cwd must
+match it. The root fingerprint binds the declaration directory; the scope
+fingerprint is `digest(selection)`. Independently supply expected project/scope
+fingerprints. Directory names do not establish repository identity. Use
+`identity_provenance: source_declared_id`, `auth_mode: none` and explicit enablement.
+Probe and cached status do not read native captures, execute runtimes or connect
+to accounts. Preview/import reuse the same bounded reader as explicit telemetry.
+
+The adapter preserves exact native-record fingerprints and approved type/timestamp
+metadata as behavioral evidence. Bodies, arguments, results, native IDs, paths and
+credentials are not copied to the journal. A body-only edit versions its native
+record and source snapshot without changing the ordinary metadata-only monitor
+fingerprint. Collection time remains separate from reported native time.
+Derived unmatched-call coverage has a stable call-based identity and unknown
+provenance; resolving another pending call cannot relabel its history.
+
+Session-start and turn-context subjects receive versioned execution metadata.
+Project/cwd, thread, producer/runtime version, explicit parent-thread and requested
+model references remain **declared**, with exact evidence-record revisions. A
+fork parent is not substituted for a parent-thread identity. Requested model is
+attached only to its declaring context; delayed events do not inherit later
+settings. Served model, actual loaded harness/configuration, memory injection,
+task root, grader outcome and independence remain unknown. Producer fields and
+labels cannot authenticate a runtime or upgrade themselves to verified evidence.
+
+Records, declared identity/coverage metadata and exact per-checkpoint membership
+nodes commit atomically through the existing schema-4 journal. The membership graph
+has no inferred joins. Append, edit and late import preserve old record revisions,
+model declarations and checkpoint membership; identical re-imports are idempotent.
+This profile re-reads one bounded file; it does not claim a full-history byte cursor
+or journal multi-file discovery. Archive sources with different declared scopes
+remain separate observations until independently resolved.
+
+An uncommitted final line can be previewed as a complete prefix with
+`checkpoint_ready: false`. Registry import rejects that snapshot before creating
+or changing a cache/checkpoint. `Snapshot.checkpoint_ready` is an explicit boolean,
+defaulting to true for existing providers; it does not turn ordinary historical
+coverage gaps into import failures. Failed/malformed reads, foreign scope,
+unsupported versions, traversal, links, resource expiry and changed declarations
+likewise cannot advance the committed cursor. Selection and source input are
+revalidated after conversion and Snapshot validation.
+
+Limits are the shared 64 MiB file read, 1 MiB line and ten-second lifecycle budget,
+at most 10,000 selected input records/normalized source records and 1,000 execution
+subjects. Coverage `records` counts observed input lines; derived source coverage
+records are separately bounded. Coverage remains partial even at native stop.
+The parser mapping is `codex-native-journal-v1`; this is not execution certification.
+`task test:sources:codex` runs native scope, privacy, history, admission and failure
+controls; installed wheel/archive source tests include them. Root-batch journaling,
+incremental byte-position imports and verified cross-source execution joins remain
+open in #42/#44/#58. Explicit analysis still owns v2 event-ledger projection.
+
 ## Offline Git and selected harness metadata
 
 The `local_git/git/v1` provider uses the same explicit declaration, registry,

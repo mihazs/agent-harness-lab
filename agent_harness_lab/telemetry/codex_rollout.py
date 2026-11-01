@@ -92,7 +92,10 @@ class Projection:
             event_id=digest((thread, ('ordinal', ordinal) if ordinal is not None else ('line', position))),
             timestamp=stamp, activity='capture_coverage', capture_complete=False, source_format='codex', source_version=VERSION,
             runtime_fingerprint=digest(('codex', '0.166.0')), capture_order=ordinal if ordinal is not None else position)
-        if kind == 'session_meta': record['activity'] = 'session_start'
+        if kind == 'session_meta':
+            record['activity'] = 'session_start'
+            for field, output in (('parent_thread_id', 'native_parent_thread_fingerprint'), ('forked_from_id', 'native_fork_parent_fingerprint')):
+                if payload.get(field) is not None: record[output] = scoped(payload[field])
         elif kind == 'turn_context':
             if Path(text(payload.get('cwd'))) != self.project: raise ValueError('native turn project mismatch')
             record['requested_model_fingerprint'] = digest(text(payload.get('model')))
@@ -145,7 +148,7 @@ class Projection:
         self.rows.append(event(record))
 
 
-def decode(folder, name, project, max_records):
+def decode(folder, name, project, max_records, *, revisions=None):
     projection = Projection(project)
     partial = False
     raw = folder.read(name, max(0, MAX_BYTES-folder.bytes))
@@ -160,7 +163,11 @@ def decode(folder, name, project, max_records):
         try:
             row = json.loads(line, object_pairs_hook=unique_object, parse_constant=invalid_constant)
             if not isinstance(row, dict): raise ValueError('invalid native rollout record')
+            before = len(projection.rows)
             projection.add(row, position)
+            if revisions is not None and len(projection.rows) > before:
+                projected = projection.rows[-1]
+                revisions[(projected['case_id'], projected['event_id'])] = digest(row)
         except RecursionError: raise ValueError('native rollout nesting limit exceeded') from None
         except (UnicodeError, json.JSONDecodeError): raise ValueError('invalid native rollout JSON') from None
     if projection.meta is None: raise ValueError('native capture has no complete session metadata')
