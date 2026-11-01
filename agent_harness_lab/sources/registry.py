@@ -68,7 +68,7 @@ class Registry:
         store._bind(source, writing=True)
         before = store.status(source)['cursor_sha256']
         snapshot = self.preview(source, **scope)
-        return store.ingest(source, snapshot.records, cursor_before=before, cursor_after=snapshot.sha256)
+        return store.ingest(source, snapshot.records, cursor_before=before, snapshot_sha256=snapshot.sha256)
 
     def status(self, source, store, **scope):
         self._resolve(source, scope)

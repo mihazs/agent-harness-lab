@@ -57,8 +57,30 @@ history and cursor fingerprints. A failed input iterator or rejected batch leave
 the previous journal byte-for-byte intact. Compare-and-swap checks reject stale
 cursors before consuming records. A busy writer fails immediately; the store never
 automatically retries a collector or a paid operation. Checkpoint history rejects
-pagination cycles. Native cursor tokens and source snapshots are not stored here:
+pagination cycles. Native cursor tokens and snapshot bodies are not stored here:
 adapters must manage those privately and pass their fingerprints.
+
+Snapshot collectors use the explicit `snapshot_sha256` argument instead of
+`cursor_after`. Snapshot content may legitimately return to an earlier state,
+for example when an instruction edit is reverted. The journal retains the latest
+snapshot fingerprint separately from a chained checkpoint fingerprint. A changed
+snapshot gets a new checkpoint linked to its predecessor, even when that content
+was observed earlier; an unchanged snapshot reuses its checkpoint. Native revision
+deduplication still preserves the first attribution. This collector checkpoint is
+not a new native revision and does not establish a historical execution identity.
+Opaque pagination cursors keep the existing cycle and stale-writer checks.
+
+Journal schema 2 retains snapshot fingerprints against their collector checkpoints
+and distinguishes the currently observed snapshot from an opaque cursor. Returning
+to opaque mode preserves earlier associations but clears the current snapshot
+claim. Legacy cursor fingerprints are never retroactively relabeled as snapshots.
+Schema-1 journals remain readable; status does not rewrite them. The next successful import
+atomically upgrades the journal, preserving records, source attribution,
+supersession claims and checkpoints. A snapshot import also records a new explicit
+snapshot observation; legacy associations remain unknown.
+Failed imports preserve the original bytes.
+Older AHL versions cannot read a schema-2 journal; keep the previous journal when
+rollback to an older client is required.
 
 The source/native-ID/revision tuple defines idempotency. Recollection timestamps
 do not create duplicate revisions; the first record and its source specification
@@ -101,8 +123,8 @@ and 10,000 records. Only normalized metadata is supported; plaintext body fields
 foreign source identities and conflicting revisions are rejected. Preview freezes
 one file read and reports its SHA-256 and count without writing a cache. Import
 uses the same snapshot contract and the journal's checkpoint comparison; failure
-leaves the prior checkpoint intact. Restoring an older snapshot is rejected as a
-checkpoint cycle; inspect/rotate the journal explicitly rather than erasing history.
+leaves the prior checkpoint intact. Restoring an older snapshot records a fresh
+collector checkpoint without erasing history or inventing a native revision.
 Status reads cache metadata without opening record data. Probe validates only the
 declaration and filesystem path metadata. Disabled/unsupported versions do not
 open record data. Registry collectors are registered explicitly by trusted Python

@@ -22,6 +22,10 @@ def native_metadata(record):
     return {k: v for k, v in record.to_dict().items() if k != 'collected_at'}
 
 
+def snapshot_cursor(source, before, snapshot):
+    return digest(('snapshot-v1', source, before, snapshot))
+
+
 def validate_edges(edges, identities):
     graph, incoming = defaultdict(list), {}
     for edge in edges:
@@ -75,11 +79,15 @@ class SourceStore:
 
     def _validate(self, state):
         fields = {'schema_version', 'project_sha256', 'scope_sha256', 'sources', 'records', 'cursors', 'supersessions'}
-        if not isinstance(state, dict) or set(state) != fields or type(state['schema_version']) is not int or state['schema_version'] != 1:
+        if not isinstance(state, dict) or type(state.get('schema_version')) is not int:
+            raise ValueError('unsupported metadata cache schema')
+        if state['schema_version'] == 1 and set(state) == fields:
+            state = {**state, 'schema_version': 2, 'snapshots': {}}
+        if state['schema_version'] != 2 or set(state) != fields|{'snapshots'}:
             raise ValueError('unsupported metadata cache schema')
         if (state['project_sha256'], state['scope_sha256']) != (self.project, self.scope):
             raise ValueError('metadata cache belongs to another project/scope')
-        for name, kind in (('sources', dict), ('records', list), ('cursors', dict), ('supersessions', list)):
+        for name, kind in (('sources', dict), ('records', list), ('cursors', dict), ('supersessions', list), ('snapshots', dict)):
             if not isinstance(state[name], kind) or len(state[name]) > self.max_records:
                 raise ValueError('invalid or exhausted metadata cache')
         sources = {}
@@ -90,18 +98,33 @@ class SourceStore:
                 raise ValueError('source specification fingerprint changed')
             sources[key] = spec.source_key
         known_sources = set(sources.values())
+        checkpoint_parents, checkpoint_count = {}, 0
         for key, cursors in state['cursors'].items():
             fingerprint(key)
             if key not in known_sources:
                 raise ValueError('checkpoint source is unknown')
             if not isinstance(cursors, list) or len(cursors) > self.max_records:
                 raise ValueError('invalid checkpoint history')
+            checkpoint_count += len(cursors)
+            if checkpoint_count > self.max_records: raise ValueError('checkpoint history limit reached')
             for cursor in cursors:
                 fingerprint(cursor)
-            if len(set(cursors)) != len(cursors):
+            checkpoint_parents[key] = dict(zip(cursors, [None, *cursors[:-1]]))
+            if len(checkpoint_parents[key]) != len(cursors):
                 raise ValueError('cyclic checkpoint history')
-        if sum(map(len, state['cursors'].values())) > self.max_records:
-            raise ValueError('checkpoint history limit reached')
+        for key, snapshots in state['snapshots'].items():
+            fingerprint(key)
+            if (key not in known_sources or not state['cursors'].get(key) or not isinstance(snapshots, dict)
+                    or set(snapshots) != {'active', 'history'} or type(snapshots['active']) is not bool
+                    or not isinstance(snapshots['history'], dict) or len(snapshots['history']) > self.max_records):
+                raise ValueError('snapshot checkpoint source is unknown')
+            for cursor, snapshot in snapshots['history'].items():
+                fingerprint(cursor); fingerprint(snapshot)
+                parents = checkpoint_parents[key]
+                if cursor not in parents or cursor != snapshot_cursor(key, parents[cursor], snapshot):
+                    raise ValueError('snapshot checkpoint hash mismatch')
+            if snapshots['active'] and state['cursors'][key][-1] not in snapshots['history']:
+                raise ValueError('active snapshot checkpoint is unknown')
         identities = set()
         for entry in state['records']:
             if not isinstance(entry, dict) or set(entry) != {'source_spec_sha256', 'record'}:
@@ -118,8 +141,8 @@ class SourceStore:
     def _read(self):
         self._safe_path()
         if not os.path.lexists(self.path):
-            return dict(schema_version=1, project_sha256=self.project, scope_sha256=self.scope,
-                        sources={}, records=[], cursors={}, supersessions=[])
+            return dict(schema_version=2, project_sha256=self.project, scope_sha256=self.scope,
+                        sources={}, records=[], cursors={}, supersessions=[], snapshots={})
         try:
             return self._validate(json.loads(read_regular(self.path, self.max_bytes), object_pairs_hook=unique_object))
         except (ValueError, TypeError, KeyError, RecursionError):
@@ -129,10 +152,13 @@ class SourceStore:
         self._bind(source)
         state = self._read(); key = source.source_key
         records = [e['record'] for e in state['records'] if e['record']['source_sha256'] == key]
+        cursor = (state['cursors'].get(key) or [None])[-1]
+        snapshots = state['snapshots'].get(key, {'active': False, 'history': {}})
         return dict(schema_version=1, source_sha256=key, revisions=len(records),
                     tombstones=sum(r['state'] == 'tombstone' for r in records),
                     supersessions=sum(e[0] == key for e in state['supersessions']),
-                    cursor_sha256=(state['cursors'].get(key) or [None])[-1],
+                    cursor_sha256=cursor,
+                    snapshot_sha256=snapshots['history'].get(cursor) if snapshots['active'] else None,
                     checkpoints=len(state['cursors'].get(key, [])), capture_completeness='unknown',
                     source_read=False, execution_authorized=False)
 
@@ -142,12 +168,15 @@ class SourceStore:
                 (entry['record']['source_sha256'], entry['record']['native_id_sha256']) ==
                 (source.source_key, native_id_sha256)]
 
-    def ingest(self, source, records, *, cursor_before=None, cursor_after=None, supersessions=()):
+    def ingest(self, source, records, *, cursor_before=None, cursor_after=None, supersessions=(), snapshot_sha256=None):
         self._bind(source, writing=True)
         for cursor in (cursor_before, cursor_after):
             if cursor is not None:
                 fingerprint(cursor)
-        if cursor_before is not None and cursor_after is None:
+        if snapshot_sha256 is not None:
+            fingerprint(snapshot_sha256)
+            if cursor_after is not None: raise ValueError('snapshot and opaque cursor modes cannot be combined')
+        elif cursor_before is not None and cursor_after is None:
             raise ValueError('a committed checkpoint cannot be silently reset')
         self._safe_path()
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -166,6 +195,14 @@ class SourceStore:
             cursors = state['cursors'].get(key, [])
             if (cursors or [None])[-1] != cursor_before:
                 raise ValueError('stale checkpoint; inspect status before collecting another page')
+            if snapshot_sha256 is not None:
+                snapshots = state['snapshots'].setdefault(key, {'active': False, 'history': {}})
+                unchanged = snapshots['active'] and snapshots['history'].get(cursor_before) == snapshot_sha256
+                cursor_after = cursor_before if unchanged else snapshot_cursor(key, cursor_before, snapshot_sha256)
+                snapshots['active'] = True
+                snapshots['history'][cursor_after] = snapshot_sha256
+            elif key in state['snapshots']:
+                state['snapshots'][key]['active'] = False
             if cursor_after != cursor_before and cursor_after in cursors:
                 raise ValueError('checkpoint cycle; no page consumed')
             existing = {identity(EvidenceRecord.parse(e['record'])): e['record'] for e in state['records']}
