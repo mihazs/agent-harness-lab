@@ -612,6 +612,46 @@ still live only in the in-memory summary pending #58. Synthetic tests cover nest
 pagination, exact cross-API identity, revision/state changes and atomic import
 failure; they do not establish live GraphQL compatibility or diagnostic utility.
 
+### Explicit immutable commit captures
+
+`GitHubSelection(..., schema_version=4, commits=(FULL_SHA, ...))` adds a bounded
+selection of up to ten unique, sorted full commit SHAs. Branch names, tags and
+abbreviated SHAs are rejected. Commit selection enters the scope fingerprint;
+versions 1–3 retain their original serialization and requests. Select commits
+without issues/PRs, or alongside them. Public reads may remain unauthenticated;
+the existing explicit configured authorization applies to private repositories.
+
+The reader uses GitHub's [commit detail](https://docs.github.com/en/rest/commits/commits#get-a-commit)
+and [commit comment](https://docs.github.com/en/rest/commits/comments#list-commit-comments)
+GET endpoints. It retains the exact SHA, ordered parent fingerprints, separate
+author/committer timestamps, tree fingerprint, reported statistics and comment
+count. File records retain path/blob/previous-path fingerprints and change counts;
+an absent blob SHA stays unknown. Raw patches, code, messages and comment bodies
+are not returned or stored. Commit comments remain a fourth discussion form,
+distinct from issue-style comments, inline PR comments and review submissions.
+
+Each file page must repeat the same static commit metadata. File identities must
+be unique, file statistics must agree with the aggregate, and comment listings
+must match the native count and requested commit. Foreign URLs, contradictory
+native IDs, metadata changes, malformed pages and the documented 3,000-file cap
+reject capture. A second full read must match the first before checkpoint commit;
+all pages/readbacks share the original request, byte and deadline limits. These
+reads remain partial observations, not atomic snapshots or complete history.
+
+An explicitly selected commit reuses its existing PR commit record when native
+metadata agrees. Relations to captured parents and selected PR head/base/merge
+references require exact SHAs; open-PR test-merge references remain separate from
+reported merged results. No revert/cherry-pick relationship is inferred from a
+message, and no comment or merge establishes a task outcome or independent root.
+Structured relationships remain in memory pending #58. Conditional requests,
+incremental/tombstone reconciliation and time windows remain open in #45/#42.
+
+`task test:sources:github:commit:live` runs the native public-service acceptance
+case only with explicit `GITHUB_ENDPOINT`, `GITHUB_REPO_ID` and `GITHUB_COMMIT`
+inputs. It uses no credentials and persists no response fixtures. Ordinary test
+discovery skips all live cases. Synthetic cases establish client behavior; they
+do not establish general provider compatibility or diagnostic effectiveness.
+
 No source is enabled by installation. Tests use synthetic metadata; they establish
 contract validation, checkpoint behavior and a side-effect-free registry, not
 real-source compatibility, containment, diagnostic usefulness or certification.

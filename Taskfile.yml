@@ -31,6 +31,17 @@ tasks:
       AHL_TEST_GITHUB_PULL: '{{.GITHUB_PULL}}'
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_github_live.py" -v'
+  test:sources:github:commit:live:
+    desc: Run one explicitly selected public GitHub commit acceptance without credentials
+    requires:
+      vars: [GITHUB_ENDPOINT, GITHUB_REPO_ID, GITHUB_COMMIT]
+    env:
+      AHL_TEST_GITHUB_LIVE: '1'
+      AHL_TEST_GITHUB_ENDPOINT: '{{.GITHUB_ENDPOINT}}'
+      AHL_TEST_GITHUB_REPO_ID: '{{.GITHUB_REPO_ID}}'
+      AHL_TEST_GITHUB_COMMIT: '{{.GITHUB_COMMIT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest tools.tests.test_source_github_live.GitHubLiveTests.test_explicit_public_commit_contract -v'
   test:hooks:
     desc: Run native Lefthook and staged-index integration tests
     cmds:

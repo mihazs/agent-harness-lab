@@ -15,11 +15,9 @@ class GitHubLiveTests(unittest.TestCase):
         cls.endpoint = os.environ.get('AHL_TEST_GITHUB_ENDPOINT', '')
         try:
             cls.repo_id = int(os.environ.get('AHL_TEST_GITHUB_REPO_ID', ''))
-            cls.issue = int(os.environ.get('AHL_TEST_GITHUB_ISSUE', ''))
-            cls.pull = int(os.environ.get('AHL_TEST_GITHUB_PULL', ''))
-            GitHubSelection(cls.repo_id, (cls.issue,), (cls.pull,))
+            GitHubSelection(cls.repo_id)
         except (ValueError, TypeError):
-            raise RuntimeError('explicit public GitHub repository and selection are required') from None
+            raise RuntimeError('explicit public GitHub repository identity is required') from None
 
     def capture(self, selection):
         client = GitHubAPI(self.endpoint, selection, max_pages=40)
@@ -47,8 +45,22 @@ class GitHubLiveTests(unittest.TestCase):
         self.assertEqual({r.record_type for r in snapshot.records}, {'github_repository'})
 
     def test_selected_public_core_timeline_and_check_contract(self):
-        snapshot = self.capture(GitHubSelection(self.repo_id, (self.issue,), (self.pull,),
-            schema_version=2, details=('checks', 'timeline')))
+        try:
+            selection = GitHubSelection(self.repo_id, (int(os.environ.get('AHL_TEST_GITHUB_ISSUE', '')),),
+                (int(os.environ.get('AHL_TEST_GITHUB_PULL', '')),), schema_version=2, details=('checks', 'timeline'))
+        except (ValueError, TypeError):
+            raise RuntimeError('explicit public GitHub issue and PR numbers are required') from None
+        snapshot = self.capture(selection)
         kinds = {r.record_type for r in snapshot.records}
         self.assertTrue({'github_issue', 'github_pull', 'github_commit'} <= kinds)
+        self.assertTrue(all(r.plane != 'grader_reference' for r in snapshot.records))
+
+    @unittest.skipUnless(os.environ.get('AHL_TEST_GITHUB_COMMIT'), 'public commit acceptance requires an explicit full SHA')
+    def test_explicit_public_commit_contract(self):
+        try:
+            selection = GitHubSelection(self.repo_id, schema_version=4, commits=(os.environ['AHL_TEST_GITHUB_COMMIT'],))
+        except (ValueError, TypeError):
+            raise RuntimeError('explicit full GitHub commit SHA is required') from None
+        snapshot = self.capture(selection)
+        self.assertTrue({'github_commit', 'github_commit_detail'} <= {r.record_type for r in snapshot.records})
         self.assertTrue(all(r.plane != 'grader_reference' for r in snapshot.records))

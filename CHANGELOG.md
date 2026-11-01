@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.22.0
+
+### Minor Changes
+
+- Add explicit GitHub v4 full-SHA commit selection, per-commit file provenance and a distinct commit-comment discussion type. Reuse native PR commit identities, retain exact parent/head/base/merge relationships and unknown blob identities, and reject truncated, conflicting or changing captures without advancing checkpoints. Preserve v1–v3 scopes and request sets; add an opt-in native public-commit acceptance task.
+
 ## 0.21.0
 
 ### Minor Changes

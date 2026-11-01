@@ -81,11 +81,12 @@ class GitHubSelection(Contract):
     pulls: tuple = ()
     schema_version: int = 1
     details: tuple = ()
+    commits: tuple = ()
 
     def __post_init__(self):
-        if type(self.schema_version) is not int or self.schema_version not in (1, 2, 3): raise ValueError('unsupported GitHub selection version')
+        if type(self.schema_version) is not int or self.schema_version not in (1, 2, 3, 4): raise ValueError('unsupported GitHub selection version')
         integer(self.repo_id, minimum=1)
-        allowed = ('checks', 'threads', 'timeline') if self.schema_version == 3 else ('checks', 'timeline')
+        allowed = ('checks', 'threads', 'timeline') if self.schema_version >= 3 else ('checks', 'timeline')
         if (type(self.details) is not tuple or len(self.details) > len(allowed) or any(d not in allowed for d in self.details)
                 or tuple(sorted(set(self.details))) != self.details or self.schema_version == 1 and self.details):
             raise ValueError('invalid explicit GitHub details')
@@ -94,19 +95,29 @@ class GitHubSelection(Contract):
             for number in numbers: integer(number, minimum=1)
             if tuple(sorted(set(numbers))) != numbers: raise ValueError('GitHub numbers must be unique and ascending')
         if len(set(self.issues)|set(self.pulls)) > 10: raise ValueError('GitHub selection exceeds ten issue/PR numbers')
+        if type(self.commits) is not tuple or len(self.commits) > 10 or self.schema_version < 4 and self.commits:
+            raise ValueError('invalid explicit GitHub commits')
+        for sha in self.commits:
+            if commit_hash(sha) is None: raise ValueError('selected GitHub commit identity missing')
+        if tuple(sorted(set(self.commits))) != self.commits: raise ValueError('GitHub commits must be unique and ascending')
 
     @classmethod
     def parse(cls, value):
         if not isinstance(value, dict): raise ValueError('invalid GitHub selection')
-        fields = set(cls.__dataclass_fields__)-({'details'} if value.get('schema_version') not in (2, 3) else set())
+        fields = set(cls.__dataclass_fields__)
+        if value.get('schema_version') not in (2, 3, 4): fields.remove('details')
+        if value.get('schema_version') != 4: fields.remove('commits')
         if set(value) != fields: raise ValueError('invalid GitHub selection fields')
         if not all(isinstance(value[k], (list, tuple)) for k in ('issues', 'pulls')): raise ValueError('invalid GitHub number collections')
         if 'details' in value and not isinstance(value['details'], (list, tuple)): raise ValueError('invalid GitHub details collection')
-        return cls(**{**value, 'issues': tuple(value['issues']), 'pulls': tuple(value['pulls']), 'details': tuple(value.get('details', ()))})
+        if 'commits' in value and not isinstance(value['commits'], (list, tuple)): raise ValueError('invalid GitHub commit collection')
+        return cls(**{**value, 'issues': tuple(value['issues']), 'pulls': tuple(value['pulls']),
+            'details': tuple(value.get('details', ())), 'commits': tuple(value.get('commits', ()))})
 
     def to_dict(self):
         value = super().to_dict()
         if self.schema_version == 1: value.pop('details')
+        if self.schema_version < 4: value.pop('commits')
         return value
 
     @property
@@ -318,6 +329,59 @@ class GitHubAPI:
     def _actor(value):
         return digest(integer(value['id'], minimum=1)) if value is not None else None
 
+    def _discussion(self, value):
+        return dict(body_sha256=text_hash(value['body']), created_at=moment(value['created_at']),
+            updated_at=moment(value['updated_at']), actor_sha256=self._actor(value['user']))
+
+    def _commit(self, value):
+        sha = value['sha']; self._url(value['url'], '/commits/'+sha)
+        detail, parents = value['commit'], value['parents']
+        if not isinstance(parents, list) or len(parents) > 100: raise ValueError('GitHub parent cap exceeded')
+        return dict(commit_sha256=commit_hash(sha), parents_sha256=[commit_hash(p['sha']) for p in parents],
+            message_sha256=text_hash(detail['message']), author_at=moment(detail['author']['date']), committer_at=moment(detail['committer']['date']))
+
+    @staticmethod
+    def _file(value):
+        if value['status'] not in ('added', 'removed', 'modified', 'renamed', 'copied', 'changed', 'unchanged'):
+            raise ValueError('unsupported GitHub file state')
+        return dict(path_sha256=text_hash(value['filename'], required=True), status=value['status'],
+            previous_path_sha256=text_hash(value.get('previous_filename')),
+            **{k: integer(value[k]) for k in ('additions', 'deletions', 'changes')})
+
+    def _commit_detail(self, sha, state):
+        page, before, files = 1, None, {}
+        while page is not None:
+            raw, headers = self._get('/commits/'+sha+f'?per_page=100&page={page}', state)
+            commit = self._commit(raw)
+            tree = commit_hash(raw['commit']['tree']['sha'])
+            stats = {k: integer(raw['stats'][k]) for k in ('additions', 'deletions', 'total')}
+            count = integer(raw['commit']['comment_count'])
+            if raw['sha'] != sha or tree is None or stats['total'] != stats['additions']+stats['deletions']:
+                raise ValueError('GitHub commit identity/tree/stats mismatch')
+            current = dict(commit=commit, tree_sha256=tree, stats=stats, comment_count=count)
+            if before is not None and current != before: raise ValueError('GitHub commit metadata changed between file pages')
+            before, rows = current, raw['files']
+            if not isinstance(rows, list) or len(rows) > 100: raise ValueError('invalid GitHub commit file page')
+            for row in rows:
+                file = dict(**self._file(row), commit_sha256=commit['commit_sha256'], blob_sha256=commit_hash(row.get('sha')))
+                if file['changes'] != file['additions']+file['deletions']: raise ValueError('invalid GitHub commit file statistics')
+                path = file['path_sha256']
+                if path in files: raise ValueError('duplicate GitHub commit file identity')
+                files[path] = file
+            if len(files) >= 3000: raise ValueError('GitHub commit file inventory reaches its native cap')
+            page = self._next(headers.get('link'), '/commits/'+sha, page)
+        if any(sum(f[k] for f in files.values()) != stats[k] for k in ('additions', 'deletions')):
+            raise ValueError('GitHub commit file statistics are incomplete')
+        comments = {}
+        for raw in self._list('/commits/'+sha+'/comments', state):
+            native = integer(raw['id'], minimum=1); self._url(raw['url'], '/comments/'+str(native))
+            if raw['commit_id'] != sha: raise ValueError('GitHub commit comment references another commit')
+            comments[native] = dict(**self._discussion(raw), commit_sha256=commit['commit_sha256'],
+                path_sha256=text_hash(raw['path'], required=raw['path'] is not None),
+                line=integer(raw['line'], minimum=1) if raw['line'] is not None else None)
+        if len(comments) != count: raise ValueError('GitHub commit comment listing is incomplete')
+        return dict(**before, files=files, comments=comments)
+
     def _issue(self, value, number):
         self._url(value['url'], f'/issues/{number}')
         if integer(value['number'], minimum=1) != number or value['state'] not in ('open', 'closed'): raise ValueError('GitHub issue mismatch')
@@ -355,9 +419,7 @@ class GitHubAPI:
         native = integer(value['id'], minimum=1)
         self._url(value['url'], f'/pulls/comments/{native}' if inline else f'/issues/comments/{native}')
         self._url(value['pull_request_url' if inline else 'issue_url'], f'/pulls/{number}' if inline else f'/issues/{number}')
-        node = dict(parent_sha256=digest((self.selection.repo_id, 'pull' if inline else 'issue', number)),
-            body_sha256=text_hash(value['body']), created_at=moment(value['created_at']),
-            updated_at=moment(value['updated_at']), actor_sha256=self._actor(value['user']))
+        node = dict(parent_sha256=digest((self.selection.repo_id, 'pull' if inline else 'issue', number)), **self._discussion(value))
         if inline:
             node.update(path_sha256=text_hash(value['path'], required=True), commit_sha256=commit_hash(value['commit_id']),
                 original_commit_sha256=commit_hash(value['original_commit_id']),
@@ -470,7 +532,7 @@ class GitHubAPI:
             value = dict(kind=kind, native_id_sha256=key, **node)
             revision = digest(value)
             record = EvidenceRecord(source.source_key, key, revision, revision,
-                'contextual_assertion' if kind in ('github_issue', 'github_issue_comment', 'github_review_comment', 'github_review', 'github_review_thread', 'github_cross_reference') else 'development_artifact',
+                'contextual_assertion' if kind in ('github_issue', 'github_issue_comment', 'github_review_comment', 'github_review', 'github_review_thread', 'github_commit_comment', 'github_cross_reference') else 'development_artifact',
                 kind, collected, original_at=original, provenance='native_field', capture_completeness='partial')
             if key in records and records[key].revision_sha256 != revision: raise ValueError('conflicting GitHub native revision')
             records[key], nodes[key] = record, value
@@ -503,19 +565,12 @@ class GitHubAPI:
             if (len(files), len(commits), len(comments)) != (node['changed_files'], node['commits'], node['review_comments']):
                 raise ValueError('GitHub PR listing is incomplete or capped')
             for file in files:
-                value = dict(path_sha256=text_hash(file['filename'], required=True), status=file['status'], head_sha256=node['head_sha256'],
-                    blob_sha256=commit_hash(file['sha']), previous_path_sha256=text_hash(file.get('previous_filename')),
-                    **{k: integer(file[k]) for k in ('additions', 'deletions', 'changes')})
-                if value['status'] not in ('added', 'removed', 'modified', 'renamed', 'copied', 'changed', 'unchanged'): raise ValueError('unsupported GitHub file state')
+                value = dict(**self._file(file), head_sha256=node['head_sha256'], blob_sha256=commit_hash(file['sha']))
                 key = emit('github_pull_file', (raw['id'], value['path_sha256']), value)
                 relations.add(('file_on', key, parent))
             for commit in commits:
-                sha = commit['sha']; self._url(commit['url'], '/commits/'+sha)
-                detail = commit['commit']; parents = commit['parents']
-                if not isinstance(parents, list) or len(parents) > 100: raise ValueError('GitHub parent cap exceeded')
-                value = dict(commit_sha256=commit_hash(sha), parents_sha256=[commit_hash(p['sha']) for p in parents],
-                    message_sha256=text_hash(detail['message']), author_at=moment(detail['author']['date']), committer_at=moment(detail['committer']['date']))
-                key = emit('github_commit', sha, value, value['committer_at']); relations.add(('commit_on', key, parent))
+                value = self._commit(commit)
+                key = emit('github_commit', commit['sha'], value, value['committer_at']); relations.add(('commit_on', key, parent))
             review_keys = {}
             for review in self._list(f'/pulls/{number}/reviews', state):
                 value = self._review(review, number, node['head_sha256'])
@@ -538,6 +593,27 @@ class GitHubAPI:
                 if comment['pull_request_review_id'] in review_keys:
                     relations.add(('inline_review', key, review_keys[comment['pull_request_review_id']]))
             if 'checks' in self.selection.details: self._checks(raw['head']['sha'], parent, state, emit, relations)
+        commit_reads = {}
+        for sha in self.selection.commits:
+            captured = self._commit_detail(sha, state); commit_reads[sha] = captured
+            value = captured['commit']; parent = emit('github_commit', sha, value, value['committer_at'])
+            detail = dict(commit_sha256=value['commit_sha256'], tree_sha256=captured['tree_sha256'],
+                stats=captured['stats'], comment_count=captured['comment_count'])
+            key = emit('github_commit_detail', sha, detail); relations.add(('details_of', key, parent))
+            for path, value in captured['files'].items():
+                key = emit('github_commit_file', (sha, path), value); relations.add(('commit_file_on', key, parent))
+            for native, value in captured['comments'].items():
+                key = emit('github_commit_comment', native, value, value['created_at']); relations.add(('commit_conversation_on', key, parent))
+        if self.selection.commits:
+            known = {v['commit_sha256']: k for k, v in nodes.items() if v['kind'] == 'github_commit'}
+            for key, value in nodes.items():
+                if value['kind'] == 'github_commit':
+                    for parent in value['parents_sha256']:
+                        if parent in known: relations.add(('commit_parent', key, known[parent]))
+                if value['kind'] == 'github_pull':
+                    for field, relation in (('head_sha256', 'pr_head_commit'), ('base_sha256', 'pr_base_commit'),
+                            ('merge_sha256', 'pr_merge_commit' if value['merged'] else 'pr_test_merge_commit')):
+                        if value[field] in known: relations.add((relation, key, known[value[field]]))
         unmapped = []
         if 'timeline' in self.selection.details:
             for number, parent in issue_keys.items():
@@ -548,6 +624,8 @@ class GitHubAPI:
             if self._pull(self._get(f'/pulls/{number}', state)[0], number) != before: raise ValueError('GitHub PR changed during capture')
         for raw, comments, before in thread_reads.values():
             if self._threads(raw_repository, raw, comments, state) != before: raise ValueError('GitHub review threads changed during capture')
+        for sha, before in commit_reads.items():
+            if self._commit_detail(sha, state) != before: raise ValueError('GitHub commit details or comments changed during capture')
         if self._repository(self._get('', state)[0]) != repository: raise ValueError('GitHub repository changed during capture')
         summary = dict(schema_version=1, api_version=API_VERSION, source_identity='repository_id_checked',
             repository=repository, nodes=[nodes[k] for k in sorted(nodes)], relations=sorted(relations),
@@ -559,6 +637,7 @@ class GitHubAPI:
             if 'threads' in self.selection.details:
                 summary['warnings'].remove('thread_resolution_unknown')
                 summary['warnings'].append('thread_readbacks_non_atomic')
+            if self.selection.commits: summary['warnings'].append('commit_file_inventory_limited')
         coverage = CoverageManifest(source.source_key, source.scope_sha256, source.scope_sha256, self.selection.source_version,
             'github-rest-graphql-v1' if 'threads' in self.selection.details else 'github-rest-v'+str(self.selection.schema_version),
             (ScanBound('records', 10000, len(records)), ScanBound('pages', self.transport.max_pages, state['requests']),
