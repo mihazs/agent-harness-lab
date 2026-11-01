@@ -10,6 +10,8 @@ import time
 
 MAX_ENTRIES = 50000
 MAX_BYTES = 512 * 1024 * 1024
+MAX_METADATA = 8 * 1024 * 1024
+MAX_DEPTH = 64
 MOUNT_DIRS = ('usr', 'usr/bin', 'dev', 'proc', 'tmp', 'work', 'home', 'home/worker', 'inputs')
 
 
@@ -27,7 +29,13 @@ def scan(root, *, deadline=None):
     root = Path(root).absolute()
     if '..' in root.parts or any(p.is_symlink() for p in (root, *root.parents)):
         raise ValueError('runtime image root crosses a symlink')
-    entries, total = {}, 0
+    entries, total, metadata_bytes = {}, 0, 0
+    def record(name, value):
+        nonlocal metadata_bytes
+        metadata_bytes += len(json.dumps([name, value], separators=(',', ':')).encode())
+        if metadata_bytes > MAX_METADATA:
+            raise ValueError('runtime image metadata bound exceeded')
+        entries[name] = value
     def attributes(path, **options):
         nonlocal total
         names = os.listxattr(path, **options)
@@ -39,8 +47,10 @@ def scan(root, *, deadline=None):
             if total > MAX_BYTES: raise ValueError('runtime image byte bound exceeded')
             result[name] = hashlib.sha256(raw).hexdigest()
         return result
-    def walk(descriptor, prefix):
+    def walk(descriptor, prefix, depth=0):
         nonlocal total
+        if depth > MAX_DEPTH:
+            raise ValueError('runtime image directory depth bound exceeded')
         before = os.fstat(descriptor)
         with os.scandir(descriptor) as children:
             for child in children:
@@ -53,12 +63,12 @@ def scan(root, *, deadline=None):
                 metadata = [mode, info.st_uid, info.st_gid, info.st_mtime_ns,
                     attributes(f'/proc/self/fd/{descriptor}/{child.name}', follow_symlinks=False)]
                 if stat.S_ISDIR(info.st_mode):
-                    entries[name] = ['directory', *metadata]
+                    record(name, ['directory', *metadata])
                     nested = os.open(child.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=descriptor)
                     try:
                         if signature(os.fstat(nested)) != signature(info):
                             raise ValueError('runtime image directory changed')
-                        walk(nested, name+'/')
+                        walk(nested, name+'/', depth+1)
                     finally:
                         os.close(nested)
                 elif stat.S_ISLNK(info.st_mode):
@@ -72,7 +82,7 @@ def scan(root, *, deadline=None):
                             parts.append(part)
                     if signature(os.stat(child.name, dir_fd=descriptor, follow_symlinks=False)) != signature(info):
                         raise ValueError('runtime image symlink changed during inspection')
-                    entries[name] = ['symlink', *metadata, target]
+                    record(name, ['symlink', *metadata, target])
                 elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
                     total += info.st_size
                     if total > MAX_BYTES:
@@ -91,7 +101,7 @@ def scan(root, *, deadline=None):
                             content.update(raw)
                         if size != info.st_size or signature(os.fstat(leaf)) != signature(info):
                             raise ValueError('runtime image file changed during reading')
-                        entries[name] = ['file', *metadata, content.hexdigest()]
+                        record(name, ['file', *metadata, content.hexdigest()])
                     finally:
                         os.close(leaf)
                 else:
@@ -104,7 +114,7 @@ def scan(root, *, deadline=None):
         info = os.fstat(descriptor)
         if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:
             raise ValueError('runtime image must be privately owned with mode 0700')
-        entries['.'] = ['directory', 0o700, info.st_uid, info.st_gid, info.st_mtime_ns, attributes(descriptor)]
+        record('.', ['directory', 0o700, info.st_uid, info.st_gid, info.st_mtime_ns, attributes(descriptor)])
         walk(descriptor, '')
     finally:
         os.close(descriptor)

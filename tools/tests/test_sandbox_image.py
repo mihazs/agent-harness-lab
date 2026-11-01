@@ -78,9 +78,11 @@ class RuntimeImageTests(unittest.TestCase):
         self.root.chmod(0o700); self.runtime.chmod(0o4755)
         with self.assertRaises(ValueError): image.scan(self.root)
         self.runtime.chmod(0o644)
-        for constant in ('MAX_BYTES', 'MAX_ENTRIES'):
+        for constant in ('MAX_BYTES', 'MAX_ENTRIES', 'MAX_METADATA'):
             with patch.object(image, constant, 2):
                 with self.assertRaises(ValueError): image.scan(self.root)
+        with patch.object(image, 'MAX_DEPTH', 1):
+            with self.assertRaisesRegex(ValueError, 'depth bound'): image.scan(self.root)
         with self.assertRaises(TimeoutError): image.scan(self.root, deadline=0)
 
     def test_changed_file_during_read_is_rejected(self):

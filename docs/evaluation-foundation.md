@@ -142,7 +142,10 @@ Inspection binds every file's bytes, path membership, mode, numeric ownership,
 modification time, symlink target and extended attributes. It does not follow
 symlinks during inventory; escaping lexical links, hardlinks, special files and
 setuid/setgid entries are refused. Mount points must be real directories.
-The bounded profile permits 50,000 entries and 512 MiB of file/attribute data.
+The bounded profile permits 50,000 entries, 512 MiB of file/attribute data and
+8 MiB of serialized manifest metadata, with at most 64 nested directory levels.
+Metadata has a separate bound even when
+attribute values or files are empty.
 No raw paths or file contents enter the runtime-image attestation.
 
 The backend mounts that rootfs readonly instead of host `/usr`/library trees.
@@ -154,6 +157,8 @@ Each worker verifies the expected pin before launch and after termination. A
 changed image fails closed; insufficient postflight budget produces an incomplete
 integrity result and cannot pass. Hashing consumes the caller's deadline, though
 blocking host filesystem I/O remains cooperatively bounded.
+The controller must keep the host image tree immutable during runs; pre/post
+hashes do not seal it against host writers.
 
 Host kernel and outer bubblewrap remain trusted host components, not part of this
 image. Their behavior is not virtualized; the outer launcher hash is separately
