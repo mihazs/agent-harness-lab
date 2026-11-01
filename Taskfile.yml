@@ -27,6 +27,10 @@ tasks:
     desc: Run explicit GitHub configuration, credential and native relationship recheck cases
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_recheck.py" -v'
+  test:sources:context:
+    desc: Run private journal inventory and offline analyze/doctor context cases
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_context.py" -v'
   test:sources:github:live:
     desc: Run explicitly selected public GitHub acceptance without credentials or captured fixtures
     requires:

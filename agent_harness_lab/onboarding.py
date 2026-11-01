@@ -20,7 +20,7 @@ class CheckResult:
     capability_version: str = 'readiness-v1'
 
 
-def doctor(project, profile=None, *, probe_runtime=False, proposed=None):
+def doctor(project, profile=None, *, probe_runtime=False, proposed=None, source_cache=None, source_project_sha256=None, source_scope_sha256=None):
     from .cli import assets
     checks = []
     def add(name, status, required, evidence, observed, remediation):
@@ -91,8 +91,15 @@ def doctor(project, profile=None, *, probe_runtime=False, proposed=None):
             'Use sandbox-check on a supported Linux host; a successful offline probe does not certify model isolation.')
         add('isolated_execution', 'blocked', profile == 'isolated', 'current_contract', 'certification_prerequisites_pending',
             'Complete inference brokering, role orchestration, pinned images and aggregate resource enforcement before isolated execution.')
-    return dict(schema_version=1, profile=profile, status='invalid' if invalid_config else 'blocked' if any(c['required_for_profile'] and c['status'] != 'pass' for c in checks) else 'ready',
-                checks=checks, automatic_promotion=False, external_runtime_executed=False)
+    from .sources.context import load
+    context = load(source_cache, source_project_sha256, source_scope_sha256)
+    if context is not None:
+        add('source_context', 'warn', False, 'scoped_private_metadata', context['status'],
+            'Confirm target-project binding and declared coverage before using source context as evidence.')
+    result = dict(schema_version=1, profile=profile, status='invalid' if invalid_config else 'blocked' if any(c['required_for_profile'] and c['status'] != 'pass' for c in checks) else 'ready',
+                  checks=checks, automatic_promotion=False, external_runtime_executed=False)
+    if context is not None: result['source_context'] = context
+    return result
 
 
 def main(argv):
@@ -103,6 +110,9 @@ def main(argv):
     check.add_argument('--profile', choices=('offline', 'cooperative', 'isolated'))
     check.add_argument('--probe-runtime', action='store_true', help='Allow a bounded offline namespace probe; agent authentication stays unverified')
     check.add_argument('--json', action='store_true')
+    check.add_argument('--source-cache', type=Path, help='Explicit private source journal; no source or credential access')
+    check.add_argument('--source-project-sha256')
+    check.add_argument('--source-scope-sha256')
     init = commands.add_parser('init', help='Preview project configuration; --write explicitly creates ahl.json')
     init.add_argument('project', nargs='?', type=Path, default=Path.cwd())
     init.add_argument('--non-interactive', action='store_true')
@@ -112,13 +122,20 @@ def main(argv):
     args = parser.parse_args(argv)
     try:
         if args.command == 'doctor':
-            result = doctor(args.project, args.profile, probe_runtime=args.probe_runtime)
+            result = doctor(args.project, args.profile, probe_runtime=args.probe_runtime, source_cache=args.source_cache,
+                source_project_sha256=args.source_project_sha256, source_scope_sha256=args.source_scope_sha256)
             if args.json:
                 print(json.dumps(result, indent=2))
             else:
                 print(f"{result['profile']}: {result['status']}")
                 for item in result['checks']:
                     print(f"{item['check_id']}: {item['status']} ({item['observed_value']}). {item['remediation']}")
+                context = result.get('source_context')
+                if context is not None:
+                    print(f"source context: {context['status']}; sources: {context['source_count']}; omitted: {context['omitted_sources']}; truncated: {context['truncated']}")
+                    for source in context['sources']:
+                        coverage, execution = source['declared_coverage'], source['execution_metadata']
+                        print(f"source {source['source_sha256']}: declared coverage: {coverage['reported_completeness'] if coverage else 'unknown'}; execution identities: {execution['identities'] if execution else 'unknown'}")
             return {'ready': 0, 'invalid': 2, 'blocked': 3}[result['status']]
         if not args.project.is_dir() or os.path.lexists(args.project/'ahl.json'):
             raise ValueError('select an existing project without ahl.json; existing configuration is never overwritten')

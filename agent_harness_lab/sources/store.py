@@ -1,5 +1,5 @@
 """Bounded private metadata history; records and checkpoints commit together."""
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 import fcntl
 import json
 import os
@@ -178,11 +178,15 @@ class SourceStore:
         validate_edges(state['supersessions'], identities)
         return state
 
-    def _read(self):
+    def _empty_state(self):
+        return dict(schema_version=4, project_sha256=self.project, scope_sha256=self.scope,
+                    sources={}, records=[], cursors={}, supersessions=[], snapshots={}, captures={})
+
+    def _read(self, *, required=False):
         self._safe_path()
         if not os.path.lexists(self.path):
-            return dict(schema_version=4, project_sha256=self.project, scope_sha256=self.scope,
-                        sources={}, records=[], cursors={}, supersessions=[], snapshots={}, captures={})
+            if required: raise FileNotFoundError('selected private journal is missing')
+            return self._empty_state()
         try:
             return self._validate(json.loads(read_regular(self.path, self.max_bytes), object_pairs_hook=unique_object))
         except (ValueError, TypeError, KeyError, RecursionError):
@@ -222,6 +226,47 @@ class SourceStore:
     def graph(self, source, cursor=None):
         envelope = self._capture_envelope(source, cursor)
         return EvidenceGraph.parse(envelope['graph']) if envelope is not None and envelope['graph'] is not None else None
+
+    def inventory(self):
+        try:
+            state = self._read(required=True); present = True
+        except FileNotFoundError:
+            state = self._empty_state(); present = False
+        specifications = defaultdict(list)
+        for spec_key, value in state['sources'].items():
+            specifications[SourceSpec.parse(value).source_key].append((spec_key, value))
+        revisions = Counter(e['record']['source_sha256'] for e in state['records'])
+        tombstones = Counter(e['record']['source_sha256'] for e in state['records'] if e['record']['state'] == 'tombstone')
+        sources = []
+        for key in sorted(specifications)[:20]:
+            specs = specifications[key]; versions = sorted({digest(v['version']) for _, v in specs})
+            cursor = (state['cursors'].get(key) or [None])[-1]
+            active = state['snapshots'].get(key, {}).get('active', False)
+            capture = state['captures'].get(key, {}).get(cursor) if active else None
+            execution = coverage = graph = None
+            if capture is not None:
+                if capture['metadata'] is not None:
+                    metadata = ExecutionMetadata.parse(capture['metadata'])
+                    summary = metadata.summary()
+                    execution = dict(identities=summary['identities'], fields=summary['fields'])
+                    c = metadata.coverage
+                    if c is not None:
+                        coverage = dict(reported_completeness=c.reported_completeness, claim_basis='source_declaration',
+                            scope_observed=c.observed_scope_sha256 is not None, limit_reached=c.limit_reached, truncated=c.truncated,
+                            scan_bounds=[b.to_dict() for b in c.scan_bounds], missing_fields=[f.to_dict() for f in c.missing_fields],
+                            gaps=c.gaps, adapter_version_sha256=digest(c.adapter_version), parser_version_sha256=digest(c.parser_version))
+                if capture['graph'] is not None:
+                    g = EvidenceGraph.parse(capture['graph']).summary()
+                    graph = {name: g[name] for name in ('nodes', 'joins', 'statuses', 'independent_roots')}
+            sources.append(dict(source_sha256=key, kind=specs[0][1]['kind'], provider_sha256=digest(specs[0][1]['provider']),
+                specifications=len(specs), adapter_versions_sha256=versions[:8], omitted_adapter_versions=max(0, len(versions)-8),
+                revisions=revisions[key], tombstones=tombstones[key], checkpoints=len(state['cursors'].get(key, [])),
+                checkpoint_sha256=cursor, active_snapshot=active, execution_metadata=execution, declared_coverage=coverage, evidence_graph=graph))
+        return dict(schema_version=1, status='available' if present else 'missing', project_sha256=self.project, scope_sha256=self.scope,
+            sources=sources, source_count=len(specifications), omitted_sources=max(0, len(specifications)-len(sources)),
+            truncated=len(specifications) > len(sources) or any(s['omitted_adapter_versions'] for s in sources),
+            target_project_binding='unverified', capture_completeness='unknown',
+            independent_roots=None, task_outcomes_verified=False, cache_read=present, source_read=False, network_used=False, execution_authorized=False)
 
     def history(self, source, native_id_sha256):
         self._bind(source); fingerprint(native_id_sha256)

@@ -68,21 +68,25 @@ def project_lock(project):
             path.unlink()
 
 
-def evidence(args, output):
+def evidence(args, output, source_context=None):
     from agent_harness_lab.telemetry.ledger import Ledger
     events = []
     data = collect(args.project, events=args.events, source_format=args.format, event_sink=events.append)
+    if source_context is not None: data['source_context'] = source_context
     Ledger(output / 'events.v2.jsonl').ingest(events)
     write_json(output / 'analysis.json', data)
-    (output / 'report.md').write_text(report(data['analysis']))
+    (output / 'report.md').write_text(report(data['analysis'], source_context=source_context))
     return data
 
 
 def analyze_project(args):
+    from .sources.context import load
+    context = load(getattr(args, 'source_cache', None), getattr(args, 'source_project_sha256', None), getattr(args, 'source_scope_sha256', None))
     output = output_dir(args)
-    data = evidence(args, output)
+    data = evidence(args, output, source_context=context)
     result = dict(status='analyzed', output=str(output),
                   findings=len(data['analysis']['findings']), evaluation_failures=len(data['evaluation_failures']))
+    if context is not None: result['source_context'] = context
     write_json(output / 'workflow.json', result)
     return result
 

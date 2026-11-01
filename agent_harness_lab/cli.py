@@ -78,6 +78,10 @@ def main(argv=None):
         command.add_argument('--events', type=Path, help='Optional explicit evidence instead of native capture discovery')
         command.add_argument('--format', choices=('normalized', 'codex', 'claude', 'ai-memory'), default='normalized')
         command.add_argument('--output', type=Path, help='New private output directory (default: user state directory)')
+        if name == 'analyze':
+            command.add_argument('--source-cache', type=Path, help='Explicit private source journal; metadata only, no collection')
+            command.add_argument('--source-project-sha256')
+            command.add_argument('--source-scope-sha256')
         if name != 'analyze':
             command.add_argument('--focus', help='Optional focus hint; discovery does not require one')
             command.add_argument('--agent', choices=('auto', 'codex', 'claude'), default='auto')
@@ -107,6 +111,8 @@ def main(argv=None):
         print(json.dumps(result, indent=2))
         from agent_harness_lab.monitoring.state import exit_code
         return exit_code(result['status'])
+    except NotImplementedError:
+        parser.exit(3, 'ahl: required filesystem capabilities unavailable; no unsafe fallback\n')
     except (ValueError, OSError, TypeError, KeyError) as exc:
         parser.exit(2, f'ahl: {exc}\n')
 
