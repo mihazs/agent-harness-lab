@@ -23,6 +23,17 @@ def scan_directory(root):
     finally: os.close(descriptor)
 
 
+@contextmanager
+def publication(destination, deadline):
+    destination = Path(destination)
+    if destination.exists() or destination.is_symlink(): raise ValueError('artifact destination already exists')
+    if any(path.is_symlink() for path in destination.absolute().parents): raise ValueError('artifact destination crosses symlink')
+    with tempfile.TemporaryDirectory(dir=destination.parent,prefix='.artifact-stage-') as folder:
+        staged = Path(folder)/'artifacts'; staged.mkdir(mode=0o700)
+        yield staged
+        check_deadline(deadline); staged.rename(destination)
+
+
 @dataclass(frozen=True)
 class Snapshot:
     root_mode: int
@@ -110,18 +121,20 @@ class WorkingState:
         self.snapshot = captured
         return dict(files=len(captured.files),directories=len(captured.directories),bytes=sum(len(raw) for _,_,raw in captured.files))
 
+    def publish(self, destination, deadline):
+        with publication(destination,deadline) as staged:
+            descriptor = os.open(staged,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+            try: self.snapshot.seed(descriptor,deadline)
+            finally: os.close(descriptor)
+        return Path(destination)
+
     def export(self, allowlist, destination, deadline):
         allowed = names(allowlist)
         files = {name:raw for name,_,raw in self.snapshot.files}
         if not allowed or any(name not in files for name in allowed):
             raise ValueError('final working state lacks declared artifacts')
-        destination = Path(destination)
-        if destination.exists() or destination.is_symlink(): raise ValueError('artifact destination already exists')
-        if any(path.is_symlink() for path in destination.absolute().parents): raise ValueError('artifact destination crosses symlink')
-        with tempfile.TemporaryDirectory(dir=destination.parent,prefix='.artifact-stage-') as folder:
-            staged = Path(folder)/'artifacts'; staged.mkdir(mode=0o700)
+        with publication(destination,deadline) as staged:
             for name in allowed:
                 check_deadline(deadline); target = contained(staged,name)
                 target.parent.mkdir(parents=True,exist_ok=True); target.write_bytes(files[name]); target.chmod(0o600)
-            check_deadline(deadline); staged.rename(destination)
-        return destination
+        return Path(destination)

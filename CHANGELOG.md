@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.37.0
+
+### Minor Changes
+
+- Extend explicit Responses execution to controlled improve/watch preparation roles. Give proposer and evaluator author separate minimal views and fresh histories, preserve one client/budget through paired trials and refinement, publish complete bounded authored trees atomically, and derive/freeze grader commands in the controller. Persist request reservations and ambiguous failures without native fallback. Keep recommendation-only outcomes and unverified model/lineage qualification.
+
 ## 0.36.0
 
 ### Minor Changes

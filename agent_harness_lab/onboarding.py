@@ -90,7 +90,7 @@ def doctor(project, profile=None, *, probe_runtime=False, proposed=None, source_
             False, 'bounded_explicit_probe' if probe_runtime else 'not_observed', capability,
             'Use sandbox-check on a supported Linux host; a successful offline probe does not certify model isolation.')
         add('isolated_execution', 'blocked', profile == 'isolated', 'current_contract', 'certification_prerequisites_pending',
-            'Complete inference isolation across all roles, audited lineage and effective runtime verification before isolated-profile promotion.')
+            'Controlled Responses workflows remain recommendation-only; audited lineage and effective runtime verification are still required.')
     from .sources.context import load
     context = load(source_cache, source_project_sha256, source_scope_sha256)
     if context is not None:

@@ -57,10 +57,15 @@ def read_settings(path):
     return value,hashlib.sha256(raw).hexdigest()
 
 
-def read_credential(settings, forbidden_roots):
+def credential_path(settings, forbidden_roots):
     path = Path(settings['credential_file'])
     if any(path.resolve().is_relative_to(Path(root).resolve()) for root in forbidden_roots):
         raise ValueError('inference credential cannot be inside worker-visible inputs or outputs')
+    return path
+
+
+def read_credential(settings, forbidden_roots):
+    path = credential_path(settings,forbidden_roots)
     info = path.lstat()
     if info.st_uid != os.geteuid() or info.st_mode&0o077:
         raise ValueError('inference credential requires private owner-only permissions')
@@ -100,12 +105,14 @@ TOOL = dict(type='function',name='run',description='Run one argv command in the 
 
 
 class Client:
-    def __init__(self, settings, credential, deadline, *, transport=None):
+    def __init__(self, settings, credential, deadline, *, transport=None, record=None):
         self.settings,self.credential,self.deadline = dict(settings),credential,deadline
         self.transport = request if transport is None else transport
         self.requests = self.tool_calls = 0
         self.request_bytes = self.response_bytes = 0
         self.poisoned = False
+        self.pending = False
+        self.record = record
         self.item_ids,self.call_ids = set(),set()
         self.usage = []
 
@@ -116,7 +123,15 @@ class Client:
             reserved_output_tokens=self.requests*self.settings['max_output_tokens'],
             limits={key:self.settings[key] for key in ('max_requests','max_tool_calls','max_output_tokens','max_request_bytes','max_response_bytes')},
             output_token_cap_scope='per_request; whole-run reservation ceiling is max_requests * max_output_tokens',
+            request_pending=self.pending,further_requests_blocked=self.poisoned,
             automatic_promotion=False)
+
+    def checkpoint(self):
+        if self.record is not None: self.record(self.report())
+
+    def abort(self):
+        self.poisoned = True
+        self.checkpoint()
 
     def respond(self, history, deadline):
         if self.poisoned: raise InferenceError('prior_inference_request_unresolved_no_retry')
@@ -129,6 +144,8 @@ class Client:
         self.requests += 1
         self.request_bytes += len(body)
         self.poisoned = True
+        self.pending = True
+        self.checkpoint()
         raw = self.transport(self.credential,body,self.settings['max_response_bytes'],deadline)
         self.response_bytes += len(raw)
         if len(raw)>self.settings['max_response_bytes']: raise InferenceError('inference_response_bytes_exhausted')
@@ -185,30 +202,37 @@ class Client:
         self.item_ids.update(item_ids); self.call_ids.update(call_ids)
         self.usage.append({key:usage[key] for key in ('input_tokens','output_tokens','total_tokens')})
         self.poisoned = False
+        self.pending = False
+        self.checkpoint()
         return output,calls
 
 
-def run_trial(client, backend, workspace, harness, prompt, artifacts, destination, seconds):
+def run_role(client, backend, workspace, inputs, role, instructions, prompt, deadline):
+    try:
+        return _run_role(client,backend,workspace,inputs,role,instructions,prompt,deadline)
+    except BaseException:
+        client.abort()
+        raise
+
+
+def _run_role(client, backend, workspace, inputs, role, instructions, prompt, deadline):
     from .working_state import WorkingState
     from .sandbox import Limits
-    deadline = min(client.deadline,time.monotonic()+seconds)
+    if role not in ('proposer','evaluator_author','executor'): raise ValueError('unsupported inference role')
+    deadline = min(client.deadline,deadline)
     state = WorkingState(workspace,deadline)
-    history = [dict(role='developer',content='Read and follow task guidance under /inputs/harness. '
-        'Work only in /work using run(argv). Complete the supplied task and write its required artifacts. '
-        'Host credentials, network and other runs are unavailable; final claims do not supply a grade.'),
+    history = [dict(role='developer',content=instructions),
         dict(role='user',content=prompt)]
     commands = []
     while True:
         output,calls = client.respond(history,deadline)
         history.extend(output)
         if not calls:
-            exported = state.export(artifacts,destination,deadline)
-            return dict(status='completed',exit_code=0,timeout=False,stdout='',stderr='',inputs_unchanged=True,
-                inference=client.report(),worker_commands=commands,artifact_workspace=str(exported))
+            return state,commands
         call_id,argv = calls[0]
         remaining = deadline-time.monotonic()
         if remaining <= 0: raise TimeoutError('executor deadline exhausted before command')
-        run = backend.run(argv,workspace,{'harness':harness},'executor',Limits(seconds=remaining),working_state=state)
+        run = backend.run(argv,workspace,inputs,role,Limits(seconds=remaining),working_state=state)
         attestation = run.get('attestation',{})
         storage = attestation.get('storage_policy') or {}
         image = attestation.get('runtime_image') or {}
@@ -222,3 +246,14 @@ def run_trial(client, backend, workspace, harness, prompt, artifacts, destinatio
         commands.append({key:run[key] for key in ('status','exit_code','attestation')})
         history.append(dict(type='function_call_output',call_id=call_id,output=json.dumps(
             {key:run[key] for key in ('status','exit_code','stdout','stderr')},allow_nan=False)))
+
+
+def run_trial(client, backend, workspace, harness, prompt, artifacts, destination, seconds):
+    deadline = min(client.deadline,time.monotonic()+seconds)
+    state,commands = run_role(client,backend,workspace,{'harness':harness},'executor',
+        'Read and follow task guidance under /inputs/harness. '
+        'Work only in /work using run(argv). Complete the supplied task and write its required artifacts. '
+        'Host credentials, network and other runs are unavailable; final claims do not supply a grade.',prompt,deadline)
+    exported = state.export(artifacts,destination,deadline)
+    return dict(status='completed',exit_code=0,timeout=False,stdout='',stderr='',inputs_unchanged=True,
+        inference=client.report(),worker_commands=commands,artifact_workspace=str(exported))

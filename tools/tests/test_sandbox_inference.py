@@ -170,6 +170,20 @@ class ControllerInferenceTests(unittest.TestCase):
             responses.request('SYNTHETIC_CONTROLLER_KEY',b'{}',1024,before+.1)
         self.assertLess(time.monotonic()-before,2)
 
+    def test_receipt_reserves_before_dispatch_and_preserves_ambiguous_request(self):
+        receipts = []
+        def transport(*args):
+            self.assertEqual(receipts[-1]['request_attempts'],1)
+            self.assertTrue(receipts[-1]['request_pending'])
+            return b'{"status":"incomplete"}'
+        client = responses.Client(self.settings,'SYNTHETIC_CONTROLLER_KEY',self.deadline,
+            transport=transport,record=receipts.append)
+        with self.assertRaises(responses.InferenceError): client.respond([],self.deadline)
+        client.abort()
+        self.assertTrue(receipts[-1]['request_pending']); self.assertTrue(receipts[-1]['further_requests_blocked'])
+        self.assertEqual(receipts[-1]['request_attempts'],1)
+        self.assertNotIn('SYNTHETIC_CONTROLLER_KEY',json.dumps(receipts))
+
 
 class ResponsesEvaluationTests(unittest.TestCase):
     def setUp(self):

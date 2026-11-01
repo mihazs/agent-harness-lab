@@ -126,6 +126,10 @@ def evaluate(args):
     sandbox_graders = getattr(args, 'sandbox_graders', False)
     if type(sandbox_graders) is not bool: raise ValueError('sandbox grader mode must be explicit')
     controlled = args.agent == 'responses'
+    supplied_client = getattr(args,'inference_client',None)
+    supplied_backend = getattr(args,'sandbox_backend',None)
+    if not controlled and (supplied_client is not None or supplied_backend is not None):
+        raise ValueError('internal controlled runtime cannot be mixed with cooperative agents')
     inference_path = getattr(args, 'inference_settings', None)
     if controlled != (inference_path is not None):
         raise ValueError('the responses executor requires explicit --inference-settings; other agents cannot use it')
@@ -272,7 +276,7 @@ def evaluate(args):
         options = dict(cgroup_root=cgroup_root)
         if image_root is not None: options.update(image_root=image_root, image_sha256=image_sha256)
         if disk_bytes is not None: options['disk_bytes'] = disk_bytes
-        backend = SandboxBackend(**options)
+        backend = supplied_backend if supplied_backend is not None else SandboxBackend(**options)
         if controlled:
             from agent_harness_lab.evaluation import responses as response_runtime
             from agent_harness_lab.evaluation.working_state import WorkingState
@@ -367,8 +371,14 @@ def evaluate(args):
     if controlled:
         forbidden = [output,image_root,*versions.values(),*map(Path,frozen_bundles),
                      *((manifest_path.parent/task['fixture']).resolve() for task in tasks)]
-        credential = response_runtime.read_credential(inference_settings,forbidden)
-        client = response_runtime.Client(inference_settings,credential,started+budget)
+        if supplied_client is not None:
+            response_runtime.credential_path(inference_settings,forbidden)
+            if not isinstance(supplied_client,response_runtime.Client) or supplied_client.settings != inference_settings:
+                raise ValueError('shared inference client must preserve the exact selected settings')
+            client = supplied_client
+        else:
+            credential = response_runtime.read_credential(inference_settings,forbidden)
+            client = response_runtime.Client(inference_settings,credential,started+budget)
         results['runtime'] = dict(agent='responses',model_inference=True,capability=capability,
             inference_settings_sha256=inference_hash,effective_settings_verified=False,inference=client.report())
         results['isolation'] = dict(executor='controller inference with offline commands and bounded in-memory working state',
@@ -441,7 +451,7 @@ def evaluate(args):
                 run = response_runtime.run_trial(client,backend,workspace,root,prompt,task['artifacts'],trial/'artifacts',min(timeout,remaining))
                 grade_workspace = Path(run.pop('artifact_workspace'))
             except (response_runtime.InferenceError,ValueError,OSError,subprocess.SubprocessError) as exc:
-                client.poisoned = True
+                client.abort()
                 record.update(status='budget_exhausted' if isinstance(exc,TimeoutError) else 'execution_error',error=str(exc),inference=client.report())
                 results['trials'].append(record)
                 continue
