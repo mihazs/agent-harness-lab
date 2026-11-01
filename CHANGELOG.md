@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.28.0
+
+### Minor Changes
+
+- Add an explicit Codex 0.166.0 rollout profile for private v2 telemetry. Pin the public wire schema, validate project/version/physical history boundaries, preserve partial tails and unknown execution settings, fingerprint private metadata, and count only deduplicated own-response usage. Keep default discovery and legacy adapters unchanged.
+
 ## 0.27.0
 
 ### Minor Changes

@@ -8,7 +8,8 @@ TEXT = {'case_id', 'event_id', 'activity', 'root_case_id', 'task_id', 'call_id',
         'runtime_fingerprint', 'config_fingerprint', 'objective_id', 'phase', 'family',
         'skill_id', 'skill_hash', 'skill_signal', 'execution_status', 'capture_status',
         'source_format', 'source_version', 'grader_id', 'grader_version', 'grader_status',
-        'outcome', 'outcome_provenance', 'missing_reason', 'reviewer_id', 'outcome_ref', 'lineage_source'}
+        'outcome', 'outcome_provenance', 'missing_reason', 'reviewer_id', 'outcome_ref', 'lineage_source', 'requested_model_fingerprint',
+        'native_turn_fingerprint', 'native_root_turn_fingerprint'}
 BOOL = {'lineage_verified', 'contract_violation', 'mutation', 'capture_complete'}
 NUMERIC = {'elapsed_seconds', 'input_tokens', 'output_tokens'}
 FIELDS = TEXT | BOOL | NUMERIC | {'schema_version', 'capture_order'}
