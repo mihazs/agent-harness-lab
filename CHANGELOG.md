@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.43.0
+
+### Minor Changes
+
+- Add private operator-attested source-lineage review over exact scoped cache snapshots, with immutable decisions, stale-cache handling, conservative components and explicit independence/derivation conflicts. Reuse regression journal persistence without changing its event bytes. Keep native freshness, independent roots, task outcomes and bank eligibility unverified.
+
 ## 0.42.0
 
 ### Minor Changes
