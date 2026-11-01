@@ -75,6 +75,7 @@ that an instruction edit caused better performance.
 | Discover local project evidence | `ahl analyze [project]` | None |
 | Inspect recurring transitions | `ahl mine FILE` | None |
 | Inspect bundled synthetic tasks | `ahl bank --starter --list` | None |
+| Validate a declared regression reproduction | `ahl regression --proposal PATH` | Explicitly authorized local record; no replay or admission |
 | Stage and evaluate a candidate | `ahl improve [project]` | Codex/Claude Code or explicit Responses settings |
 | Recheck changed evidence | `ahl watch [project]` | Each triggered improvement may use inference |
 | Run prepared tasks with controller inference | `ahl evaluate --agent responses ...` | Explicit private API settings and resource profiles |

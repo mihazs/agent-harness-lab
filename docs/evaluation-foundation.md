@@ -6,6 +6,10 @@ remain descriptive. Missing/duplicate trials cannot yield a vacuous passing gate
 
 ## Implemented contracts
 
+The [regression reproduction contract](regression-proposals.md) validates bounded
+declared evidence without replaying it or admitting a case to the active bank.
+Its receipts preserve unknown snapshots and never label a declaration verified.
+
 - `ExperimentSpec` freezes task/root/family identities, repeats, seed, resource
   ceiling, effect/noninferiority margins, confidence, family weights and hashes.
   `schedule` produces replayable counterbalanced AB/BA pairs in fresh workspaces.

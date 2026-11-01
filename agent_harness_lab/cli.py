@@ -45,7 +45,7 @@ def main(argv=None):
     if argv and argv[0] in ('research-simulate', 'incident-search', 'promotion', 'benchmark-report'):
         from agent_harness_lab.experiments.cli import main as experiment_main
         return experiment_main(argv)
-    if argv and argv[0] in ('bank', 'experiment', 'sandbox-check'):
+    if argv and argv[0] in ('bank', 'experiment', 'regression', 'sandbox-check'):
         from agent_harness_lab.evaluation.cli import main as evaluation_main
         return evaluation_main(argv)
     commands = {'mine': assets() / 'skills/harness-evaluation/scripts/mine_traces.py',
@@ -68,7 +68,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog='ahl', description=__doc__)
     parser.add_argument('--version', action='version', version=version())
     sub = parser.add_subparsers(dest='command', required=True)
-    for name in ('mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'experiment', 'sandbox-check', 'research-simulate', 'incident-search', 'promotion', 'benchmark-report', 'doctor', 'init', 'sources'):
+    for name in ('mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'experiment', 'regression', 'sandbox-check', 'research-simulate', 'incident-search', 'promotion', 'benchmark-report', 'doctor', 'init', 'sources'):
         sub.add_parser(name, help=f'{name} tools; use ahl {name} --help')
     for name in ('analyze', 'improve', 'watch'):
         command = sub.add_parser(name, help={'analyze': 'Discover project evidence and failure candidates',
