@@ -144,7 +144,7 @@ def evaluate(args):
     trial_limit = int(manifest.get('max_trials', 24))
     configured = None
     binary = args.claude if args.agent == 'claude' else args.codex
-    if getattr(args, 'config', None):
+    if getattr(args, 'config', None) is not None:
         configuration_started = time.monotonic()
         application_modules()
         from agent_harness_lab.config import evaluation_settings, evaluation_unchanged
