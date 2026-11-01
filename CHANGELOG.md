@@ -6,6 +6,12 @@
 
 - Add an explicit v2 GitHub selection for native timeline and CI/check evidence while preserving v1 scope and requests. Bind timeline projections and issue references to native parents/identities, retain unmapped forms as partial capture, and bind check runs/statuses to the captured PR head. CI success remains process evidence rather than a verified task grade.
 
+## 0.19.1
+
+### Patch Changes
+
+- Preserve an absent or null PR merge reference as unknown while retaining the reported merged state. Do not reject otherwise valid partial metadata or substitute the current head for an unavailable merge SHA.
+
 ## 0.19.0
 
 ### Minor Changes
