@@ -34,7 +34,7 @@ def read_regular(path, max_bytes):
 
 
 def relative(value):
-    if not isinstance(value, str) or not value or '\\' in value:
+    if not isinstance(value, str) or not value or '\\' in value or '\0' in value:
         raise ValueError('invalid relative path')
     path = PurePosixPath(value)
     if path.is_absolute() or '..' in path.parts or str(path) != value or value == '.':
@@ -57,18 +57,21 @@ def tree(root, max_files=1000, max_bytes=10 * 1024 * 1024):
     if any(p.is_symlink() for p in (root, *root.absolute().parents)) or not root.is_dir():
         raise ValueError('input must be a regular directory')
     result, total = {}, 0
-    for path in sorted(root.rglob('*')):
+    for index, path in enumerate(root.rglob('*')):
+        if index >= 5000 or len(path.relative_to(root).parts) > 64:
+            raise ValueError('tree entry/depth bound exceeded')
         info = path.lstat()
         if stat.S_ISDIR(info.st_mode):
             continue
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             raise ValueError('input contains symlink, hardlink or special file')
-        total += info.st_size
-        if len(result) >= max_files or total > max_bytes:
+        if len(result) >= max_files or info.st_size > max_bytes-total:
             raise ValueError('tree resource bound exceeded')
-        result[str(path.relative_to(root))] = dict(sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+        raw = read_regular(path, max_bytes-total)
+        total += len(raw)
+        result[str(path.relative_to(root))] = dict(sha256=hashlib.sha256(raw).hexdigest(),
                                                   mode=stat.S_IMODE(info.st_mode))
-    return result
+    return dict(sorted(result.items()))
 
 
 def digest(root):

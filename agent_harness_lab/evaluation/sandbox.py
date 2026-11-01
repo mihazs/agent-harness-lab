@@ -1,5 +1,5 @@
 """Optional offline Linux role isolation. Never falls back to host execution."""
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from contextlib import nullcontext
 import hashlib
 import math
@@ -15,6 +15,7 @@ import time
 from .cgroup import Cgroup
 from .image import RuntimeImage
 from .integrity import digest
+from .workspace import PrivateWorkspace, policy
 
 ROLES = {'proposer', 'evaluator_author', 'executor', 'grader'}
 
@@ -36,12 +37,16 @@ class Limits:
 
 class SandboxBackend:
     """Role mounts are controller-selected; candidate content is never policy."""
-    def __init__(self, binary='bwrap', *, cgroup_root=None, image_root=None, image_sha256=None):
+    def __init__(self, binary='bwrap', *, cgroup_root=None, image_root=None, image_sha256=None, disk_bytes=None):
         self.binary = shutil.which(binary)
         self.cgroup_root = cgroup_root
         if (image_root is None) != (image_sha256 is None):
             raise ValueError('runtime image root and SHA-256 pin must be supplied together')
         self.image = RuntimeImage(image_root, image_sha256) if image_root is not None else None
+        self.disk_bytes = disk_bytes
+        if disk_bytes is not None:
+            policy(disk_bytes)
+            if cgroup_root is None: raise ValueError('bounded storage requires aggregate cgroup controls')
 
     def command(self, argv, workspace, inputs, role):
         if role not in ROLES or not argv or not all(isinstance(a, str) for a in argv):
@@ -64,7 +69,7 @@ class SandboxBackend:
             for system in ('/usr', '/bin', '/lib', '/lib64'):
                 if Path(system).exists():
                     command += ['--ro-bind', system, system]
-        command += ['--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--dir', '/home/worker',
+        command += ['--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--dir', '/home/worker', '--dir', '/inputs',
                     '--bind', str(workspace), '/work']
         for name, folder in sorted(inputs.items()):
             if name not in ('harness', 'fixture', 'oracle') or (name == 'oracle' and role != 'grader'):
@@ -96,15 +101,19 @@ class SandboxBackend:
                     automatic_promotion=False,
                     cgroup_v2=run['attestation']['cgroup_v2'],
                     runtime_image=run['attestation'].get('runtime_image'),
-                    limitations=['no aggregate disk quota', 'inference broker not implemented']
+                    storage_policy=run['attestation'].get('storage_policy'),
+                    limitations=['inference broker not implemented']
+                        + ([] if self.disk_bytes is not None else ['no aggregate disk quota'])
                         + ([] if self.image else ['runtime dependencies unpinned'])
                         + ([] if self.cgroup_root is not None else ['no aggregate cgroup controls']))
 
-    def run(self, argv, workspace, inputs, role, limits=Limits()):
+    def run(self, argv, workspace, inputs, role, limits=Limits(), *, artifact_allowlist=None):
         limits.validate()
         start = time.monotonic()
         image = self.image.verify(deadline=start+limits.seconds) if self.image else None
         command = self.command(argv, workspace, inputs, role)
+        if self.disk_bytes is not None and role != 'grader' and artifact_allowlist is None:
+            raise ValueError('bounded workers require an explicit artifact allowlist')
         before = {name: digest(folder) for name, folder in inputs.items()}
         if time.monotonic() - start >= limits.seconds:
             raise TimeoutError('sandbox budget exhausted before launch')
@@ -121,57 +130,71 @@ class SandboxBackend:
                                (resource.RLIMIT_CORE, 0)):
                 resource.setrlimit(key, (value, value))
         buffers, reason = [bytearray(), bytearray()], None
-        boundary = Cgroup(self.cgroup_root, limits, start+limits.seconds) if self.cgroup_root is not None else nullcontext(None)
-        with boundary as group, subprocess.Popen(command, cwd=workspace, env={'PATH': '/usr/bin:/bin'},
-                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                start_new_session=True, preexec_fn=constrain) as process:
-            poll = selectors.DefaultSelector()
-            try:
-                for index, pipe in enumerate((process.stdout, process.stderr)):
-                    os.set_blocking(pipe.fileno(), False)
-                    poll.register(pipe, selectors.EVENT_READ, index)
-                while poll.get_map():
-                    remaining = limits.seconds - (time.monotonic() - start)
-                    if remaining <= 0:
-                        reason = 'timeout'; break
-                    for key, _ in poll.select(min(.1, remaining)):
-                        raw = os.read(key.fileobj.fileno(), min(65536, limits.output_bytes + 1))
-                        if not raw:
-                            poll.unregister(key.fileobj)
-                        else:
-                            available = limits.output_bytes - sum(map(len, buffers))
-                            buffers[key.data].extend(raw[:available])
-                            if len(raw) > available:
-                                reason = 'output_limit'; break
-                    if reason:
-                        break
-                if not reason:
-                    try:
-                        process.wait(timeout=max(.01, limits.seconds - (time.monotonic() - start)))
-                    except subprocess.TimeoutExpired:
-                        reason = 'timeout'
-                # Always clean descendants, including children that closed output pipes.
-                try: os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError: pass
-                process.wait(timeout=2)
-            except BaseException:
-                try: os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError: pass
-                process.wait(timeout=2)
-                raise
-            finally:
-                poll.close()
-        unchanged = all(digest(folder) == before[name] for name, folder in inputs.items())
-        if image:
-            image.update(verified_before=True, verified_after=False)
-            try:
-                self.image.verify(deadline=start+limits.seconds)
-                image['verified_after'] = True
-            except TimeoutError:
-                reason, unchanged = reason or 'timeout', False
-        cgroup = group.report if group is not None else None
-        if cgroup and (cgroup['events']['pids.events']['max'] or any(cgroup['events']['memory.events'][k] for k in ('max', 'oom', 'oom_kill'))):
-            reason = reason or 'resource_limit'
+        aggregate = replace(limits, memory_bytes=min(limits.memory_bytes, self.disk_bytes)) if self.disk_bytes is not None else limits
+        boundary = Cgroup(self.cgroup_root, aggregate, start+limits.seconds) if self.cgroup_root is not None else nullcontext(None)
+        storage = PrivateWorkspace(self, workspace, inputs, role, argv, self.disk_bytes,
+            start+limits.seconds, artifact_allowlist if artifact_allowlist is not None else []) if self.disk_bytes is not None else nullcontext(None)
+        storage_report = None
+        with storage as scratch:
+            with boundary as group, subprocess.Popen(scratch.command if scratch else command,
+                    cwd=workspace, env={'PATH': '/usr/bin:/bin'}, stdin=subprocess.DEVNULL,
+                    stdout=scratch.sender if scratch else subprocess.PIPE, stderr=subprocess.PIPE,
+                    pass_fds=(scratch.filter_fd,) if scratch else (),
+                    start_new_session=True, preexec_fn=constrain) as process:
+                poll = selectors.DefaultSelector()
+                try:
+                    if scratch: scratch.start(group)
+                    for index, pipe in enumerate((scratch.receiver if scratch else process.stdout, process.stderr)):
+                        os.set_blocking(pipe.fileno(), False)
+                        poll.register(pipe, selectors.EVENT_READ, index)
+                    while poll.get_map():
+                        remaining = limits.seconds - (time.monotonic() - start)
+                        if remaining <= 0:
+                            reason = 'timeout'; break
+                        for key, _ in poll.select(min(.1, remaining)):
+                            raw = os.read(key.fileobj.fileno(), min(65536, limits.output_bytes + 1))
+                            if not raw:
+                                poll.unregister(key.fileobj)
+                            else:
+                                available = limits.output_bytes - sum(map(len, buffers))
+                                buffers[key.data].extend(raw[:available])
+                                if len(raw) > available:
+                                    reason = 'output_limit'; break
+                        if reason:
+                            break
+                    if not reason:
+                        try:
+                            process.wait(timeout=max(.01, limits.seconds - (time.monotonic() - start)))
+                        except subprocess.TimeoutExpired:
+                            reason = 'timeout'
+                    # Always clean descendants, including children that closed output pipes.
+                    try: os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError: pass
+                    process.wait(timeout=2)
+                except BaseException:
+                    try: os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError: pass
+                    process.wait(timeout=2)
+                    raise
+                finally:
+                    poll.close()
+            unchanged = all(digest(folder) == before[name] for name, folder in inputs.items())
+            if image:
+                image.update(verified_before=True, verified_after=False)
+                try:
+                    self.image.verify(deadline=start+limits.seconds)
+                    image['verified_after'] = True
+                except TimeoutError:
+                    reason, unchanged = reason or 'timeout', False
+            cgroup = group.report if group is not None else None
+            if cgroup and (cgroup['events']['pids.events']['max'] or any(cgroup['events']['memory.events'][k] for k in ('max', 'oom', 'oom_kill'))):
+                reason = reason or 'resource_limit'
+            # The cgroup has stopped the whole tree before any artifact is read.
+            if scratch:
+                storage_report = dict(policy=scratch.policy, verified=scratch.verified,
+                    controller_seeded_bytes=scratch.seeded_bytes,
+                    hugetlb_policy=scratch.filter_policy,
+                    extracted=scratch.extract() if not reason and process.returncode == 0 and unchanged else None)
         return dict(exit_code=process.returncode, status=reason or ('completed' if process.returncode == 0 else 'failed'),
                     stdout=bytes(buffers[0][:limits.output_bytes]).decode('utf-8', 'replace'),
                     stderr=bytes(buffers[1][:limits.output_bytes]).decode('utf-8', 'replace'),
@@ -182,4 +205,5 @@ class SandboxBackend:
                         resource_limits=asdict(limits),
                         cgroup_v2=cgroup,
                         runtime_image=image,
-                        aggregate_disk_bound_verified=False, inference_supported=False))
+                        storage_policy=storage_report,
+                        aggregate_disk_bound_verified=bool(storage_report and storage_report['verified']), inference_supported=False))

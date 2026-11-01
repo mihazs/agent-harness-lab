@@ -1,5 +1,6 @@
 """Opt-in real kernel boundaries; synthetic fixtures, no inference or credentials."""
 from contextlib import contextmanager
+import errno
 import os
 import json
 import re
@@ -10,12 +11,13 @@ import selectors
 import socket
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
 import agent_harness_lab
 from agent_harness_lab.evaluation.bank_tools import regrade_artifacts
-from agent_harness_lab.evaluation.cgroup import delegated
+from agent_harness_lab.evaluation.cgroup import Cgroup, delegated
 from agent_harness_lab.evaluation.integrity import artifacts, digest
 from agent_harness_lab.evaluation.sandbox import Limits, SandboxBackend
 from agent_harness_lab.evaluation.image import MOUNT_DIRS, scan
@@ -65,8 +67,8 @@ class KernelFixture(unittest.TestCase):
         self.work = self.root/'work'; self.work.mkdir()
         self.backend = SandboxBackend(cgroup_root=self.cgroup_root)
 
-    def run_code(self, code, *, inputs=None, role='executor', limits=Limits(seconds=5)):
-        return self.backend.run(['/usr/bin/python3', '-c', code], self.work, inputs or {}, role, limits)
+    def run_code(self, code, *, inputs=None, role='executor', limits=Limits(seconds=5), **options):
+        return self.backend.run(['/usr/bin/python3', '-c', code], self.work, inputs or {}, role, limits, **options)
 
     def assert_complete(self, run):
         self.assertEqual(run['status'], 'completed', run['stderr'])
@@ -212,7 +214,7 @@ class PinnedImageKernelTests(OfflineFixture, KernelFixture):
             shutil.copy2(source, target)
         (rootfs/'image-marker').write_text('SYNTHETIC_PINNED_IMAGE')
         frozen = scan(rootfs)
-        backend = SandboxBackend(cgroup_root=self.cgroup_root, image_root=rootfs, image_sha256=frozen['sha256'])
+        backend = SandboxBackend(cgroup_root=self.cgroup_root, image_root=rootfs, image_sha256=frozen['sha256'], disk_bytes=64*1024*1024)
         scratch = self.root/'scratch'; scratch.mkdir()
         code = '''from pathlib import Path
 assert Path('/image-marker').read_text() == 'SYNTHETIC_PINNED_IMAGE'
@@ -221,20 +223,122 @@ assert not Path('/inputs/oracle').exists()
 try: Path('/image-marker').write_text('changed'); raise AssertionError('image is writable')
 except OSError: pass
 '''
-        run = backend.run(['/usr/bin/python3', '-I', '-c', code], scratch, {}, 'executor', Limits(seconds=5))
+        run = backend.run(['/usr/bin/python3', '-I', '-c', code], scratch, {}, 'executor', Limits(seconds=5), artifact_allowlist=[])
         self.assert_complete(run)
         self.assertTrue(run['attestation']['runtime_image']['verified_after'])
         self.args.cgroup_root = self.cgroup_root
         self.args.image_root, self.args.image_sha256 = rootfs, frozen['sha256']
+        self.args.disk_bytes = 64*1024*1024
         self.assertEqual(self.runner.evaluate(self.args), 1)
         result = self.results()
         self.assertEqual(len(result['trials']), 14)
         for trial in result['trials']:
             self.assertEqual(trial['status'], 'passed' if trial['version'] == 'candidate' else 'failed')
             for execution in (trial['execution'], trial['grader']['execution']):
+                self.assertTrue(execution['attestation']['aggregate_disk_bound_verified'])
                 attested = execution['attestation']['runtime_image']
                 self.assertEqual(attested['sha256'], frozen['sha256'])
                 self.assertTrue(attested['verified_before'] and attested['verified_after'])
+
+
+@unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
+class StorageKernelTests(KernelFixture):
+    def setUp(self):
+        super().setUp()
+        self.backend = SandboxBackend(cgroup_root=self.cgroup_root, disk_bytes=64*1024*1024)
+
+    def run_code(self, code, **options):
+        options.setdefault('artifact_allowlist', [])
+        return super().run_code(code, **options)
+
+    def test_every_writable_volume_enforces_aggregate_capacity_without_leaking_setup_fds(self):
+        code = "import errno,os,stat\nfor value in os.listdir('/proc/self/fd'):\n if int(value)>2:\n  try: info=os.fstat(int(value))\n  except OSError: continue\n  assert not stat.S_ISDIR(info.st_mode), 'setup handle leaked'\nfor path,cap in (('/work',32*1024*1024),('/tmp',16*1024*1024),('/dev/shm',16*1024*1024)):\n info=os.statvfs(path)\n assert info.f_blocks*info.f_frsize == cap\n denied=False\n for number in range(128):\n  try:\n   with open(path+'/'+str(number),'wb') as stream: stream.write(b'x'*(512*1024))\n  except OSError as error:\n   assert error.errno == errno.ENOSPC\n   denied=True; break\n assert denied, path+' exceeded aggregate quota'\n assert os.statvfs(path).f_bavail == 0\n for name in os.listdir(path): os.unlink(path+'/'+name)\nprint('all-volumes-bounded')\n"
+        run = self.run_code(code)
+        self.assert_complete(run)
+        self.assertIn('all-volumes-bounded', run['stdout'])
+        self.assertTrue(run['attestation']['aggregate_disk_bound_verified'])
+        self.assertEqual(list(self.work.iterdir()), [])
+
+    def test_seed_and_only_allowlisted_artifacts_survive_worker_cleanup(self):
+        source = self.work/'seed'; source.write_text('original'); source.chmod(0o755)
+        (self.work/'empty').mkdir()
+        code = "from pathlib import Path\nassert Path('seed').read_text() == 'original'\nassert Path('seed').stat().st_mode & 0o777 == 0o755\nassert Path('empty').is_dir()\nPath('seed').write_text('changed')\nPath('result').write_text('allowed')\nPath('unlisted').write_text('discarded')\n"
+        run = self.run_code(code, artifact_allowlist=['seed', 'result'])
+        self.assert_complete(run)
+        self.assertEqual(source.read_text(), 'changed')
+        self.assertEqual(source.stat().st_mode & 0o777, 0o755)
+        self.assertEqual((self.work/'result').read_text(), 'allowed')
+        self.assertFalse((self.work/'unlisted').exists())
+        self.assertEqual(run['attestation']['storage_policy']['extracted'], dict(artifacts=2, bytes=14))
+
+    def test_unsafe_or_oversized_outputs_are_rejected_before_export(self):
+        for code in ("os.symlink('/etc/passwd','result')",
+                     "Path('original').write_text('x'); os.link('original','result')",
+                     "os.mkfifo('result')", "Path('dir').mkdir(); os.symlink('dir','result')",
+                     "Path('result').write_bytes(b'x'*(1024*1024+1))"):
+            with self.subTest(code=code), self.assertRaises((OSError, ValueError)):
+                self.run_code('import os; from pathlib import Path; '+code,
+                    artifact_allowlist=['result'], limits=Limits(seconds=5, file_bytes=2*1024*1024))
+            self.assertEqual(list(self.work.iterdir()), [])
+
+    def test_failure_timeout_and_interruption_do_not_export_and_leave_no_cgroup(self):
+        before = {p.name for p in self.cgroup_root.iterdir() if p.is_dir()}
+        for suffix, expected in (("raise SystemExit(1)", 'failed'), ("import time; time.sleep(30)", 'timeout')):
+            run = self.run_code("from pathlib import Path; Path('result').write_text('untrusted'); "+suffix,
+                                artifact_allowlist=['result'], limits=Limits(seconds=.5))
+            self.assertEqual(run['status'], expected)
+            self.assertFalse((self.work/'result').exists())
+        with patch.object(selectors.EpollSelector, 'select', side_effect=KeyboardInterrupt):
+            with self.assertRaises(KeyboardInterrupt): self.run_code('import time; time.sleep(30)')
+        self.assertEqual({p.name for p in self.cgroup_root.iterdir() if p.is_dir()}, before)
+
+    def test_memfd_and_new_tmpfs_cannot_bypass_the_aggregate_storage_ceiling(self):
+        filler = "import os; f=open('data','wb'); [f.write(b'x'*65536) for _ in range(2048)]"
+        new_mount = ['/usr/bin/bwrap', '--unshare-all', '--unshare-user', '--ro-bind', '/', '/',
+                     '--proc', '/proc', '--dev', '/dev', '--size', str(128*1024*1024),
+                     '--tmpfs', '/tmp', '--chdir', '/tmp', '--', '/usr/bin/python3', '-c', filler]
+        attacks = ["import os; fd=os.memfd_create('bypass'); [os.write(fd,b'x'*65536) for _ in range(2048)]",
+                   f"import os; os.execv('/usr/bin/bwrap',{new_mount!r})"]
+        (self.work/'seed').write_bytes(b'x'*(1024*1024))
+        for code in attacks:
+            with self.subTest(code=code):
+                run = self.run_code(code, limits=Limits(seconds=5, file_bytes=128*1024*1024))
+                self.assertEqual(run['status'], 'resource_limit', run)
+                controls = run['attestation']['cgroup_v2']
+                self.assertEqual(run['attestation']['storage_policy']['controller_seeded_bytes'], 1024*1024)
+                self.assertEqual(int(controls['controls']['memory.max']), 63*1024*1024)
+                self.assertGreater(controls['events']['memory.events']['oom_kill'], 0)
+                self.assertTrue(controls['empty_after_cleanup'])
+
+    def test_capability_verifies_the_storage_policy(self):
+        result = self.backend.capability()
+        self.assertEqual(result['status'], 'available', result)
+        self.assertTrue(result['storage_policy']['verified'])
+        self.assertNotIn('no aggregate disk quota', result['limitations'])
+
+    def test_hugetlb_memfd_mapping_and_shared_memory_are_denied(self):
+        code = "import ctypes,errno,mmap,os\ntry: os.memfd_create('hugetlb-probe',os.MFD_HUGETLB)\nexcept OSError as error: assert error.errno == errno.EPERM\nelse: raise AssertionError('HugeTLB memfd allowed')\nlibc=ctypes.CDLL(None,use_errno=True)\nlibc.mmap.restype=ctypes.c_void_p\nmapped=libc.mmap(None,2*1024*1024,3,mmap.MAP_PRIVATE|mmap.MAP_ANONYMOUS|0x40000,-1,0)\nassert mapped == ctypes.c_void_p(-1).value and ctypes.get_errno() == errno.EPERM\nassert libc.shmget(0,2*1024*1024,0o600|0o1000|0o4000) == -1\nassert ctypes.get_errno() == errno.EPERM\nprint('hugetlb-denied')\n"
+        run = self.run_code(code, limits=Limits(seconds=5, file_bytes=4*1024*1024))
+        self.assert_complete(run)
+        self.assertIn('hugetlb-denied', run['stdout'])
+        self.assertEqual(run['attestation']['storage_policy']['hugetlb_policy']['name'], 'seccomp-deny-hugetlb-v1')
+
+    def test_alternate_syscall_numbers_cannot_bypass_the_storage_filter(self):
+        code = "import ctypes; ctypes.CDLL(None).syscall(0x4000013f,0,4); raise AssertionError('alternate syscall returned')"
+        run = self.run_code(code)
+        self.assertEqual(run['status'], 'failed', run)
+        self.assertEqual(run['stderr'], '')
+        self.assertTrue(run['attestation']['cgroup_v2']['empty_after_cleanup'])
+
+    def test_startup_verification_and_tiny_budget_fail_closed_and_cleanup(self):
+        before = {p.name for p in self.cgroup_root.iterdir() if p.is_dir()}
+        with patch('agent_harness_lab.evaluation.workspace.VERIFY', "raise RuntimeError('synthetic startup failure')"):
+            with self.assertRaises(ValueError): self.run_code("raise AssertionError('worker must not start')")
+        (self.work/'seed').write_bytes(b'x'*(5*1024*1024))
+        self.backend = SandboxBackend(cgroup_root=self.cgroup_root, disk_bytes=16384)
+        with self.assertRaises((OSError, ValueError)): self.run_code("raise AssertionError('worker must not start')")
+        self.assertEqual((self.work/'seed').stat().st_size, 5*1024*1024)
+        self.assertEqual({p.name for p in self.cgroup_root.iterdir() if p.is_dir()}, before)
 
 
 @unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')

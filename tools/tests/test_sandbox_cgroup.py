@@ -68,6 +68,17 @@ class CgroupContractTests(unittest.TestCase):
             self.files[name] = original
         self.assertEqual(len(self.removed), 2)
 
+    def test_storage_memory_ceiling_can_only_tighten_and_requires_readback(self):
+        with self.boundary() as group:
+            for value in (0, -1, True, Limits().memory_bytes+1):
+                with self.assertRaises(ValueError): group.limit_memory(value)
+            def write(name, value): (self.root/group.name/name).write_text(value)
+            with patch.object(group, 'write', side_effect=write): group.limit_memory(65536)
+            self.assertEqual(group.read('memory.max'), '65536')
+            self.assertEqual(group.controls['memory.max'], '65536')
+            with patch.object(group, 'read', return_value='max'):
+                with self.assertRaises(ValueError): group.limit_memory(32768)
+
     def test_readback_mismatch_and_elapsed_setup_do_not_launch(self):
         with patch.object(Cgroup, 'read', return_value='max'):
             with self.assertRaisesRegex(ValueError, 'resource setup failed'): self.boundary().__enter__()

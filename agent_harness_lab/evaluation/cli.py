@@ -25,6 +25,7 @@ def main(argv):
     sandbox.add_argument('--cgroup-root', type=Path, help='Explicit predelegated cgroup v2 subtree; fail closed if unavailable')
     sandbox.add_argument('--image-root', type=Path, help='Explicit private extracted runtime rootfs')
     sandbox.add_argument('--image-sha256', help='Required preapproved runtime rootfs content pin')
+    sandbox.add_argument('--disk-bytes', type=int, help='Aggregate tmpfs data capacity; requires --cgroup-root')
     args = parser.parse_args(argv)
     try:
         if args.command == 'bank':
@@ -55,7 +56,8 @@ def main(argv):
             code = 3
         else:
             from .sandbox import SandboxBackend
-            result = SandboxBackend(cgroup_root=args.cgroup_root, image_root=args.image_root, image_sha256=args.image_sha256).capability()
+            result = SandboxBackend(cgroup_root=args.cgroup_root, image_root=args.image_root,
+                                    image_sha256=args.image_sha256, disk_bytes=args.disk_bytes).capability()
             code = 0 if result['status'] == 'available' else 3
         print(json.dumps(result, indent=2, allow_nan=False))
         return code

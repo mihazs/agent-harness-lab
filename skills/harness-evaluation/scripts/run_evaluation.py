@@ -120,10 +120,11 @@ def agent_command(agent, binary, plugin=None, skills=()):
 
 def evaluate(args):
     cgroup_root = getattr(args, 'cgroup_root', None)
+    disk_bytes = getattr(args, 'disk_bytes', None)
     image_root, image_sha256 = getattr(args, 'image_root', None), getattr(args, 'image_sha256', None)
     if (image_root is None) != (image_sha256 is None):
         raise ValueError('runtime image root and SHA-256 pin must be supplied together')
-    if (cgroup_root is not None or image_root is not None) and args.agent != 'offline':
+    if (cgroup_root is not None or image_root is not None or disk_bytes is not None) and args.agent != 'offline':
         raise ValueError('resource boundaries currently require the offline executor')
     manifest_path = Path(args.manifest).resolve()
     manifest_bytes = manifest_path.read_bytes()
@@ -252,7 +253,10 @@ def evaluate(args):
             bundle = contained(manifest_path.parent, declared_bundles[task['id']]['path'])
             if task['grader'] != [task['grader'][0], str(bundle/'grade.py.txt'), '{workspace}', str(bundle/'expected.json')]:
                 raise ValueError('offline execution supports only the frozen Python artifact grader contract')
-        backend = SandboxBackend(cgroup_root=cgroup_root, **(dict(image_root=image_root, image_sha256=image_sha256) if image_root is not None else {}))
+        options = dict(cgroup_root=cgroup_root)
+        if image_root is not None: options.update(image_root=image_root, image_sha256=image_sha256)
+        if disk_bytes is not None: options['disk_bytes'] = disk_bytes
+        backend = SandboxBackend(**options)
     plan = None
     if 'experiment' in manifest:
         application_modules()
@@ -375,7 +379,9 @@ def evaluate(args):
             continue
         if offline:
             try:
-                run = backend.run(argv, workspace, {'harness': root}, 'executor', Limits(seconds=min(timeout, remaining)))
+                extraction = dict(artifact_allowlist=task['artifacts']) if disk_bytes is not None else {}
+                run = backend.run(argv, workspace, {'harness': root}, 'executor',
+                                  Limits(seconds=min(timeout, remaining)), **extraction)
             except (ValueError, OSError, subprocess.SubprocessError) as exc:
                 record.update(status='execution_error', error=str(exc))
                 results['trials'].append(record)
@@ -436,6 +442,7 @@ def main():
     parser.add_argument('--cgroup-root', type=Path, help='Explicit predelegated cgroup v2 subtree for offline executor and grader resources')
     parser.add_argument('--image-root', type=Path, help='Explicit private extracted runtime rootfs for offline execution')
     parser.add_argument('--image-sha256', help='Preapproved rootfs content pin; required with --image-root')
+    parser.add_argument('--disk-bytes', type=int, help='Aggregate tmpfs data capacity for offline roles; requires --cgroup-root')
     args = parser.parse_args()
     try:
         return evaluate(args)

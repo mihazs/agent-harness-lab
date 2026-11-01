@@ -65,6 +65,23 @@ class OfflineFixture(unittest.TestCase):
 
 
 class OfflineEvaluationTests(OfflineFixture):
+    def test_storage_policy_passes_declared_artifacts_to_executors_only(self):
+        self.args.cgroup_root, self.args.disk_bytes = self.root/'delegation', 65536
+        def execute(*args, **kwargs):
+            if args[3] == 'executor':
+                self.assertEqual(set(kwargs), {'artifact_allowlist'})
+                self.assertIn(kwargs['artifact_allowlist'], [t['artifacts'] for t in self.manifest['tasks']])
+            else: self.assertEqual(kwargs, {})
+            return self.emulate(*args)
+        with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend', autospec=True) as backend:
+            backend.return_value.capability.return_value = {'status': 'available'}
+            backend.return_value.run.side_effect = execute
+            self.assertEqual(self.runner.evaluate(self.args), 1)
+        backend.assert_called_once_with(cgroup_root=self.args.cgroup_root, disk_bytes=65536)
+        self.assertEqual(backend.return_value.run.call_count, 28)
+        self.args.agent = 'codex'
+        with self.assertRaisesRegex(ValueError, 'require the offline executor'): self.runner.evaluate(self.args)
+
     def test_runtime_image_flags_reach_both_roles_and_missing_pins_are_rejected(self):
         self.args.image_root, self.args.image_sha256 = self.root/'runtime', 'a'*64
         with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend', autospec=True) as backend:
