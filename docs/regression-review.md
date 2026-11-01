@@ -3,17 +3,20 @@
 New in 0.41, `ahl regression-review` records an explicit controller-owned case
 workflow. It reuses the [reproduction declarations and offline replay](regression-proposals.md).
 It never imports a caller's success receipt, modifies an active bank or publishes
-case data. Immutable bank admission remains a separate pending operation.
+case data. Version 0.44 adds explicit [immutable development-bank admission](regression-admission.md)
+after operator review; it does not modify an active bank or establish independent roots.
 
 ```mermaid
 stateDiagram-v2
     reported --> reproduced: controller replay and evidence seal
     reproduced --> drafted: recheck sealed evidence
     drafted --> reviewed: explicit operator attestation
+    reviewed --> accepted: explicit immutable development-bank revision
     reported --> quarantined
     reproduced --> quarantined
     drafted --> quarantined
     reviewed --> quarantined
+    accepted --> quarantined
     quarantined --> retired
     reviewed --> retired
 ```
@@ -116,7 +119,8 @@ reserved before dispatch. Incoming review files are limited to 64 KiB and full
 encoded events to 256 KiB before writing. Each P/D/R declaration is at most
 256 KiB. Invalid input returns exit 2 with a generic diagnostic, retaining private
 history. Successful state operations return 0; unsuccessful reproduction returns
-1, or 3 for blocked containment. Exit 0 does not admit a bank case.
+1, or 3 for blocked containment. Only the separate explicit `accept` action can
+admit a bank case; other successful state operations do not.
 
 Controller metadata uses mode 0600 under private directories. Copied data retains
 its hashed modes beneath private ancestors. Summaries omit author names, original

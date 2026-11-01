@@ -9,6 +9,7 @@
 | Understand capture formats and provenance | [Telemetry](telemetry.md) |
 | Build explicit source adapters | [Source evidence contracts](source-contracts.md) |
 | Understand evaluation and safety gates | [Evaluation foundation](evaluation-foundation.md) |
+| Accept a reviewed private regression | [Immutable development-bank admission](regression-admission.md) |
 | Check implemented/pending capabilities | [Controlled experiments](controlled-experiments.md) |
 | Inspect original smoke results | [Initial validation](validation.md) |
 | Develop, test and submit a PR | [Contributor guide](../CONTRIBUTING.md) |

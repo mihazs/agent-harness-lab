@@ -67,8 +67,8 @@ material. The schema's `approved` field is an operator assertion, not an access
 grant or independent review.
 
 Historical replay, A/A and matched comparisons, review transitions, root/exposure
-checks and immutable bank admission remain separate gates. Existing `ahl bank`
-commands are unchanged. Run the native
+checks and [immutable bank admission](regression-admission.md) remain separate
+explicit gates. Legacy `ahl bank` ingestion remains supported. Run the native
 contract checks with `task test:evaluation:regressions`; they also run against
 the installed wheel and extracted release archive.
 
@@ -208,6 +208,7 @@ it does not mean a repair was accepted. Missing containment returns 3,
 execution/validation failures return 1, and malformed declarations return 2.
 Historical task-failure verification, independent review, causality,
 temporal-regression certification, publication and bank admission remain
-unestablished or disabled. All private-derived snapshots, traces, receipts,
+unestablished or disabled by replay. A separate operator may subsequently request
+[private development-bank admission](regression-admission.md). All private-derived snapshots, traces, receipts,
 hashes and aggregates stay private. The kernel regression target separately
 executes both this replay and the draft-audit canary with actual resource controls.
