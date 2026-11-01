@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.0
+
+### Minor Changes
+
+- Add an explicitly authorized HTTPS GET transport for source adapters with TLS verification, same-origin/path pagination, bounded pages/records/bytes, timeouts and cooperative deadlines. Reject redirects, rate limits, malformed/partial responses, cursor cycles and credential-bearing URLs without automatic retries. Provider decoders stay explicit; no remote connector is enabled by installation or discovery.
+
 ## 0.8.0
 
 ### Minor Changes
