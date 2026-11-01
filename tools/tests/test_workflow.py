@@ -183,18 +183,24 @@ class WorkflowTests(unittest.TestCase):
         runner.execute.assert_not_called()
 
     def test_help_reflects_recommendation_only_boundary(self):
-        """Help output must not imply automatic behavioral adoption."""
-        import subprocess
-        for cmd in (['--help'], ['improve', '--help'], ['watch', '--help']):
-            result = subprocess.run(
-                [sys.executable, '-m', 'agent_harness_lab'] + cmd,
-                capture_output=True, text=True, timeout=10
-            )
-            self.assertEqual(result.returncode, 0, f"{cmd} failed: {result.stderr}")
-            out = (result.stdout + result.stderr).lower()
-            self.assertNotIn('adopt supported harness repairs', out)
-            self.assertNotIn('continuously improve', out)
-            if 'improve' in cmd or 'watch' in cmd:
+        """Every help surface must state the recommendation-only boundary."""
+        cases = (
+            (['--help'], ('no automatic adoption', 'recommendation-only')),
+            (['improve', '--help'], ('no automatic adoption',)),
+            (['watch', '--help'], ('recommendation-only',)),
+        )
+        for cmd, boundaries in cases:
+            with self.subTest(cmd=cmd):
+                result = subprocess.run(
+                    [sys.executable, '-m', 'agent_harness_lab', *cmd],
+                    capture_output=True, text=True, timeout=10,
+                    cwd=Path(__file__).resolve().parents[2],
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stderr, '')
+                out = ' '.join(result.stdout.lower().split())
+                self.assertNotIn('adopt supported harness repairs', out)
+                self.assertNotIn('continuously improve', out)
                 self.assertIn('recommend', out)
-                self.assertTrue('no automatic adoption' in out or 'recommendation-only' in out or 'recommend' in out)
-
+                for boundary in boundaries:
+                    self.assertIn(boundary, out)

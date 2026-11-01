@@ -1,4 +1,4 @@
-"""One entrypoint for local analysis and controlled automatic improvement."""
+"""One entrypoint for local analysis and evaluated harness recommendations."""
 import argparse
 import importlib.metadata
 import importlib.util
@@ -70,10 +70,10 @@ def main(argv=None):
     sub = parser.add_subparsers(dest='command', required=True)
     for name in ('mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'experiment', 'sandbox-check', 'research-simulate', 'incident-search', 'promotion', 'benchmark-report', 'doctor', 'init', 'sources'):
         sub.add_parser(name, help=f'{name} tools; use ahl {name} --help')
-    for name in ('analyze', 'improve', 'watch'):
-        helps = {'analyze': 'Discover project evidence and failure candidates',
+    helps = {'analyze': 'Discover project evidence and failure candidates',
             'improve': 'Discover, stage, evaluate, and recommend supported harness repairs (no automatic adoption)',
             'watch': 'Recheck evidence and recommend improvements only when project evidence changes (recommendation-only)'}
+    for name in ('analyze', 'improve', 'watch'):
         command = sub.add_parser(name, help=helps[name], description=helps[name])
         command.add_argument('project', nargs='?', type=Path, default=Path.cwd())
         command.add_argument('--events', type=Path, help='Optional explicit evidence instead of native capture discovery')
