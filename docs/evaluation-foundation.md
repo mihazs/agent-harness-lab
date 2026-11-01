@@ -9,6 +9,10 @@ remain descriptive. Missing/duplicate trials cannot yield a vacuous passing gate
 The [regression reproduction contract](regression-proposals.md) validates bounded
 declared evidence without replaying it or admitting a case to the active bank.
 Its receipts preserve unknown snapshots and never label a declaration verified.
+Explicit [private bank admission](regression-admission.md) can subsequently accept
+an intact controller-reproduced, operator-reviewed case into an immutable
+development revision. It preserves unknown native provenance and independence;
+oracle correction/invalidation and protected certification remain separate work.
 
 - `ExperimentSpec` freezes task/root/family identities, repeats, seed, resource
   ceiling, effect/noninferiority margins, confidence, family weights and hashes.

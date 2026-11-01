@@ -270,6 +270,24 @@ class RegressionDraftKernelTests(KernelFixture):
         reviewed = store.review(reported['case_id'], path)
         self.assertEqual(reviewed['state'], 'reviewed'); self.assertEqual(reviewed['review_independence'], 'operator_attested')
         self.assertEqual(reviewed['historical_verification'], 'unverified'); self.assertFalse(reviewed['bank_admission'])
+        import hashlib
+        import shutil
+        from agent_harness_lab.config import starter
+        from agent_harness_lab.evaluation.task_bank import validate
+        parent_root = self.root/'parent-bank'; shutil.copytree(starter().parent,parent_root)
+        parent = parent_root/'bank.json'; value = json.loads(parent.read_text())
+        value['tasks'] = [task for task in value['tasks'] if task['task_id']=='resumption']
+        parent.write_text(json.dumps(value)); original = parent.read_bytes()
+        admission = dict(schema_version=1,case_id=reported['case_id'],expected_event_sha256=reviewed['event_sha256'],
+            evidence_sha256=reviewed['evidence_sha256'],parent_bank_sha256=hashlib.sha256(original).hexdigest(),
+            parent_revision_sha256=None,purpose='development_regression',provenance_binding=None,
+            operator=dict(identity='synthetic-curator',source='operator_attestation',provenance='synthetic kernel fixture',
+                basis='Freeze the actual controlled replay and all reviewed controls.'),reason='Synthetic kernel admission.')
+        record = self.root/'admission.json'; record.write_text(json.dumps(admission))
+        accepted = store.accept(reported['case_id'],parent,record)
+        bank = store.root/'revisions'/accepted['revision_sha256']/'bank.json'
+        self.assertTrue(accepted['current_eligible']); self.assertFalse(validate(bank)['certification_eligible'])
+        self.assertEqual(parent.read_bytes(),original); self.assertEqual(store.show(reported['case_id'])['state'],'accepted')
 
     def test_regression_replay_uses_real_matched_snapshot_views_and_hidden_oracle(self):
         from test_regression_replay import make_replay, SOLVER

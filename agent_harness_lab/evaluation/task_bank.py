@@ -55,7 +55,7 @@ class TaskSpec:
         return obj
 
 
-def validate(path, *, verify_contents=True):
+def _validate(path, *, verify_contents=True):
     if type(verify_contents) is not bool:
         raise ValueError('content verification mode must be explicit')
     path = Path(path)
@@ -96,12 +96,28 @@ def validate(path, *, verify_contents=True):
         content_grouping, overlaps = inspect_bank(path.parent, tasks, bank_sha256)
         issues.extend(overlaps)
     return dict(schema_version=1, bank_sha256=bank_sha256, contents_verified=verify_contents,
-                content_grouping=content_grouping,
+                content_grouping=content_grouping, _controller_profile=value.get('controller_profile'),
                 tasks=len(tasks), roots=len({t.root_id for t in tasks}),
                 partitions={p: sum(t.partition == p for t in tasks) for p in sorted(PARTITIONS)},
                 certification_eligible=verify_contents and not issues, issues=issues,
                 privacy='private' if any(t.source_kind == 'private' for t in tasks) else 'public_source_only',
                 public_tasks_are_secret=False)
+
+
+def validate(path, *, verify_contents=True):
+    result = _validate(path, verify_contents=verify_contents)
+    profile = result.pop('_controller_profile',None)
+    if profile is not None:
+        from .bank_revisions import PROFILE, validate_admission
+        if profile != PROFILE: raise ValueError('unsupported controller bank profile')
+        result['admission'] = validate_admission(path)
+        if result['admission']['bank_manifest_sha256'] != result['bank_sha256']:
+            raise ValueError('bank changed during admission validation')
+        result['certification_eligible'] = False
+        result['privacy'] = 'private'
+        if not result['admission']['current_eligible']:
+            result['issues'].append(dict(status='admission_quarantined_or_retired'))
+    return result
 
 
 class CertificationLedger:

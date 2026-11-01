@@ -25,7 +25,22 @@ def transition(state, kind, target, previous_kind=None):
     if kind == 'reproduced': return state == 'reported' and target == 'reproduced' and previous_kind == 'attempt_started'
     if kind == 'drafted': return state == 'reproduced' and target == 'drafted'
     if kind == 'reviewed': return state == 'drafted' and target == 'reviewed'
+    if kind == 'accepted': return state == 'reviewed' and target == 'accepted'
     return kind == target and target in ('quarantined', 'rejected', 'retired') and state not in ('rejected', 'retired', target)
+
+
+def review_value(review, case_id):
+    fields(review, 'schema_version case_id expected_event_sha256 evidence_sha256 decision reviewer evidence_refs reason')
+    if type(review['schema_version']) is not int or review['schema_version'] != 1 or review['case_id'] != case_id:
+        raise ValueError('review case/schema mismatch')
+    sha256(review['expected_event_sha256']); text(review['reason']); references(review['evidence_refs'])
+    reviewer = review['reviewer']; fields(reviewer, 'identity source provenance basis_kind basis')
+    if review['decision'] not in ('reviewed', 'quarantined', 'rejected', 'retired', 'reported'):
+        raise ValueError('unsupported operator review decision')
+    identifier(reviewer['identity']); text(reviewer['identity']); text(reviewer['provenance']); text(reviewer['basis'])
+    text(reviewer['basis_kind'])
+    if reviewer['source'] != 'operator_attestation': raise ValueError('review requires explicit operator provenance')
+    return review
 
 
 class ReviewStore(PrivateJournal):
@@ -63,7 +78,7 @@ class ReviewStore(PrivateJournal):
         if disposition not in (None, 'reproduced', 'not_reproduced', 'baseline_already_passes', 'unstable_control',
                                'minimization_boundary_changed', 'earlier_valid_not_reproduced', 'insufficient_evidence'):
             disposition = 'unverified'
-        return dict(schema_version=1, case_id=case_id, state=last[0]['state'], event_sha256=last[1],
+        result = dict(schema_version=1, case_id=case_id, state=last[0]['state'], event_sha256=last[1],
             evidence_sha256=evidence, privacy=inputs['privacy'],
             last_attempt_status=status,
             last_attempt_disposition=disposition,
@@ -71,6 +86,13 @@ class ReviewStore(PrivateJournal):
             review_independence='operator_attested' if last[0]['state'] == 'reviewed' else 'unverified',
             historical_verification='unverified', independence='unverified', bank_admission=False,
             automatic_promotion=False, publication_allowed=False)
+        accepted = next((e for e,_ in reversed(events) if e['kind'] == 'accepted'),None)
+        if accepted is not None:
+            from .bank_revisions import revision_path, validate_admission
+            revision = accepted['payload']['revision_sha256']
+            checked = validate_admission(revision_path(self,revision)/'bank.json')
+            result.update(bank_revision_sha256=revision,bank_admission=checked['current_eligible'])
+        return result
 
     def show(self, case_id):
         with self.locked():
@@ -221,8 +243,8 @@ class ReviewStore(PrivateJournal):
             case, inputs, events = self.opened(case_id)
             if events[-1][0]['state'] != 'reported' or events[-1][0]['kind'] == 'attempt_started':
                 raise ValueError('case is not ready; uncommitted attempts require operator intervention')
-            # Leave room for completion, draft/review and two operator decisions.
-            if len(events)+6 > MAX_EVENTS: raise ValueError('case journal lacks lifecycle completion capacity')
+            # Leave room for completion, draft/review, acceptance and two operator decisions.
+            if len(events)+7 > MAX_EVENTS: raise ValueError('case journal lacks lifecycle completion capacity')
             try:
                 sources_match = all(hashlib.sha256(read_regular(p, 256*1024)).hexdigest() == inputs['hashes'][n]
                                     for n, p in inputs['origins'].items())
@@ -272,18 +294,13 @@ class ReviewStore(PrivateJournal):
             self.append(case, events, 'drafted', 'drafted', dict(evidence_sha256=identity))
             return self.summary(case_id, inputs, events)
 
+    def accept(self, case_id, parent_path, record_path):
+        from .bank_revisions import accept
+        return accept(self, case_id, parent_path, record_path)
+
     def review(self, case_id, review_path):
         review, _ = record(review_path, 64*1024)
-        fields(review, 'schema_version case_id expected_event_sha256 evidence_sha256 decision reviewer evidence_refs reason')
-        if type(review['schema_version']) is not int or review['schema_version'] != 1 or review['case_id'] != case_id:
-            raise ValueError('review case/schema mismatch')
-        sha256(review['expected_event_sha256']); text(review['reason']); references(review['evidence_refs'])
-        reviewer = review['reviewer']; fields(reviewer, 'identity source provenance basis_kind basis')
-        if review['decision'] not in ('reviewed', 'quarantined', 'rejected', 'retired', 'reported'):
-            raise ValueError('unsupported operator review decision')
-        identifier(reviewer['identity']); text(reviewer['identity']); text(reviewer['provenance']); text(reviewer['basis'])
-        text(reviewer['basis_kind'])
-        if reviewer['source'] != 'operator_attestation': raise ValueError('review requires explicit operator provenance')
+        review_value(review, case_id); reviewer = review['reviewer']
         with self.locked():
             case, inputs, events = self.opened(case_id); current = self.summary(case_id, inputs, events)
             if review['expected_event_sha256'] != current['event_sha256'] or review['evidence_sha256'] != current['evidence_sha256']:
@@ -310,10 +327,11 @@ def main(argv=None):
     propose.add_argument('--draft', type=Path, required=True)
     propose.add_argument('--replay', type=Path, required=True)
     propose.add_argument('--author', required=True)
-    for name in ('show', 'reproduce', 'draft', 'review'):
+    for name in ('show', 'reproduce', 'draft', 'review', 'accept'):
         command = actions.add_parser(name)
         command.add_argument('--case', required=True)
-        if name == 'review': command.add_argument('--record', type=Path, required=True)
+        if name in ('review','accept'): command.add_argument('--record', type=Path, required=True)
+        if name == 'accept': command.add_argument('--parent-bank', type=Path, required=True)
         if name == 'reproduce':
             command.add_argument('--cgroup-root', type=Path, required=True)
             command.add_argument('--image-root', type=Path, required=True)
@@ -331,6 +349,7 @@ def main(argv=None):
             result = store.reproduce(args.case, backend, budget_seconds=args.budget_seconds)
         elif args.action == 'draft': result = store.draft(args.case)
         elif args.action == 'review': result = store.review(args.case, args.record)
+        elif args.action == 'accept': result = store.accept(args.case, args.parent_bank, args.record)
         else: result = store.show(args.case)
         print(json.dumps(result, indent=2, allow_nan=False))
         if args.action == 'reproduce' and result['state'] != 'reproduced':

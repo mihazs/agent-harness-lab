@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.44.0
+
+### Minor Changes
+
+- Add explicit private admission of controlled, operator-reviewed regression cases into immutable development-bank revisions. Preserve sealed raw/materialized evidence and external grader controls, bind accepted markers and inherited revocation, reject stale/duplicate/orphaned admissions, and retain legacy bank behavior. Native provenance and independent roots remain unverified; oracle correction and comparison invalidation remain separate work.
+
 ## 0.43.0
 
 ### Minor Changes

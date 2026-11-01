@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import sys
 import time
-from .integrity import artifacts,contained,digest,tree
+from .integrity import artifacts,contained,copy_frozen,digest,tree
 from .task_bank import validate
 
 
@@ -24,15 +24,50 @@ def materialize_sources(workspace):
         target.write_text(content); target.chmod(0o644)
 
 
+def _eligible(reviewed):
+    admission = reviewed.get('admission')
+    if admission is not None and (not isinstance(admission, dict) or admission.get('current_eligible') is not True):
+        raise ValueError('bank revision is not currently eligible')
+    return admission
+
+
+def _reviewed_controls(bank_path, task_id):
+    from .bank_revisions import controls_for_manifest
+    return controls_for_manifest(bank_path, task_id)
+
+
+def _external_controls(bank_path, tasks, admission):
+    if admission is None: return {}
+    result = {}
+    for task in tasks:
+        controls = _reviewed_controls(bank_path, task['task_id'])
+        if not isinstance(controls, list) or not 4 <= len(controls) <= 100:
+            raise ValueError('controlled banks require bounded reviewed controls for every task')
+        for control in controls:
+            if (not isinstance(control, dict) or set(control) != {'state', 'fixture', 'digest'}
+                    or not isinstance(control['state'], str) or not control['state']
+                    or not isinstance(control['fixture'], Path)
+                    or digest(control['fixture']) != control['digest']):
+                raise ValueError('reviewed control identity changed')
+        if not {'broken', 'partial', 'complete', 'alternative_valid'} <= {c['state'] for c in controls}:
+            raise ValueError('reviewed controls need falsifiers and a valid alternative')
+        result[task['task_id']] = controls
+    return result
+
+
 def export_manifest(bank_path,output,max_trials=24):
     bank_path,output=Path(bank_path),Path(output)
     if output.absolute().is_relative_to(bank_path.parent.resolve()) or bank_path.parent.resolve().is_relative_to(output.absolute()):
         raise ValueError('bank export and source must not overlap')
     if any(p.is_symlink() for p in (output,*output.absolute().parents)):
         raise ValueError('bank export crosses symlink')
-    reviewed=validate(bank_path)
+    reviewed=validate(bank_path); admission=_eligible(reviewed)
     value=json.loads(bank_path.read_text())
     if 2*len(value['tasks'])>max_trials: raise ValueError('bank export exceeds caller trial ceiling')
+    external=_external_controls(bank_path,value['tasks'],admission)
+    for task in value['tasks']:
+        ident=task['task_id']
+        if '/' in ident or '\\' in ident or ident in ('.','..'): raise ValueError('unsafe exported task ID')
     output.mkdir(parents=True,exist_ok=False,mode=0o700)
     tasks=[]; controls=[]; bundles={}
     for task in value['tasks']:
@@ -48,18 +83,31 @@ def export_manifest(bank_path,output,max_trials=24):
         tasks.append(dict(id=ident,root=task['root_id'],family=task['family'],split={'calibration':'regression','certification':'heldout','transfer':'heldout'}.get(task['partition'],'development'),
                           fixture=str(target.relative_to(output)),prompt=prompt,artifacts=list(task['artifacts']),
                           grader=[sys.executable,str(grader.resolve()/'grade.py.txt'),'{workspace}',str(grader.resolve()/'expected.json')]))
-        audit=json.loads((grader/'controls.json').read_text())
-        for control in audit:
-            materialize_sources(contained(grader,control['fixture']))
+        if admission is None:
+            audit=json.loads((grader/'controls.json').read_text())
+        else:
+            audit=external[ident]
+        for index, control in enumerate(audit):
+            if admission is None:
+                control_path=contained(grader,control['fixture'])
+            else:
+                control_path=output/'controls'/ident/str(index)
+                copy_frozen(control['fixture'],control_path,control['digest'])
+            materialize_sources(control_path)
             if control['state'] in ('broken','partial','complete'):
-                controls.append(dict(task=ident,state=control['state'],fixture=str((grader/control['fixture']).relative_to(output))))
-        bundles[ident]=dict(path=str(grader.relative_to(output)),digest=digest(grader))
-    if validate(bank_path)['bank_sha256']!=reviewed['bank_sha256']:
+                controls.append(dict(task=ident,state=control['state'],fixture=str(control_path.relative_to(output))))
+        frozen=digest(grader)
+        if admission is not None and frozen != task['grader_digest']:
+            raise ValueError('frozen reviewed oracle changed during export')
+        bundles[ident]=dict(path=str(grader.relative_to(output)),digest=frozen)
+    current=validate(bank_path); _eligible(current)
+    if current['bank_sha256']!=reviewed['bank_sha256'] or current.get('admission')!=admission:
         raise ValueError('bank changed during export')
     manifest=dict(schema_version=1,profile='descriptive_smoke',tasks=tasks,grader_self_tests=controls,
                   grader_bundles=bundles,max_trials=max_trials,budget_seconds=300,timeout_seconds=10,
                   bank_digest=reviewed['bank_sha256'],grouping_revision_sha256=reviewed['content_grouping']['revision_sha256'],
                   independence_verified=reviewed['certification_eligible'],automatic_promotion=False)
+    if admission is not None: manifest['bank_revision_sha256']=admission['revision_sha256']
     (output/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     return manifest
 
@@ -143,10 +191,15 @@ def audit_graders(bank_path, *, cooperative=False, sandbox=False, budget_seconds
         raise ValueError('choose one grader execution mode')
     if not cooperative and not sandbox:
         raise ValueError('grader audit requires explicit cooperative or sandbox execution mode')
-    bank_path=Path(bank_path); validate(bank_path)
+    bank_path=Path(bank_path); reviewed=validate(bank_path)
     result = dict(status='incomplete', checks=[], real_agent_trials='not_run', independence='unverified',
                   execution_mode='sandbox' if sandbox else 'cooperative', automatic_promotion=False,
                   budget_seconds=budget_seconds)
+    if time.monotonic() >= deadline:
+        return dict(result, status='budget_exhausted', elapsed_seconds=time.monotonic()-started)
+    admission=_eligible(reviewed)
+    tasks=json.loads(bank_path.read_text())['tasks']
+    external=_external_controls(bank_path,tasks,admission)
     if time.monotonic() >= deadline:
         return dict(result, status='budget_exhausted', elapsed_seconds=time.monotonic()-started)
     if sandbox:
@@ -160,18 +213,23 @@ def audit_graders(bank_path, *, cooperative=False, sandbox=False, budget_seconds
             return dict(result, status='budget_exhausted', capability=capability, elapsed_seconds=time.monotonic()-started)
         if capability['status'] != 'available':
             return dict(result, status='blocked', capability=capability, elapsed_seconds=time.monotonic()-started)
-    tasks=json.loads(bank_path.read_text())['tasks']; results=result['checks']
+    results=result['checks']
     for task in tasks:
         bundle=contained(bank_path.parent,task['grader_bundle']); frozen=digest(bundle)
-        controls=json.loads((bundle/'controls.json').read_text())
+        if admission is not None and frozen!=task['grader_digest']:
+            raise ValueError('reviewed oracle identity changed before audit')
+        controls=external[task['task_id']] if admission is not None else json.loads((bundle/'controls.json').read_text())
         states={c['state'] for c in controls}
         if not {'broken','partial','complete','alternative_valid'}<=states:
             raise ValueError('grader audit needs falsifiers and a valid alternative')
         for control in controls:
-            fixture=contained(bundle,control['fixture']); tree(fixture)
+            fixture=control['fixture'] if admission is not None else contained(bundle,control['fixture']); tree(fixture)
             import tempfile
             with tempfile.TemporaryDirectory() as folder:
-                workspace=Path(folder)/'work'; shutil.copytree(fixture,workspace); materialize_sources(workspace)
+                workspace=Path(folder)/'work'
+                if admission is None: shutil.copytree(fixture,workspace)
+                else: copy_frozen(fixture,workspace,control['digest'])
+                materialize_sources(workspace)
                 remaining = deadline-time.monotonic()
                 if remaining <= 0:
                     return dict(result, status='budget_exhausted', elapsed_seconds=time.monotonic()-started)
@@ -197,6 +255,12 @@ def audit_graders(bank_path, *, cooperative=False, sandbox=False, budget_seconds
             if sandbox:
                 checked['regrade'] = grade
             results.append(checked)
+            if admission is not None and digest(fixture)!=control['digest']:
+                raise ValueError('reviewed control changed during audit')
         if digest(bundle)!=frozen: raise ValueError('grader bundle mutated during audit')
+    if admission is not None:
+        current=validate(bank_path); _eligible(current)
+        if current['bank_sha256']!=reviewed['bank_sha256'] or current.get('admission')!=admission:
+            raise ValueError('bank changed during audit')
     return dict(result, status='controls_passed' if time.monotonic() < deadline else 'budget_exhausted',
                 elapsed_seconds=time.monotonic()-started)

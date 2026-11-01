@@ -141,6 +141,21 @@ tasks:
     desc: Run native regression reproduction contract tests
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_regression_*.py" -v'
+  test:evaluation:admission:
+    desc: Run native immutable admission and external grader-control cases
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_regression_admission.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_regression_admission_profile.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_regression_bank_controls.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_grader_budget.py" -v'
+  test:evaluation:admission:compat:
+    desc: Compare legacy bank validation/export with an explicitly frozen baseline
+    requires:
+      vars: [BASELINE]
+    env:
+      AHL_ADMISSION_BASELINE_ROOT: '{{.BASELINE}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_regression_admission_profile.py" -k frozen_baseline -v'
   test:evaluation:review:
     desc: Run native private review-store lifecycle and evidence-integrity cases
     cmds:
@@ -203,6 +218,17 @@ tasks:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_sandbox_*.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_offline_evaluation.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_regression_*.py"'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_grader_budget.py"'
+  test:installed:sources:
+    desc: Run native source checks against an installed layout, including optional extras when installed
+    dir: '{{.LAYOUT_DIR}}'
+    requires:
+      vars: [LAYOUT_DIR, EXPECTED_PACKAGE_ROOT]
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_*.py"'
   install:wheel:
     cmds:
       - '{{.PYTHON | shellQuote}} -m venv dist/wheel-env'
