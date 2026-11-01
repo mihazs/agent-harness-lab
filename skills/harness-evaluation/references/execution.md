@@ -159,6 +159,11 @@ failure writes `status=blocked` and exits 3 before any task command or host grad
 runs. There is no cooperative fallback. The existing whole-run wall-clock budget
 includes probing, task execution and regrading; in-process preparation is charged
 before dispatch, but is not preemptible at an exact deadline.
+The evaluator clock starts before manifest/configuration reads and input freezing.
+When called by `improve`, it also inherits the original controller deadline;
+starting a trial stage cannot reset that deadline or enlarge a manifest/config cap.
+Exhausted preparation writes a budget-exhausted report without a capability or
+CLI/model launch. Monotonic deadlines are internal to the same controller process.
 
 This integration does not supply proposer/evaluator-author role orchestration,
 an inference broker, pinned dependency images or aggregate cgroup/disk bounds.

@@ -108,6 +108,10 @@ tasks:
     desc: Run frozen grader controls and cooperative workflow isolation contracts
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_sandbox_graders.py" -v'
+  test:evaluation:deadline:
+    desc: Run native preparation and inherited parent deadline controls
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_sandbox_deadline.py" -v'
   test:sandbox:kernel:
     desc: Run native kernel canaries in a disposable foreground user scope (Linux/systemd)
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'

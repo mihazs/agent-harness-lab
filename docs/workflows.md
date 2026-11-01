@@ -53,6 +53,9 @@ ahl improve --focus 'Look especially at repeated checks and recovery loops'
 permissions and hooks come from that runtime. Permission bypass is never enabled.
 The default whole-run budget is 45 minutes, with at most four planning sessions and
 20 task trials. Use `--timeout SECONDS` to set a smaller budget.
+Input/configuration preparation and freezing consume that budget too. Evaluation
+inherits the controller's original deadline, so a later stage cannot restart the
+clock; exhausted preparation prevents new runtime probes or model trials.
 
 On Linux with working bubblewrap namespaces, add `--sandbox-graders` to `improve`
 or `watch` to run authored grader controls and trial grading in fresh offline
