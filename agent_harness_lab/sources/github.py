@@ -191,10 +191,11 @@ class GitHubAPI:
             raise ValueError('GitHub PR scope/state mismatch')
         head, base = commit_hash(value['head']['sha']), commit_hash(value['base']['sha'])
         if head is None or base is None: raise ValueError('GitHub PR revision missing')
+        merge = commit_hash(value.get('merge_commit_sha'))
         return dict(id_sha256=digest(integer(value['id'], minimum=1)), number_sha256=digest(number),
             state=value['state'], draft=value['draft'], merged=value['merged'],
-            head_sha256=head, base_sha256=base, merge_sha256=commit_hash(value['merge_commit_sha']),
-            merge_reference_kind='merged_result' if value['merged'] else 'test_merge' if value['merge_commit_sha'] is not None else 'unknown',
+            head_sha256=head, base_sha256=base, merge_sha256=merge,
+            merge_reference_kind='unknown' if merge is None else 'merged_result' if value['merged'] else 'test_merge',
             head_repository_sha256=digest(integer(value['head']['repo']['id'], minimum=1)) if value['head']['repo'] else None,
             title_sha256=text_hash(value['title']), body_sha256=text_hash(value['body']),
             created_at=moment(value['created_at']), updated_at=moment(value['updated_at']),
