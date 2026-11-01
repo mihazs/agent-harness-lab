@@ -108,8 +108,38 @@ declaration and filesystem path metadata. Disabled/unsupported versions do not
 open record data. Registry collectors are registered explicitly by trusted Python
 code; there is no dynamic plugin loading or automatic source enablement.
 
-API transports, native provider formats, append offsets, analyze/doctor source
+Provider-specific API transports, native formats, append offsets, analyze/doctor source
 integration and remote pagination remain open in #42 and provider issues.
+
+## Shared HTTPS transport
+
+`sources.transport.JsonAPI` supplies the shared GET transport for explicitly
+registered provider adapters. Construct it with one HTTPS base endpoint; pass an
+enabled API SourceSpec whose root fingerprint is `digest(base_url)`, independently
+verified expected project/scope fingerprints, and an explicit Python page decoder
+to `pages`. Configured authentication requires an in-memory authorization header;
+the transport reads no credential stores. The decoder receives JSON and response
+headers and returns exactly `items` (a list) and `next` (a URL or null). It must
+normalize native records before the registry accepts a Snapshot. This contract
+does not assert compatibility with any real provider format.
+
+Pagination is confined to the configured HTTPS host, port and path subtree.
+Credential-bearing URLs, fragments, traversal and nested encodings are rejected.
+Redirects, non-200 statuses (including 429), compressed bodies, oversized or
+incomplete content and duplicate JSON keys fail the whole collection. There are
+no automatic retries, cookies, environment proxies or partial page returns.
+Connections and response streams close on success and failure. Raw URLs, headers
+and bodies stay in memory; public errors are redacted. Provider code must treat
+remote data as untrusted and verify project/permission identity before collection.
+
+Defaults limit a collection to 20 pages, 8 MiB of response bodies and 10,000 items, with a 10-second
+socket timeout and a 60-second cooperative deadline checked between reads. DNS
+resolution and in-process decoding are not preempted; these are not hard process
+or aggregate resource limits. A blocked/failed later page cannot reach registry
+checkpoint commit. Transport availability grants no inference or grading authority.
+Native tests use synthetic wire responses; live TLS/provider behavior remains
+unverified. Remote connectors and CLI API configuration remain unavailable until
+provider-specific contracts and authorization checks are implemented.
 No source is enabled by installation. Tests use synthetic metadata; they establish
 contract validation, checkpoint behavior and a side-effect-free registry, not
 real-source compatibility, containment, diagnostic usefulness or certification.
