@@ -480,7 +480,7 @@ retain their specific commit and whether it exactly matches the captured head;
 a missing commit leaves that comparison unknown. Approval/merge/closure is a process
 event or claim, never an executable grade or independent outcome.
 
-Only fixed GET endpoints are used. Repository-supplied URLs are checked as native
+The REST profiles use only fixed GET endpoints. Repository-supplied URLs are checked as native
 references and never followed as commands or arbitrary fetch targets. Pagination
 may advance only to the next numeric page of the same selected collection, with
 100 items per page. Every initial read, page and identity recheck shares the
@@ -554,9 +554,63 @@ capture. GitHub's default latest-check filter and reference endpoint limits do n
 establish complete check history, so `latest_checks_only` remains explicit. All new
 calls share the original request/byte/deadline budgets, and final issue/PR/repository
 readbacks still gate the snapshot. HTTP denial and an unavailable detail surface
-cannot be reported as an empty successful check/review set. GraphQL thread
-resolution, per-commit files/comments, conditional/incremental/deletion handling,
+cannot be reported as an empty successful check/review set. The explicit profile
+below adds GraphQL thread state. Per-commit files/comments, conditional/incremental/deletion handling,
 time windows and durable structured joins remain open.
+
+### Authenticated native review threads
+
+`GitHubSelection(..., schema_version=3, details=("threads",))` enables native
+review-thread state. Version 3 also allows `checks` and `timeline`; flags remain
+unique and sorted, and enter the scope fingerprint. Use `selection.source_version`
+in the source and registry. Versions 1 and 2 retain their original serialization,
+scope and request sets. Thread selection requires `auth_mode="configured"` and an
+authorization value passed directly to the constructor, even for a public repository.
+Missing authorization rejects capture before connecting. No token is discovered
+from the environment or another application's credential store.
+
+GitHub exposes [review threads](https://docs.github.com/en/graphql/reference/pulls#pullrequestreviewthread)
+through GraphQL. The reader sends two fixed **query** documents to
+`https://api.github.com/graphql`, using POST as prescribed by GitHub's
+[GraphQL transport](https://docs.github.com/en/graphql/guides/forming-calls-with-graphql).
+It accepts no user-supplied query or mutation. One query reads selected-PR threads;
+the other continues a thread's comment connection. The shared fragment requests
+only the fields needed for native identity, revision matching and thread state.
+The source version identifies this query contract; the REST API date does not
+version GitHub's GraphQL schema. Missing schema fields or denied access block
+capture rather than implying an empty review set.
+
+REST node IDs bind the GraphQL repository and PR to the already checked repository
+ID and selected PR. PR head OIDs must agree. Each thread and comment must name the
+same native parents. A comment joins only when its node ID, 64-bit database ID,
+review ID, body/path, timestamps and current/original commits match the captured
+REST fields. Full database IDs may be canonical decimal strings or integers;
+missing IDs cannot be replaced by text similarity or array positions. Comment
+membership must match the REST inline listing. Capture-wide bindings reject an
+opaque GraphQL node ID reused for another native identity, PR parent or node type,
+including across separate thread connections and selected PRs. Missing/deleted/inaccessible
+members, contradictory projections and conflicting parents reject the capture.
+
+Threads retain native resolved/outdated flags, file-path fingerprints, diff sides,
+nullable line ranges, the captured PR head and comment membership fingerprints.
+Inline comments obtain their thread's resolved state and their own native outdated
+flag and line ranges. Thread and comment outdated flags remain separate. Null line
+positions stay unknown. Resolution, approval and outdated state remain contextual
+evidence, never a task grade or evidence of an independent outcome.
+
+Both nested connections use 100-item cursor pages with stable totals, unique node
+IDs, bounded cursors and exact final counts. All REST reads, GraphQL pages and
+readbacks share the same request, byte and deadline limits. Repeated cursors,
+partial HTTP-200 responses containing GraphQL errors, HTTP failures and truncation
+fail without automatic retry or checkpoint advancement. A second thread capture
+must match the first before a snapshot is returned. This detects observed changes;
+it does not make a series of server reads atomic. Coverage remains partial.
+
+Only fingerprints and approved metadata enter the snapshot. Query variables,
+credentials, native IDs and raw comment text are not persisted. Structured joins
+still live only in the in-memory summary pending #58. Synthetic tests cover nested
+pagination, exact cross-API identity, revision/state changes and atomic import
+failure; they do not establish live GraphQL compatibility or diagnostic utility.
 
 No source is enabled by installation. Tests use synthetic metadata; they establish
 contract validation, checkpoint behavior and a side-effect-free registry, not

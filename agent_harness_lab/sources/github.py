@@ -1,6 +1,7 @@
-"""Explicit GET-only GitHub captures; comments and approvals are not task grades."""
+"""Explicit read-only GitHub captures; comments and approvals are not task grades."""
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import json
 import re
 import time
 from urllib.parse import parse_qsl
@@ -11,6 +12,33 @@ from .transport import JsonAPI, TransportError, _json_exchange, endpoint
 
 API_VERSION = '2026-03-10'
 SOURCE_VERSION = API_VERSION+'-v1'
+
+THREAD_FIELDS = '''fragment ThreadFields on PullRequestReviewThread {
+  id repository { id } pullRequest { id number headRefOid }
+  isResolved isOutdated path diffSide startDiffSide subjectType
+  line startLine originalLine originalStartLine
+  comments(first: 100, after: $commentsAfter) {
+    totalCount pageInfo { hasNextPage endCursor }
+    nodes { id fullDatabaseId body path createdAt updatedAt outdated
+      line startLine originalLine originalStartLine
+      repository { id } pullRequest { id } pullRequestReview { fullDatabaseId }
+      commit { oid } originalCommit { oid }
+    }
+  }
+}'''
+THREADS_QUERY = '''query ReviewThreads($owner: String!, $name: String!, $number: Int!,
+    $after: String, $commentsAfter: String) {
+  repository(owner: $owner, name: $name) { id nameWithOwner
+    pullRequest(number: $number) { id number headRefOid
+      reviewThreads(first: 100, after: $after) {
+        totalCount pageInfo { hasNextPage endCursor } nodes { ...ThreadFields }
+      }
+    }
+  }
+}''' + THREAD_FIELDS
+THREAD_COMMENTS_QUERY = '''query ReviewThreadComments($thread: ID!, $commentsAfter: String) {
+  node(id: $thread) { ...ThreadFields }
+}''' + THREAD_FIELDS
 
 
 def integer(value, *, minimum=0):
@@ -35,6 +63,17 @@ def commit_hash(value):
     return digest(value) if value is not None else None
 
 
+def opaque_id(value):
+    if not isinstance(value, str) or not 1 <= len(value) <= 1024 or any(not 32 < ord(c) < 127 for c in value):
+        raise ValueError('invalid GitHub node identity or cursor')
+    return value
+
+
+def bigint(value):
+    if isinstance(value, str) and re.fullmatch(r'[1-9][0-9]{0,18}', value): value = int(value)
+    return integer(value, minimum=1)
+
+
 @dataclass(frozen=True)
 class GitHubSelection(Contract):
     repo_id: int
@@ -44,9 +83,10 @@ class GitHubSelection(Contract):
     details: tuple = ()
 
     def __post_init__(self):
-        if type(self.schema_version) is not int or self.schema_version not in (1, 2): raise ValueError('unsupported GitHub selection version')
+        if type(self.schema_version) is not int or self.schema_version not in (1, 2, 3): raise ValueError('unsupported GitHub selection version')
         integer(self.repo_id, minimum=1)
-        if (type(self.details) is not tuple or len(self.details) > 2 or any(d not in ('checks', 'timeline') for d in self.details)
+        allowed = ('checks', 'threads', 'timeline') if self.schema_version == 3 else ('checks', 'timeline')
+        if (type(self.details) is not tuple or len(self.details) > len(allowed) or any(d not in allowed for d in self.details)
                 or tuple(sorted(set(self.details))) != self.details or self.schema_version == 1 and self.details):
             raise ValueError('invalid explicit GitHub details')
         for numbers in (self.issues, self.pulls):
@@ -58,7 +98,7 @@ class GitHubSelection(Contract):
     @classmethod
     def parse(cls, value):
         if not isinstance(value, dict): raise ValueError('invalid GitHub selection')
-        fields = set(cls.__dataclass_fields__)-({'details'} if value.get('schema_version') != 2 else set())
+        fields = set(cls.__dataclass_fields__)-({'details'} if value.get('schema_version') not in (2, 3) else set())
         if set(value) != fields: raise ValueError('invalid GitHub selection fields')
         if not all(isinstance(value[k], (list, tuple)) for k in ('issues', 'pulls')): raise ValueError('invalid GitHub number collections')
         if 'details' in value and not isinstance(value['details'], (list, tuple)): raise ValueError('invalid GitHub details collection')
@@ -97,21 +137,130 @@ class GitHubAPI:
             raise TransportError('GitHub native resource exceeds the selected repository/parent')
 
     def _get(self, suffix, state):
+        target, query = self.transport._target(self.transport.base+suffix)
+        return self._request(target+('?' + query if query else ''), state)
+
+    def _request(self, target, state, *, body=None):
         if state['requests'] >= self.transport.max_pages or state['used'] >= self.transport.max_bytes or time.monotonic() >= state['deadline']:
             raise TransportError('GitHub capture budget exhausted')
-        target, query = self.transport._target(self.transport.base+suffix)
-        headers = {'Accept': 'application/vnd.github+json', 'Accept-Encoding': 'identity',
-            'User-Agent': 'agent-harness-lab-reader', 'X-GitHub-Api-Version': API_VERSION}
+        headers = {'Accept': 'application/vnd.github+json', 'Accept-Encoding': 'identity', 'User-Agent': 'agent-harness-lab-reader'}
+        if body is None: headers['X-GitHub-Api-Version'] = API_VERSION
+        else: headers.update(Accept='application/json', **{'Content-Type': 'application/json'})
         if self.authorization is not None: headers['Authorization'] = self.authorization
         state['requests'] += 1
-        value, metadata, size = _json_exchange(self.transport.origin, target+('?' + query if query else ''), headers,
+        value, metadata, size = _json_exchange(self.transport.origin, target, headers, body=body,
             timeout=self.transport.timeout, deadline=state['deadline'], max_bytes=self.transport.max_bytes-state['used'])
         state['used'] += size
         metadata = {k.lower(): v for k, v in metadata.items()}
-        if (metadata.get('x-github-api-version-selected') != API_VERSION
+        if (body is None and metadata.get('x-github-api-version-selected') != API_VERSION
                 or metadata.get('content-type', '').split(';')[0].strip() not in ('application/json', 'application/vnd.github+json')):
             raise TransportError('GitHub API version/content capability is unavailable')
         return value, metadata
+
+    def _graphql(self, query, variables, state):
+        if query not in (THREADS_QUERY, THREAD_COMMENTS_QUERY) or self.authorization is None:
+            raise TransportError('explicit authenticated GitHub thread query required')
+        value, _ = self._request('/graphql', state, body=json.dumps(dict(query=query, variables=variables)).encode())
+        if not isinstance(value, dict) or 'errors' in value or not isinstance(value.get('data'), dict):
+            raise ValueError('GitHub GraphQL capability is blocked or incomplete')
+        return value['data']
+
+    @staticmethod
+    def _connection(fetch):
+        result, identities, cursors, cursor, total = [], set(), set(), None, None
+        while True:
+            value = fetch(cursor)
+            count = integer(value['totalCount'])
+            if count > 10000 or total is not None and total != count: raise ValueError('GitHub GraphQL total changed or excessive')
+            total, nodes, page = count, value['nodes'], value['pageInfo']
+            if not isinstance(nodes, list) or len(nodes) > 100 or type(page['hasNextPage']) is not bool:
+                raise ValueError('invalid GitHub GraphQL connection')
+            for node in nodes:
+                native = opaque_id(node['id'])
+                if native in identities: raise ValueError('duplicate GitHub GraphQL identity')
+                identities.add(native)
+            result.extend(nodes)
+            if len(result) > total: raise ValueError('GitHub GraphQL total exceeded')
+            if not page['hasNextPage']:
+                if len(result) != total: raise ValueError('incomplete GitHub GraphQL connection')
+                return result
+            cursor = opaque_id(page['endCursor'])
+            if not nodes or cursor in cursors: raise ValueError('GitHub GraphQL pagination cycle')
+            cursors.add(cursor)
+
+    def _thread(self, value, repository, pull):
+        opaque_id(value['id'])
+        if (value['repository']['id'] != repository['node_id'] or value['pullRequest']['id'] != pull['node_id']
+                or integer(value['pullRequest']['number'], minimum=1) != pull['number'] or value['pullRequest']['headRefOid'] != pull['head']['sha']
+                or type(value['isResolved']) is not bool or type(value['isOutdated']) is not bool
+                or value['diffSide'] not in ('LEFT', 'RIGHT') or value['startDiffSide'] not in (None, 'LEFT', 'RIGHT')
+                or value['subjectType'] not in ('LINE', 'FILE')):
+            raise ValueError('GitHub review thread scope/head/state mismatch')
+        return dict(parent_sha256=digest((self.selection.repo_id, 'pull', pull['number'])),
+            head_sha256=commit_hash(pull['head']['sha']), path_sha256=text_hash(value['path'], required=True),
+            resolved=value['isResolved'], outdated=value['isOutdated'], diff_side=value['diffSide'],
+            start_diff_side=value['startDiffSide'], subject_type=value['subjectType'], **self._lines(value))
+
+    @staticmethod
+    def _lines(value):
+        lines = {name: integer(value[field], minimum=1) if value[field] is not None else None
+            for name, field in (('line', 'line'), ('start_line', 'startLine'),
+                ('original_line', 'originalLine'), ('original_start_line', 'originalStartLine'))}
+        for start, end in (('start_line', 'line'), ('original_start_line', 'original_line')):
+            if lines[start] is not None and lines[end] is not None and lines[start] > lines[end]:
+                raise ValueError('invalid GitHub line range')
+        return lines
+
+    def _threads(self, repository, pull, comments, state):
+        def bind(value, kind, native):
+            value = opaque_id(value)
+            identities = state.setdefault('graphql_ids', {})
+            identity = kind, native
+            if value in identities and identities[value] != identity:
+                raise ValueError('conflicting GitHub GraphQL node identity')
+            identities[value] = identity
+        bind(repository['node_id'], 'repository', self.selection.repo_id)
+        bind(pull['node_id'], 'pull', (self.selection.repo_id, pull['id'], pull['number']))
+        owner, name = self.transport.path[len('/repos/'):].split('/')
+        def fetch(cursor):
+            data = self._graphql(THREADS_QUERY, dict(owner=owner, name=name, number=pull['number'],
+                after=cursor, commentsAfter=None), state)['repository']
+            child = data['pullRequest']
+            if (data['id'] != repository['node_id'] or data['nameWithOwner'].casefold() != repository['full_name'].casefold()
+                    or child['id'] != pull['node_id'] or integer(child['number'], minimum=1) != pull['number'] or child['headRefOid'] != pull['head']['sha']):
+                raise ValueError('GitHub GraphQL repository or PR identity changed')
+            return child['reviewThreads']
+        threads, links, known = {}, {}, {comment['id']: comment for comment in comments}
+        for thread in self._connection(fetch):
+            native = thread['id']; node = self._thread(thread, repository, pull)
+            bind(native, 'thread', (self.selection.repo_id, pull['id'], native))
+            def fetch_comments(cursor):
+                current = thread if cursor is None else self._graphql(THREAD_COMMENTS_QUERY,
+                    dict(thread=native, commentsAfter=cursor), state)['node']
+                if current['id'] != native or self._thread(current, repository, pull) != node:
+                    raise ValueError('GitHub thread changed during comment pagination')
+                return current['comments']
+            members = []
+            for comment in self._connection(fetch_comments):
+                number = bigint(comment['fullDatabaseId']); before = known.get(number)
+                if before is None or number in links or comment['id'] != opaque_id(before['node_id']):
+                    raise ValueError('GitHub thread comment has no unique REST identity')
+                bind(comment['id'], 'comment', (self.selection.repo_id, pull['id'], number))
+                if (comment['repository']['id'] != repository['node_id'] or comment['pullRequest']['id'] != pull['node_id']
+                        or text_hash(comment['path'], required=True) != node['path_sha256']
+                        or bigint(comment['pullRequestReview']['fullDatabaseId']) != before['pull_request_review_id']
+                        or any(comment[field] != before[original] for field, original in
+                            (('body', 'body'), ('path', 'path'), ('createdAt', 'created_at'), ('updatedAt', 'updated_at')))
+                        or (comment['commit']['oid'] if comment['commit'] else None) != before['commit_id']
+                        or (comment['originalCommit']['oid'] if comment['originalCommit'] else None) != before['original_commit_id']
+                        or type(comment['outdated']) is not bool):
+                    raise ValueError('GitHub thread comment parent/revision mismatch')
+                thread_key = digest(('github_review_thread', self.selection.repo_id, native))
+                links[number] = dict(thread_sha256=thread_key, resolved=node['resolved'], outdated=comment['outdated'], **self._lines(comment))
+                members.append(digest(('github_review_comment', self.selection.repo_id, number)))
+            threads[native] = dict(**node, comment_ids_sha256=sorted(members))
+        if set(links) != set(known): raise ValueError('GitHub thread membership is incomplete')
+        return threads, links
 
     def _next(self, link, suffix, current):
         if link is None: return None
@@ -231,6 +380,8 @@ class GitHubAPI:
             if not isinstance(source, SourceSpec) or (source.provider, source.version) != ('github', self.selection.source_version): raise ValueError('unsupported GitHub source')
             self.transport._authorize(source, project_sha256=self.selection.project_sha256,
                 scope_sha256=self.selection.sha256, authorization=self.authorization)
+            if 'threads' in self.selection.details and (self.authorization is None or any(n > 2**31-1 for n in self.selection.pulls)):
+                raise ValueError('GitHub threads require explicit authentication and GraphQL PR numbers')
             return self._capture(source)
         except Exception:
             raise TransportError('GitHub capture blocked or incomplete; no automatic retry or checkpoint commit') from None
@@ -319,13 +470,14 @@ class GitHubAPI:
             value = dict(kind=kind, native_id_sha256=key, **node)
             revision = digest(value)
             record = EvidenceRecord(source.source_key, key, revision, revision,
-                'contextual_assertion' if kind in ('github_issue', 'github_issue_comment', 'github_review_comment', 'github_review', 'github_cross_reference') else 'development_artifact',
+                'contextual_assertion' if kind in ('github_issue', 'github_issue_comment', 'github_review_comment', 'github_review', 'github_review_thread', 'github_cross_reference') else 'development_artifact',
                 kind, collected, original_at=original, provenance='native_field', capture_completeness='partial')
             if key in records and records[key].revision_sha256 != revision: raise ValueError('conflicting GitHub native revision')
             records[key], nodes[key] = record, value
             if len(records) > 10000: raise ValueError('GitHub record cap exceeded')
             return key
-        repository = self._repository(self._get('', state)[0])
+        raw_repository = self._get('', state)[0]
+        repository = self._repository(raw_repository)
         emit('github_repository', self.selection.repo_id, repository)
         issues, pulls, issue_keys = {}, {}, {}
         for number in sorted(set(self.selection.issues)|set(self.selection.pulls)):
@@ -338,6 +490,7 @@ class GitHubAPI:
                 child = self._comment(comment, number)
                 key = emit('github_issue_comment', comment['id'], child, child['created_at'])
                 relations.add(('conversation_on', key, parent))
+        thread_reads = {}
         for number in self.selection.pulls:
             raw = self._get(f'/pulls/{number}', state)[0]
             node = self._pull(raw, number); pulls[number] = node
@@ -369,10 +522,19 @@ class GitHubAPI:
                 key = emit('github_review', integer(review['id'], minimum=1), value, value['submitted_at'])
                 review_keys[review['id']] = key
                 relations.add(('review_on', key, parent))
+            thread_links = {}
+            if 'threads' in self.selection.details:
+                threads, thread_links = self._threads(raw_repository, raw, comments, state)
+                thread_reads[number] = raw, comments, (threads, thread_links)
+                for native, value in threads.items():
+                    key = emit('github_review_thread', native, value)
+                    relations.add(('thread_on', key, parent))
             for comment in comments:
                 value = self._comment(comment, number, inline=True, head=node['head_sha256'])
+                if comment['id'] in thread_links: value.update(thread_links[comment['id']])
                 key = emit('github_review_comment', comment['id'], value, value['created_at'])
                 relations.add(('inline_on', key, parent))
+                if comment['id'] in thread_links: relations.add(('thread_comment', value['thread_sha256'], key))
                 if comment['pull_request_review_id'] in review_keys:
                     relations.add(('inline_review', key, review_keys[comment['pull_request_review_id']]))
             if 'checks' in self.selection.details: self._checks(raw['head']['sha'], parent, state, emit, relations)
@@ -384,16 +546,22 @@ class GitHubAPI:
             if self._issue(self._get(f'/issues/{number}', state)[0], number) != before: raise ValueError('GitHub issue changed during capture')
         for number, before in pulls.items():
             if self._pull(self._get(f'/pulls/{number}', state)[0], number) != before: raise ValueError('GitHub PR changed during capture')
+        for raw, comments, before in thread_reads.values():
+            if self._threads(raw_repository, raw, comments, state) != before: raise ValueError('GitHub review threads changed during capture')
         if self._repository(self._get('', state)[0]) != repository: raise ValueError('GitHub repository changed during capture')
         summary = dict(schema_version=1, api_version=API_VERSION, source_identity='repository_id_checked',
             repository=repository, nodes=[nodes[k] for k in sorted(nodes)], relations=sorted(relations),
             capture_completeness='partial', warnings=['selected_resources_only', 'thread_resolution_unknown', 'execution_binding_unknown'])
-        if self.selection.schema_version == 2:
+        if self.selection.schema_version >= 2:
             summary.update(detail_capabilities=self.selection.details, unmapped_timeline=unmapped)
             if unmapped: summary['warnings'].append('timeline_event_identity_unknown')
             if 'checks' in self.selection.details: summary['warnings'].append('latest_checks_only')
+            if 'threads' in self.selection.details:
+                summary['warnings'].remove('thread_resolution_unknown')
+                summary['warnings'].append('thread_readbacks_non_atomic')
         coverage = CoverageManifest(source.source_key, source.scope_sha256, source.scope_sha256, self.selection.source_version,
-            'github-rest-v'+str(self.selection.schema_version), (ScanBound('records', 10000, len(records)), ScanBound('pages', self.transport.max_pages, state['requests']),
+            'github-rest-graphql-v1' if 'threads' in self.selection.details else 'github-rest-v'+str(self.selection.schema_version),
+            (ScanBound('records', 10000, len(records)), ScanBound('pages', self.transport.max_pages, state['requests']),
             ScanBound('bytes', self.transport.max_bytes, state['used'])), gaps=('not_captured',), reported_completeness='partial')
         snapshot = Snapshot(digest(summary), tuple(records[k] for k in sorted(records)), ExecutionMetadata((), coverage))
         self.summary = summary
