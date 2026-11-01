@@ -130,6 +130,14 @@ are explicit argv arrays from the frozen manifest, not instructions parsed from
 task text. For every arm the executor receives a fresh writable fixture at `/work`
 and only that version's read-only harness at `/inputs/harness`. Do not include
 oracles, credentials, unrelated projects or certification sets in either input.
+For aggregate memory/process caps and CPU bandwidth controls, explicitly add
+`--cgroup-root /path/to/predelegated/subtree` to an offline evaluation. Both worker
+and pristine grader use separate cgroup v2 children under that subtree. Missing
+delegation blocks execution; no controllers or privileged permissions are changed.
+Use `ahl sandbox-check --cgroup-root ...` to probe the exact requested boundary.
+See the [resource contract](../../../docs/evaluation-foundation.md#offline-sandbox-and-threat-model)
+for prerequisites, kernel-test limits and remaining certification safeguards.
+
 Only the controller chooses mounts; candidate content cannot add them. This mode
 rejects `skills`/`harness_paths` injection and requires complete declared grader
 bundles plus the fixed `grade.py.txt`/`expected.json` Python grader contract from

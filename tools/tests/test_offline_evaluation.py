@@ -65,6 +65,41 @@ class OfflineFixture(unittest.TestCase):
 
 
 class OfflineEvaluationTests(OfflineFixture):
+    def test_child_preparation_failure_remains_an_executor_or_grader_error(self):
+        for role in ('executor', 'grader'):
+            with self.subTest(role=role):
+                if (self.root/'output').exists(): shutil.rmtree(self.root/'output')
+                def execute(*args, **kwargs):
+                    if args[3] == role: raise subprocess.SubprocessError('synthetic pre-exec failure')
+                    return self.emulate(*args, **kwargs)
+                with patch.object(SandboxBackend, 'capability', return_value={'status': 'available'}), \
+                        patch.object(SandboxBackend, 'run', side_effect=execute):
+                    self.assertEqual(self.runner.evaluate(self.args), 1)
+                expected = 'execution_error' if role == 'executor' else 'grader_error'
+                self.assertTrue(all(t['status'] == expected for t in self.results()['trials']))
+                self.assertEqual(len(self.results()['trials']), 14)
+
+    def test_explicit_resource_subtree_is_shared_by_executor_and_pristine_grader(self):
+        self.args.cgroup_root = self.root/'synthetic-delegation'
+        with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend', autospec=True) as backend:
+            backend.return_value.capability.return_value = {'status': 'available'}
+            backend.return_value.run.side_effect = self.emulate
+            self.assertEqual(self.runner.evaluate(self.args), 1)
+        backend.assert_called_once_with(cgroup_root=self.args.cgroup_root)
+        self.assertEqual({call.args[3] for call in backend.return_value.run.call_args_list}, {'executor', 'grader'})
+        self.assertEqual(backend.return_value.run.call_count, 28)
+
+    def test_missing_resource_delegation_blocks_offline_and_cannot_claim_agent_isolation(self):
+        self.args.cgroup_root = self.root/'missing-delegation'
+        with patch('agent_harness_lab.evaluation.sandbox.subprocess.Popen') as launch:
+            self.assertEqual(self.runner.evaluate(self.args), 3)
+        launch.assert_not_called()
+        self.assertEqual(self.results()['status'], 'blocked')
+        self.assertEqual(self.results()['trials'], [])
+        self.args.agent = 'codex'
+        with self.assertRaisesRegex(ValueError, 'require the offline executor'):
+            self.runner.evaluate(self.args)
+
     def test_both_arms_are_executed_and_regraded_without_model_calls(self):
         with patch.object(SandboxBackend, 'capability', return_value={'status': 'available'}), \
                 patch.object(SandboxBackend, 'run', side_effect=self.emulate) as launch, \

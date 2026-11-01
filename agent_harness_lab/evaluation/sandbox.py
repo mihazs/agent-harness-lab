@@ -1,5 +1,6 @@
 """Optional offline Linux role isolation. Never falls back to host execution."""
 from dataclasses import asdict, dataclass
+from contextlib import nullcontext
 import hashlib
 import math
 import os
@@ -11,6 +12,7 @@ import signal
 import subprocess
 import sys
 import time
+from .cgroup import Cgroup
 from .integrity import digest
 
 ROLES = {'proposer', 'evaluator_author', 'executor', 'grader'}
@@ -33,8 +35,9 @@ class Limits:
 
 class SandboxBackend:
     """Role mounts are controller-selected; candidate content is never policy."""
-    def __init__(self, binary='bwrap'):
+    def __init__(self, binary='bwrap', *, cgroup_root=None):
         self.binary = shutil.which(binary)
+        self.cgroup_root = cgroup_root
 
     def command(self, argv, workspace, inputs, role):
         if role not in ROLES or not argv or not all(isinstance(a, str) for a in argv):
@@ -72,10 +75,15 @@ class SandboxBackend:
                 run = self.run(['/usr/bin/true'], Path(folder), {}, 'grader', Limits(seconds=seconds))
             except TimeoutError:
                 return dict(status='unsupported', reason='namespace_probe_timeout', automatic_promotion=False)
-        return dict(status='available' if run['exit_code'] == 0 else 'unsupported',
-                    reason=None if run['exit_code'] == 0 else 'namespace_probe_failed',
+            except (OSError, ValueError, subprocess.SubprocessError):
+                return dict(status='unsupported', reason='resource_boundary_unavailable', automatic_promotion=False)
+        available = run['exit_code'] == 0 and run['status'] == 'completed' and run['inputs_unchanged'] is True
+        return dict(status='available' if available else 'unsupported',
+                    reason=None if available else 'namespace_probe_failed',
                     automatic_promotion=False,
-                    limitations=['no aggregate disk/cgroup guarantee', 'inference broker not implemented'])
+                    cgroup_v2=run['attestation']['cgroup_v2'],
+                    limitations=['no aggregate disk quota', 'inference broker not implemented']
+                        + ([] if self.cgroup_root is not None else ['no aggregate cgroup controls']))
 
     def run(self, argv, workspace, inputs, role, limits=Limits()):
         limits.validate()
@@ -85,13 +93,20 @@ class SandboxBackend:
         if time.monotonic() - start >= limits.seconds:
             raise TimeoutError('sandbox budget exhausted before launch')
         def constrain():
+            if group is not None:
+                group.attach()
+                os.sched_setscheduler(0, os.SCHED_OTHER, os.sched_param(0))
+                resource.setrlimit(resource.RLIMIT_RTPRIO, (0, 0))
             resource.setrlimit(resource.RLIMIT_CPU, (math.ceil(limits.seconds), math.ceil(limits.seconds) + 1))
-            for key, value in ((resource.RLIMIT_AS, limits.memory_bytes), (resource.RLIMIT_NPROC, limits.processes),
+            if group is None:
+                resource.setrlimit(resource.RLIMIT_NPROC, (limits.processes, limits.processes))
+            for key, value in ((resource.RLIMIT_AS, limits.memory_bytes),
                                (resource.RLIMIT_FSIZE, limits.file_bytes), (resource.RLIMIT_NOFILE, 64),
                                (resource.RLIMIT_CORE, 0)):
                 resource.setrlimit(key, (value, value))
         buffers, reason = [bytearray(), bytearray()], None
-        with subprocess.Popen(command, cwd=workspace, env={'PATH': '/usr/bin:/bin'},
+        boundary = Cgroup(self.cgroup_root, limits, start+limits.seconds) if self.cgroup_root is not None else nullcontext(None)
+        with boundary as group, subprocess.Popen(command, cwd=workspace, env={'PATH': '/usr/bin:/bin'},
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 start_new_session=True, preexec_fn=constrain) as process:
             poll = selectors.DefaultSelector()
@@ -131,6 +146,9 @@ class SandboxBackend:
             finally:
                 poll.close()
         unchanged = all(digest(folder) == before[name] for name, folder in inputs.items())
+        cgroup = group.report if group is not None else None
+        if cgroup and (cgroup['events']['pids.events']['max'] or any(cgroup['events']['memory.events'][k] for k in ('max', 'oom', 'oom_kill'))):
+            reason = reason or 'resource_limit'
         return dict(exit_code=process.returncode, status=reason or ('completed' if process.returncode == 0 else 'failed'),
                     stdout=bytes(buffers[0][:limits.output_bytes]).decode('utf-8', 'replace'),
                     stderr=bytes(buffers[1][:limits.output_bytes]).decode('utf-8', 'replace'),
@@ -139,4 +157,5 @@ class SandboxBackend:
                         binary_sha256=hashlib.sha256(Path(self.binary).read_bytes()).hexdigest(),
                         input_digests=before, automatic_promotion=False,
                         resource_limits=asdict(limits),
+                        cgroup_v2=cgroup,
                         aggregate_disk_bound_verified=False, inference_supported=False))

@@ -58,11 +58,38 @@ failures trigger process-group cleanup, including children remaining in the grou
 after their parent exits. Host process-control tests establish that behavior separately from the
 namespace containment tests, which still require a supported host.
 
-This is not a complete certified backend: aggregate disk/cgroup enforcement,
+An explicit `--cgroup-root` on `ahl sandbox-check` or `ahl evaluate --agent offline`
+opts into aggregate Linux cgroup v2 controls. The caller must supply an existing
+unprivileged delegated subtree with cpu, memory and pids controllers already
+enabled. No subtree is discovered from the environment, no controller is enabled
+by this tool, and no privileged setup is performed. An unavailable or mismatched
+resource boundary blocks execution without falling back to rlimits alone.
+
+Each worker gets a new child cgroup with read-back memory and process caps, swap
+disabled, grouped OOM handling and a one-CPU bandwidth cap. The child joins before
+exec, so descendants inherit membership; the namespace does not mount the control
+filesystem. Whole-tree cleanup uses `cgroup.kill`, including children that create
+new process sessions. An attestation requires an empty group after cleanup and
+complete memory/process/CPU counters. A swallowed memory/process denial invalidates
+an otherwise zero exit. Each offline executor and its pristine grader use the
+same requested parent policy with separate child groups. CPU bandwidth is a rate
+limit, not an exact total CPU-time budget; existing wall-clock limits still apply.
+These controls follow the [kernel cgroup v2 interface](https://docs.kernel.org/admin-guide/cgroup-v2.html).
+
+Native synthetic control-file tests validate setup, pre-exec failure, accounting
+and cleanup failure handling; they do not establish kernel enforcement. To run
+the trusted resource canaries on a suitably delegated host, explicitly set
+`AHL_TEST_CGROUP_ROOT` for `task test:sandbox`. Those canaries bypass namespaces
+to test cgroups independently; existing namespace canaries remain separate.
+Without that opt-in, kernel resource tests are visibly skipped. The current
+unprivileged account has no delegated writable subtree, so aggregate enforcement
+has not been demonstrated locally.
+
+This is not a complete certified backend: aggregate disk quotas,
 pinned full execution-image/dependency identity, a narrow inference broker,
 full construction/execution/regrading integration and the complete adversarial
 suite remain prerequisites for #7. Per-file rlimits are not aggregate disk quotas;
-per-user process limits are not cgroup guarantees. Host/kernel compromise is out
+per-user process limits alone are not cgroup guarantees. Host/kernel compromise is out
 of scope. `automatic_promotion=false` remains explicit even if an offline probe
 succeeds. The local namespace probe fails on this managed host, so its live
 containment-canary test is skipped and cannot be cited as security evidence.
@@ -141,9 +168,11 @@ execution attestations remain in the private audit result.
 
 This mode currently supports the starter-style `grade.py.txt`/`expected.json`
 Python grader contract using `/usr/bin/python3` inside the namespace. It does not
-isolate a model run or provide inference access. Aggregate disk/cgroup bounds,
+isolate a model run or provide inference access. Aggregate disk quotas,
 pinned dependency images, whole-experiment parent-budget orchestration and full
-role integration remain pending. Offline audits now use one 300-second wall-clock
+role integration remain pending. Opt-in cgroup controls above cover aggregate
+memory/process resources and CPU bandwidth, but do not provide disk quotas.
+Offline audits now use one 300-second wall-clock
 admission deadline shared by validation, capability probing, materialization,
 extraction, oracle copying and all control executions. API callers can pass their
 remaining `budget_seconds`; individual subprocess limits are capped by what

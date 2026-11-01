@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.12.0
+
+### Minor Changes
+
+- Add opt-in delegated Linux cgroup v2 controls for offline executors and pristine graders. Verify aggregate memory/process caps and CPU bandwidth policy before launch, attach before exec, kill the whole descendant tree and require complete accounting before attestation. Missing delegation or cleanup failure never falls back to a weaker boundary. Kernel enforcement canaries require an explicit delegated host; disk quotas, inference brokering and full role isolation remain pending.
+
 ## 0.11.0
 
 ### Minor Changes
