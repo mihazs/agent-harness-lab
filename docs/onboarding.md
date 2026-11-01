@@ -3,7 +3,11 @@
 [Documentation index](README.md)
 
 `ahl doctor PROJECT --profile offline --json` inspects Python, installed skill
-assets, project/configuration safety and the selected bank's schema and digest.
+assets, platform filesystem capabilities, project/configuration safety and the
+selected bank's schema and manifest digest. It never reads fixture or oracle
+bodies: `bank_contents` remains `not_checked`. An explicit bank audit or evaluation
+still requires full content integrity verification. Metadata-only validation
+cannot make a bank eligible for certification.
 It does not run an agent, inspect authentication/session files, execute hooks,
 connect to services or change the project. Human output names prerequisites and
 safe remediations. Versioned JSON checks contain ID, status, profile requirement,
@@ -92,7 +96,7 @@ harness and fixture digests also cover file modes; changes during a version
 query cannot become a new accepted starting point for task execution.
 
 Existing analysis/improvement/watch commands still retain their explicit CLI
-behavior and do not consume `ahl.json`. Their configuration integration and a
-verified harmless agent version/authentication probe remain unfinished for #36.
+behavior and do not consume `ahl.json`. Authentication and agent runtime versions
+remain unknown because this offline interface has no supported safe agent probe.
 Initialization itself authorizes no execution or permission changes. Doctor/init
 start no installation, login, inference, download, background service or schedule.

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1
+
+### Patch Changes
+
+- Keep doctor readiness checks limited to bank metadata, explicitly report unverified fixture/oracle contents, and block unsupported filesystem capabilities without mutation. Preserve full bank integrity verification for audits and evaluation, and reject unsafe or malformed bank files with bounded reads.
+
 ## 0.5.0
 
 ### Minor Changes

@@ -1,7 +1,29 @@
 """Bounded tree integrity for immutable role inputs and artifact extraction."""
 import hashlib
+import os
 from pathlib import Path, PurePosixPath
 import stat
+
+
+def read_regular(path, max_bytes):
+    """Read one bounded, single-link file without following symlink ancestors."""
+    path = Path(path)
+    if not all(hasattr(os, name) for name in ('O_NOFOLLOW', 'O_NONBLOCK')):
+        raise NotImplementedError('safe file reads require POSIX filesystem APIs')
+    if any(p.is_symlink() for p in (path, *path.absolute().parents)):
+        raise ValueError('input crosses a symlink')
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > max_bytes:
+            raise ValueError('input must be a bounded single-link regular file')
+        with os.fdopen(descriptor, 'rb', closefd=False) as stream:
+            raw = stream.read(max_bytes+1)
+        if len(raw) > max_bytes:
+            raise ValueError('input byte limit exceeded')
+        return raw
+    finally:
+        os.close(descriptor)
 
 
 def relative(value):
@@ -60,7 +82,6 @@ def artifacts(root, allowlist, max_bytes=1024 * 1024):
         if total > max_bytes:
             raise ValueError('artifact byte bound exceeded')
         # No following links at the final open; isolated worker has already stopped.
-        import os
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
         with os.fdopen(fd, 'rb') as stream:
             if os.fstat(stream.fileno()).st_ino != info.st_ino:

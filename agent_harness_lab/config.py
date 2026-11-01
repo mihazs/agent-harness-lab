@@ -4,10 +4,9 @@ import json
 import math
 import os
 from pathlib import Path
-import stat
 import sys
 import uuid
-from .evaluation.integrity import contained, relative
+from .evaluation.integrity import contained, relative, read_regular
 
 
 def starter():
@@ -56,27 +55,24 @@ def validate(value):
     return value
 
 
+def supported():
+    names = ('O_DIRECTORY', 'O_NOFOLLOW', 'O_NONBLOCK', 'fchmod', 'fsync')
+    return (os.name == 'posix' and all(hasattr(os, n) for n in names)
+            and all(getattr(os, n) in os.supports_dir_fd for n in ('open', 'stat', 'link', 'unlink')))
+
+
 def read_json(path):
-    path = Path(path)
-    if any(p.is_symlink() for p in (path, *path.absolute().parents)):
-        raise ValueError('configuration crosses a symlink')
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
-    with os.fdopen(descriptor, 'rb') as stream:
-        info = os.fstat(stream.fileno())
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > 65536:
-            raise ValueError('configuration must be a bounded single-link regular file')
-        try:
-            raw = stream.read(65537)
-            if len(raw) > 65536:
-                raise ValueError()
-            def unique(pairs):
-                value = dict(pairs)
-                if len(value) != len(pairs):
-                    raise ValueError()
-                return value
-            return json.loads(raw, object_pairs_hook=unique)
-        except (ValueError, UnicodeError):
-            raise ValueError('malformed configuration JSON') from None
+    if not supported():
+        raise NotImplementedError('safe configuration I/O is unavailable')
+    def unique(pairs):
+        value = dict(pairs)
+        if len(value) != len(pairs):
+            raise ValueError()
+        return value
+    try:
+        return json.loads(read_regular(path, 65536), object_pairs_hook=unique)
+    except (ValueError, UnicodeError):
+        raise ValueError('malformed or unsafe configuration JSON') from None
 
 
 def prepare(settings):
@@ -166,6 +162,8 @@ def evaluation_unchanged(path, receipt):
 
 
 def create(project, config):
+    if not supported():
+        raise NotImplementedError('safe configuration I/O is unavailable')
     validate(config)
     project = Path(project).absolute()
     if any(p.is_symlink() for p in (project, *project.parents)):
