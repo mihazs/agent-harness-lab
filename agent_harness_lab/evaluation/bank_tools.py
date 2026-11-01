@@ -63,6 +63,25 @@ def export_manifest(bank_path,output,max_trials=24):
     return manifest
 
 
+def frozen_grader(root, task, declaration):
+    """Validate an explicit artifact/bundle contract before executing authored code."""
+    from .workspace import names
+    if not isinstance(declaration, dict) or set(declaration) != {'path', 'digest'}:
+        raise ValueError('every sandboxed grader requires an exact frozen bundle declaration')
+    allowed = names(task.get('artifacts'))
+    if not allowed: raise ValueError('sandboxed grading requires declared artifacts')
+    folder = contained(root, declaration['path'])
+    argv = task.get('grader')
+    if (not isinstance(argv, list) or len(argv) != 4 or not all(isinstance(a, str) and a for a in argv)
+            or argv[0] not in ('python', 'python3', '/usr/bin/python3', sys.executable)
+            or argv != [argv[0], str(folder/'grade.py.txt'), '{workspace}', str(folder/'expected.json')]):
+        raise ValueError('sandboxed grading requires the frozen Python artifact grader contract')
+    if not all((folder/name).is_file() for name in ('grade.py.txt', 'expected.json')):
+        raise ValueError('grader bundle requires grade.py.txt and expected.json')
+    if digest(folder) != declaration['digest']: raise ValueError('declared grader bundle integrity mismatch')
+    return folder, allowed
+
+
 def regrade_artifacts(workspace, allowlist, bundle, expected_digest, backend, *, limits=None):
     """Worker must be stopped before extraction; never trust its claimed result."""
     import tempfile

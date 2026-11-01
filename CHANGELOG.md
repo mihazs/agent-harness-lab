@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.35.0
+
+### Minor Changes
+
+- Add opt-in offline artifact grading for cooperative Codex and Claude evaluations and improve/watch workflows. Freeze complete grader bundles before controls, require typed outcomes and declared artifacts, block unavailable boundaries before agent execution, and forward resource/image selections to both control and trial graders. Native agents remain cooperative and automatic promotion stays disabled.
+
 ## 0.34.0
 
 ### Minor Changes

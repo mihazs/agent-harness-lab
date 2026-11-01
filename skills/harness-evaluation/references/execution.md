@@ -166,6 +166,25 @@ Results remain descriptive and `automatic_promotion=false`. Mock execution tests
 exercise orchestration and final-state graders, not containment or model behavior.
 Live namespace tests are skipped explicitly on unsupported hosts.
 
+For cooperative Codex or Claude trials, opt into the same grader boundary with
+`ahl evaluate --sandbox-graders --agent codex` (or `claude`) plus the manifest,
+version and output arguments above. Every task must declare existing artifact
+files and a complete `grader_bundles` entry with relative `path` and frozen
+`digest`. The grader argv uses the four-part exported Python contract. Only the
+controller selects the namespace command; arbitrary interpreter paths and missing
+program/reference files are rejected before agent execution. Grading never falls
+back to the host. This mode permits harness/skill injection into the cooperative
+agent workspace; that agent retains inherited configuration and authentication.
+
+`ahl improve --sandbox-graders` and `ahl watch --sandbox-graders` also isolate
+evaluator-authored controls. Their authors declare bundle paths; the controller
+freezes all bundles before running any control. Broken/partial controls must
+produce valid false grades and complete controls valid true grades, within the
+remaining parent deadline. Cgroup, image-pin and disk options select the same
+backend for controls and trial graders. An unavailable probe prevents agent
+execution. Full role isolation, credential-broker integration and independent
+certification remain pending; these modes cannot enable automatic promotion.
+
 ## Automatic project instruction experiments
 
 `ahl improve` discovers its own targets and prepares a staged experiment. A manifest

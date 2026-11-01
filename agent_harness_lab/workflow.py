@@ -170,7 +170,7 @@ def bounded_fixture(folder, runner):
     return runner.digest(folder)
 
 
-def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_heldout):
+def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_heldout, *, grader_backend=None):
     manifest = json.loads(path.read_text())
     if not isinstance(manifest, dict):
         raise ValueError('Evaluation manifest must be an object')
@@ -185,6 +185,29 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
         raise ValueError('Tasks require ids, fixtures and grader argument lists')
     if not 3 <= len(tasks) <= 5 or {t['split'] for t in tasks} != {'development', 'regression', 'heldout'}:
         raise ValueError('Provide 3–5 tasks covering development, regression, and heldout')
+    bundles = manifest.get('grader_bundles', {})
+    grader_contracts = {}
+    if grader_backend is not None:
+        from .evaluation.bank_tools import frozen_grader, regrade_artifacts
+        from .evaluation.integrity import contained, digest
+        from .evaluation.sandbox import Limits
+        if (not isinstance(bundles, dict) or len({task['id'] for task in tasks}) != len(tasks)
+                or set(bundles) != {task['id'] for task in tasks}):
+            raise ValueError('every sandboxed grader requires a frozen bundle')
+        for task in tasks:
+            declaration = bundles[task['id']]
+            if not isinstance(declaration, dict) or set(declaration) not in ({'path'}, {'path', 'digest'}):
+                raise ValueError('invalid grader bundle declaration')
+            folder = contained(path.parent, declaration['path']); frozen = digest(folder)
+            if 'digest' in declaration and declaration['digest'] != frozen:
+                raise ValueError('declared grader bundle integrity mismatch')
+            bundles[task['id']] = dict(path=declaration['path'], digest=frozen)
+            grader_contracts[task['id']] = (*frozen_grader(path.parent, task, bundles[task['id']]), frozen)
+        fixtures = [contained(path.parent, task['fixture']) for task in tasks]
+        for folder, _, _ in grader_contracts.values():
+            if any(folder == fixture or folder.is_relative_to(fixture) or fixture.is_relative_to(folder) for fixture in fixtures):
+                raise ValueError('grader bundle and task fixtures must not overlap')
+        manifest['grader_bundles'] = bundles
     controls = manifest.get('grader_self_tests', [])
     if not isinstance(controls, list) or any(not isinstance(c, dict) or not isinstance(c.get('fixture'), str) for c in controls):
         raise ValueError('Grader controls must be objects naming fixture directories')
@@ -211,21 +234,32 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
             bounded_fixture(workspace, runner)
             if any(p.is_file() and p.is_relative_to(workspace) for p in programs):
                 raise ValueError('Graders must be outside control fixtures')
-            argv = [a.replace('{workspace}', str(workspace)).replace('{trace}', str(path.parent / 'empty-trace.jsonl')) for a in task['grader']]
             available = remaining()
-            if available <= 0:
-                raise TimeoutError('Improvement budget exhausted before grader self-test')
-            programs = [Path(a).resolve() for a in argv if Path(a).is_file()]
-            before = {p: file_state(p) for p in programs}
-            available = remaining()
-            if available <= 0:
-                raise TimeoutError('Improvement budget exhausted before grader self-test')
-            run = runner.execute(argv, path.parent, min(30, available))
-            if any(file_state(p) != value for p, value in before.items()):
-                raise ValueError('Grader modified its own frozen program during self-test')
-            expected = check['state'] == 'complete'
-            if run['timeout'] or run['exit_code'] is None or (run['exit_code'] == 0) != expected:
-                raise ValueError('Grader self-test rejected: broken/partial must fail and complete must pass')
+            if available <= 0: raise TimeoutError('Improvement budget exhausted before grader self-test')
+            if grader_backend is not None:
+                bundle, allowed, frozen = grader_contracts[task['id']]
+                if workspace == bundle or bundle.is_relative_to(workspace):
+                    raise ValueError('grader bundle must not be inside a control fixture')
+                grade = regrade_artifacts(workspace, allowed, bundle, frozen,
+                    grader_backend, limits=Limits(seconds=min(30, available)))
+                if grade['status'] != ('passed' if check['state'] == 'complete' else 'failed'):
+                    raise ValueError('Grader self-test rejected: broken/partial must fail and complete must pass')
+            else:
+                argv = [a.replace('{workspace}', str(workspace)).replace('{trace}', str(path.parent / 'empty-trace.jsonl')) for a in task['grader']]
+                available = remaining()
+                if available <= 0:
+                    raise TimeoutError('Improvement budget exhausted before grader self-test')
+                programs = [Path(a).resolve() for a in argv if Path(a).is_file()]
+                before = {p: file_state(p) for p in programs}
+                available = remaining()
+                if available <= 0:
+                    raise TimeoutError('Improvement budget exhausted before grader self-test')
+                run = runner.execute(argv, path.parent, min(30, available))
+                if any(file_state(p) != value for p, value in before.items()):
+                    raise ValueError('Grader modified its own frozen program during self-test')
+                expected = check['state'] == 'complete'
+                if run['timeout'] or run['exit_code'] is None or (run['exit_code'] == 0) != expected:
+                    raise ValueError('Grader self-test rejected: broken/partial must fail and complete must pass')
     if remaining() <= 0:
         raise TimeoutError('Improvement budget exhausted before evaluation')
     manifest['no_nested_agents'] = True
@@ -271,6 +305,21 @@ def _improve(args):
     output = output_dir(args)
     print(f'Private run artifacts: {output}', file=sys.stderr)
     data = evidence(args, output)
+    grading = None
+    grader_options = {name: getattr(args, name, None) for name in ('cgroup_root', 'image_root', 'image_sha256', 'disk_bytes')}
+    if any(value is not None for value in grader_options.values()) and not getattr(args, 'sandbox_graders', False):
+        raise ValueError('grader resource options require --sandbox-graders')
+    if getattr(args, 'sandbox_graders', False):
+        from .evaluation.sandbox import SandboxBackend
+        grading = SandboxBackend(**grader_options)
+        available = remaining()
+        if available <= 0: raise TimeoutError('Improvement budget exhausted before grader preflight')
+        capability = grading.capability(seconds=min(3, available))
+        if capability['status'] != 'available':
+            result = dict(status='blocked', reason='grader_sandbox_unavailable', output=str(output), changed_files=[],
+                automatic_promotion=False, grader_capability=capability)
+            write_json(output/'workflow.json', result)
+            return result
     prepare = output / 'preparation'
     prepare.mkdir()
     baseline, candidate = prepare / 'baseline', prepare / 'candidate'
@@ -383,6 +432,16 @@ trials. The parent checks grader controls, freezes inputs, executes both version
         if remaining() <= 0:
             result['status'] = 'budget_exhausted'
             break
+        if grading is not None:
+            evaluation_prompt += """
+Grading is offline and artifact-only. Declare artifacts for every task (all must exist in controls).
+Use a separate complete grader bundle per task with grade.py.txt and expected.json plus all imports/data.
+Declare grader_bundles={task_id:{"path":"relative bundle directory"}}; the controller freezes all digests before grading.
+Use grader=["/usr/bin/python3",ABSOLUTE_BUNDLE_GRADE_PATH,"{workspace}",ABSOLUTE_EXPECTED_PATH].
+Graders must print schema_version=1, valid=true, outcome=boolean, grader_id and grader_version,
+with exit0 for true and exit1 for false. Broken/partial controls must produce a valid false grade.
+All bundles and controls stay outside task fixtures; no grader command is executed on the host.
+"""
         construction = runner.execute(command, evaluation, remaining(), evaluation_prompt)
         (output / f'evaluation-construction-{attempt}.jsonl').write_text(construction.pop('stdout'))
         (output / f'evaluation-construction-{attempt}.stderr').write_text(construction.pop('stderr'))
@@ -392,10 +451,13 @@ trials. The parent checks grader controls, freezes inputs, executes both version
             break
         if runner.digest(frozen) != frozen_hash or runner.digest(baseline) != baseline_hash:
             raise ValueError('Evaluation construction changed frozen harness inputs')
-        validate_manifest(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout)
+        validate_manifest(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, grader_backend=grading)
         options = argparse.Namespace(manifest=str(manifest_path), baseline=str(baseline),
             candidate=str(frozen), output=str(output / f'evaluation-{attempt}'),
             agent=agent, codex=args.codex, claude=args.claude)
+        if grading is not None:
+            options.sandbox_graders = True
+            for name, value in grader_options.items(): setattr(options, name, value)
         runner.evaluate(options)
         evaluated = json.loads((Path(options.output) / 'results.json').read_text())
         protected[evaluation] = runner.digest(evaluation)
@@ -460,7 +522,11 @@ def improve(args):
 
 def watch_configuration(args):
     settings = {k: getattr(args, k, None) for k in ('agent', 'codex', 'claude', 'timeout', 'format',
-                'focus', 'max_attempts', 'retry_delay', 'watch_budget')}
+                'focus', 'max_attempts', 'retry_delay', 'watch_budget', 'sandbox_graders',
+                'image_sha256', 'disk_bytes')}
+    for key in ('cgroup_root', 'image_root'):
+        value = getattr(args, key, None)
+        settings[key] = str(value.resolve()) if value is not None else None
     for key in ('codex', 'claude'):
         binary = shutil.which(getattr(args, key))
         if binary:
