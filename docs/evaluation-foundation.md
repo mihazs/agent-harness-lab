@@ -101,8 +101,8 @@ is per real user, not per trial. A successful bare namespace command does not
 establish that requested resource policy. The delegated canary command exercises
 the cgroup policy without raising the default limit or adding a runtime fallback.
 
-This is not a complete certified backend: inference isolation across all roles,
-full construction/execution/regrading integration and the complete adversarial
+This is not a complete certified backend: model-backed qualification of the
+construction/execution/regrading integration and the complete adversarial
 suite remain prerequisites for #7. Per-file rlimits are not aggregate disk quotas;
 per-user process limits alone are not cgroup guarantees. Host/kernel compromise is out
 of scope. `automatic_promotion=false` remains explicit even if an offline probe
@@ -264,8 +264,12 @@ pinned-image and quota profiles. Model-requested argv commands run offline and
 complete bounded working snapshots stay in controller memory between commands.
 Only final declared artifacts reach the existing fresh grader. An unavailable
 boundary blocks before key loading; ambiguous requests and containment failures
-prevent further inference. This does not isolate `improve`'s proposer/evaluator
-construction or enable promotion. Native CLI modes remain cooperative.
+prevent further inference. The same explicit profile isolates `improve`/`watch`
+proposer and evaluator-author commands with separate minimal views and histories,
+sharing one budget/client through trials and refinement. Controlled authors see
+baseline/metadata/methodology only; the controller publishes bounded authored trees
+and derives frozen grader commands. Native CLI modes remain cooperative and
+automatic promotion remains disabled. Full model-backed qualification is unknown.
 See the [settings, cap and state contract](../skills/harness-evaluation/references/execution.md#controller-owned-responses-executor).
 
 ## Offline validation and limits

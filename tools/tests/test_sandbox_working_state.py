@@ -7,6 +7,7 @@ import time
 import unittest
 from unittest.mock import patch
 from agent_harness_lab.evaluation.working_state import WorkingState
+from agent_harness_lab.evaluation import working_state
 if __package__:
     from . import test_sandbox_storage as fixtures
 else:
@@ -95,3 +96,23 @@ class WorkingStateTests(unittest.TestCase):
         self.assertEqual((destination/'script').read_text(),'before')
         self.assertEqual((destination/'script').stat().st_mode&0o777,0o600)
         with self.assertRaises(ValueError): self.state.export(['script'],destination,self.deadline)
+
+    def test_complete_publication_preserves_dynamic_names_modes_and_empty_directories(self):
+        (self.source/'new').mkdir(); (self.source/'new/authored.py').write_text('synthetic')
+        (self.source/'new/authored.py').chmod(0o710); (self.source/'script').unlink()
+        state = WorkingState(self.source,self.deadline)
+        destination = state.publish(self.root/'authored',self.deadline)
+        self.assertTrue((destination/'empty').is_dir()); self.assertFalse((destination/'script').exists())
+        self.assertEqual((destination/'new/authored.py').read_text(),'synthetic')
+        self.assertEqual((destination/'new/authored.py').stat().st_mode&0o777,0o710)
+
+    def test_complete_publication_failure_never_admits_a_partial_tree(self):
+        (self.source/'zz-last').write_text('last'); state = WorkingState(self.source,self.deadline)
+        original = working_state.write_file
+        def fail(root,name,raw,mode):
+            if name=='zz-last': raise OSError('synthetic late filesystem failure')
+            return original(root,name,raw,mode)
+        destination = self.root/'authored'
+        with patch.object(working_state,'write_file',side_effect=fail),self.assertRaises(OSError):
+            state.publish(destination,self.deadline)
+        self.assertFalse(destination.exists()); self.assertFalse(list(self.root.glob('.artifact-stage-*')))

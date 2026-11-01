@@ -67,6 +67,16 @@ the existing resource/image profiles for both control and trial graders.
 Agents still use the cooperative native CLI, inherited authentication and hooks;
 this option does not establish full role isolation or authorize promotion.
 
+`--agent responses --inference-settings FILE` selects the controlled workflow on
+supported Linux hosts. Supply explicit cgroup, pinned-image and disk profiles;
+the same client/request/tool/deadline budget covers proposer, evaluator author,
+paired task execution and any refinement. Roles receive separate bounded views;
+the author receives baseline/curated metadata and methodology. The original source
+project and prior held-out feedback stay outside those views. Native discovery or
+execution never becomes a fallback. Read the [role, receipt and resource contract](../skills/harness-evaluation/references/execution.md#controlled-improvement-roles)
+before using an API account. Model compatibility/quality and independent
+certification remain unverified; behavioral repairs still require review.
+
 Automatic adoption is limited to `AGENTS.md`, `CLAUDE.md`, project-local
 `.agents/skills/` and `.claude/skills/`, and an existing project-owned `skills/` tree.
 Symlinked/global skills and runtime permission settings are outside adoption scope.

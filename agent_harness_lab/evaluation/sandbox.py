@@ -102,7 +102,7 @@ class SandboxBackend:
                     cgroup_v2=run['attestation']['cgroup_v2'],
                     runtime_image=run['attestation'].get('runtime_image'),
                     storage_policy=run['attestation'].get('storage_policy'),
-                    limitations=['full-role inference orchestration not implemented']
+                    limitations=['full isolation certification not established']
                         + ([] if self.disk_bytes is not None else ['no aggregate disk quota'])
                         + ([] if self.image else ['runtime dependencies unpinned'])
                         + ([] if self.cgroup_root is not None else ['no aggregate cgroup controls']))

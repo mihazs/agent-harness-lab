@@ -78,6 +78,25 @@ class KernelFixture(unittest.TestCase):
         self.assertFalse(run['attestation']['automatic_promotion'])
 
 
+def pinned_runtime(rootfs):
+    rootfs.mkdir(mode=0o700)
+    for name in MOUNT_DIRS: (rootfs/name).mkdir(parents=True,exist_ok=True)
+    environment = {'PATH':'/usr/bin:/bin','LC_ALL':'C'}
+    stdlib = Path(subprocess.check_output(['/usr/bin/python3','-I','-c',
+        'import sysconfig; print(sysconfig.get_path("stdlib"))'],env=environment,text=True).strip())
+    shutil.copytree(stdlib,rootfs/stdlib.relative_to('/'),dirs_exist_ok=True,
+        ignore=shutil.ignore_patterns('site-packages','__pycache__','test','tests','ensurepip','idlelib','tkinter'))
+    binaries = [Path(path) for path in ('/usr/bin/python3','/usr/bin/true','/usr/bin/bwrap')]
+    extensions = list((stdlib/'lib-dynload').glob('*.so'))
+    libraries = subprocess.check_output(['ldd',*map(str,binaries+extensions)],env=environment,text=True)
+    dependencies = {Path(path) for path in re.findall(r'(/[^\s():]+)',libraries) if Path(path).is_file()}
+    for source in binaries+sorted(dependencies):
+        target = rootfs/source.relative_to('/'); target.parent.mkdir(parents=True,exist_ok=True)
+        shutil.copy2(source,target)
+    (rootfs/'image-marker').write_text('SYNTHETIC_PINNED_IMAGE')
+    return scan(rootfs)
+
+
 @unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
 class NamespaceKernelTests(KernelFixture):
     def test_executable_artifact_cannot_read_the_grader_reference(self):
@@ -198,22 +217,7 @@ class OfflineKernelTests(OfflineFixture, KernelFixture):
 @unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
 class PinnedImageKernelTests(OfflineFixture, KernelFixture):
     def test_pinned_image_is_used_by_executor_pristine_grader_and_nested_checks(self):
-        rootfs = self.root/'runtime'; rootfs.mkdir(mode=0o700)
-        for name in MOUNT_DIRS: (rootfs/name).mkdir(parents=True, exist_ok=True)
-        environment = {'PATH': '/usr/bin:/bin', 'LC_ALL': 'C'}
-        stdlib = Path(subprocess.check_output(['/usr/bin/python3', '-I', '-c',
-            'import sysconfig; print(sysconfig.get_path("stdlib"))'], env=environment, text=True).strip())
-        shutil.copytree(stdlib, rootfs/stdlib.relative_to('/'), dirs_exist_ok=True,
-            ignore=shutil.ignore_patterns('site-packages', '__pycache__', 'test', 'tests', 'ensurepip', 'idlelib', 'tkinter'))
-        binaries = [Path(p) for p in ('/usr/bin/python3', '/usr/bin/true', '/usr/bin/bwrap')]
-        extensions = list((stdlib/'lib-dynload').glob('*.so'))
-        libraries = subprocess.check_output(['ldd', *map(str, binaries+extensions)], env=environment, text=True)
-        dependencies = {Path(p) for p in re.findall(r'(/[^\s():]+)', libraries) if Path(p).is_file()}
-        for source in binaries+sorted(dependencies):
-            target = rootfs/source.relative_to('/'); target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(source, target)
-        (rootfs/'image-marker').write_text('SYNTHETIC_PINNED_IMAGE')
-        frozen = scan(rootfs)
+        rootfs = self.root/'runtime'; frozen = pinned_runtime(rootfs)
         backend = SandboxBackend(cgroup_root=self.cgroup_root, image_root=rootfs, image_sha256=frozen['sha256'], disk_bytes=64*1024*1024)
         scratch = self.root/'scratch'; scratch.mkdir()
         code = '''from pathlib import Path
@@ -239,6 +243,52 @@ except OSError: pass
                 attested = execution['attestation']['runtime_image']
                 self.assertEqual(attested['sha256'], frozen['sha256'])
                 self.assertTrue(attested['verified_before'] and attested['verified_after'])
+
+
+@unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel:roles')
+class ControlledWorkflowKernelTests(KernelFixture):
+    def test_controlled_workflow_role_views_deny_source_key_candidate_and_prior_heldout_reads(self):
+        from test_sandbox_construction import ControlledWorkflowTests,PROPOSER,AUTHOR,EXECUTOR,wire,workflow,responses
+        fixture = ControlledWorkflowTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        rootfs = self.root/'runtime'; frozen = pinned_runtime(rootfs)
+        fixture.args.cgroup_root = self.cgroup_root; fixture.args.image_root = rootfs
+        fixture.args.image_sha256 = frozen['sha256']; fixture.args.disk_bytes = 64*1024*1024; fixture.args.timeout = 60
+        home = tempfile.TemporaryDirectory(prefix='ahl-role-canary-',dir=Path.home()); self.addCleanup(home.cleanup)
+        home_secret = Path(home.name)/'canary'; home_secret.write_text('SYNTHETIC_HOME_CANARY')
+        probe = '''import json,os,pathlib,sys
+assert 'AHL_SYNTHETIC_BROKER_KEY' not in os.environ
+assert not pathlib.Path('/inputs/oracle').exists()
+for value in json.loads(sys.argv[-1]):
+ try: pathlib.Path(value).read_bytes()
+ except OSError: continue
+ raise AssertionError('forbidden host path was readable')
+'''
+        def transport(key,body,max_bytes,deadline):
+            self.assertEqual(key,'SYNTHETIC_CONTROLLER_KEY'); self.assertNotIn(key,body.decode())
+            payload = json.loads(body); fixture.histories.append(payload); ident = str(len(fixture.histories))
+            if any(item.get('type')=='function_call_output' for item in payload['input']): return wire.reply([wire.message('final-'+ident)])
+            instructions = payload['input'][0]['content']; output = fixture.args._run_output
+            hidden = output/'private-heldout'; hidden.mkdir(exist_ok=True); (hidden/'canary').write_text('SYNTHETIC_HELDOUT')
+            forbidden = [fixture.key,fixture.project/'AGENTS.md',home_secret,hidden/'canary']
+            if 'You are the proposer' in instructions:
+                argv = ['/usr/bin/python3','-c',probe+PROPOSER,'good']
+            elif 'You are the evaluator author' in instructions:
+                forbidden += [output/'candidate-0/AGENTS.md',output/'proposer-0/proposal.json']
+                self.assertNotIn('SYNTHETIC_CANDIDATE_SECRET',body.decode())
+                argv = ['/usr/bin/python3','-c',probe+"assert pathlib.Path('/inputs/harness/AGENTS.md').read_text() == 'bad'\n"+AUTHOR,'1','complete']
+            else: argv = ['/usr/bin/python3','-c',probe+EXECUTOR,'/inputs/harness']
+            argv.append(json.dumps(list(map(str,forbidden))))
+            return wire.reply([wire.call(ident,arguments=json.dumps(dict(argv=argv)))])
+        with patch('agent_harness_lab.cli.evaluator',return_value=fixture.runner), \
+             patch.object(responses,'request',side_effect=transport), \
+             patch.object(fixture.runner,'execute',side_effect=AssertionError('no native host execution')), \
+             patch.dict(os.environ,AHL_SYNTHETIC_BROKER_KEY='SYNTHETIC_ENV_KEY'):
+            result = workflow.improve(fixture.args)
+        self.assertEqual(result['status'],'inconclusive',result)
+        self.assertEqual(result['inference']['request_attempts'],16)
+        self.assertEqual((fixture.project/'AGENTS.md').read_text(),'bad')
+        ledger = json.loads((Path(result['output'])/'inference.json').read_text())
+        self.assertFalse(ledger['request_pending']); self.assertNotIn('SYNTHETIC_CONTROLLER_KEY',json.dumps(ledger))
 
 
 @unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
