@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.38.0
+
+### Minor Changes
+
+- Add a bounded regression reproduction proposal validator and read-only CLI. Record exact declared snapshot/source identities, preserve missing evidence and distinguish task failures from recovered errors and environment/grader defects. Receipts never verify reproduction, admit tasks, authorize publication or promote changes automatically.
+
 ## 0.37.0
 
 ### Minor Changes

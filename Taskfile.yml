@@ -121,6 +121,10 @@ tasks:
     desc: Run controlled preparation views, authored contracts and workflow cases
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_sandbox_construction.py" -v'
+  test:evaluation:regressions:
+    desc: Run native regression reproduction contract tests
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_regression_proposals.py" -v'
   test:sandbox:kernel:state:
     desc: Run the new working-state canary in a disposable delegated scope
     cmds:
@@ -172,6 +176,7 @@ tasks:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_claude_native.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_sandbox_*.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_offline_evaluation.py"'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_regression_proposals.py"'
   install:wheel:
     cmds:
       - '{{.PYTHON | shellQuote}} -m venv dist/wheel-env'

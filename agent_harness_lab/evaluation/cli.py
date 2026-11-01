@@ -21,6 +21,8 @@ def main(argv):
     experiment = commands.add_parser('experiment', help='Analyze a frozen repeated paired experiment')
     experiment.add_argument('--spec', type=Path, required=True)
     experiment.add_argument('--records', type=Path, required=True)
+    regression = commands.add_parser('regression', help='Validate a declared reproduction proposal; never execute or admit it')
+    regression.add_argument('--proposal', type=Path, required=True)
     sandbox = commands.add_parser('sandbox-check', help='Probe offline sandbox capability; never relax isolation')
     sandbox.add_argument('--cgroup-root', type=Path, help='Explicit predelegated cgroup v2 subtree; fail closed if unavailable')
     sandbox.add_argument('--image-root', type=Path, help='Explicit private extracted runtime rootfs')
@@ -45,6 +47,10 @@ def main(argv):
             code = 0 if result['certification_eligible'] else 3
             if args.audit and result['grader_audit']['status'] != 'controls_passed':
                 code = 3
+        elif args.command == 'regression':
+            from .regressions import validate as validate_regression
+            result = validate_regression(args.proposal)
+            code = 0
         elif args.command == 'experiment':
             from .plan import ExperimentSpec
             from .statistics import TrialRecord, analyze
