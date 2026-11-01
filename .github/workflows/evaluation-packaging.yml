@@ -33,7 +33,12 @@ jobs:
       - name: Build tools only; no inference dependencies or credentials
         run: task setup:build
       - run: task build
+      - name: Verify optional OKF parsing without model dependencies
+        run: task setup:okf
       - name: Clean wheel install and offline CLI smoke
-        run: task install:wheel test:wheel
+        run: |
+          task install:wheel
+          task setup:okf PYTHON=dist/wheel-env/bin/python
+          task test:wheel
       - name: Check versioned archive imports without a model account
         run: task test:archive

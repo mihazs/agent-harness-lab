@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.0
+
+### Minor Changes
+
+- Read explicitly selected extracted ai-memory OKF v0.2 project bundles with an optional YAML extra. Preserve parsed page metadata in memory, import fingerprinted contextual evidence through atomic checkpoints, and report freshness, authorship and lifecycle claims without treating summaries as execution or review proof. Reject unsafe YAML, links, special files, nested scopes and project mismatches; never read the derived database or start servers/hooks.
+
 ## 0.9.0
 
 ### Minor Changes
