@@ -454,7 +454,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         validate_manifest(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, grader_backend=grading)
         options = argparse.Namespace(manifest=str(manifest_path), baseline=str(baseline),
             candidate=str(frozen), output=str(output / f'evaluation-{attempt}'),
-            agent=agent, codex=args.codex, claude=args.claude)
+            agent=agent, codex=args.codex, claude=args.claude, parent_deadline=started + args.timeout)
         if grading is not None:
             options.sandbox_graders = True
             for name, value in grader_options.items(): setattr(options, name, value)

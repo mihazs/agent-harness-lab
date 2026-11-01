@@ -119,6 +119,10 @@ def agent_command(agent, binary, plugin=None, skills=()):
 
 
 def evaluate(args):
+    started = time.monotonic()
+    parent_deadline = getattr(args, 'parent_deadline', None)
+    if parent_deadline is not None and (type(parent_deadline) not in (int, float) or not math.isfinite(parent_deadline)):
+        raise ValueError('parent deadline must be a finite monotonic timestamp')
     sandbox_graders = getattr(args, 'sandbox_graders', False)
     if type(sandbox_graders) is not bool: raise ValueError('sandbox grader mode must be explicit')
     cgroup_root = getattr(args, 'cgroup_root', None)
@@ -154,7 +158,6 @@ def evaluate(args):
     configured = None
     binary = args.claude if args.agent == 'claude' else args.codex
     if getattr(args, 'config', None) is not None:
-        configuration_started = time.monotonic()
         application_modules()
         from agent_harness_lab.config import evaluation_settings, evaluation_unchanged
         configured = evaluation_settings(Path(args.config), manifest_path, manifest, versions, args.agent, binary)
@@ -163,6 +166,8 @@ def evaluate(args):
         binary = configured['binary']
     if not math.isfinite(timeout) or not math.isfinite(budget) or timeout <= 0 or budget <= 0 or len(tasks) * 2 > trial_limit:
         raise ValueError('invalid timeout/budget or trial limit exceeded')
+    if parent_deadline is not None:
+        budget = min(budget, max(0, parent_deadline - started))
     frozen_versions, frozen_fixtures = {}, {}
     for version, root in versions.items():
         if output == root or output.is_relative_to(root) or root.is_relative_to(output):
@@ -272,7 +277,6 @@ def evaluate(args):
             raise ValueError('repeated plan exceeds caller trial ceiling')
     else:
         ordered = [dict(version=version, task=task['id'], repetition=0) for version in versions for task in tasks]
-    started = configuration_started if configured else time.monotonic()
     blocked = configured and configured['blocked_reason']
     if configured and not evaluation_unchanged(Path(args.config), configured):
         blocked = 'configuration_changed_before_execution'

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.35.1
+
+### Patch Changes
+
+- Charge evaluator input/configuration preparation to the whole-run budget and preserve the original improve deadline across trial-stage dispatch. An expired parent or preparation budget prevents runtime probes and model launches; inherited deadlines can only narrow existing caps.
+
 ## 0.35.0
 
 ### Minor Changes
