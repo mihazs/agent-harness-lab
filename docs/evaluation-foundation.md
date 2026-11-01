@@ -101,13 +101,61 @@ is per real user, not per trial. A successful bare namespace command does not
 establish that requested resource policy. The delegated canary command exercises
 the cgroup policy without raising the default limit or adding a runtime fallback.
 
-This is not a complete certified backend: aggregate disk quotas, a narrow inference broker,
+This is not a complete certified backend: a narrow inference broker,
 full construction/execution/regrading integration and the complete adversarial
 suite remain prerequisites for #7. Per-file rlimits are not aggregate disk quotas;
 per-user process limits alone are not cgroup guarantees. Host/kernel compromise is out
 of scope. `automatic_promotion=false` remains explicit even if an offline probe
 succeeds. Passing selected kernel canaries supports only those tested offline
 boundaries, not complete hostile-agent certification or model-backed isolation.
+
+An explicit `--disk-bytes BYTES` on the offline evaluator or sandbox probe adds
+quota-backed private storage. It requires `--cgroup-root`, nested unprivileged
+user/mount namespaces and `/usr/bin/python3` plus `/usr/bin/bwrap` in the runtime.
+The capacity must be a positive multiple of four host memory pages. Half is
+allocated to `/work`, one quarter to `/tmp` and one quarter to `/dev/shm` using
+separate sized tmpfs mounts. These are shared volume limits across all files and
+descendants, alongside the existing per-file limit. tmpfs pages and metadata
+also consume the worker cgroup's memory allowance; swap remains disabled.
+To cover memfds and additional tmpfs mounts created by nested namespaces, the
+cgroup memory ceiling is also capped at the storage budget. Controller-seeded
+data pages are measured and subtracted from that ceiling before worker release,
+because their memory charge belongs to the controller. The effective ceiling is
+the smaller of the requested memory limit and the remaining storage budget;
+the attestation records its read-back value. This deliberately couples memory
+and storage admission: interpreter/anonymous memory and filesystem metadata use
+the same remaining allowance. Small storage budgets may fail before execution.
+
+A trusted setup process creates the private filesystem and hands its directory
+descriptor to the controller through a bounded Unix socket protocol. The
+controller seeds it from the validated fixture, then releases a fresh worker
+namespace launched from that mount namespace. Before executing the submitted
+command, the worker verifies volume capacities and readonly root/input/device
+mounts. Setup directory descriptors are closed before worker execution. The host
+workspace is never mounted writable in this mode. Failure of setup, verification
+or namespace creation blocks execution without a host-directory fallback.
+
+Executor calls must declare their artifact allowlist; offline evaluation uses the
+manifest's list. Graders export nothing. After the entire cgroup stops and input
+integrity checks pass, successful workers export only those regular, single-link
+files through anchored descriptors, refusing symlinks at every component, special
+files, missing outputs and a combined size over 1 MiB. Files are validated before
+host writes; each replacement is atomic, but a host I/O error can leave a partial
+set and fails the trial. Unlisted writes and failed/interrupted worker outputs
+are discarded. Source file modes are preserved; new exported files use mode 0600.
+
+`storage_policy` records the capacity split, controller-seeded allocation,
+verification and extraction counts;
+`aggregate_disk_bound_verified` records successful mount verification. The cap
+bounds allocated tmpfs file data, rather than logical sizes of sparse files or
+metadata overhead. The memory cap bounds metadata. Swallowed `ENOSPC` errors are
+not independently audited, so a verified storage cap does not certify that no
+resource access was denied. Automatic promotion remains disabled. Live native
+tests exercise all volumes, discarded writes, executable seed permissions,
+descriptor closure, bounded exports, links, failures and process cleanup. Unit
+tests separately exercise malformed descriptor handoffs and startup deadlines.
+Live attacks also try allocating a large memfd and mounting a new larger tmpfs;
+both must hit the aggregate memory boundary and invalidate the trial.
 
 Starter grader v2 closes an executable-artifact oracle-read bypass. In an isolated
 grader role, submitted Python checks run in a nested bubblewrap namespace with
@@ -243,10 +291,12 @@ execution attestations remain in the private audit result.
 
 This mode currently supports the starter-style `grade.py.txt`/`expected.json`
 Python grader contract using `/usr/bin/python3` inside the namespace. It does not
-isolate a model run or provide inference access. Aggregate disk quotas,
-pinned dependency images, whole-experiment parent-budget orchestration and full
-role integration remain pending. Opt-in cgroup controls above cover aggregate
-memory/process resources and CPU bandwidth, but do not provide disk quotas.
+isolate a model run or provide inference access. This audit entrypoint uses the
+default host runtime and writable workspace profile; the optional pinned-image
+and private-storage profiles above are exposed through the offline evaluator and
+sandbox probe. Whole-experiment parent-budget orchestration and full role
+integration remain pending. Cgroup controls alone cover aggregate memory/process
+resources and CPU bandwidth; storage caps require the explicit storage profile.
 Offline audits now use one 300-second wall-clock
 admission deadline shared by validation, capability probing, materialization,
 extraction, oracle copying and all control executions. API callers can pass their

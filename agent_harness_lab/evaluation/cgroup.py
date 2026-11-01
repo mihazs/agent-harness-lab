@@ -96,6 +96,14 @@ class Cgroup:
         # Called in the child before exec/fork; all descendants inherit membership.
         self.write('cgroup.procs', '0')
 
+    def limit_memory(self, ceiling):
+        if type(ceiling) is not int or not 0 < ceiling <= int(self.controls['memory.max']):
+            raise ValueError('invalid reduced cgroup memory ceiling')
+        self.write('memory.max', str(ceiling))
+        if self.read('memory.max') != str(ceiling):
+            raise ValueError('reduced cgroup memory readback mismatch')
+        self.controls['memory.max'] = str(ceiling)
+
     def __exit__(self, *exception):
         try:
             self.write('cgroup.kill', '1')
