@@ -1,0 +1,7 @@
+assert_lefthook_installed: true
+no_auto_install: true
+skip_lfs: true
+pre-commit:
+  jobs:
+    - name: zero-clones
+      run: python3 scripts/check_duplicates.py

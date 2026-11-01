@@ -36,10 +36,13 @@ Do not start paid inference merely to validate documentation.
 
 ## Pre-commit duplication check
 
-Run `npm ci` with the latest stable Node.js to install the pinned jscpd development dependency
-and enable `.githooks/pre-commit` for this checkout. Setup preserves any existing
-Git hook directory or custom hooks and reports an error instead of replacing them;
-integrate the supplied hook explicitly if you already manage hooks elsewhere.
+Run `npm ci` followed by `npm run hooks:install` with the latest stable Node.js to
+install pinned jscpd and Lefthook development dependencies and enable the
+`lefthook.yml` pre-commit job. Automatic npm lifecycle scripts are disabled so
+Lefthook's dependency postinstall cannot replace a foreign hook before the guard
+runs. Setup migrates this repository's old local `.githooks` setting. It refuses
+a foreign `core.hooksPath` or pre-commit handler; integrate the Lefthook job
+explicitly if you already manage hooks elsewhere.
 No global Git settings or installed AHL runtime dependencies are changed.
 
 `npm run duplication:check` requires **zero clones** in staged Python source.
@@ -55,7 +58,7 @@ temporary directory. It neither stashes edits nor creates Git worktrees, invokes
 checkout filters, changes the index, or includes unstaged repairs in its result.
 Reports stay local. No clone baseline or duplication allowance is maintained.
 Python-only test runs still work without Node; executable hook tests are explicitly
-skipped when jscpd is not installed.
+skipped when jscpd or Lefthook is not installed.
 
 ## Architecture map
 

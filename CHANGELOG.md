@@ -4,6 +4,8 @@
 
 ### Minor Changes
 
+- Migrate the zero-clone staged pre-commit gate to Lefthook. Explicit guarded hook installation preserves foreign hooks and migrates the repository's legacy hook path; automatic npm lifecycle installation is disabled.
+
 - Define strict metadata-only source, evidence and import-receipt contracts and an explicit version-gated capability registry. Preserve separate evidence planes and unknown provenance; discovery performs no source reads, plugin imports or network calls. Production connectors and checkpoint persistence remain pending.
 
 ## 0.5.1
