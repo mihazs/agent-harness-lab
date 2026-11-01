@@ -300,6 +300,7 @@ def evaluate(args):
     if 'experiment' in manifest:
         application_modules()
         from agent_harness_lab.evaluation.plan import ExperimentSpec, schedule
+        from agent_harness_lab.evaluation.oracle import identity as oracle_identity
         plan = ExperimentSpec.parse(manifest['experiment'])
         if {t[0] for t in plan.tasks} != {t['id'] for t in tasks}:
             raise ValueError('experiment task set differs from manifest')
@@ -307,6 +308,9 @@ def evaluate(args):
             raise ValueError('experiment harness hashes differ from inputs')
         if configured and {t[0]: t[1:] for t in plan.tasks} != {t['id']: (t['root'], t['family']) for t in tasks}:
             raise ValueError('experiment lineage differs from configured bank')
+        oracle_hash = oracle_identity(manifest_path.parent, tasks, declared_bundles)
+        if plan.grader_hash != oracle_hash:
+            raise ValueError('experiment oracle differs from frozen plan; create a new plan and rerun both arms')
         ordered = schedule(plan)
         if len(ordered) > trial_limit:
             raise ValueError('repeated plan exceeds caller trial ceiling')
@@ -386,6 +390,7 @@ def evaluate(args):
     if plan:
         results['experiment'] = manifest['experiment']
         results['plan_digest'] = plan.digest
+        results['grader_hash'] = oracle_hash
     results['profile'] = plan.profile if plan else 'descriptive_smoke'
     results['automatic_promotion'] = False
     for scheduled in ordered:

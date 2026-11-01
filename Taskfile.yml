@@ -15,6 +15,19 @@ tasks:
     desc: Run evaluator unittest cases
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s skills/harness-evaluation/scripts -p "test_*.py"'
+  experiment:oracle:
+    desc: Compute the verified oracle pin for an exported repeated-experiment manifest
+    requires:
+      vars: [MANIFEST]
+    cmds:
+      - >-
+        {{.PYTHON | shellQuote}} -c
+        'from pathlib import Path; import sys; from agent_harness_lab.private_journal import record; from agent_harness_lab.evaluation.oracle import identity; p=Path(sys.argv[1]); m,_=record(p,1024*1024); print(identity(p.parent,m["tasks"],m.get("grader_bundles",{})))'
+        {{.MANIFEST | shellQuote}}
+  test:evaluation:oracle:
+    desc: Run native oracle identity and stale-plan execution cases
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_oracle_*.py" -v'
   test:sources:
     desc: Run source contracts and checkpoint unittest cases
     cmds:
@@ -219,6 +232,7 @@ tasks:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_offline_evaluation.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_regression_*.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_grader_budget.py"'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_oracle_*.py"'
   test:installed:sources:
     desc: Run native source checks against an installed layout, including optional extras when installed
     dir: '{{.LAYOUT_DIR}}'
