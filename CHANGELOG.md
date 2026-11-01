@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.26.0
+
+### Minor Changes
+
+- Add an explicit local Git v2 profile that atomically captures scoped commit/ref/harness relationships and coverage in the shared source journal. Preserve reference-only objects, dirty snapshots, shallow and capped-history gaps, unknown execution loading and old checkpoints; keep the v1 profile unchanged.
+
 ## 0.25.0
 
 ### Minor Changes

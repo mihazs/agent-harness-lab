@@ -1,6 +1,7 @@
 """Synthetic native Git repositories; source code/config must never be executed."""
 from contextlib import redirect_stderr, redirect_stdout
 import io
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -18,6 +19,8 @@ from agent_harness_lab.cli import main
 from agent_harness_lab.sources.git import GitExport, HarnessSnapshot
 from agent_harness_lab.sources.git_view import Folder, GitView
 from agent_harness_lab.sources.schema import SourceSpec, digest
+from agent_harness_lab.sources.store import SourceStore
+from agent_harness_lab.sources.git_evidence import capture as capture_evidence
 
 
 @unittest.skipUnless(Path('/usr/bin/git').is_file(), 'explicit system Git is required')
@@ -53,7 +56,7 @@ class GitSourceTests(unittest.TestCase):
         self.git('add', '--all'); self.git('commit', '-m', 'SYNTHETIC_PRIVATE_MESSAGE')
 
     def declare(self):
-        self.source = SourceSpec('local_git', 'git', 'v1', digest(str(self.root.resolve())), digest('synthetic-project'),
+        self.source = SourceSpec('local_git', 'git', getattr(self, 'source_version', 'v1'), digest(str(self.root.resolve())), digest('synthetic-project'),
             digest(self.selection), identity_provenance='source_declared_id', enabled=True)
         (self.root/'selection.json').write_text(json.dumps(self.selection))
         self.manifest.write_text(json.dumps(dict(schema_version=1, source=self.source.to_dict(), data='selection.json')))
@@ -375,6 +378,151 @@ class GitSourceTests(unittest.TestCase):
             with self.assertRaises(TimeoutError): folder.read('source.json')
         with GitView(time.monotonic()+2) as view:
             with self.assertRaises(ValueError): view.run('fetch')
+
+    def use_evidence_profile(self):
+        self.source_version = 'v2'; self.declare()
+
+    def test_v2_native_relationships_use_scoped_revisions_and_never_execution_identity(self):
+        self.use_evidence_profile()
+        (self.repo/'AGENTS.md').write_text('SYNTHETIC_NEXT'); self.commit()
+        collector, snapshot = self.read()
+        graph = snapshot.graph; graph.validate(self.source, snapshot.records)
+        kinds = {(r.source_sha256, r.native_id_sha256, r.revision_sha256): r.record_type for r in snapshot.records}
+        self.assertEqual({j.relation for j in graph.joins}, {'commit_parent', 'git_ref_target', 'harness_based_on', 'harness_member'})
+        parent = next(j for j in graph.joins if j.relation == 'commit_parent')
+        self.assertEqual(kinds[parent.left.key], 'git_commit'); self.assertEqual(kinds[parent.right.key], 'git_commit')
+        self.assertEqual(parent.left.revision_sha256, collector.summary['head_sha256'])
+        self.assertTrue(all(j.status == 'candidate' and j.basis == 'native_fields' for j in graph.joins))
+        self.assertEqual(snapshot.metadata.identities, ()); self.assertIsNone(graph.summary()['independent_roots'])
+        self.assertEqual(snapshot.metadata.coverage.reported_completeness, 'partial')
+        self.assertTrue(all(f.reason == 'no_effective_binding' for f in snapshot.metadata.coverage.missing_fields))
+        for private in ('SYNTHETIC', 'AGENTS.md', str(self.repo), 'refs/heads/main'):
+            self.assertNotIn(private, json.dumps(graph.to_dict())+json.dumps(snapshot.metadata.to_dict()))
+
+    def test_v2_history_bound_preserves_parent_references_without_inventing_captured_commits(self):
+        (self.repo/'AGENTS.md').write_text('SYNTHETIC_NEXT'); self.commit()
+        self.selection['max_commits'] = 1; self.use_evidence_profile()
+        collector, snapshot = self.read()
+        commits = [r for r in snapshot.records if r.record_type == 'git_commit']
+        references = [r for r in snapshot.records if r.record_type == 'git_object_reference']
+        self.assertEqual(len(commits), 1); self.assertEqual(len(references), 1)
+        join = next(j for j in snapshot.graph.joins if j.relation == 'commit_parent')
+        self.assertEqual(join.right.native_id_sha256, references[0].native_id_sha256)
+        coverage = snapshot.metadata.coverage
+        self.assertTrue(coverage.truncated); self.assertTrue(coverage.limit_reached)
+        self.assertEqual(next(b.observed for b in coverage.scan_bounds if b.dimension == 'commits'), 1)
+        self.assertEqual(len(collector.summary['commits']), 1)
+
+    def test_v2_annotated_tag_targets_stay_object_references_without_assumed_peeling(self):
+        self.git('tag', '-a', 'synthetic-tag', '-m', 'SYNTHETIC_TAG')
+        self.use_evidence_profile(); collector, snapshot = self.read()
+        native = next(r for r in collector.summary['refs'] if r['object_type'] == 'tag')
+        ref_id = digest(('git_ref', 'refs/tags/synthetic-tag'))
+        join = next(j for j in snapshot.graph.joins if j.left.native_id_sha256 == ref_id)
+        target = next(r for r in snapshot.records if r.native_id_sha256 == join.right.native_id_sha256)
+        self.assertEqual(target.record_type, 'git_object_reference')
+        self.assertEqual(target.native_id_sha256, digest(('git_object_reference', native['target_sha256'])))
+        self.assertNotEqual(join.right.revision_sha256, collector.summary['head_sha256'])
+
+    def test_v2_probe_remains_offline_and_cli_import_exposes_both_contract_facets(self):
+        self.use_evidence_profile()
+        with patch('subprocess.Popen', side_effect=AssertionError('no Git during probe')):
+            code, result = self.invoke('probe')
+        self.assertEqual(code, 0); self.assertFalse(result['source_read'])
+        cache = self.root/'private/cache.json'
+        with patch.object(socket, 'socket', side_effect=AssertionError('no network')):
+            code, preview = self.invoke('preview'); self.assertEqual(code, 0)
+            self.assertIn('execution_metadata', preview); self.assertIn('evidence_graph', preview)
+            self.assertEqual(self.invoke('import', '--cache', str(cache))[0], 0)
+            first = cache.read_bytes()
+            result = self.invoke('import', '--cache', str(cache))[1]
+            self.assertEqual(result['imported'], 0); self.assertEqual(cache.read_bytes(), first)
+        store = SourceStore(cache, project_sha256=self.source.project_sha256, scope_sha256=self.source.scope_sha256)
+        self.assertIsNotNone(store.graph(self.source))
+        context = store.inventory()['sources'][0]
+        self.assertEqual(context['execution_metadata']['identities'], 0)
+        self.assertEqual(context['declared_coverage']['reported_completeness'], 'partial')
+
+    def test_v2_dirty_harness_and_later_head_preserve_old_snapshot_and_graph(self):
+        self.use_evidence_profile(); cache = self.root/'cache.json'
+        self.assertEqual(self.invoke('import', '--cache', str(cache))[0], 0)
+        store = SourceStore(cache, project_sha256=self.source.project_sha256, scope_sha256=self.source.scope_sha256)
+        old_cursor = store.status(self.source)['cursor_sha256']; old_graph = store.graph(self.source, old_cursor)
+        _, old = self.read()
+        (self.repo/'AGENTS.md').write_text('SYNTHETIC_DIRTY')
+        collector, dirty = self.read()
+        self.assertNotEqual(collector.harness.files[0].content_sha256, collector.harness.files[0].committed_sha256)
+        self.assertNotEqual(old.graph.sha256, dirty.graph.sha256)
+        self.assertEqual(self.invoke('import', '--cache', str(cache))[0], 0)
+        self.commit(); self.assertEqual(self.invoke('import', '--cache', str(cache))[0], 0)
+        self.assertEqual(store.graph(self.source, old_cursor), old_graph)
+        self.assertEqual(old.metadata.identities, ()); self.assertEqual(dirty.metadata.identities, ())
+
+    def test_v2_shallow_capture_is_truncated_even_when_commit_limit_is_not_reached(self):
+        self.git('update-ref', 'refs/heads/other', self.git('rev-parse', 'HEAD').decode().strip())
+        (self.repo/'AGENTS.md').write_text('SYNTHETIC_NEXT'); self.commit()
+        head = self.git('rev-parse', 'HEAD').decode().strip()
+        (self.repo/'.git/shallow').write_text(head+'\n')
+        self.use_evidence_profile(); _, snapshot = self.read()
+        self.assertTrue(snapshot.metadata.coverage.truncated)
+        self.assertFalse(snapshot.metadata.coverage.limit_reached)
+        self.assertEqual(snapshot.metadata.coverage.reported_completeness, 'partial')
+        self.assertTrue(any(r.record_type == 'git_object_reference' for r in snapshot.records))
+
+    def test_v2_instruction_inventory_is_bound_to_harness_without_claiming_loaded_state(self):
+        self.selection['instruction_profile'] = dict(schema_version=1, runtime='codex', version='0.166.0', task_cwd='.',
+            fallback_filenames=[], project_doc_max_bytes=32768)
+        self.use_evidence_profile(); collector, snapshot = self.read()
+        join = next(j for j in snapshot.graph.joins if j.relation == 'instruction_inventory_of')
+        self.assertEqual(join.left.revision_sha256, collector.instructions.sha256)
+        self.assertEqual(join.right.revision_sha256, collector.harness.sha256)
+        self.assertEqual(collector.harness.observed_loading, 'unknown'); self.assertEqual(snapshot.metadata.identities, ())
+
+    def test_v2_facet_failure_cannot_advance_existing_journal(self):
+        self.use_evidence_profile(); cache = self.root/'cache.json'
+        self.assertEqual(self.invoke('import', '--cache', str(cache))[0], 0); original = cache.read_bytes()
+        (self.repo/'AGENTS.md').write_text('SYNTHETIC_NEW')
+        with patch('agent_harness_lab.sources.git.capture_evidence', side_effect=ValueError('synthetic rejected graph')):
+            self.assertEqual(self.invoke('import', '--cache', str(cache))[0], 2)
+        self.assertEqual(cache.read_bytes(), original)
+
+    def test_v1_retains_legacy_snapshot_and_no_new_facets(self):
+        collector, snapshot = self.read()
+        self.assertEqual(snapshot.sha256, digest(collector.summary))
+        self.assertIsNone(snapshot.graph); self.assertIsNone(snapshot.metadata)
+        self.assertFalse(any(r.record_type in ('harness_snapshot', 'git_object_reference') for r in snapshot.records))
+
+    def test_v1_to_v2_upgrade_preserves_source_identity_records_and_legacy_checkpoint(self):
+        cache = self.root/'cache.json'
+        result = self.invoke('import', '--cache', str(cache))[1]
+        legacy = self.source
+        store = SourceStore(cache, project_sha256=legacy.project_sha256, scope_sha256=legacy.scope_sha256)
+        old_cursor = store.status(legacy)['cursor_sha256']
+        self.use_evidence_profile()
+        self.assertEqual(self.source.source_key, legacy.source_key)
+        upgraded = self.invoke('import', '--cache', str(cache))[1]
+        self.assertEqual(upgraded['imported'], 1); self.assertEqual(upgraded['skipped'], result['imported'])
+        self.assertIsNone(store.graph(legacy, old_cursor)); self.assertIsNone(store.capture(legacy, old_cursor))
+        self.assertIsNotNone(store.graph(self.source)); self.assertEqual(store.status(self.source)['checkpoints'], 2)
+
+    def test_v2_large_native_parent_sets_reject_before_allocating_graph_rows_or_receipts(self):
+        self.use_evidence_profile()
+        tree = self.git('rev-parse', 'HEAD^{tree}').strip()
+        def admit(source, rows, summary, record, *limits):
+            def reject_allocation(*args): raise AssertionError('oversized graph must reject before allocation')
+            return capture_evidence(source, rows, summary, reject_allocation, *limits)
+        for parents in (10000, 20001):
+            raw = (b'tree '+tree+b'\n'+b''.join(f'parent {n:040x}\n'.encode() for n in range(1, parents+1))
+                + b'author Synthetic <synthetic@example.invalid> 1767225600 +0000\n'
+                + b'committer Synthetic <synthetic@example.invalid> 1767225600 +0000\n\nSYNTHETIC_MANY_PARENTS\n')
+            native = b'commit '+str(len(raw)).encode()+b'\0'+raw
+            sha = hashlib.sha1(native).hexdigest()
+            directory = self.repo/'.git/objects'/sha[:2]; directory.mkdir(exist_ok=True)
+            (directory/sha[2:]).write_bytes(zlib.compress(native))
+            (self.repo/'.git/refs/heads/main').write_text(sha+'\n'); (self.repo/'.git/shallow').write_text(sha+'\n')
+            with self.subTest(parents=parents), patch('agent_harness_lab.sources.git.capture_evidence', side_effect=admit) as admission:
+                self.assertEqual(self.invoke('preview')[0], 2)
+                admission.assert_called_once()
 
 
 if __name__ == '__main__': unittest.main()
