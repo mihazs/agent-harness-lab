@@ -97,6 +97,19 @@ class SourceDispatchTests(unittest.TestCase):
         self.declare(replace(self.source, enabled=False))
         with self.assertRaises(ValueError): connector.read(self.source)
 
+    def test_mutable_export_can_return_to_an_earlier_snapshot_without_losing_history(self):
+        cache = self.root/'cache.json'
+        original = self.data.read_bytes()
+        self.assertEqual(self.invoke('import', '--cache', str(cache))[0], 0)
+        changed = replace(self.record, revision_sha256=digest('revision-2'), content_sha256=digest('changed'))
+        self.data.write_text(json.dumps([changed.to_dict()]))
+        self.assertEqual(self.invoke('import', '--cache', str(cache))[0], 0)
+        self.data.write_bytes(original)
+        code, receipt = self.invoke('import', '--cache', str(cache))
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(receipt)['imported'], 0)
+        self.assertEqual(json.loads(self.invoke('status', '--cache', str(cache))[1])['revisions'], 2)
+
     def test_registry_rejects_wrong_planes_and_store_scope_before_commit(self):
         collector = LocalExport(self.manifest)
         registry = Registry()

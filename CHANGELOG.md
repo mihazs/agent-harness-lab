@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.15.0
+
+### Minor Changes
+
+- Allow mutable source snapshots to return to previously observed content without treating the change as a pagination cycle. Keep native revision deduplication and opaque cursor guards, and migrate metadata journals atomically to schema 2 only after a successful import.
+
 ## 0.14.0
 
 ### Minor Changes

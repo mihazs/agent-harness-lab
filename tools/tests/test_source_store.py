@@ -12,13 +12,14 @@ from agent_harness_lab.sources.schema import EvidenceRecord, SourceSpec, digest
 from agent_harness_lab.sources.store import CommitUncertain, SourceStore
 
 
-def commit_page(path, source_value, before, after, start, results):
+def commit_page(path, source_value, before, after, start, results, snapshot=False):
     source = SourceSpec.parse(source_value)
     store = SourceStore(path, project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)
     if not start.wait(10):
         return
     try:
-        store.ingest(source, [], cursor_before=before, cursor_after=after)
+        options = {'snapshot_sha256': after} if snapshot else {'cursor_after': after}
+        store.ingest(source, [], cursor_before=before, **options)
         results.put(True)
     except ValueError:
         results.put(False)
@@ -99,6 +100,76 @@ class SourceStoreTests(unittest.TestCase):
         before = self.store.path.read_bytes()
         with self.assertRaisesRegex(ValueError, 'checkpoint cycle'):
             self.store.ingest(self.source, [], cursor_before=second, cursor_after=first)
+        self.assertEqual(self.store.path.read_bytes(), before)
+
+    def test_snapshot_recurrence_uses_distinct_checkpoints_and_preserves_native_history(self):
+        first, second = digest('snapshot-a'), digest('snapshot-b')
+        initial = self.store.ingest(self.source, [self.record], snapshot_sha256=first)
+        changed = replace(self.record, revision_sha256=digest('revision-2'), content_sha256=digest('body-2'))
+        middle = self.store.ingest(self.source, [changed], cursor_before=initial.cursor_after_sha256, snapshot_sha256=second)
+        final = self.store.ingest(self.source, [self.record], cursor_before=middle.cursor_after_sha256, snapshot_sha256=first)
+        self.assertEqual((final.imported, final.skipped), (0, 1))
+        self.assertEqual(len({r.cursor_after_sha256 for r in (initial, middle, final)}), 3)
+        status = self.store.status(self.source)
+        self.assertEqual((status['snapshot_sha256'], status['revisions'], status['checkpoints']), (first, 2, 3))
+        replay = self.store.ingest(self.source, [self.record], cursor_before=final.cursor_after_sha256, snapshot_sha256=first)
+        self.assertEqual(replay.cursor_after_sha256, final.cursor_after_sha256)
+        self.assertEqual(self.store.status(self.source)['checkpoints'], 3)
+
+    def test_snapshot_failure_stale_writer_and_ambiguous_cursor_do_not_advance(self):
+        initial = self.store.ingest(self.source, [self.record], snapshot_sha256=digest('a'))
+        before = self.store.path.read_bytes()
+        def failure():
+            yield replace(self.record, revision_sha256=digest('next'))
+            raise TimeoutError('SYNTHETIC_SECRET')
+        with self.assertRaises(ValueError):
+            self.store.ingest(self.source, failure(), cursor_before=initial.cursor_after_sha256, snapshot_sha256=digest('b'))
+        with self.assertRaisesRegex(ValueError, 'stale checkpoint'):
+            self.store.ingest(self.source, failure(), snapshot_sha256=digest('b'))
+        with self.assertRaises(ValueError):
+            self.store.ingest(self.source, [], cursor_before=initial.cursor_after_sha256,
+                              cursor_after=digest('opaque'), snapshot_sha256=digest('b'))
+        self.assertEqual(self.store.path.read_bytes(), before)
+
+    def test_legacy_journal_migration_waits_for_successful_import(self):
+        first = digest('legacy-snapshot')
+        self.store.ingest(self.source, [self.record], cursor_after=first)
+        state = json.loads(self.store.path.read_bytes()); state['schema_version'] = 1; state.pop('snapshots')
+        self.store.path.write_text(json.dumps(state)); original = self.store.path.read_bytes()
+        self.assertIsNone(self.store.status(self.source)['snapshot_sha256'])
+        self.assertEqual(self.store.path.read_bytes(), original)
+        with self.assertRaises(ValueError):
+            self.store.ingest(self.source, [{}], cursor_before=first, snapshot_sha256=first)
+        self.assertEqual(self.store.path.read_bytes(), original)
+        receipt = self.store.ingest(self.source, [self.record], cursor_before=first, snapshot_sha256=first)
+        self.assertNotEqual(receipt.cursor_after_sha256, first)
+        self.assertEqual(json.loads(self.store.path.read_bytes())['schema_version'], 2)
+        self.assertEqual(self.store.status(self.source)['revisions'], 1)
+        state = json.loads(self.store.path.read_bytes())
+        self.assertNotIn(first, state['snapshots'][self.source.source_key]['history'])
+        self.assertEqual(state['cursors'][self.source.source_key][0], first)
+
+    def test_opaque_mode_keeps_past_snapshot_identity_but_cannot_relabel_current_state(self):
+        content = digest('snapshot')
+        initial = self.store.ingest(self.source, [self.record], snapshot_sha256=content)
+        cursor = initial.cursor_after_sha256
+        self.store.ingest(self.source, [], cursor_before=cursor, cursor_after=cursor)
+        self.assertIsNone(self.store.status(self.source)['snapshot_sha256'])
+        state = json.loads(self.store.path.read_bytes())
+        self.assertEqual(state['snapshots'][self.source.source_key]['history'][cursor], content)
+        following = self.store.ingest(self.source, [self.record], cursor_before=cursor, snapshot_sha256=content)
+        self.assertNotEqual(following.cursor_after_sha256, cursor)
+
+    def test_invalid_snapshot_associations_are_rejected_without_repair(self):
+        initial = self.store.ingest(self.source, [self.record], snapshot_sha256=digest('snapshot'))
+        state = json.loads(self.store.path.read_bytes())
+        state['snapshots'][self.source.source_key]['history'][digest('unknown')] = digest('forged')
+        self.store.path.write_text(json.dumps(state)); before = self.store.path.read_bytes()
+        with self.assertRaises(ValueError): self.store.status(self.source)
+        self.assertEqual(self.store.path.read_bytes(), before)
+        state['snapshots'][self.source.source_key]['history'] = {initial.cursor_after_sha256: digest('forged')}
+        self.store.path.write_text(json.dumps(state)); before = self.store.path.read_bytes()
+        with self.assertRaises(ValueError): self.store.status(self.source)
         self.assertEqual(self.store.path.read_bytes(), before)
 
     def test_conflicting_revision_or_foreign_records_roll_back_whole_batch(self):
@@ -191,6 +262,25 @@ class SourceStoreTests(unittest.TestCase):
                 child.join(timeout=10)
                 self.assertEqual(child.exitcode, 0)
             self.assertEqual(self.store.status(self.source)['revisions'], 1)
+        finally:
+            for child in children:
+                if child.is_alive(): child.terminate()
+                child.join(timeout=5)
+            results.close(); results.join_thread()
+
+    def test_competing_snapshot_processes_cannot_both_commit_from_one_checkpoint(self):
+        initial = self.store.ingest(self.source, [self.record], snapshot_sha256=digest('initial-snapshot'))
+        context = multiprocessing.get_context('spawn')
+        start, results = context.Event(), context.Queue()
+        children = [context.Process(target=commit_page, args=(str(self.store.path), self.source.to_dict(),
+                    initial.cursor_after_sha256, digest(name), start, results, True)) for name in ('snapshot-a', 'snapshot-b')]
+        try:
+            for child in children: child.start()
+            start.set()
+            self.assertEqual(sorted(results.get(timeout=10) for _ in children), [False, True])
+            for child in children:
+                child.join(timeout=10); self.assertEqual(child.exitcode, 0)
+            self.assertEqual(self.store.status(self.source)['checkpoints'], 2)
         finally:
             for child in children:
                 if child.is_alive(): child.terminate()
