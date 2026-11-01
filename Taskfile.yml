@@ -23,6 +23,10 @@ tasks:
     desc: Run native graph contracts, migrations and scoped source relationship cases
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_graph.py" -v'
+  test:sources:recheck:
+    desc: Run explicit GitHub configuration, credential and native relationship recheck cases
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_recheck.py" -v'
   test:sources:github:live:
     desc: Run explicitly selected public GitHub acceptance without credentials or captured fixtures
     requires:
@@ -46,6 +50,18 @@ tasks:
       AHL_TEST_GITHUB_COMMIT: '{{.GITHUB_COMMIT}}'
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest tools.tests.test_source_github_live.GitHubLiveTests.test_explicit_public_commit_contract -v'
+  test:sources:github:recheck:live:
+    desc: Run one explicit anonymous public PR import and read-only relationship recheck
+    requires:
+      vars: [GITHUB_ENDPOINT, GITHUB_REPO_ID, GITHUB_PULL]
+    env:
+      AHL_TEST_GITHUB_LIVE: '1'
+      AHL_TEST_GITHUB_RECHECK: '1'
+      AHL_TEST_GITHUB_ENDPOINT: '{{.GITHUB_ENDPOINT}}'
+      AHL_TEST_GITHUB_REPO_ID: '{{.GITHUB_REPO_ID}}'
+      AHL_TEST_GITHUB_PULL: '{{.GITHUB_PULL}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest tools.tests.test_source_github_live.GitHubLiveTests.test_explicit_cli_native_relationship_recheck -v'
   test:hooks:
     desc: Run native Lefthook and staged-index integration tests
     cmds:

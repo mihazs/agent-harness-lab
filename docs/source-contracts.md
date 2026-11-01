@@ -235,7 +235,7 @@ in these contracts.
 This persistence layer retains candidate, conflicted and unlinked claims. Native
 field and review labels cannot self-certify: claimed `verified`/`reviewed` joins are
 rejected through normalized export, Registry, direct ingestion and journal reads.
-Strong native/reviewed resolution, cross-source joining, grouping/deduplication,
+Persisted native proofs, reviewed/cross-source resolution, grouping/deduplication,
 contradiction diagnosis and diagnostic-utility trials remain open in #58. A stored
 link is an investigation lead, not proof of a common cause or an independent task.
 `independent_roots` remains null and verification/execution authority stays false.
@@ -497,8 +497,8 @@ the endpoint fingerprint as `root_sha256`, those project/scope fingerprints,
 `identity_provenance="source_declared_id"`, and explicit enablement. Register the
 reader with `Capability("api", "github", SOURCE_VERSION,
 ("contextual_assertion", "development_artifact"))` to use the shared Registry and
-atomic journal. This first remote API is programmatic; it adds no remote CLI
-configuration or automatic network discovery.
+atomic journal. The explicit CLI configuration below provides the same reader;
+installation and probes perform no automatic network discovery.
 
 The endpoint must be exactly `https://api.github.com/repos/OWNER/REPO`. Public reads
 may use `auth_mode="none"`; configured/private reads require authorization explicitly
@@ -547,7 +547,7 @@ execution identities, inferred tombstones, causal labels or scientific independe
 Version 1 leaves thread resolution/outdated state unknown without native GraphQL
 evidence and does not read timelines or CI/checks; the explicit profile below adds
 those reads. Per-commit file detail, commit comments, conditional/incremental/deletion
-handling, time windows and remote CLI integration remain open in #45/#42. An omitted
+handling and time windows remain open in #45/#42. An omitted
 comment is not proof of deletion or no defect.
 Readbacks limit head inconsistency but do not make multiple REST calls an atomic
 server snapshot. Native unittest fixtures cover the client contract using fake
@@ -651,8 +651,8 @@ it does not make a series of server reads atomic. Coverage remains partial.
 
 Only fingerprints and approved metadata enter the snapshot. Query variables,
 credentials, native IDs and raw comment text are not persisted. Structured joins
-remain in memory unless the v5 graph profile is selected. Strong resolution remains
-#58 work. Synthetic tests cover nested
+remain in memory unless the v5 graph profile is selected. Persisted/cross-source
+resolution remains #58 work. Synthetic tests cover nested
 pagination, exact cross-API identity, revision/state changes and atomic import
 failure; they do not establish live GraphQL compatibility or diagnostic utility.
 
@@ -688,7 +688,7 @@ references require exact SHAs; open-PR test-merge references remain separate fro
 reported merged results. No revert/cherry-pick relationship is inferred from a
 message, and no comment or merge establishes a task outcome or independent root.
 Structured relationships remain in memory unless the v5 graph profile is selected.
-Strong resolution remains #58 work. Conditional requests,
+Persisted/cross-source resolution remains #58 work. Conditional requests,
 incremental/tombstone reconciliation and time windows remain open in #45/#42.
 
 `task test:sources:github:commit:live` runs the native public-service acceptance
@@ -711,8 +711,61 @@ does not claim independent relationship resolution. Imported edges preserve PR
 head/merge distinctions and specific review/comment revisions as investigation
 leads. Historical graphs remain attached to their captures, and source state
 changes cannot relabel an older graph. Structured relationships persist only with
-this explicit profile; ordinary summaries remain in memory. Strong joins and
-independent-root/grouping claims still require the #58 resolver and validation.
+this explicit profile; ordinary summaries remain in memory. Current native links
+may be explicitly rechecked below; persisted/cross-source proofs and independent
+root/grouping claims still require further #58 resolution and validation.
+
+### Explicit GitHub CLI configuration and native recheck
+
+The CLI accepts a bounded GitHub configuration instead of a local export manifest.
+It contains exactly `schema_version: 1`, `source` (a complete API/github SourceSpec),
+`endpoint`, `selection` (GitHubSelection.to_dict()) and `limits`. The endpoint is
+the explicit GitHub.com repository URL above. `source.root_sha256` must equal
+`digest(endpoint)`; its project/scope/version must match the selection and the
+independently supplied expected project/scope fingerprints. The identity provenance
+is `source_declared_id`. Limits may set only the existing `max_pages`, `max_bytes`,
+`timeout` and `seconds` bounds; an empty object selects the same defaults. Unknown
+fields, unsafe hosts, unsupported selections and mismatched identities reject
+before credentials or network access.
+
+Use `ahl sources probe|preview|import|status --manifest CONFIG --project-sha256 HASH
+--scope-sha256 HASH`; import/status require the existing private `--cache` argument.
+Probes validate configuration without reading credentials or contacting GitHub.
+Cached status is also offline. Preview/import explicitly perform the selected
+bounded reads. Enabled public sources may use auth mode `none`. For configured
+authorization, pass `--authorization-file PRIVATE_FILE` to each operation that
+reads GitHub. This file contains the complete Authorization header value, with an
+optional final newline; it must be a bounded single-link regular file. Headers
+with embedded control characters, linked files and files over 8 KiB are rejected.
+No token, authorization path or response body enters the journal or normal output.
+The reader never discovers tokens through the environment, browser or GitHub CLI.
+
+`ahl sources recheck --manifest CONFIG --cache PRIVATE_FILE --project-sha256 HASH
+--scope-sha256 HASH` requires an already captured v5 graph and explicitly performs
+a fresh bounded capture with the built-in configured GitHub reader. Other registered
+collectors cannot grant this capability by returning matching labels. Exact native
+source/ID/revision endpoints and relations must match the new observation before a
+verified receipt is returned. Stable IDs with stale revisions stay unlinked;
+missing targets, unsupported native identities, unobserved relations and declared
+conflicts remain explicit. File-based composite identities and cross-reference
+events with unknown occurrence identity stay candidates.
+
+The report binds the proposed checkpoint/graph, observed graph/snapshot, current
+source specification and resolver version. Verification covers current native
+relationships only. Claimed historical intervals are cleared, independent roots
+remain unknown, and no task outcome or execution authority is granted. A sequence
+of API reads is not an atomic server snapshot. Recheck does not change the journal,
+configuration or lock files; failed/limited API reads emit no partial proof set.
+Unvalidated metadata labels are represented by the original claim fingerprint,
+not echoed as receipt namespaces or resolver labels. Serialized reports cannot be
+imported as verified graphs, and stored candidates
+are not relabeled. Historical proof persistence, reviewed/cross-source resolution,
+grouping and diagnostic-utility validation remain open in #58.
+
+`task test:sources:recheck` runs synthetic configuration, credential and resolver
+controls. `task test:sources:github:recheck:live` runs an explicitly selected public
+PR import/recheck with no credentials; it uses private temporary metadata, checks
+that the candidate journal is unchanged, and is skipped in ordinary test runs.
 
 No source is enabled by installation. Tests use synthetic metadata; they establish
 contract validation, checkpoint behavior and a side-effect-free registry, not
