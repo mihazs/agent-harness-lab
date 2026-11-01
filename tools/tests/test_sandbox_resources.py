@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import selectors
+import resource
 import subprocess
 import tempfile
 import time
@@ -74,7 +75,11 @@ else:
  os.close(1); os.close(2)
  time.sleep(30)
 '''
-        run = self.run_code(code, Limits(seconds=2, processes=100000))
+        hard = resource.getrlimit(resource.RLIMIT_NPROC)[1]
+        processes = 100000 if hard == resource.RLIM_INFINITY else min(100000, hard)
+        if processes <= 0:
+            self.skipTest('host hard process limit forbids the fork cleanup fixture')
+        run = self.run_code(code, Limits(seconds=2, processes=processes))
         self.assertEqual(run['status'], 'completed')
         self.assert_stopped(int(run['stdout']))
 

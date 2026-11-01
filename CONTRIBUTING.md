@@ -36,7 +36,7 @@ Do not start paid inference merely to validate documentation.
 
 ## Pre-commit duplication check
 
-Run `npm ci` with Node.js 22+ to install the pinned jscpd development dependency
+Run `npm ci` with the latest stable Node.js to install the pinned jscpd development dependency
 and enable `.githooks/pre-commit` for this checkout. Setup preserves any existing
 Git hook directory or custom hooks and reports an error instead of replacing them;
 integrate the supplied hook explicitly if you already manage hooks elsewhere.
@@ -128,7 +128,8 @@ milestone. Keep the Changeset, validation and release PR focused so completed wo
 does not wait for unrelated features. A local commit or green PR is not a release;
 verify the published tag, archive, installer and checksums.
 
-Maintainers use Node.js 22+ for Changesets; users of GitHub release bundles do not
+Maintainers always use the latest stable Node.js for Changesets and jscpd; CI
+resolves `node-version: latest` from the current distribution. Release users do not
 need Node or a checkout. Run `npm ci` then `npm run changeset`, and commit the
 changeset with each releasable change. Do not manually edit release versions.
 
