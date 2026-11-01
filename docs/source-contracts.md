@@ -444,6 +444,73 @@ and live-server verification remain open in #43. No server is contacted by packa
 installation, constructor invocation, help or default source discovery. Native
 tests use synthetic wire responses; they establish client contracts, not live
 server efficacy or scientific independence.
+## Explicit GitHub REST captures
+
+`sources.github.GitHubAPI` is an optional standard-library reader for one explicitly
+authorized GitHub.com repository. Construct `GitHubSelection(repo_id, issues=(...),
+pulls=(...))` with at most ten distinct ascending issue/PR numbers. Its
+`project_sha256` binds the native repository ID and its `sha256` binds the selection.
+Use `SourceSpec(kind="api", provider="github", version=SOURCE_VERSION, ...)` with
+the endpoint fingerprint as `root_sha256`, those project/scope fingerprints,
+`identity_provenance="source_declared_id"`, and explicit enablement. Register the
+reader with `Capability("api", "github", SOURCE_VERSION,
+("contextual_assertion", "development_artifact"))` to use the shared Registry and
+atomic journal. This first remote API is programmatic; it adds no remote CLI
+configuration or automatic network discovery.
+
+The endpoint must be exactly `https://api.github.com/repos/OWNER/REPO`. Public reads
+may use `auth_mode="none"`; configured/private reads require authorization explicitly
+supplied to the constructor. The reader never loads GitHub CLI credentials, browser
+cookies or environment tokens. Use a token with only the read permissions needed
+for the selected resources. Repository ID, canonical resource URLs and visibility
+are checked before child reads; private/internal visibility without authorization
+blocks capture. Tokens and full repository names are absent from returned metadata.
+
+The first capability pins REST API `2026-03-10` in the request and checks the selected
+version response header. See [GitHub API versioning](https://docs.github.com/en/rest/about-the-rest-api/api-versions).
+It captures issue/PR state, hashed titles/bodies/labels/milestones, timestamps,
+base/head/merge references, proposed file changes, PR commit sequences/parents and
+three distinct discussion forms: issue-style conversation comments, inline review
+comments and review submissions. See GitHub's [conversation comments](https://docs.github.com/en/rest/issues/comments),
+[inline comments](https://docs.github.com/en/rest/pulls/comments) and
+[review submissions](https://docs.github.com/en/rest/pulls/reviews) contracts.
+Native IDs and parents determine associations; matching body text never merges IDs.
+Open-PR test-merge references remain distinct from merged results. Review decisions
+retain their specific commit and whether it exactly matches the captured head;
+a missing commit leaves that comparison unknown. Approval/merge/closure is a process
+event or claim, never an executable grade or independent outcome.
+
+Only fixed GET endpoints are used. Repository-supplied URLs are checked as native
+references and never followed as commands or arbitrary fetch targets. Pagination
+may advance only to the next numeric page of the same selected collection, with
+100 items per page. Every initial read, page and identity recheck shares the
+configured JsonAPI request, byte and deadline bounds (defaults: 20 requests,
+8 MiB and 60 seconds, with per-request timeouts). PR file/commit/comment counts are
+checked against listings to reject documented API caps or incomplete pagination;
+GitHub documents maxima of [3,000 PR files and 250 PR commits](https://docs.github.com/en/rest/pulls/pulls).
+Issue/PR identities and head/state metadata are rechecked before returning a
+snapshot. HTTP errors, inaccessible resources, version mismatch, changing heads,
+conflicting native parents and malformed/limited responses fail without returning
+a snapshot or advancing a checkpoint. There is no automatic retry.
+
+`GitHubAPI.summary` contains bounded hash-only nodes and native relationship
+metadata from the last successful capture. That graph stays in memory; structured
+relationship persistence and verified joins remain #58 work. The snapshot imports
+fingerprinted typed records and declared partial coverage through journal v3.
+Raw comment/code/message text is neither stored nor printed. Fingerprints remain
+private metadata rather than an anonymization guarantee. The reader emits no
+execution identities, inferred tombstones, causal labels or scientific independence.
+
+This first slice leaves thread resolution/outdated state unknown without native
+GraphQL evidence. Timeline events, CI/checks, per-commit file detail, commit comments,
+conditional/incremental/deletion handling, time windows and remote CLI integration
+remain open in #45/#42. An omitted comment is not proof of deletion or no defect.
+Readbacks limit head inconsistency but do not make multiple REST calls an atomic
+server snapshot. Native unittest fixtures cover the client contract using fake
+HTTPS responses; live GitHub compatibility, concurrency and diagnostic utility
+are not established by those fixtures. No source or server is contacted by install,
+help, constructor invocation or default discovery.
+
 No source is enabled by installation. Tests use synthetic metadata; they establish
 contract validation, checkpoint behavior and a side-effect-free registry, not
 real-source compatibility, containment, diagnostic usefulness or certification.

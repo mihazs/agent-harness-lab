@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.19.0
+
+### Minor Changes
+
+- Add an explicit GET-only GitHub REST source for selected issue/PR metadata, conversation and inline comments, review submissions, proposed files and commit lineage. Verify repository/native parent identities, constrain pagination and capture budgets, recheck PR heads and preserve private hash-only metadata with declared partial coverage. Approvals and merges remain process evidence rather than task grades.
+
 ## 0.18.0
 
 ### Minor Changes
