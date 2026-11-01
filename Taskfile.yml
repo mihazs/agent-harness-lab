@@ -27,6 +27,23 @@ tasks:
     desc: Run native resource boundary and explicit delegated-host tests
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_sandbox_*.py" -v'
+  test:sandbox:kernel:
+    desc: Run native kernel canaries in a disposable foreground user scope (Linux/systemd)
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    vars:
+      SCOPE_ID:
+        sh: cat /proc/sys/kernel/random/uuid
+    env:
+      PYTHONPATH: ''
+      AHL_TEST_SYSTEMD_SCOPE: '1'
+      AHL_TEST_CGROUP_ROOT: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=90 -- {{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_sandbox_kernel.py" -v'
+  bank:build:
+    desc: Reproduce the bundled public synthetic bank and frozen grader digests
+    cmds:
+      - '{{.PYTHON | shellQuote}} scripts/build_synthetic_bank.py'
   test:installed:
     desc: Run native tests against an installed wheel or extracted archive
     dir: '{{.LAYOUT_DIR}}'

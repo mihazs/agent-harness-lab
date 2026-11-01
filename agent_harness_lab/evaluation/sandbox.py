@@ -50,6 +50,7 @@ class SandboxBackend:
         command = [self.binary, '--unshare-all', '--unshare-user', '--unshare-net', '--die-with-parent',
                    '--new-session', '--cap-drop', 'ALL', '--clearenv', '--setenv', 'PATH', '/usr/bin:/bin',
                    '--setenv', 'HOME', '/home/worker', '--setenv', 'LANG', 'C.UTF-8']
+        command += ['--setenv', 'AHL_SANDBOX_ROLE', role]
         for system in ('/usr', '/bin', '/lib', '/lib64'):
             if Path(system).exists():
                 command += ['--ro-bind', system, system]

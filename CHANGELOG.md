@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.1
+
+### Patch Changes
+
+- Fix an oracle-read bypass in the starter Python grader: sandboxed submitted code now runs in a nested namespace without oracle or grader-process access. Version the frozen graders as v2 while preserving the explicitly trusted cooperative diagnostic path.
+
+- Add opt-in native kernel canaries in a disposable foreground systemd user scope, including real role/file/network boundaries, pristine regrading, aggregate cgroup resources and offline paired evaluation. Support source, wheel and archive layouts without persistent services or changing runtime defaults. Document per-user process-limit failures and keep unsupported tests explicit; full isolation certification remains pending.
+
 ## 0.12.0
 
 ### Minor Changes
