@@ -7,6 +7,7 @@
 | Check readiness or initialize config | [Offline doctor and safe init](onboarding.md) |
 | Analyze a project, improve or monitor | [Workflows and CLI reference](workflows.md) |
 | Understand capture formats and provenance | [Telemetry](telemetry.md) |
+| Build explicit source adapters | [Source evidence contracts](source-contracts.md) |
 | Understand evaluation and safety gates | [Evaluation foundation](evaluation-foundation.md) |
 | Check implemented/pending capabilities | [Controlled experiments](controlled-experiments.md) |
 | Inspect original smoke results | [Initial validation](validation.md) |

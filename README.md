@@ -110,7 +110,7 @@ while Discussions is unavailable. See [support](SUPPORT.md), [private security r
 and the [code of conduct](CODE_OF_CONDUCT.md). No response-time commitment is made.
 
 Versions use Changesets; do not change version numbers manually. For a releasable
-change, run `npm ci` and `npm run changeset`; see [release conventions](CONTRIBUTING.md#versions-and-changelogs).
+change, run `npm ci`, `npm run hooks:install` and `npm run changeset`; see [release conventions](CONTRIBUTING.md#versions-and-changelogs).
 
 ```sh
 python3 -m unittest discover -s skills/harness-evaluation/scripts -p 'test_*.py'

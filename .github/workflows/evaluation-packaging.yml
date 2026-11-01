@@ -1,5 +1,9 @@
 name: Evaluation packaging
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 concurrency:
@@ -19,6 +23,7 @@ jobs:
           node-version: 'latest'
           cache: npm
       - run: npm ci
+      - run: npm run hooks:install
       - name: Require zero source clones
         run: npm run duplication:report
       - name: Verify staged pre-commit enforcement

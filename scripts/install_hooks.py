@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Install the repository hook without replacing another hook setup."""
+"""Migrate the owned hook to Lefthook without replacing foreign hooks."""
 from pathlib import Path
 import subprocess
 
@@ -13,23 +13,35 @@ def install(root):
     if configured.returncode not in (0, 1):
         raise ValueError('could not inspect Git hook configuration')
     current = configured.stdout.strip()
-    if current:
-        if (root/current).resolve() == root/'.githooks':
-            return
-        raise ValueError('existing core.hooksPath retained; integrate .githooks/pre-commit into it explicitly')
-    hooks = git('rev-parse', '--git-path', 'hooks')
-    if hooks.returncode:
+    legacy = current and (root/current).resolve() == root/'.githooks'
+    if current and (not legacy or git('config', '--local', '--get', 'core.hooksPath').stdout.strip() != current):
+        raise ValueError('existing core.hooksPath retained; integrate lefthook.yml explicitly')
+    common = git('rev-parse', '--git-common-dir')
+    if common.returncode:
         raise ValueError('could not inspect existing Git hooks')
-    folder = root/hooks.stdout.strip()
-    if folder.exists() and any(p.is_file() and not p.name.endswith('.sample') for p in folder.iterdir()):
-        raise ValueError('existing Git hooks retained; integrate .githooks/pre-commit into them explicitly')
-    if git('config', '--local', 'core.hooksPath', '.githooks').returncode:
-        raise ValueError('could not install repository Git hooks')
-    print('Installed repository pre-commit hook.')
+    folder = root/common.stdout.strip()/'hooks'
+    hook = folder/'pre-commit'
+    if folder.is_symlink() or hook.is_symlink():
+        raise ValueError('linked Git hooks retained; integrate lefthook.yml explicitly')
+    if hook.exists() and (not hook.is_file() or hook.stat().st_nlink != 1 or hook.stat().st_size > 65536):
+        raise ValueError('non-regular or linked Git hook retained')
+    if hook.exists() and 'call_lefthook run "pre-commit" "$@"' not in hook.read_text():
+        raise ValueError('existing Git pre-commit retained; integrate lefthook.yml explicitly')
+    binary = root/'node_modules/.bin/lefthook'
+    if not binary.is_file():
+        raise ValueError('lefthook is missing; run npm ci first')
+    if legacy and git('config', '--local', '--unset', 'core.hooksPath').returncode:
+        raise ValueError('could not migrate the owned hooksPath')
+    try:
+        subprocess.run([str(binary), 'install', 'pre-commit'], cwd=root, check=True)
+    except (OSError, subprocess.SubprocessError):
+        if legacy:
+            git('config', '--local', 'core.hooksPath', current)
+        raise
 
 
 if __name__ == '__main__':
     try:
         install(Path(__file__).resolve().parents[1])
-    except (ValueError, OSError) as exc:
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
         raise SystemExit(f'hook setup: {exc}')
