@@ -27,6 +27,9 @@ def doctor(project, profile=None, *, probe_runtime=False, proposed=None):
         checks.append(asdict(CheckResult(name, status, required, evidence, observed, remediation)))
     add('python', 'pass' if sys.version_info >= (3, 11) else 'blocked', True, 'current_process',
         '.'.join(map(str, sys.version_info[:3])), 'Use Python 3.11 or later.')
+    supported = config.supported()
+    add('platform', 'pass' if supported else 'blocked', True, 'filesystem_api_presence', sys.platform,
+        'Use a POSIX host with descriptor-relative, no-follow filesystem APIs; no unsafe fallback is enabled.')
     project = Path(project).absolute()
     safe = project.is_dir() and not any(p.is_symlink() for p in (project, *project.parents))
     add('project', 'pass' if safe else 'blocked', True, 'filesystem_metadata',
@@ -38,11 +41,13 @@ def doctor(project, profile=None, *, probe_runtime=False, proposed=None):
     try:
         if not safe:
             raise ValueError()
+        if not supported:
+            raise NotImplementedError()
         value = proposed if proposed is not None else (config.read_json(project/'ahl.json') if os.path.lexists(project/'ahl.json') else config.defaults())
         effective = config.validate(value)
         add('configuration', 'pass', True, 'validated_schema', 'version_1', 'Use ahl init to preview a valid configuration.')
-    except (ValueError, OSError, TypeError, KeyError) as exc:
-        invalid_config = not isinstance(exc, PermissionError) and safe and (proposed is not None or os.path.lexists(project/'ahl.json'))
+    except (ValueError, OSError, TypeError, KeyError, NotImplementedError) as exc:
+        invalid_config = supported and not isinstance(exc, PermissionError) and safe and (proposed is not None or os.path.lexists(project/'ahl.json'))
         add('configuration', 'blocked', True, 'validated_schema', 'permission_denied' if isinstance(exc, PermissionError) else 'invalid_or_unreadable',
             'Repair ahl.json schema or read access without elevation; diagnostics do not display file contents.')
     profile = profile or (effective['profile'] if effective else 'offline')
@@ -52,10 +57,12 @@ def doctor(project, profile=None, *, probe_runtime=False, proposed=None):
         from .evaluation.task_bank import validate
         try:
             bank = config.bank_path(project, effective)
-            reviewed = validate(bank)
+            reviewed = validate(bank, verify_contents=False)
             matched = reviewed['bank_sha256'] == effective['bank']['sha256']
             add('bank', 'pass' if matched else 'blocked', True, 'validated_bank_digest',
                 'matched' if matched else 'digest_mismatch', 'Select a valid bank and explicitly review its SHA-256 digest.')
+            add('bank_contents', 'not_checked', False, 'not_observed', 'not_read',
+                'Use an explicit bank audit or evaluation for fixture/oracle integrity; doctor reads metadata only.')
         except (ValueError, OSError, TypeError, KeyError):
             add('bank', 'blocked', True, 'validated_bank_digest', 'invalid_or_unavailable', 'Select an existing supported task bank within the project, or the bundled starter bank.')
         runtime = effective['runtime']
@@ -115,6 +122,8 @@ def main(argv):
             return {'ready': 0, 'invalid': 2, 'blocked': 3}[result['status']]
         if not args.project.is_dir() or os.path.lexists(args.project/'ahl.json'):
             raise ValueError('select an existing project without ahl.json; existing configuration is never overwritten')
+        if not config.supported():
+            raise NotImplementedError()
         settings = config.read_json(args.config_input) if args.config_input else {}
         if not isinstance(settings, dict):
             raise ValueError('initialization settings must be an object')
@@ -154,8 +163,8 @@ def main(argv):
     except (KeyboardInterrupt, EOFError):
         print('Operation cancelled.')
         return 1
-    except PermissionError:
-        print('onboarding blocked: insufficient filesystem permissions; no elevation attempted', file=sys.stderr)
+    except (PermissionError, NotImplementedError):
+        print('onboarding blocked: required filesystem access/capabilities unavailable; no elevation attempted', file=sys.stderr)
         return 3
     except (ValueError, OSError, TypeError, KeyError):
         parser.exit(2, 'onboarding error: invalid or unavailable project/configuration; existing files were preserved\n')

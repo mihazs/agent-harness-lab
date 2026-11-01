@@ -1,9 +1,11 @@
 import contextlib
+import hashlib
 import io
 import json
 import os
 from pathlib import Path
 import socket
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -117,6 +119,54 @@ class OnboardingTests(unittest.TestCase):
         config.create(self.root, value)
         report = doctor(self.root)
         self.assertEqual(next(c['status'] for c in report['checks'] if c['check_id'] == 'bank'), 'blocked')
+
+    def test_doctor_does_not_read_bank_fixture_or_oracle_bodies(self):
+        bank_root = self.root/'bank'
+        shutil.copytree(config.starter().parent, bank_root)
+        bank = bank_root/'bank.json'
+        canary = bank_root/'tasks/localization/.auth'
+        canary.write_text('SYNTHETIC_AUTH_CANARY')
+        config.create(self.root, config.prepare({'bank': {'path': 'bank/bank.json',
+                         'sha256': hashlib.sha256(bank.read_bytes()).hexdigest()}}))
+        original = Path.read_bytes
+        def bounded_metadata(path):
+            if path.is_relative_to(bank_root) and path != bank:
+                raise AssertionError('doctor must not open bank data bodies')
+            return original(path)
+        with patch.object(Path, 'read_bytes', bounded_metadata), \
+                patch('agent_harness_lab.evaluation.task_bank.digest', side_effect=AssertionError('no tree hashing')):
+            code, output, error = self.invoke('doctor', str(self.root), '--json')
+        self.assertEqual(code, 0, error)
+        self.assertNotIn('SYNTHETIC_AUTH_CANARY', output+error)
+        report = json.loads(output)
+        self.assertEqual(next(c['status'] for c in report['checks'] if c['check_id'] == 'bank_contents'), 'not_checked')
+        from agent_harness_lab.evaluation.task_bank import validate
+        with self.assertRaisesRegex(ValueError, 'integrity'): validate(bank)
+        self.assertFalse(validate(bank, verify_contents=False)['certification_eligible'])
+
+    def test_unsupported_filesystem_capabilities_block_without_mutation(self):
+        with patch.object(config, 'supported', return_value=False):
+            self.assertEqual(self.invoke('doctor', str(self.root), '--json')[0], 3)
+            self.assertEqual(self.invoke('init', str(self.root), '--non-interactive', '--write')[0], 3)
+            with self.assertRaises(NotImplementedError): config.create(self.root, config.defaults())
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_unsupported_python_is_reported(self):
+        with patch('agent_harness_lab.onboarding.sys.version_info', (3, 10, 0)):
+            report = doctor(self.root)
+        self.assertEqual(next(c['status'] for c in report['checks'] if c['check_id'] == 'python'), 'blocked')
+
+    def test_bank_reader_rejects_fifo_links_oversize_and_nonobject_json(self):
+        from agent_harness_lab.evaluation.task_bank import validate
+        bank = self.root/'bank.json'
+        os.mkfifo(bank)
+        with self.assertRaises(ValueError): validate(bank, verify_contents=False)
+        bank.unlink()
+        for content in ('[]', 'null', '0', ' '* (1024*1024+1)):
+            bank.write_text(content)
+            with self.assertRaises(ValueError): validate(bank, verify_contents=False)
+        alias = self.root/'alias.json'; os.link(bank, alias)
+        with self.assertRaises(ValueError): validate(alias, verify_contents=False)
 
     def test_permission_denial_is_blocked_without_elevation_or_partial_writes(self):
         with patch.object(config, 'create', side_effect=PermissionError):

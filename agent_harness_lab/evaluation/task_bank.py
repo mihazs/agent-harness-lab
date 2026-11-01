@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 from agent_harness_lab.monitoring.state import atomic_json
-from .integrity import contained, digest
+from .integrity import contained, digest, read_regular
 
 PARTITIONS = {'construction', 'development', 'calibration', 'certification', 'transfer'}
 
@@ -55,12 +55,13 @@ class TaskSpec:
         return obj
 
 
-def validate(path):
+def validate(path, *, verify_contents=True):
+    if type(verify_contents) is not bool:
+        raise ValueError('content verification mode must be explicit')
     path = Path(path)
-    if path.is_symlink() or path.stat().st_size > 1024 * 1024:
-        raise ValueError('unsafe or oversized task bank')
-    value = json.loads(path.read_text())
-    if value.get('schema_version') != 1 or not isinstance(value.get('tasks'), list) or not 0 < len(value['tasks']) <= 1000:
+    raw = read_regular(path, 1024 * 1024)
+    value = json.loads(raw.decode('utf-8'))
+    if not isinstance(value, dict) or value.get('schema_version') != 1 or not isinstance(value.get('tasks'), list) or not 0 < len(value['tasks']) <= 1000:
         raise ValueError('invalid/empty task bank')
     dimensions = value.get('separate_by', ['root_id'])
     if not dimensions or any(k not in ('root_id', 'family', 'project_group', 'time_group') for k in dimensions) or 'root_id' not in dimensions:
@@ -74,7 +75,7 @@ def validate(path):
         grader = contained(path.parent, task.grader_bundle)
         if fixture == grader or fixture.is_relative_to(grader) or grader.is_relative_to(fixture):
             raise ValueError('grader and fixture overlap')
-        if digest(fixture) != task.fixture_digest or digest(grader) != task.grader_digest:
+        if verify_contents and (digest(fixture) != task.fixture_digest or digest(grader) != task.grader_digest):
             raise ValueError('task/grader integrity changed; comparisons must be invalidated')
         for name in task.artifacts:
             from .integrity import relative
@@ -88,10 +89,10 @@ def validate(path):
             raise ValueError('fixture copy leaks across partitions')
         if task.independence != 'reviewed' or task.review_status != 'accepted' or task.permission != 'approved':
             issues.append(dict(task=task.task_id, status='independence_or_review_unverified'))
-    return dict(schema_version=1, bank_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+    return dict(schema_version=1, bank_sha256=hashlib.sha256(raw).hexdigest(), contents_verified=verify_contents,
                 tasks=len(tasks), roots=len({t.root_id for t in tasks}),
                 partitions={p: sum(t.partition == p for t in tasks) for p in sorted(PARTITIONS)},
-                certification_eligible=not issues, issues=issues,
+                certification_eligible=verify_contents and not issues, issues=issues,
                 privacy='private' if any(t.source_kind == 'private' for t in tasks) else 'public_source_only',
                 public_tasks_are_secret=False)
 
