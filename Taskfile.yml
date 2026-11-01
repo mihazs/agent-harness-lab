@@ -142,7 +142,7 @@ tasks:
     cmds:
       - task: test:sandbox:kernel
         vars:
-          KERNEL_TEST_FILTER: regression_draft
+          KERNEL_TEST_FILTER: regression_
   test:sandbox:kernel:
     desc: Run native kernel canaries in a disposable foreground user scope (Linux/systemd)
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'

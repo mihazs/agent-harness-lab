@@ -125,3 +125,85 @@ admission, publication and promotion remain unestablished or disabled in the
 receipt. Private inputs and all derived hashes/receipts remain private. Run
 `task test:sandbox:kernel:regressions` for the separate real pinned-image/cgroup
 canary; ordinary native tests simulate backend replies and cannot prove isolation.
+
+## Controlled offline replay
+
+New in 0.40, `ahl regression --proposal P --draft D --replay R --output OUT`
+uses the same required cgroup, pinned-image and private-disk options to run a
+bounded local replay. This adapter executes an explicitly supplied offline argv;
+it does not invoke a model or native agent CLI. It is useful for independently
+synthetic cases or an authorized deterministic reproducer, not a reconstruction
+of missing model reasoning or authentication of historical capture.
+
+The exact version 1 replay-spec fields are:
+
+| Field | Contract |
+| --- | --- |
+| `schema_version` | Integer `1` |
+| `proposal_sha256`, `draft_sha256` | Digests of the exact approved proposal and unreviewed draft bytes |
+| `snapshot_format` | `ahl-tree-v1`, the existing content/mode tree-digest convention |
+| `runtime_ref` | Exact runtime reference from the proposal; the image pin must also match |
+| `before`, `after` | Objects with relative `harness`, `config` and `memory` directory paths |
+| `task_start` | Relative path to the recorded task-start directory |
+| `offline_executor` | Explicit bounded argv inside the sandbox namespace |
+| `earlier_valid` | JSON `null`, or the explicit earlier snapshot described below |
+
+Paths are relative to the replay-spec directory. All three before/after
+component directories must match their corresponding proposal SHA-256 tree
+identities. The recorded start must match `task_start.sha256`. Empty but observed
+configuration or memory directories have real tree identities; missing states
+remain missing. Existing captures using incompatible identity formats cannot be
+silently relabelled as this format. A mismatch, unsupported format or unavailable
+snapshot blocks execution; the tool never substitutes current state.
+
+The controller copies each admitted snapshot into one readonly execution view:
+`/inputs/harness/harness`, `/inputs/harness/config` and `/inputs/harness/memory`.
+For example, a synthetic adapter can execute
+`["/usr/bin/python3", "-I", "/inputs/harness/harness/solve.py"]` and explicitly
+consume the configuration and memory paths. The composite view has its own
+recorded hash and assembly policy, separate from the original harness identity.
+Task work runs in `/work`. The selected oracle is outside every executor view.
+
+All source identities, executor argv and prepared views freeze before scoring.
+The five draft controls must pass first. The existing offline runner then creates
+fresh workspaces for eight task attempts: before/before A/A and before/after A/B,
+each on both the recorded and minimized task fixtures. Every run uses the same
+image, grader bundle/version, artifact allowlist and executor argv. Recorded
+task-start trees remain plain observed trees: `source_files.json` is ordinary
+data there. Only minimized bank fixtures use the existing data-only source
+materialization convention, with separate original/materialized fixture hashes.
+The case count is a protocol coverage choice, not a statistical sample-size claim.
+
+If present, `earlier_valid` contains exactly `paths`, `identities` and
+`evidence_refs`. Its paths use the same three component names; identities contain
+exactly `harness_sha256`, `config_sha256` and `memory_sha256`, with nonempty
+explicit evidence references in the proposal reference format. The controller
+adds an earlier/before comparison on both fixtures, for twelve attempts total.
+No earlier snapshot is inferred from before/after state. Even an earlier version
+passing this local oracle does not authenticate its historical origin or certify
+temporal degradation.
+
+The original absolute deadline narrows the grader audit and every paired phase.
+Preparation, capability probes and integrity checks consume it; each worker has
+a five-second allowance clipped to the remaining time. Unsupported containment,
+failed controls or changed inputs prevent subsequent phases. Oracle crashes and
+nonzero executor exits remain environment/grader defects, never task failures.
+
+Owner-only `replay.json` records input/assembly hashes, changed components,
+control-receipt and phase-result hashes, typed outcomes and artifact digests.
+Private run directories retain the raw local evidence. A/A agreement means
+agreement of graded boolean outcomes, not identical artifacts or mechanisms.
+Incomplete/malformed phase capture leaves the attempt count unknown, not zero.
+`baseline_already_passes`, `unstable_control`, `minimization_boundary_changed`
+and `earlier_valid_not_reproduced` stay distinct from a reproduced local failure.
+`repair_observed` describes the frozen before/after grades only. Late integrity or
+budget failures withhold derived comparisons while retaining raw phase evidence.
+
+Exit 0 means this descriptive replay completed, including an unhelpful result;
+it does not mean a repair was accepted. Missing containment returns 3,
+execution/validation failures return 1, and malformed declarations return 2.
+Historical task-failure verification, independent review, causality,
+temporal-regression certification, publication and bank admission remain
+unestablished or disabled. All private-derived snapshots, traces, receipts,
+hashes and aggregates stay private. The kernel regression target separately
+executes both this replay and the draft-audit canary with actual resource controls.

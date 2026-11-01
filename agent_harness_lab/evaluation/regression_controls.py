@@ -46,22 +46,29 @@ def read_draft(path):
     return value, task, hashlib.sha256(raw).hexdigest()
 
 
-def containment(run, expected_image):
+def containment(run, expected_image, role='grader'):
+    if not isinstance(run, dict): return False
     attestation = run.get('attestation') or {}
+    if not isinstance(attestation, dict): return False
     image = attestation.get('runtime_image') or {}
     group = attestation.get('cgroup_v2') or {}
-    return (attestation.get('backend') == 'bubblewrap-offline-v1' and attestation.get('role') == 'grader'
+    if not isinstance(image, dict) or not isinstance(group, dict): return False
+    return (role in ('grader', 'executor') and attestation.get('backend') == 'bubblewrap-offline-v1' and attestation.get('role') == role
             and attestation.get('network') == 'none' and attestation.get('aggregate_disk_bound_verified') is True
             and image.get('sha256') == expected_image
             and image.get('verified_before') is True and image.get('verified_after') is True
             and group.get('empty_after_cleanup') is True)
 
 
-def audit(proposal_path, draft_path, output, backend, *, budget_seconds=60):
+def audit(proposal_path, draft_path, output, backend, *, budget_seconds=60, parent_deadline=None):
     started = time.monotonic()
     if type(budget_seconds) not in (int, float) or not math.isfinite(budget_seconds) or not 0 < budget_seconds <= 300:
         raise ValueError('draft audit budget must be positive and at most 300 seconds')
     deadline = started + budget_seconds
+    if parent_deadline is not None:
+        if type(parent_deadline) not in (int, float) or not math.isfinite(parent_deadline):
+            raise ValueError('draft parent deadline must be finite')
+        deadline = min(deadline, parent_deadline)
     if backend.cgroup_root is None or backend.image is None or backend.disk_bytes is None:
         raise ValueError('draft controls require aggregate cgroups, a pinned image and private disk quotas')
     proposal_path, draft_path, output = map(Path, (proposal_path, draft_path, output))

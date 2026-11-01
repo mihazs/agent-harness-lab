@@ -247,6 +247,31 @@ except OSError: pass
 
 @unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
 class RegressionDraftKernelTests(KernelFixture):
+    def test_regression_replay_uses_real_matched_snapshot_views_and_hidden_oracle(self):
+        from test_regression_replay import make_replay, SOLVER
+        from agent_harness_lab.evaluation.regression_replay import replay
+        rootfs = self.root/'runtime'; frozen = pinned_runtime(rootfs)
+        replay_root = self.root/'replay'; replay_root.mkdir()
+        canary = self.root/'host-only'; canary.write_text('SYNTHETIC_HOST_ONLY')
+        solver = SOLVER + f'''
+assert not pathlib.Path('/inputs/oracle').exists()
+assert not pathlib.Path({str(canary)!r}).exists()
+assert set(p.name for p in view.iterdir()) == {{'harness','config','memory'}}
+try:
+ (view/'config/state.json').write_text('changed')
+ raise AssertionError('snapshot input is writable')
+except OSError: pass
+'''
+        source, draft, spec = make_replay(replay_root, frozen['sha256'], solver)
+        backend = SandboxBackend(cgroup_root=self.cgroup_root, image_root=rootfs,
+            image_sha256=frozen['sha256'], disk_bytes=64*1024*1024)
+        report = replay(source, draft, spec, self.root/'output', backend)
+        self.assertEqual(report['status'], 'replay_completed', report)
+        self.assertEqual(report['reproduction_disposition'], 'reproduced')
+        self.assertEqual(report['task_trials'], 8)
+        self.assertTrue(report['repair_observed']); self.assertTrue(report['aa_observed_agreement'])
+        self.assertFalse(report['task_failure_verified']); self.assertFalse(report['bank_admission'])
+
     def test_regression_draft_controls_use_real_pinned_graders_and_private_quotas(self):
         from test_regression_controls import make_draft
         from agent_harness_lab.evaluation.regression_controls import audit

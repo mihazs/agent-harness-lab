@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.40.0
+
+### Minor Changes
+
+- Add explicit offline regression replay over hash-bound harness, configuration, memory and recorded task-start snapshots. Audit draft controls, then compare recorded/minimized fixtures with fresh A/A and A/B workspaces under one absolute deadline and fixed resource profile. Retain graded outcomes, artifact hashes, earlier-valid evidence and distinct instability/defect dispositions in private descriptive receipts without authenticating history, establishing causality or admitting tasks automatically.
+
 ## 0.39.0
 
 ### Minor Changes

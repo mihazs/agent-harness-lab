@@ -250,3 +250,15 @@ class RegressionControlTests(unittest.TestCase):
         with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend', return_value=self.backend), patch('builtins.print') as out:
             self.assertEqual(main(args), 0)
         self.assertEqual(json.loads(out.call_args.args[0])['status'], 'grader_controls_passed')
+
+    def test_parent_deadline_only_narrows_and_rejects_nonfinite_values(self):
+        for invalid in (True, float('inf'), float('nan')):
+            with self.assertRaises(ValueError): self.run_audit(parent_deadline=invalid)
+        with patch('agent_harness_lab.evaluation.regression_controls.time.monotonic', return_value=0):
+            self.assertEqual(self.run_audit(parent_deadline=-1)['status'], 'budget_exhausted')
+        self.backend.run.assert_not_called(); self.backend.capability.assert_not_called()
+        shutil.rmtree(self.output)
+        ticks = iter([0, 2])
+        with patch('agent_harness_lab.evaluation.regression_controls.time.monotonic', side_effect=lambda: next(ticks, 2)):
+            self.assertEqual(self.run_audit(budget_seconds=1, parent_deadline=100)['status'], 'budget_exhausted')
+        self.backend.run.assert_not_called()
