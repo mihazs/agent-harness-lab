@@ -5,6 +5,7 @@ import math
 import os
 from pathlib import Path
 import stat
+import sys
 import uuid
 from .evaluation.integrity import contained, relative
 
@@ -89,6 +90,79 @@ def prepare(settings):
 
 def bank_path(project, config):
     return starter() if config['bank']['path'] == 'starter' else contained(project, config['bank']['path'])
+
+
+def load(path):
+    value = validate(read_json(path))
+    digest = hashlib.sha256(json.dumps(value, sort_keys=True, allow_nan=False).encode()).hexdigest()
+    return value, digest
+
+
+def evaluation_settings(path, manifest_path, manifest, versions, agent, binary):
+    """Explicit config narrows an already requested run; it never grants execution."""
+    import tempfile
+    from .evaluation.bank_tools import export_manifest
+    from .evaluation.integrity import digest, tree
+    from .evaluation.task_bank import validate as validate_bank
+    value, configuration_digest = load(path)
+    bank = bank_path(Path(path).absolute().parent, value)
+    reviewed = validate_bank(bank)
+    if reviewed['bank_sha256'] != value['bank']['sha256'] or manifest.get('bank_digest') != value['bank']['sha256']:
+        raise ValueError('configured bank digest does not match the evaluation')
+    if manifest.get('skills') or not set(manifest.get('harness_paths', [])) <= set(value['harness_paths']):
+        raise ValueError('evaluation injection exceeds configured harness paths')
+    fixture_digests = {}
+    with tempfile.TemporaryDirectory() as folder:
+        pristine = export_manifest(bank, Path(folder)/'bank', max_trials=2*reviewed['tasks'])
+        approved = {t['id']: t for t in pristine['tasks']}
+        for task in manifest['tasks']:
+            reference = approved.get(task['id'])
+            if reference is None or any(task.get(k) != reference[k] for k in ('root', 'family', 'split', 'prompt', 'artifacts')):
+                raise ValueError('task differs from configured bank')
+            fixture = contained(manifest_path.parent, task['fixture'])
+            bundle = manifest.get('grader_bundles', {}).get(task['id'], {})
+            actual = contained(manifest_path.parent, bundle.get('path'))
+            expected = Path(folder)/'bank'/pristine['grader_bundles'][task['id']]['path']
+            if digest(fixture) != digest(Path(folder)/'bank'/reference['fixture']) or digest(actual) != digest(expected):
+                raise ValueError('fixture or oracle differs from configured bank')
+            fixture_digests[task['id']] = digest(Path(folder)/'bank'/reference['fixture'])
+            if task['grader'][1:] != [str(actual/'grade.py.txt'), '{workspace}', str(actual/'expected.json')]:
+                raise ValueError('configured evaluation requires the frozen artifact grader contract')
+            if Path(task['grader'][0]).resolve() != Path(sys.executable).resolve():
+                raise ValueError('configured evaluation requires the current Python grader interpreter')
+    reason = None
+    if value['profile'] == 'isolated':
+        reason = 'configured_isolated_runtime_unsupported'
+    elif value['profile'] == 'offline':
+        if agent != 'offline':
+            reason = 'offline_configuration_forbids_model_execution'
+        else:
+            binary = None
+        if agent == 'offline' and any(not set(tree(root)) <= set(value['harness_paths']) for root in versions.values()):
+            raise ValueError('offline harness mount exceeds configured harness paths')
+    elif agent != value['runtime']['name']:
+        reason = 'configured_runtime_differs_from_requested_runtime'
+    else:
+        executable = value['runtime']['executable']
+        if binary not in (agent, executable):
+            reason = 'configured_executable_differs_from_requested_executable'
+        elif not Path(executable).is_file() or not os.access(executable, os.X_OK):
+            reason = 'configured_executable_unavailable'
+        binary = executable
+    return dict(schema_version=1, configuration=value, canonical_sha256=configuration_digest,
+                bank_sha256=reviewed['bank_sha256'], binary=binary, blocked_reason=reason,
+                harness_digests={name: digest(root) for name, root in versions.items()}, fixture_digests=fixture_digests,
+                execution_authorized_by_configuration=False)
+
+
+def evaluation_unchanged(path, receipt):
+    from .evaluation.task_bank import validate as validate_bank
+    try:
+        current, digest = load(path)
+        bank = bank_path(Path(path).absolute().parent, current)
+        return digest == receipt['canonical_sha256'] and validate_bank(bank)['bank_sha256'] == receipt['bank_sha256']
+    except (ValueError, OSError, TypeError, KeyError):
+        return False
 
 
 def create(project, config):
