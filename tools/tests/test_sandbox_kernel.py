@@ -247,6 +247,30 @@ except OSError: pass
 
 @unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
 class RegressionDraftKernelTests(KernelFixture):
+    def test_regression_review_lifecycle_seals_real_replay_with_operator_attestation(self):
+        from test_regression_replay import make_replay, SOLVER
+        from agent_harness_lab.evaluation.regression_review import ReviewStore
+        rootfs = self.root/'runtime'; frozen = pinned_runtime(rootfs)
+        source_root = self.root/'source'; source_root.mkdir()
+        store = ReviewStore(self.root/'private-cases')
+        solver = SOLVER + f'\nassert not pathlib.Path({str(store.root)!r}).exists()\n'
+        proposal, draft, spec = make_replay(source_root, frozen['sha256'], solver)
+        reported = store.propose(proposal, draft, spec, 'synthetic-author')
+        backend = SandboxBackend(cgroup_root=self.cgroup_root, image_root=rootfs,
+            image_sha256=frozen['sha256'], disk_bytes=64*1024*1024)
+        reproduced = store.reproduce(reported['case_id'], backend)
+        self.assertEqual(reproduced['state'], 'reproduced', reproduced)
+        prepared = store.draft(reported['case_id'])
+        review = dict(schema_version=1, case_id=reported['case_id'], expected_event_sha256=prepared['event_sha256'],
+            evidence_sha256=prepared['evidence_sha256'], decision='reviewed',
+            reviewer=dict(identity='synthetic-reviewer', source='operator_attestation', provenance='synthetic kernel fixture',
+                basis_kind='independent_artifact_review', basis='Synthetic operator assertion; no authenticated human-independence claim.'),
+            evidence_refs=[dict(ref='synthetic:kernel-review', sha256='a'*64)], reason='Exercise the operator review contract.')
+        path = self.root/'operator-review.json'; path.write_text(json.dumps(review))
+        reviewed = store.review(reported['case_id'], path)
+        self.assertEqual(reviewed['state'], 'reviewed'); self.assertEqual(reviewed['review_independence'], 'operator_attested')
+        self.assertEqual(reviewed['historical_verification'], 'unverified'); self.assertFalse(reviewed['bank_admission'])
+
     def test_regression_replay_uses_real_matched_snapshot_views_and_hidden_oracle(self):
         from test_regression_replay import make_replay, SOLVER
         from agent_harness_lab.evaluation.regression_replay import replay

@@ -56,6 +56,10 @@ version and controlled comparisons; those are outside this validator.
 
 ## Privacy and remaining work
 
+The [private case review workflow](regression-review.md) records controlled
+reproduction, sealed evidence and explicit operator attestations. It preserves
+these declarations and never admits cases to a bank automatically.
+
 Private records and their derived receipts, hashes, summaries and aggregates stay
 in private user state. A receipt's omission of prose does not authorize publishing
 it. Public examples must be independently synthetic or explicitly permitted public
