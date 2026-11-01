@@ -239,6 +239,19 @@ broken baseline programs and complete candidate programs. Their outcomes establi
 runner wiring, not model quality or actual containment. A supported-host end-to-end
 test remains explicitly conditional on the real namespace probe.
 
+`ahl evaluate --sandbox-graders --agent codex` (or `claude`) keeps native agent
+execution cooperative while using that same offline artifact-grading boundary.
+Every task needs explicit artifacts and a frozen complete bundle. `ahl improve`
+and `ahl watch` accept the option too: the controller freezes evaluator-authored
+bundles and runs all broken/partial/complete controls offline before paired trials.
+Unsupported grading capabilities block before any agent launch. Grader errors,
+missing artifacts, changed bundles and malformed typed grades cannot pass or
+trigger host fallback. Optional cgroup, image and private-storage selections reach
+both control and trial grading; watch fingerprints include those settings.
+These synthetic orchestration checks establish wiring, not kernel containment,
+inference credential isolation, evaluator independence or improved model outcomes.
+Native agents remain cooperative and automatic promotion remains disabled.
+
 [Bubblewrap's upstream documentation](https://github.com/containers/bubblewrap)
 explains that application policy and the selected mounts determine the boundary;
 the installed binary alone is not a security policy.

@@ -95,6 +95,11 @@ def main(argv=None):
             command.add_argument('--codex', default='codex')
             command.add_argument('--claude', default='claude')
             command.add_argument('--timeout', type=int, default=2700, help='Whole improvement run budget in seconds')
+            command.add_argument('--sandbox-graders', action='store_true', help='Require offline frozen grader controls and trial grading; agent CLI remains cooperative')
+            command.add_argument('--cgroup-root', type=Path, help='Explicit delegated cgroup v2 subtree for graders')
+            command.add_argument('--image-root', type=Path, help='Explicit extracted readonly grader runtime image')
+            command.add_argument('--image-sha256', help='Required content pin for --image-root')
+            command.add_argument('--disk-bytes', type=int, help='Bound grader scratch storage; requires --cgroup-root')
         if name == 'watch':
             command.add_argument('--interval', type=int, default=300, help='Seconds between evidence checks')
             command.add_argument('--max-attempts', type=int, default=3, help='Total transient infrastructure attempts per evidence/configuration')

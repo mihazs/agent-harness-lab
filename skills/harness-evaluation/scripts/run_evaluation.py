@@ -119,12 +119,14 @@ def agent_command(agent, binary, plugin=None, skills=()):
 
 
 def evaluate(args):
+    sandbox_graders = getattr(args, 'sandbox_graders', False)
+    if type(sandbox_graders) is not bool: raise ValueError('sandbox grader mode must be explicit')
     cgroup_root = getattr(args, 'cgroup_root', None)
     disk_bytes = getattr(args, 'disk_bytes', None)
     image_root, image_sha256 = getattr(args, 'image_root', None), getattr(args, 'image_sha256', None)
     if (image_root is None) != (image_sha256 is None):
         raise ValueError('runtime image root and SHA-256 pin must be supplied together')
-    if (cgroup_root is not None or image_root is not None or disk_bytes is not None) and args.agent != 'offline':
+    if (cgroup_root is not None or image_root is not None or disk_bytes is not None) and args.agent != 'offline' and not sandbox_graders:
         raise ValueError('resource boundaries currently require the offline executor')
     manifest_path = Path(args.manifest).resolve()
     manifest_bytes = manifest_path.read_bytes()
@@ -192,13 +194,14 @@ def evaluate(args):
         if any('{workspace}' in a and a != '{workspace}' for a in task['grader']):
             raise ValueError('keep grader programs outside the workspace; pass {workspace} as a separate argument')
     grader_files = {}
-    for task in tasks:
-        for arg in task['grader']:
-            if '{workspace}' in arg or '{trace}' in arg:
-                continue
-            file = (manifest_path.parent / arg).resolve()
-            if file.is_file():
-                grader_files[str(file)] = hashlib.sha256(file.read_bytes()).hexdigest()
+    if not (sandbox_graders or args.agent == 'offline'):
+        for task in tasks:
+            for arg in task['grader']:
+                if '{workspace}' in arg or '{trace}' in arg:
+                    continue
+                file = (manifest_path.parent / arg).resolve()
+                if file.is_file():
+                    grader_files[str(file)] = hashlib.sha256(file.read_bytes()).hexdigest()
     declared_bundles = manifest.get('grader_bundles', {})
     frozen_bundles = {}
     if declared_bundles:
@@ -235,24 +238,20 @@ def evaluate(args):
         return False
     offline = agent == 'offline'
     backend = None
-    if offline:
-        if not frozen_bundles or skills or harness_paths:
+    if offline or sandbox_graders:
+        if not frozen_bundles:
+            raise ValueError('sandboxed grading requires every frozen grader bundle')
+        if offline and (skills or harness_paths):
             raise ValueError('offline execution requires frozen grader bundles and a directly mounted harness, without skill injection')
         from agent_harness_lab.evaluation.sandbox import SandboxBackend, Limits
-        from agent_harness_lab.evaluation.integrity import relative
-        from agent_harness_lab.evaluation.bank_tools import regrade_artifacts
+        from agent_harness_lab.evaluation.bank_tools import frozen_grader, regrade_artifacts
         for task in tasks:
-            command, allowed = task.get('offline_executor'), task.get('artifacts')
-            if (not isinstance(command, list) or not command
-                    or not all(isinstance(a, str) and a and '\0' not in a for a in command)
-                    or not isinstance(allowed, list) or not allowed or len(allowed) > 100
-                    or len(set(allowed)) != len(allowed)):
-                raise ValueError('offline tasks require an explicit executor argv and bounded artifact allowlist')
-            for name in allowed:
-                relative(name)
-            bundle = contained(manifest_path.parent, declared_bundles[task['id']]['path'])
-            if task['grader'] != [task['grader'][0], str(bundle/'grade.py.txt'), '{workspace}', str(bundle/'expected.json')]:
-                raise ValueError('offline execution supports only the frozen Python artifact grader contract')
+            frozen_grader(manifest_path.parent, task, declared_bundles[task['id']])
+            if offline:
+                command = task.get('offline_executor')
+                if (not isinstance(command, list) or not command
+                        or not all(isinstance(a, str) and a and '\0' not in a for a in command)):
+                    raise ValueError('offline tasks require an explicit executor argv and bounded artifact allowlist')
         options = dict(cgroup_root=cgroup_root)
         if image_root is not None: options.update(image_root=image_root, image_sha256=image_sha256)
         if disk_bytes is not None: options['disk_bytes'] = disk_bytes
@@ -280,7 +279,11 @@ def evaluate(args):
     available = budget - (time.monotonic() - started)
     if available <= 0:
         blocked = 'preflight_budget_exhausted'
-    capability = backend.capability(seconds=min(3, available)) if offline and not blocked else None
+    capability = backend.capability(seconds=min(3, available)) if (offline or sandbox_graders) and not blocked else None
+    if sandbox_graders and not offline and capability is not None and capability['status'] != 'available':
+        blocked = 'grader_sandbox_unavailable'
+    available = budget - (time.monotonic() - started)
+    if available <= 0: blocked = 'preflight_budget_exhausted'
     version_info = dict(exit_code=None, stdout='') if offline or blocked else execute([binary, '--version'], manifest_path.parent, min(timeout, available))
     config_path = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'config.toml'
     config = {}
@@ -299,6 +302,10 @@ def evaluate(args):
                             'user_config_defaults': config, 'effective_settings_verified': False},
                    isolation=('cooperative trusted fixtures; ' + ('workspace-write; ' if agent == 'codex' else 'inherited Claude permissions/sandbox; ') + 'inherited configuration/auth/hooks; no security or network isolation claim'))
     results['grader_bundle_digests'] = frozen_bundles
+    if sandbox_graders:
+        results['runtime']['grader_capability'] = capability
+        results['isolation'] = dict(executor='cooperative native CLI; no role isolation claim',
+            grader='fresh offline namespace with readonly artifacts and frozen oracle', full_certification=False)
     if configured:
         results['effective_configuration'] = dict(configured, applied_limits=dict(seconds=budget, trials=trial_limit),
                                                   requested_agent=agent, effective_runtime_settings_verified=False)
@@ -407,7 +414,7 @@ def evaluate(args):
             if remaining <= 0:
                 record['status'] = 'budget_exhausted'
             else:
-                if offline:
+                if offline or sandbox_graders:
                     bundle = contained(manifest_path.parent, declared_bundles[task['id']]['path'])
                     try:
                         grade = regrade_artifacts(workspace, task['artifacts'], bundle, frozen_bundles[str(bundle)],
@@ -439,10 +446,11 @@ def main():
                         help='offline executes explicit fixture commands without model inference and requires bubblewrap')
     parser.add_argument('--codex', default='codex', help='Codex executable path')
     parser.add_argument('--claude', default='claude', help='Claude Code executable path')
-    parser.add_argument('--cgroup-root', type=Path, help='Explicit predelegated cgroup v2 subtree for offline executor and grader resources')
-    parser.add_argument('--image-root', type=Path, help='Explicit private extracted runtime rootfs for offline execution')
+    parser.add_argument('--sandbox-graders', action='store_true', help='Require fresh offline frozen artifact graders for cooperative CLI trials')
+    parser.add_argument('--cgroup-root', type=Path, help='Explicit predelegated cgroup v2 subtree for offline execution or sandboxed grader resources')
+    parser.add_argument('--image-root', type=Path, help='Explicit private extracted runtime rootfs for offline execution or sandboxed grading')
     parser.add_argument('--image-sha256', help='Preapproved rootfs content pin; required with --image-root')
-    parser.add_argument('--disk-bytes', type=int, help='Aggregate tmpfs data capacity for offline roles; requires --cgroup-root')
+    parser.add_argument('--disk-bytes', type=int, help='Aggregate tmpfs data capacity for offline roles or sandboxed graders; requires --cgroup-root')
     args = parser.parse_args()
     try:
         return evaluate(args)

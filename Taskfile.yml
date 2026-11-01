@@ -104,6 +104,10 @@ tasks:
     desc: Run native resource boundary and explicit delegated-host tests
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_sandbox_*.py" -v'
+  test:sandbox:graders:
+    desc: Run frozen grader controls and cooperative workflow isolation contracts
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_sandbox_graders.py" -v'
   test:sandbox:kernel:
     desc: Run native kernel canaries in a disposable foreground user scope (Linux/systemd)
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'

@@ -54,6 +54,16 @@ permissions and hooks come from that runtime. Permission bypass is never enabled
 The default whole-run budget is 45 minutes, with at most four planning sessions and
 20 task trials. Use `--timeout SECONDS` to set a smaller budget.
 
+On Linux with working bubblewrap namespaces, add `--sandbox-graders` to `improve`
+or `watch` to run authored grader controls and trial grading in fresh offline
+namespaces. The controller freezes every complete grader bundle before any
+control runs and extracts only declared artifacts. An unavailable boundary blocks
+before agent execution; grading never falls back to host execution. Optional
+`--cgroup-root`, `--image-root` with `--image-sha256`, and `--disk-bytes` select
+the existing resource/image profiles for both control and trial graders.
+Agents still use the cooperative native CLI, inherited authentication and hooks;
+this option does not establish full role isolation or authorize promotion.
+
 Automatic adoption is limited to `AGENTS.md`, `CLAUDE.md`, project-local
 `.agents/skills/` and `.claude/skills/`, and an existing project-owned `skills/` tree.
 Symlinked/global skills and runtime permission settings are outside adoption scope.

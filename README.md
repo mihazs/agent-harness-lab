@@ -84,7 +84,9 @@ inside an agent session. Never enable runtime permission bypass to use AHL.
 ## Safety, privacy and evidence
 
 - Use trusted projects and synthetic fixtures. Agent runtimes, inherited hooks and
-  cooperative graders are **not a hostile-code security sandbox**.
+  cooperative graders are **not a hostile-code security sandbox**. Optional
+  [`--sandbox-graders`](docs/workflows.md#automatic-improvement) isolates artifact
+  grading on supported Linux hosts; native agent execution remains cooperative.
 - Real-world diagnostic accuracy and general performance gains are unestablished.
   Synthetic checks exercise implementation behavior; they do not certify improvement.
 - Repetition is not waste. Fewer tool calls count as an improvement only when required
