@@ -19,6 +19,10 @@ tasks:
     desc: Run source contracts and checkpoint unittest cases
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_*.py"'
+  test:sources:grouping:
+    desc: Run native lexical grouping, revision and bank-exposure controls
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_grouping.py" -v'
   test:sources:graph:
     desc: Run native graph contracts, migrations and scoped source relationship cases
     cmds:

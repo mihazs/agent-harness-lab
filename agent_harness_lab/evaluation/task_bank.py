@@ -89,7 +89,14 @@ def validate(path, *, verify_contents=True):
             raise ValueError('fixture copy leaks across partitions')
         if task.independence != 'reviewed' or task.review_status != 'accepted' or task.permission != 'approved':
             issues.append(dict(task=task.task_id, status='independence_or_review_unverified'))
-    return dict(schema_version=1, bank_sha256=hashlib.sha256(raw).hexdigest(), contents_verified=verify_contents,
+    bank_sha256 = hashlib.sha256(raw).hexdigest()
+    content_grouping = None
+    if verify_contents:
+        from .content_grouping import inspect_bank
+        content_grouping, overlaps = inspect_bank(path.parent, tasks, bank_sha256)
+        issues.extend(overlaps)
+    return dict(schema_version=1, bank_sha256=bank_sha256, contents_verified=verify_contents,
+                content_grouping=content_grouping,
                 tasks=len(tasks), roots=len({t.root_id for t in tasks}),
                 partitions={p: sum(t.partition == p for t in tasks) for p in sorted(PARTITIONS)},
                 certification_eligible=verify_contents and not issues, issues=issues,

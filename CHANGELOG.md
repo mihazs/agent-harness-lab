@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.42.0
+
+### Minor Changes
+
+- Add versioned bounded lexical grouping receipts and fixture/prompt exposure checks to task-bank validation. Detect normalized copies under distinct declared roots, preserve negation and ordering, reject ambiguous JSON, freeze grouping revisions in exported manifests and keep lineage/independent-root claims unverified.
+
 ## 0.41.0
 
 ### Minor Changes
