@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.25.0
+
+### Minor Changes
+
+- Expose explicitly scoped private source-journal context in analyze and doctor without collecting sources or contacting services. Report declared execution identities, coverage gaps/limits and graph counts separately from telemetry and readiness prerequisites; preserve unknown target binding, independence and capture completeness. Fingerprint untrusted labels, bound summaries with explicit omissions, and leave journals unchanged, including legacy and missing-cache cases.
+
 ## 0.24.0
 
 ### Minor Changes
