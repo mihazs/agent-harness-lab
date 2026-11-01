@@ -133,6 +133,86 @@ code; there is no dynamic plugin loading or automatic source enablement.
 Provider-specific API transports, native formats, append offsets, analyze/doctor source
 integration and remote pagination remain open in #42 and provider issues.
 
+## Offline Git and selected harness metadata
+
+The `local_git/git/v1` provider uses the same explicit declaration, registry,
+preview/import/status and private journal. Installing AHL enables no source.
+Its declaration's `data` points to a separate JSON selection descriptor under
+the authorized declaration root:
+
+```json
+{
+  "schema_version": 1,
+  "checkout": "project",
+  "git_dir": "project/.git",
+  "common_dir": "project/.git",
+  "harness_paths": ["AGENTS.md", ".claude/settings.json"],
+  "max_commits": 100
+}
+```
+
+All three directories are explicit relative paths under that root. A linked
+worktree names its own administrative Git directory and the shared common Git
+directory; its marker, backlink and common-directory pointer must match those
+selections. The source specification uses `identity_provenance: source_declared_id`,
+`auth_mode: none` and `enabled: true`. Its root fingerprint is the declaration
+directory fingerprint described above; its scope fingerprint is `digest(selection)`
+using `sources.schema.digest`. Independently supply the expected project/scope
+fingerprints. The reader does not infer project identity from path names, remotes,
+branch names or timestamps. Keep the explicitly chosen journal outside the source
+directories.
+
+Preview invokes the trusted system `/usr/bin/git`, version-checked for Git 2.43+
+in major version 2. Missing/unsupported tools block the read. Source configuration
+is copied as bounded data and parsed with includes disabled solely to identify
+supported repository/object/reference formats. Git operates against a private
+temporary bare view containing copied regular object-store files and a sanitized
+configuration. Source hooks, filters, signatures, aliases, fsmonitor settings,
+credential helpers, global/system configuration and remote settings are not applied.
+There is no checkout, source-index refresh, submodule update, fetch or lazy fetch.
+Network protocols are disabled and the subprocess environment is cleared.
+
+The view supports SHA-1 and SHA-256 loose objects and indexed packfiles. Full strict
+`fsck` verifies the frozen object store before deriving history or diff statistics;
+read-back commit, tree and selected blob identities are also checked. Ref names,
+commit IDs, messages and touched paths become fingerprints. Per-worktree private
+ref namespaces come from the selected administrative directory. Dangling refs are
+excluded with a warning. History covers up to the declared 1–100 commits in HEAD
+ancestry; merge differences use the first parent. Shallow boundaries retain known
+parent identities while leaving unavailable differences unknown. Neither signed
+metadata nor a commit date proves authorship quality, causal effect or independence.
+
+`GitExport.harness` is a frozen `HarnessSnapshot` of only the selected paths. Each
+file records its path/content fingerprints, current permission bits and its
+committed content fingerprint/Git mode, including missing and untracked states.
+The snapshot retains the captured HEAD identity when later captures see a different
+HEAD. `configuration_source` identifies declared project files; observed loading
+and effective settings remain `unknown`. File presence, names and contents do not
+prove that an agent loaded them. Preview includes these metadata in `git_summary`;
+import keeps normalized development-artifact records in the journal. Collector
+checkpoints describe committed captures, not the current live source or a historical
+execution's version. Full instruction/import/override graphs, hook lifecycle
+inventory, independently evidenced execution bindings and hosting-provider
+reconciliation remain open in #46/#58/#77–#80.
+
+The first profile caps source reads at 512 MiB, filesystem entries at 10,000,
+directory depth at 64, refs at 1,000 and selected paths at 100. Selection JSON is
+bounded to 64 KiB and each current harness file to 1 MiB. Git output is limited to
+4 MiB per command and 64 MiB per capture, with one ten-second admission deadline
+and child CPU/address-space limits. Source filesystem operations are checked
+between bounded reads but cannot be preempted at an exact deadline. Links,
+nonregular files, alternate object stores, bare repositories, reftable repositories
+and selected submodule/nested-repository contents are blocked without fallback.
+All observed source metadata are rechecked before returning; failed reads leave
+the committed journal untouched. Private copies are removed after success or error.
+
+Synthetic native tests cover ordinary/linked/detached/shallow repositories, packed
+and SHA-256 objects, corrupt blobs, private ref namespaces, dirty/untracked/missing
+files, literal paths, mutable snapshot recurrence, inert execution settings,
+missing-object remote denial, timeout cleanup and unchanged source contents/index.
+These checks establish the tested read policy, not general hostile-binary isolation
+or independently verified historical execution lineage.
+
 ## ai-memory OKF project exports
 
 Select `local_file/ai-memory-okf/0.2` in the existing source declaration, with

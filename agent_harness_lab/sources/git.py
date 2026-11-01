@@ -167,6 +167,7 @@ class GitExport(LocalExport):
             if Folder.stamp(view.binary.stat()) != view.binary_stamp: raise ValueError('trusted Git binary changed')
             if read_json(descriptor) != selection or self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)[0] != source:
                 raise ValueError('Git selection changed during capture')
+            self.harness = harness
             self.summary = dict(head_sha256=harness.head_sha256, branch_sha256=digest(branch) if branch else None,
                 commits=graph, refs=[dict(name_sha256=digest(n), target_sha256=digest(t.decode()), object_type=k) for n, t, k in valid_refs],
                 harness=asdict(harness), harness_sha256=harness.sha256, git_version=view.version,

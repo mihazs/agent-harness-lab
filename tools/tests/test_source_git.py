@@ -238,6 +238,47 @@ class GitSourceTests(unittest.TestCase):
         self.assertEqual(len(children), 2)
         self.assertTrue(all(child.poll() is not None for child in children))
 
+    def test_snapshot_import_can_return_to_prior_harness_content_without_erasing_revisions(self):
+        original = (self.repo/'AGENTS.md').read_bytes()
+        cache = self.root/'history.json'
+        self.assertEqual(self.invoke('import', '--cache', str(cache))[0], 0)
+        (self.repo/'AGENTS.md').write_text('SYNTHETIC_TEMPORARY_EDIT')
+        self.assertEqual(self.invoke('import', '--cache', str(cache))[0], 0)
+        (self.repo/'AGENTS.md').write_bytes(original)
+        code, receipt = self.invoke('import', '--cache', str(cache))
+        self.assertEqual(code, 0)
+        self.assertEqual(receipt['imported'], 0)
+        _, status = self.invoke('status', '--cache', str(cache))
+        self.assertEqual(status['checkpoints'], 3)
+        self.assertEqual(status['revisions'], 4)
+
+    def test_captured_harness_identity_does_not_follow_later_head_changes(self):
+        collector, capture = self.read()
+        before, old_root = collector.harness, capture.sha256
+        (self.repo/'AGENTS.md').write_text('SYNTHETIC_NEXT_REVISION'); self.commit()
+        newer = collector.read(self.source)
+        self.assertNotEqual(before.head_sha256, collector.harness.head_sha256)
+        self.assertNotEqual(old_root, newer.sha256)
+        self.assertEqual(before.observed_loading, 'unknown')
+        self.assertNotEqual(before.files[0].content_sha256, collector.harness.files[0].content_sha256)
+
+    def test_tabs_newlines_and_pathspec_magic_in_file_names_remain_literal(self):
+        name = 'strange\tname\n:(glob)*'
+        (self.repo/name).write_text('SYNTHETIC_LITERAL_PATH'); self.commit()
+        self.selection['harness_paths'] = [name]; self.declare()
+        collector, _ = self.read()
+        file = collector.harness.files[0]
+        self.assertEqual(file.path_sha256, digest(name))
+        self.assertEqual(file.content_sha256, file.committed_sha256)
+        self.assertIn(file.path_sha256, {c['path_sha256'] for c in collector.summary['commits'][0]['changes']})
+
+    def test_corrupt_packfile_is_rejected_before_a_snapshot_is_returned(self):
+        self.git('gc', '--prune=now')
+        target = next((self.repo/'.git/objects/pack').glob('*.pack'))
+        target.chmod(0o600)
+        raw = bytearray(target.read_bytes()); raw[len(raw)//2] ^= 1; target.write_bytes(raw)
+        self.assertEqual(self.invoke('preview')[0], 2)
+
     def test_shallow_clone_and_history_ceiling_are_explicit(self):
         (self.repo/'AGENTS.md').write_text('SYNTHETIC_SECOND'); self.commit()
         self.selection['max_commits'] = 1; self.declare()

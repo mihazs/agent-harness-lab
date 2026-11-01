@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.16.0
+
+### Minor Changes
+
+- Add an explicit offline Git metadata source with bounded private object-store copies, verified object integrity and selected immutable harness-file snapshots. Record hashes instead of private paths or commit text, ignore source execution settings and remotes, and retain unknown runtime-loading and effective-configuration state.
+
 ## 0.15.0
 
 ### Minor Changes
