@@ -2,11 +2,13 @@
 import argparse
 import json
 import sys
+import subprocess
 from .registry import Capability, Registry
 from .schema import PLANES
 from .snapshot import LocalExport
 from .okf import MissingOKFDependency, OKFExport
 from .store import SourceStore
+from .git import GitExport
 
 
 def main(argv):
@@ -28,9 +30,12 @@ def main(argv):
             source, _ = connector.declaration(**scope)
             if source.provider == 'ai-memory-okf':
                 connector = OKFExport(args.manifest)
+            elif source.provider == 'git':
+                connector = GitExport(args.manifest)
             registry = Registry()
             registry.register(Capability('local_file', 'ahl-metadata', 'v1', PLANES), connector)
             registry.register(Capability('local_file', 'ai-memory-okf', '0.2', ('contextual_assertion',)), connector)
+            registry.register(Capability('local_git', 'git', 'v1', ('development_artifact',)), connector)
             result = registry.probe(source, **scope)
             if result['status'] != 'recognized':
                 print(json.dumps(result)); return 3
@@ -40,6 +45,8 @@ def main(argv):
                               capture_completeness='unknown')
                 if isinstance(connector, OKFExport):
                     result['context_summary'] = connector.summary
+                elif isinstance(connector, GitExport):
+                    result['git_summary'] = connector.summary
             elif args.operation in ('import', 'status'):
                 if not args.cache:
                     raise ValueError()
@@ -54,6 +61,6 @@ def main(argv):
     except (NotImplementedError, PermissionError):
         print('source operation blocked by unavailable filesystem capabilities/access', file=sys.stderr)
         return 3
-    except (ValueError, OSError, TypeError, KeyError, RecursionError):
+    except (ValueError, OSError, TypeError, KeyError, RecursionError, subprocess.SubprocessError):
         print('source operation rejected; inspect scope, declaration and metadata; no automatic retry', file=sys.stderr)
         return 2

@@ -47,6 +47,17 @@ class SourceDispatchTests(unittest.TestCase):
             self.assertEqual(main(['sources']), 0)
         self.assertEqual(json.loads(output.getvalue())['enabled_sources'], 0)
 
+    def test_git_capability_probe_reads_no_git_data_and_grants_no_execution_authority(self):
+        self.declare(replace(self.source, kind='local_git', provider='git', version='v1'))
+        with patch('subprocess.Popen', side_effect=AssertionError('probe must not launch Git')):
+            code, raw = self.invoke('probe')
+        self.assertEqual(code, 0)
+        result = json.loads(raw)
+        self.assertEqual(result['planes'], ['development_artifact'])
+        self.assertFalse(result['source_read'])
+        self.assertFalse(result['network_used'])
+        self.assertFalse(result['execution_authorized'])
+
     def test_preview_import_status_and_reimport_use_the_same_frozen_export(self):
         cache = self.root/'private/history.json'
         with patch.object(socket, 'socket', side_effect=AssertionError('no network')):
