@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.39.0
+
+### Minor Changes
+
+- Audit explicitly supplied regression drafts against frozen broken, partial, complete, alternative-valid and superficial artifact controls in the offline sandbox. Bind proposal/task/control hashes and runtime identity, require aggregate resource profiles, and retain private typed receipts under one parent deadline. Keep historical reproduction, independent review, bank admission and automatic promotion unverified or disabled.
+
 ## 0.38.0
 
 ### Minor Changes

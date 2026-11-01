@@ -129,7 +129,8 @@ def regrade_artifacts(workspace, allowlist, bundle, expected_digest, backend, *,
         except (ValueError, TypeError, KeyError):
             pass
     return dict(status='grader_error' if outcome is None else ('passed' if outcome else 'failed'),
-                outcome=outcome, execution=run, automatic_promotion=False)
+                outcome=outcome, grader_identity={k: envelope[k] for k in ('grader_id', 'grader_version')} if outcome is not None else None,
+                execution=run, automatic_promotion=False)
 
 
 def audit_graders(bank_path, *, cooperative=False, sandbox=False, budget_seconds=300):

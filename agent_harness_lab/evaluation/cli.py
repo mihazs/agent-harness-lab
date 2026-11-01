@@ -21,8 +21,15 @@ def main(argv):
     experiment = commands.add_parser('experiment', help='Analyze a frozen repeated paired experiment')
     experiment.add_argument('--spec', type=Path, required=True)
     experiment.add_argument('--records', type=Path, required=True)
-    regression = commands.add_parser('regression', help='Validate a declared reproduction proposal; never execute or admit it')
+    regression = commands.add_parser('regression', help='Validate reproduction declarations or explicitly audit draft graders; no bank admission')
     regression.add_argument('--proposal', type=Path, required=True)
+    regression.add_argument('--draft', type=Path, help='Explicit frozen unreviewed TaskSpec/control descriptor to audit offline')
+    regression.add_argument('--output', type=Path, help='New private review-receipt directory; requires --draft')
+    regression.add_argument('--cgroup-root', type=Path)
+    regression.add_argument('--image-root', type=Path)
+    regression.add_argument('--image-sha256')
+    regression.add_argument('--disk-bytes', type=int)
+    regression.add_argument('--budget-seconds', type=float, default=60)
     sandbox = commands.add_parser('sandbox-check', help='Probe offline sandbox capability; never relax isolation')
     sandbox.add_argument('--cgroup-root', type=Path, help='Explicit predelegated cgroup v2 subtree; fail closed if unavailable')
     sandbox.add_argument('--image-root', type=Path, help='Explicit private extracted runtime rootfs')
@@ -48,9 +55,22 @@ def main(argv):
             if args.audit and result['grader_audit']['status'] != 'controls_passed':
                 code = 3
         elif args.command == 'regression':
-            from .regressions import validate as validate_regression
-            result = validate_regression(args.proposal)
-            code = 0
+            options = (args.output, args.cgroup_root, args.image_root, args.image_sha256, args.disk_bytes)
+            if args.draft:
+                if any(v is None for v in options):
+                    raise ValueError('draft audits require output, cgroup, pinned image and private disk profiles')
+                from .sandbox import SandboxBackend
+                from .regression_controls import audit
+                backend = SandboxBackend(cgroup_root=args.cgroup_root, image_root=args.image_root,
+                                         image_sha256=args.image_sha256, disk_bytes=args.disk_bytes)
+                result = audit(args.proposal, args.draft, args.output, backend, budget_seconds=args.budget_seconds)
+                code = 0 if result['status'] == 'grader_controls_passed' else (3 if result['status'] == 'blocked' else 1)
+            else:
+                if any(v is not None for v in options) or args.budget_seconds != 60:
+                    raise ValueError('control execution options require --draft')
+                from .regressions import validate as validate_regression
+                result = validate_regression(args.proposal)
+                code = 0
         elif args.command == 'experiment':
             from .plan import ExperimentSpec
             from .statistics import TrialRecord, analyze

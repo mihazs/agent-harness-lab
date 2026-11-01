@@ -122,10 +122,15 @@ class RegressionProposal:
                     bank_admission=False, automatic_promotion=False, publication_allowed=False)
 
 
-def validate(path):
+def load(path):
     raw = read_regular(path, 256 * 1024)
     try:
         value = json.loads(raw, object_pairs_hook=unique_object, parse_constant=invalid_constant)
     except RecursionError:
         raise ValueError('reproduction JSON nesting limit exceeded') from None
-    return RegressionProposal.parse(value).receipt(hashlib.sha256(raw).hexdigest())
+    return RegressionProposal.parse(value), hashlib.sha256(raw).hexdigest()
+
+
+def validate(path):
+    proposal, identity = load(path)
+    return proposal.receipt(identity)
