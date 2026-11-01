@@ -213,7 +213,7 @@ def run_trial(client, backend, workspace, harness, prompt, artifacts, destinatio
         storage = attestation.get('storage_policy') or {}
         image = attestation.get('runtime_image') or {}
         cgroup = attestation.get('cgroup_v2') or {}
-        if (run.get('status') not in ('completed','failed') or type(run.get('exit_code')) is not int
+        if (run.get('status') not in ('completed','failed') or type(run.get('exit_code')) is not int or not 0 <= run['exit_code'] < 128
                 or (run['exit_code']==0) != (run['status']=='completed') or run.get('inputs_unchanged') is not True
                 or storage.get('verified') is not True or storage.get('extracted') is None
                 or image.get('verified_before') is not True or image.get('verified_after') is not True

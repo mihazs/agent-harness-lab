@@ -268,6 +268,24 @@ class ResponsesEvaluationTests(unittest.TestCase):
         self.assertEqual(self.requests,1); self.assertEqual(self.backend.run.call_count,1); self.assertEqual(self.grades,0)
         self.assertTrue(all(t['status']=='not_executed' for t in self.fixture.results()['trials'][1:]))
 
+    def test_signal_killed_command_cannot_continue_even_with_forged_available_attestations(self):
+        original = self.execute
+        for code in (-9,137):
+            with self.subTest(exit_code=code):
+                self.requests = self.commands = self.grades = 0
+                self.args.output = self.root/('signal-'+str(code))
+                def killed(*args,**kwargs):
+                    result = original(*args,**kwargs)
+                    result.update(status='failed',exit_code=code)
+                    return result
+                self.backend.run.side_effect = killed
+                with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=self.backend), \
+                     patch.object(responses,'request',side_effect=self.transport):
+                    self.assertEqual(self.runner.evaluate(self.args),1)
+                self.assertEqual((self.requests,self.commands,self.grades),(1,1,0))
+                result = json.loads((self.args.output/'results.json').read_text())
+                self.assertTrue(all(t['status']=='not_executed' for t in result['trials'][1:]))
+
     def test_partial_profiles_and_unsafe_views_reject_before_inference(self):
         original = dict(vars(self.args))
         for name in ('cgroup_root','image_root','image_sha256','disk_bytes'):

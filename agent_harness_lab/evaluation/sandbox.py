@@ -198,7 +198,8 @@ class SandboxBackend:
                 storage_report = dict(policy=scratch.policy, verified=scratch.verified,
                     controller_seeded_bytes=scratch.seeded_bytes,
                     hugetlb_policy=scratch.filter_policy,
-                    extracted=scratch.extract() if not reason and (process.returncode == 0 or working_state is not None) and unchanged else None)
+                    extracted=scratch.extract() if not reason and (process.returncode == 0 or
+                        working_state is not None and 0 < process.returncode < 128) and unchanged else None)
         return dict(exit_code=process.returncode, status=reason or ('completed' if process.returncode == 0 else 'failed'),
                     stdout=bytes(buffers[0][:limits.output_bytes]).decode('utf-8', 'replace'),
                     stderr=bytes(buffers[1][:limits.output_bytes]).decode('utf-8', 'replace'),

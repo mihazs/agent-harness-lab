@@ -260,8 +260,10 @@ regular single-link files, 1 MiB contents, 100 directories, depth 64, 4096-byte 
 and 64 KiB metadata. Capture occurs after worker cleanup through no-follow directory
 descriptors. Preserve ordinary modes, new files, empty directories and deletions;
 reject links, special files/mode bits and incomplete/oversized reads. Nonzero test
-commands retain valid edits for inspection. Timeout/resource/integrity failures
-never adopt partial state. Only terminal declared artifacts are staged and
+commands with exit codes 1–127 retain valid edits for inspection. Higher codes are
+ambiguous with wrapped signals and abort. Timeout/resource/integrity failures
+and signal-killed commands never adopt partial state or continue inference.
+Only terminal declared artifacts are staged and
 published together for fresh offline grading; a final model claim cannot pass a
 task. Synthetic transports establish orchestration; separately selected kernel
 canaries establish only their tested process/filesystem boundaries.
