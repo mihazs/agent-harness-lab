@@ -125,6 +125,17 @@ the smaller of the requested memory limit and the remaining storage budget;
 the attestation records its read-back value. This deliberately couples memory
 and storage admission: interpreter/anonymous memory and filesystem metadata use
 the same remaining allowance. Small storage budgets may fail before execution.
+HugeTLB uses separate accounting on some hosts. An inherited, sealed seccomp
+filter denies HugeTLB flags on `memfd_create`, `shmget` and `mmap`, including in
+nested namespaces. It validates the syscall ABI and rejects alternate syscall
+number ranges. This storage profile supports Linux x86_64 and aarch64; other
+architectures or unavailable seccomp support fail closed. Filter identity and
+digest are included in the storage attestation. These guards do not audit every
+denied syscall and do not enable automatic promotion.
+Existing HugeTLB-backed runtime/input mounts, including nested mounts, are
+rejected before launch because mapping such a file need not set that flag.
+As with the runtime image contract, privileged host mount changes during a trial
+are outside this backend's threat model.
 
 A trusted setup process creates the private filesystem and hands its directory
 descriptor to the controller through a bounded Unix socket protocol. The

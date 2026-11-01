@@ -316,6 +316,20 @@ class StorageKernelTests(KernelFixture):
         self.assertTrue(result['storage_policy']['verified'])
         self.assertNotIn('no aggregate disk quota', result['limitations'])
 
+    def test_hugetlb_memfd_mapping_and_shared_memory_are_denied(self):
+        code = "import ctypes,errno,mmap,os\ntry: os.memfd_create('hugetlb-probe',os.MFD_HUGETLB)\nexcept OSError as error: assert error.errno == errno.EPERM\nelse: raise AssertionError('HugeTLB memfd allowed')\nlibc=ctypes.CDLL(None,use_errno=True)\nlibc.mmap.restype=ctypes.c_void_p\nmapped=libc.mmap(None,2*1024*1024,3,mmap.MAP_PRIVATE|mmap.MAP_ANONYMOUS|0x40000,-1,0)\nassert mapped == ctypes.c_void_p(-1).value and ctypes.get_errno() == errno.EPERM\nassert libc.shmget(0,2*1024*1024,0o600|0o1000|0o4000) == -1\nassert ctypes.get_errno() == errno.EPERM\nprint('hugetlb-denied')\n"
+        run = self.run_code(code, limits=Limits(seconds=5, file_bytes=4*1024*1024))
+        self.assert_complete(run)
+        self.assertIn('hugetlb-denied', run['stdout'])
+        self.assertEqual(run['attestation']['storage_policy']['hugetlb_policy']['name'], 'seccomp-deny-hugetlb-v1')
+
+    def test_alternate_syscall_numbers_cannot_bypass_the_storage_filter(self):
+        code = "import ctypes; ctypes.CDLL(None).syscall(0x4000013f,0,4); raise AssertionError('alternate syscall returned')"
+        run = self.run_code(code)
+        self.assertEqual(run['status'], 'failed', run)
+        self.assertEqual(run['stderr'], '')
+        self.assertTrue(run['attestation']['cgroup_v2']['empty_after_cleanup'])
+
     def test_startup_verification_and_tiny_budget_fail_closed_and_cleanup(self):
         before = {p.name for p in self.cgroup_root.iterdir() if p.is_dir()}
         with patch('agent_harness_lab.evaluation.workspace.VERIFY', "raise RuntimeError('synthetic startup failure')"):

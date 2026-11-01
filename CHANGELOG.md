@@ -4,7 +4,7 @@
 
 ### Minor Changes
 
-- Add opt-in quota-backed private storage for offline sandbox workers and graders. Verify bounded work, temporary and shared-memory volumes, seed fixtures through a private directory handoff, and export only bounded declared artifacts after whole-tree cleanup. Require explicit cgroup controls and keep automatic promotion disabled.
+- Add opt-in quota-backed private storage for offline sandbox workers and graders. Verify bounded work, temporary and shared-memory volumes, seed fixtures through a private directory handoff, and export only bounded declared artifacts after whole-tree cleanup. Require explicit cgroup controls, deny HugeTLB allocation through an inherited syscall policy, and keep automatic promotion disabled.
 
 ## 0.13.0
 

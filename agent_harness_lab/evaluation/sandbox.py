@@ -139,6 +139,7 @@ class SandboxBackend:
             with boundary as group, subprocess.Popen(scratch.command if scratch else command,
                     cwd=workspace, env={'PATH': '/usr/bin:/bin'}, stdin=subprocess.DEVNULL,
                     stdout=scratch.sender if scratch else subprocess.PIPE, stderr=subprocess.PIPE,
+                    pass_fds=(scratch.filter_fd,) if scratch else (),
                     start_new_session=True, preexec_fn=constrain) as process:
                 poll = selectors.DefaultSelector()
                 try:
@@ -192,6 +193,7 @@ class SandboxBackend:
             if scratch:
                 storage_report = dict(policy=scratch.policy, verified=scratch.verified,
                     controller_seeded_bytes=scratch.seeded_bytes,
+                    hugetlb_policy=scratch.filter_policy,
                     extracted=scratch.extract() if not reason and process.returncode == 0 and unchanged else None)
         return dict(exit_code=process.returncode, status=reason or ('completed' if process.returncode == 0 else 'failed'),
                     stdout=bytes(buffers[0][:limits.output_bytes]).decode('utf-8', 'replace'),

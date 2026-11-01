@@ -10,6 +10,7 @@ import struct
 import tempfile
 import time
 from .integrity import contained, digest, read_regular, relative, tree
+from .seccomp import ordinary_filesystems, sealed_filter
 
 MAGIC = b'ahl-tmpfs-v1'
 READY = b'ahl-storage-verified-v1'
@@ -85,11 +86,14 @@ def names(values):
 
 class PrivateWorkspace:
     def __init__(self, backend, workspace, inputs, role, argv, total, deadline, outputs):
+        runtime = [backend.image.root] if backend.image else [Path(p) for p in ('/usr', '/bin', '/lib', '/lib64') if Path(p).exists()]
+        ordinary_filesystems([workspace, *inputs.values(), *runtime])
         self.backend, self.workspace = backend, Path(workspace)
         self.deadline, self.outputs = deadline, names(outputs)
         if role == 'grader' and self.outputs: raise ValueError('graders cannot export storage artifacts')
         self.policy, self.fd, self.verified = policy(total), None, False
         self.seeded_bytes = None
+        self.filter_fd = self.filter_policy = None
         self.receiver = self.sender = None
         self.command = self.layout(backend.command(['/usr/bin/python3', '-I', '-c', BOOTSTRAP], workspace, inputs, role), bootstrap=True)
         inner_argv = ['/usr/bin/python3', '-I', '-c', VERIFY, json.dumps(self.policy), json.dumps(argv)]
@@ -119,8 +123,14 @@ class PrivateWorkspace:
         return command
 
     def __enter__(self):
-        self.receiver, self.sender = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
-        return self
+        try:
+            self.filter_fd, self.filter_policy = sealed_filter()
+            self.receiver, self.sender = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.command[1:1] = ['--seccomp', str(self.filter_fd)]
+            return self
+        except BaseException:
+            self.__exit__()
+            raise
 
     def timeout(self):
         remaining = self.deadline-time.monotonic()
@@ -227,6 +237,7 @@ class PrivateWorkspace:
         return dict(artifacts=len(result), bytes=total)
 
     def __exit__(self, *error):
+        if self.filter_fd is not None: os.close(self.filter_fd)
         if self.fd is not None: os.close(self.fd)
         if self.receiver is not None: self.receiver.close()
         if self.sender is not None: self.sender.close()

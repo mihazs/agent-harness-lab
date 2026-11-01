@@ -10,9 +10,10 @@ import threading
 import time
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, mock_open, patch
 
 from agent_harness_lab.evaluation import workspace
+from agent_harness_lab.evaluation import seccomp
 from agent_harness_lab.evaluation.integrity import tree
 from agent_harness_lab.evaluation.sandbox import SandboxBackend
 
@@ -101,6 +102,25 @@ class StorageTests(unittest.TestCase):
             self.assertFalse(scratch.verified)
         scratch = self.opened(); scratch.deadline = 0
         with self.assertRaises(TimeoutError): scratch.timeout()
+
+    def test_syscall_policy_is_sealed_and_unsupported_architectures_fail_closed(self):
+        descriptor, record = seccomp.sealed_filter()
+        try:
+            self.assertEqual(os.pread(descriptor, 65536, 0), seccomp.program())
+            self.assertEqual(len(record['sha256']), 64)
+            with self.assertRaises(PermissionError): os.write(descriptor, b'changed')
+            with self.assertRaises(PermissionError): os.ftruncate(descriptor, 0)
+        finally: os.close(descriptor)
+        with patch.object(seccomp.platform, 'machine', return_value='unsupported'):
+            with self.assertRaises(ValueError): seccomp.program()
+
+    def test_existing_hugetlb_backing_mounts_cannot_bypass_flag_filtering(self):
+        inventory = b'1 0 0:1 / /data/huge\\040pages rw - hugetlbfs none rw\n'
+        for root in ('/data', '/data/huge pages/nested'):
+            with patch.object(seccomp.Path, 'open', mock_open(read_data=inventory)):
+                with self.assertRaises(ValueError): seccomp.ordinary_filesystems([root])
+        with patch.object(seccomp.Path, 'open', mock_open(read_data=inventory)):
+            seccomp.ordinary_filesystems(['/ordinary'])
 
     def test_changed_seed_and_empty_directory_depth_are_bounded(self):
         (self.source/'seed').write_text('synthetic')
