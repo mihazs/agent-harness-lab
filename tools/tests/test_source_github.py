@@ -208,6 +208,18 @@ class GitHubSourceTests(unittest.TestCase):
         self.routes['/issues/7'] = changing_identity
         with self.assertRaises(TransportError): self.read()
 
+    def test_missing_or_null_merge_reference_stays_unknown_for_a_merged_pr(self):
+        self.pull.update(merged=True, state='closed', merged_at=self.stamp)
+        self.pull_issue['state'] = 'closed'
+        self.pull.pop('merge_commit_sha')
+        for missing in (True, False):
+            if not missing: self.pull['merge_commit_sha'] = None
+            client, _ = self.read()
+            pull = next(n for n in client.summary['nodes'] if n['kind'] == 'github_pull')
+            self.assertTrue(pull['merged'])
+            self.assertIsNone(pull['merge_sha256'])
+            self.assertEqual(pull['merge_reference_kind'], 'unknown')
+
     def test_capture_wide_deadline_and_configured_auth_do_not_connect_when_invalid(self):
         with patch('agent_harness_lab.sources.github.time.monotonic', side_effect=[0, 2]):
             with self.assertRaises(TransportError): self.read(seconds=1)
