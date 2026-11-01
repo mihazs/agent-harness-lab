@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.21.0
+
+### Minor Changes
+
+- Add an opt-in authenticated GitHub v3 review-thread profile. Bind fixed read-only GraphQL queries to checked REST repository, PR, comment and revision identities; capture native resolved/outdated states and nullable line ranges with bounded nested pagination and stable readbacks. Preserve older source scopes and requests, explicit unknowns, partial coverage and atomic failure without inferring task outcomes.
+
 ## 0.20.0
 
 ### Minor Changes
