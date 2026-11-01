@@ -102,17 +102,21 @@ class SandboxBackend:
                     cgroup_v2=run['attestation']['cgroup_v2'],
                     runtime_image=run['attestation'].get('runtime_image'),
                     storage_policy=run['attestation'].get('storage_policy'),
-                    limitations=['inference broker not implemented']
+                    limitations=['full-role inference orchestration not implemented']
                         + ([] if self.disk_bytes is not None else ['no aggregate disk quota'])
                         + ([] if self.image else ['runtime dependencies unpinned'])
                         + ([] if self.cgroup_root is not None else ['no aggregate cgroup controls']))
 
-    def run(self, argv, workspace, inputs, role, limits=Limits(), *, artifact_allowlist=None):
+    def run(self, argv, workspace, inputs, role, limits=Limits(), *, artifact_allowlist=None, working_state=None):
         limits.validate()
         start = time.monotonic()
+        if working_state is not None:
+            from .working_state import WorkingState
+            if not isinstance(working_state,WorkingState) or role == 'grader' or self.disk_bytes is None or artifact_allowlist is not None:
+                raise ValueError('working state requires a private worker workspace without artifact export')
         image = self.image.verify(deadline=start+limits.seconds) if self.image else None
         command = self.command(argv, workspace, inputs, role)
-        if self.disk_bytes is not None and role != 'grader' and artifact_allowlist is None:
+        if self.disk_bytes is not None and role != 'grader' and artifact_allowlist is None and working_state is None:
             raise ValueError('bounded workers require an explicit artifact allowlist')
         before = {name: digest(folder) for name, folder in inputs.items()}
         if time.monotonic() - start >= limits.seconds:
@@ -133,7 +137,7 @@ class SandboxBackend:
         aggregate = replace(limits, memory_bytes=min(limits.memory_bytes, self.disk_bytes)) if self.disk_bytes is not None else limits
         boundary = Cgroup(self.cgroup_root, aggregate, start+limits.seconds) if self.cgroup_root is not None else nullcontext(None)
         storage = PrivateWorkspace(self, workspace, inputs, role, argv, self.disk_bytes,
-            start+limits.seconds, artifact_allowlist if artifact_allowlist is not None else []) if self.disk_bytes is not None else nullcontext(None)
+            start+limits.seconds, artifact_allowlist if artifact_allowlist is not None else [], working_state) if self.disk_bytes is not None else nullcontext(None)
         storage_report = None
         with storage as scratch:
             with boundary as group, subprocess.Popen(scratch.command if scratch else command,
@@ -194,7 +198,8 @@ class SandboxBackend:
                 storage_report = dict(policy=scratch.policy, verified=scratch.verified,
                     controller_seeded_bytes=scratch.seeded_bytes,
                     hugetlb_policy=scratch.filter_policy,
-                    extracted=scratch.extract() if not reason and process.returncode == 0 and unchanged else None)
+                    extracted=scratch.extract() if not reason and (process.returncode == 0 or
+                        working_state is not None and 0 < process.returncode < 128) and unchanged else None)
         return dict(exit_code=process.returncode, status=reason or ('completed' if process.returncode == 0 else 'failed'),
                     stdout=bytes(buffers[0][:limits.output_bytes]).decode('utf-8', 'replace'),
                     stderr=bytes(buffers[1][:limits.output_bytes]).decode('utf-8', 'replace'),

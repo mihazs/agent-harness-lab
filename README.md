@@ -77,6 +77,7 @@ that an instruction edit caused better performance.
 | Inspect bundled synthetic tasks | `ahl bank --starter --list` | None |
 | Stage and evaluate a candidate | `ahl improve [project]` | Authenticated Codex or Claude Code |
 | Recheck changed evidence | `ahl watch [project]` | Each triggered improvement may use inference |
+| Run prepared tasks with controller inference | `ahl evaluate --agent responses ...` | Explicit private API settings and resource profiles |
 
 See [all workflows and commands](docs/workflows.md). Installed skills can also run
 inside an agent session. Never enable runtime permission bypass to use AHL.

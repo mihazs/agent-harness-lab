@@ -73,6 +73,15 @@ def directory(root, parts, *, create=False):
         raise
 
 
+def write_file(root, name, raw, mode):
+    parent = directory(root, name.split('/')[:-1], create=True)
+    try:
+        descriptor = os.open(name.split('/')[-1], os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW, mode, dir_fd=parent)
+        with os.fdopen(descriptor, 'wb') as output:
+            os.fchmod(output.fileno(), mode); output.write(raw)
+    finally: os.close(parent)
+
+
 def names(values):
     if (not isinstance(values, (tuple, list)) or len(values) > 100
             or not all(isinstance(v, str) for v in values) or len(set(values)) != len(values)):
@@ -85,11 +94,12 @@ def names(values):
 
 
 class PrivateWorkspace:
-    def __init__(self, backend, workspace, inputs, role, argv, total, deadline, outputs):
+    def __init__(self, backend, workspace, inputs, role, argv, total, deadline, outputs, working_state=None):
         runtime = [backend.image.root] if backend.image else [Path(p) for p in ('/usr', '/bin', '/lib', '/lib64') if Path(p).exists()]
         ordinary_filesystems([workspace, *inputs.values(), *runtime])
         self.backend, self.workspace = backend, Path(workspace)
         self.deadline, self.outputs = deadline, names(outputs)
+        self.working_state = working_state
         if role == 'grader' and self.outputs: raise ValueError('graders cannot export storage artifacts')
         self.policy, self.fd, self.verified = policy(total), None, False
         self.seeded_bytes = None
@@ -182,6 +192,9 @@ class PrivateWorkspace:
             for descriptor in descriptors: os.close(descriptor)
 
     def seed(self):
+        if self.working_state is not None:
+            self.working_state.seed(self.fd,self.deadline)
+            return
         frozen = tree(self.workspace)
         before = digest(self.workspace)
         for index, path in enumerate(self.workspace.rglob('*')):
@@ -195,18 +208,14 @@ class PrivateWorkspace:
             raw = read_regular(self.workspace/name, 10*1024*1024)
             if hashlib.sha256(raw).hexdigest() != record['sha256']:
                 raise ValueError('storage seed changed')
-            parent = directory(self.fd, name.split('/')[:-1], create=True)
-            try:
-                descriptor = os.open(name.split('/')[-1], os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW, record['mode'], dir_fd=parent)
-                with os.fdopen(descriptor, 'wb') as output:
-                    os.fchmod(output.fileno(), record['mode'])
-                    output.write(raw)
-            finally: os.close(parent)
+            write_file(self.fd,name,raw,record['mode'])
             self.timeout()
         if digest(self.workspace) != before: raise ValueError('storage seed changed during copying')
 
     def extract(self):
         self.timeout()
+        if self.working_state is not None:
+            return self.working_state.capture(self.fd,self.deadline)
         result, total = {}, 0
         for name in self.outputs:
             parent = directory(self.fd, name.split('/')[:-1])

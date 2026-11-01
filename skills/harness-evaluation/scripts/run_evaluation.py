@@ -125,15 +125,26 @@ def evaluate(args):
         raise ValueError('parent deadline must be a finite monotonic timestamp')
     sandbox_graders = getattr(args, 'sandbox_graders', False)
     if type(sandbox_graders) is not bool: raise ValueError('sandbox grader mode must be explicit')
+    controlled = args.agent == 'responses'
+    inference_path = getattr(args, 'inference_settings', None)
+    if controlled != (inference_path is not None):
+        raise ValueError('the responses executor requires explicit --inference-settings; other agents cannot use it')
+    if controlled and getattr(args, 'config', None) is not None:
+        raise ValueError('Responses execution uses explicit inference settings, not cooperative runtime configuration')
     cgroup_root = getattr(args, 'cgroup_root', None)
     disk_bytes = getattr(args, 'disk_bytes', None)
     image_root, image_sha256 = getattr(args, 'image_root', None), getattr(args, 'image_sha256', None)
     if (image_root is None) != (image_sha256 is None):
         raise ValueError('runtime image root and SHA-256 pin must be supplied together')
-    if (cgroup_root is not None or image_root is not None or disk_bytes is not None) and args.agent != 'offline' and not sandbox_graders:
+    if (cgroup_root is not None or image_root is not None or disk_bytes is not None) and args.agent not in ('offline','responses') and not sandbox_graders:
         raise ValueError('resource boundaries currently require the offline executor')
+    if controlled and any(value is None for value in (cgroup_root,image_root,image_sha256,disk_bytes)):
+        raise ValueError('Responses execution requires explicit cgroup, pinned image and private disk profiles')
+    if controlled:
+        application_modules()
+        from agent_harness_lab.evaluation.integrity import contained, read_regular, tree as bounded_tree
     manifest_path = Path(args.manifest).resolve()
-    manifest_bytes = manifest_path.read_bytes()
+    manifest_bytes = read_regular(manifest_path,1024*1024) if controlled else manifest_path.read_bytes()
     manifest = json.loads(manifest_bytes.decode('utf-8'))
     manifest_hash = hashlib.sha256(manifest_bytes).hexdigest()
     versions = {v: Path(getattr(args, v)).resolve() for v in ('baseline', 'candidate')}
@@ -181,7 +192,7 @@ def evaluate(args):
             if not (root / skill / 'SKILL.md').is_file():
                 raise ValueError(f'missing skill {root / skill}')
     for task in tasks:
-        fixture = (manifest_path.parent / task['fixture']).resolve()
+        fixture = contained(manifest_path.parent,task['fixture']) if controlled else (manifest_path.parent / task['fixture']).resolve()
         if output == fixture or output.is_relative_to(fixture) or fixture.is_relative_to(output):
             raise ValueError('output and fixture must not overlap')
         frozen_fixtures[task['id']] = digest(fixture)
@@ -199,7 +210,7 @@ def evaluate(args):
         if any('{workspace}' in a and a != '{workspace}' for a in task['grader']):
             raise ValueError('keep grader programs outside the workspace; pass {workspace} as a separate argument')
     grader_files = {}
-    if not (sandbox_graders or args.agent == 'offline'):
+    if not (sandbox_graders or args.agent in ('offline','responses')):
         for task in tasks:
             for arg in task['grader']:
                 if '{workspace}' in arg or '{trace}' in arg:
@@ -231,6 +242,7 @@ def evaluate(args):
                     and hashlib.sha256(manifest_path.read_bytes()).hexdigest() == manifest_hash
                     and all(Path(p).is_file() and hashlib.sha256(Path(p).read_bytes()).hexdigest() == h for p, h in grader_files.items())
                     and (not frozen_bundles or all(bundle_digest(Path(p)) == h for p, h in frozen_bundles.items()))
+                    and (not controlled or response_runtime.read_settings(inference_path)[1] == inference_hash)
                     and (configured is None or (evaluation_unchanged(Path(args.config), configured)
                          and all(bundle_digest(root) == configured['harness_digests'][name] for name, root in versions.items())
                          and all(bundle_digest((manifest_path.parent/t['fixture']).resolve()) == configured['fixture_digests'][t['id']] for t in tasks))))
@@ -243,10 +255,10 @@ def evaluate(args):
         return False
     offline = agent == 'offline'
     backend = None
-    if offline or sandbox_graders:
+    if offline or sandbox_graders or controlled:
         if not frozen_bundles:
             raise ValueError('sandboxed grading requires every frozen grader bundle')
-        if offline and (skills or harness_paths):
+        if (offline or controlled) and (skills or harness_paths):
             raise ValueError('offline execution requires frozen grader bundles and a directly mounted harness, without skill injection')
         from agent_harness_lab.evaluation.sandbox import SandboxBackend, Limits
         from agent_harness_lab.evaluation.bank_tools import frozen_grader, regrade_artifacts
@@ -261,6 +273,25 @@ def evaluate(args):
         if image_root is not None: options.update(image_root=image_root, image_sha256=image_sha256)
         if disk_bytes is not None: options['disk_bytes'] = disk_bytes
         backend = SandboxBackend(**options)
+        if controlled:
+            from agent_harness_lab.evaluation import responses as response_runtime
+            from agent_harness_lab.evaluation.working_state import WorkingState
+            inference_settings,inference_hash = response_runtime.read_settings(inference_path)
+            fixtures = [contained(manifest_path.parent,task['fixture']) for task in tasks]
+            for root in versions.values():
+                bounded_tree(root)
+                if any(root.is_relative_to(fixture) or fixture.is_relative_to(root) for fixture in fixtures):
+                    raise ValueError('executor harness and task fixture views must not overlap')
+            if any(left != right and (left.is_relative_to(right) or right.is_relative_to(left)) for left in fixtures for right in fixtures):
+                raise ValueError('executor task fixtures must not be nested')
+            for folder in frozen_bundles:
+                if any(Path(folder).is_relative_to(root) or root.is_relative_to(Path(folder)) for root in versions.values()):
+                    raise ValueError('executor harness views must not overlap grader bundles')
+            try:
+                for task in tasks:
+                    WorkingState((manifest_path.parent/task['fixture']).resolve(),started+budget)
+            except TimeoutError:
+                pass  # Budget reporting below blocks before credentials or inference.
     plan = None
     if 'experiment' in manifest:
         application_modules()
@@ -283,12 +314,14 @@ def evaluate(args):
     available = budget - (time.monotonic() - started)
     if available <= 0:
         blocked = 'preflight_budget_exhausted'
-    capability = backend.capability(seconds=min(3, available)) if (offline or sandbox_graders) and not blocked else None
+    capability = backend.capability(seconds=min(3, available)) if (offline or sandbox_graders or controlled) and not blocked else None
     if sandbox_graders and not offline and capability is not None and capability['status'] != 'available':
         blocked = 'grader_sandbox_unavailable'
+    if controlled and capability is not None and capability['status'] != 'available':
+        blocked = 'inference_sandbox_unavailable'
     available = budget - (time.monotonic() - started)
     if available <= 0: blocked = 'preflight_budget_exhausted'
-    version_info = dict(exit_code=None, stdout='') if offline or blocked else execute([binary, '--version'], manifest_path.parent, min(timeout, available))
+    version_info = dict(exit_code=None, stdout='') if offline or controlled or blocked else execute([binary, '--version'], manifest_path.parent, min(timeout, available))
     config_path = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'config.toml'
     config = {}
     try:
@@ -330,6 +363,16 @@ def evaluate(args):
             results.update(status='blocked', reason='offline_sandbox_unavailable', elapsed_seconds=time.monotonic()-started)
             (output/'results.json').write_text(json.dumps(results, indent=2)+'\n')
             return 3
+    client = None
+    if controlled:
+        forbidden = [output,image_root,*versions.values(),*map(Path,frozen_bundles),
+                     *((manifest_path.parent/task['fixture']).resolve() for task in tasks)]
+        credential = response_runtime.read_credential(inference_settings,forbidden)
+        client = response_runtime.Client(inference_settings,credential,started+budget)
+        results['runtime'] = dict(agent='responses',model_inference=True,capability=capability,
+            inference_settings_sha256=inference_hash,effective_settings_verified=False,inference=client.report())
+        results['isolation'] = dict(executor='controller inference with offline commands and bounded in-memory working state',
+            grader='fresh offline namespace with readonly declared artifacts and frozen oracle',full_certification=False)
     if plan:
         results['experiment'] = manifest['experiment']
         results['plan_digest'] = plan.digest
@@ -342,6 +385,10 @@ def evaluate(args):
         record = dict(scheduled, split=task['split'])
         record.setdefault('root',task.get('root'))
         record.setdefault('family',task.get('family'))
+        if client is not None and client.poisoned:
+            record.update(status='not_executed',reason='inference_aborted_after_failure')
+            results['trials'].append(record)
+            continue
         if not verify_inputs(record):
             results['trials'].append(record)
             continue
@@ -377,7 +424,7 @@ def evaluate(args):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(root / skill, target)
             loaded.append(str(target / 'SKILL.md'))
-        argv = task['offline_executor'] if offline else agent_command(agent, binary, plugin if agent == 'claude' else None, skills)
+        argv = task['offline_executor'] if offline else None if controlled else agent_command(agent, binary, plugin if agent == 'claude' else None, skills)
         prompt = ('Load these exact evaluation skill files before the task: ' + ', '.join(loaded) + '\n' if loaded and task.get('preload_skills', True) else '')
         if manifest.get('no_nested_agents', False):
             prompt += 'Do not launch child agents or nested model trials; the parent owns the evaluation budget.\n'
@@ -388,7 +435,17 @@ def evaluate(args):
             record['status'] = 'budget_exhausted'
             results['trials'].append(record)
             continue
-        if offline:
+        grade_workspace = workspace
+        if controlled:
+            try:
+                run = response_runtime.run_trial(client,backend,workspace,root,prompt,task['artifacts'],trial/'artifacts',min(timeout,remaining))
+                grade_workspace = Path(run.pop('artifact_workspace'))
+            except (response_runtime.InferenceError,ValueError,OSError,subprocess.SubprocessError) as exc:
+                client.poisoned = True
+                record.update(status='budget_exhausted' if isinstance(exc,TimeoutError) else 'execution_error',error=str(exc),inference=client.report())
+                results['trials'].append(record)
+                continue
+        elif offline:
             try:
                 extraction = dict(artifact_allowlist=task['artifacts']) if disk_bytes is not None else {}
                 run = backend.run(argv, workspace, {'harness': root}, 'executor',
@@ -401,12 +458,12 @@ def evaluate(args):
             run['timeout'] = run['status'] == 'timeout'
         else:
             run = execute(argv, workspace, min(timeout, remaining), prompt)
-        trace = trial / ('stdout.txt' if offline else 'trace.jsonl')
+        trace = trial / ('stdout.txt' if offline or controlled else 'trace.jsonl')
         trace.write_text(run.pop('stdout'))
         (trial / 'stderr.txt').write_text(run.pop('stderr'))
         record['execution'] = run
         check = {**run, 'stdout': trace.read_text()}
-        if offline:
+        if offline or controlled:
             record['status'] = 'completed' if (run['status'] == 'completed' and type(run['exit_code']) is int
                                                and run['exit_code'] == 0 and run['inputs_unchanged'] is True) else 'execution_error'
             record['usage'] = None
@@ -418,10 +475,10 @@ def evaluate(args):
             if remaining <= 0:
                 record['status'] = 'budget_exhausted'
             else:
-                if offline or sandbox_graders:
+                if offline or sandbox_graders or controlled:
                     bundle = contained(manifest_path.parent, declared_bundles[task['id']]['path'])
                     try:
-                        grade = regrade_artifacts(workspace, task['artifacts'], bundle, frozen_bundles[str(bundle)],
+                        grade = regrade_artifacts(grade_workspace, task['artifacts'], bundle, frozen_bundles[str(bundle)],
                                                   backend, limits=Limits(seconds=min(timeout, remaining)))
                         record['grader'] = grade
                         record['status'] = grade['status']
@@ -436,6 +493,7 @@ def evaluate(args):
         results['trials'].append(record)
         (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
     results['elapsed_seconds'] = time.monotonic() - started
+    if client is not None: results['runtime']['inference'] = client.report()
     results['inputs_unchanged'] = inputs_unchanged()
     (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
     return 0 if results['inputs_unchanged'] and all(t['status'] == 'passed' for t in results['trials']) else 1
@@ -446,11 +504,12 @@ def main():
     for name in ('manifest', 'baseline', 'candidate', 'output'):
         parser.add_argument('--' + name, required=True)
     parser.add_argument('--config', help='Explicit project configuration; restricts bank, harness scope, runtime and resource caps')
-    parser.add_argument('--agent', choices=('codex', 'claude', 'offline'), default='codex',
+    parser.add_argument('--agent', choices=('codex', 'claude', 'offline', 'responses'), default='codex',
                         help='offline executes explicit fixture commands without model inference and requires bubblewrap')
     parser.add_argument('--codex', default='codex', help='Codex executable path')
     parser.add_argument('--claude', default='claude', help='Claude Code executable path')
     parser.add_argument('--sandbox-graders', action='store_true', help='Require fresh offline frozen artifact graders for cooperative CLI trials')
+    parser.add_argument('--inference-settings', type=Path, help='Explicit private settings/key-file and caps for the controller Responses executor')
     parser.add_argument('--cgroup-root', type=Path, help='Explicit predelegated cgroup v2 subtree for offline execution or sandboxed grader resources')
     parser.add_argument('--image-root', type=Path, help='Explicit private extracted runtime rootfs for offline execution or sandboxed grading')
     parser.add_argument('--image-sha256', help='Preapproved rootfs content pin; required with --image-root')
