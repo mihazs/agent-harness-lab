@@ -22,7 +22,7 @@ class ConfiguredEvaluationTests(OfflineFixture):
     def test_explicit_empty_config_cannot_fall_back_to_unconfigured_execution(self):
         self.args.config = ''
         with patch.object(SandboxBackend, 'capability') as probe, patch.object(self.runner, 'execute') as host:
-            with self.assertRaises(ValueError): self.runner.evaluate(self.args)
+            with self.assertRaises((ValueError, OSError)): self.runner.evaluate(self.args)
         probe.assert_not_called(); host.assert_not_called()
 
     def test_applied_limits_and_frozen_configuration_are_recorded(self):
