@@ -245,6 +245,26 @@ except OSError: pass
                 self.assertTrue(attested['verified_before'] and attested['verified_after'])
 
 
+@unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
+class RegressionDraftKernelTests(KernelFixture):
+    def test_regression_draft_controls_use_real_pinned_graders_and_private_quotas(self):
+        from test_regression_controls import make_draft
+        from agent_harness_lab.evaluation.regression_controls import audit
+        rootfs = self.root/'runtime'; frozen = pinned_runtime(rootfs)
+        draft_root = self.root/'draft'; draft_root.mkdir()
+        source, draft = make_draft(draft_root, frozen['sha256'])
+        backend = SandboxBackend(cgroup_root=self.cgroup_root, image_root=rootfs,
+            image_sha256=frozen['sha256'], disk_bytes=64*1024*1024)
+        report = audit(source, draft, self.root/'review', backend)
+        self.assertEqual(report['status'], 'grader_controls_passed', report)
+        self.assertEqual([c['observed'] for c in report['checks']], [False, False, True, True, False])
+        for control in report['checks']:
+            self.assertTrue(control['attestation']['aggregate_disk_bound_verified'])
+            self.assertTrue(control['attestation']['cgroup_v2']['empty_after_cleanup'])
+            self.assertEqual(control['attestation']['runtime_image']['sha256'], frozen['sha256'])
+        self.assertFalse(report['task_failure_verified']); self.assertFalse(report['bank_admission'])
+
+
 @unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel:roles')
 class ControlledWorkflowKernelTests(KernelFixture):
     def test_controlled_workflow_role_views_deny_source_key_candidate_and_prior_heldout_reads(self):

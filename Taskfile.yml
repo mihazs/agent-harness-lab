@@ -124,7 +124,7 @@ tasks:
   test:evaluation:regressions:
     desc: Run native regression reproduction contract tests
     cmds:
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_regression_proposals.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_regression_*.py" -v'
   test:sandbox:kernel:state:
     desc: Run the new working-state canary in a disposable delegated scope
     cmds:
@@ -137,6 +137,12 @@ tasks:
       - task: test:sandbox:kernel
         vars:
           KERNEL_TEST_FILTER: controlled_workflow
+  test:sandbox:kernel:regressions:
+    desc: Audit frozen draft grader controls with actual pinned workers and quotas
+    cmds:
+      - task: test:sandbox:kernel
+        vars:
+          KERNEL_TEST_FILTER: regression_draft
   test:sandbox:kernel:
     desc: Run native kernel canaries in a disposable foreground user scope (Linux/systemd)
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -176,7 +182,7 @@ tasks:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_claude_native.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_sandbox_*.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_offline_evaluation.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_regression_proposals.py"'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_regression_*.py"'
   install:wheel:
     cmds:
       - '{{.PYTHON | shellQuote}} -m venv dist/wheel-env'
