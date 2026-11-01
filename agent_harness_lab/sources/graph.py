@@ -9,7 +9,8 @@ RELATIONS = ('check_on', 'status_on', 'timeline_on', 'references_issue', 'timeli
     'thread_on', 'inline_on', 'thread_comment', 'inline_review', 'details_of', 'commit_file_on',
     'commit_conversation_on', 'commit_parent', 'pr_head_commit', 'pr_base_commit',
     'pr_merge_commit', 'pr_test_merge_commit', 'same_observation', 'derived_from', 'cites',
-    'supports', 'contradicts', 'same_execution', 'parent_attempt', 'supersedes')
+    'supports', 'contradicts', 'same_execution', 'parent_attempt', 'supersedes',
+    'git_ref_target', 'harness_based_on', 'harness_member', 'instruction_inventory_of')
 STATUSES = ('verified', 'reviewed', 'candidate', 'conflicted', 'unlinked')
 
 

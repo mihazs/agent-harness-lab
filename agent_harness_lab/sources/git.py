@@ -13,6 +13,7 @@ from .git_view import Folder, GitView, MAX_BYTES
 from .instructions import capture as capture_instructions, validate as validate_instruction_profile
 from .schema import EvidenceRecord, digest, fingerprint
 from .snapshot import LocalExport, Snapshot
+from .git_evidence import capture as capture_evidence
 
 OID = re.compile(rb'(?:[0-9a-f]{40}|[0-9a-f]{64})')
 
@@ -69,7 +70,7 @@ class HarnessSnapshot:
 
 class GitExport(LocalExport):
     def read(self, source):
-        if (source.kind, source.provider, source.version) != ('local_git', 'git', 'v1'):
+        if (source.kind, source.provider) != ('local_git', 'git') or source.version not in ('v1', 'v2'):
             raise ValueError('unsupported Git source version')
         current, declaration = self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)
         if current != source or not source.enabled: raise ValueError('Git source changed or is disabled')
@@ -184,6 +185,8 @@ class GitExport(LocalExport):
                 network_used=False, capture_completeness='partial', source_identity='caller_declared')
             if instructions is not None:
                 self.summary.update(instruction_inventory=asdict(instructions), instruction_inventory_sha256=instructions.sha256)
+            if source.version == 'v2':
+                return capture_evidence(source, rows, self.summary, record, count, folder.bytes)
             return Snapshot(digest(self.summary), tuple(rows))
 
     def harness_file(self, head, checkout, path):

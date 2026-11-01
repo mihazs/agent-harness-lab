@@ -371,6 +371,45 @@ missing-object remote denial, timeout cleanup and unchanged source contents/inde
 These checks establish the tested read policy, not general hostile-binary isolation
 or independently verified historical execution lineage.
 
+### Local Git graph and coverage profile
+
+Select `local_git/git/v2` explicitly to project the same frozen Git view into the
+shared execution-metadata and evidence-graph contracts. The selection descriptor
+stays at schema version 1; no additional source reads, commands or network access
+are enabled. The `v1` record set, raw snapshot fingerprint and absence of these
+facets stay unchanged.
+
+The graph binds exact captured commit parents, ref targets, a new immutable
+`harness_snapshot` record, its selected file records and any declared instruction
+inventory. `harness_based_on` identifies the snapshot's HEAD base; it does not
+assert that dirty/untracked file content equals that commit. `harness_member`
+records selected file metadata in that snapshot, including missing-file states.
+Instruction inventory membership does not establish runtime loading.
+
+Parent/ref targets outside captured commit history become content-free
+`git_object_reference` records. Their native reference was observed, but their
+full object/history was not captured as a commit record. Annotated tags retain
+their direct tag-object target; the graph does not invent a peeled-commit edge.
+All relationships remain native-field candidates requiring independent resolution.
+They grant no execution authority, cross-provider identity or independent roots.
+Admission rejects more than 10,000 nodes or 20,000 edges before allocating graph
+rows/receipts, including oversized parent lists in shallow commits.
+
+Coverage records captured commit/record counts and frozen-view bytes read under
+the existing limits. Reaching the selected history ceiling marks truncation;
+shallow history marks truncation even when the ceiling was not reached. Coverage
+always remains partial because selected paths/history cannot certify a complete
+execution capture. Execution identities are empty, and missing effective bindings
+remain explicit. Source scope is caller-declared, not verified repository identity.
+
+Preview exposes both facets; import commits records, graph, coverage and checkpoint
+atomically through the existing journal. Cached status and explicit analyze/doctor
+context can inspect those facets without reading Git. Older checkpoints retain
+their captured graph when HEAD, refs or current files change. `task test:sources:git`
+runs the native synthetic Git contract and compatibility cases. Historical execution
+binding, cross-provider reconciliation and independent proof persistence remain
+open in #46/#58.
+
 ### Declared Codex project instruction inventory
 
 An optional `instruction_profile` in the Git selection enables bounded instruction

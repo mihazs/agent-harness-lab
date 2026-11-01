@@ -45,6 +45,7 @@ def main(argv):
             registry.register(Capability('local_file', 'ahl-metadata', 'v3', PLANES), connector)
             registry.register(Capability('local_file', 'ai-memory-okf', '0.2', ('contextual_assertion',)), connector)
             registry.register(Capability('local_git', 'git', 'v1', ('development_artifact',)), connector)
+            registry.register(Capability('local_git', 'git', 'v2', ('development_artifact',)), connector)
             if isinstance(connector, GitHubConfigured):
                 registry.register(Capability('api', 'github', source.version, ('contextual_assertion', 'development_artifact')), connector)
             result = registry.probe(source, **scope)
