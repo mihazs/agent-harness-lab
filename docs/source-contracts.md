@@ -70,8 +70,10 @@ trusted execution verifier, but **every current export, registry and store impor
 rejects verified execution fields**. A native/controller provenance label, source
 provider name or valid checksum cannot grant that capability. Existing Git and
 instruction-inventory captures do not establish which configuration an execution
-loaded. Native receipt mapping, verified joins and analyze/doctor integration
-remain open in #42/#44/#46/#58. No receipt authorizes execution or grading.
+loaded. Preview/status and the explicit private cache context in analyze/doctor
+already expose these declarations and missing fields. Verified execution-receipt
+production and verified cross-source joins remain separate work in
+#44/#45/#46/#53/#58. No receipt authorizes execution or grading.
 
 Fields and collections use fixed bounds: 16 supported identity names, eight evidence
 references or conflict alternatives per field, five scan dimensions and enumerated
@@ -88,6 +90,17 @@ expected project and scope fingerprints, then call `ingest`, `status` or `histor
 Scope mismatch, disabled sources and unattributed identities block writes before
 records are consumed. The caller must independently verify identity and permissions
 before collecting source data; a stored provenance label is not that verification.
+
+Normalized local v1–v3 exports require matching readbacks of their selected
+payload and declaration before returning a checkpoint-ready snapshot. The reader
+rechecks project/scope, enablement and the original data-file selection before
+each bounded payload read. An observed edit, removal, oversized file or symlink
+blocks the operation and leaves an existing committed checkpoint unchanged. A
+changed selector is rejected before reading its replacement, even if its bytes
+would match. Declaration formatting and payload mtime alone do not change the
+snapshot identity. This detects changes seen at the read boundaries; it is not
+an atomic filesystem snapshot or proof that no transient change occurred. Stable
+exports retain their previous raw-byte SHA-256, v1–v3 metadata and cursor behavior.
 
 An import atomically replaces the journal containing source specifications, record
 history and cursor fingerprints. A failed input iterator or rejected batch leaves

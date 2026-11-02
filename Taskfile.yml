@@ -122,6 +122,14 @@ tasks:
     desc: Run source contracts and checkpoint unittest cases
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_*.py"'
+  test:sources:normalized-exports:
+    desc: Run normalized local export consistency and checkpoint guards using synthetic metadata
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_normalized_exports.py" -v'
   test:sources:grouping:
     desc: Run native lexical grouping, revision and bank-exposure controls
     cmds:
@@ -408,6 +416,11 @@ tasks:
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_installed_layout.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_*.py"'
+      - task: test:sources:normalized-exports
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_codex_rollout.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_codex_discovery.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_claude_native.py"'
@@ -467,6 +480,11 @@ tasks:
       - '{{.PYTHON | shellQuote}} -m venv dist/wheel-env'
       - 'dist/wheel-env/bin/python -m pip install --no-index --no-deps --force-reinstall {{printf "dist/wheels/agent_harness_lab-%s-py3-none-any.whl" .PACKAGE_VERSION | shellQuote}}'
       - mkdir -p dist/wheel-cwd
+  test:packaging:layouts:
+    desc: Require both independently prepared installed layouts, concurrently
+    deps:
+      - task: test:wheel
+      - task: test:archive
   test:wheel:
     cmds:
       - task: test:installed

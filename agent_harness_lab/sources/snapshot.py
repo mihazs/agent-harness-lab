@@ -73,14 +73,17 @@ class LocalExport:
                 self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)[1] != expected):
             raise ValueError('source selection changed during capture')
 
+    def _normalized_export(self, source, expected=None):
+        current, value = self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)
+        if current != source or not current.enabled or expected is not None and value != expected:
+            raise ValueError('normalized export declaration changed or is disabled')
+        return value, read_regular(contained(self.manifest.parent, value['data']), 8*1024*1024)
+
     def read(self, source):
         if (source.kind, source.provider, source.version) not in (
                 ('local_file', 'ahl-metadata', 'v1'), ('local_file', 'ahl-metadata', 'v2'), ('local_file', 'ahl-metadata', 'v3')):
             raise ValueError('unsupported normalized export version')
-        current, value = self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)
-        if current != source or not current.enabled:
-            raise ValueError('source declaration changed or is disabled')
-        raw = read_regular(contained(self.manifest.parent, value['data']), 8*1024*1024)
+        value, raw = self._normalized_export(source)
         rows = json.loads(raw, object_pairs_hook=unique_object)
         metadata = graph = None
         if source.version in ('v2', 'v3'):
@@ -96,4 +99,8 @@ class LocalExport:
         records = tuple(EvidenceRecord.parse(r) for r in rows)
         if metadata is not None: metadata.validate(source, records)
         if graph is not None: graph.validate(source, records)
+        if self._normalized_export(source, value)[1] != raw:
+            raise ValueError('normalized export payload changed during capture')
+        if self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256) != (source, value):
+            raise ValueError('normalized export declaration changed after readback')
         return Snapshot(hashlib.sha256(raw).hexdigest(), records, metadata, graph)

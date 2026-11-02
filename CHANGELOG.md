@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.59.1
+
+### Patch Changes
+
+- 74b90cf: Reject observed payload or declaration changes during normalized local export capture before advancing source checkpoints. Readbacks recheck scope and enablement before opening the payload, preserve stable v1–v3 snapshot identities, and make no complete-history or execution-authority claim.
+- 74857fe: Run the existing wheel and archive validation tasks concurrently after serial package preparation, requiring both layouts to pass under the unchanged offline-packaging CI job.
+
 ## 0.59.0
 
 ### Minor Changes
