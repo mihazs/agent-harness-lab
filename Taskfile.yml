@@ -407,6 +407,27 @@ tasks:
       AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
       - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=90 -- {{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_sandbox_kernel.py" -k {{default "" .KERNEL_TEST_FILTER | shellQuote}} -v'
+  test:sandbox:permission-audit:
+    desc: Run bounded permission-audit protocol and integration controls without requesting kernel execution
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_permission_audit.py" -v'
+  test:sandbox:kernel:permission-audit:
+    desc: Observe swallowed permission denials with real pinned quota-backed workers
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    vars:
+      SCOPE_ID:
+        sh: cat /proc/sys/kernel/random/uuid
+    env:
+      PYTHONPATH: ''
+      AHL_TEST_SYSTEMD_SCOPE: '1'
+      AHL_TEST_CGROUP_ROOT: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=90 -- {{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_permission_audit.py" -k {{default "" .KERNEL_TEST_FILTER | shellQuote}} -v'
   bank:build:
     desc: Reproduce the bundled public synthetic bank and frozen grader digests
     cmds:
@@ -443,6 +464,11 @@ tasks:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_sandbox_*.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_controller_actions.py"'
       - task: test:evaluation:bank-qualification
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+      - task: test:sandbox:permission-audit
         vars:
           PYTHON: '{{.PYTHON}}'
           LAYOUT_DIR: '{{.LAYOUT_DIR}}'

@@ -26,11 +26,11 @@ def public_export_allowed(records):
             if isinstance(metadata,dict) and (metadata.get('publication_allowed',True) is not True
                     or any(key in metadata for key in ('controller_run_id','cohort_manifest_sha256','preservation','receipt_sha256',
                         'cohort_binding','controller_qualification','qualification_sha256','controller_grade',
-                        'trajectory_profile','trajectory_analysis','policy_sha256',
+                        'trajectory_profile','trajectory_analysis','policy_sha256','permission_audit','isolation_qualification',
                         'classifier_selection_allowed','review_event_sha256'))
                     or metadata.get('algorithm') in ('private-preservation-decision-v1','private-controller-history-report-v1',
                         'guarded-preservation-search-v1','corrected-cohort-qualification-v1')
-                    or metadata.get('profile') in ('controller-trajectory-v1','diagnostic-corpus-v1')
+                    or metadata.get('profile') in ('controller-trajectory-v1','diagnostic-corpus-v1','permission-results-v1')
                     or metadata.get('report_kind')=='controller_trajectory'
                     or metadata.get('outcome_mapping')=='artifact_and_required_v1'
                     or metadata.get('evidence_source')=='controller_verified_development_only'):

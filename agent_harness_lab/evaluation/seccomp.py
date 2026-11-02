@@ -25,7 +25,7 @@ def ordinary_filesystems(roots):
                 raise ValueError('HugeTLB-backed runtime and role inputs are unsupported')
 
 
-def program():
+def program(*, permission_audit=False):
     architecture = platform.machine()
     supported = {'x86_64': (0xc000003e, (319, 29, 9)),
                  'aarch64': (0xc00000b7, (279, 194, 222))}
@@ -38,12 +38,19 @@ def program():
     for call, offset, flag in zip(calls, (24, 32, 40), (4, 0o4000, 0x40000)):
         code.extend([(0x20, 0, 0, 0), (0x15, 0, 3, call), (0x20, 0, 0, offset),
                      (0x45, 0, 1, flag), (0x06, 0, 0, 0x50000|errno.EPERM)])
+    if permission_audit:
+        if architecture!='x86_64':raise ValueError('permission audit requires native x86_64')
+        # clone3's pointed-to flags cannot be validated by classic seccomp BPF.
+        # ENOSYS provides a fixed compatibility surface; classic clone remains.
+        code.extend([(0x20,0,0,0),(0x15,0,1,435),(0x06,0,0,0x50000|errno.ENOSYS),
+            (0x20,0,0,0),(0x15,0,3,56),(0x20,0,0,16),
+            (0x45,0,1,0x00800000),(0x06,0,0,0x50000|errno.EPERM)])
     code.append((0x06, 0, 0, 0x7fff0000))
     return b''.join(struct.pack('HBBI', *instruction) for instruction in code)
 
 
-def sealed_filter():
-    raw = program()
+def sealed_filter(*, permission_audit=False):
+    raw = program(permission_audit=permission_audit)
     descriptor = os.memfd_create('ahl-storage-policy', os.MFD_CLOEXEC|os.MFD_ALLOW_SEALING)
     try:
         if os.write(descriptor, raw) != len(raw) or os.pread(descriptor, len(raw), 0) != raw:
@@ -51,7 +58,7 @@ def sealed_filter():
         # Linux UAPI values; portable Python builds may omit the symbolic names.
         fcntl.fcntl(descriptor, 1033, 0x0f)  # ADD_SEALS: WRITE, GROW, SHRINK, SEAL.
         os.lseek(descriptor, 0, os.SEEK_SET)
-        return descriptor, dict(name='seccomp-deny-hugetlb-v1', architecture=platform.machine(),
+        return descriptor, dict(name='seccomp-permission-audit-v1' if permission_audit else 'seccomp-deny-hugetlb-v1', architecture=platform.machine(),
                                 sha256=hashlib.sha256(raw).hexdigest())
     except BaseException:
         os.close(descriptor)

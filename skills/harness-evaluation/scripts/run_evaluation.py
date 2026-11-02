@@ -137,6 +137,9 @@ def evaluate(args):
         raise ValueError('Responses execution uses explicit inference settings, not cooperative runtime configuration')
     cgroup_root = getattr(args, 'cgroup_root', None)
     disk_bytes = getattr(args, 'disk_bytes', None)
+    permission_audit=getattr(args,'permission_audit',None)
+    if permission_audit is not None and (permission_audit!='permission-results-v1' or args.agent not in ('offline','responses')):
+        raise ValueError('permission audit requires the supported offline or controller executor')
     image_root, image_sha256 = getattr(args, 'image_root', None), getattr(args, 'image_sha256', None)
     if (image_root is None) != (image_sha256 is None):
         raise ValueError('runtime image root and SHA-256 pin must be supplied together')
@@ -276,7 +279,10 @@ def evaluate(args):
         options = dict(cgroup_root=cgroup_root)
         if image_root is not None: options.update(image_root=image_root, image_sha256=image_sha256)
         if disk_bytes is not None: options['disk_bytes'] = disk_bytes
+        if permission_audit is not None:options['permission_audit']=permission_audit
         backend = supplied_backend if supplied_backend is not None else SandboxBackend(**options)
+        if (supplied_backend is not None or permission_audit is not None) and getattr(backend,'permission_audit',None)!=permission_audit:
+            raise ValueError('shared backend must preserve the requested permission audit profile')
         if controlled:
             from agent_harness_lab.evaluation import responses as response_runtime
             from agent_harness_lab.evaluation.working_state import WorkingState
@@ -366,6 +372,7 @@ def evaluate(args):
                             'user_config_defaults': config, 'effective_settings_verified': False},
                    isolation=('cooperative trusted fixtures; ' + ('workspace-write; ' if agent == 'codex' else 'inherited Claude permissions/sandbox; ') + 'inherited configuration/auth/hooks; no security or network isolation claim'))
     results['grader_bundle_digests'] = frozen_bundles
+    if permission_audit is not None:results['isolation_qualification']=backend.permission_qualification()
     if sandbox_graders:
         results['runtime']['grader_capability'] = capability
         results['isolation'] = dict(executor='cooperative native CLI; no role isolation claim',
@@ -430,6 +437,7 @@ def evaluate(args):
         root = versions[version]
         remaining = budget - (time.monotonic() - started)
         record = dict(scheduled, split=task['split'])
+        audit_offset=len(backend.permission_reports) if permission_audit is not None else 0
         record.setdefault('root',task.get('root'))
         record.setdefault('family',task.get('family'))
         if client is not None and client.poisoned:
@@ -549,6 +557,10 @@ def evaluate(args):
             if record['status'] in ('passed', 'failed'):
                 record['status'] = ('passed' if grade['outcome'] is True and grade['valid'] else
                                     'failed' if grade['outcome'] is False else 'trajectory_unknown')
+        if permission_audit is not None:
+            from agent_harness_lab.evaluation.permission_audit import qualification
+            record['isolation_qualification']=qualification(backend.permission_reports[audit_offset:])
+            results['isolation_qualification']=backend.permission_qualification()
         verify_inputs(record)
         results['trials'].append(record)
         (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
@@ -561,6 +573,7 @@ def evaluate(args):
         for trial in results['trials']:
             grade = trial.get('controller_grade', trial.get('grader', {}))
             outcome = grade.get('outcome') if trial['status'] in ('passed', 'failed') else None
+            if permission_audit is not None and trial.get('isolation_qualification')!='qualified':outcome=None
             records.append(TrialRecord(trial['trial_id'], outcome,
                 'graded' if type(outcome) is bool and (grade.get('valid') is True if 'controller_grade' in trial else True) else 'unknown',
                 'executable_grader', plan.baseline_hash, plan.candidate_hash, plan.grader_hash, plan.runtime_hash,
@@ -570,8 +583,10 @@ def evaluate(args):
         results['trajectory_analysis'].update(oracle_validity='unverified', native_identity='unverified',
             root_independence='unverified', inference_scope='conditional_on_declared_root_lineage',
             history_authority='unverified', automatic_promotion=False, publication_allowed=False)
+    if permission_audit is not None:
+        results['isolation_qualification']=backend.permission_qualification()
     (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
-    return 0 if results['inputs_unchanged'] and all(t['status'] == 'passed' for t in results['trials']) else 1
+    return 0 if (permission_audit is None or results['isolation_qualification']['qualification']=='qualified') and results['inputs_unchanged'] and all(t['status'] == 'passed' for t in results['trials']) else 1
 
 
 def main():
@@ -588,6 +603,7 @@ def main():
     parser.add_argument('--cgroup-root', type=Path, help='Explicit predelegated cgroup v2 subtree for offline execution or sandboxed grader resources')
     parser.add_argument('--image-root', type=Path, help='Explicit private extracted runtime rootfs for offline execution or sandboxed grading')
     parser.add_argument('--image-sha256', help='Preapproved rootfs content pin; required with --image-root')
+    parser.add_argument('--permission-audit',choices=('permission-results-v1',),help='Require observed Linux x86_64 permission-result qualification for all offline roles')
     parser.add_argument('--disk-bytes', type=int, help='Aggregate tmpfs data capacity for offline roles or sandboxed graders; requires --cgroup-root')
     args = parser.parse_args()
     try:

@@ -110,6 +110,7 @@ def main(argv=None):
             command.add_argument('--cgroup-root', type=Path, help='Explicit delegated cgroup v2 subtree for controlled roles or graders')
             command.add_argument('--image-root', type=Path, help='Explicit extracted readonly runtime image for controlled roles or graders')
             command.add_argument('--image-sha256', help='Required content pin for --image-root')
+            command.add_argument('--permission-audit',choices=('permission-results-v1',),help='Require controller-role permission-result qualification; Responses mode only')
             command.add_argument('--disk-bytes', type=int, help='Bound offline role scratch storage; requires --cgroup-root')
         if name == 'watch':
             command.add_argument('--interval', type=int, default=300, help='Seconds between evidence checks')
