@@ -99,7 +99,11 @@ def _validate(path, *, verify_contents=True):
                 content_grouping=content_grouping, _controller_profile=value.get('controller_profile'),
                 tasks=len(tasks), roots=len({t.root_id for t in tasks}),
                 partitions={p: sum(t.partition == p for t in tasks) for p in sorted(PARTITIONS)},
-                certification_eligible=verify_contents and not issues, issues=issues,
+                review_declarations_complete=all(t.independence == 'reviewed' and t.review_status == 'accepted'
+                    and t.permission == 'approved' for t in tasks),
+                # Structural checks and caller-authored labels cannot issue certification authority.
+                certification_eligible=False, certification_status='unverified',
+                certification_reason='controller_qualification_unavailable', issues=issues,
                 privacy='private' if any(t.source_kind == 'private' for t in tasks) else 'public_source_only',
                 public_tasks_are_secret=False)
 
