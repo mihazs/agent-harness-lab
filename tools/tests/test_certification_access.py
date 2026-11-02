@@ -1,5 +1,5 @@
 """Public synthetic managed diagnostics; cooperative attestations are not containment proof."""
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from copy import deepcopy
 from dataclasses import replace
 import io
@@ -216,6 +216,47 @@ class CertificationAccessTests(unittest.TestCase):
         finally:
             release.set()
             if child.is_alive(): child.terminate(); child.join(5)
+            q.close()
+
+    def test_competing_initial_writer_cannot_strand_consumed_managed_grant(self):
+        import multiprocessing
+        from agent_harness_lab.evaluation.oracle_history import HistoryStore
+        if 'fork' not in multiprocessing.get_all_start_methods(): self.skipTest('fork unavailable')
+        ctx=multiprocessing.get_context('fork'); q=ctx.Queue()
+        ready,held,release=ctx.Event(),ctx.Event(),ctx.Event(); ident=self.reserve()
+        original_lock=HistoryStore.locked; original_execute=self.f.execute; visits=[0]
+        @contextmanager
+        def locked(store,*args,**kwargs):
+            name=multiprocessing.current_process().name; first=visits[0]==0; visits[0]+=1
+            with original_lock(store,*args,**kwargs) as value:
+                if name=='synthetic-history-contender' and first:
+                    held.set()
+                    if not release.wait(15): raise TimeoutError('synthetic writer release expired')
+                yield value
+            if name=='synthetic-history-winner' and first:
+                ready.set()
+                if not held.wait(15): raise TimeoutError('synthetic contender did not enter')
+        def execute(*args,**kwargs):
+            release.set()
+            return original_execute(*args,**kwargs)
+        self.f.execute=execute
+        children=[ctx.Process(name=name,target=_controller_child,args=(self.f,ident,q))
+            for name in ('synthetic-history-winner','synthetic-history-contender')]
+        try:
+            with patch.object(HistoryStore,'locked',locked):
+                children[0].start(); self.assertTrue(ready.wait(15))
+                children[1].start(); self.assertTrue(held.wait(15))
+                rows=[q.get(timeout=25)]; release.set()
+                for child in children: child.join(25); self.assertFalse(child.is_alive())
+                rows.append(q.get(timeout=5))
+            self.assertEqual(sum(row['calls'] for row in rows),8,rows)
+            winners=[row for row in rows if row['state']=='sealed']
+            self.assertEqual(len(winners),1,rows); self.assertEqual(winners[0]['calls'],8,rows)
+            for child in children: self.assertEqual(child.exitcode,0)
+        finally:
+            release.set()
+            for child in children:
+                if child.pid is not None and child.is_alive(): child.terminate(); child.join(5)
             q.close()
 
 
