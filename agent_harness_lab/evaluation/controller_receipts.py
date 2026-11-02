@@ -105,31 +105,39 @@ def begin(source, artifacts, deadline):
 
 
 class _Ticket:
-    def __init__(self, capture, event): self.capture,self.event=capture,event
+    def __init__(self, capture, event, argv): self.capture,self.event,self.requested=capture,event,tuple(argv)
 
 
-def _kernel_started(role):
+def _kernel_started(role, argv=()):
     capture = _ACTIVE.get()
     if capture is None: return None
     if not _current(capture) or len(capture.data['kernels']) >= MAX_WORKERS:
         capture.lost = True; return None
-    event = dict(ordinal=len(capture.data['kernels']),role=role,complete=False)
+    event = dict(ordinal=len(capture.data['kernels']),role=role,complete=False,requested_argv_sha256=None)
     capture.data['kernels'].append(event); capture.latest = None
     _PENDING[capture] = capture._state()
-    return _Ticket(capture,event)
+    if not isinstance(argv,(list,tuple)) or any(not isinstance(arg,str) for arg in argv):
+        capture.lost=True;return None
+    event['requested_argv_sha256']=_hash(list(argv))
+    _PENDING[capture] = capture._state()
+    return _Ticket(capture,event,argv)
 
 
-def _kernel_spawned(ticket, process, scratch, group):
+def _kernel_spawned(ticket, process, scratch, group, audit=None):
     if ticket is None: return
     import subprocess
     from .workspace import PrivateWorkspace
     from .cgroup import Cgroup
     if (type(ticket) is not _Ticket or not _current(ticket.capture)
             or type(process) is not subprocess.Popen or type(scratch) is not PrivateWorkspace
-            or type(group) is not Cgroup or not scratch.verified or process.args!=scratch.command):
+            or type(group) is not Cgroup or not scratch.verified):
         if type(ticket) is _Ticket: ticket.capture.lost=True
         return
-    _DISPATCHES[ticket] = process,scratch,group
+    from .permission_audit import Observation
+    if (process.args!=scratch.command if audit is None else type(audit) is not Observation
+            or not audit._owns(ticket,process,scratch.command,scratch.audit_execs,group,ticket.event['role'])):
+        ticket.capture.lost=True;return
+    _DISPATCHES[ticket] = process,scratch,group,audit
 
 
 def _kernel_finished(ticket, run, argv, exports):
@@ -139,10 +147,13 @@ def _kernel_finished(ticket, run, argv, exports):
     producer = _DISPATCHES.pop(ticket,None)
     if not _current(capture) or event['complete'] or producer is None:
         capture.lost = True; return
-    process,scratch,group = producer
+    process,scratch,group,audit = producer
     attestation = run['attestation']; image = attestation.get('runtime_image') or {}
     storage = attestation.get('storage_policy') or {}; cgroup = attestation.get('cgroup_v2') or {}
-    valid = (process.returncode==run.get('exit_code') and process.poll() is not None
+    from .permission_audit import canonical_argv, _consume_completion
+    expected=canonical_argv(ticket.requested) if audit is not None else list(ticket.requested)
+    valid = (_hash(list(ticket.requested))==event['requested_argv_sha256'] and list(argv)==expected
+        and process.returncode==run.get('exit_code') and process.poll() is not None
         and scratch.verified and group.report is not None and group.report['empty_after_cleanup'] is True
         and run.get('status') in ('completed','failed') and type(run.get('exit_code')) is int
         and 0 <= run['exit_code'] < 128 and (run['exit_code']==0)==(run['status']=='completed')
@@ -150,6 +161,9 @@ def _kernel_finished(ticket, run, argv, exports):
         and image.get('verified_after') is True and storage.get('verified') is True
         and (event['role']=='grader' or storage.get('extracted') is not None and exports is not None)
         and cgroup.get('empty_after_cleanup') is True and attestation.get('aggregate_disk_bound_verified') is True)
+    if valid and audit is not None:
+        completion=audit._completion(ticket,process,scratch.command,event['role'])
+        valid=_consume_completion(completion,ticket,process)
     if not valid: capture.lost = True; return
     event.update(complete=True,binary_sha256=attestation['binary_sha256'],image_sha256=image['sha256'],
         input_digests=deepcopy(attestation['input_digests']),argv_sha256=_hash(argv),
@@ -169,7 +183,7 @@ def _artifact_grade(run, extracted, oracle_sha256, fixture_sha256, outcome):
     if latest is None or latest[0] is not run or capture.executor is None or capture.data['grade'] is not None:
         capture.lost = True; return
     event = latest[1]; inputs = event['input_digests']; ordinal,exports = capture.executor
-    if (event['role']!='grader' or event['argv_sha256']!=_hash(GRADER_ARGV) or event['result_sha256']!=_hash(run)
+    if (event['role']!='grader' or event['requested_argv_sha256']!=_hash(GRADER_ARGV) or event['result_sha256']!=_hash(run)
             or inputs != dict(oracle=oracle_sha256,fixture=fixture_sha256) or type(outcome) is not bool
             or _artifact_fingerprints(extracted.items())!=exports or {name for name,_ in exports}!=capture.expected):
         capture.lost = True; return

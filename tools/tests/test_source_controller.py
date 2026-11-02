@@ -74,6 +74,15 @@ class ControllerSourceTests(unittest.TestCase):
             self.assertEqual(self.sink.finish(capture,True)['status'],'unknown')
         self.assertFalse(self.sink.store.path.exists())
 
+    def test_invalid_requested_argv_reserves_loss_before_command_validation(self):
+        with owned.session():
+            capture=self.sink.begin(['result.txt'],time.monotonic()+5)
+            self.assertIsNone(owned._kernel_started('executor',None))
+            self.assertTrue(capture.lost)
+            self.assertEqual(len(capture.data['kernels']),1)
+            self.assertFalse(capture.data['kernels'][0]['complete'])
+            self.assertEqual(self.sink.finish(capture,True)['status'],'unknown')
+
     def test_fully_labeled_fake_backend_never_becomes_source_authority(self):
         from agent_harness_lab.evaluation import responses
         if __package__:

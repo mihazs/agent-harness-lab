@@ -23,10 +23,21 @@ startup. Completion is observed after the worker tree is stopped, image/input
 checks and bounded artifact extraction finish. An invocation that raises or loses
 its completion cannot disappear from capture coverage.
 
-Only the direct verified private-workspace subprocess currently qualifies. A
-monitor-mediated dispatch remains unknown until its monitor-to-worker handoff is
-separately substantiated. Permission-audit JSON is not a source receipt, and source
-identity verification does not replace permission/isolation qualification.
+The direct verified private-workspace subprocess qualifies without a monitor.
+With `permission-results-v1`, the trusted observation privately binds the original
+launch frame, exact actual monitor subprocess and pipe descriptors. Only bytes
+sent/read through that owned pipe, actual EOF and the monitor's terminal state can
+issue its one-use, attempt-specific completion. The existing Trace must have
+observed every expected setup-to-role exec and reaped its owned tree. Public
+`Observation.data`, parsed reports and permission-audit JSON cannot issue this
+capability. Missing custody or incomplete execution keeps source identity unknown.
+
+Both requested and effective argv are bound. The shared existing canonical Python
+`-B` transform must match exactly, and the fresh grader must retain its fixed
+requested command. This does not prove loaded executable identity. Completed
+permission violations may substantiate the same limited execution facts while
+remaining violations; source identity verification never grants permission or
+isolation qualification. Terminal setup gaps remain incomplete setup coverage.
 
 Artifact fingerprints come from bytes read through the actual private workspace
 descriptor, or the controller's final in-memory working-state snapshot. They do
@@ -104,7 +115,10 @@ Run `task test:sources:controller` for admission controls and
 `task test:sandbox:kernel:controller-sources` for actual pinned workers, the fresh
 grader, artifact swaps, context loss and replay controls. The source cases are
 also included by installed layouts' `test_source_*.py` selection; native kernel
-qualification remains explicitly opt-in. Synthetic transport supplies the model
+qualification remains explicitly opt-in. Run
+`task test:sources:permission-composition:kernel` for the actual audited
+worker/fresh-grader handoff and private-wire, argv and artifact controls.
+Synthetic transport supplies the model
 responses in these controls; no real inference or native agent is launched.
 
 The full #42/#58 chain still requires supported effective configuration/memory/code
