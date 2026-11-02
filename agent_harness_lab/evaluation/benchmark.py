@@ -24,8 +24,10 @@ def public_export_allowed(records):
     for record in records:
         for metadata in (record,record.get('receipt'),record.get('analysis'),record.get('context')):
             if isinstance(metadata,dict) and (metadata.get('publication_allowed',True) is not True
-                    or any(key in metadata for key in ('controller_run_id','cohort_manifest_sha256','preservation','receipt_sha256'))
-                    or metadata.get('algorithm') in ('private-preservation-decision-v1','private-controller-history-report-v1','guarded-preservation-search-v1')
+                    or any(key in metadata for key in ('controller_run_id','cohort_manifest_sha256','preservation','receipt_sha256',
+                        'cohort_binding','controller_qualification','qualification_sha256'))
+                    or metadata.get('algorithm') in ('private-preservation-decision-v1','private-controller-history-report-v1',
+                        'guarded-preservation-search-v1','corrected-cohort-qualification-v1')
                     or metadata.get('evidence_source')=='controller_verified_development_only'):
                 return False
         provenance=record.get('provenance',{})

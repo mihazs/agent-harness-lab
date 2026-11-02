@@ -50,6 +50,8 @@ class ExperimentalCliTests(unittest.TestCase):
                     dict(publication_allowed=True,receipt_sha256='1'*64),
                     dict(publication_allowed=True,algorithm='private-preservation-decision-v1'),
                     dict(publication_allowed=True,receipt=dict(algorithm='private-preservation-decision-v1')),
+                    dict(publication_allowed=True,algorithm='corrected-cohort-qualification-v1'),
+                    dict(publication_allowed=True,qualification_sha256='3'*64),
                     dict(publication_allowed=True,analysis=dict(controller_run_id='2'*64)))):
                 forged=record(); forged.update(fields)
                 source.write_text(json.dumps([forged])); output=root/f'blocked-controller-{index}'

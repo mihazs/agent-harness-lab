@@ -80,8 +80,9 @@ Receipt regeneration and rebinding after an engine change must be explicit.
 
 Use [private history reports](history-reports.md) to inspect comparison receipts.
 Public export is refused even if search state is relabelled synthetic. Oracle
-corrections still require fresh qualification and a new cohort manifest; automatic
-corrected-oracle requalification remains separate work under issue #122.
+corrections use a separately reviewed
+[correction-rerun request](grader-corrections.md#requalify-corrected-preservation-cohorts)
+to execute fresh qualification, freeze a new cohort and rerun both comparison arms.
 
 Run `task test:optimization:history` for native controller/search contracts.
 The actual synthetic positive control explicitly predeclares an affordable test

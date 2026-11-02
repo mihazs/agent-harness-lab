@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.56.0
+
+### Minor Changes
+
+- Execute reviewed corrected-oracle qualification before rerunning preservation comparisons. Freeze original harness inputs, preserve prior cohort membership and rules, run fresh historical-pass and repaired-case phases, bind actual sealed evidence into a new cohort manifest, then execute both original comparison arms under the corrected oracle. Retain interrupted attempts and historical evidence after revocation, reject input overlap before writes, enforce aggregate limits and one deadline, and block public export of private qualification records. Preserve version-1 rerun compatibility and recommendation-only behavior.
+
 ## 0.55.0
 
 ### Minor Changes

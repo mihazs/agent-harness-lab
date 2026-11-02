@@ -58,6 +58,11 @@ tasks:
     desc: Run frozen preservation qualification, legacy plan identity and history contracts
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_preservation_*.py" -v'
+  test:evaluation:requalification:
+    desc: Verify fresh corrected-cohort qualification and legacy rerun compatibility
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_cohort_requalification.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_correction_*.py" -v'
   test:report-privacy:
     desc: Verify benchmark publication boundaries and output creation
     cmds:
@@ -262,7 +267,8 @@ tasks:
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_installed_layout.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_bank_corrections.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_correction_rerun.py"'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_cohort_requalification.py"'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_correction_*.py"'
   test:evaluation:review:
     desc: Run native private review-store lifecycle and evidence-integrity cases
     cmds:

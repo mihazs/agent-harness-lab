@@ -4,8 +4,9 @@ A preservation cohort identifies behavior that worked in a prior execution and
 must be evaluated separately from aggregate gains. Frozen membership and resolved
 prior qualification feed the existing paired-root analysis. Each required cohort
 gets its own noninferiority endpoint. [Private decision receipts](decision-receipts.md)
-bind the analysis to current evidence; optimization/report integration remains
-pending. Conditional statistical support cannot authorize adoption.
+bind the analysis to current evidence. [Guarded search](guarded-search.md) and
+[private reports](history-reports.md) consume current receipts. Conditional
+statistical support cannot authorize adoption.
 
 Existing plans keep their original serialization, digest and scheduled trial IDs.
 An optional `cohort_manifest_sha256` field binds the exact bytes of a new sidecar.
@@ -75,10 +76,11 @@ snapshot; revocation blocks current use while `historical-plan` retains the orig
 declarations with current applicability unevaluated.
 
 An oracle correction needs fresh qualification and a newly frozen cohort manifest,
-followed by both comparison arms under a new plan. The existing correction-rerun
-operation refuses cohort-enabled plans rather than silently retaining old qualification.
-Automatic requalification and optimization/report receipt integration remain work
-for issue #122. Automatic promotion and publication remain disabled.
+followed by both comparison arms under a new plan. The version 2
+[correction-rerun request](grader-corrections.md#requalify-corrected-preservation-cohorts)
+executes a predeclared reviewed qualification protocol. Version 1 continues to
+refuse cohort-enabled plans. Automatic promotion and publication remain disabled;
+broader preservation work remains tracked in issue #122.
 
 ## Conditional preservation analysis
 

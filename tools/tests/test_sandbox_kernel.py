@@ -332,7 +332,25 @@ class RegressionDraftKernelTests(KernelFixture):
         self.assertFalse(checked['qualified_feasible'])
         self.assertTrue(checked['retain_no_op'])
         self.assertEqual(context.verify(checked['binding']),checked)
-        for run_id in (prior['run_id'],observed['run_id']):
+        from agent_harness_lab.evaluation.cohort_requalification import ALGORITHM,qualify
+        original=value.store.historical_plan(observed['run_id'])
+        protocol=dict(schema_version=2,algorithm=ALGORITHM,prior_run_id=original['run_id'],
+            prior_plan_sha256=original['plan_sha256'],cohort_manifest_sha256=pin,
+            author='synthetic-kernel-protocol-author',image_sha256=pinned['sha256'],
+            max_total_trials=8,before_harnesses=[])
+        protocol_path=self.root/'qualification-protocol.json'; protocol_path.write_text(json.dumps(protocol))
+        protocol_sha=hashlib.sha256(protocol_path.read_bytes()).hexdigest()
+        review=dict(identity='synthetic-kernel-protocol-reviewer',source='operator_attestation',
+            basis_kind='independent_artifact_review',evidence_refs=[dict(ref='synthetic:protocol',sha256=protocol_sha)])
+        fresh=qualify(protocol_path,protocol_sha,original,value.bank,value.baseline,value.candidate,
+            self.root/'prepared-requalification',value.store,review=review,cgroup_root=self.cgroup_root,
+            image_root=runtime,image_sha256=pinned['sha256'],disk_bytes=64*1024*1024,
+            parent_deadline=time.monotonic()+45)
+        self.assertEqual(len(fresh['phases']),1)
+        fresh_run=fresh['phases'][0]['run_id']
+        self.assertNotIn(fresh_run,(prior['run_id'],observed['run_id']))
+        self.assertNotEqual(fresh['manifest_sha256'],pin)
+        for run_id in (prior['run_id'],observed['run_id'],fresh_run):
             trials=value.store.checked(run_id)[4]['trials']; self.assertEqual(len(trials),4)
             for trial in trials:
                 for execution in (trial['execution'],trial['grader']['execution']):

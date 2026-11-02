@@ -45,6 +45,8 @@ class BenchmarkContracts(unittest.TestCase):
                 dict(receipt=dict(algorithm='private-preservation-decision-v1')),
                 dict(analysis=dict(controller_run_id='4'*64)),
                 dict(context=dict(algorithm='guarded-preservation-search-v1')),
+                dict(algorithm='corrected-cohort-qualification-v1'),
+                dict(cohort_binding={}),dict(controller_qualification={}),dict(qualification_sha256=None),
                 dict(evidence_source='controller_verified_development_only')):
             item=dict(record(),publication_allowed=True)
             item.update(fields)

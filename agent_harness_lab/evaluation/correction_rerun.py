@@ -16,12 +16,14 @@ from .integrity import contained,digest,read_regular
 from .oracle import identity
 from .oracle_history import HistoryStore
 from .plan import ExperimentSpec
-from .regressions import fields,sha256,text
+from .regressions import fields,references,sha256,text
 
 
 def request_value(value,case_id):
-    fields(value,'schema_version case_id expected_event_sha256 evidence_sha256 bank_sha256 revision_sha256 history_store prior operator reason')
-    if type(value['schema_version']) is not int or value['schema_version']!=1 or value['case_id']!=case_id:
+    version = value.get('schema_version') if isinstance(value,dict) else None
+    fields(value,'schema_version case_id expected_event_sha256 evidence_sha256 bank_sha256 revision_sha256 history_store prior operator reason'
+        +(' qualification' if type(version) is int and version==2 else ''))
+    if type(version) is not int or version not in (1,2) or value['case_id']!=case_id:
         raise ValueError('rerun case/schema mismatch')
     for key in ('case_id','expected_event_sha256','evidence_sha256','bank_sha256','revision_sha256'): sha256(value[key])
     if not isinstance(value['history_store'],str) or str(canonical(value['history_store']))!=value['history_store']:
@@ -35,6 +37,17 @@ def request_value(value,case_id):
     if len(value['operator']['identity'])>128 or value['operator']['source']!='operator_attestation':
         raise ValueError('explicit operator rerun provenance required')
     text(value['reason'])
+    if version==2:
+        selected = value['qualification']; fields(selected,'protocol review')
+        fields(selected['protocol'],'path sha256'); sha256(selected['protocol']['sha256'])
+        if not isinstance(selected['protocol']['path'],str) or str(canonical(selected['protocol']['path']))!=selected['protocol']['path']:
+            raise ValueError('qualification protocol locator must be explicit and canonical')
+        review = selected['review']; fields(review,'identity source basis_kind evidence_refs')
+        text(review['identity']); references(review['evidence_refs'])
+        if (len(review['identity'].encode('utf-8'))>128 or review['source']!='operator_attestation'
+                or review['basis_kind']!='independent_artifact_review'
+                or not any(ref['sha256']==selected['protocol']['sha256'] for ref in review['evidence_refs'])):
+            raise ValueError('qualification requires explicit protocol artifact review')
 
 
 def prior_binding(history,request,*,historical=False):
@@ -110,20 +123,31 @@ def validate_events(store,case_id,case,events):
             if started['kind']!='rerun_started' or started['payload']['attempt']!=event['payload']['attempt']:
                 raise ValueError('rerun completion has no exact controller start')
             attempt = contained(case,event['payload']['attempt']); receipt,receipt_hash = record(attempt/'receipt.json')
-            fields(receipt,'schema_version status prior_run_id prior_state new_run_id new_event_sha256 new_evidence_sha256 new_plan_sha256 fixture_mode_evidence harness_mode_evidence historical_state_reproduction independence automatic_promotion publication_allowed')
-            if (type(receipt['schema_version']) is not int or receipt['schema_version']!=1
+            request,_ = record(attempt/'request.json',64*1024)
+            version = request['schema_version']
+            fields(receipt,'schema_version status prior_run_id prior_state new_run_id new_event_sha256 new_evidence_sha256 new_plan_sha256 fixture_mode_evidence harness_mode_evidence historical_state_reproduction independence automatic_promotion publication_allowed'
+                +(' qualification_sha256' if version==2 else ''))
+            if (type(receipt['schema_version']) is not int or receipt['schema_version']!=version
                     or receipt_hash!=event['payload']['receipt_sha256'] or receipt['status'] not in ('completed','incomplete','budget_exhausted','interrupted')
                     or receipt['automatic_promotion'] is not False or receipt['publication_allowed'] is not False
                     or receipt['independence']!='unverified' or receipt['historical_state_reproduction']!='unverified'
                     or receipt['fixture_mode_evidence'] not in ('pinned','unknown') or receipt['harness_mode_evidence']!='unknown'):
                 raise ValueError('rerun receipt binding changed')
-            request,_ = record(attempt/'request.json',64*1024)
             if receipt['prior_run_id']!=request['prior']['run_id']: raise ValueError('rerun prior subject changed')
             prior = prior_binding(HistoryStore(request['history_store']),request,historical=True)
             if receipt['prior_state']!=prior['state'] or receipt['fixture_mode_evidence']!=prior['fixture_mode_evidence']:
                 raise ValueError('rerun failure/success claims differ from frozen prior evidence')
             for key in ('new_run_id','new_event_sha256','new_evidence_sha256','new_plan_sha256'):
                 if receipt[key] is not None: sha256(receipt[key])
+            qualification = None
+            if version==2 and receipt['qualification_sha256'] is not None:
+                sha256(receipt['qualification_sha256'])
+                qualification,qualification_hash = record(attempt/'qualification.json',1024*1024)
+                selected = request['qualification']
+                if (qualification_hash!=receipt['qualification_sha256'] or qualification.get('review')!=selected['review']
+                        or qualification.get('protocol_path')!=selected['protocol']['path']
+                        or qualification.get('protocol_sha256')!=selected['protocol']['sha256']):
+                    raise ValueError('rerun qualification protocol or evidence changed')
             if receipt['new_run_id'] is None and any(receipt[k] is not None for k in ('new_event_sha256','new_evidence_sha256')):
                 raise ValueError('rerun event evidence has no generated run subject')
             if receipt['new_evidence_sha256'] is not None and receipt['new_event_sha256'] is None:
@@ -142,6 +166,17 @@ def validate_events(store,case_id,case,events):
                 old = ExperimentSpec.parse(prior['plan']); derived = replace(old,grader_hash=actual['plan']['grader_hash'])
                 source = actual['manifest']; authority = source.get('bank_authority',{})
                 correction = record(case/'spec.json')[0]
+                if version==2:
+                    from .cohort_requalification import verify_completion
+                    if qualification is None or old.cohort_manifest_sha256 is None:
+                        raise ValueError('completed cohort rerun lacks fresh qualification evidence')
+                    bank = contained(store.root,'revisions/'+request['revision_sha256']+'/bank.json')
+                    verify_completion(qualification,prior,bank,HistoryStore(request['history_store']),current=False)
+                    derived = replace(derived,cohort_manifest_sha256=qualification['manifest_sha256'])
+                    if (source.get('cohort_manifest')!=dict(path='cohort-manifest.json',sha256=qualification['manifest_sha256'])
+                            or record(attempt/'export/cohort-manifest.json',1024*1024)[1]!=qualification['manifest_sha256']
+                            or 'controller_search' in source):
+                        raise ValueError('comparison lacks newly frozen preservation declaration')
                 declared_inputs(prior,source,correction['parent']['task_id'])
                 if (actual['state']!='sealed' or actual['run_id']==receipt['prior_run_id']
                         or actual['event_sha256']!=receipt['new_event_sha256'] or actual['evidence_sha256']!=receipt['new_evidence_sha256']
@@ -193,8 +228,10 @@ def rerun(store,case_id,request_path,baseline,candidate,*,cgroup_root,image_root
             raise ValueError('rerun authority differs from applied correction')
         with history.locked(): prior = prior_binding(history,request)
         old = ExperimentSpec.parse(prior['plan'])
-        if old.cohort_manifest_sha256 is not None:
+        if old.cohort_manifest_sha256 is not None and request['schema_version']==1:
             raise ValueError('corrected preservation plans require fresh qualification and a newly frozen cohort manifest')
+        if old.cohort_manifest_sha256 is None and request['schema_version']==2:
+            raise ValueError('cohort qualification request requires a prior preservation plan')
         if old.profile!='descriptive_smoke' or old.partition!='development': raise ValueError('correction reruns cannot upgrade protected/certification exposure')
         if image_sha256!=old.runtime_hash or image_sha256!=spec['image_sha256']:
             raise ValueError('rerun runtime differs from observed prior/audited image')
@@ -204,17 +241,33 @@ def rerun(store,case_id,request_path,baseline,candidate,*,cgroup_root,image_root
         selected = [t[0] for t in old.tasks]
         if task.task_id not in selected or prior['manifest']['grader_bundles'][task.task_id]['digest']!=task.grader_digest:
             raise ValueError('prior run did not select this exact old oracle')
+        bank = contained(store.root,'revisions/'+metadata['revision_sha256']+'/bank.json')
+        qualification = None; original_baseline,original_candidate = baseline,candidate
+        if request['schema_version']==2:
+            from .cohort_requalification import load_protocol
+            protocol = request['qualification']['protocol']
+            load_protocol(protocol['path'],protocol['sha256'],prior,baseline,candidate,image_sha256)
         if len(events)+3>MAX_EVENTS: raise ValueError('rerun journal capacity exhausted')
         relative = 'reruns/'+secrets.token_hex(12); attempt = contained(case,relative); attempt.mkdir(parents=True,mode=0o700)
         write_bytes(attempt/'request.json',raw); sync_directory(attempt); sync_directory(attempt.parent); sync_directory(case)
         store.append(case,events,'rerun_started','applied',dict(attempt=relative,request_sha256=request_hash))
-        receipt = dict(schema_version=1,status='incomplete',prior_run_id=prior['run_id'],prior_state=prior['state'],
+        receipt = dict(schema_version=request['schema_version'],status='incomplete',prior_run_id=prior['run_id'],prior_state=prior['state'],
             new_run_id=None,new_event_sha256=None,new_evidence_sha256=None,new_plan_sha256=None,
             fixture_mode_evidence=prior['fixture_mode_evidence'],harness_mode_evidence='unknown',
             historical_state_reproduction='unverified',independence='unverified',automatic_promotion=False,publication_allowed=False)
+        if request['schema_version']==2: receipt['qualification_sha256'] = None
         interrupted = False
         try:
-            bank = contained(store.root,'revisions/'+metadata['revision_sha256']+'/bank.json')
+            if request['schema_version']==2:
+                from .cohort_requalification import qualify
+                qualification = qualify(protocol['path'],protocol['sha256'],prior,bank,baseline,candidate,
+                    attempt/'qualification',history,review=request['qualification']['review'],
+                    cgroup_root=cgroup_root,image_root=image_root,image_sha256=image_sha256,
+                    disk_bytes=disk_bytes,parent_deadline=deadline)
+                write_bytes(attempt/'qualification.json',encoded(qualification)); sync_directory(attempt)
+                receipt['qualification_sha256'] = record(attempt/'qualification.json',1024*1024)[1]
+                baseline = canonical(qualification['snapshots']['baseline']['path'])
+                candidate = canonical(qualification['snapshots']['candidate']['path'])
             manifest = export_manifest(bank,attempt/'export',max_trials=old.max_trials,task_ids=selected)
             previous = {t['id']:t for t in prior['manifest']['tasks']}
             for current in manifest['tasks']:
@@ -235,6 +288,14 @@ def rerun(store,case_id,request_path,baseline,candidate,*,cgroup_root,image_root
             declared_inputs(prior,manifest,task.task_id)
             new = replace(old,grader_hash=identity(attempt/'export',manifest['tasks'],manifest['grader_bundles']))
             if new.grader_hash==old.grader_hash: raise ValueError('rerun requires a newly pinned corrected oracle')
+            if qualification is not None:
+                raw_cohort = read_regular(qualification['manifest_path'],1024*1024)
+                if hashlib.sha256(raw_cohort).hexdigest()!=qualification['manifest_sha256']:
+                    raise ValueError('new cohort manifest changed before comparison')
+                write_bytes(attempt/'export/cohort-manifest.json',raw_cohort)
+                manifest['cohort_manifest'] = dict(path='cohort-manifest.json',sha256=qualification['manifest_sha256'])
+                manifest.pop('controller_search',None)
+                new = replace(new,cohort_manifest_sha256=qualification['manifest_sha256'])
             manifest['experiment'] = new.to_dict(); write_path = attempt/'export/manifest.json'
             write_path.write_bytes(encoded(manifest)); sync_tree(attempt)
             remaining = deadline-time.monotonic()
@@ -252,7 +313,12 @@ def rerun(store,case_id,request_path,baseline,candidate,*,cgroup_root,image_root
             if (observed['state']!='sealed' or observed['plan_sha256']!=new.digest
                     or observed['manifest_sha256']!=record(write_path,1024*1024)[1]):
                 raise ValueError('fresh complete controller comparison unavailable')
-            committed_application(store,case_id,applied['payload'])
+            if qualification is not None:
+                from .cohort_requalification import revalidate
+                revalidate(qualification,prior,original_baseline,original_candidate,bank,history,parent_deadline=deadline)
+            current = committed_application(store,case_id,applied['payload'])
+            if qualification is not None and not current['current_eligible']:
+                raise ValueError('correction authority changed before rerun completion')
             if time.monotonic()>=deadline: raise TimeoutError('rerun sealing exceeded parent deadline')
             receipt.update(status='completed',new_event_sha256=observed['event_sha256'],new_evidence_sha256=observed['evidence_sha256'])
         except KeyboardInterrupt:
