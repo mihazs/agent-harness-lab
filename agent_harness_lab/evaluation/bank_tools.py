@@ -56,7 +56,8 @@ def _external_controls(bank_path, tasks, admission):
 
 
 def export_manifest(bank_path,output,max_trials=24):
-    bank_path,output=Path(bank_path),Path(output)
+    bank_path,output=Path(bank_path),Path(output).absolute()
+    if '..' in output.parts: raise ValueError('bank export output must not contain parent traversal')
     if output.absolute().is_relative_to(bank_path.parent.resolve()) or bank_path.parent.resolve().is_relative_to(output.absolute()):
         raise ValueError('bank export and source must not overlap')
     if any(p.is_symlink() for p in (output,*output.absolute().parents)):
