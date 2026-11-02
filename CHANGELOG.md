@@ -4,10 +4,13 @@
 
 ### Minor Changes
 
+- Add `ahl update` for release installations, retain installation locations and selected skill directories, and serialize installation transactions to keep launchers and receipts consistent. Bundle the checksum-verifying installer and document one-line installation.
 - 2bef4b9: Capture explicitly selected controller sources from actual pinned offline workers and fresh artifact graders. Exact live capabilities support bounded runtime and grader-attempt projections; private journals preserve declared metadata and candidate relationships without replaying verification from serialized claims.
 
 ### Patch Changes
 
+- Make installation and project usage prominent in the README and document newcomer guidance from public sources.
+- Use focused bug and feature issue forms and a shorter pull request template with explicit verification and privacy guidance.
 - Keep managed access retirement and case publication under one store-writer lock so a competing writer cannot strand the winning reservation before dispatch.
 - b5a0c1b: Bind optional live source receipts to the existing permission monitor's privately owned launch and wire completion. Preserve declared journal replay, exact grader command and independent permission qualification. Retire source-session authority on normal and exceptional exit, including saved Python-context reuse, and bind live authority to its issuing process.
 
