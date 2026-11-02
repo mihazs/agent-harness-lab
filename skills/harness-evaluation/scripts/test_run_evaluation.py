@@ -212,13 +212,20 @@ else:
         from dataclasses import asdict
         sys.path.insert(0, str(RUNNER.parents[3]))
         from agent_harness_lab.evaluation.plan import ExperimentSpec
+        from agent_harness_lab.evaluation.integrity import digest
+        from agent_harness_lab.evaluation.oracle import identity
         spec=importlib.util.spec_from_file_location('synthetic_runner', RUNNER)
         runner=importlib.util.module_from_spec(spec); spec.loader.exec_module(runner)
+        oracle = self.root/'oracle'; oracle.mkdir()
+        grader = oracle/'grade.py'
+        grader.write_text(self.grader.read_text()+"import json; print(json.dumps(dict(schema_version=1,valid=True,outcome=True,grader_id='synthetic',grader_version='v1')))\n")
+        tasks = [dict(id='case',split='development',fixture='fixture',prompt='ok',
+                      grader=[sys.executable,str(grader),'{workspace}'])]
+        bundles = {'case':dict(path='oracle',digest=digest(oracle))}
         plan=ExperimentSpec('synthetic', (('case','root','family'),), 2, 13, 4, 2,
                             .05, .1, .05, (('family',1),), runner.digest(self.root/'baseline'),
-                            runner.digest(self.root/'candidate'), 'grader', 'runtime')
-        manifest=dict(tasks=[dict(id='case',split='development',fixture='fixture',prompt='ok',
-                                  grader=[sys.executable,str(self.grader),'{workspace}'])],
+                            runner.digest(self.root/'candidate'), identity(self.root,tasks,bundles), 'runtime')
+        manifest=dict(tasks=tasks,grader_bundles=bundles,
                       experiment=asdict(plan),max_trials=4,budget_seconds=10,timeout_seconds=2)
         (self.root/'manifest.json').write_text(json.dumps(manifest))
         result=subprocess.run([sys.executable,str(RUNNER),'--manifest',str(self.root/'manifest.json'),

@@ -1,0 +1,217 @@
+"""Synthetic controller observations, not model behavior or kernel containment proof."""
+import importlib.util
+import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
+import time
+import unittest
+from unittest.mock import Mock,patch
+
+from agent_harness_lab.evaluation import responses
+if __package__:
+    from . import test_sandbox_inference as fixtures
+else:
+    import test_sandbox_inference as fixtures
+
+
+class ControllerActionTests(unittest.TestCase):
+    def setUp(self):
+        self.fixture = fixtures.ControllerInferenceTests(); self.fixture.setUp(); self.addCleanup(self.fixture.doCleanups)
+        self.root,self.deadline = self.fixture.root,self.fixture.deadline
+
+    def client(self,items,**limits):
+        transport = Mock(side_effect=[fixtures.reply(output) for output in items])
+        return responses.Client(self.fixture.settings|limits,'SYNTHETIC_CONTROLLER_KEY',self.deadline,transport=transport),transport
+
+    def tool_rows(self,client): return [row for row in client.action_report()['actions'] if row['kind']=='tool_request']
+
+    def role(self,client,backend,trial='synthetic-trial'):
+        workspace = self.root/(trial+'-workspace'); workspace.mkdir(exist_ok=True)
+        return responses.run_role(client,backend,workspace,{},'executor','synthetic instructions','synthetic task',self.deadline,trial_id=trial)
+
+    def backend(self,stdout='',stderr='',status='completed'):
+        def execute(argv,workspace,inputs,role,limits,**options):
+            return dict(status=status,exit_code=0 if status=='completed' else 1,stdout=stdout,stderr=stderr,inputs_unchanged=True,
+                attestation=dict(storage_policy=dict(verified=True,extracted={}),runtime_image=dict(verified_before=True,verified_after=True),
+                    cgroup_v2=dict(empty_after_cleanup=True),aggregate_disk_bound_verified=True))
+        return Mock(run=Mock(side_effect=execute))
+
+    def test_accepted_name_reservation_dispatch_and_actual_outputs_have_controller_order(self):
+        client,transport = self.client([[fixtures.call()],[fixtures.message()]]); backend = self.backend('CANARY_STDOUT','synthetic stderr')
+        _,commands = self.role(client,backend)
+        row = self.tool_rows(client)[0]
+        self.assertEqual(row['decision'],'accepted'); self.assertEqual(row['reservation_id'],1)
+        self.assertEqual(row['model_call_id']['text'],'call-one'); self.assertNotEqual(row['controller_id'],'call-one')
+        self.assertTrue(row['backend_invoked']); self.assertTrue(row['containment_validated'])
+        self.assertLess(row['observed_ordinal'],row['dispatch_ordinal']); self.assertLess(row['dispatch_ordinal'],row['outcome_ordinal'])
+        self.assertEqual(row['stdout']['text'],'CANARY_STDOUT'); self.assertEqual(row['stderr']['text'],'synthetic stderr')
+        self.assertEqual(client.action_report()['trial_id'],'synthetic-trial')
+        self.assertEqual(set(commands[0]),{'status','exit_code','attestation'})
+        self.assertEqual(client.action_report()['argv_semantic_authorization'],'unknown')
+        self.assertEqual((transport.call_count,backend.run.call_count),(2,1))
+
+    def test_undeclared_and_malformed_calls_are_denied_without_dispatch_or_reservation(self):
+        for item,reason in [(fixtures.call(name='host_shell'),'undeclared_tool'),
+                            (fixtures.call(arguments='{"argv":["bad\\u0000argument"]}'),'malformed_argv')]:
+            with self.subTest(reason=reason):
+                client,_ = self.client([[item]]); backend = self.backend()
+                with self.assertRaises(responses.InferenceError): self.role(client,backend,reason)
+                row = self.tool_rows(client)[0]
+                self.assertEqual(row['decision'],'denied'); self.assertEqual(row['reason'],reason)
+                self.assertFalse(row['reserved']); self.assertFalse(row['backend_invoked'])
+                self.assertEqual(client.tool_calls,0); backend.run.assert_not_called()
+
+    def test_duplicate_model_id_remains_denied_with_distinct_controller_identity(self):
+        client,_ = self.client([[fixtures.call()],[fixtures.call('two',call_id='call-one')]])
+        backend = self.backend()
+        with self.assertRaises(responses.InferenceError): self.role(client,backend)
+        rows = self.tool_rows(client)
+        self.assertEqual(len(rows),2); self.assertNotEqual(rows[0]['controller_id'],rows[1]['controller_id'])
+        self.assertEqual(rows[0]['model_call_id'],rows[1]['model_call_id'])
+        self.assertEqual(rows[1]['reason'],'duplicate_model_call_id'); self.assertFalse(rows[1]['backend_invoked'])
+        self.assertEqual(backend.run.call_count,1)
+
+    def test_exact_tool_cap_and_over_cap_keep_original_refusal_and_counts(self):
+        client,_ = self.client([[fixtures.call()],[fixtures.message()]],max_tool_calls=1)
+        self.role(client,self.backend())
+        self.assertEqual(client.tool_calls,1)
+        client,_ = self.client([[fixtures.call()],[fixtures.call('two')]],max_tool_calls=1); backend = self.backend()
+        with self.assertRaisesRegex(responses.InferenceError,'tool_count'): self.role(client,backend)
+        denied = self.tool_rows(client)[-1]
+        self.assertEqual(denied['reason'],'tool_count_exhausted'); self.assertFalse(denied['reserved'])
+        self.assertEqual((client.requests,client.tool_calls,backend.run.call_count),(2,1,1))
+
+    def test_observed_canary_survives_later_workspace_restore(self):
+        change = 'from pathlib import Path; Path("original.txt").write_text("changed"); print("SYNTHETIC_CANARY")'
+        restore = 'from pathlib import Path; Path("original.txt").write_text("preserved")'
+        client,_ = self.client([[fixtures.call(arguments=json.dumps(dict(argv=['/usr/bin/python3','-I','-c',change])))],
+            [fixtures.call('two',arguments=json.dumps(dict(argv=['/usr/bin/python3','-I','-c',restore])))],[fixtures.message()]],max_requests=3)
+        backend = self.backend()
+        def execute(*args,**kwargs):
+            state = kwargs['working_state']
+            with tempfile.TemporaryDirectory() as folder:
+                descriptor = os.open(folder,os.O_RDONLY|os.O_DIRECTORY)
+                try:
+                    state.seed(descriptor,self.deadline)
+                    observed = subprocess.run(args[0],cwd=folder,env={'PATH':'/usr/bin:/bin'},capture_output=True,text=True,timeout=5)
+                    state.capture(descriptor,self.deadline)
+                finally: os.close(descriptor)
+            run = self.backend(observed.stdout,observed.stderr).run(*args,**kwargs)
+            return run
+        backend.run.side_effect = execute
+        state,_ = self.role(client,backend)
+        self.assertEqual(dict((name,raw) for name,_,raw in state.snapshot.files)['original.txt'],b'preserved')
+        rows = self.tool_rows(client); self.assertEqual(rows[0]['stdout']['text'],'SYNTHETIC_CANARY\n')
+        self.assertEqual(rows[1]['stdout']['text'],'')
+        detached = client.action_report(); detached['actions'].clear()
+        self.assertTrue(client.action_report()['actions'])
+
+    def test_output_limits_redaction_and_missing_streams_remain_explicit_unknowns(self):
+        client,_ = self.client([[fixtures.call()],[fixtures.message()]])
+        self.role(client,self.backend('SYNTHETIC_CONTROLLER_KEY '+'x'*9000,None))
+        row = self.tool_rows(client)[0]
+        self.assertEqual(row['stdout']['visibility'],'redacted'); self.assertTrue(row['stdout']['truncated'])
+        self.assertEqual(row['stderr']['visibility'],'unavailable'); self.assertIsNone(row['stderr']['text'])
+        self.assertNotIn('SYNTHETIC_CONTROLLER_KEY',json.dumps(client.action_report()))
+        client,_ = self.client([[fixtures.call()]])
+        with self.assertRaises(responses.InferenceError): self.role(client,self.backend('partial output',status='output_limit'),'limited')
+        row = self.tool_rows(client)[0]
+        self.assertEqual(row['backend_stream_coverage'],'unknown_or_truncated')
+        self.assertEqual(row['stdout']['text'],'partial output'); self.assertFalse(row['containment_validated'])
+
+    def test_role_trial_scopes_are_distinct_and_observation_caps_do_not_add_execution_caps(self):
+        client,_ = self.client([[fixtures.call()],[fixtures.message()],[fixtures.call('two')],[fixtures.message('final-two')]],max_requests=4)
+        self.role(client,self.backend(),'first'); first = client.action_report(); first_scope=first['scope_id']
+        client.actions.MAX_RECORDS = len(client.actions.rows)
+        self.role(client,self.backend(),'second'); second = client.action_report()
+        self.assertNotEqual(first_scope,second['scope_id']); self.assertEqual(second['trial_id'],'second')
+        self.assertFalse(second['coverage']['records_complete']); self.assertGreater(second['coverage']['omitted_records'],0)
+        self.assertEqual(client.action_report(first_scope)['actions'],first['actions'])
+        self.assertEqual(client.tool_calls,2)
+
+    def test_backend_exception_retains_invocation_but_no_fabricated_output(self):
+        client,_ = self.client([[fixtures.call()]]); backend = self.backend()
+        backend.run.side_effect = OSError('synthetic worker unavailable')
+        with self.assertRaises(OSError): self.role(client,backend)
+        row = self.tool_rows(client)[0]
+        self.assertTrue(row['backend_invoked']); self.assertEqual(row['worker_outcome'],'unavailable')
+        self.assertIsNone(row['stdout']['text'])
+
+    def test_byte_budget_omissions_do_not_change_tool_execution_and_remain_unknown(self):
+        client,_ = self.client([[fixtures.call()],[fixtures.message()]],max_request_bytes=65536)
+        client.actions.MAX_BYTES = 2048
+        backend = self.backend('large observed output '*2000)
+        self.role(client,backend)
+        report = client.action_report()
+        self.assertFalse(report['coverage']['records_complete'])
+        self.assertGreater(report['coverage']['omitted_updates'],0)
+        self.assertLessEqual(client.actions.bytes,2048)
+        self.assertEqual((client.tool_calls,backend.run.call_count),(1,1))
+
+    def test_credential_redaction_covers_call_metadata_and_argv(self):
+        secret = 'SYNTHETIC_CONTROLLER_KEY'
+        client,_ = self.client([[fixtures.call(name=secret,call_id=secret,arguments=json.dumps(dict(argv=['echo',secret])))]])
+        with self.assertRaises(responses.InferenceError): self.role(client,self.backend())
+        self.assertNotIn(secret,json.dumps(client.action_report()))
+        row = self.tool_rows(client)[0]
+        self.assertEqual(row['tool_name']['visibility'],'redacted'); self.assertEqual(row['argv_visibility'],'redacted')
+
+    def test_existing_cumulative_report_bytes_match_frozen_baseline(self):
+        baseline = Path(__file__).resolve().parents[2]/'artifacts/controller-actions/baseline/responses.py'
+        if not baseline.exists(): self.skipTest('requires explicitly frozen ignored baseline')
+        spec = importlib.util.spec_from_file_location('agent_harness_lab.evaluation._responses_baseline',baseline)
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        old = module.Client(self.fixture.settings,'SYNTHETIC_CONTROLLER_KEY',self.deadline,transport=Mock(return_value=fixtures.reply([fixtures.call()])))
+        new,_ = self.client([[fixtures.call()]])
+        self.assertEqual(old.respond([],self.deadline),new.respond([],self.deadline))
+        self.assertEqual(json.dumps(old.report(),sort_keys=True),json.dumps(new.report(),sort_keys=True))
+
+
+class ControllerActionIntegrationTests(unittest.TestCase):
+    def test_actual_runner_propagates_private_per_trial_observations(self):
+        fixture = fixtures.ResponsesEvaluationTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=fixture.backend), \
+                patch.object(responses,'request',side_effect=fixture.transport):
+            fixture.runner.evaluate(fixture.args)
+        result = fixture.fixture.results(); scopes = []
+        for trial in result['trials']:
+            report = trial['controller_actions']; scopes.append(report['scope_id'])
+            self.assertEqual(report['role'],'executor')
+            self.assertTrue(report['coverage']['records_complete'])
+            calls = [a for a in report['actions'] if a['kind']=='tool_request']
+            self.assertEqual(len(calls),1); self.assertTrue(calls[0]['backend_invoked'])
+            self.assertEqual(len(trial['execution']['worker_commands']),1)
+        self.assertEqual(len(scopes),len(set(scopes)))
+        self.assertNotIn('SYNTHETIC_CONTROLLER_KEY',json.dumps(result))
+
+    def test_runner_denial_keeps_observation_when_no_worker_commands_exist(self):
+        fixture = fixtures.ResponsesEvaluationTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=fixture.backend), \
+                patch.object(responses,'request',return_value=fixtures.reply([fixtures.call(name='unapproved')])):
+            fixture.runner.evaluate(fixture.args)
+        first = fixture.fixture.results()['trials'][0]
+        self.assertEqual(first['status'],'execution_error')
+        denied = next(a for a in first['controller_actions']['actions'] if a['kind']=='tool_request')
+        self.assertEqual(denied['decision'],'denied'); self.assertFalse(denied['backend_invoked'])
+        self.assertEqual(fixture.commands,0)
+
+    def test_raw_offline_results_match_frozen_runner_except_elapsed_time(self):
+        baseline = Path(__file__).resolve().parents[2]/'artifacts/controller-actions/baseline/run_evaluation.py'
+        if not baseline.exists(): self.skipTest('requires explicitly frozen ignored baseline')
+        if __package__: from . import test_offline_evaluation as offline
+        else: import test_offline_evaluation as offline
+        fixture = offline.OfflineFixture(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        spec = importlib.util.spec_from_file_location('action_baseline_runner',baseline)
+        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+        fixture.args.agent='offline'
+        observed = []
+        for runner in (module,fixture.runner):
+            fixture.args.output = fixture.root/('output-'+str(len(observed)))
+            with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend.capability',return_value={'status':'available'}), \
+                    patch('agent_harness_lab.evaluation.sandbox.SandboxBackend.run',side_effect=fixture.emulate):
+                runner.evaluate(fixture.args)
+            value = json.loads((fixture.args.output/'results.json').read_text()); value.pop('elapsed_seconds')
+            observed.append(value)
+        self.assertEqual(json.dumps(observed[0],sort_keys=True),json.dumps(observed[1],sort_keys=True))

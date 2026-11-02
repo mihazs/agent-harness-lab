@@ -24,6 +24,7 @@ class ExperimentSpec:
     runtime_hash: str
     profile: str = 'descriptive_smoke'
     partition: str = 'development'
+    cohort_manifest_sha256: str | None = None
 
     def validate(self):
         if not self.tasks or self.profile not in ('descriptive_smoke', 'certification'):
@@ -54,11 +55,20 @@ class ExperimentSpec:
             raise ValueError('missing experiment provenance')
         if self.profile == 'certification' and self.partition != 'certification':
             raise ValueError('certification requires an untouched reserved partition')
+        cohort = self.cohort_manifest_sha256
+        if cohort is not None and (not isinstance(cohort,str) or len(cohort)!=64
+                or any(c not in '0123456789abcdef' for c in cohort)):
+            raise ValueError('cohort manifest requires an exact lowercase SHA-256')
+
+    def to_dict(self):
+        value = asdict(self)
+        if self.cohort_manifest_sha256 is None: value.pop('cohort_manifest_sha256')
+        return value
 
     @property
     def digest(self):
         self.validate()
-        return hashlib.sha256(json.dumps(asdict(self), sort_keys=True).encode()).hexdigest()
+        return hashlib.sha256(json.dumps(self.to_dict(), sort_keys=True).encode()).hexdigest()
 
     @classmethod
     def parse(cls, value):

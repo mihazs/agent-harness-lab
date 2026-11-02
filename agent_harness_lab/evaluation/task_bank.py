@@ -55,7 +55,7 @@ class TaskSpec:
         return obj
 
 
-def validate(path, *, verify_contents=True):
+def _validate(path, *, verify_contents=True):
     if type(verify_contents) is not bool:
         raise ValueError('content verification mode must be explicit')
     path = Path(path)
@@ -89,12 +89,41 @@ def validate(path, *, verify_contents=True):
             raise ValueError('fixture copy leaks across partitions')
         if task.independence != 'reviewed' or task.review_status != 'accepted' or task.permission != 'approved':
             issues.append(dict(task=task.task_id, status='independence_or_review_unverified'))
-    return dict(schema_version=1, bank_sha256=hashlib.sha256(raw).hexdigest(), contents_verified=verify_contents,
+    bank_sha256 = hashlib.sha256(raw).hexdigest()
+    content_grouping = None
+    if verify_contents:
+        from .content_grouping import inspect_bank
+        content_grouping, overlaps = inspect_bank(path.parent, tasks, bank_sha256)
+        issues.extend(overlaps)
+    return dict(schema_version=1, bank_sha256=bank_sha256, contents_verified=verify_contents,
+                content_grouping=content_grouping, _controller_profile=value.get('controller_profile'),
                 tasks=len(tasks), roots=len({t.root_id for t in tasks}),
                 partitions={p: sum(t.partition == p for t in tasks) for p in sorted(PARTITIONS)},
-                certification_eligible=verify_contents and not issues, issues=issues,
+                review_declarations_complete=all(t.independence == 'reviewed' and t.review_status == 'accepted'
+                    and t.permission == 'approved' for t in tasks),
+                # Structural checks and caller-authored labels cannot issue certification authority.
+                certification_eligible=False, certification_status='unverified',
+                certification_reason='controller_qualification_unavailable', issues=issues,
                 privacy='private' if any(t.source_kind == 'private' for t in tasks) else 'public_source_only',
                 public_tasks_are_secret=False)
+
+
+def validate(path, *, verify_contents=True):
+    result = _validate(path, verify_contents=verify_contents)
+    profile = result.pop('_controller_profile',None)
+    if profile is not None:
+        from .bank_revisions import PROFILE, validate_admission
+        from .bank_corrections import PROFILE as CORRECTION_PROFILE
+        if profile not in (PROFILE,CORRECTION_PROFILE): raise ValueError('unsupported controller bank profile')
+        result['admission'] = validate_admission(path)
+        if profile==CORRECTION_PROFILE: result['certification_eligible']=False
+        if result['admission']['bank_manifest_sha256'] != result['bank_sha256']:
+            raise ValueError('bank changed during admission validation')
+        result['certification_eligible'] = False
+        result['privacy'] = 'private'
+        if not result['admission']['current_eligible']:
+            result['issues'].append(dict(status='admission_quarantined_or_retired'))
+    return result
 
 
 class CertificationLedger:
@@ -131,3 +160,23 @@ class CertificationLedger:
         state.update(status='retired', retirement_reason='final_evaluation_access')
         atomic_json(self.path, state)
         return state['bank']
+
+    def reserve_managed(self, binding):
+        from .certification_access import reserve
+        return reserve(self.path, binding)
+
+    def consume_managed(self, reservation_id, binding, run_id):
+        from .certification_access import consumed
+        return consumed(self.path, reservation_id, binding, run_id)
+
+    def validate_managed_history(self, receipt):
+        from .certification_access import historical
+        historical(self.path, receipt)
+
+    def admit_managed(self, assets, run_id, *, reservation_id=None, binding=None):
+        from .certification_access import admit
+        return admit(self.path, assets, run_id, ident=reservation_id, binding=binding)
+
+    def managed_status(self, reservation_id):
+        from .certification_access import status
+        return status(self.path, reservation_id)

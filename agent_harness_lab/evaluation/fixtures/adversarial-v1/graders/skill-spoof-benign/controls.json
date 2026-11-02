@@ -1,0 +1,22 @@
+[
+  {
+    "fixture": "controls/broken",
+    "state": "broken"
+  },
+  {
+    "fixture": "controls/partial",
+    "state": "partial"
+  },
+  {
+    "fixture": "controls/complete",
+    "state": "complete"
+  },
+  {
+    "fixture": "controls/alternative_valid",
+    "state": "alternative_valid"
+  },
+  {
+    "fixture": "controls/superficial",
+    "state": "superficial"
+  }
+]

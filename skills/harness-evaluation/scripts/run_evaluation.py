@@ -119,17 +119,46 @@ def agent_command(agent, binary, plugin=None, skills=()):
 
 
 def evaluate(args):
+    started = time.monotonic()
+    parent_deadline = getattr(args, 'parent_deadline', None)
+    if parent_deadline is not None and (type(parent_deadline) not in (int, float) or not math.isfinite(parent_deadline)):
+        raise ValueError('parent deadline must be a finite monotonic timestamp')
+    sandbox_graders = getattr(args, 'sandbox_graders', False)
+    if type(sandbox_graders) is not bool: raise ValueError('sandbox grader mode must be explicit')
+    controlled = args.agent == 'responses'
+    supplied_client = getattr(args,'inference_client',None)
+    supplied_backend = getattr(args,'sandbox_backend',None)
+    if not controlled and (supplied_client is not None or supplied_backend is not None):
+        raise ValueError('internal controlled runtime cannot be mixed with cooperative agents')
+    inference_path = getattr(args, 'inference_settings', None)
+    if controlled != (inference_path is not None):
+        raise ValueError('the responses executor requires explicit --inference-settings; other agents cannot use it')
+    if controlled and getattr(args, 'config', None) is not None:
+        raise ValueError('Responses execution uses explicit inference settings, not cooperative runtime configuration')
     cgroup_root = getattr(args, 'cgroup_root', None)
     disk_bytes = getattr(args, 'disk_bytes', None)
+    permission_audit=getattr(args,'permission_audit',None)
+    if permission_audit is not None and (permission_audit!='permission-results-v1' or args.agent not in ('offline','responses')):
+        raise ValueError('permission audit requires the supported offline or controller executor')
     image_root, image_sha256 = getattr(args, 'image_root', None), getattr(args, 'image_sha256', None)
     if (image_root is None) != (image_sha256 is None):
         raise ValueError('runtime image root and SHA-256 pin must be supplied together')
-    if (cgroup_root is not None or image_root is not None or disk_bytes is not None) and args.agent != 'offline':
+    if (cgroup_root is not None or image_root is not None or disk_bytes is not None) and args.agent not in ('offline','responses') and not sandbox_graders:
         raise ValueError('resource boundaries currently require the offline executor')
+    if controlled and any(value is None for value in (cgroup_root,image_root,image_sha256,disk_bytes)):
+        raise ValueError('Responses execution requires explicit cgroup, pinned image and private disk profiles')
+    if controlled:
+        application_modules()
+        from agent_harness_lab.evaluation.integrity import contained, read_regular, tree as bounded_tree
     manifest_path = Path(args.manifest).resolve()
-    manifest_bytes = manifest_path.read_bytes()
+    manifest_bytes = read_regular(manifest_path,1024*1024) if controlled else manifest_path.read_bytes()
     manifest = json.loads(manifest_bytes.decode('utf-8'))
     manifest_hash = hashlib.sha256(manifest_bytes).hexdigest()
+    if (isinstance(manifest.get('experiment'),dict) and manifest['experiment'].get('profile') == 'certification'
+            or 'protected_access' in manifest or getattr(args, '_protected_access', None) is not None):
+        application_modules()
+        from agent_harness_lab.evaluation.certification_access import admission
+        admission(args, manifest)
     versions = {v: Path(getattr(args, v)).resolve() for v in ('baseline', 'candidate')}
     output = Path(args.output).resolve()
     skills = manifest.get('skills', [])
@@ -152,7 +181,6 @@ def evaluate(args):
     configured = None
     binary = args.claude if args.agent == 'claude' else args.codex
     if getattr(args, 'config', None) is not None:
-        configuration_started = time.monotonic()
         application_modules()
         from agent_harness_lab.config import evaluation_settings, evaluation_unchanged
         configured = evaluation_settings(Path(args.config), manifest_path, manifest, versions, args.agent, binary)
@@ -161,6 +189,8 @@ def evaluate(args):
         binary = configured['binary']
     if not math.isfinite(timeout) or not math.isfinite(budget) or timeout <= 0 or budget <= 0 or len(tasks) * 2 > trial_limit:
         raise ValueError('invalid timeout/budget or trial limit exceeded')
+    if parent_deadline is not None:
+        budget = min(budget, max(0, parent_deadline - started))
     frozen_versions, frozen_fixtures = {}, {}
     for version, root in versions.items():
         if output == root or output.is_relative_to(root) or root.is_relative_to(output):
@@ -174,7 +204,7 @@ def evaluate(args):
             if not (root / skill / 'SKILL.md').is_file():
                 raise ValueError(f'missing skill {root / skill}')
     for task in tasks:
-        fixture = (manifest_path.parent / task['fixture']).resolve()
+        fixture = contained(manifest_path.parent,task['fixture']) if controlled else (manifest_path.parent / task['fixture']).resolve()
         if output == fixture or output.is_relative_to(fixture) or fixture.is_relative_to(output):
             raise ValueError('output and fixture must not overlap')
         frozen_fixtures[task['id']] = digest(fixture)
@@ -192,13 +222,14 @@ def evaluate(args):
         if any('{workspace}' in a and a != '{workspace}' for a in task['grader']):
             raise ValueError('keep grader programs outside the workspace; pass {workspace} as a separate argument')
     grader_files = {}
-    for task in tasks:
-        for arg in task['grader']:
-            if '{workspace}' in arg or '{trace}' in arg:
-                continue
-            file = (manifest_path.parent / arg).resolve()
-            if file.is_file():
-                grader_files[str(file)] = hashlib.sha256(file.read_bytes()).hexdigest()
+    if not (sandbox_graders or args.agent in ('offline','responses')):
+        for task in tasks:
+            for arg in task['grader']:
+                if '{workspace}' in arg or '{trace}' in arg:
+                    continue
+                file = (manifest_path.parent / arg).resolve()
+                if file.is_file():
+                    grader_files[str(file)] = hashlib.sha256(file.read_bytes()).hexdigest()
     declared_bundles = manifest.get('grader_bundles', {})
     frozen_bundles = {}
     if declared_bundles:
@@ -223,6 +254,7 @@ def evaluate(args):
                     and hashlib.sha256(manifest_path.read_bytes()).hexdigest() == manifest_hash
                     and all(Path(p).is_file() and hashlib.sha256(Path(p).read_bytes()).hexdigest() == h for p, h in grader_files.items())
                     and (not frozen_bundles or all(bundle_digest(Path(p)) == h for p, h in frozen_bundles.items()))
+                    and (not controlled or response_runtime.read_settings(inference_path)[1] == inference_hash)
                     and (configured is None or (evaluation_unchanged(Path(args.config), configured)
                          and all(bundle_digest(root) == configured['harness_digests'][name] for name, root in versions.items())
                          and all(bundle_digest((manifest_path.parent/t['fixture']).resolve()) == configured['fixture_digests'][t['id']] for t in tasks))))
@@ -235,32 +267,51 @@ def evaluate(args):
         return False
     offline = agent == 'offline'
     backend = None
-    if offline:
-        if not frozen_bundles or skills or harness_paths:
+    if offline or sandbox_graders or controlled:
+        if not frozen_bundles:
+            raise ValueError('sandboxed grading requires every frozen grader bundle')
+        if (offline or controlled) and (skills or harness_paths):
             raise ValueError('offline execution requires frozen grader bundles and a directly mounted harness, without skill injection')
         from agent_harness_lab.evaluation.sandbox import SandboxBackend, Limits
-        from agent_harness_lab.evaluation.integrity import relative
-        from agent_harness_lab.evaluation.bank_tools import regrade_artifacts
+        from agent_harness_lab.evaluation.bank_tools import frozen_grader, regrade_artifacts
         for task in tasks:
-            command, allowed = task.get('offline_executor'), task.get('artifacts')
-            if (not isinstance(command, list) or not command
-                    or not all(isinstance(a, str) and a and '\0' not in a for a in command)
-                    or not isinstance(allowed, list) or not allowed or len(allowed) > 100
-                    or len(set(allowed)) != len(allowed)):
-                raise ValueError('offline tasks require an explicit executor argv and bounded artifact allowlist')
-            for name in allowed:
-                relative(name)
-            bundle = contained(manifest_path.parent, declared_bundles[task['id']]['path'])
-            if task['grader'] != [task['grader'][0], str(bundle/'grade.py.txt'), '{workspace}', str(bundle/'expected.json')]:
-                raise ValueError('offline execution supports only the frozen Python artifact grader contract')
+            frozen_grader(manifest_path.parent, task, declared_bundles[task['id']])
+            if offline:
+                command = task.get('offline_executor')
+                if (not isinstance(command, list) or not command
+                        or not all(isinstance(a, str) and a and '\0' not in a for a in command)):
+                    raise ValueError('offline tasks require an explicit executor argv and bounded artifact allowlist')
         options = dict(cgroup_root=cgroup_root)
         if image_root is not None: options.update(image_root=image_root, image_sha256=image_sha256)
         if disk_bytes is not None: options['disk_bytes'] = disk_bytes
-        backend = SandboxBackend(**options)
+        if permission_audit is not None:options['permission_audit']=permission_audit
+        backend = supplied_backend if supplied_backend is not None else SandboxBackend(**options)
+        if (supplied_backend is not None or permission_audit is not None) and getattr(backend,'permission_audit',None)!=permission_audit:
+            raise ValueError('shared backend must preserve the requested permission audit profile')
+        if controlled:
+            from agent_harness_lab.evaluation import responses as response_runtime
+            from agent_harness_lab.evaluation.working_state import WorkingState
+            inference_settings,inference_hash = response_runtime.read_settings(inference_path)
+            fixtures = [contained(manifest_path.parent,task['fixture']) for task in tasks]
+            for root in versions.values():
+                bounded_tree(root)
+                if any(root.is_relative_to(fixture) or fixture.is_relative_to(root) for fixture in fixtures):
+                    raise ValueError('executor harness and task fixture views must not overlap')
+            if any(left != right and (left.is_relative_to(right) or right.is_relative_to(left)) for left in fixtures for right in fixtures):
+                raise ValueError('executor task fixtures must not be nested')
+            for folder in frozen_bundles:
+                if any(Path(folder).is_relative_to(root) or root.is_relative_to(Path(folder)) for root in versions.values()):
+                    raise ValueError('executor harness views must not overlap grader bundles')
+            try:
+                for task in tasks:
+                    WorkingState((manifest_path.parent/task['fixture']).resolve(),started+budget)
+            except TimeoutError:
+                pass  # Budget reporting below blocks before credentials or inference.
     plan = None
     if 'experiment' in manifest:
         application_modules()
         from agent_harness_lab.evaluation.plan import ExperimentSpec, schedule
+        from agent_harness_lab.evaluation.oracle import identity as oracle_identity
         plan = ExperimentSpec.parse(manifest['experiment'])
         if {t[0] for t in plan.tasks} != {t['id'] for t in tasks}:
             raise ValueError('experiment task set differs from manifest')
@@ -268,20 +319,47 @@ def evaluate(args):
             raise ValueError('experiment harness hashes differ from inputs')
         if configured and {t[0]: t[1:] for t in plan.tasks} != {t['id']: (t['root'], t['family']) for t in tasks}:
             raise ValueError('experiment lineage differs from configured bank')
+        oracle_hash = oracle_identity(manifest_path.parent, tasks, declared_bundles)
+        if plan.grader_hash != oracle_hash:
+            raise ValueError('experiment oracle differs from frozen plan; create a new plan and rerun both arms')
+        if plan.cohort_manifest_sha256 is not None:
+            from agent_harness_lab.evaluation import cohort_history
+            from agent_harness_lab.evaluation.oracle_history import bank_authority
+            bank_tasks=bank_authority(manifest,export_root=manifest_path.parent)
+            cohort_history.capture(manifest_path.parent,manifest,plan,bank_tasks)
         ordered = schedule(plan)
         if len(ordered) > trial_limit:
             raise ValueError('repeated plan exceeds caller trial ceiling')
     else:
         ordered = [dict(version=version, task=task['id'], repetition=0) for version in versions for task in tasks]
-    started = configuration_started if configured else time.monotonic()
+    if manifest.get('cohort_manifest') is not None and (plan is None or plan.cohort_manifest_sha256 is None):
+        raise ValueError('cohort declarations require a frozen experiment plan pin')
+    trajectories = {}
+    if frozen_bundles:
+        from agent_harness_lab.evaluation import trajectory_assertions
+        for task in tasks:
+            bundle = contained(manifest_path.parent, declared_bundles[task['id']]['path'])
+            binding = trajectory_assertions.capture_policy(bundle, frozen_bundles[str(bundle)],
+                dict(task_id=task['id'], root_id=task.get('root'), family=task.get('family')))
+            if binding is not None:
+                if not controlled: raise ValueError('trajectory assertions require the controller Responses executor')
+                if plan is not None and (task.get('root'), task.get('family')) != next(t[1:] for t in plan.tasks if t[0] == task['id']):
+                    raise ValueError('trajectory lineage differs from frozen experiment')
+                trajectories[task['id']] = binding
     blocked = configured and configured['blocked_reason']
     if configured and not evaluation_unchanged(Path(args.config), configured):
         blocked = 'configuration_changed_before_execution'
     available = budget - (time.monotonic() - started)
     if available <= 0:
         blocked = 'preflight_budget_exhausted'
-    capability = backend.capability(seconds=min(3, available)) if offline and not blocked else None
-    version_info = dict(exit_code=None, stdout='') if offline or blocked else execute([binary, '--version'], manifest_path.parent, min(timeout, available))
+    capability = backend.capability(seconds=min(3, available)) if (offline or sandbox_graders or controlled) and not blocked else None
+    if sandbox_graders and not offline and capability is not None and capability['status'] != 'available':
+        blocked = 'grader_sandbox_unavailable'
+    if controlled and capability is not None and capability['status'] != 'available':
+        blocked = 'inference_sandbox_unavailable'
+    available = budget - (time.monotonic() - started)
+    if available <= 0: blocked = 'preflight_budget_exhausted'
+    version_info = dict(exit_code=None, stdout='') if offline or controlled or blocked else execute([binary, '--version'], manifest_path.parent, min(timeout, available))
     config_path = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'config.toml'
     config = {}
     try:
@@ -299,6 +377,11 @@ def evaluate(args):
                             'user_config_defaults': config, 'effective_settings_verified': False},
                    isolation=('cooperative trusted fixtures; ' + ('workspace-write; ' if agent == 'codex' else 'inherited Claude permissions/sandbox; ') + 'inherited configuration/auth/hooks; no security or network isolation claim'))
     results['grader_bundle_digests'] = frozen_bundles
+    if permission_audit is not None:results['isolation_qualification']=backend.permission_qualification()
+    if sandbox_graders:
+        results['runtime']['grader_capability'] = capability
+        results['isolation'] = dict(executor='cooperative native CLI; no role isolation claim',
+            grader='fresh offline namespace with readonly artifacts and frozen oracle', full_certification=False)
     if configured:
         results['effective_configuration'] = dict(configured, applied_limits=dict(seconds=budget, trials=trial_limit),
                                                   requested_agent=agent, effective_runtime_settings_verified=False)
@@ -319,18 +402,53 @@ def evaluate(args):
             results.update(status='blocked', reason='offline_sandbox_unavailable', elapsed_seconds=time.monotonic()-started)
             (output/'results.json').write_text(json.dumps(results, indent=2)+'\n')
             return 3
+    client = None
+    if controlled:
+        forbidden = [output,image_root,*versions.values(),*map(Path,frozen_bundles),
+                     *((manifest_path.parent/task['fixture']).resolve() for task in tasks)]
+        if supplied_client is not None:
+            response_runtime.credential_path(inference_settings,forbidden)
+            if not isinstance(supplied_client,response_runtime.Client) or supplied_client.settings != inference_settings:
+                raise ValueError('shared inference client must preserve the exact selected settings')
+            client = supplied_client
+        else:
+            credential = response_runtime.read_credential(inference_settings,forbidden)
+            client = response_runtime.Client(inference_settings,credential,started+budget)
+        results['runtime'] = dict(agent='responses',model_inference=True,capability=capability,
+            inference_settings_sha256=inference_hash,effective_settings_verified=False,inference=client.report())
+        results['isolation'] = dict(executor='controller inference with offline commands and bounded in-memory working state',
+            grader='fresh offline namespace with readonly declared artifacts and frozen oracle',full_certification=False)
     if plan:
         results['experiment'] = manifest['experiment']
         results['plan_digest'] = plan.digest
+        results['grader_hash'] = oracle_hash
+        if plan.cohort_manifest_sha256 is not None:
+            results.update(cohort_manifest_sha256=plan.cohort_manifest_sha256,
+                cohort_qualification='current_membership_only',publication_allowed=False)
     results['profile'] = plan.profile if plan else 'descriptive_smoke'
     results['automatic_promotion'] = False
+    if trajectories:
+        results.update(trajectory_profile=trajectory_assertions.PROFILE, publication_allowed=False,
+            history_authority='unverified', trajectory_policy_digests={key:b['policy_sha256'] for key,b in trajectories.items()})
+    def record_trajectory(record, binding, capture):
+        receipt = trajectory_assertions.evaluate(binding, capture)
+        if receipt.get('trial_id') != record['controller_trial_id']:
+            receipt = trajectory_assertions.evaluate(binding, None)
+        grade = trajectory_assertions.compose(binding, record.get('grader'), receipt)
+        record['controller_grade'] = grade
+        return grade
     for scheduled in ordered:
         version, task = scheduled['version'], next(t for t in tasks if t['id'] == scheduled['task'])
         root = versions[version]
         remaining = budget - (time.monotonic() - started)
         record = dict(scheduled, split=task['split'])
+        audit_offset=len(backend.permission_reports) if permission_audit is not None else 0
         record.setdefault('root',task.get('root'))
         record.setdefault('family',task.get('family'))
+        if client is not None and client.poisoned:
+            record.update(status='not_executed',reason='inference_aborted_after_failure')
+            results['trials'].append(record)
+            continue
         if not verify_inputs(record):
             results['trials'].append(record)
             continue
@@ -366,7 +484,7 @@ def evaluate(args):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(root / skill, target)
             loaded.append(str(target / 'SKILL.md'))
-        argv = task['offline_executor'] if offline else agent_command(agent, binary, plugin if agent == 'claude' else None, skills)
+        argv = task['offline_executor'] if offline else None if controlled else agent_command(agent, binary, plugin if agent == 'claude' else None, skills)
         prompt = ('Load these exact evaluation skill files before the task: ' + ', '.join(loaded) + '\n' if loaded and task.get('preload_skills', True) else '')
         if manifest.get('no_nested_agents', False):
             prompt += 'Do not launch child agents or nested model trials; the parent owns the evaluation budget.\n'
@@ -377,7 +495,25 @@ def evaluate(args):
             record['status'] = 'budget_exhausted'
             results['trials'].append(record)
             continue
-        if offline:
+        grade_workspace = workspace
+        binding, trajectory_capture = trajectories.get(task['id']), None
+        if controlled:
+            trial_id = record.get('trial_id') or 'trial-'+str(len(results['trials'])+1)
+            if binding is not None: record['controller_trial_id'] = trial_id
+            try:
+                run = response_runtime.run_trial(client,backend,workspace,root,prompt,task['artifacts'],trial/'artifacts',min(timeout,remaining),
+                    trial_id=trial_id, trajectory=binding)
+                trajectory_capture = run.pop('_trajectory_capture', None)
+                record['controller_actions'] = run.pop('controller_actions')
+                grade_workspace = Path(run.pop('artifact_workspace'))
+            except (response_runtime.InferenceError,ValueError,OSError,subprocess.SubprocessError) as exc:
+                client.abort()
+                record.update(status='budget_exhausted' if isinstance(exc,TimeoutError) else 'execution_error',error=str(exc),
+                    inference=client.report(),controller_actions=client.action_report())
+                if binding is not None: record_trajectory(record, binding, client.actions.trajectory)
+                results['trials'].append(record)
+                continue
+        elif offline:
             try:
                 extraction = dict(artifact_allowlist=task['artifacts']) if disk_bytes is not None else {}
                 run = backend.run(argv, workspace, {'harness': root}, 'executor',
@@ -390,12 +526,12 @@ def evaluate(args):
             run['timeout'] = run['status'] == 'timeout'
         else:
             run = execute(argv, workspace, min(timeout, remaining), prompt)
-        trace = trial / ('stdout.txt' if offline else 'trace.jsonl')
+        trace = trial / ('stdout.txt' if offline or controlled else 'trace.jsonl')
         trace.write_text(run.pop('stdout'))
         (trial / 'stderr.txt').write_text(run.pop('stderr'))
         record['execution'] = run
         check = {**run, 'stdout': trace.read_text()}
-        if offline:
+        if offline or controlled:
             record['status'] = 'completed' if (run['status'] == 'completed' and type(run['exit_code']) is int
                                                and run['exit_code'] == 0 and run['inputs_unchanged'] is True) else 'execution_error'
             record['usage'] = None
@@ -407,10 +543,10 @@ def evaluate(args):
             if remaining <= 0:
                 record['status'] = 'budget_exhausted'
             else:
-                if offline:
+                if offline or sandbox_graders or controlled:
                     bundle = contained(manifest_path.parent, declared_bundles[task['id']]['path'])
                     try:
-                        grade = regrade_artifacts(workspace, task['artifacts'], bundle, frozen_bundles[str(bundle)],
+                        grade = regrade_artifacts(grade_workspace, task['artifacts'], bundle, frozen_bundles[str(bundle)],
                                                   backend, limits=Limits(seconds=min(timeout, remaining)))
                         record['grader'] = grade
                         record['status'] = grade['status']
@@ -421,13 +557,41 @@ def evaluate(args):
                     grade = execute(grader, manifest_path.parent, min(timeout, remaining))
                     record['grader'] = grade
                     record['status'] = grading_status(grade,typed=bool(frozen_bundles))
+        if binding is not None:
+            grade = record_trajectory(record, binding, trajectory_capture)
+            if record['status'] in ('passed', 'failed'):
+                record['status'] = ('passed' if grade['outcome'] is True and grade['valid'] else
+                                    'failed' if grade['outcome'] is False else 'trajectory_unknown')
+        if permission_audit is not None:
+            from agent_harness_lab.evaluation.permission_audit import qualification
+            record['isolation_qualification']=qualification(backend.permission_reports[audit_offset:])
+            results['isolation_qualification']=backend.permission_qualification()
         verify_inputs(record)
         results['trials'].append(record)
         (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
     results['elapsed_seconds'] = time.monotonic() - started
+    if client is not None: results['runtime']['inference'] = client.report()
     results['inputs_unchanged'] = inputs_unchanged()
+    if trajectories and plan is not None:
+        from agent_harness_lab.evaluation.statistics import TrialRecord, analyze
+        records = []
+        for trial in results['trials']:
+            grade = trial.get('controller_grade', trial.get('grader', {}))
+            outcome = grade.get('outcome') if trial['status'] in ('passed', 'failed') else None
+            if permission_audit is not None and trial.get('isolation_qualification')!='qualified':outcome=None
+            records.append(TrialRecord(trial['trial_id'], outcome,
+                'graded' if type(outcome) is bool and (grade.get('valid') is True if 'controller_grade' in trial else True) else 'unknown',
+                'executable_grader', plan.baseline_hash, plan.candidate_hash, plan.grader_hash, plan.runtime_hash,
+                grade.get('critical_violation') is True))
+        results['trajectory_analysis'] = (analyze(plan, records) if results['inputs_unchanged'] else
+            dict(status='blocked', reason='frozen_inputs_changed'))
+        results['trajectory_analysis'].update(oracle_validity='unverified', native_identity='unverified',
+            root_independence='unverified', inference_scope='conditional_on_declared_root_lineage',
+            history_authority='unverified', automatic_promotion=False, publication_allowed=False)
+    if permission_audit is not None:
+        results['isolation_qualification']=backend.permission_qualification()
     (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
-    return 0 if results['inputs_unchanged'] and all(t['status'] == 'passed' for t in results['trials']) else 1
+    return 0 if (permission_audit is None or results['isolation_qualification']['qualification']=='qualified') and results['inputs_unchanged'] and all(t['status'] == 'passed' for t in results['trials']) else 1
 
 
 def main():
@@ -435,14 +599,17 @@ def main():
     for name in ('manifest', 'baseline', 'candidate', 'output'):
         parser.add_argument('--' + name, required=True)
     parser.add_argument('--config', help='Explicit project configuration; restricts bank, harness scope, runtime and resource caps')
-    parser.add_argument('--agent', choices=('codex', 'claude', 'offline'), default='codex',
+    parser.add_argument('--agent', choices=('codex', 'claude', 'offline', 'responses'), default='codex',
                         help='offline executes explicit fixture commands without model inference and requires bubblewrap')
     parser.add_argument('--codex', default='codex', help='Codex executable path')
     parser.add_argument('--claude', default='claude', help='Claude Code executable path')
-    parser.add_argument('--cgroup-root', type=Path, help='Explicit predelegated cgroup v2 subtree for offline executor and grader resources')
-    parser.add_argument('--image-root', type=Path, help='Explicit private extracted runtime rootfs for offline execution')
+    parser.add_argument('--sandbox-graders', action='store_true', help='Require fresh offline frozen artifact graders for cooperative CLI trials')
+    parser.add_argument('--inference-settings', type=Path, help='Explicit private settings/key-file and caps for the controller Responses executor')
+    parser.add_argument('--cgroup-root', type=Path, help='Explicit predelegated cgroup v2 subtree for offline execution or sandboxed grader resources')
+    parser.add_argument('--image-root', type=Path, help='Explicit private extracted runtime rootfs for offline execution or sandboxed grading')
     parser.add_argument('--image-sha256', help='Preapproved rootfs content pin; required with --image-root')
-    parser.add_argument('--disk-bytes', type=int, help='Aggregate tmpfs data capacity for offline roles; requires --cgroup-root')
+    parser.add_argument('--permission-audit',choices=('permission-results-v1',),help='Require observed Linux x86_64 permission-result qualification for all offline roles')
+    parser.add_argument('--disk-bytes', type=int, help='Aggregate tmpfs data capacity for offline roles or sandboxed graders; requires --cgroup-root')
     args = parser.parse_args()
     try:
         return evaluate(args)

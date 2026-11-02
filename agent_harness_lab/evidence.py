@@ -185,7 +185,7 @@ def _evaluation_results(project, max_files, sources, fingerprint, caveats, budge
     return failures
 
 
-def collect(project, events=None, source_format='normalized', max_files=100, max_events=100000, max_scan_files=2000, event_sink=None):
+def collect(project, events=None, source_format='normalized', max_files=100, max_events=100000, max_scan_files=2000, event_sink=None, source_version=None, source_root=None, session=None):
     """Return local evidence, not a claim of task success or a causal diagnosis."""
     project = Path(project).resolve()
     if not project.is_dir():
@@ -194,14 +194,24 @@ def collect(project, events=None, source_format='normalized', max_files=100, max
         raise ValueError('collection limits must be positive')
     if source_format not in ('normalized', 'codex', 'claude', 'ai-memory'):
         raise ValueError('unsupported evidence format')
+    from .telemetry.adapters import CAPABILITIES
+    from .telemetry.codex_rollout import VERSION as CODEX_NATIVE_VERSION
+    from .telemetry.claude_native import VERSION as CLAUDE_NATIVE_VERSION
+    codex_pinned = source_format == 'codex' and source_version == CODEX_NATIVE_VERSION
+    pinned = codex_pinned or source_format == 'claude' and source_version == CLAUDE_NATIVE_VERSION
+    if source_root is not None and (not codex_pinned or events is not None) or session is not None and source_root is None:
+        raise ValueError('native source-root/session requires the explicit pinned Codex profile and excludes --events')
+    if source_version is not None and (events is None and source_root is None or not pinned and source_version != CAPABILITIES.get(source_format, {}).get('version')):
+        raise ValueError('source version requires an explicit supported capture')
     caveats, sources, errors = [], [], []
     fingerprint = hashlib.sha256()
     budget = {'bytes': 0, 'chunks': 0}
     selected = []
-    if events is not None:
-        path = Path(events).resolve()
+    if events is not None or source_root is not None:
+        chosen = events if events is not None else source_root
+        path = Path(chosen).absolute() if pinned else Path(chosen).resolve()
         # Explicit input is authorized by the caller, but a symlink is still refused.
-        if Path(events).is_symlink() or not path.is_file():
+        if Path(chosen).is_symlink() or not (path.is_dir() if source_root is not None else path.is_file()):
             raise ValueError('events must be an existing regular file, not a symlink')
         selected.append((path, source_format))
     else:
@@ -224,7 +234,9 @@ def collect(project, events=None, source_format='normalized', max_files=100, max
         for path, fmt in sorted(selected, key=lambda pair: str(pair[0])):
             source_digest = hashlib.sha256()
             source_id = hashlib.sha256(str(path).encode()).hexdigest()[:16]
-            source = dict(path=str(path), format=fmt, events=0)
+            source = dict(format=fmt, events=0)
+            if pinned: source['path_sha256'] = hashlib.sha256(str(path).encode()).hexdigest()
+            else: source['path'] = str(path)
             sources.append(source)
             def scoped_rows():
                 active = events is not None
@@ -235,11 +247,34 @@ def collect(project, events=None, source_format='normalized', max_files=100, max
                     if active:
                         row.setdefault('id', str(accepted))
                         yield row
-            for event in normalize(scoped_rows(), fmt, project='local'):
+            if pinned:
+                if source_format == 'claude':
+                    from .telemetry.claude_native import read
+                else:
+                    from .telemetry.codex_rollout import read
+                try:
+                    if source_root is None: records, coverage, native_digest = read(path, project, max_records=min(max_events, 100000))
+                    else:
+                        from .telemetry.codex_discovery import scan
+                        records, coverage, native_digest = scan(path, project, session=session, max_files=max_files,
+                            max_scan_files=max_scan_files, max_records=min(max_events, 100000))
+                except OSError: raise ValueError('native capture is unavailable or unsafe') from None
+                source.update(native_coverage=coverage)
+                if coverage['partial_tail']: _warn(caveats, 'Native capture has an uncommitted final line; only the complete prefix was projected.')
+                if coverage['unsupported_records'] or coverage['inherited_records_skipped']:
+                    _warn(caveats, 'Native capture contains unsupported or inherited records; coverage is partial.')
+                if source_root is not None:
+                    discovery = coverage['discovery']
+                    if discovery['reached_limits'] or discovery['unsupported_headers'] or discovery['unsafe_entries_skipped']:
+                        _warn(caveats, 'Native discovery reached limits or skipped unsupported/unsafe inputs; history is incomplete.')
+                    if not discovery['accepted_files']:
+                        _warn(caveats, 'No matching native capture was found; completeness remains unknown.')
+            else: records = normalize(scoped_rows(), fmt, project='local', source_version=source_version)
+            for event in records:
                 event = telemetry_event(event)
                 case = event['case_id']
-                event['case_id'] = hashlib.sha256((source_id + ':' + case).encode()).hexdigest()
-                if fmt in ('codex', 'claude'):
+                if not pinned: event['case_id'] = hashlib.sha256((source_id + ':' + case).encode()).hexdigest()
+                if not pinned and fmt in ('codex', 'claude'):
                     root = event.get('root_case_id', case)
                     event['root_case_id'] = hashlib.sha256((fmt + ':' + root).encode()).hexdigest()
                 tool_error = event.get('execution_status') == 'error'
@@ -252,11 +287,11 @@ def collect(project, events=None, source_format='normalized', max_files=100, max
                 if event_sink is not None:
                     event_sink(event)
                 yield event
-            source['sha256'] = source_digest.hexdigest()
+            source['sha256'] = native_digest if pinned else source_digest.hexdigest()
 
     analysis = analyze(normalized_events(), max_events=max_events)
     analysis['findings'].extend(errors)
-    outcomes = [] if events is not None else _evaluation_results(project, max_files, sources, fingerprint, caveats, budget)
+    outcomes = [] if events is not None or source_root is not None else _evaluation_results(project, max_files, sources, fingerprint, caveats, budget)
     if not selected:
         _warn(caveats, 'No matching local capture was found; absence of evidence is not success.')
     failures = [record for record in outcomes if record['status'] in FAILURES]

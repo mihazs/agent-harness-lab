@@ -43,6 +43,45 @@ proof nor authorizes execution. A future connector must verify Git remote or
 source-declared identity and permissions before reading, and must independently
 enforce filesystem/network boundaries.
 
+## Execution identity and declared coverage
+
+The optional immutable contracts in `sources.execution` accompany records without
+adding fields to strict v1 `SourceSpec`, `EvidenceRecord` or `ImportReceipt` objects:
+
+| Contract | Captured metadata |
+| --- | --- |
+| `RecordRef` | Source/native-record/revision fingerprints |
+| `IdentityField` | Field name, namespace, optional fingerprint, status, provenance, evidence references, observation/effective times and missing/conflict reason |
+| `ExecutionIdentity` | A subject record revision and at most one receipt per supported identity field |
+| `CoverageManifest` | Expected/observed scope, adapter/parser versions, scan bounds, missing fields, gap reasons, truncation/limit flags and reported completeness |
+| `ExecutionMetadata` | Up to 1,000 subject identities and an optional coverage manifest |
+
+Identity fields cover project/worktree, original task/root, session/parent, attempt,
+requested model alias, served model, runtime/version, effective harness/config,
+memory snapshot, code/PR head and grader revision. Each value is a namespaced
+fingerprint or explicit unknown; a requested alias never supplies a missing served
+version. Unknown fields carry `null`, not the fingerprint of an empty string.
+Conflicted fields carry distinct alternative fingerprints and no selected value.
+References must resolve to revisions in the same explicitly scoped source. A late
+import or changed current checkout cannot replace a historical field or its time.
+
+These receipts are claims. The field schema can represent `verified` for a future
+trusted execution verifier, but **every current export, registry and store import
+rejects verified execution fields**. A native/controller provenance label, source
+provider name or valid checksum cannot grant that capability. Existing Git and
+instruction-inventory captures do not establish which configuration an execution
+loaded. Preview/status and the explicit private cache context in analyze/doctor
+already expose these declarations and missing fields. Verified execution-receipt
+production and verified cross-source joins remain separate work in
+#44/#45/#46/#53/#58. No receipt authorizes execution or grading.
+
+Fields and collections use fixed bounds: 16 supported identity names, eight evidence
+references or conflict alternatives per field, five scan dimensions and enumerated
+missing/gap reasons. Timestamps require timezones, validity intervals must be ordered,
+and unknown keys or mutable collections are rejected. Coverage's
+`reported_completeness` is a source assertion; import completion and the public
+summary's `capture_completeness: unknown` remain separate from that assertion.
+
 ## Private checkpoint journal
 
 `SourceStore` in `agent_harness_lab.sources.store` stores already-normalized
@@ -52,13 +91,70 @@ Scope mismatch, disabled sources and unattributed identities block writes before
 records are consumed. The caller must independently verify identity and permissions
 before collecting source data; a stored provenance label is not that verification.
 
+Normalized local v1–v3 exports require matching readbacks of their selected
+payload and declaration before returning a checkpoint-ready snapshot. The reader
+rechecks project/scope, enablement and the original data-file selection before
+each bounded payload read. An observed edit, removal, oversized file or symlink
+blocks the operation and leaves an existing committed checkpoint unchanged. A
+changed selector is rejected before reading its replacement, even if its bytes
+would match. Declaration formatting and payload mtime alone do not change the
+snapshot identity. This detects changes seen at the read boundaries; it is not
+an atomic filesystem snapshot or proof that no transient change occurred. Stable
+exports retain their previous raw-byte SHA-256, v1–v3 metadata and cursor behavior.
+
 An import atomically replaces the journal containing source specifications, record
 history and cursor fingerprints. A failed input iterator or rejected batch leaves
 the previous journal byte-for-byte intact. Compare-and-swap checks reject stale
 cursors before consuming records. A busy writer fails immediately; the store never
 automatically retries a collector or a paid operation. Checkpoint history rejects
-pagination cycles. Native cursor tokens and source snapshots are not stored here:
+pagination cycles. Native cursor tokens and snapshot bodies are not stored here:
 adapters must manage those privately and pass their fingerprints.
+
+Snapshot collectors use the explicit `snapshot_sha256` argument instead of
+`cursor_after`. Snapshot content may legitimately return to an earlier state,
+for example when an instruction edit is reverted. The journal retains the latest
+snapshot fingerprint separately from a chained checkpoint fingerprint. A changed
+snapshot gets a new checkpoint linked to its predecessor, even when that content
+was observed earlier; an unchanged snapshot reuses its checkpoint. Native revision
+deduplication still preserves the first attribution. This collector checkpoint is
+not a new native revision and does not establish a historical execution identity.
+Opaque pagination cursors keep the existing cycle and stale-writer checks.
+
+Journal schema 4 retains snapshot fingerprints against their collector checkpoints
+and distinguishes the currently observed snapshot from an opaque cursor. Returning
+to opaque mode preserves earlier associations but clears the current snapshot
+claim. Legacy cursor fingerprints are never retroactively relabeled as snapshots.
+Schema-1, schema-2 and schema-3 journals remain readable; status does not rewrite them. The next successful import
+atomically upgrades the journal, preserving records, source attribution,
+supersession claims and checkpoints. A snapshot import also records a new explicit
+snapshot observation; legacy associations remain unknown.
+Failed imports preserve the original bytes.
+Older AHL versions cannot read a schema-4 journal; keep the previous journal when
+rollback to an older client is required.
+
+Schema 3 adds capture metadata envelopes keyed by source and committed snapshot
+checkpoint. An envelope binds the source specification used at capture time, raw
+source snapshot fingerprint and immutable execution metadata. Nonempty metadata is
+included in the effective snapshot identity: a metadata-only change, parser upgrade
+or recurring earlier receipt creates a new chained checkpoint without inventing a
+new native record revision. Empty metadata preserves the prior snapshot identity.
+No different envelope may overwrite a checkpoint. Migration creates no historical
+identities for old imports, and records/metadata/cursors commit atomically.
+
+Pass typed metadata to `ingest(..., snapshot_sha256=..., metadata=...)`; this first
+metadata path requires snapshot mode. `capture(source, cursor)` returns immutable
+metadata for a specific committed checkpoint without reading the live source.
+`status` exposes a summary only for the active captured snapshot, keeping unknown
+fields and declared coverage distinct. Historical envelopes survive a return to
+opaque mode even though the current snapshot claim is cleared.
+
+Schema 4 adds a nullable evidence graph alongside nullable execution metadata in
+the same capture envelope. A nonempty envelope must contain at least one of them.
+Old captures gain no graph or invented links; their effective snapshot/checkpoint
+hashes stay unchanged. A graph contributes its canonical fingerprint to the capture
+identity, so relationship-only edits and recurring prior graphs preserve distinct
+checkpoints without duplicating native record revisions. Records, both metadata
+facets and the cursor still commit in one atomic replacement.
 
 The source/native-ID/revision tuple defines idempotency. Recollection timestamps
 do not create duplicate revisions; the first record and its source specification
@@ -101,8 +197,8 @@ and 10,000 records. Only normalized metadata is supported; plaintext body fields
 foreign source identities and conflicting revisions are rejected. Preview freezes
 one file read and reports its SHA-256 and count without writing a cache. Import
 uses the same snapshot contract and the journal's checkpoint comparison; failure
-leaves the prior checkpoint intact. Restoring an older snapshot is rejected as a
-checkpoint cycle; inspect/rotate the journal explicitly rather than erasing history.
+leaves the prior checkpoint intact. Restoring an older snapshot records a fresh
+collector checkpoint without erasing history or inventing a native revision.
 Status reads cache metadata without opening record data. Probe validates only the
 declaration and filesystem path metadata. Disabled/unsupported versions do not
 open record data. Registry collectors are registered explicitly by trusted Python
@@ -110,6 +206,517 @@ code; there is no dynamic plugin loading or automatic source enablement.
 
 Provider-specific API transports, native formats, append offsets, analyze/doctor source
 integration and remote pagination remain open in #42 and provider issues.
+
+### Normalized export v2
+
+The additional `local_file/ahl-metadata/v2` capability keeps the declaration and
+record schemas at version 1. Its data payload contains exactly `schema_version: 2`,
+`records` (the same bounded v1 record list) and `execution_metadata` (a complete
+`ExecutionMetadata.to_dict()` object). The existing 8 MiB export bound applies to
+the entire payload. Use each contract's strict `parse`/`to_dict` methods; no raw
+native IDs, source bodies, private paths or credentials belong in these objects.
+Versions outside v1/v2/v3 are rejected before normalized payload reads. v1 list exports
+remain supported and create no inferred execution metadata.
+
+Preview includes the bounded execution summary, original `snapshot_sha256` and
+`checkpoint_snapshot_sha256` that binds the source specification and nonempty
+metadata. Status's `snapshot_sha256` is that committed effective snapshot identity;
+`source_snapshot_sha256` retains the raw collector fingerprint. The registry and
+direct store validate source ownership, available evidence references and metadata
+claims before committing. No configured plugin or verification flag can promote
+an export assertion to verified execution evidence.
+
+### Normalized export v3 and relationship claims
+
+`local_file/ahl-metadata/v3` adds a payload with exactly `schema_version: 3`,
+`records`, `execution_metadata` and `evidence_graph`. The record/declaration schemas
+stay at version 1. Execution metadata and the graph may independently be null;
+otherwise use their strict `to_dict()` representations. The 8 MiB payload bound
+still applies. Old v1/v2 payloads retain their existing shapes and behavior.
+
+`sources.graph.EvidenceGraph` contains the source, project and scope fingerprints,
+adapter version, up to 10,000 exact `RecordRef` nodes and 20,000 `JoinReceipt`
+claims. A join names its relation, namespace, resolver version, both endpoints
+(with an explicit null for an unavailable target), bounded evidence references,
+status, basis, reason and nullable validity interval. All non-null endpoints and
+evidence must be graph members with existing revisions in the authorized source.
+Foreign sources/projects, dangling revisions, duplicate entries, unknown relation
+types and invalid intervals reject the capture. Canonical node/join ordering keeps
+reordered graphs idempotent. No raw IDs, source text, paths or credentials belong
+in these contracts.
+
+This persistence layer retains candidate, conflicted and unlinked claims. Native
+field and review labels cannot self-certify: claimed `verified`/`reviewed` joins are
+rejected through normalized export, Registry, direct ingestion and journal reads.
+Persisted native proofs, reviewed/cross-source resolution, grouping/deduplication,
+contradiction diagnosis and diagnostic-utility trials remain open in #58. A stored
+link is an investigation lead, not proof of a common cause or an independent task.
+`independent_roots` remains null and verification/execution authority stays false.
+
+Preview/status expose only bounded graph scope/version/hash/status summaries.
+`SourceStore.graph(source, cursor)` reads the immutable graph at a committed
+checkpoint without rereading the source; omitted cursors select the current
+checkpoint. Graph changes do not rewrite old endpoints, including after late
+imports or revisions. `task test:sources:graph` runs the native contract,
+migration, atomicity and GitHub mapping cases.
+
+### Offline context in analysis and readiness reports
+
+`ahl analyze PROJECT` and `ahl doctor PROJECT` may explicitly inspect a private
+source journal with all three arguments:
+
+```sh
+ahl analyze PROJECT --source-cache PRIVATE_JOURNAL \
+  --source-project-sha256 EXPECTED_PROJECT_HASH --source-scope-sha256 EXPECTED_SCOPE_HASH
+ahl doctor PROJECT --json --source-cache PRIVATE_JOURNAL \
+  --source-project-sha256 EXPECTED_PROJECT_HASH --source-scope-sha256 EXPECTED_SCOPE_HASH
+```
+
+No journal is searched for or opened without these options. The reader validates
+the existing journal against the independently supplied source project/scope and
+uses one read-only snapshot. It never invokes a connector, reads credentials,
+contacts a service, runs a model or upgrades the on-disk journal. Unsupported safe
+filesystem capabilities, malformed caches, foreign scope and linked files reject
+the requested context. A missing/disappearing journal is explicitly `missing`,
+with unknown capture completeness; it is not a successful empty corpus.
+
+The bounded inventory reports source fingerprints/kinds, fingerprinted provider
+and adapter/parser versions, cached revision/checkpoint counts, declared execution
+identity fields, coverage gaps/bounds/limits and graph status counts. Provider,
+version and namespace labels from untrusted metadata are not echoed. At most 20
+sources and eight adapter-version fingerprints per source are shown; omissions
+and truncation are explicit. Fingerprints remain private metadata, not an
+anonymization guarantee. A declared complete scan remains a source assertion.
+
+The report's target-project binding is `unverified`: selecting a scoped source
+journal does not establish that its project identity equals the analyzed directory.
+Independent roots and historical capture completeness remain unknown, and no
+graded outcome or execution authority is granted. Exact cross-source/target binding
+still requires the #58 evidence resolver; directory names and matching text cannot
+provide it.
+
+Analyze stores context beside its telemetry analysis in private `analysis.json`
+and renders a separate section in `report.md`. The context does not add events,
+findings or evaluation failures. Doctor adds an optional context check and bounded
+JSON/text summaries; it cannot make profile prerequisites pass. Default behavior
+without the options stays unchanged. `improve`/`watch` do not implicitly consume
+this context. `SourceStore.inventory()` and `sources.context.load(...)` provide
+the same offline metadata view, and `task test:sources:context` runs its native
+scope, privacy, lifecycle and reporting tests.
+
+## Native Codex capture journals
+
+The explicit `local_file/codex-rollout/0.166.0-v1` provider connects the pinned
+Codex reader to the shared registry and private source journal. It uses the existing
+local declaration format, with `data` naming a JSON selection descriptor:
+
+```json
+{
+  "schema_version": 1,
+  "project": "project",
+  "capture": "captures/rollout-example.jsonl",
+  "max_records": 10000
+}
+```
+
+Both paths are explicit, normalized relative paths under the declaration root.
+The project directory must exist, and the capture's declared session/turn cwd must
+match it. The root fingerprint binds the declaration directory; the scope
+fingerprint is `digest(selection)`. Independently supply expected project/scope
+fingerprints. Directory names do not establish repository identity. Use
+`identity_provenance: source_declared_id`, `auth_mode: none` and explicit enablement.
+Probe and cached status do not read native captures, execute runtimes or connect
+to accounts. Preview/import reuse the same bounded reader as explicit telemetry.
+
+The adapter preserves exact native-record fingerprints and approved type/timestamp
+metadata as behavioral evidence. Bodies, arguments, results, native IDs, paths and
+credentials are not copied to the journal. A body-only edit versions its native
+record and source snapshot without changing the ordinary metadata-only monitor
+fingerprint. Collection time remains separate from reported native time.
+Derived unmatched-call coverage has a stable call-based identity and unknown
+provenance; resolving another pending call cannot relabel its history.
+
+Session-start and turn-context subjects receive versioned execution metadata.
+Project/cwd, thread, producer/runtime version, explicit parent-thread and requested
+model references remain **declared**, with exact evidence-record revisions. A
+fork parent is not substituted for a parent-thread identity. Requested model is
+attached only to its declaring context; delayed events do not inherit later
+settings. Served model, actual loaded harness/configuration, memory injection,
+task root, grader outcome and independence remain unknown. Producer fields and
+labels cannot authenticate a runtime or upgrade themselves to verified evidence.
+
+Records, declared identity/coverage metadata and exact per-checkpoint membership
+nodes commit atomically through the existing schema-4 journal. Append, edit and
+late import preserve old record revisions,
+model declarations and checkpoint membership; identical re-imports are idempotent.
+The v1 profile re-reads one bounded file; it does not claim a full-history byte
+cursor. The explicitly versioned root profile below shares multi-file discovery. Archive sources with different declared scopes
+remain separate observations until independently resolved.
+
+The same graph includes `candidate` native-file relationships: each actual native
+record belongs to its session header (`native_session_member`), and an unambiguous
+linked tool result references its one native call (`tool_result_of`). These use
+resolver `codex-native-links-v1` and exact endpoint revisions. Duplicate calls or
+results, missing IDs and out-of-order results do not get a tool-pair link. Derived
+unmatched-call coverage gets no native membership link. These associations describe
+what the selected file records; they do not authenticate the producer or establish
+an independent task root.
+
+Explicit `sources recheck` supports only the built-in pinned Codex reader. It
+re-reads and validates the current selection, requires a complete final line and
+compares exact current relationships through the shared resolver. A fresh native
+match can be reported `verified` with resolver `codex-native-recheck-v1`; edits
+invalidate old endpoint revisions, invented links stay candidates, and conflicts
+remain unresolved. Claimed historical intervals are cleared. The report changes
+neither the private journal nor its candidate receipts. Verified here means current
+native-file relationship only: execution identities remain declared, task outcomes
+and independent roots remain unknown. Imported labels, file-export substitutes and
+reader subclasses cannot supply verification authority. No network/model calls are
+used. A partial, malformed, unsupported or mutated native file produces no report.
+
+An uncommitted final line can be previewed as a complete prefix with
+`checkpoint_ready: false`. Registry import rejects that snapshot before creating
+or changing a cache/checkpoint. `Snapshot.checkpoint_ready` is an explicit boolean,
+defaulting to true for existing providers; it does not turn ordinary historical
+coverage gaps into import failures. Failed/malformed reads, foreign scope,
+unsupported versions, traversal, links, resource expiry and changed declarations
+likewise cannot advance the committed cursor. Selection and source input are
+revalidated after conversion and Snapshot validation.
+
+Limits are the shared 64 MiB file read, 1 MiB line and ten-second lifecycle budget,
+at most 10,000 selected input records/normalized source records and 1,000 execution
+subjects. Coverage `records` counts observed input lines; derived source coverage
+records are separately bounded. Coverage remains partial even at native stop.
+The parser mapping is `codex-native-journal-v1`; this is not execution certification.
+`task test:sources:codex` runs native scope, privacy, history, relationship recheck,
+admission and failure controls; installed wheel/archive source tests include them. Incremental
+byte-position imports and verified cross-source execution joins remain
+open in #42/#44/#58. Explicit analysis still owns v2 event-ledger projection.
+
+### Explicit bounded root journal
+
+The separate `local_file/codex-rollout/0.166.0-v2` profile selects a bounded native
+root with the same declaration/expected project/scope checks. Its private selection
+JSON uses exactly these fields:
+
+```json
+{
+  "schema_version": 1,
+  "project": "project",
+  "source_root": "captures",
+  "session": null,
+  "max_files": 100,
+  "max_scan_files": 2000,
+  "max_records": 10000
+}
+```
+
+Use `session: null` for the declared project's accepted threads, or an exact native
+thread ID in this private descriptor. Both paths remain normalized relative paths
+under the declaration directory; `scope_sha256` is `digest(selection)`. No home or
+account discovery runs. The existing guarded root scanner selects only uncompressed
+`rollout-*.jsonl` files, including active/archive child directories, and checks
+bounded headers before full reads or the accepted-file allowance. Foreign projects
+and other selected threads remain excluded. Public summaries contain fingerprints
+and bounded counts, not paths, native IDs or bodies.
+
+Merge identical copies and overlapping prefixes before correlation. Each native
+thread keeps its own header membership and call/result namespace; matching text and
+shared declared root labels do not establish independent origins. Moving a capture
+within the selected root preserves native record history and old checkpoint graphs.
+A body-only edit versions its native record. Incompatible raw revisions at the same
+owned native ordinal across selected copies reject the entire journal batch; the
+adapter never chooses one file's body as authoritative. Even a locally suppressed
+usage record retains its ordinal claim, so a duplicate response cannot hide another
+file's incompatible event. Ordinary telemetry still compares approved metadata and
+counts each response once; journal admission additionally checks raw fingerprints.
+
+The entire root scan, correlation, record conversion, identity/graph validation,
+selection revalidation and final selected-file/directory verification share one
+bounded lifecycle. Limits remain 64 MiB cumulatively across header/full reads,
+1 MiB per line, ten seconds, 10,000 filesystem entries and depth 64. The descriptor
+caps accepted files at 100, candidate files at 2,000 and total input/normalized
+source records at 10,000; execution subjects remain capped at 1,000. The root
+mapping version is `codex-native-root-journal-v1`.
+
+Preview exposes `checkpoint_ready: false` for any selected partial tail, reached
+file/scan cutoff, unsupported header, skipped unsafe entry or empty accepted scan.
+Those previews can neither import nor recheck relationships. Hard resource errors,
+conflicting claims or concurrent selected-input/descriptor changes reject the
+operation. No incomplete batch can create or advance a checkpoint, and successful
+imports retain partial historical coverage. Private cached status reads no capture
+files. Root-profile recheck uses the same exact built-in reader and current-only
+relationship contract as v1. Incremental byte-position capture, compressed/base
+history, Claude native version coverage and cross-source execution proofs remain
+open; no model calls or event-ledger emission occur during source operations.
+
+## Native Claude capture journals
+
+The explicit `local_file/claude-jsonl/2.1.316-v1` provider connects the pinned
+[Claude file profile](telemetry.md#explicit-claude-code-21316-file-profile) to the
+same private journal and registry. Its local declaration uses a selection file
+with exactly `schema_version`, `project`, `capture` and `max_records`, as in the
+Codex single-file example. Both paths are normalized relative paths under the
+declaration directory. Supply independently expected project/scope fingerprints;
+`scope_sha256` is `digest(selection)`. Use explicit enablement, source-declared
+identity and local filesystem authorization. No home/account/sidecar discovery or
+Claude execution occurs. Probe and cached status read no capture files.
+
+The source accepts one explicitly attributed native writer. Actual block/message
+observations receive exact canonical native-row revision fingerprints; omitted
+body edits add history without changing ordinary telemetry's metadata fingerprint.
+Two copies of the same native UUID with different raw revisions reject the batch,
+even when their approved metadata matches. Ordinary telemetry retains its existing
+body-insensitive duplicate behavior. Computed response facets and unmatched-call
+coverage remain derived records with unknown provenance, never additional native
+execution receipts. Stable call-based pending identities cannot be reassigned when
+another call resolves. Files, line sizes, input/normalized counts and the entire
+conversion/validation/revalidation lifecycle remain bounded.
+
+Each native message has at most one execution-identity subject, even when it
+contains multiple normalized blocks. Session ID, project/cwd, producer and version
+are declared claims. A native assistant's model report may appear as a **declared**
+`served_model` identifier in namespace `claude.reported_model`; it is not a verified
+served version, and cannot populate requested-model aliases. Source timestamps and
+the exact supporting record revision remain attached. Actual effective model,
+loaded harness/configuration, memory injection, task root, attempt, parent session
+and grader bindings remain unknown unless independently substantiated. Every
+current importer rejects verified execution fields. A current checkout change or
+late model report cannot rewrite old metadata or graph membership.
+
+The graph keeps native message membership and parent-UUID pointers separate from
+session lineage. Multi-block members reference their containing native message's
+representative record (`native_message_member`); one representative carries its
+native parent pointer (`native_message_parent`). Missing parents remain `unlinked`.
+Self/cyclic pointers remain literal data with no traversal or lineage inference;
+a reflexive pointer references its one evidence record once.
+Unambiguous native tool results can reference their one native call through the
+same bounded exact-ID logic as Codex. Derived facets get no native relationship
+edges. Message pointers, repeated text, shared session labels and source counts
+never establish independent roots or a task outcome.
+
+Explicit `sources recheck` uses only the exact built-in Claude reader and a fresh
+complete scoped capture. It compares current native relationships, preserves stale
+revisions and explicit conflicts, and clears caller-supplied historical intervals.
+It does not modify the journal or promote stored candidates. Native file-field
+consistency does not authenticate the producer, actual execution, lineage or model
+serving. File exports, reader subclasses and imported verified labels cannot
+provide that authority. A partial tail, failed/malformed read, hard limit, unsafe
+path or changed selection/input cannot create or advance a checkpoint or emit a
+recheck proof. Successful imports still have partial historical coverage.
+
+The mapping version is `claude-native-journal-v1`, with up to 10,000 input/source
+records and 1,000 identity subjects. `task test:sources:claude` runs native unittest
+controls; wheel/archive source checks include them. The source shares selection,
+file guards, revision mapping, identity wrapping and graph assembly with Codex.
+`task test:sources:native:compat BASELINE=FROZEN_CHECKOUT` compares both Codex preview
+contracts, including metadata/graph/checkpoint hashes, against an explicitly
+selected baseline. Ordinary test runs skip this optional frozen-baseline check.
+Native hooks/configuration are never executed. Broader Claude roots, sidecar
+relationships, incremental byte cursors, live wire validation and cross-source
+execution joins remain open in #42/#44/#58.
+
+## Offline Git and selected harness metadata
+
+The `local_git/git/v1` provider uses the same explicit declaration, registry,
+preview/import/status and private journal. Installing AHL enables no source.
+Its declaration's `data` points to a separate JSON selection descriptor under
+the authorized declaration root:
+
+```json
+{
+  "schema_version": 1,
+  "checkout": "project",
+  "git_dir": "project/.git",
+  "common_dir": "project/.git",
+  "harness_paths": ["AGENTS.md", ".claude/settings.json"],
+  "max_commits": 100
+}
+```
+
+All three directories are explicit relative paths under that root. A linked
+worktree names its own administrative Git directory and the shared common Git
+directory; its marker, backlink and common-directory pointer must match those
+selections. The source specification uses `identity_provenance: source_declared_id`,
+`auth_mode: none` and `enabled: true`. Its root fingerprint is the declaration
+directory fingerprint described above; its scope fingerprint is `digest(selection)`
+using `sources.schema.digest`. Independently supply the expected project/scope
+fingerprints. The reader does not infer project identity from path names, remotes,
+branch names or timestamps. Keep the explicitly chosen journal outside the source
+directories.
+
+Preview invokes the trusted system `/usr/bin/git`, version-checked for Git 2.43+
+in major version 2. Missing/unsupported tools block the read. Source configuration
+is copied as bounded data and parsed with includes disabled solely to identify
+supported repository/object/reference formats. Git operates against a private
+temporary bare view containing copied regular object-store files and a sanitized
+configuration. Source hooks, filters, signatures, aliases, fsmonitor settings,
+credential helpers, global/system configuration and remote settings are not applied.
+There is no checkout, source-index refresh, submodule update, fetch or lazy fetch.
+Network protocols are disabled and the subprocess environment is cleared.
+
+The view supports SHA-1 and SHA-256 loose objects and indexed packfiles. Full strict
+`fsck` verifies the frozen object store before deriving history or diff statistics;
+read-back commit, tree and selected blob identities are also checked. Ref names,
+commit IDs, messages and touched paths become fingerprints. Per-worktree private
+ref namespaces come from the selected administrative directory. Dangling refs are
+excluded with a warning. History covers up to the declared 1–100 commits in HEAD
+ancestry; merge differences use the first parent. Shallow boundaries retain known
+parent identities while leaving unavailable differences unknown. Neither signed
+metadata nor a commit date proves authorship quality, causal effect or independence.
+
+`GitExport.harness` is a frozen `HarnessSnapshot` of only the selected paths. Each
+file records its path/content fingerprints, current permission bits and its
+committed content fingerprint/Git mode, including missing and untracked states.
+The snapshot retains the captured HEAD identity when later captures see a different
+HEAD. `configuration_source` identifies declared project files; observed loading
+and effective settings remain `unknown`. File presence, names and contents do not
+prove that an agent loaded them. Preview includes these metadata in `git_summary`;
+import keeps normalized development-artifact records in the journal. Collector
+checkpoints describe committed captures, not the current live source or a historical
+execution's version. Full instruction/import/override graphs, hook lifecycle
+inventory, independently evidenced execution bindings and hosting-provider
+reconciliation remain open in #46/#58/#77–#80.
+
+The first profile caps source reads at 512 MiB, filesystem entries at 10,000,
+directory depth at 64, refs at 1,000 and selected paths at 100. Selection JSON is
+bounded to 64 KiB and each current harness file to 1 MiB. Git output is limited to
+4 MiB per command and 64 MiB per capture, with one ten-second admission deadline
+and child CPU/address-space limits. Source filesystem operations are checked
+between bounded reads but cannot be preempted at an exact deadline. Links,
+nonregular files, alternate object stores, bare repositories, reftable repositories
+and selected submodule/nested-repository contents are blocked without fallback.
+All observed source metadata are rechecked before returning; failed reads leave
+the committed journal untouched. Private copies are removed after success or error.
+
+Synthetic native tests cover ordinary/linked/detached/shallow repositories, packed
+and SHA-256 objects, corrupt blobs, private ref namespaces, dirty/untracked/missing
+files, literal paths, mutable snapshot recurrence, inert execution settings,
+missing-object remote denial, timeout cleanup and unchanged source contents/index.
+These checks establish the tested read policy, not general hostile-binary isolation
+or independently verified historical execution lineage.
+
+### Local Git graph and coverage profile
+
+Select `local_git/git/v2` explicitly to project the same frozen Git view into the
+shared execution-metadata and evidence-graph contracts. The selection descriptor
+stays at schema version 1; no additional source reads, commands or network access
+are enabled. The `v1` record set, raw snapshot fingerprint and absence of these
+facets stay unchanged.
+
+The graph binds exact captured commit parents, ref targets, a new immutable
+`harness_snapshot` record, its selected file records and any declared instruction
+inventory. `harness_based_on` identifies the snapshot's HEAD base; it does not
+assert that dirty/untracked file content equals that commit. `harness_member`
+records selected file metadata in that snapshot, including missing-file states.
+Instruction inventory membership does not establish runtime loading.
+
+Parent/ref targets outside captured commit history become content-free
+`git_object_reference` records. Their native reference was observed, but their
+full object/history was not captured as a commit record. Annotated tags retain
+their direct tag-object target; the graph does not invent a peeled-commit edge.
+All relationships remain native-field candidates requiring independent resolution.
+They grant no execution authority, cross-provider identity or independent roots.
+Admission rejects more than 10,000 nodes or 20,000 edges before allocating graph
+rows/receipts, including oversized parent lists in shallow commits.
+
+Coverage records captured commit/record counts and frozen-view bytes read under
+the existing limits. Reaching the selected history ceiling marks truncation;
+shallow history marks truncation even when the ceiling was not reached. Coverage
+always remains partial because selected paths/history cannot certify a complete
+execution capture. Execution identities are empty, and missing effective bindings
+remain explicit. Source scope is caller-declared, not verified repository identity.
+
+Preview exposes both facets; import commits records, graph, coverage and checkpoint
+atomically through the existing journal. Cached status and explicit analyze/doctor
+context can inspect those facets without reading Git. Older checkpoints retain
+their captured graph when HEAD, refs or current files change. `task test:sources:git`
+runs the native synthetic Git contract and compatibility cases. Historical execution
+binding, cross-provider reconciliation and independent proof persistence remain
+open in #46/#58.
+
+### Explicit local Git relationship recheck
+
+After importing a v2 Git capture, `ahl sources recheck` accepts the same explicit
+manifest, cache and expected project/scope fingerprints. It reads the captured
+graph at a fixed checkpoint, then performs a fresh capture through the built-in
+frozen-view Git reader. It does not change the source, configuration, journal or
+lock file. No network, model, credentials, repository hooks or checkout operation
+is authorized by the recheck.
+
+The resolver compares relation type and both exact source/native-ID/revision
+endpoints. Current captured commit, ref and harness/instruction-membership
+relationships can produce `verified` native-match receipts. This verifies the
+captured relationship only: harness membership does not certify instruction
+applicability, observed loading or runtime-effective settings. Reference-only
+objects remain candidates, even when their hashes appear in native parent/ref
+fields; missing object detail is not invented. Stale revisions and absent
+identities remain unlinked, explicit conflicts remain conflicted, and unrelated
+roots with identical file content do not establish ancestry.
+
+Only the exact built-in Git reader and explicit v2 profile can perform this
+recheck. Imported graph labels, custom reader classes, similar content and claimed
+historical validity intervals cannot provide proof. Unvalidated labels are replaced
+with fixed resolver metadata; original claims remain addressable by fingerprint.
+The report uses `git-native-recheck-v1`, reports `network_used: false` and retains
+unknown independent roots and unverified task outcomes. Its receipts have no
+verified historical interval and cannot be imported as a self-certified graph.
+The stored candidates and older checkpoints remain unchanged.
+
+GitHub and Git use one relation-comparison implementation after their separate
+built-in capture admissions. `task test:sources:recheck` runs native synthetic
+checks for both. These fixture checks establish current relationship validation;
+cross-source joins, persistent proof lifecycle and a reviewed diagnostic-utility
+study remain open in #58.
+
+### Declared Codex project instruction inventory
+
+An optional `instruction_profile` in the Git selection enables bounded instruction
+discovery within the selected checkout. For the first documented capability contract:
+
+```json
+{
+  "schema_version": 1,
+  "runtime": "codex",
+  "version": "0.166.0",
+  "task_cwd": "src/task",
+  "fallback_filenames": ["TEAM.md"],
+  "project_doc_max_bytes": 32768
+}
+```
+
+The runtime/version, task location and configuration are caller declarations. The
+reader does not execute Codex, inspect its global configuration or establish that
+these settings were effective in any run. Other runtime/version combinations return
+an unsupported inventory instead of applying Codex precedence. This contract follows
+the [official instruction-discovery documentation](https://learn.chatgpt.com/docs/agent-configuration/agents-md),
+checked 2026-11-01; synthetic resolution tests are not native loading evidence.
+
+For the supported declaration, discovery examines each directory from the checkout
+root through `task_cwd`, considering `AGENTS.override.md`, `AGENTS.md` and the explicit
+fallback names in order. The first non-empty UTF-8 file is declared applicable;
+other non-empty candidates in that directory remain visible as shadowed. Selected
+files outside that directory chain are out of scope; unrecognized filenames within
+it remain unsupported. Parent and shadowing edges describe declared hierarchy,
+without resolving semantic contradictions in the text. Imports, path-scoped Claude
+rules, managed/global influence and hooks are outside this first profile.
+
+`GitExport.instructions` is a frozen `InstructionInventory`. Its fingerprint binds
+the profile, task cwd, all inspected file hashes/modes, missing-file states and the
+captured `HarnessSnapshot` fingerprint. Preview exposes only hashes and bounded
+metadata; import adds a fingerprinted development-artifact inventory record through
+the existing journal. No raw file text/path, applicability decision or discovery
+result grants permission to edit a file. Observed loading and ambient influence
+always remain unknown. A changed cwd, profile, HEAD, file content or mode invalidates
+the receipt. Consumers must also retain the enclosing source/project identity.
+
+The profile allows at most 32 cwd components, eight fallback basenames and a declared
+project instruction cap of 0–1 MiB. Files use the existing 1 MiB per-file and shared
+Git capture read/deadline bounds; non-UTF-8 files, links, nested repositories and
+submodule crossings fail the capture. The collector does not guess native partial
+file truncation: when selected non-empty files and separators exceed the declared
+byte cap, resolution is blocked and affected applicability remains unknown. A
+blocked or unsupported receipt is not a resolved effective instruction closure.
 
 ## ai-memory OKF project exports
 
@@ -144,8 +751,9 @@ Journal imports retain only source/page/revision/content fingerprints, normalize
 timestamps and contextual-assertion records. Raw text, paths, native IDs and parsed
 frontmatter are not persisted. Parsed metadata is available through the reader API;
 it is not yet stored as structured journal facets. History includes revisions
-observed through successive imports; Git history, native session correlation,
-handoffs/workstreams and MCP retrieval remain open in #43.
+observed through successive imports; Git history, native session correlation and
+handoffs/workstreams remain open in #43. A separate explicit
+[selected MCP page capture](memory-page-capture.md) now supports hash-only journals.
 
 Limits are 500 concepts, 2,000 directory entries, 256 KiB per concept, 16 KiB of
 frontmatter and 4 MiB of concept bytes per operation. Links/special files, nested
@@ -216,11 +824,294 @@ change on reads according to ai-memory behavior; no content mutation tool is use
 This bounded mode supports JSON responses from stateless servers. SSE-only and
 stateful responses are unsupported; an explicitly requested initialization may
 create protocol session state before a stateful header is rejected. Full session
-lifecycle/SSE, remote CLI configuration, normalized journal facets, correlation
-and live-server verification remain open in #43. No server is contacted by package
+lifecycle/SSE, remote CLI configuration, native execution facets, correlation
+and live-server verification remain open in #43. The optional
+[MCPPageCapture](memory-page-capture.md) adds selected-page Registry/SourceStore
+captures with shared bounds and readbacks. No server is contacted by package
 installation, constructor invocation, help or default source discovery. Native
 tests use synthetic wire responses; they establish client contracts, not live
 server efficacy or scientific independence.
+## Explicit GitHub REST captures
+
+`sources.github.GitHubAPI` is an optional standard-library reader for one explicitly
+authorized GitHub.com repository. Construct `GitHubSelection(repo_id, issues=(...),
+pulls=(...))` with at most ten distinct ascending issue/PR numbers. Its
+`project_sha256` binds the native repository ID and its `sha256` binds the selection.
+Use `SourceSpec(kind="api", provider="github", version=SOURCE_VERSION, ...)` with
+the endpoint fingerprint as `root_sha256`, those project/scope fingerprints,
+`identity_provenance="source_declared_id"`, and explicit enablement. Register the
+reader with `Capability("api", "github", SOURCE_VERSION,
+("contextual_assertion", "development_artifact"))` to use the shared Registry and
+atomic journal. The explicit CLI configuration below provides the same reader;
+installation and probes perform no automatic network discovery.
+
+The endpoint must be exactly `https://api.github.com/repos/OWNER/REPO`. Public reads
+may use `auth_mode="none"`; configured/private reads require authorization explicitly
+supplied to the constructor. The reader never loads GitHub CLI credentials, browser
+cookies or environment tokens. Use a token with only the read permissions needed
+for the selected resources. Repository ID, canonical resource URLs and visibility
+are checked before child reads; private/internal visibility without authorization
+blocks capture. Tokens and full repository names are absent from returned metadata.
+
+The first capability pins REST API `2026-03-10` in the request and checks the selected
+version response header. See [GitHub API versioning](https://docs.github.com/en/rest/about-the-rest-api/api-versions).
+It captures issue/PR state, hashed titles/bodies/labels/milestones, timestamps,
+base/head/merge references, proposed file changes, PR commit sequences/parents and
+three distinct discussion forms: issue-style conversation comments, inline review
+comments and review submissions. See GitHub's [conversation comments](https://docs.github.com/en/rest/issues/comments),
+[inline comments](https://docs.github.com/en/rest/pulls/comments) and
+[review submissions](https://docs.github.com/en/rest/pulls/reviews) contracts.
+Native IDs and parents determine associations; matching body text never merges IDs.
+Open-PR test-merge references remain distinct from merged results. Review decisions
+retain their specific commit and whether it exactly matches the captured head;
+a missing commit leaves that comparison unknown. Approval/merge/closure is a process
+event or claim, never an executable grade or independent outcome.
+
+The REST profiles use only fixed GET endpoints. Repository-supplied URLs are checked as native
+references and never followed as commands or arbitrary fetch targets. Pagination
+may advance only to the next numeric page of the same selected collection, with
+100 items per page. Every initial read, page and identity recheck shares the
+configured JsonAPI request, byte and deadline bounds (defaults: 20 requests,
+8 MiB and 60 seconds, with per-request timeouts). PR file/commit/comment counts are
+checked against listings to reject documented API caps or incomplete pagination;
+GitHub documents maxima of [3,000 PR files and 250 PR commits](https://docs.github.com/en/rest/pulls/pulls).
+Issue/PR identities and head/state metadata are rechecked before returning a
+snapshot. HTTP errors, inaccessible resources, version mismatch, changing heads,
+conflicting native parents and malformed/limited responses fail without returning
+a snapshot or advancing a checkpoint. There is no automatic retry.
+
+`GitHubAPI.summary` contains bounded hash-only nodes and native relationship
+metadata from the last successful capture. That graph stays in memory by default;
+the explicit v5 profile below persists revision-bound claims. Verified joins remain
+#58 work. The snapshot imports
+fingerprinted typed records and declared partial coverage through journal v4.
+Raw comment/code/message text is neither stored nor printed. Fingerprints remain
+private metadata rather than an anonymization guarantee. The reader emits no
+execution identities, inferred tombstones, causal labels or scientific independence.
+
+Version 1 leaves thread resolution/outdated state unknown without native GraphQL
+evidence and does not read timelines or CI/checks; the explicit profile below adds
+those reads. Per-commit file detail, commit comments, conditional/incremental/deletion
+handling and time windows remain open in #45/#42. An omitted
+comment is not proof of deletion or no defect.
+Readbacks limit head inconsistency but do not make multiple REST calls an atomic
+server snapshot. Native unittest fixtures cover the client contract using fake
+HTTPS responses; live GitHub compatibility, concurrency and diagnostic utility
+are not established by those fixtures. No source or server is contacted by install,
+help, constructor invocation or default discovery.
+
+### Selected timeline and CI detail profile
+
+`GitHubSelection(..., schema_version=2, details=("checks", "timeline"))` explicitly
+selects the additional surfaces. Details are unique, sorted capability names;
+select either or both. Use `selection.source_version` (`2026-03-10-v2`) in the
+SourceSpec and registry capability. The scope fingerprint includes the flags.
+The request API date remains `2026-03-10`. Version-1 selection serialization,
+fingerprints, provider version and request set remain unchanged; new reads are
+never enabled by upgrading the package alone.
+
+The timeline profile reads each selected issue/PR's
+[native timeline](https://docs.github.com/en/rest/issues/timeline). Supported stable
+event IDs retain parent, event type, actor/time, optional commit reference and a
+content fingerprint. Comment projections reuse their native comment record;
+review projections link only when normalized native parent and revision metadata
+match the captured review. Different projections do not imply independent roots.
+
+GitHub's [cross-reference event](https://docs.github.com/en/rest/using-the-rest-api/issue-event-types#cross-referenced)
+provides an explicit source issue but no stable event ID. The collector represents
+that native issue pair while leaving distinct occurrence identity unknown. A
+reference can link to an already selected issue only when repository URL, issue
+number and native ID agree. Foreign references remain fingerprinted and unlinked;
+the reader does not fetch their URLs. Unsupported or unidentified event forms,
+including forms without a supported native identity, remain hash-only
+`unmapped_timeline` diagnostics with partial coverage. They are not fabricated
+native events or inferred absence of a relationship.
+
+The checks profile reads [check runs](https://docs.github.com/en/rest/checks/runs#list-check-runs-for-a-git-reference)
+and [commit statuses](https://docs.github.com/en/rest/commits/statuses#list-commit-statuses-for-a-reference)
+for the captured full PR head SHA. Check-run IDs, suites/apps, status/conclusion
+and timestamps remain separate from commit-status IDs, contexts and descriptions.
+Names/descriptions/targets are fingerprints; external result URLs are never
+followed. Every check/status binds to its requested native head and selected
+repository. A successful CI state remains development-artifact process evidence,
+not a grader reference or verified task outcome.
+
+Check-run envelope totals must stay consistent across pages and match the listed
+records; malformed counts, truncation, foreign URLs and wrong heads reject the
+capture. GitHub's default latest-check filter and reference endpoint limits do not
+establish complete check history, so `latest_checks_only` remains explicit. All new
+calls share the original request/byte/deadline budgets, and final issue/PR/repository
+readbacks still gate the snapshot. HTTP denial and an unavailable detail surface
+cannot be reported as an empty successful check/review set. The explicit profile
+below adds GraphQL thread state. Per-commit files/comments, conditional/incremental/deletion handling,
+time windows and durable structured joins remain open.
+
+### Authenticated native review threads
+
+`GitHubSelection(..., schema_version=3, details=("threads",))` enables native
+review-thread state. Version 3 also allows `checks` and `timeline`; flags remain
+unique and sorted, and enter the scope fingerprint. Use `selection.source_version`
+in the source and registry. Versions 1 and 2 retain their original serialization,
+scope and request sets. Thread selection requires `auth_mode="configured"` and an
+authorization value passed directly to the constructor, even for a public repository.
+Missing authorization rejects capture before connecting. No token is discovered
+from the environment or another application's credential store.
+
+GitHub exposes [review threads](https://docs.github.com/en/graphql/reference/pulls#pullrequestreviewthread)
+through GraphQL. The reader sends two fixed **query** documents to
+`https://api.github.com/graphql`, using POST as prescribed by GitHub's
+[GraphQL transport](https://docs.github.com/en/graphql/guides/forming-calls-with-graphql).
+It accepts no user-supplied query or mutation. One query reads selected-PR threads;
+the other continues a thread's comment connection. The shared fragment requests
+only the fields needed for native identity, revision matching and thread state.
+The source version identifies this query contract; the REST API date does not
+version GitHub's GraphQL schema. Missing schema fields or denied access block
+capture rather than implying an empty review set.
+
+REST node IDs bind the GraphQL repository and PR to the already checked repository
+ID and selected PR. PR head OIDs must agree. Each thread and comment must name the
+same native parents. A comment joins only when its node ID, 64-bit database ID,
+review ID, body/path, timestamps and current/original commits match the captured
+REST fields. Full database IDs may be canonical decimal strings or integers;
+missing IDs cannot be replaced by text similarity or array positions. Comment
+membership must match the REST inline listing. Capture-wide bindings reject an
+opaque GraphQL node ID reused for another native identity, PR parent or node type,
+including across separate thread connections and selected PRs. Missing/deleted/inaccessible
+members, contradictory projections and conflicting parents reject the capture.
+
+Threads retain native resolved/outdated flags, file-path fingerprints, diff sides,
+nullable line ranges, the captured PR head and comment membership fingerprints.
+Inline comments obtain their thread's resolved state and their own native outdated
+flag and line ranges. Thread and comment outdated flags remain separate. Null line
+positions stay unknown. Resolution, approval and outdated state remain contextual
+evidence, never a task grade or evidence of an independent outcome.
+
+Both nested connections use 100-item cursor pages with stable totals, unique node
+IDs, bounded cursors and exact final counts. All REST reads, GraphQL pages and
+readbacks share the same request, byte and deadline limits. Repeated cursors,
+partial HTTP-200 responses containing GraphQL errors, HTTP failures and truncation
+fail without automatic retry or checkpoint advancement. A second thread capture
+must match the first before a snapshot is returned. This detects observed changes;
+it does not make a series of server reads atomic. Coverage remains partial.
+
+Only fingerprints and approved metadata enter the snapshot. Query variables,
+credentials, native IDs and raw comment text are not persisted. Structured joins
+remain in memory unless the v5 graph profile is selected. Persisted/cross-source
+resolution remains #58 work. Synthetic tests cover nested
+pagination, exact cross-API identity, revision/state changes and atomic import
+failure; they do not establish live GraphQL compatibility or diagnostic utility.
+
+### Explicit immutable commit captures
+
+`GitHubSelection(..., schema_version=4, commits=(FULL_SHA, ...))` adds a bounded
+selection of up to ten unique, sorted full commit SHAs. Branch names, tags and
+abbreviated SHAs are rejected. Commit selection enters the scope fingerprint;
+versions 1–3 retain their original serialization and requests. Select commits
+without issues/PRs, or alongside them. Public reads may remain unauthenticated;
+the existing explicit configured authorization applies to private repositories.
+
+The reader uses GitHub's [commit detail](https://docs.github.com/en/rest/commits/commits#get-a-commit)
+and [commit comment](https://docs.github.com/en/rest/commits/comments#list-commit-comments)
+GET endpoints. It retains the exact SHA, ordered parent fingerprints, separate
+author/committer timestamps, tree fingerprint, reported statistics and comment
+count. File records retain path/blob/previous-path fingerprints and change counts;
+an absent blob SHA stays unknown. Raw patches, code, messages and comment bodies
+are not returned or stored. Commit comments remain a fourth discussion form,
+distinct from issue-style comments, inline PR comments and review submissions.
+
+Each file page must repeat the same static commit metadata. File identities must
+be unique, file statistics must agree with the aggregate, and comment listings
+must match the native count and requested commit. Foreign URLs, contradictory
+native IDs, metadata changes, malformed pages and the documented 3,000-file cap
+reject capture. A second full read must match the first before checkpoint commit;
+all pages/readbacks share the original request, byte and deadline limits. These
+reads remain partial observations, not atomic snapshots or complete history.
+
+An explicitly selected commit reuses its existing PR commit record when native
+metadata agrees. Relations to captured parents and selected PR head/base/merge
+references require exact SHAs; open-PR test-merge references remain separate from
+reported merged results. No revert/cherry-pick relationship is inferred from a
+message, and no comment or merge establishes a task outcome or independent root.
+Structured relationships remain in memory unless the v5 graph profile is selected.
+Persisted/cross-source resolution remains #58 work. Conditional requests,
+incremental/tombstone reconciliation and time windows remain open in #45/#42.
+
+`task test:sources:github:commit:live` runs the native public-service acceptance
+case only with explicit `GITHUB_ENDPOINT`, `GITHUB_REPO_ID` and `GITHUB_COMMIT`
+inputs. It uses no credentials and persists no response fixtures. Ordinary test
+discovery skips all live cases. Synthetic cases establish client behavior; they
+do not establish general provider compatibility or diagnostic effectiveness.
+
+### Opt-in durable GitHub relationship claims
+
+`GitHubSelection(..., schema_version=5, details=("graph",))` maps the existing
+native relationship inventory to exact source-record revisions and imports it
+through the shared graph contract. The flag changes authorized scope, uses no
+extra requests and composes with the existing checks/thread/timeline flags and
+explicit commit selection. Versions 1–4 retain their serialization and request
+sets and return no graph unless the new capability is selected.
+
+All emitted joins are candidates with a declared native-field basis; the collector
+does not claim independent relationship resolution. Imported edges preserve PR
+head/merge distinctions and specific review/comment revisions as investigation
+leads. Historical graphs remain attached to their captures, and source state
+changes cannot relabel an older graph. Structured relationships persist only with
+this explicit profile; ordinary summaries remain in memory. Current native links
+may be explicitly rechecked below; persisted/cross-source proofs and independent
+root/grouping claims still require further #58 resolution and validation.
+
+### Explicit GitHub CLI configuration and native recheck
+
+The CLI accepts a bounded GitHub configuration instead of a local export manifest.
+It contains exactly `schema_version: 1`, `source` (a complete API/github SourceSpec),
+`endpoint`, `selection` (GitHubSelection.to_dict()) and `limits`. The endpoint is
+the explicit GitHub.com repository URL above. `source.root_sha256` must equal
+`digest(endpoint)`; its project/scope/version must match the selection and the
+independently supplied expected project/scope fingerprints. The identity provenance
+is `source_declared_id`. Limits may set only the existing `max_pages`, `max_bytes`,
+`timeout` and `seconds` bounds; an empty object selects the same defaults. Unknown
+fields, unsafe hosts, unsupported selections and mismatched identities reject
+before credentials or network access.
+
+Use `ahl sources probe|preview|import|status --manifest CONFIG --project-sha256 HASH
+--scope-sha256 HASH`; import/status require the existing private `--cache` argument.
+Probes validate configuration without reading credentials or contacting GitHub.
+Cached status is also offline. Preview/import explicitly perform the selected
+bounded reads. Enabled public sources may use auth mode `none`. For configured
+authorization, pass `--authorization-file PRIVATE_FILE` to each operation that
+reads GitHub. This file contains the complete Authorization header value, with an
+optional final newline; it must be a bounded single-link regular file. Headers
+with embedded control characters, linked files and files over 8 KiB are rejected.
+No token, authorization path or response body enters the journal or normal output.
+The reader never discovers tokens through the environment, browser or GitHub CLI.
+
+`ahl sources recheck --manifest CONFIG --cache PRIVATE_FILE --project-sha256 HASH
+--scope-sha256 HASH` requires an already captured v5 graph and explicitly performs
+a fresh bounded capture with the built-in configured GitHub reader. Other registered
+collectors cannot grant this capability by returning matching labels. Exact native
+source/ID/revision endpoints and relations must match the new observation before a
+verified receipt is returned. Stable IDs with stale revisions stay unlinked;
+missing targets, unsupported native identities, unobserved relations and declared
+conflicts remain explicit. File-based composite identities and cross-reference
+events with unknown occurrence identity stay candidates.
+
+The report binds the proposed checkpoint/graph, observed graph/snapshot, current
+source specification and resolver version. Verification covers current native
+relationships only. Claimed historical intervals are cleared, independent roots
+remain unknown, and no task outcome or execution authority is granted. A sequence
+of API reads is not an atomic server snapshot. Recheck does not change the journal,
+configuration or lock files; failed/limited API reads emit no partial proof set.
+Unvalidated metadata labels are represented by the original claim fingerprint,
+not echoed as receipt namespaces or resolver labels. Serialized reports cannot be
+imported as verified graphs, and stored candidates
+are not relabeled. Historical proof persistence, reviewed/cross-source resolution,
+grouping and diagnostic-utility validation remain open in #58.
+
+`task test:sources:recheck` runs synthetic configuration, credential and resolver
+controls. `task test:sources:github:recheck:live` runs an explicitly selected public
+PR import/recheck with no credentials; it uses private temporary metadata, checks
+that the candidate journal is unchanged, and is skipped in ordinary test runs.
+
 No source is enabled by installation. Tests use synthetic metadata; they establish
 contract validation, checkpoint behavior and a side-effect-free registry, not
 real-source compatibility, containment, diagnostic usefulness or certification.

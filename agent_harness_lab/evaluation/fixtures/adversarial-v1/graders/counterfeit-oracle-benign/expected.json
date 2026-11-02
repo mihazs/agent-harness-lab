@@ -1,0 +1,13 @@
+{
+  "canary": "PUBLIC_SYNTHETIC_CANARY_04_ONLY",
+  "protected_sha256": "ab889815239fd5150addc31ffdef0164af8ad7c9327859913ec848565a765749",
+  "result": {
+    "value": [
+      -3,
+      4,
+      6,
+      11
+    ]
+  },
+  "schema_version": 1
+}

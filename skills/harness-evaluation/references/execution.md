@@ -159,12 +159,160 @@ failure writes `status=blocked` and exits 3 before any task command or host grad
 runs. There is no cooperative fallback. The existing whole-run wall-clock budget
 includes probing, task execution and regrading; in-process preparation is charged
 before dispatch, but is not preemptible at an exact deadline.
+The evaluator clock starts before manifest/configuration reads and input freezing.
+When called by `improve`, it also inherits the original controller deadline;
+starting a trial stage cannot reset that deadline or enlarge a manifest/config cap.
+Exhausted preparation writes a budget-exhausted report without a capability or
+CLI/model launch. Monotonic deadlines are internal to the same controller process.
 
-This integration does not supply proposer/evaluator-author role orchestration,
-an inference broker, pinned dependency images or aggregate cgroup/disk bounds.
+The offline command mode does not perform model inference or role construction.
+Dependency images and aggregate cgroup/disk bounds use the explicit profiles above.
 Results remain descriptive and `automatic_promotion=false`. Mock execution tests
 exercise orchestration and final-state graders, not containment or model behavior.
 Live namespace tests are skipped explicitly on unsupported hosts.
+
+For cooperative Codex or Claude trials, opt into the same grader boundary with
+`ahl evaluate --sandbox-graders --agent codex` (or `claude`) plus the manifest,
+version and output arguments above. Every task must declare existing artifact
+files and a complete `grader_bundles` entry with relative `path` and frozen
+`digest`. The grader argv uses the four-part exported Python contract. Only the
+controller selects the namespace command; arbitrary interpreter paths and missing
+program/reference files are rejected before agent execution. Grading never falls
+back to the host. This mode permits harness/skill injection into the cooperative
+agent workspace; that agent retains inherited configuration and authentication.
+
+`ahl improve --sandbox-graders` and `ahl watch --sandbox-graders` also isolate
+evaluator-authored controls. Their authors declare bundle paths; the controller
+freezes all bundles before running any control. Broken/partial controls must
+produce valid false grades and complete controls valid true grades, within the
+remaining parent deadline. Cgroup, image-pin and disk options select the same
+backend for controls and trial graders. An unavailable probe prevents agent
+execution. Full role isolation, credential-broker integration and independent
+certification remain pending; these modes cannot enable automatic promotion.
+
+## Controller-owned Responses executor
+
+`ahl evaluate --agent responses` adds an explicit controller-owned OpenAI Responses
+executor. It is separate from the cooperative Codex/Claude CLI modes. The same
+profile also supports controlled proposer/evaluator construction through `improve`
+and `watch`, using the role contract below. Automatic promotion remains unavailable.
+
+Supply the manifest/version/output arguments above, plus all of:
+
+```sh
+--inference-settings /absolute/private/inference-settings.json \
+--cgroup-root /absolute/delegated/subtree \
+--image-root /absolute/private/rootfs --image-sha256 REVIEWED_SHA256 \
+--disk-bytes 67108864
+```
+
+The settings file has an exact versioned schema; no environment/default account
+or model discovery occurs. An example with explicit operator-selected caps is:
+
+```json
+{
+  "schema_version": 1,
+  "model": "operator-selected-model",
+  "credential_file": "/absolute/private/key.txt",
+  "max_requests": 40,
+  "max_tool_calls": 32,
+  "max_output_tokens": 512,
+  "max_request_bytes": 1048576,
+  "max_response_bytes": 1048576
+}
+```
+
+The key file must be an owner-only, single-link regular file outside worker views,
+runtime images and output directories. Keep settings/keys outside version control.
+The controller probes the selected boundary and admits all initial fixtures before
+reading the key. Missing/unsupported boundaries block; no native CLI or cooperative
+fallback is launched. Tasks require frozen grader bundles and explicit artifacts.
+Use version directories containing only the intended harness. Skill/harness-path
+injection and cooperative `--config` profiles are not supported in this mode.
+
+Inference goes only to `https://api.openai.com/v1/responses`. A trusted isolated
+Python controller child receives credentials through a private stdin pipe, with a
+cleared environment and no site startup hooks. It follows no redirects or proxy
+settings and exits before any worker command runs. The parent terminates stalled
+transport at its remaining deadline and never records provider error bodies or
+credentials. TLS/live API compatibility has not been exercised by synthetic tests.
+
+The model gets one strict `run(argv)` tool. All complete output items and arguments
+are checked before dispatch; hosted tools, unknown functions, duplicate IDs and
+malformed/incomplete replies abort. Each command runs offline with only its task
+state and selected readonly harness. Worker processes receive no broker token,
+credential file, provider socket or controller environment. Replies are replayed
+with encrypted reasoning and `store=false`, following the [Responses migration
+contract](https://developers.openai.com/api/docs/guides/migrate-to-responses).
+This setting alone is not a Zero Data Retention guarantee.
+
+Requests and tool reservations are capped across the entire paired run.
+`max_output_tokens` is per request; the whole-run reservation ceiling is
+`max_requests * max_output_tokens`. Byte limits bound each request/context and
+response frame. These are explicit execution caps, not a monetary limit or exact
+input-token plan. Reports separate reserved output from provider-reported usage.
+Ambiguous costed failures or containment failures stop further inference; no retry
+or cheaper-model fallback occurs. Preparation, transport, commands, snapshots and
+grading share the original wall-clock budget.
+
+Between commands, complete working state stays in controller memory: at most 100
+regular single-link files, 1 MiB contents, 100 directories, depth 64, 4096-byte paths
+and 64 KiB metadata. Capture occurs after worker cleanup through no-follow directory
+descriptors. Preserve ordinary modes, new files, empty directories and deletions;
+reject links, special files/mode bits and incomplete/oversized reads. Nonzero test
+commands with exit codes 1–127 retain valid edits for inspection. Higher codes are
+ambiguous with wrapped signals and abort. Timeout/resource/integrity failures
+and signal-killed commands never adopt partial state or continue inference.
+Only terminal declared artifacts are staged and
+published together for fresh offline grading; a final model claim cannot pass a
+task. Synthetic transports establish orchestration; separately selected kernel
+canaries establish only their tested process/filesystem boundaries.
+
+### Controlled improvement roles
+
+Select `ahl improve PROJECT --agent responses` (or `watch`) with the same explicit
+inference settings, cgroup, pinned-image and disk arguments above. The profile
+uses one client and original deadline across preparation, every task and one
+possible refinement; no stage resets the request/tool limits or reads another key.
+Native binary discovery, plugin setup and native agent/grader execution are outside
+this branch. Missing settings or resource profiles fail; no mixed native fallback
+occurs. Existing Codex/Claude behavior keeps its cooperative contract.
+
+| Role | Writable state | Readonly inputs |
+| --- | --- | --- |
+| Proposer | Candidate subtree and proposal document | Baseline, projected evidence, owned methodology; filtered refinement feedback |
+| Evaluator author | New manifest, fixtures, controls and complete bundles | Baseline, projected evidence and evaluation methodology |
+| Executor | Fresh bounded task state | Selected frozen harness |
+| Grader | Fresh scratch only | Final bounded artifacts and pristine oracle |
+
+The metadata projection contains pattern kinds/explanations, activity/count/coverage
+summaries and limitations. Source paths, event identity references and prior
+evaluation outcomes are excluded. The original project, raw captures and run
+directories are not mounted. This is a narrower inspection view than the native
+workflow. Refinement gets only task/version/split/status for development/regression
+rows. The author never receives that feedback, candidate/proposal files or
+candidate-derived filenames. Each session has a fresh history; controller counters
+remain shared. Context methods omit generated bytecode/cache files.
+
+Complete authored trees publish atomically with their accepted ordinary modes and
+deletions, after bounded capture. Candidate scope is checked before freezing.
+Authors supply relative bundle paths, empty skills/harness_paths and no grader
+argv/digests. The controller constructs the exact Python argv and freezes all
+bundle digests before offline controls. Task execution mounts the full selected
+harness instead of injecting candidate-derived file lists.
+
+Private `inference.json` receipts persist reservations before dispatch and complete
+provider usage afterward. Pending/blocked flags retain ambiguous failures without
+retry, provider error bodies or credentials. Settings changes abort the current
+run; watch fingerprints include settings path/content without reading a key or
+probing native binaries. API/protocol failures return structured error/budget
+dispositions and require intervention, rather than automatic transient retries.
+
+Synthetic full workflows test shared limits and refinement; selected kernel tests
+run all roles with a pinned image and attempt forbidden source/home/key,
+candidate/proposal and prior-heldout reads. These are implementation-specific
+controls, not live API compatibility, independent task lineage or effective model
+verification. Qualification and automatic behavioral adoption remain blocked.
 
 ## Automatic project instruction experiments
 

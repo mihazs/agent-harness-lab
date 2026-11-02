@@ -61,6 +61,8 @@ class Registry:
         for record in snapshot.records:
             if record.source_sha256 != source.source_key or record.plane not in capability.planes:
                 raise ValueError('collector exceeded its source/evidence capability')
+        if snapshot.metadata is not None: snapshot.metadata.validate(source, snapshot.records)
+        if snapshot.graph is not None: snapshot.graph.validate(source, snapshot.records)
         return snapshot
 
     def ingest(self, source, store, **scope):
@@ -68,8 +70,21 @@ class Registry:
         store._bind(source, writing=True)
         before = store.status(source)['cursor_sha256']
         snapshot = self.preview(source, **scope)
-        return store.ingest(source, snapshot.records, cursor_before=before, cursor_after=snapshot.sha256)
+        if not snapshot.checkpoint_ready: raise ValueError('capture is not ready for a committed checkpoint')
+        return store.ingest(source, snapshot.records, cursor_before=before, snapshot_sha256=snapshot.sha256,
+            metadata=snapshot.metadata, graph=snapshot.graph)
 
     def status(self, source, store, **scope):
         self._resolve(source, scope)
         return store.status(source)
+
+    def recheck(self, source, store, **scope):
+        from .resolve import recheck
+        _, connector = self._resolve(source, scope)
+        store._bind(source)
+        cursor = store.status(source)['cursor_sha256']
+        proposed = store.graph(source, cursor)
+        if proposed is None: raise NotImplementedError('no captured relationship graph to recheck')
+        result = recheck(source, connector, proposed)
+        result['proposed_checkpoint_sha256'] = cursor
+        return result

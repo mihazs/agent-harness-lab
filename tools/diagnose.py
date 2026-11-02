@@ -82,7 +82,7 @@ def analyze(rows, max_events=100000, *, observation_per_case=128, observation_to
                     'No automatic staleness, skill utility, or model correctness inference.'])
 
 
-def report(result):
+def report(result, *, source_context=None):
     lines = ['# Trace diagnosis', '', f"Events: {result['events']}; cases: {result['cases']}.", '',
              '| Evidence field | Known / events |', '| --- | --- |']
     lines += [f"| {k} | {v['known']} / {v['total']} |" for k, v in result['field_coverage'].items()]
@@ -95,6 +95,15 @@ def report(result):
     lines += [f'- {k}: {v}' for k, v in result['deferred_mechanisms'].items()]
     lines += ['', 'Limitations:', '']
     lines += ['- ' + limit for limit in result['limitations']]
+    if source_context is not None:
+        lines += ['', '## Scoped source context', '',
+            f"Journal: {source_context['status']}; sources: {source_context['source_count']}; omitted: {source_context['omitted_sources']}.",
+            'Target-project binding, independent roots and historical capture completeness remain unverified.', '',
+            '| Source fingerprint | Declared coverage | Cached revisions |', '| --- | --- | --- |']
+        for source in source_context['sources']:
+            coverage = source['declared_coverage']
+            lines.append(f"| {source['source_sha256']} | {coverage['reported_completeness'] if coverage else 'unknown'} | {source['revisions']} |")
+        lines += ['', 'Context is private metadata; it does not add telemetry events, findings or graded outcomes.']
     return '\n'.join(lines) + '\n'
 
 

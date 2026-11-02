@@ -75,8 +75,13 @@ that an instruction edit caused better performance.
 | Discover local project evidence | `ahl analyze [project]` | None |
 | Inspect recurring transitions | `ahl mine FILE` | None |
 | Inspect bundled synthetic tasks | `ahl bank --starter --list` | None |
-| Stage and evaluate a candidate | `ahl improve [project]` | Authenticated Codex or Claude Code |
+| Validate a declared regression reproduction | `ahl regression --proposal PATH` | Explicitly authorized local record; no replay or admission |
+| Accept a reviewed private regression | [`ahl regression-review ... accept`](docs/regression-admission.md) | None; explicit sealed case and immutable parent bank |
+| Record comparisons and quarantine defective graders | [`ahl experiment-history`](docs/oracle-history.md) | None; explicit pinned offline profile |
+| Audit and review a grader-defect proposal | [`ahl grader-correction`](docs/grader-corrections.md) | None; frozen controls and explicit pinned offline profile |
+| Stage and evaluate a candidate | `ahl improve [project]` | Codex/Claude Code or explicit Responses settings |
 | Recheck changed evidence | `ahl watch [project]` | Each triggered improvement may use inference |
+| Run prepared tasks with controller inference | `ahl evaluate --agent responses ...` | Explicit private API settings and resource profiles |
 
 See [all workflows and commands](docs/workflows.md). Installed skills can also run
 inside an agent session. Never enable runtime permission bypass to use AHL.
@@ -84,7 +89,9 @@ inside an agent session. Never enable runtime permission bypass to use AHL.
 ## Safety, privacy and evidence
 
 - Use trusted projects and synthetic fixtures. Agent runtimes, inherited hooks and
-  cooperative graders are **not a hostile-code security sandbox**.
+  cooperative graders are **not a hostile-code security sandbox**. Optional
+  [`--sandbox-graders`](docs/workflows.md#automatic-improvement) isolates artifact
+  grading on supported Linux hosts; native agent execution remains cooperative.
 - Real-world diagnostic accuracy and general performance gains are unestablished.
   Synthetic checks exercise implementation behavior; they do not certify improvement.
 - Repetition is not waste. Fewer tool calls count as an improvement only when required

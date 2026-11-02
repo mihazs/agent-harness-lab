@@ -1,5 +1,334 @@
 # Changelog
 
+## 0.62.0
+
+### Minor Changes
+
+- 4f13fdd: Connect private one-shot protected-diagnostic reservations and durable exposure accounting to actual controller dispatch. Preserve unverified qualification, reject unsupported certification claims, and refuse known retired-asset reuse without preventing ordinary development comparisons.
+
+### Patch Changes
+
+- f2516f7: Clarify permission-audit inference stopping: proposer, evaluator-author and executor command failures stop continuation; grader audit failures block final qualification while remaining trials can still run.
+
+## 0.61.0
+
+### Minor Changes
+
+- 3941676: Add an opt-in Linux x86_64 permission-result audit for pinned, quota-backed isolated workers, with private bounded observations and qualification gates separate from artifact outcomes.
+
+## 0.60.1
+
+### Patch Changes
+
+- d5c2884: Separate task-bank review declarations from certification authority. Keep structural validation and descriptive export available without falsely marking self-labeled banks certification-eligible or their roots verified independent.
+
+## 0.60.0
+
+### Minor Changes
+
+- 290366c: Add opt-in hash-only ai-memory MCP selected-page captures through the existing source registry and journal, with shared bounds, scoped readbacks and explicitly partial retrieved-context coverage.
+
+## 0.59.1
+
+### Patch Changes
+
+- 74b90cf: Reject observed payload or declaration changes during normalized local export capture before advancing source checkpoints. Readbacks recheck scope and enablement before opening the payload, preserve stable v1–v3 snapshot identities, and make no complete-history or execution-authority claim.
+- 74857fe: Run the existing wheel and archive validation tasks concurrently after serial package preparation, requiring both layouts to pass under the unchanged offline-packaging CI job.
+
+## 0.59.0
+
+### Minor Changes
+
+- 408e5d9: Add a bounded private diagnostic annotation corpus API with immutable review journals, blinded packets, disagreement/adjudication history, stale-client protection, protected-split alias checks and explicit exposure retirement. Exported annotations remain operator-attested declarations without gold-label, classifier-selection or executable task-outcome authority.
+
+## 0.58.0
+
+### Minor Changes
+
+- Add frozen, bounded trajectory assertions over controller requests, denials, dispatches and observed results. Combine three-valued action compliance with independent artifact grades, retain critical violations and unknown required evidence, and expose private descriptive reports without reconstructing controller authority from saved JSON.
+
+## 0.57.0
+
+### Minor Changes
+
+- Retain bounded private assistant text and refusal observations separately from tool actions, with explicit protocol, quota, omission and visibility metadata. Preserve malformed or denied-response observations without treating text as task success or proof of external delivery. Enforce UTF-8 retention bounds and mark lossy invalid-Unicode observations unknown. Keep execution quotas, worker policy and automatic-adoption restrictions unchanged.
+
+## 0.56.0
+
+### Minor Changes
+
+- Execute reviewed corrected-oracle qualification before rerunning preservation comparisons. Freeze original harness inputs, preserve prior cohort membership and rules, run fresh historical-pass and repaired-case phases, bind actual sealed evidence into a new cohort manifest, then execute both original comparison arms under the corrected oracle. Retain interrupted attempts and historical evidence after revocation, reject input overlap before writes, enforce aggregate limits and one deadline, and block public export of private qualification records. Preserve version-1 rerun compatibility and recommendation-only behavior.
+
+## 0.55.0
+
+### Minor Changes
+
+- Add opt-in guarded development search using actual controller executions and freshly verified preservation receipts. Bind authorized patches to prepared harness identities, preserve charges and genuine run custody across interruption, revalidate cached results and require fresh paired confirmation before a development recommendation for review. Enforce early input-entry limits and deadlines through final verification. Keep callback results unverified and certification, automatic adoption and corrected-oracle requalification disabled.
+
+## 0.54.0
+
+### Minor Changes
+
+- Generate private JSON, Markdown and HTML reports from freshly verified controller receipt references. Retain qualification provenance, preservation endpoints, losses and recoveries, intervals, assumptions and unknown observations. Recheck current authority before writing output, escape untrusted report content and refuse public export regardless of publication labels. Keep optimization integration, corrected-oracle requalification and adoption authority pending.
+
+## 0.53.0
+
+### Minor Changes
+
+- Persist bounded private analysis receipts bound to current controller evidence, frozen qualification, paired analysis and the analysis engine. Reopen authority and recompute results when verifying a receipt, with explicit regeneration after engine changes. Add receipt creation and verification CLI commands and prevent controller/cohort data from being publicly exported through spoofed publication labels. Receipts confer no adoption authority; optimization/report integration and corrected-oracle requalification remain pending.
+
+## 0.52.0
+
+### Minor Changes
+
+- Add conditional paired-root preservation endpoints and descriptive loss/recovery reporting for frozen cohorts. Bind numeric criteria to exact manifest bytes and allocate error across primary, family and required cohort claims. Preserve missing observations, critical-invariant vetoes and legacy plan behavior. Keep cohort-enabled promotion blocked pending bound decision and optimization receipts.
+
+## 0.51.0
+
+### Minor Changes
+
+- Freeze preservation-cohort membership from reviewed prior controller executions and bind it to optional experiment plans and private history. Preserve legacy plan digests and trial IDs, enforce current task/oracle and exposure checks before dispatch, and keep favorable cohort decisions blocked while preservation analysis and decision-receipt integration remain pending.
+
+## 0.50.0
+
+### Minor Changes
+
+- Add an exposed paired adversarial development bank with separate completion and final-artifact effect grading. Bind frozen behavior policies into private experiment history, reject verified critical candidate effects, and block recommendations when required observations are unknown. Preserve legacy history interpretation and reject protected-split relabelling of public development policies.
+
+## 0.49.0
+
+### Minor Changes
+
+- Record bounded private controller observations for Responses tool requests and results, including denied requests and missing visibility. Preserve existing execution quotas and offline history admission; observations alone do not establish safe behavior.
+
+## 0.48.0
+
+### Minor Changes
+
+- Apply reviewed grader corrections to immutable private bank revisions, preserving original approval and revocation chains and durably invalidating the old oracle first. Execute fresh complete baseline/candidate reruns from recorded plans under the same pinned runtime and one deadline; retain interrupted attempts, exact generated run identities and honest legacy identity limits. Add explicit apply/rerun commands, historical-plan inspection, subset export and real source/installed sandbox controls. Keep certification, native identity, causal benefit and automatic promotion unqualified or disabled.
+
+## 0.47.0
+
+### Minor Changes
+
+- 4010413: Bind controlled-bank comparisons to actual current bank approval, selected task policy, materialized fixture identities and grader versions. Recheck inherited revocations through execution and guarded analysis, preserve legacy unbound history bytes, and retain immutable evidence when authority becomes unavailable. Validate the boundary with native controls and real pinned replay/admission/comparison workers; correction application remains separate work.
+
+## 0.46.1
+
+### Patch Changes
+
+- Fix task-bank exports to relative output directories by using one absolute destination for fixtures and grader controls. Reject parent traversal before creating output, preserve existing destinations and retain symlink/source-overlap checks.
+
+## 0.46.0
+
+### Minor Changes
+
+- Add private frozen grader-correction proposals, controlled old/replacement audits and explicit operator artifact review. Preserve failed and retryable observations, reject forged or changed evidence, and keep grading defects separate from historical task failure. Reuse the existing audit core and retain bank/root/exposure metadata; approved immutable bank replacement remains separate work.
+
+## 0.45.0
+
+### Minor Changes
+
+- Add private controller-owned history for actual pinned offline comparisons and monotone quarantine of shared grader dependencies. Preserve sealed historical evidence, invalidate affected comparisons across task subsets, reject incomplete or forged results, and require current oracle history for certification promotion. Retain legacy mathematical analysis with unknown validity. Positive grader correction approval and immutable bank replacement remain separate work.
+
+## 0.44.1
+
+### Patch Changes
+
+- Bind repeated experiment plans to the actual complete grader bundles, grading arguments and artifact selection before execution. Changed oracles require a new plan and fresh baseline/candidate trial identities. Preserve descriptive legacy manifests; expose a Task command for computing the oracle pin. Historical comparison invalidation remains separate work.
+
+## 0.44.0
+
+### Minor Changes
+
+- Add explicit private admission of controlled, operator-reviewed regression cases into immutable development-bank revisions. Preserve sealed raw/materialized evidence and external grader controls, bind accepted markers and inherited revocation, reject stale/duplicate/orphaned admissions, and retain legacy bank behavior. Native provenance and independent roots remain unverified; oracle correction and comparison invalidation remain separate work.
+
+## 0.43.0
+
+### Minor Changes
+
+- Add private operator-attested source-lineage review over exact scoped cache snapshots, with immutable decisions, stale-cache handling, conservative components and explicit independence/derivation conflicts. Reuse regression journal persistence without changing its event bytes. Keep native freshness, independent roots, task outcomes and bank eligibility unverified.
+
+## 0.42.0
+
+### Minor Changes
+
+- Add versioned bounded lexical grouping receipts and fixture/prompt exposure checks to task-bank validation. Detect normalized copies under distinct declared roots, preserve negation and ordering, reject ambiguous JSON, freeze grouping revisions in exported manifests and keep lineage/independent-root claims unverified.
+
+## 0.41.0
+
+### Minor Changes
+
+- Add a private controller-owned regression review lifecycle with exact declaration copies, real offline reproduction, sealed grader/artifact evidence and event-bound operator attestations. Preserve interrupted and unqualified attempts, reject stale/self/session-only positive reviews, quarantine tampered evidence, and bound journal capacity and encoded events before dispatch or writes. Keep bank admission, publication, authenticated independence and historical verification disabled or unestablished.
+
+## 0.40.0
+
+### Minor Changes
+
+- Add explicit offline regression replay over hash-bound harness, configuration, memory and recorded task-start snapshots. Audit draft controls, then compare recorded/minimized fixtures with fresh A/A and A/B workspaces under one absolute deadline and fixed resource profile. Retain graded outcomes, artifact hashes, earlier-valid evidence and distinct instability/defect dispositions in private descriptive receipts without authenticating history, establishing causality or admitting tasks automatically.
+
+## 0.39.0
+
+### Minor Changes
+
+- Audit explicitly supplied regression drafts against frozen broken, partial, complete, alternative-valid and superficial artifact controls in the offline sandbox. Bind proposal/task/control hashes and runtime identity, require aggregate resource profiles, and retain private typed receipts under one parent deadline. Keep historical reproduction, independent review, bank admission and automatic promotion unverified or disabled.
+
+## 0.38.0
+
+### Minor Changes
+
+- Add a bounded regression reproduction proposal validator and read-only CLI. Record exact declared snapshot/source identities, preserve missing evidence and distinguish task failures from recovered errors and environment/grader defects. Receipts never verify reproduction, admit tasks, authorize publication or promote changes automatically.
+
+## 0.37.0
+
+### Minor Changes
+
+- Extend explicit Responses execution to controlled improve/watch preparation roles. Give proposer and evaluator author separate minimal views and fresh histories, preserve one client/budget through paired trials and refinement, publish complete bounded authored trees atomically, and derive/freeze grader commands in the controller. Persist request reservations and ambiguous failures without native fallback. Keep recommendation-only outcomes and unverified model/lineage qualification.
+
+## 0.36.0
+
+### Minor Changes
+
+- Add an explicit controller-owned Responses executor for prepared paired evaluations. Keep credentials outside offline workers, require pinned-image/cgroup/storage profiles, preserve bounded working state in controller memory between commands, enforce shared request/tool/deadline caps, and regrade final allowlisted artifacts in fresh namespaces. Synthetic transport and real-kernel state controls validate the boundary; full proposer/evaluator orchestration, live API validation and automatic promotion remain pending.
+
+## 0.35.1
+
+### Patch Changes
+
+- Charge evaluator input/configuration preparation to the whole-run budget and preserve the original improve deadline across trial-stage dispatch. An expired parent or preparation budget prevents runtime probes and model launches; inherited deadlines can only narrow existing caps.
+
+## 0.35.0
+
+### Minor Changes
+
+- Add opt-in offline artifact grading for cooperative Codex and Claude evaluations and improve/watch workflows. Freeze complete grader bundles before controls, require typed outcomes and declared artifacts, block unavailable boundaries before agent execution, and forward resource/image selections to both control and trial graders. Native agents remain cooperative and automatic promotion stays disabled.
+
+## 0.34.0
+
+### Minor Changes
+
+- Connect explicitly selected Claude native files to private source journals with exact row revision history, declared execution metadata, message membership and current-only relationship rechecks. Share bounded native journal machinery with Codex while preserving its preview hashes, block partial/failed checkpoints, and keep derived facets and unverified execution claims distinct.
+
+## 0.33.0
+
+### Minor Changes
+
+- Add an explicit pinned Claude Code 2.1.316 native file profile with scoped writers, private block/message metadata, parallel tool correlation, compaction coverage and conservative response usage. Share guarded JSONL boundaries with Codex, enforce expansion limits before allocation, preserve duplicate UUID idempotence, and withhold conflicting or incomplete native response facets.
+
+## 0.32.0
+
+### Minor Changes
+
+- Journal explicitly scoped Codex roots through the shared bounded scanner, preserving per-thread membership and exact native revision history across active/archive copies. Block incomplete root checkpoints and conflicting native claims, including file-local suppressed usage ordinals, while retaining ordinary metadata-only telemetry and unknown execution outcomes.
+
+## 0.31.0
+
+### Minor Changes
+
+- Add revision-bound native Codex session membership and unambiguous tool-result relationships. Recheck only through the built-in scoped reader, reject partial files and forged proof sources, preserve stale/conflicted links and unknown execution identity, and leave journals unchanged.
+
+## 0.30.0
+
+### Minor Changes
+
+- Connect explicitly selected native Codex captures to shared source journals with exact revision history, declared execution metadata, coverage and checkpoint membership. Keep partial-tail previews visible while blocking their import, preserve old model declarations and derived coverage identities, and revalidate scoped selections through the full bounded capture lifecycle.
+
+## 0.29.0
+
+### Minor Changes
+
+- Add explicit bounded native Codex source-root and exact thread selection with visible scan/capture limits. Filter headers before full reads, merge archive/prefix duplicates before correlation, and deduplicate response usage without hiding ordinal conflicts. Preserve unknown lineage and outcomes, shared read budgets, private paths and unchanged default discovery.
+
+## 0.28.0
+
+### Minor Changes
+
+- Add an explicit Codex 0.166.0 rollout profile for private v2 telemetry. Pin the public wire schema, validate project/version/physical history boundaries, preserve partial tails and unknown execution settings, fingerprint private metadata, and count only deduplicated own-response usage. Keep default discovery and legacy adapters unchanged.
+
+## 0.27.0
+
+### Minor Changes
+
+- Add explicit read-only relationship rechecks for the built-in local Git v2 reader. Verify exact current captured relationships while preserving stale revisions, missing identities, conflicts, reference-only targets and unknown execution loading. Share comparison logic with GitHub without changing its reader admission or report contract; leave sources and journals unchanged.
+
+## 0.26.0
+
+### Minor Changes
+
+- Add an explicit local Git v2 profile that atomically captures scoped commit/ref/harness relationships and coverage in the shared source journal. Preserve reference-only objects, dirty snapshots, shallow and capped-history gaps, unknown execution loading and old checkpoints; keep the v1 profile unchanged.
+
+## 0.25.0
+
+### Minor Changes
+
+- Expose explicitly scoped private source-journal context in analyze and doctor without collecting sources or contacting services. Report declared execution identities, coverage gaps/limits and graph counts separately from telemetry and readiness prerequisites; preserve unknown target binding, independence and capture completeness. Fingerprint untrusted labels, bound summaries with explicit omissions, and leave journals unchanged, including legacy and missing-cache cases.
+
+## 0.24.0
+
+### Minor Changes
+
+- Add explicit GitHub CLI configuration and a bounded live native-relationship recheck. Admit exact native source/ID/revision relationships through a fresh built-in capture, preserve stale/missing/conflicting uncertainty and unknown independence, and keep stored candidates unchanged. Probes/status remain offline; authorization is read only from an explicitly supplied file and is never persisted. Serialized proof labels cannot self-certify imported graphs or task outcomes.
+
+## 0.23.0
+
+### Minor Changes
+
+- Persist bounded, revision-bound relationship claims with atomic graph/execution metadata checkpoints. Add journal v4 with read-only migration from v1–v3, normalized export v3 and an opt-in GitHub v5 graph profile. Preserve old capture hashes and historical graphs, reject foreign/dangling references and self-certified verified/reviewed labels, and keep independence unknown pending explicit relationship resolution.
+
+## 0.22.0
+
+### Minor Changes
+
+- Add explicit GitHub v4 full-SHA commit selection, per-commit file provenance and a distinct commit-comment discussion type. Reuse native PR commit identities, retain exact parent/head/base/merge relationships and unknown blob identities, and reject truncated, conflicting or changing captures without advancing checkpoints. Preserve v1–v3 scopes and request sets; add an opt-in native public-commit acceptance task.
+
+## 0.21.0
+
+### Minor Changes
+
+- Add an opt-in authenticated GitHub v3 review-thread profile. Bind fixed read-only GraphQL queries to checked REST repository, PR, comment and revision identities; capture native resolved/outdated states and nullable line ranges with bounded nested pagination and stable readbacks. Preserve older source scopes and requests, explicit unknowns, partial coverage and atomic failure without inferring task outcomes.
+
+## 0.20.0
+
+### Minor Changes
+
+- Add an explicit v2 GitHub selection for native timeline and CI/check evidence while preserving v1 scope and requests. Bind timeline projections and issue references to native parents/identities, retain unmapped forms as partial capture, and bind check runs/statuses to the captured PR head. CI success remains process evidence rather than a verified task grade.
+
+## 0.19.1
+
+### Patch Changes
+
+- Preserve an absent or null PR merge reference as unknown while retaining the reported merged state. Do not reject otherwise valid partial metadata or substitute the current head for an unavailable merge SHA.
+
+## 0.19.0
+
+### Minor Changes
+
+- Add an explicit GET-only GitHub REST source for selected issue/PR metadata, conversation and inline comments, review submissions, proposed files and commit lineage. Verify repository/native parent identities, constrain pagination and capture budgets, recheck PR heads and preserve private hash-only metadata with declared partial coverage. Approvals and merges remain process evidence rather than task grades.
+
+## 0.18.0
+
+### Minor Changes
+
+- Add immutable content-free execution identity and declared coverage receipts through explicit normalized export v2, preview/status and atomic journal v3. Preserve v1 exports and v1/v2 journal history, bind metadata changes to new checkpoints and keep missing/conflicted identities explicit. Current collectors reject verified execution claims rather than trusting provenance labels.
+
+## 0.17.0
+
+### Minor Changes
+
+- Add an optional declared Codex project instruction inventory to offline Git captures. Fingerprint root and nested guidance, overrides, fallbacks, shadowing and task scope while preserving unknown loading and ambient state. Unsupported versions and ambiguous native truncation remain unresolved, and discovery grants no mutation authority.
+
+## 0.16.0
+
+### Minor Changes
+
+- Add an explicit offline Git metadata source with bounded private object-store copies, verified object integrity and selected immutable harness-file snapshots. Record hashes instead of private paths or commit text, ignore source execution settings and remotes, and retain unknown runtime-loading and effective-configuration state.
+
+## 0.15.0
+
+### Minor Changes
+
+- Allow mutable source snapshots to return to previously observed content without treating the change as a pagination cycle. Keep native revision deduplication and opaque cursor guards, and migrate metadata journals atomically to schema 2 only after a successful import.
+
 ## 0.14.0
 
 ### Minor Changes

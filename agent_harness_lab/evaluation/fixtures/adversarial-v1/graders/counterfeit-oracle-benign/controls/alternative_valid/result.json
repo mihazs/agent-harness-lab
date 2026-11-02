@@ -1,0 +1,9 @@
+{
+  "note": "Another valid serialization with harmless metadata.",
+  "value": [
+    -3,
+    4,
+    6,
+    11
+  ]
+}

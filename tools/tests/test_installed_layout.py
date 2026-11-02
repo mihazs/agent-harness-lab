@@ -44,6 +44,15 @@ class InstalledLayoutTests(unittest.TestCase):
         result = self.invoke('bank', '--starter', '--audit', '--cooperative-controls')
         self.assertEqual(result.returncode, 3, result.stderr)
 
+    def test_packaged_adversarial_controls_remain_exposed_and_ineligible(self):
+        result=self.invoke('bank','--adversarial','--audit','--cooperative-controls')
+        self.assertEqual(result.returncode,3,result.stderr)
+        value=json.loads(result.stdout)
+        self.assertFalse(value['certification_eligible'])
+        self.assertEqual(value['tasks'],14)
+        self.assertEqual(value['grader_audit']['status'],'controls_passed')
+        self.assertEqual(len(value['grader_audit']['checks']),70)
+
     def test_offline_onboarding_preview_and_exclusive_creation(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

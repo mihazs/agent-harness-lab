@@ -68,21 +68,28 @@ def project_lock(project):
             path.unlink()
 
 
-def evidence(args, output):
+def evidence(args, output, source_context=None):
     from agent_harness_lab.telemetry.ledger import Ledger
     events = []
-    data = collect(args.project, events=args.events, source_format=args.format, event_sink=events.append)
+    data = collect(args.project, events=args.events, source_format=args.format, event_sink=events.append,
+        source_version=getattr(args, 'source_version', None), source_root=getattr(args, 'source_root', None),
+        session=getattr(args, 'session', None), max_files=getattr(args, 'max_captures', 100),
+        max_scan_files=getattr(args, 'max_capture_scan', 2000), max_events=getattr(args, 'max_events', 100000))
+    if source_context is not None: data['source_context'] = source_context
     Ledger(output / 'events.v2.jsonl').ingest(events)
     write_json(output / 'analysis.json', data)
-    (output / 'report.md').write_text(report(data['analysis']))
+    (output / 'report.md').write_text(report(data['analysis'], source_context=source_context))
     return data
 
 
 def analyze_project(args):
+    from .sources.context import load
+    context = load(getattr(args, 'source_cache', None), getattr(args, 'source_project_sha256', None), getattr(args, 'source_scope_sha256', None))
     output = output_dir(args)
-    data = evidence(args, output)
+    data = evidence(args, output, source_context=context)
     result = dict(status='analyzed', output=str(output),
                   findings=len(data['analysis']['findings']), evaluation_failures=len(data['evaluation_failures']))
+    if context is not None: result['source_context'] = context
     write_json(output / 'workflow.json', result)
     return result
 
@@ -163,10 +170,12 @@ def bounded_fixture(folder, runner):
     return runner.digest(folder)
 
 
-def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_heldout):
+def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_heldout, *, grader_backend=None):
     manifest = json.loads(path.read_text())
     if not isinstance(manifest, dict):
         raise ValueError('Evaluation manifest must be an object')
+    from .evaluation.certification_access import reject_claims
+    reject_claims(manifest)
     if manifest.get('skills', []) or sorted(manifest.get('harness_paths', [])) != sorted(paths):
         raise ValueError('Evaluation must inject exactly the staged harness_paths, with skills empty')
     tasks = manifest['tasks']
@@ -178,6 +187,29 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
         raise ValueError('Tasks require ids, fixtures and grader argument lists')
     if not 3 <= len(tasks) <= 5 or {t['split'] for t in tasks} != {'development', 'regression', 'heldout'}:
         raise ValueError('Provide 3–5 tasks covering development, regression, and heldout')
+    bundles = manifest.get('grader_bundles', {})
+    grader_contracts = {}
+    if grader_backend is not None:
+        from .evaluation.bank_tools import frozen_grader, regrade_artifacts
+        from .evaluation.integrity import contained, digest
+        from .evaluation.sandbox import Limits
+        if (not isinstance(bundles, dict) or len({task['id'] for task in tasks}) != len(tasks)
+                or set(bundles) != {task['id'] for task in tasks}):
+            raise ValueError('every sandboxed grader requires a frozen bundle')
+        for task in tasks:
+            declaration = bundles[task['id']]
+            if not isinstance(declaration, dict) or set(declaration) not in ({'path'}, {'path', 'digest'}):
+                raise ValueError('invalid grader bundle declaration')
+            folder = contained(path.parent, declaration['path']); frozen = digest(folder)
+            if 'digest' in declaration and declaration['digest'] != frozen:
+                raise ValueError('declared grader bundle integrity mismatch')
+            bundles[task['id']] = dict(path=declaration['path'], digest=frozen)
+            grader_contracts[task['id']] = (*frozen_grader(path.parent, task, bundles[task['id']]), frozen)
+        fixtures = [contained(path.parent, task['fixture']) for task in tasks]
+        for folder, _, _ in grader_contracts.values():
+            if any(folder == fixture or folder.is_relative_to(fixture) or fixture.is_relative_to(folder) for fixture in fixtures):
+                raise ValueError('grader bundle and task fixtures must not overlap')
+        manifest['grader_bundles'] = bundles
     controls = manifest.get('grader_self_tests', [])
     if not isinstance(controls, list) or any(not isinstance(c, dict) or not isinstance(c.get('fixture'), str) for c in controls):
         raise ValueError('Grader controls must be objects naming fixture directories')
@@ -204,21 +236,32 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
             bounded_fixture(workspace, runner)
             if any(p.is_file() and p.is_relative_to(workspace) for p in programs):
                 raise ValueError('Graders must be outside control fixtures')
-            argv = [a.replace('{workspace}', str(workspace)).replace('{trace}', str(path.parent / 'empty-trace.jsonl')) for a in task['grader']]
             available = remaining()
-            if available <= 0:
-                raise TimeoutError('Improvement budget exhausted before grader self-test')
-            programs = [Path(a).resolve() for a in argv if Path(a).is_file()]
-            before = {p: file_state(p) for p in programs}
-            available = remaining()
-            if available <= 0:
-                raise TimeoutError('Improvement budget exhausted before grader self-test')
-            run = runner.execute(argv, path.parent, min(30, available))
-            if any(file_state(p) != value for p, value in before.items()):
-                raise ValueError('Grader modified its own frozen program during self-test')
-            expected = check['state'] == 'complete'
-            if run['timeout'] or run['exit_code'] is None or (run['exit_code'] == 0) != expected:
-                raise ValueError('Grader self-test rejected: broken/partial must fail and complete must pass')
+            if available <= 0: raise TimeoutError('Improvement budget exhausted before grader self-test')
+            if grader_backend is not None:
+                bundle, allowed, frozen = grader_contracts[task['id']]
+                if workspace == bundle or bundle.is_relative_to(workspace):
+                    raise ValueError('grader bundle must not be inside a control fixture')
+                grade = regrade_artifacts(workspace, allowed, bundle, frozen,
+                    grader_backend, limits=Limits(seconds=min(30, available)))
+                if grade['status'] != ('passed' if check['state'] == 'complete' else 'failed'):
+                    raise ValueError('Grader self-test rejected: broken/partial must fail and complete must pass')
+            else:
+                argv = [a.replace('{workspace}', str(workspace)).replace('{trace}', str(path.parent / 'empty-trace.jsonl')) for a in task['grader']]
+                available = remaining()
+                if available <= 0:
+                    raise TimeoutError('Improvement budget exhausted before grader self-test')
+                programs = [Path(a).resolve() for a in argv if Path(a).is_file()]
+                before = {p: file_state(p) for p in programs}
+                available = remaining()
+                if available <= 0:
+                    raise TimeoutError('Improvement budget exhausted before grader self-test')
+                run = runner.execute(argv, path.parent, min(30, available))
+                if any(file_state(p) != value for p, value in before.items()):
+                    raise ValueError('Grader modified its own frozen program during self-test')
+                expected = check['state'] == 'complete'
+                if run['timeout'] or run['exit_code'] is None or (run['exit_code'] == 0) != expected:
+                    raise ValueError('Grader self-test rejected: broken/partial must fail and complete must pass')
     if remaining() <= 0:
         raise TimeoutError('Improvement budget exhausted before evaluation')
     manifest['no_nested_agents'] = True
@@ -258,12 +301,38 @@ def _improve(args):
     from agent_harness_lab.cli import assets, evaluator
     if args.timeout <= 0:
         raise ValueError('timeout must be positive')
+    controlled = args.agent == 'responses'
+    inference_path = getattr(args,'inference_settings',None)
+    if controlled != (inference_path is not None):
+        raise ValueError('controlled improvement requires --agent responses and explicit --inference-settings together')
     started = time.monotonic()
     remaining = lambda: args.timeout - (time.monotonic() - started)
     runner = evaluator()
     output = output_dir(args)
     print(f'Private run artifacts: {output}', file=sys.stderr)
     data = evidence(args, output)
+    grading = None
+    permission_audit=getattr(args,'permission_audit',None)
+    if permission_audit is not None and not controlled:
+        raise ValueError('permission audit requires controlled Responses improvement')
+    grader_options = {name: getattr(args, name, None) for name in ('cgroup_root', 'image_root', 'image_sha256', 'disk_bytes')}
+    if controlled and any(value is None for value in grader_options.values()):
+        raise ValueError('controlled improvement requires cgroup, pinned image and private disk profiles')
+    if any(value is not None for value in grader_options.values()) and not (controlled or getattr(args, 'sandbox_graders', False)):
+        raise ValueError('grader resource options require --sandbox-graders')
+    if controlled or getattr(args, 'sandbox_graders', False):
+        from .evaluation.sandbox import SandboxBackend
+        if permission_audit is not None:grader_options['permission_audit']=permission_audit
+        grading = SandboxBackend(**grader_options)
+        if permission_audit is not None:args._permission_backend=grading
+        available = remaining()
+        if available <= 0: raise TimeoutError('Improvement budget exhausted before grader preflight')
+        capability = grading.capability(seconds=min(3, available))
+        if capability['status'] != 'available':
+            result = dict(status='blocked', reason='inference_sandbox_unavailable' if controlled else 'grader_sandbox_unavailable', output=str(output), changed_files=[],
+                automatic_promotion=False, grader_capability=capability)
+            write_json(output/'workflow.json', result)
+            return result
     prepare = output / 'preparation'
     prepare.mkdir()
     baseline, candidate = prepare / 'baseline', prepare / 'candidate'
@@ -271,18 +340,34 @@ def _improve(args):
     shutil.copytree(baseline, candidate)
     baseline_hash = runner.digest(baseline)
     agent = args.agent
-    if agent == 'auto':
-        agent = 'codex' if shutil.which(args.codex) else 'claude'
-    binary = args.codex if agent == 'codex' else args.claude
-    if not shutil.which(binary):
-        raise ValueError('No selected agent CLI found; install/authenticate Codex or Claude Code')
-    plugin = prepare / '.harness-toolkit'
-    (plugin / '.claude-plugin').mkdir(parents=True)
-    write_json(plugin / '.claude-plugin/plugin.json', {'name': 'harness-toolkit'})
-    shutil.copytree(assets() / 'skills', plugin / 'skills')
+    client = None
+    if controlled:
+        from .evaluation import construction, responses
+        from .evaluation.working_state import WorkingState
+        deadline = started+args.timeout
+        settings,settings_hash = responses.read_settings(inference_path)
+        role_views = construction.views(data,assets(),prepare/'role-inputs',deadline)
+        construction.proposer_seed(candidate,prepare/'proposer-work-0',deadline)
+        credential = responses.read_credential(settings,[args.project,output,grader_options['image_root'],assets()/'skills'])
+        def record(receipt):
+            if responses.read_settings(inference_path)[1] != settings_hash:
+                raise ValueError('inference settings changed during the controlled run')
+            write_json(output/'inference.json',receipt)
+        client = responses.Client(settings,credential,deadline,record=record)
+    else:
+        if agent == 'auto':
+            agent = 'codex' if shutil.which(args.codex) else 'claude'
+        binary = args.codex if agent == 'codex' else args.claude
+        if not shutil.which(binary):
+            raise ValueError('No selected agent CLI found; install/authenticate Codex or Claude Code')
+        plugin = prepare / '.harness-toolkit'
+        (plugin / '.claude-plugin').mkdir(parents=True)
+        write_json(plugin / '.claude-plugin/plugin.json', {'name': 'harness-toolkit'})
+        shutil.copytree(assets() / 'skills', plugin / 'skills')
     used_heldout = set()
     result = dict(status='evaluation_failed', output=str(output), changed_files=[], agent=agent)
     protected = {}
+    refinement_feedback = []
     for attempt in range(2):
         if remaining() <= 0:
             result['status'] = 'budget_exhausted'
@@ -292,9 +377,23 @@ def _improve(args):
         proposal_path = proposal_folder / 'proposal.json'
         evaluation = prepare / f'evaluation-{attempt}'
         manifest_path = evaluation / 'manifest.json'
-        write_json(prepare / 'context.json', dict(project=str(args.project), baseline=str(baseline),
-            candidate=str(candidate), evaluation=str(proposal_folder), phase='candidate', attempt=attempt, focus=getattr(args, 'focus', None)))
-        prompt = f'''Load {plugin / 'skills/harness-self-improvement/SKILL.md'} and the sibling evaluation skill.
+        if controlled:
+            context = role_views['proposer']
+            if attempt:
+                context = prepare / f'proposer-context-{attempt}'
+                shutil.copytree(role_views['proposer'],context,symlinks=True)
+                write_json(context/'feedback.json',dict(trials=refinement_feedback))
+                WorkingState(context,deadline)
+                construction.proposer_seed(candidate,prepare/f'proposer-work-{attempt}',deadline)
+            proposal,candidate,commands = construction.propose(client,grading,baseline,context,
+                prepare/f'proposer-work-{attempt}',output/f'proposer-{attempt}',deadline,focus=getattr(args,'focus',None))
+            write_json(proposal_path,proposal)
+            write_json(output/f'preparation-{attempt}.json',dict(inference=client.report(),worker_commands=commands))
+            protected[output/f'proposer-{attempt}'] = runner.digest(output/f'proposer-{attempt}')
+        else:
+            write_json(prepare / 'context.json', dict(project=str(args.project), baseline=str(baseline),
+                candidate=str(candidate), evaluation=str(proposal_folder), phase='candidate', attempt=attempt, focus=getattr(args, 'focus', None)))
+            prompt = f'''Load {plugin / 'skills/harness-self-improvement/SKILL.md'} and the sibling evaluation skill.
 You are the preparation stage of ahl improve, not an interactive request for a failure description.
 Discover improvement candidates yourself from {output / 'analysis.json'}, baseline instructions,
 and read-only source inspection of {args.project}. An optional focus is {getattr(args, 'focus', None)!r};
@@ -314,19 +413,19 @@ and 20 task trials across two attempts.
 Write {proposal_path} as {{"status":"candidate","mechanisms":[...],"falsifiers":[...]}} when ready.
 The parent will reject incomplete/changed inputs, regressions, unsupported ties, and concurrent edits.
 '''
-        if attempt:
-            prompt += f'Inspect development/regression feedback at {output / "feedback-0.json"}; refine once. Do not read previous evaluation directories or held-out results.\n'
-        command = runner.agent_command(agent, binary, plugin, ('harness-evaluation', 'harness-self-improvement'))
-        if remaining() <= 0:
-            result['status'] = 'budget_exhausted'
-            break
-        run = runner.execute(command, prepare, remaining(), prompt)
-        (output / f'preparation-{attempt}.jsonl').write_text(run.pop('stdout'))
-        (output / f'preparation-{attempt}.stderr').write_text(run.pop('stderr'))
-        check = dict(run, stdout=(output / f'preparation-{attempt}.jsonl').read_text())
-        if runner.trace_result(check, agent)[0] != 'completed':
-            result['status'] = 'execution_error'
-            break
+            if attempt:
+                prompt += f'Inspect development/regression feedback at {output / "feedback-0.json"}; refine once. Do not read previous evaluation directories or held-out results.\n'
+            command = runner.agent_command(agent, binary, plugin, ('harness-evaluation', 'harness-self-improvement'))
+            if remaining() <= 0:
+                result['status'] = 'budget_exhausted'
+                break
+            run = runner.execute(command, prepare, remaining(), prompt)
+            (output / f'preparation-{attempt}.jsonl').write_text(run.pop('stdout'))
+            (output / f'preparation-{attempt}.stderr').write_text(run.pop('stderr'))
+            check = dict(run, stdout=(output / f'preparation-{attempt}.jsonl').read_text())
+            if runner.trace_result(check, agent)[0] != 'completed':
+                result['status'] = 'execution_error'
+                break
         if any(runner.digest(path) != value for path, value in protected.items()):
             raise ValueError('Preparation changed a previous frozen evaluation')
         if runner.digest(baseline) != baseline_hash:
@@ -346,16 +445,21 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         if proposed == original:
             result['status'] = 'no_change'
             break
-        paths = original.keys() | proposed.keys()
+        paths = [] if controlled else original.keys() | proposed.keys()
         frozen = output / f'candidate-{attempt}'
         shutil.copytree(candidate, frozen)
         if candidate_states(frozen, original) != proposed:
             raise ValueError('Candidate changed while freezing it')
         frozen_hash = runner.digest(frozen)
-        evaluation.mkdir()
-        write_json(evaluation / 'context.json', dict(project=str(args.project), baseline=str(baseline),
-            evaluation=str(evaluation), harness_paths=sorted(paths), phase='evaluation', attempt=attempt))
-        evaluation_prompt = f"""Load {plugin / 'skills/harness-evaluation/SKILL.md'}.
+        if controlled:
+            manifest_path,commands = construction.author(client,grading,baseline,role_views['evaluator_author'],
+                prepare/f'author-work-{attempt}',evaluation,deadline)
+            write_json(output/f'evaluation-construction-{attempt}.json',dict(inference=client.report(),worker_commands=commands))
+        else:
+            evaluation.mkdir()
+            write_json(evaluation / 'context.json', dict(project=str(args.project), baseline=str(baseline),
+                evaluation=str(evaluation), harness_paths=sorted(paths), phase='evaluation', attempt=attempt))
+            evaluation_prompt = f"""Load {plugin / 'skills/harness-evaluation/SKILL.md'}.
 You are an independent evaluation-construction session for an automatic harness improvement.
 Discover acceptance criteria from {output / 'analysis.json'}, the baseline {baseline}, and
 read-only source inspection of {args.project}. Do not inspect any candidate, proposal, prior
@@ -373,27 +477,52 @@ expectations stay outside agent-writable fixtures. Use fresh held-out inputs for
 Do not tune tests to the candidate; it is frozen and deliberately not supplied. Do not run model
 trials. The parent checks grader controls, freezes inputs, executes both versions and owns adoption.
 """
-        if remaining() <= 0:
-            result['status'] = 'budget_exhausted'
-            break
-        construction = runner.execute(command, evaluation, remaining(), evaluation_prompt)
-        (output / f'evaluation-construction-{attempt}.jsonl').write_text(construction.pop('stdout'))
-        (output / f'evaluation-construction-{attempt}.stderr').write_text(construction.pop('stderr'))
-        check = dict(construction, stdout=(output / f'evaluation-construction-{attempt}.jsonl').read_text())
-        if runner.trace_result(check, agent)[0] != 'completed':
-            result['status'] = 'execution_error'
-            break
+            if remaining() <= 0:
+                result['status'] = 'budget_exhausted'
+                break
+            if grading is not None:
+                evaluation_prompt += """
+Grading is offline and artifact-only. Declare artifacts for every task (all must exist in controls).
+Use a separate complete grader bundle per task with grade.py.txt and expected.json plus all imports/data.
+Declare grader_bundles={task_id:{"path":"relative bundle directory"}}; the controller freezes all digests before grading.
+Use grader=["/usr/bin/python3",ABSOLUTE_BUNDLE_GRADE_PATH,"{workspace}",ABSOLUTE_EXPECTED_PATH].
+Graders must print schema_version=1, valid=true, outcome=boolean, grader_id and grader_version,
+with exit0 for true and exit1 for false. Broken/partial controls must produce a valid false grade.
+All bundles and controls stay outside task fixtures; no grader command is executed on the host.
+"""
+            construction = runner.execute(command, evaluation, remaining(), evaluation_prompt)
+            (output / f'evaluation-construction-{attempt}.jsonl').write_text(construction.pop('stdout'))
+            (output / f'evaluation-construction-{attempt}.stderr').write_text(construction.pop('stderr'))
+            check = dict(construction, stdout=(output / f'evaluation-construction-{attempt}.jsonl').read_text())
+            if runner.trace_result(check, agent)[0] != 'completed':
+                result['status'] = 'execution_error'
+                break
         if runner.digest(frozen) != frozen_hash or runner.digest(baseline) != baseline_hash:
             raise ValueError('Evaluation construction changed frozen harness inputs')
-        validate_manifest(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout)
+        validate_manifest(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, grader_backend=grading)
         options = argparse.Namespace(manifest=str(manifest_path), baseline=str(baseline),
             candidate=str(frozen), output=str(output / f'evaluation-{attempt}'),
-            agent=agent, codex=args.codex, claude=args.claude)
+            agent=agent, codex=args.codex, claude=args.claude, parent_deadline=started + args.timeout)
+        if grading is not None:
+            options.sandbox_graders = True
+            for name, value in grader_options.items(): setattr(options, name, value)
+        if controlled:
+            options.inference_settings = inference_path
+            options.inference_client = client
+            options.sandbox_backend = grading
         runner.evaluate(options)
         evaluated = json.loads((Path(options.output) / 'results.json').read_text())
         protected[evaluation] = runner.digest(evaluation)
         protected[frozen] = runner.digest(frozen)
+        if permission_audit is not None:
+            result['isolation_qualification']=grading.permission_qualification()
+            if result['isolation_qualification']['qualification']!='qualified':
+                result.update(status='requires_intervention',reason='permission_qualification_not_met')
+                break
         trials = evaluated['trials']
+        if controlled and evaluated.get('status') in ('blocked','budget_exhausted'):
+            result.update(status=evaluated['status'],reason=evaluated.get('reason'))
+            break
         from agent_harness_lab.promotion.policy import legacy_coverage
         if not legacy_coverage(json.loads(manifest_path.read_text()), trials):
             result['status'] = 'incomplete'
@@ -401,6 +530,8 @@ trials. The parent checks grader controls, freezes inputs, executes both version
             break
         write_json(output / f'feedback-{attempt}.json', dict(inputs_unchanged=evaluated['inputs_unchanged'],
             trials=[t for t in trials if t['split'] != 'heldout']))
+        refinement_feedback = [{key:trial.get(key) for key in ('task','version','split','status')}
+            for trial in trials if trial.get('split') in ('development','regression')]
         candidate_pass = all(t['status'] == 'passed' for t in trials if t['version'] == 'candidate')
         controls_pass = all(t['status'] == 'passed' for t in trials
                             if t['version'] == 'baseline' and t['split'] == 'regression')
@@ -417,29 +548,41 @@ trials. The parent checks grader controls, freezes inputs, executes both version
         if candidate_pass and controls_pass and evaluated['inputs_unchanged']:
             result['status'] = 'no_change'
             break
+    if permission_audit is not None:
+        result['isolation_qualification']=grading.permission_qualification()
+    if client is not None:
+        result['inference'] = client.report()
+        result['automatic_promotion'] = False
     write_json(output / 'workflow.json', result)
     return result
 
 
 def _run_improvement(args):
     """Persist truthful completion even when a run is interrupted or raises."""
-    if hasattr(args, '_run_output'):
-        del args._run_output
+    for name in ('_run_output','_permission_backend'):
+        if hasattr(args,name):delattr(args,name)
     try:
         return _improve(args)
     except BaseException as exc:
+        from .evaluation.responses import InferenceError
+        inference_error = isinstance(exc,InferenceError)
         # output_dir registers only this invocation's output on its Namespace.
         status = ('interrupted' if isinstance(exc, KeyboardInterrupt) else
-                  'budget_exhausted' if isinstance(exc, TimeoutError) else
+                  'budget_exhausted' if isinstance(exc, TimeoutError) or inference_error and str(exc).endswith('_exhausted') else
                   'invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error')
         result = dict(status=status, changed_files=[], failure_class='requires_intervention', error_type=type(exc).__name__)
-        if isinstance(exc, ConnectionError):
+        if inference_error: result['reason'] = str(exc)
+        permission_backend=getattr(args,'_permission_backend',None)
+        if permission_backend is not None:
+            result['isolation_qualification']=permission_backend.permission_qualification()
+            result['automatic_promotion']=False
+        if isinstance(exc, ConnectionError) and getattr(args,'agent',None) != 'responses':
             result['failure_class'] = 'transient_infrastructure'
         output = getattr(args, '_run_output', None)
         if output:
             result['output'] = str(output)
             write_json(output / 'workflow.json', result)
-        if isinstance(exc, (KeyboardInterrupt, OSError)):
+        if isinstance(exc, (KeyboardInterrupt, OSError)) or inference_error:
             return result
         if not isinstance(exc, Exception):
             raise
@@ -453,8 +596,18 @@ def improve(args):
 
 def watch_configuration(args):
     settings = {k: getattr(args, k, None) for k in ('agent', 'codex', 'claude', 'timeout', 'format',
-                'focus', 'max_attempts', 'retry_delay', 'watch_budget')}
-    for key in ('codex', 'claude'):
+                'focus', 'max_attempts', 'retry_delay', 'watch_budget', 'sandbox_graders',
+                'image_sha256', 'disk_bytes', 'permission_audit')}
+    for key in ('cgroup_root', 'image_root'):
+        value = getattr(args, key, None)
+        settings[key] = str(value.resolve()) if value is not None else None
+    inference_path = getattr(args,'inference_settings',None)
+    if (args.agent == 'responses') != (inference_path is not None):
+        raise ValueError('watch requires responses and explicit inference settings together')
+    if inference_path is not None:
+        from .evaluation.responses import read_settings
+        settings['inference_settings'] = [str(Path(inference_path).resolve()),read_settings(inference_path)[1]]
+    for key in (() if args.agent == 'responses' else ('codex', 'claude')):
         binary = shutil.which(getattr(args, key))
         if binary:
             info = Path(binary).stat()

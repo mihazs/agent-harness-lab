@@ -37,6 +37,27 @@ class BenchmarkContracts(unittest.TestCase):
         self.assertIn('inconclusive',markdown); self.assertIn('skipped',html)
         self.assertNotIn('<script>',html); self.assertIn('&lt;script&gt;',html)
 
+    def test_private_controller_claims_cannot_be_relabelled_public(self):
+        for fields in (dict(publication_allowed=False),dict(publication_allowed=None),
+                dict(controller_run_id='1'*64),dict(cohort_manifest_sha256='2'*64),
+                dict(preservation={}),dict(receipt_sha256='3'*64),
+                dict(algorithm='private-preservation-decision-v1'),
+                dict(receipt=dict(algorithm='private-preservation-decision-v1')),
+                dict(analysis=dict(controller_run_id='4'*64)),
+                dict(context=dict(algorithm='guarded-preservation-search-v1')),
+                dict(algorithm='corrected-cohort-qualification-v1'),
+                dict(cohort_binding={}),dict(controller_qualification={}),dict(qualification_sha256=None),
+                dict(controller_grade={}),dict(trajectory_profile='controller-trajectory-v1'),
+                dict(trajectory_analysis={}),dict(policy_sha256='5'*64),
+                dict(receipt=dict(profile='controller-trajectory-v1')),
+                dict(report_kind='controller_trajectory'),dict(context=dict(outcome_mapping='artifact_and_required_v1')),
+                dict(evidence_source='controller_verified_development_only')):
+            item=dict(record(),publication_allowed=True)
+            item.update(fields)
+            with self.subTest(fields=fields):
+                self.assertFalse(public_export_allowed([item]))
+                with self.assertRaises(ValueError): summary([item],public=True)
+
     def test_cost_is_unknown_without_measured_usage_or_dated_pricing(self):
         self.assertIsNone(measured_cost({'input_tokens':100}))
         prices=dict(as_of='2026-10-31',currency='test-units',input_per_token=1,output_per_token=2)

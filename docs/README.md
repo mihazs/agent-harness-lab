@@ -9,6 +9,12 @@
 | Understand capture formats and provenance | [Telemetry](telemetry.md) |
 | Build explicit source adapters | [Source evidence contracts](source-contracts.md) |
 | Understand evaluation and safety gates | [Evaluation foundation](evaluation-foundation.md) |
+| Accept a reviewed private regression | [Immutable development-bank admission](regression-admission.md) |
+| Record comparisons and invalidate defective graders | [Controller oracle history](oracle-history.md) |
+| Bind private analysis to current controller evidence | [Decision receipts](decision-receipts.md) |
+| Render current private qualification and preservation evidence | [Controller history reports](history-reports.md) |
+| Search with current preservation evidence and fresh confirmation | [Guarded development search](guarded-search.md) |
+| Audit and review a proposed grader correction | [Frozen correction controls](grader-corrections.md) |
 | Check implemented/pending capabilities | [Controlled experiments](controlled-experiments.md) |
 | Inspect original smoke results | [Initial validation](validation.md) |
 | Develop, test and submit a PR | [Contributor guide](../CONTRIBUTING.md) |

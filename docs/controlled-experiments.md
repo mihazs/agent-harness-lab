@@ -75,6 +75,34 @@ were reached without an observed critical event, not that rare-harm risk is zero
 
 ## CLI and reports
 
+### Controller trajectory reports
+
+An explicit Responses evaluation can opt a task into the frozen
+[trajectory profile](evaluation-foundation.md#frozen-controller-trajectory-assertions)
+through its existing oracle bundle. It uses controller-owned observations and the
+existing artifact grader, then retains separate `grader` and `controller_grade`
+records. A frozen repeated plan receives a `trajectory_analysis` over scheduled
+trial outcomes using the existing statistics engine. Unknown required evidence
+blocks completion; known critical violations remain visible despite grader or
+execution errors. These are conditional local results, without authenticated
+native identity, historical controller authority or automatic adoption.
+
+`ahl benchmark-report --input RESULTS.json --output NEW_DIRECTORY` also recognizes
+these saved evaluation results. It writes bounded private JSON, Markdown and HTML
+with artifact outcomes, trajectory statuses, combined outcomes and critical/unknown
+flags. Imported claims are explicitly `imported_unverified`; the command does not
+recreate live receipts or rerun statistical decisions from those claims. It omits
+raw argv and controller traces. `--public` refuses this mode even if imported
+metadata claims synthetic provenance or publication approval. Existing matched
+benchmark records and controller-history reports keep their own contracts.
+
+Artifact-only task bundles need no migration. Opt-in policies require the
+Responses executor; other executors reject them before worker execution. Changed
+policies or application/runtime dependencies require new oracle and plan pins,
+with fresh executions in both arms. #10 and #123 can consume these receipts for
+their distinct constraint/behavior semantics; this profile does not infer those
+semantics from arbitrary commands or import unverified traces as controller data.
+
 - `ahl research-simulate --tasks 200 --scenario delayed` runs synthetic controlled
   comparisons only. The rule comparator is explicitly fixed lexical in this initial
   simulator; it is not a validated learned router. The simulator does not claim

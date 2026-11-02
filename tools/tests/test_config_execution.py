@@ -58,13 +58,14 @@ class ConfiguredEvaluationTests(OfflineFixture):
     def test_repeated_plan_respects_cap_and_bank_lineage_before_any_probe(self):
         from dataclasses import asdict, replace
         from agent_harness_lab.evaluation.plan import ExperimentSpec
+        from agent_harness_lab.evaluation.oracle import identity
         tasks = [self.manifest['tasks'][0], self.manifest['tasks'][-1]]
         self.manifest['tasks'] = tasks
         self.manifest['grader_bundles'] = {t['id']: self.manifest['grader_bundles'][t['id']] for t in tasks}
         plan = ExperimentSpec('synthetic-config', tuple((t['id'], t['root'], t['family']) for t in tasks),
                               2, 13, 8, 2, .05, .1, .05, tuple((t['family'], .5) for t in tasks),
                               self.runner.digest(self.root/'baseline'), self.runner.digest(self.root/'candidate'),
-                              'synthetic-grader', 'offline-not-a-model')
+                              identity(self.root/'export',tasks,self.manifest['grader_bundles']), 'offline-not-a-model')
         for cap, spec in ((6, plan), (20, replace(plan, tasks=((tasks[0]['id'], 'forged-root', tasks[0]['family']), plan.tasks[1])))):
             self.value['limits']['trials'] = cap; self.write_config()
             self.manifest['experiment'] = asdict(spec); self.write_manifest()

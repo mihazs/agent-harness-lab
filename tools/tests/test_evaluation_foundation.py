@@ -57,7 +57,7 @@ class ExperimentTests(unittest.TestCase):
         benefit = analyze(spec, records(spec))
         self.assertEqual(benefit['status'], 'supported')
         self.assertEqual(decide(spec, benefit).status, 'blocked')
-        decision = decide(spec, benefit, isolation_verified=True, effective_runtime_verified=True,
+        decision = decide(spec, dict(benefit,oracle_validity='current'), isolation_verified=True, effective_runtime_verified=True,
                           graders_audited=True, lineage_reviewed=True, certification_reserved=True)
         self.assertEqual(decision.status, 'recommended')
         self.assertFalse(decision.automatic)
@@ -105,8 +105,11 @@ class TaskBankTests(unittest.TestCase):
         self.path.write_text(json.dumps(dict(schema_version=1, tasks=self.tasks,
             separate_by=['root_id','family','project_group','time_group'])))
 
-    def test_reviewed_synthetic_bank_and_mutated_oracle(self):
-        self.write(); self.assertTrue(validate(self.path)['certification_eligible'])
+    def test_declared_reviewed_bank_remains_unqualified_and_detects_mutated_oracle(self):
+        self.write(); checked = validate(self.path)
+        self.assertTrue(checked['review_declarations_complete'])
+        self.assertFalse(checked['certification_eligible'])
+        self.assertEqual(checked['issues'], [])
         (self.root/'grader1/grade.py').write_text('different\n')
         with self.assertRaisesRegex(ValueError, 'integrity'): validate(self.path)
 
@@ -117,7 +120,10 @@ class TaskBankTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'leakage'): validate(self.path)
             self.tasks[1][dimension]=original
         self.tasks[1]['independence']='unverified'; self.write()
-        self.assertFalse(validate(self.path)['certification_eligible'])
+        checked = validate(self.path)
+        self.assertFalse(checked['certification_eligible'])
+        self.assertFalse(checked['review_declarations_complete'])
+        self.assertEqual(checked['issues'][0]['status'], 'independence_or_review_unverified')
 
     def test_certification_access_is_consumed_before_feedback(self):
         ledger = CertificationLedger(self.root/'private/final.json')

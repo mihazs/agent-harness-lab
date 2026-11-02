@@ -6,10 +6,26 @@ remain descriptive. Missing/duplicate trials cannot yield a vacuous passing gate
 
 ## Implemented contracts
 
+The [regression reproduction contract](regression-proposals.md) validates bounded
+declared evidence without replaying it or admitting a case to the active bank.
+Its receipts preserve unknown snapshots and never label a declaration verified.
+Explicit [private bank admission](regression-admission.md) can subsequently accept
+an intact controller-reproduced, operator-reviewed case into an immutable
+development revision. It preserves unknown native provenance and independence;
+oracle correction/invalidation and protected certification remain separate work.
+
 - `ExperimentSpec` freezes task/root/family identities, repeats, seed, resource
   ceiling, effect/noninferiority margins, confidence, family weights and hashes.
   `schedule` produces replayable counterbalanced AB/BA pairs in fresh workspaces.
   Explicit repeated manifests must fit both their own and the caller's trial cap.
+  Their `grader_hash` must also match the verified, versioned oracle identity
+  before any execution probe. Compute it from the exported manifest with
+  `task experiment:oracle MANIFEST=/path/to/manifest.json` and freeze that value
+  in the plan. The identity covers complete bundle bytes/modes, grading argv and
+  declared artifact selection, including reference/control files. Relocating an unchanged oracle preserves
+  the identity; changing it requires a new plan and fresh trials for both arms.
+  Old trial IDs cannot satisfy the new schedule. Repeated plans without complete
+  bundles must be regenerated; legacy manifests without `experiment` are unchanged.
 - `TrialRecord` analysis requires the exact planned trial set, executable graded
   binary outcomes and matching provenance. Infrastructure errors stay unknown.
   Root means retain correlated repeats together. Independent roots are an explicit
@@ -26,10 +42,21 @@ remain descriptive. Missing/duplicate trials cannot yield a vacuous passing gate
 - `TaskSpec` and bank validation freeze fixture/grader bundles, provenance,
   partitions, safety and artifact boundaries. Root leakage is always rejected;
   optional family/project/time separation and copied-fixture checks are enforced.
-  Unknown semantic independence/review blocks certification eligibility. Public
-  tasks are explicitly not secret. Grader changes invalidate comparisons.
-- A private controller-owned certification ledger reserves one final candidate and
-  consumes access before exposing its bank. Search roles cannot request access.
+  [Review declarations and certification qualification](bank-qualification.md) remain
+  separate: raw labels never establish certification eligibility or verified
+  independence. No current production bank-certification issuer is available. Public
+  tasks are explicitly not secret. Grader integrity mismatches reject execution.
+  [Controller history](oracle-history.md) can quarantine a grader dependency
+  across recorded comparisons while preserving old report bytes. New controlled
+  exports also bind current bank admission authority, materialized fixtures and
+  observed grader versions through dispatch, sealing and guarded analysis. Dedicated
+  [correction audits/review](grader-corrections.md) preserve grader defects as
+  grading observations. Immutable corrected-bank replacement remains pending
+  in #8. These checks do not authenticate runtime/import dependencies.
+- A private controller-owned [managed diagnostic ledger](protected-diagnostic-access.md)
+  binds a frozen comparison and consumes access before preparation/worker visibility.
+  Its reservations remain explicitly unqualified. The legacy standalone API
+  reserves one candidate and consumes access before returning its bank digest. Search roles cannot request access.
   Concurrent access is single-use. API role checks require OS isolation; they are
   not a security boundary on their own.
 - Artifact extraction rejects traversal, symlinks, hardlinks and special files,
@@ -101,8 +128,8 @@ is per real user, not per trial. A successful bare namespace command does not
 establish that requested resource policy. The delegated canary command exercises
 the cgroup policy without raising the default limit or adding a runtime fallback.
 
-This is not a complete certified backend: a narrow inference broker,
-full construction/execution/regrading integration and the complete adversarial
+This is not a complete certified backend: model-backed qualification of the
+construction/execution/regrading integration and the complete adversarial
 suite remain prerequisites for #7. Per-file rlimits are not aggregate disk quotas;
 per-user process limits alone are not cgroup guarantees. Host/kernel compromise is out
 of scope. `automatic_promotion=false` remains explicit even if an offline probe
@@ -239,11 +266,146 @@ broken baseline programs and complete candidate programs. Their outcomes establi
 runner wiring, not model quality or actual containment. A supported-host end-to-end
 test remains explicitly conditional on the real namespace probe.
 
+`ahl evaluate --sandbox-graders --agent codex` (or `claude`) keeps native agent
+execution cooperative while using that same offline artifact-grading boundary.
+Every task needs explicit artifacts and a frozen complete bundle. `ahl improve`
+and `ahl watch` accept the option too: the controller freezes evaluator-authored
+bundles and runs all broken/partial/complete controls offline before paired trials.
+Unsupported grading capabilities block before any agent launch. Grader errors,
+missing artifacts, changed bundles and malformed typed grades cannot pass or
+trigger host fallback. Optional cgroup, image and private-storage selections reach
+both control and trial grading; watch fingerprints include those settings.
+These synthetic orchestration checks establish wiring, not kernel containment,
+inference credential isolation, evaluator independence or improved model outcomes.
+Native agents remain cooperative and automatic promotion remains disabled.
+
 [Bubblewrap's upstream documentation](https://github.com/containers/bubblewrap)
 explains that application policy and the selected mounts determine the boundary;
 the installed binary alone is not a security policy.
 
+## Explicit controller inference
+
+Prepared `ahl evaluate --agent responses` runs can use a controller-owned fixed
+Responses endpoint, explicit private key-file/settings and mandatory cgroup,
+pinned-image and quota profiles. Model-requested argv commands run offline and
+complete bounded working snapshots stay in controller memory between commands.
+Only final declared artifacts reach the existing fresh grader. An unavailable
+boundary blocks before key loading; ambiguous requests and containment failures
+prevent further inference. The same explicit profile isolates `improve`/`watch`
+proposer and evaluator-author commands with separate minimal views and histories,
+sharing one budget/client through trials and refinement. Controlled authors see
+baseline/metadata/methodology only; the controller publishes bounded authored trees
+and derives frozen grader commands. Native CLI modes remain cooperative and
+automatic promotion remains disabled. Full model-backed qualification is unknown.
+See the [settings, cap and state contract](../skills/harness-evaluation/references/execution.md#controller-owned-responses-executor).
+
+Each controlled trial also records private controller observations of tool requests,
+validation decisions, reservations, backend invocation and returned output. Controller
+IDs and ordering do not depend on model-supplied call IDs. Retention and output are
+bounded; omissions, redaction and unavailable streams remain explicit. These records
+preserve observed output across later workspace changes, but do not establish semantic
+argv authorization, hidden reads, transient writes, provider effects or crash durability.
+They are not admitted into sealed offline experiment history or used as a safety grade.
+
+Assistant `output_text` and `refusal` parts are retained separately as
+`assistant_emission` observations; other claimed message roles stay unverified.
+Each record identifies its response/item/part position, content type and visibility.
+At most 64 parts per message are observed, with explicit omission counts and the
+existing global record/byte caps. Retained text is bounded to 8,192 UTF-8 bytes,
+with credential redaction and truncation reported separately. Invalid Unicode
+retains only a bounded replacement and reports `unknown_encoding_loss`,
+`encoding_loss=true` and an unknown original UTF-8 byte count.
+
+`protocol_validated` describes response validation, separately from whether quotas
+or other checks allowed further dispatch. Observed text can therefore remain in a
+denied response's private record. `external_delivery` remains unknown: controller
+transport text is neither proof of delivery elsewhere nor a task-success grade.
+The same final message can accompany a failed or passing artifact evaluation.
+These records may contain private project data and are not public export material.
+Run `task test:evaluation:controller-emissions` for native protocol, fidelity and
+paired-runner controls; the existing `task test:sandbox:kernel:roles` also checks
+emission records with real pinned workers and simulated API transport.
+
+## Frozen controller trajectory assertions
+
+A frozen grader bundle may contain `trajectory.json` to add action compliance to
+its independent artifact grade. Artifact-only bundles retain their existing
+behavior. The first profile is `schema_version: 1`,
+`profile: "controller-trajectory-v1"`, with exact `task_id`, `root_id`, `family`,
+`engine`, `outcome_mapping: "artifact_and_required_v1"` and `assertions` fields.
+`task experiment:trajectory-engine` prints the required engine object: it pins
+every application Python source, the owned evaluator and the Python runtime.
+Changing any dependency or assertion requires a new complete bundle digest and
+experiment oracle pin, followed by fresh trials in both arms. The candidate
+workspace cannot supply or change this policy.
+
+Each assertion has an `id`, Boolean `required`, `severity` (`normal` or `critical`)
+and `rule`. The bounded rule language supports:
+
+| Kind | Required rule fields beyond `kind` |
+| --- | --- |
+| `required`, `forbidden` | `stage`, `tool`, `arguments`, `quantifier` |
+| `count` | `stage`, `tool`, `arguments`, integer `minimum`, integer or null `maximum` |
+| `sequence` | `stage`, `mode` (`subsequence` or `exact`), nonempty `steps` of `{tool, arguments}` |
+| `all_of`, `any_of` | Nonempty `children` of rules |
+
+`stage` selects `request`, `denied`, `dispatch` or observed backend `result`.
+`tool` is an exact controller tool identifier, initially `run`; command text
+does not create a semantic tool catalog. `arguments: null` compares only the tool.
+Exact argv uses `{"mode":"exact","argv":["/usr/bin/true"]}`. Partial argv uses
+`{"mode":"partial","argv":{"0":"/usr/bin/true"}}`: keys are canonical
+zero-based decimal array indices, and only selected observed entries are compared.
+An index outside a completely captured argv array is a known mismatch; a missing
+argv observation or an unavailable captured entry remains unknown.
+Objects other than these supported argv structures are rejected.
+
+`quantifier: "exists"` requires one matching action. `all` requires a nonempty
+domain of the named tool at the selected stage, with every such action matching
+the argv predicate; known unrelated tools are excluded. `forbidden` negates the
+selected quantifier. An empty complete domain therefore violates required `all`
+and satisfies forbidden `all`. Incomplete relevant coverage remains unknown.
+
+Positive witnesses, count lower bounds already reached and observed counts above
+a maximum can decide despite omissions. Absence, upper-bound satisfaction and
+exact sequences require closed, predicate-relevant coverage. Request, denial,
+dispatch and backend-result order use their own controller ordinals; no concurrent
+dependency is reconstructed. Missing, redacted, clipped or invalidly encoded
+compared arguments stay unknown. A backend result establishes a return observation,
+not semantic success. Group truth tables preserve every child: `all_of` fails on
+any violation and otherwise needs all satisfied; `any_of` passes on any satisfaction
+and otherwise needs all violated. Other combinations are unknown.
+
+Policies reject duplicate/unknown fields, invalid types/numbers, empty groups,
+more than 64 KiB, depth over eight, more than 128 predicate nodes or sequences
+longer than 32 steps. Receipts are bounded to 1 MiB and identify predicates by
+digest and local controller IDs without echoing argv. Live controller handles
+bind policy, task, scheduled trial and scope; JSON imports cannot recreate them.
+Malformed or unsupported evidence is invalid and unknown.
+
+The frozen outcome mapping requires a valid successful artifact grade and all
+required assertions satisfied. A required violation or any critical violation
+blocks success; unknown required observations cannot pass. Critical violations
+remain visible even when execution or artifact grading fails. The independent
+artifact grade is retained alongside the combined controller grade. Optional
+noncritical assertions remain diagnostic. The existing paired analysis receives
+one outcome per scheduled trial; assertions and tool counts never create roots.
+Native identity, semantic independence and history authority remain unverified;
+these receipts never authorize automatic promotion or certify hidden reads,
+transient writes, external delivery or all effects.
+
+`task test:evaluation:trajectory` runs native synthetic capture, matching, typed
+grading, paired-analysis and private-report controls without model/network calls.
+The same target runs in wheel and archive verification. See
+[controlled experiment reporting](controlled-experiments.md#controller-trajectory-reports)
+for saved-result handling and migration limits.
+
 ## Offline validation and limits
+
+The [paired adversarial development bank](adversarial-bank.md) adds frozen policies
+for final artifact effects, separate completion counts and critical-effect vetoes
+in private offline experiment history. Required missing observations remain unknown.
+Transient accesses, native activation, model compliance and external delivery are
+outside this component's observed scope.
 
 The tests cover exact coverage/provenance rejection, clustered repeats, critical
 harms, a large synthetic benefit, conservative small-sample abstention, deterministic
@@ -331,3 +493,10 @@ inside disposable fixtures, avoiding installation-generated bytecode changing
 frozen bank inputs. Both wheel and versioned archive include the complete pack.
 These checks establish reproducibility and objective control behavior; fresh-model
 performance, semantic independence and hidden-oracle isolation remain unexecuted.
+
+Task-bank validation also checks [versioned content exposure](content-grouping.md)
+without treating lexical similarity as verified lineage.
+
+The optional [permission-result audit](permission-audit.md) observes a bounded
+errno policy in supported pinned Linux workers. It keeps task outcomes separate
+from permission qualification and does not certify hidden access attempts.

@@ -29,7 +29,10 @@ def bound(values, weights, alpha):
                 independent_roots=len(values), method='weighted_root_Hoeffding', alpha=alpha)
 
 
-def analyze(spec, records):
+def analyze(spec, records, *, cohort_binding=None):
+    if spec.cohort_manifest_sha256 is not None:
+        from .preservation_analysis import analyze as preservation
+        return preservation(spec, records, cohort_binding)
     expected = {t['trial_id']: t for t in schedule(spec)}
     if len(records) != len(expected) or len({r.trial_id for r in records}) != len(records):
         return dict(status='incomplete', reason='missing_or_duplicate_trials')
