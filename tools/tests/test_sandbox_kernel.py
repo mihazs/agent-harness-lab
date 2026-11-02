@@ -648,6 +648,58 @@ for value in json.loads(sys.argv[-1]):
 
 
 @unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
+class TrajectoryKernelTests(KernelFixture):
+    def test_trajectory_assertions_use_real_workers_and_independent_artifact_grades(self):
+        from dataclasses import replace
+        from test_trajectory_evaluation import TrajectoryEvaluationTests
+        from agent_harness_lab.evaluation import responses
+        fixture = TrajectoryEvaluationTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        runtime = self.root/'runtime'; frozen = pinned_runtime(runtime)
+        fixture.plan = replace(fixture.plan,runtime_hash=frozen['sha256'])
+        fixture.freeze()
+        args = fixture.f.args
+        args.cgroup_root = self.cgroup_root; args.image_root = runtime
+        args.image_sha256 = frozen['sha256']; args.disk_bytes = 64*1024*1024
+        backend = SandboxBackend(cgroup_root=self.cgroup_root,image_root=runtime,
+            image_sha256=frozen['sha256'],disk_bytes=args.disk_bytes)
+        args.sandbox_backend = backend
+        with patch.object(responses,'request',side_effect=fixture.f.transport), \
+                patch.object(backend,'run',wraps=backend.run) as workers, \
+                patch.object(fixture.f.runner,'execute',side_effect=AssertionError('native agents must not launch')):
+            self.assertEqual(fixture.f.runner.evaluate(args),1)
+        fixture.f.backend.run.assert_not_called()
+        self.assertEqual(workers.call_count,9)  # One real capability probe plus eight trial workers.
+        self.assertEqual([call.args[3] for call in workers.call_args_list].count('executor'),4)
+        graders = [call for call in workers.call_args_list if call.args[3]=='grader']
+        self.assertEqual(sum(set(call.args[2])=={'fixture','oracle'} for call in graders),4)
+        self.assertEqual(sum(call.args[0]==['/usr/bin/true'] and call.args[2]=={} for call in graders),1)
+        result = fixture.fixture.results()
+        self.assertEqual(fixture.f.requests,8)
+        self.assertEqual(result['trajectory_analysis']['roots'],2)
+        self.assertEqual(result['trajectory_analysis']['trials'],4)
+        self.assertEqual(result['trajectory_analysis']['oracle_validity'],'unverified')
+        self.assertEqual(result['trajectory_analysis']['native_identity'],'unverified')
+        self.assertFalse(result['trajectory_analysis']['publication_allowed'])
+        self.assertFalse(result['trajectory_analysis']['automatic_promotion'])
+        for trial in result['trials']:
+            self.assertEqual(trial['status'],'passed' if trial['version']=='candidate' else 'failed')
+            grade = trial['grader']['execution']
+            self.assertTrue(grade['attestation']['cgroup_v2']['empty_after_cleanup'])
+            self.assertEqual(grade['attestation']['runtime_image']['sha256'],frozen['sha256'])
+        for trial in fixture.controlled_trials(result):
+            grade = trial['controller_grade']; receipt = grade['trajectory']
+            self.assertEqual(receipt['trial_id'],trial['trial_id'])
+            self.assertEqual(receipt['status'],'satisfied'); self.assertTrue(receipt['closed'])
+            self.assertTrue(grade['valid']); self.assertEqual(grade['outcome'],trial['grader']['outcome'])
+            self.assertEqual(grade['history_authority'],'unverified')
+            self.assertEqual(receipt['native_identity'],'unverified')
+            self.assertFalse(receipt['publication_allowed'])
+            action, = [a for a in trial['controller_actions']['actions'] if a['kind']=='tool_request']
+            self.assertTrue(action['backend_invoked']); self.assertTrue(action['containment_validated'])
+        self.assertNotIn('SYNTHETIC_CONTROLLER_KEY',json.dumps(result))
+
+
+@unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
 class StorageKernelTests(KernelFixture):
     def setUp(self):
         super().setUp()

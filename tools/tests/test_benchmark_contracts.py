@@ -47,6 +47,10 @@ class BenchmarkContracts(unittest.TestCase):
                 dict(context=dict(algorithm='guarded-preservation-search-v1')),
                 dict(algorithm='corrected-cohort-qualification-v1'),
                 dict(cohort_binding={}),dict(controller_qualification={}),dict(qualification_sha256=None),
+                dict(controller_grade={}),dict(trajectory_profile='controller-trajectory-v1'),
+                dict(trajectory_analysis={}),dict(policy_sha256='5'*64),
+                dict(receipt=dict(profile='controller-trajectory-v1')),
+                dict(report_kind='controller_trajectory'),dict(context=dict(outcome_mapping='artifact_and_required_v1')),
                 dict(evidence_source='controller_verified_development_only')):
             item=dict(record(),publication_allowed=True)
             item.update(fields)

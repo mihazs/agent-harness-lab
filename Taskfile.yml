@@ -37,6 +37,12 @@ tasks:
         {{.PYTHON | shellQuote}} -c
         'import sys; from agent_harness_lab.evaluation.integrity import digest; print(digest(sys.argv[1]))'
         {{.INPUT_DIR | shellQuote}}
+  experiment:trajectory-engine:
+    desc: Print the exact current evaluator/dependency/Python identity for a frozen trajectory oracle
+    cmds:
+      - >-
+        {{.PYTHON | shellQuote}} -c
+        'import json; from agent_harness_lab.evaluation.trajectory_assertions import engine; print(json.dumps(engine(),sort_keys=True))'
   test:evaluation:oracle:
     desc: Run native oracle identity and stale-plan execution cases
     cmds:
@@ -240,6 +246,14 @@ tasks:
       AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_controller_emissions.py" -v'
+  test:evaluation:trajectory:
+    desc: Run frozen trajectory predicates and synthetic controller-to-report contracts
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_trajectory_*.py" -v'
   test:evaluation:roles:
     desc: Run controlled preparation views, authored contracts and workflow cases
     cmds:
@@ -300,6 +314,12 @@ tasks:
       - task: test:sandbox:kernel
         vars:
           KERNEL_TEST_FILTER: controlled_workflow
+  test:sandbox:kernel:trajectory:
+    desc: Run the synthetic trajectory vertical slice with real isolated workers and artifact graders
+    cmds:
+      - task: test:sandbox:kernel
+        vars:
+          KERNEL_TEST_FILTER: trajectory_assertions
   test:sandbox:kernel:regressions:
     desc: Audit frozen draft grader controls with actual pinned workers and quotas
     cmds:
@@ -386,6 +406,11 @@ tasks:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_sandbox_*.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_controller_actions.py"'
       - task: test:evaluation:controller-emissions
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+      - task: test:evaluation:trajectory
         vars:
           PYTHON: '{{.PYTHON}}'
           LAYOUT_DIR: '{{.LAYOUT_DIR}}'

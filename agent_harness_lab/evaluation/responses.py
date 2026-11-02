@@ -118,9 +118,9 @@ class ActionLedger:
         self.credential = credential
         self.ledger_id = secrets.token_hex(16)
         self.rows = {}; self.bytes = self.sequence = self.scope_sequence = self.order = 0
-        self.scopes = {}; self.scope = self.begin('unscoped',None)
+        self.scopes = {}; self.trajectory = None; self.scope = self.begin('unscoped',None)
 
-    def begin(self,role,trial_id):
+    def begin(self,role,trial_id,*,trajectory=None):
         if trial_id is not None and (not isinstance(trial_id,str) or not 0<len(trial_id)<=256):
             raise ValueError('bounded controller trial identity required')
         self.scope_sequence += 1; scope = 'scope-'+str(self.scope_sequence)
@@ -129,6 +129,10 @@ class ActionLedger:
             omitted_records=0,omitted_updates=0,scope_retained=len(self.scopes)<self.MAX_SCOPES)
         if self.current['scope_retained']: self.scopes[scope] = self.current
         self.scope = scope
+        self.trajectory = None
+        if trajectory is not None:
+            from .trajectory_assertions import _begin_capture
+            self.trajectory = _begin_capture(self,trajectory,trial_id,role)
         return scope
 
     def text(self,value,limit):
@@ -154,6 +158,7 @@ class ActionLedger:
     def add(self,kind,request_ordinal,**fields):
         self.sequence += 1; ident = self.ledger_id+':'+str(self.sequence)
         row = dict(controller_id=ident,scope_id=self.scope,kind=kind,request_ordinal=request_ordinal,observed_ordinal=self.step(),**fields)
+        if self.trajectory is not None and kind=='tool_request': self.trajectory.event('request')
         size = self.size(row)
         if not self.current['scope_retained'] or len(self.rows)>=self.MAX_RECORDS or self.bytes+size>self.MAX_BYTES:
             self.current['omitted_records'] += 1
@@ -161,6 +166,11 @@ class ActionLedger:
         return ident
 
     def update(self,ident,**fields):
+        if self.trajectory is not None:
+            if fields.get('decision')=='denied':
+                fields['decision_ordinal']=self.step(); self.trajectory.event('denied')
+            if fields.get('backend_invoked') is True: self.trajectory.event('dispatch')
+            if fields.get('worker_outcome')=='observed': self.trajectory.event('result')
         if ident not in self.rows:
             self.current['omitted_updates'] += 1; return
         old = self.rows[ident]; new = dict(old,**fields,last_observation_ordinal=self.step()); delta = self.size(new)-self.size(old)
@@ -232,17 +242,19 @@ class Client:
             if item.get('type')=='reasoning': continue
             name = self.actions.text(item.get('name',item.get('type')),256)
             ident = self.actions.text(item.get('call_id'),256)
+            values = None
             try:
                 values = [self.actions.text(a,4096) for a in run_arguments(item)]
                 argv = [v['text'] for v in values]
                 visibility = 'redacted' if any(v['redacted'] for v in values) else 'observed'
             except (ValueError,TypeError,KeyError,RecursionError,UnicodeError): argv,visibility = None,'invalid_or_unavailable'
             kind = 'tool_request' if item.get('type')=='function_call' else 'unsupported_response_item'
+            argument_fields = dict(argv_observations=values) if self.actions.trajectory is not None else {}
             self.response_actions.append(self.actions.add(kind,self.requests,
                 tool_name=name,model_call_id=ident,argv=argv,argv_visibility=visibility,
                 source_item_type=self.actions.text(item.get('type'),128),decision_scope='local_controller_dispatch',
                 name_policy='declared' if item.get('type')=='function_call' and item.get('name')=='run' else 'undeclared',
-                decision='pending_validation',reserved=False,backend_invoked=False,worker_outcome='unobserved'))
+                decision='pending_validation',reserved=False,backend_invoked=False,worker_outcome='unobserved',**argument_fields))
 
     def report(self):
         return dict(runtime='controller-responses-executor-v1',request_attempts=self.requests,tool_call_reservations=self.tool_calls,
@@ -269,6 +281,7 @@ class Client:
             tool_item_visibility='unavailable',emission_visibility='unavailable')
         self.response_actions = []; self.response_reserved = False; self.response_reason = 'protocol_validation_failed'
         self.response_emissions = []; self.response_protocol_validated = False
+        self.response_items_observed = False; self.response_transport_invoked = False
         disposition = 'denied_or_unresolved'
         try:
             value = self._respond(history,deadline,request_action)
@@ -282,6 +295,8 @@ class Client:
                 else: self.actions.update(action,dispatch_blocked=True)
             raise
         finally:
+            if self.actions.trajectory is not None and self.response_transport_invoked and not self.response_items_observed:
+                self.actions.trajectory.request_gap()
             for emission in self.response_emissions:
                 self.actions.update(emission,protocol_validated=self.response_protocol_validated,response_disposition=disposition)
 
@@ -304,6 +319,7 @@ class Client:
         self.actions.update(request_action,reserved=True,request_ordinal=self.requests)
         self.checkpoint()
         self.actions.update(request_action,transport_invoked=True)
+        self.response_transport_invoked = True
         raw = self.transport(self.credential,body,self.settings['max_response_bytes'],deadline)
         self.actions.update(request_action,response_observed=True,observed_response_bytes=len(raw))
         self.response_bytes += len(raw)
@@ -314,6 +330,7 @@ class Client:
             candidate = value.get('output') if isinstance(value,dict) else None
             if isinstance(candidate,list) and 0<len(candidate)<=64:
                 self.observe_items(candidate)
+                self.response_items_observed = all(isinstance(item,dict) and item.get('type') in ('message','reasoning','function_call') for item in candidate)
                 self.actions.update(request_action,tool_item_visibility='bounded_items_observed',emission_visibility='bounded_items_observed')
             if (not isinstance(value,dict) or value.get('status') != 'completed'
                     or value.get('error') is not None or value.get('incomplete_details') is not None): raise ValueError('response incomplete')
@@ -374,14 +391,16 @@ class Client:
         return output,calls
 
 
-def run_role(client, backend, workspace, inputs, role, instructions, prompt, deadline,*,trial_id=None):
+def run_role(client, backend, workspace, inputs, role, instructions, prompt, deadline,*,trial_id=None,trajectory=None):
     try:
         if role not in ('proposer','evaluator_author','executor'): raise ValueError('unsupported inference role')
-        client.actions.begin(role,trial_id)
+        client.actions.begin(role,trial_id,trajectory=trajectory)
         return _run_role(client,backend,workspace,inputs,role,instructions,prompt,deadline)
     except BaseException:
         client.abort()
         raise
+    finally:
+        if client.actions.trajectory is not None: client.actions.trajectory.close()
 
 
 def _run_role(client, backend, workspace, inputs, role, instructions, prompt, deadline):
@@ -431,12 +450,13 @@ def _run_role(client, backend, workspace, inputs, role, instructions, prompt, de
             {key:run[key] for key in ('status','exit_code','stdout','stderr')},allow_nan=False)))
 
 
-def run_trial(client, backend, workspace, harness, prompt, artifacts, destination, seconds,*,trial_id=None):
+def run_trial(client, backend, workspace, harness, prompt, artifacts, destination, seconds,*,trial_id=None,trajectory=None):
     deadline = min(client.deadline,time.monotonic()+seconds)
     state,commands = run_role(client,backend,workspace,{'harness':harness},'executor',
         'Read and follow task guidance under /inputs/harness. '
         'Work only in /work using run(argv). Complete the supplied task and write its required artifacts. '
-        'Host credentials, network and other runs are unavailable; final claims do not supply a grade.',prompt,deadline,trial_id=trial_id)
+        'Host credentials, network and other runs are unavailable; final claims do not supply a grade.',prompt,deadline,trial_id=trial_id,trajectory=trajectory)
     exported = state.export(artifacts,destination,deadline)
+    captured = dict(_trajectory_capture=client.actions.trajectory) if trajectory is not None else {}
     return dict(status='completed',exit_code=0,timeout=False,stdout='',stderr='',inputs_unchanged=True,
-        inference=client.report(),worker_commands=commands,controller_actions=client.action_report(),artifact_workspace=str(exported))
+        inference=client.report(),worker_commands=commands,controller_actions=client.action_report(),artifact_workspace=str(exported),**captured)
