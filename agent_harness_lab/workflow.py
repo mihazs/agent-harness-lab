@@ -368,10 +368,15 @@ def _improve(args):
     result = dict(status='evaluation_failed', output=str(output), changed_files=[], agent=agent)
     protected = {}
     refinement_feedback = []
+    trials_left = getattr(args, "trial_limit", 24)
     for attempt in range(2):
         if remaining() <= 0:
             result['status'] = 'budget_exhausted'
             break
+        if trials_left < 8:
+            result.update(status='budget_exhausted', reason='shared_trial_budget_exhausted')
+            break
+        trials_left -= 2
         proposal_folder = prepare / f'proposal-{attempt}'
         proposal_folder.mkdir()
         proposal_path = proposal_folder / 'proposal.json'
@@ -500,6 +505,19 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if runner.digest(frozen) != frozen_hash or runner.digest(baseline) != baseline_hash:
             raise ValueError('Evaluation construction changed frozen harness inputs')
         validate_manifest(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, grader_backend=grading)
+        manifest = json.loads(manifest_path.read_text())
+        required_trials = 2 * len(manifest["tasks"])
+        if required_trials > trials_left:
+            result.update(status="budget_exhausted", reason="shared_trial_budget_exhausted")
+            break
+        trials_left -= required_trials
+        if hasattr(args, "project_settings"):
+            from .one_call import unchanged
+            if not unchanged(args):
+                raise ValueError("project configuration changed during improvement")
+            settings = args.project_settings
+            if settings and not set(paths) <= set(settings["harness_paths"]):
+                raise ValueError("candidate exceeds configured harness scope")
         options = argparse.Namespace(manifest=str(manifest_path), baseline=str(baseline),
             candidate=str(frozen), output=str(output / f'evaluation-{attempt}'),
             agent=agent, codex=args.codex, claude=args.claude, parent_deadline=started + args.timeout)
@@ -512,6 +530,10 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             options.sandbox_backend = grading
         runner.evaluate(options)
         evaluated = json.loads((Path(options.output) / 'results.json').read_text())
+        if hasattr(args, 'project_settings'):
+            from .one_call import unchanged
+            if not unchanged(args):
+                raise ValueError('project configuration changed during evaluation')
         protected[evaluation] = runner.digest(evaluation)
         protected[frozen] = runner.digest(frozen)
         if permission_audit is not None:
@@ -540,6 +562,13 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if evaluated['inputs_unchanged'] and candidate_pass and controls_pass and improvement:
             if any(file_state(args.project / name) != value for name, value in original.items()):
                 raise ValueError('Project harness changed during evaluation; recommendation is stale')
+            write_json(output / 'change-plan.json', dict(schema_version=1, kind='behavioral_candidate',
+                baseline_sha256=baseline_hash, candidate_sha256=frozen_hash,
+                operations=[dict(path=name, before=original.get(name), after=proposed.get(name))
+                            for name in sorted(original.keys() | proposed.keys())
+                            if original.get(name) != proposed.get(name)],
+                evaluation=str(options.output), application_eligible=False))
+            result['plan'] = str(output / 'change-plan.json')
             result['status'] = 'inconclusive'
             result['recommendation'] = 'candidate_requires_independent_certification'
             result['blocked_prerequisites'] = ['role_isolation', 'audited_task_lineage',
@@ -590,6 +619,17 @@ def _run_improvement(args):
 
 
 def improve(args):
+    from .one_call import contracts, preflight
+    if getattr(args, 'repair_contracts', False):
+        return contracts(args)
+    if hasattr(args, 'project_settings'):
+        reason = preflight(args)
+        if reason:
+            output = output_dir(args)
+            result = dict(status='blocked', reason=reason, output=str(output), changed_files=[],
+                          remediation='Select a supported runtime/profile and budget; see ahl improve --help')
+            write_json(output/'workflow.json', result)
+            return result
     with project_lock(args.project):
         return _run_improvement(args)
 

@@ -36,6 +36,9 @@ def evaluator():
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == 'rollback':
+        from .one_call import rollback_main
+        return rollback_main(argv[1:])
     if argv and argv[0] == 'sources':
         from agent_harness_lab.sources.cli import main as source_main
         return source_main(argv[1:])
@@ -77,6 +80,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog='ahl', description=__doc__)
     parser.add_argument('--version', action='version', version=version())
     sub = parser.add_subparsers(dest='command', required=True)
+    sub.add_parser('rollback', help='Restore a journaled deployment; use ahl rollback --help')
     for name in ('mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'experiment', 'experiment-history', 'grader-correction', 'regression', 'regression-review', 'sandbox-check', 'research-simulate', 'incident-search', 'promotion', 'benchmark-report', 'doctor', 'init', 'sources'):
         sub.add_parser(name, help=f'{name} tools; use ahl {name} --help')
     for name in ('analyze', 'improve', 'watch'):
@@ -105,13 +109,15 @@ def main(argv=None):
             command.add_argument('--inference-settings', type=Path, help='Explicit settings/key-file and shared caps for controlled Responses roles')
             command.add_argument('--codex', default='codex')
             command.add_argument('--claude', default='claude')
-            command.add_argument('--timeout', type=int, default=2700, help='Whole improvement run budget in seconds')
+            command.add_argument('--timeout', type=int, default=None, help='Whole improvement run budget in seconds')
             command.add_argument('--sandbox-graders', action='store_true', help='Require offline frozen grader controls and trial grading; agent CLI remains cooperative')
             command.add_argument('--cgroup-root', type=Path, help='Explicit delegated cgroup v2 subtree for controlled roles or graders')
             command.add_argument('--image-root', type=Path, help='Explicit extracted readonly runtime image for controlled roles or graders')
             command.add_argument('--image-sha256', help='Required content pin for --image-root')
             command.add_argument('--permission-audit',choices=('permission-results-v1',),help='Require controller-role permission-result qualification; Responses mode only')
             command.add_argument('--disk-bytes', type=int, help='Bound offline role scratch storage; requires --cgroup-root')
+        if name == 'improve':
+            command.add_argument('--repair-contracts', action='store_true', help='Evaluate and apply supported deterministic skill format repairs only; no model calls')
         if name == 'watch':
             command.add_argument('--interval', type=int, default=300, help='Seconds between evidence checks')
             command.add_argument('--max-attempts', type=int, default=3, help='Total transient infrastructure attempts per evidence/configuration')
@@ -127,8 +133,12 @@ def main(argv=None):
         if args.command == 'analyze':
             result = analyze_project(args)
         elif args.command == 'watch':
+            from .one_call import resolve
+            resolve(args, {arg.split("=", 1)[0] for arg in argv})
             return watch(args)
         else:
+            from .one_call import resolve
+            resolve(args, {arg.split("=", 1)[0] for arg in argv})
             if args.timeout <= 0:
                 raise ValueError('timeout must be positive')
             result = improve(args)
