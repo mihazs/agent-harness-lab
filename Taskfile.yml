@@ -19,6 +19,15 @@ tasks:
     desc: Run evaluator unittest cases
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s skills/harness-evaluation/scripts -p "test_*.py"'
+  test:release:update:
+    desc: Verify release installer transactions and installed updater ownership offline
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_release_install.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_updater.py" -v'
   test:diagnostics:corpus:
     desc: Run the private diagnostic annotation and protected-split contracts with synthetic cases
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -490,6 +499,11 @@ tasks:
       AHL_EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_installed_layout.py"'
+      - task: test:release:update
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_*.py"'
       - task: test:sources:normalized-exports
         vars:

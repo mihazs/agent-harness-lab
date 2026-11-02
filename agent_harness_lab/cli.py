@@ -36,6 +36,9 @@ def evaluator():
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == 'update':
+        from agent_harness_lab.updater import main as update_main
+        return update_main(argv[1:])
     if argv and argv[0] == 'sources':
         from agent_harness_lab.sources.cli import main as source_main
         return source_main(argv[1:])
@@ -77,6 +80,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog='ahl', description=__doc__)
     parser.add_argument('--version', action='version', version=version())
     sub = parser.add_subparsers(dest='command', required=True)
+    sub.add_parser('update', help='Update a release installation and its existing skill links')
     for name in ('mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'experiment', 'experiment-history', 'grader-correction', 'regression', 'regression-review', 'sandbox-check', 'research-simulate', 'incident-search', 'promotion', 'benchmark-report', 'doctor', 'init', 'sources'):
         sub.add_parser(name, help=f'{name} tools; use ahl {name} --help')
     for name in ('analyze', 'improve', 'watch'):
