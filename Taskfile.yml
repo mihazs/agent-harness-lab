@@ -50,6 +50,10 @@ tasks:
     desc: Run native private grader correction audit and review cases
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_grader_correction*.py" -v'
+  test:evaluation:bank-export:
+    desc: Run native bank export path and frozen-manifest cases
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_bank_export.py" -v'
   test:sources:
     desc: Run source contracts and checkpoint unittest cases
     cmds:
@@ -269,6 +273,7 @@ tasks:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_oracle_*.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_grader_correction*.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_grader_control_core.py"'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_bank_export.py"'
   test:installed:sources:
     desc: Run native source checks against an installed layout, including optional extras when installed
     dir: '{{.LAYOUT_DIR}}'
