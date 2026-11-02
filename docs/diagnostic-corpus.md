@@ -39,7 +39,8 @@ The lifecycle is pending → claimed → submitted → claimed → reviewed → 
 The second submission uses a different declared reviewer identity; the author
 cannot review their own incident, and adjudication uses a third declared identity.
 Claim/submission bindings and exact event hashes reject stale clients. The store
-lock gives concurrent claims one winner. Original labels and disagreements remain
+lock gives concurrent claims one winner. Declared identities reject surrounding
+whitespace and compare case-insensitively for reviewer separation. Original labels and disagreements remain
 in append-only history after adjudication; an unknown final annotation remains
 unresolved and is excluded from development export.
 
@@ -70,6 +71,8 @@ Re-importing an exported record starts pending; review history is not imported a
 authority.
 
 All storage and exports remain private, including synthetic-source declarations.
+The existing benchmark exporter rejects all canonical corpus outputs even if
+their publication flag and public provenance are forged.
 No public exporter or corpus-to-classifier adapter is included. The next slices
 still need verified grouping, near-duplicate adjudication, a production review
 authentication policy, protected evaluation access, class-wise uncertainty plans

@@ -218,5 +218,32 @@ class DiagnosticCorpusTests(unittest.TestCase):
         linked.unlink(); linked.write_text('not a directory')
         with self.assertRaises(ValueError): self.store.case_ids(128)
 
+    def test_canonical_private_corpus_surfaces_cannot_be_relabelled_for_public_export(self):
+        from agent_harness_lab.evaluation.benchmark import public_export_allowed, summary
+        if __package__:
+            from . import test_benchmark_contracts as benchmark_fixtures
+        else:
+            import test_benchmark_contracts as benchmark_fixtures
+        item=self.reviewed(); exported=self.export()
+        surfaces=[exported,self.store.snapshot(),exported['records'][0],item,
+                  self.store.packet(item['case_id'],'synthetic-reader')]
+        for surface in surfaces:
+            forged={**surface,**benchmark_fixtures.record(), 'publication_allowed':True}
+            with self.subTest(keys=sorted(surface)):
+                self.assertFalse(public_export_allowed([forged]))
+                with self.assertRaises(ValueError): summary([forged],public=True)
+
+    def test_declared_review_identity_cannot_use_padding_to_evade_separation(self):
+        for index,reviewer in enumerate((' synthetic-author','SYNTHETIC-AUTHOR ','\tsynthetic-author\n')):
+            store=CorpusStore(Path(self.temp.name)/('padded-'+str(index))); item=store.enqueue(sample())
+            with self.subTest(reviewer=reviewer),self.assertRaises(ValueError):
+                store.update(item['case_id'],item['event_sha256'],'claimed',reviewer=reviewer)
+        value=sample(); value['author']=' synthetic-author '
+        with self.assertRaises(ValueError): incident(value)
+        item=self.enqueue(); item=self.update(item,'claimed','one'); item=self.update(item,'submitted','one',label())
+        with self.assertRaises(ValueError): self.update(item,'claimed',' one ')
+        item=self.update(item,'claimed','two'); item=self.update(item,'submitted','two',label())
+        with self.assertRaises(ValueError): self.update(item,'adjudicated',' one ',label(),'Padded reviewer')
+
 
 if __name__=='__main__': unittest.main()

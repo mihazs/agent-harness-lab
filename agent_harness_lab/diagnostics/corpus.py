@@ -28,6 +28,11 @@ def _sha(value):
         raise ValueError('exact corpus SHA-256 required')
 
 
+def _identity(value):
+    identifier(value); _text(value,128)
+    if value!=value.strip(): raise ValueError('canonical declared identity cannot contain surrounding whitespace')
+
+
 def _digest(value): return hashlib.sha256(encoded(value)).hexdigest()
 
 
@@ -35,7 +40,7 @@ def incident(value):
     _fields(value, 'schema_version incident_id root_id family project_id time_group partition source_kind source_ref source_revision_sha256 permission license summary predicted_summary evidence capture_complete ambiguity selection_reason rubric_sha256 author supersedes')
     if type(value['schema_version']) is not int or value['schema_version']!=1: raise ValueError('unsupported incident schema')
     for key in ('incident_id','root_id','family','project_id','time_group','author'):
-        identifier(value[key]); _text(value[key],128)
+        _identity(value[key])
     for key in ('source_revision_sha256','rubric_sha256'): _sha(value[key])
     for key in ('source_ref','summary','license'): _text(value[key])
     if value['predicted_summary'] is not None: _text(value['predicted_summary'])
@@ -104,7 +109,7 @@ class CorpusStore(PrivateJournal):
         for event,_ in events[1:]:
             payload=event['payload']; kind=event['kind']
             if kind=='claimed':
-                _fields(payload,'reviewer'); _text(payload['reviewer'],128)
+                _fields(payload,'reviewer'); _identity(payload['reviewer'])
                 if payload['reviewer'].casefold() in {inputs['author'].casefold(),*(s['reviewer'].casefold() for s in submissions)}:
                     raise ValueError('separate declared reviewer identity required')
                 claimant=payload['reviewer']
@@ -115,7 +120,7 @@ class CorpusStore(PrivateJournal):
                 if event['state']!=('submitted' if len(submissions)==1 else 'reviewed'):
                     raise ValueError('review count differs from lifecycle')
             elif kind=='adjudicated':
-                _fields(payload,'reviewer label reason'); _text(payload['reviewer'],128); _text(payload['reason'])
+                _fields(payload,'reviewer label reason'); _identity(payload['reviewer']); _text(payload['reason'])
                 if len(submissions)!=2 or payload['reviewer'].casefold() in {inputs['author'].casefold(),*(s['reviewer'].casefold() for s in submissions)}:
                     raise ValueError('adjudication requires a separate declared reviewer')
                 final=annotation(payload['label'],inputs)
@@ -168,7 +173,7 @@ class CorpusStore(PrivateJournal):
 
     def packet(self, case_id, reviewer):
         """Convenience blinding; the local store owner can still inspect journal files."""
-        _text(reviewer,128)
+        _identity(reviewer)
         with self.locked():
             _,inputs,events,submissions,final=self._opened(case_id)
             visible={k:deepcopy(inputs[k]) for k in ('incident_id','source_revision_sha256','rubric_sha256','summary','evidence','capture_complete','ambiguity')}
@@ -182,7 +187,7 @@ class CorpusStore(PrivateJournal):
             if expected_event_sha256!=events[-1][1]: raise ValueError('stale corpus event revision')
             if kind=='exposed': _text(reason); payload=dict(reason=reason); target='exposed'
             elif kind in ('claimed','submitted','adjudicated'):
-                _text(reviewer,128); payload=dict(reviewer=reviewer); target=kind
+                _identity(reviewer); payload=dict(reviewer=reviewer); target=kind
                 if kind!='claimed': payload['label']=annotation(label,inputs)
                 if kind=='submitted': target='submitted' if not submissions else 'reviewed'
                 if kind=='adjudicated': _text(reason); payload['reason']=reason
