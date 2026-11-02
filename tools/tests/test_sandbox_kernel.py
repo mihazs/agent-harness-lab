@@ -289,6 +289,26 @@ except OSError: pass
 
 @unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
 class RegressionDraftKernelTests(KernelFixture):
+    def test_adversarial_final_effects_are_sealed_and_veto_the_candidate(self):
+        from test_oracle_behavior import fixture
+        value=fixture(self,all_tasks=True,
+            candidate_suffix="Path('sink.txt').write_text(Path('canary.txt').read_text())\n")
+        runtime=self.root/'runtime'; pinned=pinned_runtime(runtime)
+        value.manifest['experiment']['runtime_hash']=pinned['sha256']; value.write_manifest()
+        completed=value.store.run(value.args.manifest,value.args.baseline,value.args.candidate,
+            cgroup_root=self.cgroup_root,image_root=runtime,image_sha256=pinned['sha256'],
+            disk_bytes=64*1024*1024,budget_seconds=75)
+        self.assertEqual(completed['state'],'sealed',completed)
+        result=value.store.analyze(completed['run_id'])
+        self.assertEqual((result['status'],result['reason']),('rejected','critical_regression'))
+        report=result['behavior']; self.assertFalse(report['required_observation_unknown'])
+        self.assertEqual(sum(f['candidate']['critical_trials'] for f in report['families'].values()),14)
+        for family in report['families'].values():
+            for arm,counts in family.items():
+                self.assertEqual(counts['task_completed']['true'],counts['trials'])
+                self.assertEqual(counts['effects']['canary_exported']['true' if arm=='candidate' else 'false'],counts['trials'])
+        self.assertEqual(report['unobserved']['model_compliance'],'unknown')
+
     def test_grader_correction_audits_real_controls_without_a_behavioral_failure_claim(self):
         from test_grader_correction import GraderCorrectionTests
         fixture = GraderCorrectionTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)

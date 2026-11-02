@@ -1,0 +1,415 @@
+{
+  "schema_version": 1,
+  "separate_by": [
+    "root_id",
+    "family"
+  ],
+  "tasks": [
+    {
+      "artifacts": [
+        "result.json",
+        "protected.txt",
+        "sink.txt"
+      ],
+      "family": "state-integrity",
+      "fixture": "tasks/repository-text-benign",
+      "fixture_digest": "1929dbda4c64565dd0428c6bbb85e45a3f1306812ee1e7bad9e78a1db3a2e1a0",
+      "grader_bundle": "graders/repository-text-benign",
+      "grader_digest": "23eb9a449155af2a1a85d9eff1a52e73245f816a3ec1a4ae3dc2e7ef23d76257",
+      "grader_version": "v1",
+      "independence": "unverified",
+      "partition": "development",
+      "permission": "approved",
+      "project_group": "public-synthetic-adversarial",
+      "review_status": "accepted",
+      "reviewer": "synthetic-control-review-v1",
+      "root_id": "state-integrity",
+      "safety": [
+        "public synthetic data only",
+        "offline disposable final-artifact probe",
+        "instruction and skill text is data, not native activation"
+      ],
+      "source_kind": "synthetic",
+      "source_ref": "scripts/build_adversarial_bank.py",
+      "task_id": "repository-text-benign",
+      "time_group": "v1"
+    },
+    {
+      "artifacts": [
+        "result.json",
+        "protected.txt",
+        "sink.txt"
+      ],
+      "family": "state-integrity",
+      "fixture": "tasks/repository-text-adversarial",
+      "fixture_digest": "7301d714c6a1370c84cd05615296e972745805f4401c2f8945592000a5baf740",
+      "grader_bundle": "graders/repository-text-adversarial",
+      "grader_digest": "e28120a1cbd61642c6908ad46e4449bf413da7257ae86be85b9ce099233246ad",
+      "grader_version": "v1",
+      "independence": "unverified",
+      "partition": "development",
+      "permission": "approved",
+      "project_group": "public-synthetic-adversarial",
+      "review_status": "accepted",
+      "reviewer": "synthetic-control-review-v1",
+      "root_id": "state-integrity",
+      "safety": [
+        "public synthetic data only",
+        "offline disposable final-artifact probe",
+        "instruction and skill text is data, not native activation"
+      ],
+      "source_kind": "synthetic",
+      "source_ref": "scripts/build_adversarial_bank.py",
+      "task_id": "repository-text-adversarial",
+      "time_group": "v1"
+    },
+    {
+      "artifacts": [
+        "result.json",
+        "protected.txt",
+        "sink.txt"
+      ],
+      "family": "state-integrity",
+      "fixture": "tasks/retrieved-data-benign",
+      "fixture_digest": "49737f97d46f8dc46e501fa8f46ccce24dcb0e726257b8ea706549ca430d688a",
+      "grader_bundle": "graders/retrieved-data-benign",
+      "grader_digest": "f428fb24ab48480987908065b08e3bf80511b1a9a3e2fe3d730c6e36e13da1bb",
+      "grader_version": "v1",
+      "independence": "unverified",
+      "partition": "development",
+      "permission": "approved",
+      "project_group": "public-synthetic-adversarial",
+      "review_status": "accepted",
+      "reviewer": "synthetic-control-review-v1",
+      "root_id": "state-integrity",
+      "safety": [
+        "public synthetic data only",
+        "offline disposable final-artifact probe",
+        "instruction and skill text is data, not native activation"
+      ],
+      "source_kind": "synthetic",
+      "source_ref": "scripts/build_adversarial_bank.py",
+      "task_id": "retrieved-data-benign",
+      "time_group": "v1"
+    },
+    {
+      "artifacts": [
+        "result.json",
+        "protected.txt",
+        "sink.txt"
+      ],
+      "family": "state-integrity",
+      "fixture": "tasks/retrieved-data-adversarial",
+      "fixture_digest": "9e0f86b1a482ddba9079dc6fa8269c7814af26980b5850f95fe470489e588ee7",
+      "grader_bundle": "graders/retrieved-data-adversarial",
+      "grader_digest": "fc9f63c5d438974f8508975a8a2630a9e2a58d463545b79f837ec0ba4c8923f3",
+      "grader_version": "v1",
+      "independence": "unverified",
+      "partition": "development",
+      "permission": "approved",
+      "project_group": "public-synthetic-adversarial",
+      "review_status": "accepted",
+      "reviewer": "synthetic-control-review-v1",
+      "root_id": "state-integrity",
+      "safety": [
+        "public synthetic data only",
+        "offline disposable final-artifact probe",
+        "instruction and skill text is data, not native activation"
+      ],
+      "source_kind": "synthetic",
+      "source_ref": "scripts/build_adversarial_bank.py",
+      "task_id": "retrieved-data-adversarial",
+      "time_group": "v1"
+    },
+    {
+      "artifacts": [
+        "result.json",
+        "protected.txt",
+        "sink.txt"
+      ],
+      "family": "state-integrity",
+      "fixture": "tasks/instruction-spoof-benign",
+      "fixture_digest": "197cf0ad77ee1d784f4c803f57de8278523042608be2887696442d6b40a58068",
+      "grader_bundle": "graders/instruction-spoof-benign",
+      "grader_digest": "e8cbd3c5e2b1285f906821b7a31ad24a75fbf608f2e8f8f4e83c9732642545d4",
+      "grader_version": "v1",
+      "independence": "unverified",
+      "partition": "development",
+      "permission": "approved",
+      "project_group": "public-synthetic-adversarial",
+      "review_status": "accepted",
+      "reviewer": "synthetic-control-review-v1",
+      "root_id": "state-integrity",
+      "safety": [
+        "public synthetic data only",
+        "offline disposable final-artifact probe",
+        "instruction and skill text is data, not native activation"
+      ],
+      "source_kind": "synthetic",
+      "source_ref": "scripts/build_adversarial_bank.py",
+      "task_id": "instruction-spoof-benign",
+      "time_group": "v1"
+    },
+    {
+      "artifacts": [
+        "result.json",
+        "protected.txt",
+        "sink.txt"
+      ],
+      "family": "state-integrity",
+      "fixture": "tasks/instruction-spoof-adversarial",
+      "fixture_digest": "2d57e41bd48ed463aa6b716407d5e9d8825944abb763487667be54da60fa0bc7",
+      "grader_bundle": "graders/instruction-spoof-adversarial",
+      "grader_digest": "91253c338974f71637464e457d27d4a4f5b36bd4be059e2c4f8781c3c8643839",
+      "grader_version": "v1",
+      "independence": "unverified",
+      "partition": "development",
+      "permission": "approved",
+      "project_group": "public-synthetic-adversarial",
+      "review_status": "accepted",
+      "reviewer": "synthetic-control-review-v1",
+      "root_id": "state-integrity",
+      "safety": [
+        "public synthetic data only",
+        "offline disposable final-artifact probe",
+        "instruction and skill text is data, not native activation"
+      ],
+      "source_kind": "synthetic",
+      "source_ref": "scripts/build_adversarial_bank.py",
+      "task_id": "instruction-spoof-adversarial",
+      "time_group": "v1"
+    },
+    {
+      "artifacts": [
+        "result.json",
+        "protected.txt",
+        "sink.txt"
+      ],
+      "family": "oracle-integrity",
+      "fixture": "tasks/skill-spoof-benign",
+      "fixture_digest": "29b768a78e1c912f28d5735473fd7714db61165f2b55edc282b22ec997288388",
+      "grader_bundle": "graders/skill-spoof-benign",
+      "grader_digest": "7c388ea91d8f778d7726622ba4d2aff3cea57951adc9ce3b3a0af974c8edfc42",
+      "grader_version": "v1",
+      "independence": "unverified",
+      "partition": "development",
+      "permission": "approved",
+      "project_group": "public-synthetic-adversarial",
+      "review_status": "accepted",
+      "reviewer": "synthetic-control-review-v1",
+      "root_id": "oracle-integrity",
+      "safety": [
+        "public synthetic data only",
+        "offline disposable final-artifact probe",
+        "instruction and skill text is data, not native activation"
+      ],
+      "source_kind": "synthetic",
+      "source_ref": "scripts/build_adversarial_bank.py",
+      "task_id": "skill-spoof-benign",
+      "time_group": "v1"
+    },
+    {
+      "artifacts": [
+        "result.json",
+        "protected.txt",
+        "sink.txt"
+      ],
+      "family": "oracle-integrity",
+      "fixture": "tasks/skill-spoof-adversarial",
+      "fixture_digest": "10f1fd0287e428987ba129e10dc7cfe8cf8a1dcd77df17a95951cdd7df34c5f4",
+      "grader_bundle": "graders/skill-spoof-adversarial",
+      "grader_digest": "7296e5d3acb2271da0d06aa9eddf65b8d1c280b01864c535d410665940811ef9",
+      "grader_version": "v1",
+      "independence": "unverified",
+      "partition": "development",
+      "permission": "approved",
+      "project_group": "public-synthetic-adversarial",
+      "review_status": "accepted",
+      "reviewer": "synthetic-control-review-v1",
+      "root_id": "oracle-integrity",
+      "safety": [
+        "public synthetic data only",
+        "offline disposable final-artifact probe",
+        "instruction and skill text is data, not native activation"
+      ],
+      "source_kind": "synthetic",
+      "source_ref": "scripts/build_adversarial_bank.py",
+      "task_id": "skill-spoof-adversarial",
+      "time_group": "v1"
+    },
+    {
+      "artifacts": [
+        "result.json",
+        "protected.txt",
+        "sink.txt"
+      ],
+      "family": "oracle-integrity",
+      "fixture": "tasks/counterfeit-oracle-benign",
+      "fixture_digest": "4d580ae7e2174fb49ad2ed7bc6d0910a745b203214e8dc18a2441026bef3137a",
+      "grader_bundle": "graders/counterfeit-oracle-benign",
+      "grader_digest": "aa01df03d9dd901f86b24c4db0e621962f65672a6c823e9bb17f1e8a4f96a682",
+      "grader_version": "v1",
+      "independence": "unverified",
+      "partition": "development",
+      "permission": "approved",
+      "project_group": "public-synthetic-adversarial",
+      "review_status": "accepted",
+      "reviewer": "synthetic-control-review-v1",
+      "root_id": "oracle-integrity",
+      "safety": [
+        "public synthetic data only",
+        "offline disposable final-artifact probe",
+        "instruction and skill text is data, not native activation"
+      ],
+      "source_kind": "synthetic",
+      "source_ref": "scripts/build_adversarial_bank.py",
+      "task_id": "counterfeit-oracle-benign",
+      "time_group": "v1"
+    },
+    {
+      "artifacts": [
+        "result.json",
+        "protected.txt",
+        "sink.txt"
+      ],
+      "family": "oracle-integrity",
+      "fixture": "tasks/counterfeit-oracle-adversarial",
+      "fixture_digest": "857b3c4665f5f783302b5123f147c018768054bd0e147ddfcfb6317e2f9b3350",
+      "grader_bundle": "graders/counterfeit-oracle-adversarial",
+      "grader_digest": "394f3e84d4201bc2e00f287aa09d169d467a66be5753fe513bc7e09debd605a1",
+      "grader_version": "v1",
+      "independence": "unverified",
+      "partition": "development",
+      "permission": "approved",
+      "project_group": "public-synthetic-adversarial",
+      "review_status": "accepted",
+      "reviewer": "synthetic-control-review-v1",
+      "root_id": "oracle-integrity",
+      "safety": [
+        "public synthetic data only",
+        "offline disposable final-artifact probe",
+        "instruction and skill text is data, not native activation"
+      ],
+      "source_kind": "synthetic",
+      "source_ref": "scripts/build_adversarial_bank.py",
+      "task_id": "counterfeit-oracle-adversarial",
+      "time_group": "v1"
+    },
+    {
+      "artifacts": [
+        "result.json",
+        "protected.txt",
+        "sink.txt"
+      ],
+      "family": "oracle-integrity",
+      "fixture": "tasks/counterfeit-receipt-benign",
+      "fixture_digest": "bf9b3a19d4716e90d3fc419f32558f986a64911c1d3567d2afe662706f35bb37",
+      "grader_bundle": "graders/counterfeit-receipt-benign",
+      "grader_digest": "d573cd6cced840b04a1d0670466d596d8ed03cde6ee8f039a2b6a3a3c822eaf1",
+      "grader_version": "v1",
+      "independence": "unverified",
+      "partition": "development",
+      "permission": "approved",
+      "project_group": "public-synthetic-adversarial",
+      "review_status": "accepted",
+      "reviewer": "synthetic-control-review-v1",
+      "root_id": "oracle-integrity",
+      "safety": [
+        "public synthetic data only",
+        "offline disposable final-artifact probe",
+        "instruction and skill text is data, not native activation"
+      ],
+      "source_kind": "synthetic",
+      "source_ref": "scripts/build_adversarial_bank.py",
+      "task_id": "counterfeit-receipt-benign",
+      "time_group": "v1"
+    },
+    {
+      "artifacts": [
+        "result.json",
+        "protected.txt",
+        "sink.txt"
+      ],
+      "family": "oracle-integrity",
+      "fixture": "tasks/counterfeit-receipt-adversarial",
+      "fixture_digest": "102bd349638c03e733c36b42fa333480160ee9f1bf225789235244e47a147880",
+      "grader_bundle": "graders/counterfeit-receipt-adversarial",
+      "grader_digest": "ea92012c39839a3b2244fca354c27d1544bea0cf71441a8edc4c577a7ef6fb0f",
+      "grader_version": "v1",
+      "independence": "unverified",
+      "partition": "development",
+      "permission": "approved",
+      "project_group": "public-synthetic-adversarial",
+      "review_status": "accepted",
+      "reviewer": "synthetic-control-review-v1",
+      "root_id": "oracle-integrity",
+      "safety": [
+        "public synthetic data only",
+        "offline disposable final-artifact probe",
+        "instruction and skill text is data, not native activation"
+      ],
+      "source_kind": "synthetic",
+      "source_ref": "scripts/build_adversarial_bank.py",
+      "task_id": "counterfeit-receipt-adversarial",
+      "time_group": "v1"
+    },
+    {
+      "artifacts": [
+        "result.json",
+        "protected.txt",
+        "sink.txt"
+      ],
+      "family": "export-control",
+      "fixture": "tasks/canary-export-benign",
+      "fixture_digest": "ea8cd0d23371e273f2696a6fa7dc095183248ca1f9931a6a716f1ae6bf1bb88b",
+      "grader_bundle": "graders/canary-export-benign",
+      "grader_digest": "976c5df3a5e8ab76fa1db6b4106acff4314a19cc90448b2c9d78b905c78beb22",
+      "grader_version": "v1",
+      "independence": "unverified",
+      "partition": "development",
+      "permission": "approved",
+      "project_group": "public-synthetic-adversarial",
+      "review_status": "accepted",
+      "reviewer": "synthetic-control-review-v1",
+      "root_id": "export-control",
+      "safety": [
+        "public synthetic data only",
+        "offline disposable final-artifact probe",
+        "instruction and skill text is data, not native activation"
+      ],
+      "source_kind": "synthetic",
+      "source_ref": "scripts/build_adversarial_bank.py",
+      "task_id": "canary-export-benign",
+      "time_group": "v1"
+    },
+    {
+      "artifacts": [
+        "result.json",
+        "protected.txt",
+        "sink.txt"
+      ],
+      "family": "export-control",
+      "fixture": "tasks/canary-export-adversarial",
+      "fixture_digest": "867e43424493d3ff29c84a9eae5bab009f12cce3989d118a7502684c9da43054",
+      "grader_bundle": "graders/canary-export-adversarial",
+      "grader_digest": "87c7801b379cae39b01be884851e42b70ab9be1f438d431e333c7815d62e938f",
+      "grader_version": "v1",
+      "independence": "unverified",
+      "partition": "development",
+      "permission": "approved",
+      "project_group": "public-synthetic-adversarial",
+      "review_status": "accepted",
+      "reviewer": "synthetic-control-review-v1",
+      "root_id": "export-control",
+      "safety": [
+        "public synthetic data only",
+        "offline disposable final-artifact probe",
+        "instruction and skill text is data, not native activation"
+      ],
+      "source_kind": "synthetic",
+      "source_ref": "scripts/build_adversarial_bank.py",
+      "task_id": "canary-export-adversarial",
+      "time_group": "v1"
+    }
+  ]
+}

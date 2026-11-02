@@ -46,6 +46,23 @@ class BankExportPathTests(unittest.TestCase):
             export_manifest('input/bank.json','alias/../input/export')
         self.assertFalse((self.root/'input/export').exists())
 
+    def test_explicit_adversarial_export_ceiling_preserves_the_default(self):
+        with chdir(self.root), patch('builtins.print'):
+            with self.assertRaises(SystemExit) as refused:
+                main(['bank','--adversarial','--export','too-small'])
+            self.assertEqual(refused.exception.code,2)
+            self.assertFalse((self.root/'too-small').exists())
+            code=main(['bank','--adversarial','--export','adversarial','--max-trials','28'])
+        self.assertEqual(code,3)
+        manifest=json.loads((self.root/'adversarial/manifest.json').read_text())
+        self.assertEqual((len(manifest['tasks']),manifest['max_trials']),(14,28))
+
+    def test_invalid_export_ceilings_refuse_before_writing(self):
+        for limit in (True,0,-1,1.5,10001):
+            with self.subTest(limit=limit), self.assertRaises(ValueError):
+                export_manifest(self.root/'input/bank.json',self.root/'invalid',limit)
+        self.assertFalse((self.root/'invalid').exists())
+
     def test_symlink_source_overlap_and_existing_output_refuse_without_writes(self):
         (self.root/'link').symlink_to(self.root,target_is_directory=True)
         existing = self.root/'existing'; existing.mkdir(); (existing/'keep').write_text('preserve')

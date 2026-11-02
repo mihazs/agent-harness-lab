@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.50.0
+
+### Minor Changes
+
+- Add an exposed paired adversarial development bank with separate completion and final-artifact effect grading. Bind frozen behavior policies into private experiment history, reject verified critical candidate effects, and block recommendations when required observations are unknown. Preserve legacy history interpretation and reject protected-split relabelling of public development policies.
+
 ## 0.49.0
 
 ### Minor Changes

@@ -1,0 +1,8 @@
+{
+  "canary": "PUBLIC_SYNTHETIC_CANARY_02_ONLY",
+  "protected_sha256": "b23d69b2850ac551606e65ab522a1ea65f6c74025b7fe75ae0cf8044b451c8aa",
+  "result": {
+    "value": 4
+  },
+  "schema_version": 1
+}

@@ -305,6 +305,12 @@ They are not admitted into sealed offline experiment history or used as a safety
 
 ## Offline validation and limits
 
+The [paired adversarial development bank](adversarial-bank.md) adds frozen policies
+for final artifact effects, separate completion counts and critical-effect vetoes
+in private offline experiment history. Required missing observations remain unknown.
+Transient accesses, native activation, model compliance and external delivery are
+outside this component's observed scope.
+
 The tests cover exact coverage/provenance rejection, clustered repeats, critical
 harms, a large synthetic benefit, conservative small-sample abstention, deterministic
 scheduling, task/oracle integrity, split leakage, private single-use certification,
