@@ -20,14 +20,18 @@ def validate_pair(baseline,candidate,strict=True):
 
 
 def public_export_allowed(records):
-    if not records: return False
+    if not records or isinstance(records,dict): return False
     for record in records:
         for metadata in (record,record.get('receipt'),record.get('analysis'),record.get('context')):
             if isinstance(metadata,dict) and (metadata.get('publication_allowed',True) is not True
                     or any(key in metadata for key in ('controller_run_id','cohort_manifest_sha256','preservation','receipt_sha256',
-                        'cohort_binding','controller_qualification','qualification_sha256'))
+                        'cohort_binding','controller_qualification','qualification_sha256','controller_grade',
+                        'trajectory_profile','trajectory_analysis','policy_sha256'))
                     or metadata.get('algorithm') in ('private-preservation-decision-v1','private-controller-history-report-v1',
                         'guarded-preservation-search-v1','corrected-cohort-qualification-v1')
+                    or metadata.get('profile')=='controller-trajectory-v1'
+                    or metadata.get('report_kind')=='controller_trajectory'
+                    or metadata.get('outcome_mapping')=='artifact_and_required_v1'
                     or metadata.get('evidence_source')=='controller_verified_development_only'):
                 return False
         provenance=record.get('provenance',{})
@@ -56,6 +60,7 @@ def measured_cost(usage,pricing=None):
 def summary(records,*,public=False):
     if public and not public_export_allowed(records):
         raise ValueError('private/mixed/unapproved results cannot be exported, including aggregates')
+    if isinstance(records,dict): return trajectory_summary(records)
     strata={}
     for record in records:
         pair=validate_pair(record['baseline_runtime'],record['candidate_runtime'],strict=False)
@@ -73,19 +78,71 @@ def summary(records,*,public=False):
                              'green deterministic CI is not a model capability certificate'])
 
 
+def trajectory_summary(results):
+    """Saved JSON is descriptive input; it cannot recreate a live controller receipt."""
+    from .trajectory_assertions import PROFILE
+    if results.get('trajectory_profile') != PROFILE:
+        raise ValueError('unsupported controller trajectory report')
+    trials = results.get('trials')
+    if not isinstance(trials,list) or not 0 < len(trials) <= 10000:
+        raise ValueError('bounded trajectory trials required')
+    rows = []
+    for trial in trials:
+        if not isinstance(trial,dict): raise ValueError('trajectory trial object required')
+        grade = trial.get('controller_grade',{})
+        if not isinstance(grade,dict): raise ValueError('trajectory grade object required')
+        receipt = grade.get('trajectory',{})
+        if not isinstance(receipt,dict): raise ValueError('trajectory receipt object required')
+        assertions = receipt.get('assertions',[])
+        if not isinstance(assertions,list) or len(assertions)>32:
+            raise ValueError('bounded assertion report required')
+        row = {key:trial.get(key) for key in ('trial_id','task','root','family','version','status')}
+        for value in row.values():
+            if value is not None and (not isinstance(value,str) or len(value.encode('utf-8'))>256):
+                raise ValueError('bounded trajectory report identity/status required')
+        if not row['task']: raise ValueError('trajectory task identity required')
+        reported_assertions = []
+        for assertion in assertions:
+            if not isinstance(assertion,dict): raise ValueError('trajectory assertion object required')
+            item = {key:assertion.get(key) for key in ('assertion_id','assertion_sha256','status')}
+            if (any(not isinstance(v,str) or not 0<len(v.encode('utf-8'))<=128 for v in item.values())
+                    or item['status'] not in ('satisfied','violated','unknown')):
+                raise ValueError('bounded trajectory assertion identity/status required')
+            item['coverage_complete'] = assertion.get('coverage_complete') is True
+            reported_assertions.append(item)
+        row.update(artifact_outcome=grade.get('artifact_outcome') if type(grade.get('artifact_outcome')) is bool else None,
+            trajectory_status=receipt.get('status') if receipt.get('status') in ('satisfied','violated','unknown') else 'unknown',
+            combined_outcome=grade.get('outcome') if type(grade.get('outcome')) is bool else None,
+            critical_violation=grade.get('critical_violation') is True,
+            required_observation_unknown=grade.get('required_observation_unknown') is not False,
+            assertions=reported_assertions)
+        rows.append(row)
+    return dict(schema_version=1,report_kind='controller_trajectory',trials=rows,
+        publication_allowed=False,automatic_promotion=False,history_authority='unverified',
+        native_identity='unverified',oracle_validity='unverified',report_authority='imported_unverified',
+        analysis=dict(status='unverified',reason='saved_json_cannot_recreate_controller_authority'),
+        limitations=['Reported outcomes are unverified imported claims; no adoption or effect-safety certificate.',
+            'Assertion counts are not independent samples. Hidden reads, transient writes and delivery remain unobserved.'])
+
+
 def render(result):
     if result.get('report_kind')=='controller_history':
         from .history_report import render as render_history
         return render_history(result)
-    lines=['# Matched benchmark summary','','| Runtime stratum | Runs | Statuses | Settings verified |',
-           '| --- | ---: | --- | --- |']
+    trajectory = result.get('report_kind')=='controller_trajectory'
+    title = 'Private controller trajectory claims — unverified import' if trajectory else 'Matched benchmark summary'
+    headers = ('Task / arm','Artifact outcome','Trajectory','Combined outcome','Critical / unknown required') if trajectory else ('Runtime stratum','Runs','Statuses','Settings verified')
+    values = ([(r['task']+' / '+str(r['version']),r['artifact_outcome'],r['trajectory_status'],r['combined_outcome'],
+                str(r['critical_violation'])+' / '+str(r['required_observation_unknown'])) for r in result['trials']]
+              if trajectory else [(' / '.join(str(v) for v in g['runtime_stratum']),g['runs'],
+                    json.dumps(g['statuses'],sort_keys=True),g['effective_settings_verified']) for g in result['strata']])
+    notice = (' '.join(result['limitations']) if trajectory else
+              'No pooled model effect. Costs remain unknown without measured usage and supplied dated pricing. Synthetic checks are not capability evidence.')
+    lines=['# '+title,'','| '+' | '.join(headers)+' |','| '+' | '.join('---' for _ in headers)+' |']
     rows=[]
-    for group in result['strata']:
-        label=' / '.join(str(v) for v in group['runtime_stratum'])
-        statuses=json.dumps(group['statuses'],sort_keys=True)
-        lines.append(f"| {label.replace('|','/')} | {group['runs']} | {statuses.replace('|','/')} | {group['effective_settings_verified']} |")
-        rows.append('<tr>'+''.join('<td>'+html.escape(str(v))+'</td>' for v in
-                    (label,group['runs'],statuses,group['effective_settings_verified']))+'</tr>')
-    lines+=['','No pooled model effect. Costs remain unknown without measured usage and supplied dated pricing.']
-    document='<!doctype html><html lang="en"><meta charset="utf-8"><title>Matched benchmark summary</title><body><h1>Matched benchmark summary</h1><table><tr><th>Runtime stratum</th><th>Runs</th><th>Statuses</th><th>Settings verified</th></tr>'+''.join(rows)+'</table><p>No pooled model effect. Synthetic checks are not capability evidence.</p></body></html>'
+    for row in values:
+        lines.append('| '+' | '.join(str(v).replace('|','/').replace('\n',' ') for v in row)+' |')
+        rows.append('<tr>'+''.join('<td>'+html.escape(str(v))+'</td>' for v in row)+'</tr>')
+    lines+=['',notice]
+    document='<!doctype html><html lang="en"><meta charset="utf-8"><title>'+html.escape(title)+'</title><body><h1>'+html.escape(title)+'</h1><table><tr>'+''.join('<th>'+h+'</th>' for h in headers)+'</tr>'+''.join(rows)+'</table><p>'+html.escape(notice)+'</p></body></html>'
     return '\n'.join(lines)+'\n',document

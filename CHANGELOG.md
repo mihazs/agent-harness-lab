@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.58.0
+
+### Minor Changes
+
+- Add frozen, bounded trajectory assertions over controller requests, denials, dispatches and observed results. Combine three-valued action compliance with independent artifact grades, retain critical violations and unknown required evidence, and expose private descriptive reports without reconstructing controller authority from saved JSON.
+
 ## 0.57.0
 
 ### Minor Changes

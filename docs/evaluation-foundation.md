@@ -322,6 +322,79 @@ Run `task test:evaluation:controller-emissions` for native protocol, fidelity an
 paired-runner controls; the existing `task test:sandbox:kernel:roles` also checks
 emission records with real pinned workers and simulated API transport.
 
+## Frozen controller trajectory assertions
+
+A frozen grader bundle may contain `trajectory.json` to add action compliance to
+its independent artifact grade. Artifact-only bundles retain their existing
+behavior. The first profile is `schema_version: 1`,
+`profile: "controller-trajectory-v1"`, with exact `task_id`, `root_id`, `family`,
+`engine`, `outcome_mapping: "artifact_and_required_v1"` and `assertions` fields.
+`task experiment:trajectory-engine` prints the required engine object: it pins
+every application Python source, the owned evaluator and the Python runtime.
+Changing any dependency or assertion requires a new complete bundle digest and
+experiment oracle pin, followed by fresh trials in both arms. The candidate
+workspace cannot supply or change this policy.
+
+Each assertion has an `id`, Boolean `required`, `severity` (`normal` or `critical`)
+and `rule`. The bounded rule language supports:
+
+| Kind | Required rule fields beyond `kind` |
+| --- | --- |
+| `required`, `forbidden` | `stage`, `tool`, `arguments`, `quantifier` |
+| `count` | `stage`, `tool`, `arguments`, integer `minimum`, integer or null `maximum` |
+| `sequence` | `stage`, `mode` (`subsequence` or `exact`), nonempty `steps` of `{tool, arguments}` |
+| `all_of`, `any_of` | Nonempty `children` of rules |
+
+`stage` selects `request`, `denied`, `dispatch` or observed backend `result`.
+`tool` is an exact controller tool identifier, initially `run`; command text
+does not create a semantic tool catalog. `arguments: null` compares only the tool.
+Exact argv uses `{"mode":"exact","argv":["/usr/bin/true"]}`. Partial argv uses
+`{"mode":"partial","argv":{"0":"/usr/bin/true"}}`: keys are canonical
+zero-based decimal array indices, and only selected observed entries are compared.
+An index outside a completely captured argv array is a known mismatch; a missing
+argv observation or an unavailable captured entry remains unknown.
+Objects other than these supported argv structures are rejected.
+
+`quantifier: "exists"` requires one matching action. `all` requires a nonempty
+domain of the named tool at the selected stage, with every such action matching
+the argv predicate; known unrelated tools are excluded. `forbidden` negates the
+selected quantifier. An empty complete domain therefore violates required `all`
+and satisfies forbidden `all`. Incomplete relevant coverage remains unknown.
+
+Positive witnesses, count lower bounds already reached and observed counts above
+a maximum can decide despite omissions. Absence, upper-bound satisfaction and
+exact sequences require closed, predicate-relevant coverage. Request, denial,
+dispatch and backend-result order use their own controller ordinals; no concurrent
+dependency is reconstructed. Missing, redacted, clipped or invalidly encoded
+compared arguments stay unknown. A backend result establishes a return observation,
+not semantic success. Group truth tables preserve every child: `all_of` fails on
+any violation and otherwise needs all satisfied; `any_of` passes on any satisfaction
+and otherwise needs all violated. Other combinations are unknown.
+
+Policies reject duplicate/unknown fields, invalid types/numbers, empty groups,
+more than 64 KiB, depth over eight, more than 128 predicate nodes or sequences
+longer than 32 steps. Receipts are bounded to 1 MiB and identify predicates by
+digest and local controller IDs without echoing argv. Live controller handles
+bind policy, task, scheduled trial and scope; JSON imports cannot recreate them.
+Malformed or unsupported evidence is invalid and unknown.
+
+The frozen outcome mapping requires a valid successful artifact grade and all
+required assertions satisfied. A required violation or any critical violation
+blocks success; unknown required observations cannot pass. Critical violations
+remain visible even when execution or artifact grading fails. The independent
+artifact grade is retained alongside the combined controller grade. Optional
+noncritical assertions remain diagnostic. The existing paired analysis receives
+one outcome per scheduled trial; assertions and tool counts never create roots.
+Native identity, semantic independence and history authority remain unverified;
+these receipts never authorize automatic promotion or certify hidden reads,
+transient writes, external delivery or all effects.
+
+`task test:evaluation:trajectory` runs native synthetic capture, matching, typed
+grading, paired-analysis and private-report controls without model/network calls.
+The same target runs in wheel and archive verification. See
+[controlled experiment reporting](controlled-experiments.md#controller-trajectory-reports)
+for saved-result handling and migration limits.
+
 ## Offline validation and limits
 
 The [paired adversarial development bank](adversarial-bank.md) adds frozen policies

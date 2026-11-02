@@ -323,6 +323,18 @@ def evaluate(args):
         ordered = [dict(version=version, task=task['id'], repetition=0) for version in versions for task in tasks]
     if manifest.get('cohort_manifest') is not None and (plan is None or plan.cohort_manifest_sha256 is None):
         raise ValueError('cohort declarations require a frozen experiment plan pin')
+    trajectories = {}
+    if frozen_bundles:
+        from agent_harness_lab.evaluation import trajectory_assertions
+        for task in tasks:
+            bundle = contained(manifest_path.parent, declared_bundles[task['id']]['path'])
+            binding = trajectory_assertions.capture_policy(bundle, frozen_bundles[str(bundle)],
+                dict(task_id=task['id'], root_id=task.get('root'), family=task.get('family')))
+            if binding is not None:
+                if not controlled: raise ValueError('trajectory assertions require the controller Responses executor')
+                if plan is not None and (task.get('root'), task.get('family')) != next(t[1:] for t in plan.tasks if t[0] == task['id']):
+                    raise ValueError('trajectory lineage differs from frozen experiment')
+                trajectories[task['id']] = binding
     blocked = configured and configured['blocked_reason']
     if configured and not evaluation_unchanged(Path(args.config), configured):
         blocked = 'configuration_changed_before_execution'
@@ -403,6 +415,16 @@ def evaluate(args):
                 cohort_qualification='current_membership_only',publication_allowed=False)
     results['profile'] = plan.profile if plan else 'descriptive_smoke'
     results['automatic_promotion'] = False
+    if trajectories:
+        results.update(trajectory_profile=trajectory_assertions.PROFILE, publication_allowed=False,
+            history_authority='unverified', trajectory_policy_digests={key:b['policy_sha256'] for key,b in trajectories.items()})
+    def record_trajectory(record, binding, capture):
+        receipt = trajectory_assertions.evaluate(binding, capture)
+        if receipt.get('trial_id') != record['controller_trial_id']:
+            receipt = trajectory_assertions.evaluate(binding, None)
+        grade = trajectory_assertions.compose(binding, record.get('grader'), receipt)
+        record['controller_grade'] = grade
+        return grade
     for scheduled in ordered:
         version, task = scheduled['version'], next(t for t in tasks if t['id'] == scheduled['task'])
         root = versions[version]
@@ -461,16 +483,21 @@ def evaluate(args):
             results['trials'].append(record)
             continue
         grade_workspace = workspace
+        binding, trajectory_capture = trajectories.get(task['id']), None
         if controlled:
+            trial_id = record.get('trial_id') or 'trial-'+str(len(results['trials'])+1)
+            if binding is not None: record['controller_trial_id'] = trial_id
             try:
                 run = response_runtime.run_trial(client,backend,workspace,root,prompt,task['artifacts'],trial/'artifacts',min(timeout,remaining),
-                    trial_id=record.get('trial_id') or 'trial-'+str(len(results['trials'])+1))
+                    trial_id=trial_id, trajectory=binding)
+                trajectory_capture = run.pop('_trajectory_capture', None)
                 record['controller_actions'] = run.pop('controller_actions')
                 grade_workspace = Path(run.pop('artifact_workspace'))
             except (response_runtime.InferenceError,ValueError,OSError,subprocess.SubprocessError) as exc:
                 client.abort()
                 record.update(status='budget_exhausted' if isinstance(exc,TimeoutError) else 'execution_error',error=str(exc),
                     inference=client.report(),controller_actions=client.action_report())
+                if binding is not None: record_trajectory(record, binding, client.actions.trajectory)
                 results['trials'].append(record)
                 continue
         elif offline:
@@ -517,12 +544,32 @@ def evaluate(args):
                     grade = execute(grader, manifest_path.parent, min(timeout, remaining))
                     record['grader'] = grade
                     record['status'] = grading_status(grade,typed=bool(frozen_bundles))
+        if binding is not None:
+            grade = record_trajectory(record, binding, trajectory_capture)
+            if record['status'] in ('passed', 'failed'):
+                record['status'] = ('passed' if grade['outcome'] is True and grade['valid'] else
+                                    'failed' if grade['outcome'] is False else 'trajectory_unknown')
         verify_inputs(record)
         results['trials'].append(record)
         (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
     results['elapsed_seconds'] = time.monotonic() - started
     if client is not None: results['runtime']['inference'] = client.report()
     results['inputs_unchanged'] = inputs_unchanged()
+    if trajectories and plan is not None:
+        from agent_harness_lab.evaluation.statistics import TrialRecord, analyze
+        records = []
+        for trial in results['trials']:
+            grade = trial.get('controller_grade', trial.get('grader', {}))
+            outcome = grade.get('outcome') if trial['status'] in ('passed', 'failed') else None
+            records.append(TrialRecord(trial['trial_id'], outcome,
+                'graded' if type(outcome) is bool and (grade.get('valid') is True if 'controller_grade' in trial else True) else 'unknown',
+                'executable_grader', plan.baseline_hash, plan.candidate_hash, plan.grader_hash, plan.runtime_hash,
+                grade.get('critical_violation') is True))
+        results['trajectory_analysis'] = (analyze(plan, records) if results['inputs_unchanged'] else
+            dict(status='blocked', reason='frozen_inputs_changed'))
+        results['trajectory_analysis'].update(oracle_validity='unverified', native_identity='unverified',
+            root_independence='unverified', inference_scope='conditional_on_declared_root_lineage',
+            history_authority='unverified', automatic_promotion=False, publication_allowed=False)
     (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
     return 0 if results['inputs_unchanged'] and all(t['status'] == 'passed' for t in results['trials']) else 1
 
