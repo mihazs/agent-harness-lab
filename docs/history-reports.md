@@ -44,6 +44,7 @@ Python callers use `benchmark.history_summary(store_path, receipt_refs)` followe
 by `benchmark.render(result)`. Results remain private analysis evidence and grant
 no certification or adoption authority. Reverify receipts before later use.
 
-Guarded optimization and corrected-oracle requalification remain separate work
-under issue #122. Run `task test:history-report` for native synthetic reporting,
+[Guarded development search](guarded-search.md) uses current receipts for candidate
+selection and fresh confirmation. Corrected-oracle requalification remains separate
+work under issue #122. Run `task test:history-report` for native synthetic reporting,
 revocation, rendering and publication-boundary checks.
