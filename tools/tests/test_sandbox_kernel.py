@@ -1,6 +1,7 @@
 """Opt-in real kernel boundaries; synthetic fixtures, no inference or credentials."""
 from contextlib import contextmanager
 import errno
+import hashlib
 import os
 import json
 import re
@@ -314,6 +315,72 @@ class RegressionDraftKernelTests(KernelFixture):
         reviewed = fixture.store.review(fixture.case_id,fixture.review_file())
         self.assertEqual(reviewed['state'],'reviewed'); self.assertEqual(fixture.bank.read_bytes(),parent)
         self.assertFalse(reviewed['task_failure_verified']); self.assertFalse(reviewed['bank_replacement'])
+
+    def test_grader_correction_applies_and_reruns_entire_pair_with_real_pinned_workers(self):
+        from dataclasses import asdict
+        from agent_harness_lab.cli import evaluator
+        from agent_harness_lab.evaluation.oracle import identity
+        from agent_harness_lab.evaluation.oracle_history import HistoryStore
+        from agent_harness_lab.evaluation.plan import ExperimentSpec,schedule
+        from test_grader_correction import GraderCorrectionTests
+        fixture = GraderCorrectionTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        rootfs = self.root/'runtime'; frozen = pinned_runtime(rootfs)
+        fixture.spec_value['image_sha256'] = frozen['sha256']; fixture.write_spec()
+        proposed = fixture.propose()
+        profile = dict(cgroup_root=self.cgroup_root,image_root=rootfs,image_sha256=frozen['sha256'],disk_bytes=64*1024*1024,budget_seconds=60)
+        backend = SandboxBackend(**{k:v for k,v in profile.items() if k!='budget_seconds'})
+        audited = fixture.store.audit(proposed['case_id'],backend); self.assertEqual(audited['state'],'audited',audited)
+        fixture.store.review(fixture.case_id,fixture.review_file())
+        root = fixture.root; baseline,candidate = root/'baseline',root/'candidate'
+        export = root/'prior-export'; export.mkdir()
+        shutil.copytree(root/'fixture',export/'fixture'); shutil.copytree(root/'oldoracle',export/'oldoracle')
+        for folder,order in ((baseline,('count','label')),(candidate,('label','count'))):
+            folder.mkdir()
+            (folder/'solve.py').write_text("import json,pathlib\nw=pathlib.Path.cwd(); data=json.loads((w/'task.json').read_text())['inputs']\n"
+                +f"value={{k:data[k] for k in {order!r}}}\n"
+                +"(w/'result.json').write_text(json.dumps(value,separators=(',',':')))\n")
+        runner = evaluator()
+        task = dict(id=fixture.task['task_id'],root=fixture.task['root_id'],family=fixture.task['family'],split='development',
+            prompt=json.loads((root/'fixture/task.json').read_text())['prompt'],fixture='fixture',artifacts=fixture.task['artifacts'],
+            grader=[sys.executable,str(export/'oldoracle/grade.py.txt'),'{workspace}',str(export/'oldoracle/expected.json')],
+            offline_executor=['/usr/bin/python3','-I','/inputs/harness/solve.py'])
+        bundles = {task['id']:dict(path='oldoracle',digest=fixture.task['grader_digest'])}
+        spec = ExperimentSpec('synthetic-real-correction-pair',((task['id'],task['root'],task['family']),),2,13,4,2,.05,.1,.05,
+            ((task['family'],1),),runner.digest(baseline),runner.digest(candidate),identity(export,[task],bundles),frozen['sha256'])
+        manifest = dict(schema_version=1,tasks=[task],grader_bundles=bundles,experiment=asdict(spec),max_trials=4,budget_seconds=45,timeout_seconds=5)
+        source = export/'manifest.json'; source.write_text(json.dumps(manifest))
+        history = HistoryStore(root/'real-history')
+        prior = history.run(source,baseline,candidate,**profile); self.assertEqual(prior['state'],'sealed',prior)
+        reviewed = fixture.store.show(fixture.case_id)
+        operator = dict(identity='synthetic-kernel-curator',source='operator_attestation',provenance='synthetic real-kernel canary',basis='Explicit synthetic reviewed replacement')
+        request = dict(schema_version=1,case_id=fixture.case_id,expected_event_sha256=reviewed['event_sha256'],evidence_sha256=reviewed['evidence_sha256'],
+            parent_bank_sha256=hashlib.sha256(fixture.bank.read_bytes()).hexdigest(),parent_revision_sha256=None,
+            history_store=str(history.root),expected_oracle_event_sha256=history.oracle(fixture.task['grader_digest'])['event_sha256'],operator=operator,reason='Synthetic kernel application')
+        application = root/'apply.json'; application.write_text(json.dumps(request))
+        applied = fixture.store.apply(fixture.case_id,fixture.bank,history,application)
+        self.assertEqual(history.show(prior['run_id'])['oracle_validity'],'invalidated')
+        original = history.historical_plan(prior['run_id']); current = fixture.store.show(fixture.case_id)
+        request = dict(schema_version=1,case_id=fixture.case_id,expected_event_sha256=current['event_sha256'],evidence_sha256=current['evidence_sha256'],
+            bank_sha256=applied['bank_manifest_sha256'],revision_sha256=applied['revision_sha256'],history_store=str(history.root),
+            prior={k:original[k] for k in ('run_id','event_sha256','inputs_sha256','plan_sha256','evidence_sha256')},operator=operator,reason='Fresh real paired execution')
+        rerun = root/'rerun.json'; rerun.write_text(json.dumps(request))
+        result = fixture.store.rerun(fixture.case_id,rerun,baseline,candidate,**profile)
+        self.assertEqual(result['rerun_status'],'completed',result)
+        actual = history.historical_plan(result['new_run_id']); observed = ExperimentSpec.parse(actual['plan'])
+        expected = asdict(spec); expected['grader_hash'] = observed.grader_hash
+        self.assertEqual(asdict(observed),expected)
+        self.assertTrue({t['trial_id'] for t in schedule(spec)}.isdisjoint(t['trial_id'] for t in schedule(observed)))
+        self.assertEqual(history.show(result['new_run_id'])['oracle_validity'],'current')
+        analysis = history.analyze(result['new_run_id']); self.assertEqual(analysis['reason'],'insufficient_independent_roots')
+        self.assertFalse(result['automatic_promotion']); self.assertFalse(result['task_failure_verified'])
+        self.assertEqual(result['historical_state_reproduction'],'unverified'); self.assertEqual(result['harness_mode_evidence'],'unknown')
+        rows = json.loads((history.case(result['new_run_id'])/'execution/results.json').read_text())['trials']
+        self.assertEqual(len(rows),4)
+        for row in rows:
+            self.assertEqual(row['status'],'passed')
+            for run in (row['execution'],row['grader']['execution']):
+                self.assertTrue(run['attestation']['cgroup_v2']['empty_after_cleanup'])
+                self.assertEqual(run['attestation']['runtime_image']['sha256'],frozen['sha256'])
 
     def test_regression_review_lifecycle_seals_real_replay_with_operator_attestation_and_bank_authority(self):
         from test_regression_replay import make_replay, SOLVER

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.48.0
+
+### Minor Changes
+
+- Apply reviewed grader corrections to immutable private bank revisions, preserving original approval and revocation chains and durably invalidating the old oracle first. Execute fresh complete baseline/candidate reruns from recorded plans under the same pinned runtime and one deadline; retain interrupted attempts, exact generated run identities and honest legacy identity limits. Add explicit apply/rerun commands, historical-plan inspection, subset export and real source/installed sandbox controls. Keep certification, native identity, causal benefit and automatic promotion unqualified or disabled.
+
 ## 0.47.0
 
 ### Minor Changes

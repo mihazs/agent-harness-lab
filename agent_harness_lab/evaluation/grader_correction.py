@@ -1,4 +1,4 @@
-"""Frozen grader-defect controls and operator artifact review; no bank replacement."""
+"""Frozen grader-defect controls, operator review and explicit immutable application."""
 import hashlib
 import json
 import math
@@ -26,6 +26,9 @@ def transition(state,kind,target,previous_kind=None):
     if kind == 'audit_finished': return state == 'auditing' and target in ('reported','audited','quarantined')
     if kind == 'audit_abandoned': return state == 'auditing' and target == 'reported'
     if kind == 'reviewed': return state == 'audited' and target == 'reviewed'
+    if kind == 'applied': return state == 'reviewed' and target == 'applied'
+    if kind == 'rerun_started': return state == target == 'applied'
+    if kind == 'rerun_finished': return state == target == 'applied' and previous_kind=='rerun_started'
     return kind == target and target in ('quarantined','rejected','retired') and state not in (target,'rejected','retired')
 
 
@@ -138,6 +141,10 @@ class CorrectionStore(PrivateJournal):
         if inputs['assets'] != expected or any(digest(contained(case,p)) != h for p,h in expected.items()):
             raise ValueError('frozen correction assets changed')
         for index,(event,_) in enumerate(events):
+            if event['kind']=='applied':
+                from .bank_corrections import application_event
+                evidence,_ = self.checked_evidence(case,spec,task,events[:index])
+                application_event(self,case_id,events,index,evidence)
             for name,expected_hash in event['payload'].get('reports_sha256',{}).items():
                 sha256(expected_hash)
                 attempt = contained(case,event['payload']['attempt'])
@@ -154,6 +161,9 @@ class CorrectionStore(PrivateJournal):
                 if decision == 'reviewed':
                     _,packet = self.checked_evidence(case,spec,task,events[:index])
                     artifact_review(value,inputs['author'],packet['corrective_signal'])
+        if any(e['kind'].startswith('rerun_') for e,_ in events):
+            from .correction_rerun import validate_events
+            validate_events(self,case_id,case,events)
         return case,inputs,events,spec,task
 
     def packet(self,case,spec,task,attempt):
@@ -209,13 +219,35 @@ class CorrectionStore(PrivateJournal):
         attempt = next((e['payload']['attempt'] for e,_ in reversed(events) if e['kind']=='audit_started'),None)
         if any(e['kind']=='audit_finished' and e['state']=='audited' for e,_ in events):
             evidence_hash,evidence = self.checked_evidence(case,spec,task,events)
-        return dict(schema_version=1,case_id=case_id,state=events[-1][0]['state'],event_sha256=events[-1][1],
+        result = dict(schema_version=1,case_id=case_id,state=events[-1][0]['state'],event_sha256=events[-1][1],
             evidence_sha256=evidence_hash,old_audit_status=evidence.get('old_status',latest.get('old_status')),
             replacement_audit_status=evidence.get('replacement_status',latest.get('replacement_status')),corrective_signal=evidence.get('corrective_signal',False),
             oracle_approval='operator_attested' if events[-1][0]['state']=='reviewed' else 'unverified',
             proposed_bank_diff=proposed_diff(spec,task),audit_attempt=attempt,
             task_failure_verified=False,historical_task_outcome='unknown',independence='unverified',
             bank_replacement=False,automatic_promotion=False,publication_allowed=False)
+        applied = next((e for e,_ in events if e['kind']=='applied'),None)
+        if applied is not None:
+            from .bank_corrections import application_summary,committed_application
+            if events[-1][0]['state']=='applied':
+                result.update(application_summary(committed_application(self,case_id,applied['payload'])))
+            else:
+                result.update(bank_replacement=True,current_eligible=False,rerun_status='pending_rerun',
+                    revision_sha256=applied['payload']['revision_sha256'],privacy='private')
+            result['oracle_approval'] = 'operator_attested' if events[-1][0]['state']=='applied' else 'unverified'
+            result['proposed_bank_diff']['applied'] = True
+        if any(e['kind'].startswith('rerun_') for e,_ in events):
+            from .correction_rerun import validate_events
+            result.update(validate_events(self,case_id,case,events))
+        return result
+
+    def apply(self,case_id,parent_path,history_store,request_path):
+        from .bank_corrections import apply
+        return apply(self,case_id,parent_path,history_store,request_path)
+
+    def rerun(self,case_id,request_path,baseline,candidate,**profile):
+        from .correction_rerun import rerun
+        return rerun(self,case_id,request_path,baseline,candidate,**profile)
 
     def show(self,case_id):
         with self.locked(): return self.summary(case_id,*self.opened(case_id))
@@ -278,7 +310,10 @@ class CorrectionStore(PrivateJournal):
         value,_ = record(path,64*1024); review_value(value,case_id)
         with self.locked():
             opened = self.opened(case_id); case,inputs,events,spec,task = opened
-            current = self.summary(case_id,*opened)
+            if any(e['kind']=='applied' for e,_ in events):
+                current = dict(event_sha256=events[-1][1],state=events[-1][0]['state'],
+                    evidence_sha256=self.checked_evidence(case,spec,task,events)[0])
+            else: current = self.summary(case_id,*opened)
             if (value['expected_event_sha256'] != current['event_sha256']
                     or value['evidence_sha256'] != current['evidence_sha256']):
                 raise ValueError('stale correction review')
@@ -300,11 +335,15 @@ def main(argv=None):
     actions = parser.add_subparsers(dest='action',required=True)
     propose = actions.add_parser('propose',help='Freeze an authorized grader-defect declaration and its controls')
     propose.add_argument('--spec',type=Path,required=True); propose.add_argument('--author',required=True)
-    for name in ('show','audit','review'):
+    for name in ('show','audit','review','apply','rerun'):
         command = actions.add_parser(name); command.add_argument('--case',required=True)
-        if name == 'review': command.add_argument('--record',type=Path,required=True)
-        if name == 'audit':
+        if name in ('review','apply','rerun'): command.add_argument('--record',type=Path,required=True)
+        if name=='apply':
+            command.add_argument('--parent',type=Path,required=True); command.add_argument('--history-store',type=Path,required=True)
+        if name in ('audit','rerun'):
             pinned_arguments(command)
+        if name=='rerun':
+            command.add_argument('--baseline',type=Path,required=True); command.add_argument('--candidate',type=Path,required=True)
     args = parser.parse_args(argv)
     try:
         store = CorrectionStore(args.store)
@@ -315,10 +354,17 @@ def main(argv=None):
                 image_sha256=args.image_sha256,disk_bytes=args.disk_bytes)
             result = store.audit(args.case,backend,budget_seconds=args.budget_seconds)
         elif args.action == 'review': result = store.review(args.case,args.record)
+        elif args.action=='apply':
+            from .oracle_history import HistoryStore
+            result = store.apply(args.case,args.parent,HistoryStore(args.history_store),args.record)
+        elif args.action=='rerun':
+            result = store.rerun(args.case,args.record,args.baseline,args.candidate,cgroup_root=args.cgroup_root,
+                image_root=args.image_root,image_sha256=args.image_sha256,disk_bytes=args.disk_bytes,budget_seconds=args.budget_seconds)
         else: result = store.show(args.case)
         print(json.dumps(result,indent=2,allow_nan=False))
         if args.action == 'audit' and result['state'] != 'audited':
             return 3 if result['state']=='reported' else 1
+        if args.action=='rerun' and result['rerun_status']!='completed': return 1
         return 0
     except BlockingIOError:
         print(json.dumps(dict(status='busy',bank_replacement=False,publication_allowed=False)))

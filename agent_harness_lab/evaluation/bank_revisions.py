@@ -80,6 +80,9 @@ def accepted_marker(events):
 def revision_metadata(bank_path, *, check_current=True):
     from .regression_review import ReviewStore
     path = Path(bank_path).absolute()
+    if record(path,1024*1024)[0].get('controller_profile')=='grader-correction-bank-v1':
+        from .bank_corrections import revision_metadata as corrected_metadata
+        return corrected_metadata(path)
     if path.name != 'bank.json' or path.parent.parent.name != 'revisions':
         raise ValueError('controlled bank requires its original controller revision path')
     revision = path.parent.name; sha256(revision)
@@ -154,6 +157,9 @@ def controls_for_manifest(bank_path, task_id):
     if not metadata['current_eligible']: raise ValueError('bank revision is quarantined or retired')
     task = next((t for t in value['tasks'] if t['task_id'] == task_id), None)
     if task is None: raise ValueError('unknown bank task')
+    if value.get('controller_profile')=='grader-correction-bank-v1':
+        return [dict(state=c['state'],fixture=contained(path.parent,c['fixture']),digest=c['digest'])
+            for c in metadata['descriptor']['controls'][task_id]]
     entry = metadata['descriptor']['admissions'].get(task_id)
     if entry is not None:
         return [dict(state=c['state'],fixture=contained(path.parent,c['fixture']),digest=c['digest']) for c in entry['controls']]
