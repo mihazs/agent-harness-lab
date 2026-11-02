@@ -41,6 +41,9 @@ class GraderCorrectionTests(unittest.TestCase):
         task = next(t for t in json.loads((starter/'bank.json').read_text())['tasks'] if t['task_id']=='regression')
         shutil.copytree(starter/task['fixture'],self.root/'fixture')
         (self.root/'fixture/original.txt').write_text('preserve\n')
+        (self.root/'fixture/task.json').write_text(json.dumps(dict(
+            prompt='Write result.json with the count and label from inputs, preserving original.txt exactly.',
+            inputs=dict(count=3,label='ok'))))
         expected = '{"count":3,"label":"ok"}'
         for name,structural,version in [('oldoracle',False,'v1'),('neworacle',True,'v2')]:
             folder = self.root/name; folder.mkdir()
@@ -48,7 +51,7 @@ class GraderCorrectionTests(unittest.TestCase):
             (folder/'expected.json').write_text(expected)
         task.update(fixture='fixture',fixture_digest=digest(self.root/'fixture'),grader_bundle='oldoracle',
                     grader_digest=digest(self.root/'oldoracle'),grader_version='v1',
-                    artifacts=['result.json','original.txt'])
+                    artifacts=['result.json','original.txt'],source_ref='synthetic:grader-json-preservation')
         self.task = task
         self.bank = self.root/'bank.json'
         self.bank.write_text(json.dumps(dict(schema_version=1,separate_by=['root_id'],tasks=[task])))

@@ -162,6 +162,9 @@ class HistoryStore(PrivateJournal):
                 historical_comparisons_invalidated=True,corrected_oracle_approved=False,publication_allowed=False)
 
     def opened(self, run_id):
+        return self._opened(run_id,current_bank=True)
+
+    def _opened(self, run_id, *, current_bank):
         case = self.case(run_id); events = self.history(case)
         inputs, inputs_hash = record(case/'inputs.json')
         version = inputs.get('schema_version')
@@ -186,7 +189,7 @@ class HistoryStore(PrivateJournal):
                 fields(value,'task_revision_sha256 materialized_sha256 execution_fixture_sha256 grader_version')
                 for key in ('task_revision_sha256','materialized_sha256','execution_fixture_sha256'): sha256(value[key])
                 text(value['grader_version'])
-            bank_authority(source,expected=inputs['bank_tasks'])
+            if current_bank: bank_authority(source,expected=inputs['bank_tasks'])
         elif source.get('bank_authority') is not None:
             raise ValueError('bound bank history cannot use the unbound input schema')
         if not isinstance(inputs['dependencies'],dict) or not inputs['dependencies']:
@@ -203,6 +206,10 @@ class HistoryStore(PrivateJournal):
         case,events,inputs,spec = self.opened(run_id)
         validity = 'invalidated' if any(self.oracle_events(b)[-1][0]['state'] != 'active' for b in inputs['dependencies']) else 'current'
         if events[-1][0]['state'] != 'sealed': return case,events,inputs,spec,None,'incomplete'
+        result = self._sealed(case,events,inputs,spec)
+        return case,events,inputs,spec,result,validity
+
+    def _sealed(self,case,events,inputs,spec):
         evidence, evidence_hash = record(case/'evidence.json')
         fields(evidence,'results_sha256 execution_tree_sha256')
         if events[-1][0]['payload'] != dict(evidence_sha256=evidence_hash): raise ValueError('controller evidence seal changed')
@@ -210,7 +217,38 @@ class HistoryStore(PrivateJournal):
         if result_hash != evidence['results_sha256'] or tree_hash(case/'execution') != evidence['execution_tree_sha256']:
             raise ValueError('sealed controller execution changed')
         self.trials(inputs,spec,result)
-        return case,events,inputs,spec,result,validity
+        return result
+
+    def historical_plan(self,run_id):
+        """Read frozen prior declarations/evidence, without approving old bank applicability."""
+        with self.locked(): return self._historical_plan(run_id)
+
+    def _historical_plan(self,run_id,*,event_sha256=None):
+        from dataclasses import asdict
+        case,events,inputs,spec = self._opened(run_id,current_bank=False)
+        if event_sha256 is not None:
+            sha256(event_sha256)
+            index = next((i for i,(_,value) in enumerate(events) if value==event_sha256),None)
+            if index is None: raise ValueError('historical controller event is unavailable')
+            events = events[:index+1]
+        source,_ = record(case/'manifest.json',1024*1024)
+        evidence_hash = None
+        if events[-1][0]['state']=='sealed':
+            result = self._sealed(case,events,inputs,spec)
+            fixtures = result.get('fixtures')
+            evidence_hash = record(case/'evidence.json')[1]
+        elif inputs['schema_version']==2:
+            fixtures = {k:v['execution_fixture_sha256'] for k,v in inputs['bank_tasks'].items()}
+        else: raise ValueError('unsealed legacy history lacks authoritative earlier fixture pins')
+        if not isinstance(fixtures,dict) or set(fixtures)!={t[0] for t in spec.tasks}:
+            raise ValueError('earlier fixture identities unavailable')
+        for value in fixtures.values(): sha256(value)
+        return dict(run_id=run_id,event_sha256=events[-1][1],inputs_sha256=record(case/'inputs.json')[1],
+            evidence_sha256=evidence_hash,plan=asdict(spec),plan_sha256=spec.digest,manifest=source,
+            manifest_sha256=inputs['source_manifest_sha256'],fixtures=fixtures,bank_tasks=inputs.get('bank_tasks'),
+            state=events[-1][0]['state'],historical_outcome='observed' if evidence_hash else 'unknown',
+            fixture_mode_evidence='pinned' if inputs['schema_version']==2 else 'unknown',
+            current_applicability='not_evaluated',independence='unverified',publication_allowed=False)
 
     @staticmethod
     def trials(inputs,spec,result):
@@ -283,14 +321,19 @@ class HistoryStore(PrivateJournal):
             if inputs['schema_version']==2: result['bank_authority']='current_eligible'
             return result
 
-    def run(self, manifest, baseline, candidate, *, cgroup_root, image_root, image_sha256, disk_bytes, budget_seconds=60):
+    def run(self, manifest, baseline, candidate, *, cgroup_root, image_root, image_sha256, disk_bytes, budget_seconds=60,parent_deadline=None,on_started=None):
         from agent_harness_lab.cli import evaluator
         from .bank_tools import frozen_grader
         from .bank_revisions import sync_tree
         started = time.monotonic(); sha256(image_sha256)
+        if on_started is not None and not callable(on_started): raise ValueError('history start observer must be callable')
         if type(budget_seconds) not in (int,float) or not math.isfinite(budget_seconds) or not 0<budget_seconds<=300:
             raise ValueError('history budget must be positive and at most 300 seconds')
         deadline = started+budget_seconds
+        if parent_deadline is not None:
+            if type(parent_deadline) not in (int,float) or not math.isfinite(parent_deadline):
+                raise ValueError('history parent deadline must be finite')
+            deadline = min(deadline,parent_deadline)
         manifest,baseline,candidate,image_root = map(lambda p:Path(p).absolute(),(manifest,baseline,candidate,image_root))
         if any('..' in p.parts or any(q.is_symlink() for q in (p,*p.parents))
                 for p in (manifest,baseline,candidate,image_root)):
@@ -345,6 +388,10 @@ class HistoryStore(PrivateJournal):
             agent='offline',codex='must-not-launch',claude='must-not-launch',cgroup_root=Path(cgroup_root),
             image_root=image_root,image_sha256=image_sha256,disk_bytes=disk_bytes,parent_deadline=deadline)
         try:
+            if on_started is not None:
+                try: on_started(run_id)
+                except Exception: raise ValueError('history start observation failed') from None
+            if time.monotonic()>=deadline: raise TimeoutError('history deadline exhausted before dispatch')
             if bound_tasks is not None: bank_authority(source,export_root=manifest.parent,expected=bound_tasks)
             runner.evaluate(args)
             result,result_hash = record(case/'execution/results.json',8*1024*1024)
@@ -379,7 +426,7 @@ def main(argv=None):
     for name in ('manifest','baseline','candidate'):
         run.add_argument('--'+name,type=Path,required=True)
     pinned_arguments(run)
-    for name in ('show','analyze'):
+    for name in ('show','analyze','historical-plan'):
         command = actions.add_parser(name)
         command.add_argument('--run',dest='run_id',required=True)
     oracle = actions.add_parser('oracle',help='Read an observed bundle registration and current CAS identity')
@@ -396,6 +443,7 @@ def main(argv=None):
         elif args.action == 'quarantine': result,code = store.quarantine(args.record),0
         elif args.action == 'oracle': result,code = store.oracle(args.bundle),0
         elif args.action == 'analyze': result,code = store.analyze(args.run_id),3
+        elif args.action=='historical-plan': result,code = store.historical_plan(args.run_id),0
         else: result,code = store.show(args.run_id),0
         print(json.dumps(result,indent=2,allow_nan=False))
         return code

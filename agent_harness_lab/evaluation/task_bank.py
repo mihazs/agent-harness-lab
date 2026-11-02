@@ -109,8 +109,10 @@ def validate(path, *, verify_contents=True):
     profile = result.pop('_controller_profile',None)
     if profile is not None:
         from .bank_revisions import PROFILE, validate_admission
-        if profile != PROFILE: raise ValueError('unsupported controller bank profile')
+        from .bank_corrections import PROFILE as CORRECTION_PROFILE
+        if profile not in (PROFILE,CORRECTION_PROFILE): raise ValueError('unsupported controller bank profile')
         result['admission'] = validate_admission(path)
+        if profile==CORRECTION_PROFILE: result['certification_eligible']=False
         if result['admission']['bank_manifest_sha256'] != result['bank_sha256']:
             raise ValueError('bank changed during admission validation')
         result['certification_eligible'] = False

@@ -55,7 +55,7 @@ def _external_controls(bank_path, tasks, admission):
     return result
 
 
-def export_manifest(bank_path,output,max_trials=24):
+def export_manifest(bank_path,output,max_trials=24,*,task_ids=None):
     bank_path,output=Path(bank_path),Path(output).absolute()
     if '..' in output.parts: raise ValueError('bank export output must not contain parent traversal')
     if output.absolute().is_relative_to(bank_path.parent.resolve()) or bank_path.parent.resolve().is_relative_to(output.absolute()):
@@ -64,6 +64,14 @@ def export_manifest(bank_path,output,max_trials=24):
         raise ValueError('bank export crosses symlink')
     reviewed=validate(bank_path); admission=_eligible(reviewed)
     value=json.loads(bank_path.read_text())
+    if task_ids is not None:
+        if (not isinstance(task_ids,(list,tuple)) or not 0<len(task_ids)<=1000
+                or any(not isinstance(t,str) or not 0<len(t)<=128 for t in task_ids)
+                or len(set(task_ids))!=len(task_ids)):
+            raise ValueError('explicit bounded unique export task selection required')
+        indexed={t['task_id']:t for t in value['tasks']}
+        if any(t not in indexed for t in task_ids): raise ValueError('unknown export task selection')
+        value['tasks']=[indexed[t] for t in task_ids]
     if 2*len(value['tasks'])>max_trials: raise ValueError('bank export exceeds caller trial ceiling')
     external=_external_controls(bank_path,value['tasks'],admission)
     for task in value['tasks']:

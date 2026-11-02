@@ -203,6 +203,23 @@ tasks:
       AHL_ADMISSION_BASELINE_ROOT: '{{.BASELINE}}'
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_regression_admission_profile.py" -k frozen_baseline -v'
+  test:evaluation:correction-application:
+    desc: Run native immutable correction application and fresh paired rerun contracts
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_bank_corrections.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_correction_rerun.py" -v'
+  test:evaluation:correction-application:installed:
+    desc: Run installed layout and fresh correction workflow native contracts
+    dir: '{{.LAYOUT_DIR}}'
+    requires:
+      vars: [LAYOUT_DIR, EXPECTED_PACKAGE_ROOT]
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_installed_layout.py"'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_bank_corrections.py"'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_correction_rerun.py"'
   test:evaluation:review:
     desc: Run native private review-store lifecycle and evidence-integrity cases
     cmds:
@@ -243,6 +260,12 @@ tasks:
       - task: test:sandbox:kernel
         vars:
           KERNEL_TEST_FILTER: grader_correction
+  test:sandbox:kernel:correction-application:
+    desc: Apply a reviewed correction and run both entire pinned arms in real kernel workers
+    cmds:
+      - task: test:sandbox:kernel
+        vars:
+          KERNEL_TEST_FILTER: applies_and_reruns_entire_pair
   test:sandbox:kernel:
     desc: Run native kernel canaries in a disposable foreground user scope (Linux/systemd)
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -288,6 +311,8 @@ tasks:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_grader_correction*.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_grader_control_core.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_bank_export.py"'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_bank_corrections.py"'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_correction_rerun.py"'
   test:installed:sources:
     desc: Run native source checks against an installed layout, including optional extras when installed
     dir: '{{.LAYOUT_DIR}}'
