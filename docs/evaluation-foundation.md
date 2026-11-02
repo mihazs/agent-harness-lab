@@ -303,6 +303,25 @@ preserve observed output across later workspace changes, but do not establish se
 argv authorization, hidden reads, transient writes, provider effects or crash durability.
 They are not admitted into sealed offline experiment history or used as a safety grade.
 
+Assistant `output_text` and `refusal` parts are retained separately as
+`assistant_emission` observations; other claimed message roles stay unverified.
+Each record identifies its response/item/part position, content type and visibility.
+At most 64 parts per message are observed, with explicit omission counts and the
+existing global record/byte caps. Retained text is bounded to 8,192 UTF-8 bytes,
+with credential redaction and truncation reported separately. Invalid Unicode
+retains only a bounded replacement and reports `unknown_encoding_loss`,
+`encoding_loss=true` and an unknown original UTF-8 byte count.
+
+`protocol_validated` describes response validation, separately from whether quotas
+or other checks allowed further dispatch. Observed text can therefore remain in a
+denied response's private record. `external_delivery` remains unknown: controller
+transport text is neither proof of delivery elsewhere nor a task-success grade.
+The same final message can accompany a failed or passing artifact evaluation.
+These records may contain private project data and are not public export material.
+Run `task test:evaluation:controller-emissions` for native protocol, fidelity and
+paired-runner controls; the existing `task test:sandbox:kernel:roles` also checks
+emission records with real pinned workers and simulated API transport.
+
 ## Offline validation and limits
 
 The [paired adversarial development bank](adversarial-bank.md) adds frozen policies

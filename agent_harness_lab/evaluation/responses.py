@@ -112,6 +112,7 @@ class ActionLedger:
     MAX_BYTES = 8*1024*1024
     OUTPUT_BYTES = 8192
     MAX_SCOPES = 4096
+    MAX_MESSAGE_PARTS = 64
 
     def __init__(self,credential):
         self.credential = credential
@@ -132,12 +133,16 @@ class ActionLedger:
 
     def text(self,value,limit):
         if not isinstance(value,str): return dict(text=None,visibility='unavailable',observed_text_utf8_bytes=None)
-        raw = value.encode('utf-8','replace'); redacted = bool(self.credential and self.credential in value)
+        try: observed_bytes = len(value.encode('utf-8'))
+        except UnicodeEncodeError: observed_bytes = None
+        redacted = bool(self.credential and self.credential in value)
         if redacted: value = value.replace(self.credential,'[REDACTED_CREDENTIAL]')
-        selected = value.encode('utf-8','replace')[:limit]
-        clipped = len(value.encode('utf-8','replace'))>limit
-        return dict(text=selected.decode('utf-8','replace'),visibility='redacted' if redacted else 'truncated' if clipped else 'observed',
-            observed_text_utf8_bytes=len(raw),truncated=clipped,redacted=redacted)
+        raw = value.encode('utf-8','replace'); selected = raw[:limit]; clipped = len(raw)>limit
+        result = dict(text=selected.decode('utf-8','ignore'),visibility='redacted' if redacted else 'truncated' if clipped else 'observed',
+            observed_text_utf8_bytes=observed_bytes,truncated=clipped,redacted=redacted)
+        if observed_bytes is None:
+            result.update(visibility='unknown_encoding_loss',encoding_loss=True,reason='source_not_valid_utf8')
+        return result
 
     @staticmethod
     def size(value): return len(json.dumps(value,ensure_ascii=False,separators=(',',':')).encode('utf-8'))
@@ -201,10 +206,30 @@ class Client:
         self.usage = []
         self.actions = ActionLedger(credential)
         self.response_actions = []; self.response_reserved = False; self.response_reason = 'protocol_validation_failed'
+        self.response_emissions = []; self.response_protocol_validated = False
+
+    def observe_message(self,item,item_index):
+        content = item.get('content')
+        parts = content if isinstance(content,list) and content else [None]
+        omitted = max(0,len(parts)-self.actions.MAX_MESSAGE_PARTS)
+        self.actions.current['omitted_records'] += omitted
+        for index,part in enumerate(parts[:self.actions.MAX_MESSAGE_PARTS]):
+            kind = part.get('type') if isinstance(part,dict) else None
+            key = {'output_text':'text','refusal':'refusal'}.get(kind) if isinstance(kind,str) else None
+            text = self.actions.text(part.get(key) if key else None,self.actions.OUTPUT_BYTES) if isinstance(part,dict) else self.actions.text(None,0)
+            self.response_emissions.append(self.actions.add('assistant_emission' if item.get('role')=='assistant' else 'message_observation',self.requests,
+                source_item_index=item_index,source_part_index=index,model_message_id=self.actions.text(item.get('id'),256),
+                claimed_role=self.actions.text(item.get('role'),128),content_type=self.actions.text(kind,128),content=text,
+                content_supported=key is not None and isinstance(part.get(key),str),
+                content_parts_omitted=omitted,protocol_validated=False,response_disposition='pending_validation',
+                observation_scope='controller_transport_text_only',external_delivery='unknown',native_provenance='unverified'))
 
     def observe_items(self,output):
-        for item in output:
-            if not isinstance(item,dict) or item.get('type') in ('message','reasoning'): continue
+        for index,item in enumerate(output):
+            if not isinstance(item,dict): continue
+            if item.get('type')=='message':
+                self.observe_message(item,index); continue
+            if item.get('type')=='reasoning': continue
             name = self.actions.text(item.get('name',item.get('type')),256)
             ident = self.actions.text(item.get('call_id'),256)
             try:
@@ -241,11 +266,14 @@ class Client:
 
     def respond(self, history, deadline):
         request_action = self.actions.add('model_request',self.requests+1,reserved=False,transport_invoked=False,response_observed=False,
-            tool_item_visibility='unavailable')
+            tool_item_visibility='unavailable',emission_visibility='unavailable')
         self.response_actions = []; self.response_reserved = False; self.response_reason = 'protocol_validation_failed'
+        self.response_emissions = []; self.response_protocol_validated = False
+        disposition = 'denied_or_unresolved'
         try:
             value = self._respond(history,deadline,request_action)
             self.actions.update(request_action,disposition='validated')
+            disposition = 'validated'
             return value
         except BaseException:
             self.actions.update(request_action,disposition='denied_or_unresolved',reason=self.response_reason)
@@ -253,6 +281,9 @@ class Client:
                 if not self.response_reserved: self.actions.update(action,decision='denied',reason=self.response_reason)
                 else: self.actions.update(action,dispatch_blocked=True)
             raise
+        finally:
+            for emission in self.response_emissions:
+                self.actions.update(emission,protocol_validated=self.response_protocol_validated,response_disposition=disposition)
 
     def _respond(self,history,deadline,request_action):
         if self.poisoned:
@@ -283,7 +314,7 @@ class Client:
             candidate = value.get('output') if isinstance(value,dict) else None
             if isinstance(candidate,list) and 0<len(candidate)<=64:
                 self.observe_items(candidate)
-                self.actions.update(request_action,tool_item_visibility='bounded_items_observed')
+                self.actions.update(request_action,tool_item_visibility='bounded_items_observed',emission_visibility='bounded_items_observed')
             if (not isinstance(value,dict) or value.get('status') != 'completed'
                     or value.get('error') is not None or value.get('incomplete_details') is not None): raise ValueError('response incomplete')
             output = value['output']
@@ -328,6 +359,7 @@ class Client:
                     or usage['output_tokens']>self.settings['max_output_tokens']): raise ValueError('invalid provider usage')
         except (ValueError,TypeError,KeyError,RecursionError,UnicodeError):
             raise InferenceError('inference_protocol_error_no_retry') from None
+        self.response_protocol_validated = True
         if self.tool_calls+len(calls)>self.settings['max_tool_calls']:
             self.response_reason='tool_count_exhausted'; raise InferenceError('inference_tool_count_exhausted')
         self.tool_calls += len(calls)

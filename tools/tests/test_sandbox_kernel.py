@@ -636,6 +636,15 @@ for value in json.loads(sys.argv[-1]):
         self.assertEqual((fixture.project/'AGENTS.md').read_text(),'bad')
         ledger = json.loads((Path(result['output'])/'inference.json').read_text())
         self.assertFalse(ledger['request_pending']); self.assertNotIn('SYNTHETIC_CONTROLLER_KEY',json.dumps(ledger))
+        evaluated=json.loads((Path(result['output'])/'evaluation-0/results.json').read_text())
+        for trial in evaluated['trials']:
+            report=trial['controller_actions']; self.assertFalse(report['publication_allowed'])
+            emission,=[row for row in report['actions'] if row['kind']=='assistant_emission']
+            self.assertTrue(emission['protocol_validated'])
+            self.assertEqual(emission['response_disposition'],'validated')
+            self.assertEqual(emission['external_delivery'],'unknown')
+            self.assertEqual(emission['observation_scope'],'controller_transport_text_only')
+            self.assertLessEqual(len(emission['content']['text'].encode('utf-8')),8192)
 
 
 @unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
