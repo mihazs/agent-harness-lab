@@ -134,8 +134,8 @@ Start with the [contributor guide](CONTRIBUTING.md) for setup, architecture, tes
 and choosing a bounded task. Documentation, synthetic fixtures and focused tests
 are useful contributions alongside research work.
 
-Questions and reproducible bugs belong in [Issues](https://github.com/mihazs/agent-harness-lab/issues)
-while Discussions is unavailable. See [support](SUPPORT.md), [private security reporting](SECURITY.md)
+Questions and reproducible bugs belong in [Issues](https://github.com/mihazs/agent-harness-lab/issues).
+See [support](SUPPORT.md), [private security reporting](SECURITY.md)
 and the [code of conduct](CODE_OF_CONDUCT.md). No response-time commitment is made.
 
 Versions use Changesets; do not change version numbers manually. For a releasable
