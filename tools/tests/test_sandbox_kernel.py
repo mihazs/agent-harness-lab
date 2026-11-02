@@ -315,7 +315,7 @@ class RegressionDraftKernelTests(KernelFixture):
         self.assertEqual(reviewed['state'],'reviewed'); self.assertEqual(fixture.bank.read_bytes(),parent)
         self.assertFalse(reviewed['task_failure_verified']); self.assertFalse(reviewed['bank_replacement'])
 
-    def test_regression_review_lifecycle_seals_real_replay_with_operator_attestation(self):
+    def test_regression_review_lifecycle_seals_real_replay_with_operator_attestation_and_bank_authority(self):
         from test_regression_replay import make_replay, SOLVER
         from agent_harness_lab.evaluation.regression_review import ReviewStore
         rootfs = self.root/'runtime'; frozen = pinned_runtime(rootfs)
@@ -356,6 +356,42 @@ class RegressionDraftKernelTests(KernelFixture):
         bank = store.root/'revisions'/accepted['revision_sha256']/'bank.json'
         self.assertTrue(accepted['current_eligible']); self.assertFalse(validate(bank)['certification_eligible'])
         self.assertEqual(parent.read_bytes(),original); self.assertEqual(store.show(reported['case_id'])['state'],'accepted')
+        from dataclasses import asdict
+        from test_offline_evaluation import SOLVER as comparison_solver
+        from agent_harness_lab.cli import evaluator
+        from agent_harness_lab.evaluation.bank_tools import export_manifest
+        from agent_harness_lab.evaluation.oracle import identity
+        from agent_harness_lab.evaluation.oracle_history import HistoryStore
+        from agent_harness_lab.evaluation.plan import ExperimentSpec
+        export = self.root/'bank-export'; manifest = export_manifest(bank,export)
+        runner = evaluator()
+        baseline,candidate = self.root/'baseline',self.root/'candidate'
+        for folder,source in ((baseline,"from pathlib import Path; Path('result.json').write_text('{}')\n"),
+                              (candidate,comparison_solver)):
+            folder.mkdir(); (folder/'solve.py').write_text(source)
+        tasks = manifest['tasks']; families = sorted({t['family'] for t in tasks})
+        for task in tasks: task['offline_executor'] = ['/usr/bin/python3','-I','/inputs/harness/solve.py']
+        plan = ExperimentSpec('synthetic-bank-authority',tuple((t['id'],t['root'],t['family']) for t in tasks),
+            1,13,4,2,.05,.1,.05,tuple((f,1/len(families)) for f in families),runner.digest(baseline),
+            runner.digest(candidate),identity(export,tasks,manifest['grader_bundles']),frozen['sha256'])
+        manifest['experiment'] = asdict(plan); (export/'manifest.json').write_text(json.dumps(manifest))
+        history = HistoryStore(self.root/'bank-history')
+        observed = history.run(export/'manifest.json',baseline,candidate,cgroup_root=self.cgroup_root,
+            image_root=rootfs,image_sha256=frozen['sha256'],disk_bytes=64*1024*1024)
+        self.assertEqual(observed['state'],'sealed'); self.assertEqual(observed['bank_authority'],'current_eligible')
+        self.assertEqual(observed['oracle_validity'],'current')
+        result = history.case(observed['run_id'])/'execution/results.json'; frozen_result = result.read_bytes()
+        trials = json.loads(frozen_result)['trials']; self.assertEqual(len(trials),4)
+        self.assertEqual({t['version'] for t in trials},{'baseline','candidate'})
+        for trial in trials:
+            self.assertEqual(trial['grader']['outcome'],trial['version']=='candidate')
+            self.assertEqual(trial['grader']['execution']['attestation']['runtime_image']['sha256'],frozen['sha256'])
+        current = store.show(reported['case_id'])
+        review.update(expected_event_sha256=current['event_sha256'],decision='quarantined')
+        path.write_text(json.dumps(review)); store.review(reported['case_id'],path)
+        with self.assertRaises(ValueError): history.show(observed['run_id'])
+        with self.assertRaises(ValueError): history.analyze(observed['run_id'])
+        self.assertEqual(result.read_bytes(),frozen_result)
 
     def test_regression_replay_uses_real_matched_snapshot_views_and_hidden_oracle(self):
         from test_regression_replay import make_replay, SOLVER
