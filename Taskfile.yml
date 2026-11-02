@@ -270,6 +270,14 @@ tasks:
       AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_trajectory_*.py" -v'
+  test:sources:memory:
+    desc: Run synthetic scoped MCP reads and hash-only selected-page journal captures
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_m*.py" -v'
   test:evaluation:roles:
     desc: Run controlled preparation views, authored contracts and workflow cases
     cmds:
