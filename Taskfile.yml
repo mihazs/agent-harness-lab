@@ -49,6 +49,11 @@ tasks:
     desc: Run native controlled-bank authority, fixture-binding and revocation cases
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_oracle_bank_authority.py" -v'
+  test:evaluation:preservation-analysis:
+    desc: Run conditional preservation endpoints and unchanged evaluation foundation tests
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_preservation_analysis.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_evaluation_foundation.py" -v'
   test:evaluation:preservation:
     desc: Run frozen preservation qualification, legacy plan identity and history contracts
     cmds:

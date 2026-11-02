@@ -333,6 +333,8 @@ class HistoryStore(PrivateJournal):
                 raise ValueError('observed grader version differs from authoritative bank task')
             policy = inputs.get('behavior_policies',{}).get(trial['task'])
             observed = behavior.observation(policy,graded) if policy is not None else None
+            if spec.cohort_manifest_sha256 is not None and observed is not None and not observed['complete']:
+                outcome=None
             records.append(TrialRecord(trial['trial_id'],outcome,'graded','executable_grader',
                 spec.baseline_hash,spec.candidate_hash,spec.grader_hash,spec.runtime_hash,
                 critical_regression=bool(trial['version']=='candidate' and observed and observed['critical'])))
@@ -356,16 +358,23 @@ class HistoryStore(PrivateJournal):
 
     def analyze(self, run_id):
         with self.locked():
-            checked = self.checked(run_id); _,_,inputs,spec,result,validity = checked
+            checked = self.checked(run_id); case,_,inputs,spec,result,validity = checked
+            membership=None
+            if spec.cohort_manifest_sha256 is not None:
+                membership,membership_hash=record(case/'cohort-binding.json',1024*1024)
+                if membership_hash!=inputs['cohort_binding_sha256']:
+                    raise ValueError('preservation analysis binding changed after validation')
+                membership['manifest_json']=read_regular(case/'cohort-manifest.json',1024*1024)
             effects = behavior.report(spec,result['trials'],inputs['behavior_policies']) if result is not None and inputs.get('behavior_policies') else None
             if validity != 'current':
                 value = dict(status='blocked' if validity=='invalidated' else 'incomplete',reason='oracle_quarantined' if validity=='invalidated' else 'controller_run_not_sealed')
-            else: value = analyze(spec,self.trials(inputs,spec,result))
+            else: value = analyze(spec,self.trials(inputs,spec,result),cohort_binding=membership)
+            retained=dict(preservation=value['preservation']) if 'preservation' in value else {}
             if validity=='current' and effects is not None:
                 if effects['critical_candidate_effect']:
-                    value = dict(status='rejected',reason='critical_regression')
+                    value = dict(status='rejected',reason='critical_regression',**retained)
                 elif effects['required_observation_unknown']:
-                    value = dict(status='blocked',reason='behavior_observation_incomplete')
+                    value = dict(status='blocked',reason='behavior_observation_incomplete',**retained)
             result = dict(value,oracle_validity=validity,controller_run_id=run_id,oracle_review='unverified',
                 independence='unverified',automatic_promotion=False,publication_allowed=False)
             if inputs.get('bank_tasks') is not None: result['bank_authority']='current_eligible'

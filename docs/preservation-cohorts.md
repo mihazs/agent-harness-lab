@@ -1,10 +1,10 @@
-# Frozen preservation qualification
+# Frozen preservation qualification and conditional analysis
 
 A preservation cohort identifies behavior that worked in a prior execution and
-must be evaluated separately from aggregate gains. This first component freezes
-membership and resolves qualification evidence. Cohort noninferiority analysis and
-optimization receipts remain pending. Cohort-enabled plans currently receive a
-blocked preservation decision; membership validation cannot recommend adoption.
+must be evaluated separately from aggregate gains. Frozen membership and resolved
+prior qualification feed the existing paired-root analysis. Each required cohort
+gets its own noninferiority endpoint. Bound decision and optimization receipts remain
+pending; conditional statistical support cannot authorize adoption.
 
 Existing plans keep their original serialization, digest and scheduled trial IDs.
 An optional `cohort_manifest_sha256` field binds the exact bytes of a new sidecar.
@@ -76,8 +76,49 @@ declarations with current applicability unevaluated.
 An oracle correction needs fresh qualification and a newly frozen cohort manifest,
 followed by both comparison arms under a new plan. The existing correction-rerun
 operation refuses cohort-enabled plans rather than silently retaining old qualification.
-Automatic requalification and preservation endpoint/report integration remain work
+Automatic requalification and bound decision/optimization receipt integration remain work
 for issue #122. Automatic promotion and publication remain disabled.
+
+## Conditional preservation analysis
+
+`statistics.analyze(spec, records, cohort_binding=...)` requires the exact raw
+sidecar bytes as `manifest_json` in addition to the retained binding. Their SHA-256
+must match both the plan pin and `manifest_sha256`; the strictly parsed bytes must
+match the embedded `manifest`. Changing criteria requires a new plan and trial IDs.
+This numeric function validates the declaration but
+does not resolve current qualification authority. Private history supplies its
+retained binding only after the existing live bank/oracle/qualification checks.
+Raw callback booleans or a detached numeric report cannot establish that authority.
+
+For each required cohort, candidate-minus-baseline outcomes are averaged over its
+task/repetition pairs within each original root, then over equally weighted roots.
+Related variants and repeats remain within their original root. A root appearing
+in multiple cohorts remains the same root; overlap creates correlated endpoints.
+
+The existing weighted-root Hoeffding method uses Bonferroni allocation
+`alpha / (1 + frozen families + required cohorts)` for primary, family and required
+cohort intervals. This allocation permits dependence between endpoints. Its
+independent-root and fixed-membership assumptions remain explicit and unverified;
+root labels do not establish independence. Optional reporting cohorts receive
+descriptive counts without additional confidence claims.
+
+A required cohort is supported when its lower bound meets its frozen `-margin`;
+an upper bound below that boundary rejects. Insufficient precision is inconclusive.
+Every required endpoint must be supported alongside the original primary/family
+criteria before conditional support. Missing or invalid planned evidence stays
+incomplete or blocked; verified critical-invariant violations retain their veto.
+
+Reports retain pass/pass, fail/pass, pass/fail, fail/fail, missing, invalid and
+unknown paired outcomes, plus task/root rates and planned denominators. A rate is
+unknown when required observations are missing. One stochastic pass-to-fail pair
+is descriptive evidence, not proof of a stable regression. Reports preserve these
+counts before early negative decisions and remain private.
+
+Promotion of cohort-enabled plans remains blocked while bound decision receipts,
+optimization/report integration and corrected-oracle requalification are pending.
+Run `task test:evaluation:preservation-analysis` for the synthetic aggregate-gain
+counterexample, powered preservation, sparse data, overlap, missing outcomes,
+selection-bias construction and legacy compatibility checks.
 
 Run `task test:evaluation:preservation` for native synthetic qualification, identity,
 revocation and history checks. Isolation attestations in these unit fixtures are

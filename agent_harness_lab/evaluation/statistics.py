@@ -29,7 +29,10 @@ def bound(values, weights, alpha):
                 independent_roots=len(values), method='weighted_root_Hoeffding', alpha=alpha)
 
 
-def analyze(spec, records):
+def analyze(spec, records, *, cohort_binding=None):
+    if spec.cohort_manifest_sha256 is not None:
+        from .preservation_analysis import analyze as preservation
+        return preservation(spec, records, cohort_binding)
     expected = {t['trial_id']: t for t in schedule(spec)}
     if len(records) != len(expected) or len({r.trial_id for r in records}) != len(records):
         return dict(status='incomplete', reason='missing_or_duplicate_trials')
@@ -46,8 +49,6 @@ def analyze(spec, records):
             return dict(status='incomplete', reason='unknown_or_invalid_grade')
         trial = expected[record.trial_id]
         roots[(trial['family'], trial['root'])][(trial['task'], trial['repetition'])][trial['version']] = record.outcome
-    if spec.cohort_manifest_sha256 is not None:
-        return dict(status='blocked',reason='preservation_analysis_unavailable')
     families = defaultdict(list)
     for (family, _), pairs in roots.items():
         differences = [int(pair['candidate']) - int(pair['baseline']) for pair in pairs.values()]

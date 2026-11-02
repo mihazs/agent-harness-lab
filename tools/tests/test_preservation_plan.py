@@ -46,7 +46,9 @@ class PreservationPlanTests(unittest.TestCase):
         spec=replace(self.spec(),cohort_manifest_sha256='a'*64)
         rows=[TrialRecord(t['trial_id'],True,'graded','executable_grader',
             spec.baseline_hash,spec.candidate_hash,spec.grader_hash,spec.runtime_hash) for t in schedule(spec)]
-        self.assertEqual(analyze(spec,rows),dict(status='blocked',reason='preservation_analysis_unavailable'))
+        unresolved=analyze(spec,rows)
+        self.assertEqual((unresolved['status'],unresolved['reason']),('blocked','preservation_binding_missing_or_invalid'))
+        self.assertFalse(unresolved['publication_allowed'])
         final=replace(spec,profile='certification',partition='certification')
         decision=decide(final,dict(status='supported',oracle_validity='current'),isolation_verified=True,
             effective_runtime_verified=True,graders_audited=True,lineage_reviewed=True,certification_reserved=True)

@@ -314,7 +314,9 @@ class RegressionDraftKernelTests(KernelFixture):
         observed=value.store.run(value.export/'manifest.json',value.baseline,value.candidate,**profile)
         self.assertEqual(observed['state'],'sealed',observed)
         self.assertEqual(observed['cohort_qualification'],'current_membership_only')
-        self.assertEqual(value.store.analyze(observed['run_id'])['reason'],'preservation_analysis_unavailable')
+        analysis=value.store.analyze(observed['run_id'])
+        self.assertEqual(analysis['reason'],'uncertainty_or_margin_not_met')
+        self.assertEqual(analysis['preservation']['cohorts']['preserved']['endpoint']['mean'],0)
         for run_id in (prior['run_id'],observed['run_id']):
             trials=value.store.checked(run_id)[4]['trials']; self.assertEqual(len(trials),4)
             for trial in trials:
