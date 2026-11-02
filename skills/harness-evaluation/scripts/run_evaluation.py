@@ -154,6 +154,11 @@ def evaluate(args):
     manifest_bytes = read_regular(manifest_path,1024*1024) if controlled else manifest_path.read_bytes()
     manifest = json.loads(manifest_bytes.decode('utf-8'))
     manifest_hash = hashlib.sha256(manifest_bytes).hexdigest()
+    if (isinstance(manifest.get('experiment'),dict) and manifest['experiment'].get('profile') == 'certification'
+            or 'protected_access' in manifest or getattr(args, '_protected_access', None) is not None):
+        application_modules()
+        from agent_harness_lab.evaluation.certification_access import admission
+        admission(args, manifest)
     versions = {v: Path(getattr(args, v)).resolve() for v in ('baseline', 'candidate')}
     output = Path(args.output).resolve()
     skills = manifest.get('skills', [])

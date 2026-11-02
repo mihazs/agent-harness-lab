@@ -66,10 +66,10 @@ runtime claim is added.
 ## Remaining #8 work
 
 This repairs a false qualification signal; it does not complete #8. There is no
-current production bank-certification producer. `CertificationLedger` has a
-standalone reserve/consume API, but the production controller does not yet call it
-as an end-to-end final-evaluation lifecycle. A reserve call or caller-provided JSON
-receipt cannot establish independent curation or oracle validity.
+current production bank-certification producer. The production controller now uses
+`CertificationLedger` for an explicitly [unqualified managed diagnostic lifecycle](protected-diagnostic-access.md).
+Its legacy standalone API and a managed reservation cannot establish independent
+curation, untouched data or oracle validity.
 
 The positive path still needs actual independently reviewed source/root evidence,
 frozen oracle and falsification evidence, a frozen final candidate, controlled

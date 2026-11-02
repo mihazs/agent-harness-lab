@@ -53,8 +53,10 @@ oracle correction/invalidation and protected certification remain separate work.
   [correction audits/review](grader-corrections.md) preserve grader defects as
   grading observations. Immutable corrected-bank replacement remains pending
   in #8. These checks do not authenticate runtime/import dependencies.
-- A private controller-owned certification ledger reserves one final candidate and
-  consumes access before exposing its bank. Search roles cannot request access.
+- A private controller-owned [managed diagnostic ledger](protected-diagnostic-access.md)
+  binds a frozen comparison and consumes access before preparation/worker visibility.
+  Its reservations remain explicitly unqualified. The legacy standalone API
+  reserves one candidate and consumes access before returning its bank digest. Search roles cannot request access.
   Concurrent access is single-use. API role checks require OS isolation; they are
   not a security boundary on their own.
 - Artifact extraction rejects traversal, symlinks, hardlinks and special files,

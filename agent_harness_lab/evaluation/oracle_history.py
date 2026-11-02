@@ -188,7 +188,8 @@ class HistoryStore(PrivateJournal):
         fields(inputs,'schema_version run_id source_manifest_sha256 plan_sha256 oracle_sha256 dependencies versions image_sha256'
             + (' bank_authority bank_tasks' if type(version) is int and version in (2,3,4) else '')
             + (' behavior_policies' if type(version) is int and version in (3,4) else '')
-            + (' cohort_binding_sha256' if type(version) is int and version==4 else ''))
+            + (' cohort_binding_sha256' if type(version) is int and version==4 else '')
+            + (' protected_access_sha256' if 'protected_access_sha256' in inputs else ''))
         if (type(version) is not int or version not in (1,2,3,4) or inputs['run_id'] != run_id
                 or events[0][0]['kind'] != 'run_started' or events[0][0]['payload'] != dict(inputs_sha256=inputs_hash)):
             raise ValueError('controller run input binding changed')
@@ -196,6 +197,15 @@ class HistoryStore(PrivateJournal):
         spec = ExperimentSpec.parse(source['experiment']); spec.validate()
         if manifest_hash != inputs['source_manifest_sha256'] or spec.digest != inputs['plan_sha256'] or spec.grader_hash != inputs['oracle_sha256']:
             raise ValueError('stored experiment declaration changed')
+        if 'protected_access_sha256' in inputs:
+            receipt, receipt_hash = record(case/'protected-access.json',1024*1024)
+            if receipt_hash != inputs['protected_access_sha256'] or receipt.get('run_id') != run_id:
+                raise ValueError('managed access frozen binding changed')
+            self.access_ledger().validate_managed_history(receipt)
+            binding = receipt['binding']
+            if (binding['plan_sha256'] != spec.digest or binding['manifest_sha256'] != manifest_hash
+                    or binding['oracle_sha256'] != spec.grader_hash or binding['runtime_sha256'] != spec.runtime_hash):
+                raise ValueError('managed access differs from historical comparison')
         if version==2 or inputs.get('bank_authority') is not None:
             if not isinstance(inputs['bank_authority'],dict) or inputs['bank_authority']!=source.get('bank_authority'):
                 raise ValueError('stored bank authority binding changed')
@@ -346,6 +356,9 @@ class HistoryStore(PrivateJournal):
             oracle_validity=validity,dependencies=sorted(inputs['dependencies']),
             controller_observed=events[-1][0]['state']=='sealed',oracle_review='unverified',
             independence='unverified',automatic_promotion=False,publication_allowed=False)
+        if 'protected_access_sha256' in inputs:
+            from .certification_access import view
+            result['protected_access']=view(record(checked[0]/'protected-access.json',1024*1024)[0])
         if inputs.get('bank_tasks') is not None: result['bank_authority']='current_eligible'
         if inputs['schema_version']==4:
             result['cohort_manifest_sha256']=checked[3].cohort_manifest_sha256
@@ -380,6 +393,9 @@ class HistoryStore(PrivateJournal):
                 value = dict(status='blocked',reason='behavior_observation_incomplete',**retained)
         result = dict(value,oracle_validity=validity,controller_run_id=run_id,oracle_review='unverified',
             independence='unverified',automatic_promotion=False,publication_allowed=False)
+        if 'protected_access_sha256' in inputs:
+            from .certification_access import view
+            result['protected_access']=view(record(case/'protected-access.json',1024*1024)[0])
         if inputs.get('bank_tasks') is not None: result['bank_authority']='current_eligible'
         if effects is not None: result['behavior']=effects
         if inputs['schema_version']==4:
@@ -397,7 +413,33 @@ class HistoryStore(PrivateJournal):
         from .decision_receipts import verify
         with self.locked(): return verify(self,run_id,receipt_sha256)
 
-    def run(self, manifest, baseline, candidate, *, cgroup_root, image_root, image_sha256, disk_bytes, budget_seconds=60,parent_deadline=None,on_started=None):
+    def access_ledger(self):
+        from .task_bank import CertificationLedger
+        return CertificationLedger(self.root/'protected-access.json')
+
+    def reserve_access(self, manifest, baseline, candidate, *, budget_seconds=60,parent_deadline=None):
+        from .certification_access import capture
+        if type(budget_seconds) not in (int,float) or not math.isfinite(budget_seconds) or not 0<budget_seconds<=300:
+            raise ValueError('access reservation budget must be positive and at most 300 seconds')
+        deadline=time.monotonic()+budget_seconds
+        if parent_deadline is not None:
+            if type(parent_deadline) not in (int,float) or not math.isfinite(parent_deadline): raise ValueError('finite access deadline required')
+            deadline=min(deadline,parent_deadline)
+        def check():
+            if time.monotonic()>=deadline: raise TimeoutError('access reservation budget exhausted')
+        paths = [Path(p).absolute() for p in (manifest,baseline,candidate)]
+        if any(self.root.is_relative_to(p if p.is_dir() else p.parent)
+                or (p if p.is_dir() else p.parent).is_relative_to(self.root) for p in paths):
+            raise ValueError('access ledger must remain outside controller input views')
+        binding = capture(manifest,baseline,candidate,check)
+        declared,_ = record(manifest,1024*1024)
+        if ExperimentSpec.parse(declared['experiment']).cohort_manifest_sha256 is not None:
+            raise ValueError('managed diagnostics do not qualify preservation cohorts')
+        with self.locked(create=True): pass
+        check()
+        return self.access_ledger().reserve_managed(binding)
+
+    def run(self, manifest, baseline, candidate, *, cgroup_root, image_root, image_sha256, disk_bytes, budget_seconds=60,parent_deadline=None,on_started=None,access_reservation=None):
         from agent_harness_lab.cli import evaluator
         from .bank_tools import frozen_grader
         from .bank_revisions import sync_tree
@@ -422,6 +464,10 @@ class HistoryStore(PrivateJournal):
         raw = read_regular(manifest,1024*1024); source,manifest_hash = record(manifest,1024*1024)
         if hashlib.sha256(raw).hexdigest() != manifest_hash: raise ValueError('manifest changed during history preflight')
         spec = ExperimentSpec.parse(source['experiment']); spec.validate()
+        if spec.profile == 'certification':
+            raise ValueError('genuine certification qualification issuer is unavailable; public development remains unqualified')
+        if 'protected_access' in source and access_reservation is None:
+            raise ValueError('managed access declaration requires its controller reservation')
         bound_tasks = bank_authority(source,export_root=manifest.parent)
         if bound_tasks is not None:
             owner = Path(source['bank_authority']['bank_path']).parents[2]
@@ -444,6 +490,21 @@ class HistoryStore(PrivateJournal):
         membership=cohort_history.capture(manifest.parent,source,spec,bound_tasks)
         if time.monotonic()>=deadline: raise TimeoutError('history qualification preflight budget exhausted')
         run_id = hashlib.sha256(('run:'+secrets.token_hex(32)).encode()).hexdigest()
+        from .certification_access import capture as capture_access, exposure
+        binding = None
+        def check_access_budget():
+            if time.monotonic() >= deadline: raise TimeoutError('access observation budget exhausted')
+        if access_reservation is not None:
+            binding = capture_access(manifest,baseline,candidate,check_access_budget)
+            if spec.cohort_manifest_sha256 is not None:
+                raise ValueError('managed diagnostics do not qualify preservation cohorts')
+            assets = binding['assets']
+        else:
+            assets,_ = exposure(manifest.parent,selected,source['grader_bundles'],check_access_budget)
+        if time.monotonic() >= deadline: raise TimeoutError('managed access preflight budget exhausted')
+        with self.locked(create=True): pass
+        access_handle,access_receipt = self.access_ledger().admit_managed(assets,run_id,
+            reservation_id=access_reservation,binding=binding)
         with self.locked(create=True):
             dependencies = {}
             for bundle in sorted(folders):
@@ -465,6 +526,9 @@ class HistoryStore(PrivateJournal):
                 binding_hash=cohort_history.freeze(case,membership,source,spec,bound_tasks)
                 inputs.update(schema_version=4,bank_authority=source['bank_authority'],bank_tasks=bound_tasks,
                     behavior_policies=policies,cohort_binding_sha256=binding_hash)
+            if access_receipt is not None:
+                write_bytes(case/'protected-access.json',encoded(access_receipt))
+                inputs['protected_access_sha256'] = record(case/'protected-access.json',1024*1024)[1]
             if len(encoded(inputs))>256*1024: raise ValueError('history input metadata limit exceeded')
             write_bytes(case/'manifest.json',raw); write_bytes(case/'inputs.json',encoded(inputs)); sync_tree(case)
             events = []; self.append(case,events,'run_started','running',dict(inputs_sha256=record(case/'inputs.json')[1]))
@@ -472,6 +536,7 @@ class HistoryStore(PrivateJournal):
         args = SimpleNamespace(manifest=manifest,baseline=baseline,candidate=candidate,output=case/'execution',
             agent='offline',codex='must-not-launch',claude='must-not-launch',cgroup_root=Path(cgroup_root),
             image_root=image_root,image_sha256=image_sha256,disk_bytes=disk_bytes,parent_deadline=deadline)
+        if access_handle is not None: args._protected_access = access_handle
         try:
             if on_started is not None:
                 try: on_started(run_id)
@@ -512,8 +577,14 @@ def main(argv=None):
     parser.add_argument('--store',type=Path,required=True,help='Explicit private controller history')
     actions = parser.add_subparsers(dest='action',required=True)
     run = actions.add_parser('run',help='Execute a fresh full pinned offline comparison; never import results')
-    for name in ('manifest','baseline','candidate'):
-        run.add_argument('--'+name,type=Path,required=True)
+    reserve = actions.add_parser('reserve-access',help='Reserve an unqualified one-shot protected diagnostic comparison')
+    for command in (run,reserve):
+        for name in ('manifest','baseline','candidate'):
+            command.add_argument('--'+name,type=Path,required=True)
+    reserve.add_argument('--budget-seconds',type=float,default=60)
+    status = actions.add_parser('access-status',help='Inspect private reservation retirement without inferring worker access')
+    status.add_argument('--reservation-id',required=True)
+    run.add_argument('--access-reservation',help='Actual controller-owned protected diagnostic reservation ID')
     pinned_arguments(run)
     for name in ('show','analyze','historical-plan','decision','verify-decision'):
         command = actions.add_parser(name)
@@ -528,8 +599,13 @@ def main(argv=None):
         store = HistoryStore(args.store)
         if args.action == 'run':
             result = store.run(args.manifest,args.baseline,args.candidate,cgroup_root=args.cgroup_root,
-                image_root=args.image_root,image_sha256=args.image_sha256,disk_bytes=args.disk_bytes,budget_seconds=args.budget_seconds)
+                image_root=args.image_root,image_sha256=args.image_sha256,disk_bytes=args.disk_bytes,budget_seconds=args.budget_seconds,
+                access_reservation=args.access_reservation)
             code = 0 if result['state']=='sealed' and result['oracle_validity']=='current' else 3 if result['oracle_validity']=='invalidated' else 1
+        elif args.action == 'access-status':
+            with store.locked(): result=store.access_ledger().managed_status(args.reservation_id)
+            code=0
+        elif args.action == 'reserve-access': result,code = store.reserve_access(args.manifest,args.baseline,args.candidate,budget_seconds=args.budget_seconds),0
         elif args.action == 'quarantine': result,code = store.quarantine(args.record),0
         elif args.action == 'oracle': result,code = store.oracle(args.bundle),0
         elif args.action == 'analyze': result,code = store.analyze(args.run_id),3
