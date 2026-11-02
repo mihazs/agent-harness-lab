@@ -157,6 +157,7 @@ execution and later approval revocation over synthetic inputs.
 Opt-in [preservation cohorts](preservation-cohorts.md) bind reviewed prior execution
 and exact member contracts into a new plan and private history inputs schema 4.
 The controller freezes membership before dispatch and revalidates current authority.
-Cohort-enabled plans currently block favorable decisions while preservation analysis
-and decision-receipt integration remain pending. Legacy plans retain their original
+History analysis now includes conditional cohort noninferiority endpoints and
+descriptive losses/recoveries. Cohort-enabled promotion remains blocked while bound
+decision-receipt integration is pending. Legacy plans retain their original
 digests, trial IDs and history interpretation.

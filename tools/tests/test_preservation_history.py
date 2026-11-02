@@ -43,7 +43,11 @@ class PreservationHistoryTests(unittest.TestCase):
         self.assertEqual(result['cohort_qualification'],'current_membership_only')
         self.assertFalse(result['publication_allowed'])
         analysis=self.f.store.analyze(result['run_id'])
-        self.assertEqual((analysis['status'],analysis['reason']),('blocked','preservation_analysis_unavailable'))
+        self.assertEqual((analysis['status'],analysis['reason']),('inconclusive','uncertainty_or_margin_not_met'))
+        cohort=analysis['preservation']['cohorts']['preserved']
+        self.assertEqual(cohort['disposition'],'inconclusive')
+        self.assertEqual(cohort['endpoint']['mean'],0)
+        self.assertEqual(cohort['descriptive']['transitions']['pass_pass'],2)
         self.assertEqual(analysis['cohort_manifest_sha256'],self.pin)
         prior=self.f.store.historical_plan(result['run_id'])
         self.assertEqual(prior['plan']['cohort_manifest_sha256'],self.pin)

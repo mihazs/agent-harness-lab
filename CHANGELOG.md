@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.52.0
+
+### Minor Changes
+
+- Add conditional paired-root preservation endpoints and descriptive loss/recovery reporting for frozen cohorts. Bind numeric criteria to exact manifest bytes and allocate error across primary, family and required cohort claims. Preserve missing observations, critical-invariant vetoes and legacy plan behavior. Keep cohort-enabled promotion blocked pending bound decision and optimization receipts.
+
 ## 0.51.0
 
 ### Minor Changes
