@@ -502,10 +502,9 @@ class HistoryStore(PrivateJournal):
         else:
             assets,_ = exposure(manifest.parent,selected,source['grader_bundles'],check_access_budget)
         if time.monotonic() >= deadline: raise TimeoutError('managed access preflight budget exhausted')
-        with self.locked(create=True): pass
-        access_handle,access_receipt = self.access_ledger().admit_managed(assets,run_id,
-            reservation_id=access_reservation,binding=binding)
         with self.locked(create=True):
+            access_handle,access_receipt = self.access_ledger().admit_managed(assets,run_id,
+                reservation_id=access_reservation,binding=binding)
             dependencies = {}
             for bundle in sorted(folders):
                 if not self.case(oracle_case(bundle)).exists():
