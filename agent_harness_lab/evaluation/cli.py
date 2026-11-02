@@ -83,6 +83,7 @@ def main(argv):
             spec = ExperimentSpec.parse(json.loads(args.spec.read_text()))
             records = [TrialRecord(**r) for r in json.loads(args.records.read_text())]
             result = analyze(spec, records)
+            result['oracle_validity'] = 'unverified'
             result['promotion'] = asdict(decide(spec, result))
             code = 3
         else:

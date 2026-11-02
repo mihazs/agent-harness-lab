@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
-COMMANDS = ('mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'experiment', 'regression', 'regression-review', 'sandbox-check',
+COMMANDS = ('mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'experiment', 'experiment-history', 'regression', 'regression-review', 'sandbox-check',
             'research-simulate', 'incident-search', 'promotion', 'benchmark-report', 'analyze', 'improve', 'watch', 'doctor', 'init', 'sources')
 
 

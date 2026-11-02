@@ -45,8 +45,8 @@ def _argument(root, folder, value, executable):
     return {'literal':value}
 
 
-def identity(root, tasks, bundles):
-    """Hash task IDs, complete current bundles and relocation-stable grader argv."""
+def capture(root, tasks, bundles):
+    """Capture validated oracle dependencies in the existing versioned JSON form."""
     if not isinstance(root,(str,Path)): raise ValueError('oracle root must be an explicit path')
     root = Path(root).absolute()
     if '..' in root.parts: raise ValueError('oracle root must be canonical')
@@ -92,10 +92,15 @@ def identity(root, tasks, bundles):
         elif verified[folder]!=expected:
             raise ValueError('conflicting oracle declarations')
         argv, allowed = indexed[name]
-        result[name] = dict(bundle_sha256=expected,artifacts=allowed,argv=[_argument(root,folder,arg,index==0)
+        result[name] = dict(bundle_sha256=expected,artifacts=None if allowed is None else list(allowed),argv=[_argument(root,folder,arg,index==0)
             for index,arg in enumerate(argv)])
     if any(digest(folder)!=expected for folder,expected in verified.items()):
         raise ValueError('oracle changed during identity capture')
-    raw = json.dumps(dict(schema_version=1,algorithm='declared-oracle-argv-v1',tasks=result),
+    return dict(schema_version=1,algorithm='declared-oracle-argv-v1',tasks=result)
+
+
+def identity(root, tasks, bundles):
+    """Hash the canonical capture without changing version 1 identity bytes."""
+    raw = json.dumps(capture(root,tasks,bundles),
                      sort_keys=True,separators=(',',':'),ensure_ascii=False).encode('utf-8')
     return hashlib.sha256(raw).hexdigest()

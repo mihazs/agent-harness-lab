@@ -16,6 +16,8 @@ def decide(spec, analysis, *, isolation_verified=False, effective_runtime_verifi
         return PromotionDecision(analysis['status'], analysis.get('reason', 'invalid_evidence'))
     if spec.profile != 'certification':
         return PromotionDecision('inconclusive', 'descriptive_smoke_cannot_certify')
+    if analysis.get('oracle_validity') != 'current':
+        return PromotionDecision('blocked', 'oracle_history_unverified_or_invalidated')
     if not all((isolation_verified, effective_runtime_verified, graders_audited, lineage_reviewed, certification_reserved)):
         return PromotionDecision('blocked', 'certification_prerequisites_unverified')
     if analysis['status'] != 'supported':
