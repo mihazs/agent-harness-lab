@@ -86,6 +86,20 @@ class PrivateJournal:
             raise ValueError('case identity must be an exact SHA-256')
         return contained(self.root, 'cases/'+case_id)
 
+    def case_ids(self, maximum):
+        """Enumerate bounded canonical case directories without following links."""
+        if type(maximum) is not int or maximum<=0: raise ValueError('positive case count bound required')
+        folder=contained(self.root,'cases')
+        if not folder.exists(): return []
+        result=[]
+        with os.scandir(folder) as entries:
+            for entry in entries:
+                if len(result)>=maximum: raise ValueError('case directory count bound exceeded')
+                path=self.case(entry.name)
+                if not entry.is_dir(follow_symlinks=False) or not path.is_dir(): raise ValueError('invalid case directory')
+                result.append(entry.name)
+        return sorted(result)
+
     def history(self, case):
         events = []
         with os.scandir(case/'events') as entries:

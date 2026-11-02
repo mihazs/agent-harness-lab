@@ -126,16 +126,7 @@ class LineageStore(PrivateJournal):
         return digest(dict(project_sha256=self.project, scope_sha256=self.scope, cache_sha256=cache_sha256, claim=value))
 
     def cases(self):
-        folder = contained(self.root, 'cases')
-        if not folder.exists(): return []
-        result = []
-        with os.scandir(folder) as entries:
-            for entry in entries:
-                if len(result) >= MAX_CASES: raise ValueError('lineage case bound exceeded')
-                fingerprint(entry.name); path = self.case(entry.name)
-                if not path.is_dir(): raise ValueError('invalid lineage case directory')
-                result.append(entry.name)
-        return sorted(result)
+        return self.case_ids(MAX_CASES)
 
     def snapshot(self, raw, identity):
         folder = contained(self.root, 'snapshots'); folder.mkdir(mode=0o700, exist_ok=True)
