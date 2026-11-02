@@ -116,6 +116,7 @@ class PrivateWorkspace:
                     inner[index+1] = destination
         index = inner.index('--bind'); inner[index+1] = '/work'
         self.frame = json.dumps(self.layout(inner, bootstrap=False), allow_nan=False).encode()
+        self.audit_execs=[self.command,['/usr/bin/python3','-I','-c',BOOTSTRAP],json.loads(self.frame),inner_argv,list(argv)]
         if len(self.frame) > MAX_FRAME:
             raise ValueError('worker startup frame bound exceeded')
 
@@ -134,7 +135,8 @@ class PrivateWorkspace:
 
     def __enter__(self):
         try:
-            self.filter_fd, self.filter_policy = sealed_filter()
+            self.filter_fd, self.filter_policy = (sealed_filter(permission_audit=True)
+                if getattr(self.backend,'permission_audit',None) else sealed_filter())
             self.receiver, self.sender = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
             self.command[1:1] = ['--seccomp', str(self.filter_fd)]
             return self

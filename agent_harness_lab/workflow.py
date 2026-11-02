@@ -310,6 +310,9 @@ def _improve(args):
     print(f'Private run artifacts: {output}', file=sys.stderr)
     data = evidence(args, output)
     grading = None
+    permission_audit=getattr(args,'permission_audit',None)
+    if permission_audit is not None and not controlled:
+        raise ValueError('permission audit requires controlled Responses improvement')
     grader_options = {name: getattr(args, name, None) for name in ('cgroup_root', 'image_root', 'image_sha256', 'disk_bytes')}
     if controlled and any(value is None for value in grader_options.values()):
         raise ValueError('controlled improvement requires cgroup, pinned image and private disk profiles')
@@ -317,7 +320,9 @@ def _improve(args):
         raise ValueError('grader resource options require --sandbox-graders')
     if controlled or getattr(args, 'sandbox_graders', False):
         from .evaluation.sandbox import SandboxBackend
+        if permission_audit is not None:grader_options['permission_audit']=permission_audit
         grading = SandboxBackend(**grader_options)
+        if permission_audit is not None:args._permission_backend=grading
         available = remaining()
         if available <= 0: raise TimeoutError('Improvement budget exhausted before grader preflight')
         capability = grading.capability(seconds=min(3, available))
@@ -507,6 +512,11 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         evaluated = json.loads((Path(options.output) / 'results.json').read_text())
         protected[evaluation] = runner.digest(evaluation)
         protected[frozen] = runner.digest(frozen)
+        if permission_audit is not None:
+            result['isolation_qualification']=grading.permission_qualification()
+            if result['isolation_qualification']['qualification']!='qualified':
+                result.update(status='requires_intervention',reason='permission_qualification_not_met')
+                break
         trials = evaluated['trials']
         if controlled and evaluated.get('status') in ('blocked','budget_exhausted'):
             result.update(status=evaluated['status'],reason=evaluated.get('reason'))
@@ -536,6 +546,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if candidate_pass and controls_pass and evaluated['inputs_unchanged']:
             result['status'] = 'no_change'
             break
+    if permission_audit is not None:
+        result['isolation_qualification']=grading.permission_qualification()
     if client is not None:
         result['inference'] = client.report()
         result['automatic_promotion'] = False
@@ -545,8 +557,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
 
 def _run_improvement(args):
     """Persist truthful completion even when a run is interrupted or raises."""
-    if hasattr(args, '_run_output'):
-        del args._run_output
+    for name in ('_run_output','_permission_backend'):
+        if hasattr(args,name):delattr(args,name)
     try:
         return _improve(args)
     except BaseException as exc:
@@ -558,6 +570,10 @@ def _run_improvement(args):
                   'invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error')
         result = dict(status=status, changed_files=[], failure_class='requires_intervention', error_type=type(exc).__name__)
         if inference_error: result['reason'] = str(exc)
+        permission_backend=getattr(args,'_permission_backend',None)
+        if permission_backend is not None:
+            result['isolation_qualification']=permission_backend.permission_qualification()
+            result['automatic_promotion']=False
         if isinstance(exc, ConnectionError) and getattr(args,'agent',None) != 'responses':
             result['failure_class'] = 'transient_infrastructure'
         output = getattr(args, '_run_output', None)
@@ -579,7 +595,7 @@ def improve(args):
 def watch_configuration(args):
     settings = {k: getattr(args, k, None) for k in ('agent', 'codex', 'claude', 'timeout', 'format',
                 'focus', 'max_attempts', 'retry_delay', 'watch_budget', 'sandbox_graders',
-                'image_sha256', 'disk_bytes')}
+                'image_sha256', 'disk_bytes', 'permission_audit')}
     for key in ('cgroup_root', 'image_root'):
         value = getattr(args, key, None)
         settings[key] = str(value.resolve()) if value is not None else None

@@ -148,7 +148,7 @@ class ControlledWorkflowTests(unittest.TestCase):
             max_tool_calls=40,max_output_tokens=100,max_request_bytes=32768,max_response_bytes=16384)
         self.args.inference_settings = self.root/'settings.json'; self.write_settings()
         self.runner = fixtures.fixtures.evaluator()
-        self.backend = Mock(); self.backend.capability.return_value = dict(status='available'); self.backend.run.side_effect = self.execute
+        self.backend = Mock(permission_audit=None); self.backend.capability.return_value = dict(status='available'); self.backend.run.side_effect = self.execute
         self.histories = []; self.roles = []; self.proposals = self.authors = 0
         self.mode = 'complete'
         workflow.collect.return_value['evaluation_failures'] = [dict(split='heldout',result='SYNTHETIC_PRIOR_HELDOUT_SECRET')]

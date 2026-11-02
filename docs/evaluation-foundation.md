@@ -494,3 +494,7 @@ performance, semantic independence and hidden-oracle isolation remain unexecuted
 
 Task-bank validation also checks [versioned content exposure](content-grouping.md)
 without treating lexical similarity as verified lineage.
+
+The optional [permission-result audit](permission-audit.md) observes a bounded
+errno policy in supported pinned Linux workers. It keeps task outcomes separate
+from permission qualification and does not certify hidden access attempts.

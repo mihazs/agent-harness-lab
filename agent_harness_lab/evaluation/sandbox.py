@@ -1,6 +1,6 @@
 """Optional offline Linux role isolation. Never falls back to host execution."""
 from dataclasses import asdict, dataclass, replace
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 import hashlib
 import math
 import os
@@ -37,16 +37,27 @@ class Limits:
 
 class SandboxBackend:
     """Role mounts are controller-selected; candidate content is never policy."""
-    def __init__(self, binary='bwrap', *, cgroup_root=None, image_root=None, image_sha256=None, disk_bytes=None):
+    def __init__(self, binary='bwrap', *, cgroup_root=None, image_root=None, image_sha256=None, disk_bytes=None, permission_audit=None):
         self.binary = shutil.which(binary)
         self.cgroup_root = cgroup_root
         if (image_root is None) != (image_sha256 is None):
             raise ValueError('runtime image root and SHA-256 pin must be supplied together')
         self.image = RuntimeImage(image_root, image_sha256) if image_root is not None else None
         self.disk_bytes = disk_bytes
+        from .permission_audit import PROFILE
+        if permission_audit not in (None,PROFILE):raise ValueError('unsupported permission audit profile')
+        self.permission_audit=permission_audit
+        self.permission_reports=[]
         if disk_bytes is not None:
             policy(disk_bytes)
             if cgroup_root is None: raise ValueError('bounded storage requires aggregate cgroup controls')
+
+    def permission_qualification(self):
+        from .permission_audit import qualification
+        return dict(profile=self.permission_audit,status='requested' if self.permission_audit else 'not_requested',
+            qualification=qualification(self.permission_reports) if self.permission_audit else 'unknown',
+            runs=len(self.permission_reports),observation_scope='declared_role_permission_errno_results_only',
+            semantic_intent='unknown',automatic_promotion=False,publication_allowed=False)
 
     def command(self, argv, workspace, inputs, role):
         if role not in ROLES or not argv or not all(isinstance(a, str) for a in argv):
@@ -60,6 +71,8 @@ class SandboxBackend:
                    '--new-session', '--cap-drop', 'ALL', '--clearenv', '--setenv', 'PATH', '/usr/bin:/bin',
                    '--setenv', 'HOME', '/home/worker', '--setenv', 'LANG', 'C.UTF-8']
         command += ['--setenv', 'AHL_SANDBOX_ROLE', role]
+        if self.permission_audit:
+            command += ['--setenv','PYTHONDONTWRITEBYTECODE','1']
         if self.image:
             for folder in (workspace, *map(Path, inputs.values())):
                 if folder.resolve().is_relative_to(self.image.root) or self.image.root.is_relative_to(folder.resolve()):
@@ -87,21 +100,37 @@ class SandboxBackend:
         Limits(seconds=seconds).validate()
         if sys.platform != 'linux' or not self.binary:
             return dict(status='unsupported', reason='linux_bubblewrap_unavailable', automatic_promotion=False)
+        if self.permission_audit:
+            from .permission_audit import supported
+            if not supported() or self.image is None or self.disk_bytes is None or self.cgroup_root is None:
+                return dict(status='unsupported',reason='permission_audit_profile_unavailable',automatic_promotion=False)
         import tempfile
         with tempfile.TemporaryDirectory() as folder:
             try:
-                run = self.run(['/usr/bin/true'], Path(folder), {}, 'grader', Limits(seconds=seconds))
+                checkpoint=len(self.permission_reports)
+                if self.permission_audit:
+                    fixture=Path(folder)/'fixture';fixture.mkdir();(fixture/'marker').write_text('synthetic')
+                    work=Path(folder)/'work';work.mkdir()
+                    code="from pathlib import Path\nPath('/work/allowed').write_text('synthetic')\ntry:Path('/inputs/fixture/marker').write_text('bad')\nexcept OSError as exc:assert exc.errno in (1,13,30)\nelse:raise AssertionError('readonly boundary absent')"
+                    run=self.run(['/usr/bin/python3','-c',code],work,{'fixture':fixture},'grader',Limits(seconds=seconds))
+                else:
+                    run = self.run(['/usr/bin/true'], Path(folder), {}, 'grader', Limits(seconds=seconds))
+                del self.permission_reports[checkpoint:]
             except TimeoutError:
                 return dict(status='unsupported', reason='namespace_probe_timeout', automatic_promotion=False)
             except (OSError, ValueError, subprocess.SubprocessError):
                 return dict(status='unsupported', reason='resource_boundary_unavailable', automatic_promotion=False)
         available = run['exit_code'] == 0 and run['status'] == 'completed' and run['inputs_unchanged'] is True
+        if self.permission_audit:
+            observed=run['attestation']['permission_audit']
+            available=available and observed['status']=='complete' and observed['qualification']=='violated'
         return dict(status='available' if available else 'unsupported',
                     reason=None if available else 'namespace_probe_failed',
                     automatic_promotion=False,
                     cgroup_v2=run['attestation']['cgroup_v2'],
                     runtime_image=run['attestation'].get('runtime_image'),
                     storage_policy=run['attestation'].get('storage_policy'),
+                    permission_audit=dict(profile=self.permission_audit,probe='observed_swallowed_readonly_denial') if self.permission_audit else None,
                     limitations=['full isolation certification not established']
                         + ([] if self.disk_bytes is not None else ['no aggregate disk quota'])
                         + ([] if self.image else ['runtime dependencies unpinned'])
@@ -109,7 +138,26 @@ class SandboxBackend:
 
     def run(self, argv, workspace, inputs, role, limits=Limits(), *, artifact_allowlist=None, working_state=None):
         limits.validate()
+        audit_capture=None
+        if self.permission_audit:
+            # Reserve coverage before preparation/launch can raise.
+            audit_capture=dict(status='unknown',qualification='unknown',reason='capture_unresolved')
+            self.permission_reports.append(audit_capture)
         start = time.monotonic()
+        permission_command=None
+        if self.permission_audit:
+            from .permission_audit import hashed
+            if not isinstance(argv,(list,tuple)) or not argv or any(not isinstance(a,str) or '\0' in a for a in argv):
+                raise ValueError('permission audit requires an explicit argv')
+            requested=list(argv);effective=list(requested)
+            if effective and effective[0]=='/usr/bin/python3':effective.insert(1,'-B')
+            permission_command=dict(requested_argv_sha256=hashed(requested),effective_argv_sha256=hashed(effective),
+                normalization='canonical_python_no_bytecode_v1' if effective!=requested else 'unchanged')
+            argv=effective
+        if self.permission_audit:
+            from .permission_audit import supported
+            if not supported() or self.image is None or self.disk_bytes is None or self.cgroup_root is None:
+                raise ValueError('permission audit requires the full supported isolation profile')
         if working_state is not None:
             from .working_state import WorkingState
             if not isinstance(working_state,WorkingState) or role == 'grader' or self.disk_bytes is None or artifact_allowlist is not None:
@@ -139,14 +187,25 @@ class SandboxBackend:
         storage = PrivateWorkspace(self, workspace, inputs, role, argv, self.disk_bytes,
             start+limits.seconds, artifact_allowlist if artifact_allowlist is not None else [], working_state) if self.disk_bytes is not None else nullcontext(None)
         storage_report = None
+        audit_report=dict(status='not_requested',qualification='unknown',observation_scope='unobserved')
         with storage as scratch:
-            with boundary as group, subprocess.Popen(scratch.command if scratch else command,
-                    cwd=workspace, env={'PATH': '/usr/bin:/bin'}, stdin=subprocess.DEVNULL,
+            with ExitStack() as stack:
+                group=stack.enter_context(boundary)
+                audit=None
+                if self.permission_audit:
+                    from .permission_audit import Observation
+                    audit=Observation(scratch.command,scratch.audit_execs,group,limits,start+limits.seconds,role)
+                    stack.callback(audit.close)
+                descriptors=tuple(([scratch.filter_fd] if scratch else [])+([audit.writer] if audit else []))
+                process=stack.enter_context(subprocess.Popen(audit.command if audit else scratch.command if scratch else command,
+                    cwd=workspace, env={'PATH': '/usr/bin:/bin'}, stdin=subprocess.PIPE if audit else subprocess.DEVNULL,
                     stdout=scratch.sender if scratch else subprocess.PIPE, stderr=subprocess.PIPE,
-                    pass_fds=(scratch.filter_fd,) if scratch else (),
-                    start_new_session=True, preexec_fn=constrain) as process:
+                    pass_fds=descriptors,
+                    start_new_session=True, preexec_fn=None if audit else constrain))
                 poll = selectors.DefaultSelector()
                 try:
+                    if audit:
+                        audit.start(process);poll.register(audit.reader,selectors.EVENT_READ,2)
                     if scratch: scratch.start(group)
                     for index, pipe in enumerate((scratch.receiver if scratch else process.stdout, process.stderr)):
                         os.set_blocking(pipe.fileno(), False)
@@ -156,6 +215,10 @@ class SandboxBackend:
                         if remaining <= 0:
                             reason = 'timeout'; break
                         for key, _ in poll.select(min(.1, remaining)):
+                            if key.data==2:
+                                audit.receive()
+                                if audit.eof:poll.unregister(key.fileobj)
+                                continue
                             raw = os.read(key.fileobj.fileno(), min(65536, limits.output_bytes + 1))
                             if not raw:
                                 poll.unregister(key.fileobj)
@@ -175,6 +238,9 @@ class SandboxBackend:
                     try: os.killpg(process.pid, signal.SIGKILL)
                     except ProcessLookupError: pass
                     process.wait(timeout=2)
+                    if audit:
+                        audit_report=audit.result()
+                        if audit_report['status']!='complete':reason=reason or 'permission_audit_unavailable'
                 except BaseException:
                     try: os.killpg(process.pid, signal.SIGKILL)
                     except ProcessLookupError: pass
@@ -200,6 +266,9 @@ class SandboxBackend:
                     hugetlb_policy=scratch.filter_policy,
                     extracted=scratch.extract() if not reason and (process.returncode == 0 or
                         working_state is not None and 0 < process.returncode < 128) and unchanged else None)
+        if self.permission_audit:
+            if reason and audit_report['qualification']!='violated':audit_report.update(status='unknown',qualification='unknown')
+            audit_capture.update(audit_report)
         return dict(exit_code=process.returncode, status=reason or ('completed' if process.returncode == 0 else 'failed'),
                     stdout=bytes(buffers[0][:limits.output_bytes]).decode('utf-8', 'replace'),
                     stderr=bytes(buffers[1][:limits.output_bytes]).decode('utf-8', 'replace'),
@@ -211,4 +280,6 @@ class SandboxBackend:
                         cgroup_v2=cgroup,
                         runtime_image=image,
                         storage_policy=storage_report,
+                        permission_audit=audit_report,
+                        permission_command=permission_command,
                         aggregate_disk_bound_verified=bool(storage_report and storage_report['verified']), inference_supported=False))
