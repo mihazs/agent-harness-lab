@@ -1,9 +1,11 @@
 """Explicit controller-owned Responses inference; no credentials reach workers."""
 import base64
+from copy import deepcopy
 import hashlib
 import json
 import os
 from pathlib import Path
+import secrets
 import subprocess
 import sys
 import time
@@ -104,6 +106,88 @@ TOOL = dict(type='function',name='run',description='Run one argv command in the 
                                 required=['argv'],additionalProperties=False))
 
 
+class ActionLedger:
+    """Bounded private observations; omitted evidence never becomes a negative fact."""
+    MAX_RECORDS = 4096
+    MAX_BYTES = 8*1024*1024
+    OUTPUT_BYTES = 8192
+    MAX_SCOPES = 4096
+
+    def __init__(self,credential):
+        self.credential = credential
+        self.ledger_id = secrets.token_hex(16)
+        self.rows = {}; self.bytes = self.sequence = self.scope_sequence = self.order = 0
+        self.scopes = {}; self.scope = self.begin('unscoped',None)
+
+    def begin(self,role,trial_id):
+        if trial_id is not None and (not isinstance(trial_id,str) or not 0<len(trial_id)<=256):
+            raise ValueError('bounded controller trial identity required')
+        self.scope_sequence += 1; scope = 'scope-'+str(self.scope_sequence)
+        label = self.text(trial_id,256)
+        self.current = dict(role=role,trial_id=label['text'],trial_id_visibility=label['visibility'],
+            omitted_records=0,omitted_updates=0,scope_retained=len(self.scopes)<self.MAX_SCOPES)
+        if self.current['scope_retained']: self.scopes[scope] = self.current
+        self.scope = scope
+        return scope
+
+    def text(self,value,limit):
+        if not isinstance(value,str): return dict(text=None,visibility='unavailable',observed_text_utf8_bytes=None)
+        raw = value.encode('utf-8','replace'); redacted = bool(self.credential and self.credential in value)
+        if redacted: value = value.replace(self.credential,'[REDACTED_CREDENTIAL]')
+        selected = value.encode('utf-8','replace')[:limit]
+        clipped = len(value.encode('utf-8','replace'))>limit
+        return dict(text=selected.decode('utf-8','replace'),visibility='redacted' if redacted else 'truncated' if clipped else 'observed',
+            observed_text_utf8_bytes=len(raw),truncated=clipped,redacted=redacted)
+
+    @staticmethod
+    def size(value): return len(json.dumps(value,ensure_ascii=False,separators=(',',':')).encode('utf-8'))
+
+    def step(self):
+        self.order += 1
+        return self.order
+
+    def add(self,kind,request_ordinal,**fields):
+        self.sequence += 1; ident = self.ledger_id+':'+str(self.sequence)
+        row = dict(controller_id=ident,scope_id=self.scope,kind=kind,request_ordinal=request_ordinal,observed_ordinal=self.step(),**fields)
+        size = self.size(row)
+        if not self.current['scope_retained'] or len(self.rows)>=self.MAX_RECORDS or self.bytes+size>self.MAX_BYTES:
+            self.current['omitted_records'] += 1
+        else: self.rows[ident]=row; self.bytes+=size
+        return ident
+
+    def update(self,ident,**fields):
+        if ident not in self.rows:
+            self.current['omitted_updates'] += 1; return
+        old = self.rows[ident]; new = dict(old,**fields,last_observation_ordinal=self.step()); delta = self.size(new)-self.size(old)
+        if self.bytes+delta>self.MAX_BYTES:
+            self.scopes[old['scope_id']]['omitted_updates'] += 1
+            new = dict(controller_id=ident,scope_id=old['scope_id'],kind=old['kind'],visibility='unknown_ledger_limit')
+            delta = self.size(new)-self.size(old)
+        self.rows[ident] = new; self.bytes += delta
+
+    def report(self,scope=None):
+        scope = scope or self.scope; meta = self.scopes.get(scope,self.current if scope==self.scope else None)
+        if meta is None: raise ValueError('action scope not retained')
+        return deepcopy(dict(schema_version=1,privacy='private',publication_allowed=False,ledger_id=self.ledger_id,
+            scope_id=scope,role=meta['role'],trial_id=meta['trial_id'],trial_id_visibility=meta['trial_id_visibility'],
+            actions=[row for row in self.rows.values() if row['scope_id']==scope],
+            coverage=dict(omitted_records=meta['omitted_records'],omitted_updates=meta['omitted_updates'],
+                records_complete=not(meta['omitted_records'] or meta['omitted_updates']) and meta['scope_retained'],
+                scope='controller_record_retention_only',max_records=self.MAX_RECORDS,max_bytes=self.MAX_BYTES),
+            redaction_policy='exact_controller_credential',
+            argv_semantic_authorization='unknown',subprocess_visibility='unobserved',read_visibility='unobserved',transient_write_visibility='unobserved'))
+
+
+def run_arguments(item):
+    arguments = json.loads(item['arguments'],object_pairs_hook=unique_object,parse_constant=invalid_number)
+    if not isinstance(arguments,dict) or set(arguments)!={'argv'}: raise ValueError('invalid run arguments')
+    argv = arguments['argv']
+    if (not isinstance(argv,list) or not 0<len(argv)<=100
+            or not all(isinstance(arg,str) and arg and '\0' not in arg and len(arg.encode('utf-8'))<=4096 for arg in argv)
+            or sum(len(arg.encode('utf-8')) for arg in argv)>32768): raise ValueError('invalid bounded argv')
+    return argv
+
+
 class Client:
     def __init__(self, settings, credential, deadline, *, transport=None, record=None):
         self.settings,self.credential,self.deadline = dict(settings),credential,deadline
@@ -115,6 +199,25 @@ class Client:
         self.record = record
         self.item_ids,self.call_ids = set(),set()
         self.usage = []
+        self.actions = ActionLedger(credential)
+        self.response_actions = []; self.response_reserved = False; self.response_reason = 'protocol_validation_failed'
+
+    def observe_items(self,output):
+        for item in output:
+            if not isinstance(item,dict) or item.get('type') in ('message','reasoning'): continue
+            name = self.actions.text(item.get('name',item.get('type')),256)
+            ident = self.actions.text(item.get('call_id'),256)
+            try:
+                values = [self.actions.text(a,4096) for a in run_arguments(item)]
+                argv = [v['text'] for v in values]
+                visibility = 'redacted' if any(v['redacted'] for v in values) else 'observed'
+            except (ValueError,TypeError,KeyError,RecursionError,UnicodeError): argv,visibility = None,'invalid_or_unavailable'
+            kind = 'tool_request' if item.get('type')=='function_call' else 'unsupported_response_item'
+            self.response_actions.append(self.actions.add(kind,self.requests,
+                tool_name=name,model_call_id=ident,argv=argv,argv_visibility=visibility,
+                source_item_type=self.actions.text(item.get('type'),128),decision_scope='local_controller_dispatch',
+                name_policy='declared' if item.get('type')=='function_call' and item.get('name')=='run' else 'undeclared',
+                decision='pending_validation',reserved=False,backend_invoked=False,worker_outcome='unobserved'))
 
     def report(self):
         return dict(runtime='controller-responses-executor-v1',request_attempts=self.requests,tool_call_reservations=self.tool_calls,
@@ -126,6 +229,9 @@ class Client:
             request_pending=self.pending,further_requests_blocked=self.poisoned,
             automatic_promotion=False)
 
+    def action_report(self,scope=None):
+        return self.actions.report(scope)
+
     def checkpoint(self):
         if self.record is not None: self.record(self.report())
 
@@ -134,24 +240,50 @@ class Client:
         self.checkpoint()
 
     def respond(self, history, deadline):
-        if self.poisoned: raise InferenceError('prior_inference_request_unresolved_no_retry')
+        request_action = self.actions.add('model_request',self.requests+1,reserved=False,transport_invoked=False,response_observed=False,
+            tool_item_visibility='unavailable')
+        self.response_actions = []; self.response_reserved = False; self.response_reason = 'protocol_validation_failed'
+        try:
+            value = self._respond(history,deadline,request_action)
+            self.actions.update(request_action,disposition='validated')
+            return value
+        except BaseException:
+            self.actions.update(request_action,disposition='denied_or_unresolved',reason=self.response_reason)
+            for action in self.response_actions:
+                if not self.response_reserved: self.actions.update(action,decision='denied',reason=self.response_reason)
+                else: self.actions.update(action,dispatch_blocked=True)
+            raise
+
+    def _respond(self,history,deadline,request_action):
+        if self.poisoned:
+            self.response_reason='prior_request_unresolved'; raise InferenceError('prior_inference_request_unresolved_no_retry')
         deadline = min(deadline,self.deadline)
-        if time.monotonic() >= deadline: raise TimeoutError('inference deadline exhausted')
-        if self.requests >= self.settings['max_requests']: raise InferenceError('inference_request_count_exhausted')
+        if time.monotonic() >= deadline:
+            self.response_reason='request_deadline_exhausted'; raise TimeoutError('inference deadline exhausted')
+        if self.requests >= self.settings['max_requests']:
+            self.response_reason='request_count_exhausted'; raise InferenceError('inference_request_count_exhausted')
         body = json.dumps(dict(model=self.settings['model'],store=False,parallel_tool_calls=False,
             tools=[TOOL],max_output_tokens=self.settings['max_output_tokens'],input=history),allow_nan=False).encode('utf-8')
-        if len(body)>self.settings['max_request_bytes']: raise InferenceError('inference_request_bytes_exhausted')
+        if len(body)>self.settings['max_request_bytes']:
+            self.response_reason='request_bytes_exhausted'; raise InferenceError('inference_request_bytes_exhausted')
         self.requests += 1
         self.request_bytes += len(body)
         self.poisoned = True
         self.pending = True
+        self.actions.update(request_action,reserved=True,request_ordinal=self.requests)
         self.checkpoint()
+        self.actions.update(request_action,transport_invoked=True)
         raw = self.transport(self.credential,body,self.settings['max_response_bytes'],deadline)
+        self.actions.update(request_action,response_observed=True,observed_response_bytes=len(raw))
         self.response_bytes += len(raw)
         if len(raw)>self.settings['max_response_bytes']: raise InferenceError('inference_response_bytes_exhausted')
         if time.monotonic() >= deadline: raise TimeoutError('inference deadline exhausted after response')
         try:
             value = json.loads(raw,object_pairs_hook=unique_object,parse_constant=invalid_number)
+            candidate = value.get('output') if isinstance(value,dict) else None
+            if isinstance(candidate,list) and 0<len(candidate)<=64:
+                self.observe_items(candidate)
+                self.actions.update(request_action,tool_item_visibility='bounded_items_observed')
             if (not isinstance(value,dict) or value.get('status') != 'completed'
                     or value.get('error') is not None or value.get('incomplete_details') is not None): raise ValueError('response incomplete')
             output = value['output']
@@ -175,18 +307,17 @@ class Client:
                         if key is None or not isinstance(part.get(key),str): raise ValueError('unsupported assistant content')
                     final = True
                 elif item.get('type') == 'function_call':
+                    if item.get('name')!='run': self.response_reason='undeclared_tool'
                     if (set(item)-{'type','id','call_id','name','arguments','status'} or item.get('name') != 'run'
                             or item.get('status') not in (None,'completed')): raise ValueError('unsupported function call')
                     call_id = item['call_id']
+                    if call_id in self.call_ids|call_ids: self.response_reason='duplicate_model_call_id'
                     if not isinstance(call_id,str) or not 0 < len(call_id) <= 256 or call_id in self.call_ids|call_ids:
                         raise ValueError('invalid or repeated function call ID')
                     call_ids.add(call_id)
-                    arguments = json.loads(item['arguments'],object_pairs_hook=unique_object,parse_constant=invalid_number)
-                    if not isinstance(arguments,dict) or set(arguments) != {'argv'}: raise ValueError('invalid run arguments')
-                    argv = arguments['argv']
-                    if (not isinstance(argv,list) or not 0 < len(argv) <= 100
-                            or not all(isinstance(arg,str) and arg and '\0' not in arg and len(arg.encode('utf-8'))<=4096 for arg in argv)
-                            or sum(len(arg.encode('utf-8')) for arg in argv)>32768): raise ValueError('invalid bounded argv')
+                    try: argv = run_arguments(item)
+                    except (ValueError,TypeError,KeyError,RecursionError,UnicodeError):
+                        self.response_reason='malformed_argv'; raise
                     calls.append((call_id,argv))
                 else: raise ValueError('hosted or unknown execution item')
             if len(calls)>1 or not calls and not final: raise ValueError('unsupported response completion')
@@ -197,8 +328,12 @@ class Client:
                     or usage['output_tokens']>self.settings['max_output_tokens']): raise ValueError('invalid provider usage')
         except (ValueError,TypeError,KeyError,RecursionError,UnicodeError):
             raise InferenceError('inference_protocol_error_no_retry') from None
-        if self.tool_calls+len(calls)>self.settings['max_tool_calls']: raise InferenceError('inference_tool_count_exhausted')
+        if self.tool_calls+len(calls)>self.settings['max_tool_calls']:
+            self.response_reason='tool_count_exhausted'; raise InferenceError('inference_tool_count_exhausted')
         self.tool_calls += len(calls)
+        for action in self.response_actions:
+            self.actions.update(action,decision='accepted',reserved=True,reservation_id=self.tool_calls)
+        self.response_reserved = bool(calls)
         self.item_ids.update(item_ids); self.call_ids.update(call_ids)
         self.usage.append({key:usage[key] for key in ('input_tokens','output_tokens','total_tokens')})
         self.poisoned = False
@@ -207,8 +342,10 @@ class Client:
         return output,calls
 
 
-def run_role(client, backend, workspace, inputs, role, instructions, prompt, deadline):
+def run_role(client, backend, workspace, inputs, role, instructions, prompt, deadline,*,trial_id=None):
     try:
+        if role not in ('proposer','evaluator_author','executor'): raise ValueError('unsupported inference role')
+        client.actions.begin(role,trial_id)
         return _run_role(client,backend,workspace,inputs,role,instructions,prompt,deadline)
     except BaseException:
         client.abort()
@@ -230,9 +367,22 @@ def _run_role(client, backend, workspace, inputs, role, instructions, prompt, de
         if not calls:
             return state,commands
         call_id,argv = calls[0]
+        action = client.response_actions[0]
         remaining = deadline-time.monotonic()
-        if remaining <= 0: raise TimeoutError('executor deadline exhausted before command')
-        run = backend.run(argv,workspace,inputs,role,Limits(seconds=remaining),working_state=state)
+        if remaining <= 0:
+            client.actions.update(action,dispatch_blocked=True,reason='deadline_exhausted_before_backend')
+            raise TimeoutError('executor deadline exhausted before command')
+        client.actions.update(action,backend_invoked=True,dispatch_ordinal=client.actions.step(),worker_outcome='pending')
+        try: run = backend.run(argv,workspace,inputs,role,Limits(seconds=remaining),working_state=state)
+        except BaseException:
+            client.actions.update(action,worker_outcome='unavailable',stdout=client.actions.text(None,0),stderr=client.actions.text(None,0))
+            raise
+        client.actions.update(action,worker_outcome='observed',outcome_ordinal=client.actions.step(),status=client.actions.text(run.get('status'),128),
+            exit_code=run.get('exit_code') if type(run.get('exit_code')) is int else None,
+            stdout=client.actions.text(run.get('stdout'),client.actions.OUTPUT_BYTES),
+            stderr=client.actions.text(run.get('stderr'),client.actions.OUTPUT_BYTES),
+            backend_stream_coverage='bounded_observed_text' if run.get('status') in ('completed','failed') else 'unknown_or_truncated',
+            containment_validated=False)
         attestation = run.get('attestation',{})
         storage = attestation.get('storage_policy') or {}
         image = attestation.get('runtime_image') or {}
@@ -243,17 +393,18 @@ def _run_role(client, backend, workspace, inputs, role, instructions, prompt, de
                 or image.get('verified_before') is not True or image.get('verified_after') is not True
                 or cgroup.get('empty_after_cleanup') is not True or attestation.get('aggregate_disk_bound_verified') is not True):
             raise InferenceError('executor_containment_or_state_failure')
+        client.actions.update(action,containment_validated=True)
         commands.append({key:run[key] for key in ('status','exit_code','attestation')})
         history.append(dict(type='function_call_output',call_id=call_id,output=json.dumps(
             {key:run[key] for key in ('status','exit_code','stdout','stderr')},allow_nan=False)))
 
 
-def run_trial(client, backend, workspace, harness, prompt, artifacts, destination, seconds):
+def run_trial(client, backend, workspace, harness, prompt, artifacts, destination, seconds,*,trial_id=None):
     deadline = min(client.deadline,time.monotonic()+seconds)
     state,commands = run_role(client,backend,workspace,{'harness':harness},'executor',
         'Read and follow task guidance under /inputs/harness. '
         'Work only in /work using run(argv). Complete the supplied task and write its required artifacts. '
-        'Host credentials, network and other runs are unavailable; final claims do not supply a grade.',prompt,deadline)
+        'Host credentials, network and other runs are unavailable; final claims do not supply a grade.',prompt,deadline,trial_id=trial_id)
     exported = state.export(artifacts,destination,deadline)
     return dict(status='completed',exit_code=0,timeout=False,stdout='',stderr='',inputs_unchanged=True,
-        inference=client.report(),worker_commands=commands,artifact_workspace=str(exported))
+        inference=client.report(),worker_commands=commands,controller_actions=client.action_report(),artifact_workspace=str(exported))
