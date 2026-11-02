@@ -59,6 +59,14 @@ tasks:
     desc: Run native controller history, quarantine and guarded-analysis cases
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_oracle_history*.py" -v'
+  test:evaluation:protected-access:
+    desc: Verify unqualified managed diagnostics, durable exposure and one-shot controller dispatch
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_certification_access.py" -v'
   test:evaluation:bank-authority:
     desc: Run native controlled-bank authority, fixture-binding and revocation cases
     cmds:
@@ -469,6 +477,11 @@ tasks:
           LAYOUT_DIR: '{{.LAYOUT_DIR}}'
           EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
       - task: test:sandbox:permission-audit
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+      - task: test:evaluation:protected-access
         vars:
           PYTHON: '{{.PYTHON}}'
           LAYOUT_DIR: '{{.LAYOUT_DIR}}'

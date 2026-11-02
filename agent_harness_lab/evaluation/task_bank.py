@@ -160,3 +160,23 @@ class CertificationLedger:
         state.update(status='retired', retirement_reason='final_evaluation_access')
         atomic_json(self.path, state)
         return state['bank']
+
+    def reserve_managed(self, binding):
+        from .certification_access import reserve
+        return reserve(self.path, binding)
+
+    def consume_managed(self, reservation_id, binding, run_id):
+        from .certification_access import consumed
+        return consumed(self.path, reservation_id, binding, run_id)
+
+    def validate_managed_history(self, receipt):
+        from .certification_access import historical
+        historical(self.path, receipt)
+
+    def admit_managed(self, assets, run_id, *, reservation_id=None, binding=None):
+        from .certification_access import admit
+        return admit(self.path, assets, run_id, ident=reservation_id, binding=binding)
+
+    def managed_status(self, reservation_id):
+        from .certification_access import status
+        return status(self.path, reservation_id)
