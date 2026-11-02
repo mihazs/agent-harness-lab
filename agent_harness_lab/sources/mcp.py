@@ -10,16 +10,17 @@ PROTOCOL = '2024-11-05'
 
 
 class AiMemoryMCP:
-    def __init__(self, endpoint, *, workspace, project, server_version, tool_schemas, timeout=10, seconds=60):
+    def __init__(self, endpoint, *, workspace, project, server_version, tool_schemas, timeout=10, seconds=60, max_bytes=8*1024*1024):
         for value in (workspace, project):
-            if not isinstance(value, str) or not value or len(value) > 256 or any(ord(c) < 32 for c in value):
+            if (not isinstance(value, str) or not value or value.strip()!=value
+                    or len(value) > 256 or any(ord(c) < 32 for c in value)):
                 raise TransportError('explicit workspace and project are required')
         label(server_version)
         if not isinstance(tool_schemas, dict) or set(tool_schemas) != READ_TOOLS:
             raise TransportError('both read-only tool schemas must be pinned')
         for value in tool_schemas.values():
             fingerprint(value)
-        self.transport = JsonAPI(endpoint, max_pages=5, timeout=timeout, seconds=seconds)
+        self.transport = JsonAPI(endpoint, max_pages=5, max_bytes=max_bytes, timeout=timeout, seconds=seconds)
         self.workspace, self.project = workspace, project
         self.server_version, self.schemas = server_version, dict(tool_schemas)
 
@@ -37,6 +38,8 @@ class AiMemoryMCP:
                 raise TransportError('MCP tool arguments exceed read-only scope')
         if time.monotonic() >= state['deadline']:
             raise TransportError('MCP deadline reached')
+        if state['id'] >= 128: raise TransportError('MCP request limit reached')
+        if state['used'] >= self.transport.max_bytes: raise TransportError('MCP byte limit reached')
         state['id'] += 1
         target, query = self.transport._target(self.transport.base)
         request = dict(jsonrpc='2.0', id=state['id'], method=method, params=params)
@@ -53,11 +56,14 @@ class AiMemoryMCP:
             raise TransportError('MCP request failed')
         return response['result']
 
-    def _read(self, source, tool, arguments, authorization):
+    def _read(self, source, tool, arguments, authorization, *, state=None):
         self.transport._authorize(source, project_sha256=digest(self.project), scope_sha256=digest(self.workspace), authorization=authorization)
         if source.provider != 'ai-memory-mcp' or source.version != self.server_version or source.auth_mode != 'configured':
             raise TransportError('MCP source version/authentication is unavailable')
-        state = dict(id=0, used=0, deadline=time.monotonic()+self.transport.seconds, authorization=authorization)
+        if state is None:
+            state = dict(id=0, used=0, deadline=time.monotonic()+self.transport.seconds, authorization=authorization)
+        elif state['authorization'] != authorization:
+            raise TransportError('MCP authorization changed during capture')
         try:
             initialized = self._rpc('initialize', dict(protocolVersion=PROTOCOL, capabilities={},
                 clientInfo=dict(name='agent-harness-lab-reader', version='1')), state)

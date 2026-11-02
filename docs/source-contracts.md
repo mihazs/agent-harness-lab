@@ -751,8 +751,9 @@ Journal imports retain only source/page/revision/content fingerprints, normalize
 timestamps and contextual-assertion records. Raw text, paths, native IDs and parsed
 frontmatter are not persisted. Parsed metadata is available through the reader API;
 it is not yet stored as structured journal facets. History includes revisions
-observed through successive imports; Git history, native session correlation,
-handoffs/workstreams and MCP retrieval remain open in #43.
+observed through successive imports; Git history, native session correlation and
+handoffs/workstreams remain open in #43. A separate explicit
+[selected MCP page capture](memory-page-capture.md) now supports hash-only journals.
 
 Limits are 500 concepts, 2,000 directory entries, 256 KiB per concept, 16 KiB of
 frontmatter and 4 MiB of concept bytes per operation. Links/special files, nested
@@ -823,8 +824,10 @@ change on reads according to ai-memory behavior; no content mutation tool is use
 This bounded mode supports JSON responses from stateless servers. SSE-only and
 stateful responses are unsupported; an explicitly requested initialization may
 create protocol session state before a stateful header is rejected. Full session
-lifecycle/SSE, remote CLI configuration, normalized journal facets, correlation
-and live-server verification remain open in #43. No server is contacted by package
+lifecycle/SSE, remote CLI configuration, native execution facets, correlation
+and live-server verification remain open in #43. The optional
+[MCPPageCapture](memory-page-capture.md) adds selected-page Registry/SourceStore
+captures with shared bounds and readbacks. No server is contacted by package
 installation, constructor invocation, help or default source discovery. Native
 tests use synthetic wire responses; they establish client contracts, not live
 server efficacy or scientific independence.
