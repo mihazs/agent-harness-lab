@@ -137,6 +137,8 @@ class SandboxBackend:
                         + ([] if self.cgroup_root is not None else ['no aggregate cgroup controls']))
 
     def run(self, argv, workspace, inputs, role, limits=Limits(), *, artifact_allowlist=None, working_state=None):
+        from .controller_receipts import _kernel_started, _kernel_spawned, _kernel_finished
+        source_ticket = _kernel_started(role)
         limits.validate()
         audit_capture=None
         if self.permission_audit:
@@ -207,6 +209,7 @@ class SandboxBackend:
                     if audit:
                         audit.start(process);poll.register(audit.reader,selectors.EVENT_READ,2)
                     if scratch: scratch.start(group)
+                    _kernel_spawned(source_ticket,process,scratch,group)
                     for index, pipe in enumerate((scratch.receiver if scratch else process.stdout, process.stderr)):
                         os.set_blocking(pipe.fileno(), False)
                         poll.register(pipe, selectors.EVENT_READ, index)
@@ -269,7 +272,7 @@ class SandboxBackend:
         if self.permission_audit:
             if reason and audit_report['qualification']!='violated':audit_report.update(status='unknown',qualification='unknown')
             audit_capture.update(audit_report)
-        return dict(exit_code=process.returncode, status=reason or ('completed' if process.returncode == 0 else 'failed'),
+        result = dict(exit_code=process.returncode, status=reason or ('completed' if process.returncode == 0 else 'failed'),
                     stdout=bytes(buffers[0][:limits.output_bytes]).decode('utf-8', 'replace'),
                     stderr=bytes(buffers[1][:limits.output_bytes]).decode('utf-8', 'replace'),
                     elapsed_seconds=time.monotonic() - start, inputs_unchanged=unchanged,
@@ -283,3 +286,5 @@ class SandboxBackend:
                         permission_audit=audit_report,
                         permission_command=permission_command,
                         aggregate_disk_bound_verified=bool(storage_report and storage_report['verified']), inference_supported=False))
+        _kernel_finished(source_ticket,result,argv,scratch.export_fingerprints if scratch else None)
+        return result

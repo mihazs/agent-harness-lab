@@ -12,7 +12,7 @@ class Capability:
 
     def __post_init__(self):
         label(self.provider); label(self.version)
-        if self.kind not in ('local_file', 'local_git', 'api'):
+        if self.kind not in ('local_file', 'local_git', 'api', 'controller'):
             raise ValueError('unsupported connector kind')
         if type(self.planes) is not tuple or not self.planes or len(set(self.planes)) != len(self.planes) or any(p not in PLANES for p in self.planes):
             raise ValueError('unsupported connector evidence planes')
