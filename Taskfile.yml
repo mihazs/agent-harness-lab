@@ -28,6 +28,10 @@ tasks:
     desc: Run native oracle identity and stale-plan execution cases
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_oracle_*.py" -v'
+  test:evaluation:history:
+    desc: Run native controller history, quarantine and guarded-analysis cases
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_oracle_history*.py" -v'
   test:sources:
     desc: Run source contracts and checkpoint unittest cases
     cmds:
@@ -191,6 +195,12 @@ tasks:
       - task: test:sandbox:kernel
         vars:
           KERNEL_TEST_FILTER: regression_
+  test:sandbox:kernel:history:
+    desc: Seal actual pinned comparisons and exercise oracle invalidation with synthetic inputs
+    cmds:
+      - task: test:sandbox:kernel
+        vars:
+          KERNEL_TEST_FILTER: oracle_history
   test:sandbox:kernel:
     desc: Run native kernel canaries in a disposable foreground user scope (Linux/systemd)
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'

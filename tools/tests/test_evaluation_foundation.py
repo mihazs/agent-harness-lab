@@ -57,7 +57,7 @@ class ExperimentTests(unittest.TestCase):
         benefit = analyze(spec, records(spec))
         self.assertEqual(benefit['status'], 'supported')
         self.assertEqual(decide(spec, benefit).status, 'blocked')
-        decision = decide(spec, benefit, isolation_verified=True, effective_runtime_verified=True,
+        decision = decide(spec, dict(benefit,oracle_validity='current'), isolation_verified=True, effective_runtime_verified=True,
                           graders_audited=True, lineage_reviewed=True, certification_reserved=True)
         self.assertEqual(decision.status, 'recommended')
         self.assertFalse(decision.automatic)

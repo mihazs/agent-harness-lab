@@ -216,6 +216,47 @@ class OfflineKernelTests(OfflineFixture, KernelFixture):
 
 @unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
 class PinnedImageKernelTests(OfflineFixture, KernelFixture):
+    def test_oracle_history_seals_real_arms_and_quarantines_shared_grader_dependencies(self):
+        from dataclasses import asdict, replace
+        from agent_harness_lab.evaluation.oracle import identity
+        from agent_harness_lab.evaluation.oracle_history import HistoryStore
+        from agent_harness_lab.evaluation.plan import ExperimentSpec
+        rootfs = self.root/'runtime'; frozen = pinned_runtime(rootfs)
+        tasks = [self.manifest['tasks'][0],self.manifest['tasks'][-1]]
+        self.manifest['tasks'] = tasks
+        self.manifest['grader_bundles'] = {t['id']:self.manifest['grader_bundles'][t['id']] for t in tasks}
+        plan = ExperimentSpec('synthetic-history',tuple((t['id'],t['root'],t['family']) for t in tasks),
+            1,13,4,2,.05,.1,.05,tuple((t['family'],.5) for t in tasks),
+            self.runner.digest(self.root/'baseline'),self.runner.digest(self.root/'candidate'),
+            identity(self.root/'export',tasks,self.manifest['grader_bundles']),frozen['sha256'])
+        self.manifest['experiment'] = asdict(plan); self.write_manifest()
+        history = HistoryStore(self.root/'history')
+        options = dict(cgroup_root=self.cgroup_root,image_root=rootfs,image_sha256=frozen['sha256'],
+            disk_bytes=64*1024*1024,budget_seconds=60)
+        old = history.run(self.args.manifest,self.args.baseline,self.args.candidate,**options)
+        self.assertEqual(old['state'],'sealed'); self.assertEqual(old['oracle_validity'],'current')
+        report = history.case(old['run_id'])/'execution/results.json'; original = report.read_bytes()
+        bundle = self.manifest['grader_bundles'][tasks[0]['id']]
+        decision = dict(schema_version=1,bundle_sha256=bundle['digest'],
+            expected_event_sha256=history.oracle(bundle['digest'])['event_sha256'],
+            operator=dict(identity='synthetic-curator',source='operator_attestation',
+                provenance='synthetic kernel canary',basis='Exercise oracle dependency quarantine.'),
+            evidence_refs=[dict(ref='synthetic:kernel-history',sha256='a'*64)],reason='Synthetic quarantine.')
+        record = self.root/'quarantine.json'; record.write_text(json.dumps(decision)); history.quarantine(record)
+        self.assertEqual(history.analyze(old['run_id'])['reason'],'oracle_quarantined')
+        self.assertEqual(report.read_bytes(),original)
+        reference = self.root/'export'/bundle['path']/'expected.json'; reference.write_text(reference.read_text()+'\n')
+        bundle['digest'] = digest(reference.parent)
+        plan = replace(plan,grader_hash=identity(self.root/'export',tasks,self.manifest['grader_bundles']))
+        self.manifest['experiment'] = asdict(plan); self.write_manifest()
+        new = history.run(self.args.manifest,self.args.baseline,self.args.candidate,**options)
+        self.assertEqual(new['state'],'sealed'); self.assertEqual(new['oracle_validity'],'current')
+        observed = json.loads((history.case(new['run_id'])/'execution/results.json').read_text())
+        self.assertEqual(len(observed['trials']),4)
+        self.assertEqual({t['version'] for t in observed['trials']},{'baseline','candidate'})
+        self.assertEqual(history.show(old['run_id'])['oracle_validity'],'invalidated')
+        self.assertEqual(new['oracle_review'],'unverified'); self.assertEqual(new['independence'],'unverified')
+
     def test_pinned_image_is_used_by_executor_pristine_grader_and_nested_checks(self):
         rootfs = self.root/'runtime'; frozen = pinned_runtime(rootfs)
         backend = SandboxBackend(cgroup_root=self.cgroup_root, image_root=rootfs, image_sha256=frozen['sha256'], disk_bytes=64*1024*1024)

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.45.0
+
+### Minor Changes
+
+- Add private controller-owned history for actual pinned offline comparisons and monotone quarantine of shared grader dependencies. Preserve sealed historical evidence, invalidate affected comparisons across task subsets, reject incomplete or forged results, and require current oracle history for certification promotion. Retain legacy mathematical analysis with unknown validity. Positive grader correction approval and immutable bank replacement remain separate work.
+
 ## 0.44.1
 
 ### Patch Changes

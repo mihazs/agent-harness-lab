@@ -1,12 +1,14 @@
 """Synthetic oracle identity controls; no grader or runtime is executed."""
 from copy import deepcopy
+import hashlib
+import json
 from pathlib import Path
 import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
 from agent_harness_lab.evaluation.integrity import digest
-from agent_harness_lab.evaluation.oracle import identity
+from agent_harness_lab.evaluation.oracle import capture, identity
 
 
 class OracleIdentityTests(unittest.TestCase):
@@ -24,6 +26,53 @@ class OracleIdentityTests(unittest.TestCase):
                 '{workspace}','{trace}','--expected='+str(folder/'expected.json'),'literal']))
 
     def capture(self): return identity(self.root,self.tasks,self.bundles)
+
+    def test_capture_hashes_to_the_exact_existing_identity(self):
+        self.tasks[0]['artifacts'] = ['answer.json']
+        value = capture(self.root,self.tasks,self.bundles)
+        self.assertEqual(set(value),{'schema_version','algorithm','tasks'})
+        self.assertEqual(value['schema_version'],1)
+        self.assertEqual(value['algorithm'],'declared-oracle-argv-v1')
+        self.assertEqual(set(value['tasks']),{'first','second'})
+        for name in value['tasks']:
+            self.assertEqual(set(value['tasks'][name]),{'bundle_sha256','artifacts','argv'})
+        self.assertEqual(value['tasks']['first']['artifacts'],['answer.json'])
+        self.assertIsNone(value['tasks']['second']['artifacts'])
+        raw = json.dumps(value,sort_keys=True,separators=(',',':'),ensure_ascii=False).encode('utf-8')
+        self.assertEqual(hashlib.sha256(raw).hexdigest(),self.capture())
+
+    def test_bundle_dependency_is_shared_across_different_task_subsets(self):
+        self.bundles['second'] = dict(self.bundles['first'])
+        self.tasks[1]['grader'] = list(self.tasks[0]['grader'])
+        first = capture(self.root,self.tasks[:1],{'first':self.bundles['first']})
+        second = capture(self.root,self.tasks[1:],{'second':self.bundles['second']})
+        together = capture(self.root,self.tasks,self.bundles)
+        for value in (first,second,together):
+            self.assertEqual({entry['bundle_sha256'] for entry in value['tasks'].values()},
+                             {self.bundles['first']['digest']})
+        self.assertNotEqual(identity(self.root,self.tasks[:1],{'first':self.bundles['first']}),self.capture())
+
+    def test_capture_detaches_every_mutable_caller_container(self):
+        self.tasks[0]['artifacts'] = ['answer.json']
+        tasks,bundles = deepcopy(self.tasks),deepcopy(self.bundles)
+        value = capture(self.root,self.tasks,self.bundles)
+        self.assertEqual((self.tasks,self.bundles),(tasks,bundles))
+        frozen = deepcopy(value)
+        self.tasks[0]['artifacts'].append('other.json'); self.tasks[0]['grader'].append('new literal')
+        self.bundles['first']['path'] = 'changed'
+        self.assertEqual(value,frozen)
+        value['tasks']['first']['artifacts'].append('captured-only.json')
+        value['tasks']['first']['argv'][0]['literal'] = 'captured-only'
+        self.assertNotIn('captured-only.json',self.tasks[0]['artifacts'])
+        self.assertEqual(self.tasks[0]['grader'][0],tasks[0]['grader'][0])
+
+    def test_v0441_frozen_identity_bytes_are_unchanged(self):
+        # Captured before extraction at cc18399984041b16cb70a67eba18fd58d7926382.
+        self.tasks[0]['artifacts'] = ['answer.json']
+        for name in self.bundles:
+            for path in (self.root/name).iterdir(): path.chmod(0o644)
+            self.bundles[name]['digest'] = digest(self.root/name)
+        self.assertEqual(self.capture(),'1fcaa3679f0080b65f878acefe03f0d89b7cec812b1a2b1d633b1586f2d6bd52')
 
     def test_relocation_bundle_renaming_and_task_map_order_preserve_identity(self):
         before = self.capture(); relocated = self.root.parent/'relocated'; shutil.copytree(self.root,relocated)
