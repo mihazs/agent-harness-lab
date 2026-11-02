@@ -42,7 +42,9 @@ oracle correction/invalidation and protected certification remain separate work.
 - `TaskSpec` and bank validation freeze fixture/grader bundles, provenance,
   partitions, safety and artifact boundaries. Root leakage is always rejected;
   optional family/project/time separation and copied-fixture checks are enforced.
-  Unknown semantic independence/review blocks certification eligibility. Public
+  [Review declarations and certification qualification](bank-qualification.md) remain
+  separate: raw labels never establish certification eligibility or verified
+  independence. No current production bank-certification issuer is available. Public
   tasks are explicitly not secret. Grader integrity mismatches reject execution.
   [Controller history](oracle-history.md) can quarantine a grader dependency
   across recorded comparisons while preserving old report bytes. New controlled

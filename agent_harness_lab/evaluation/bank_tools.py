@@ -117,7 +117,7 @@ def export_manifest(bank_path,output,max_trials=24,*,task_ids=None):
     manifest=dict(schema_version=1,profile='descriptive_smoke',tasks=tasks,grader_self_tests=controls,
                   grader_bundles=bundles,max_trials=max_trials,budget_seconds=300,timeout_seconds=10,
                   bank_digest=reviewed['bank_sha256'],grouping_revision_sha256=reviewed['content_grouping']['revision_sha256'],
-                  independence_verified=reviewed['certification_eligible'],automatic_promotion=False)
+                  independence_verified=False,bank_certification_status='unverified',automatic_promotion=False)
     if admission is not None:
         manifest['bank_revision_sha256']=admission['revision_sha256']
         manifest['bank_authority']=dict(schema_version=1,bank_path=str(bank_path.absolute()),

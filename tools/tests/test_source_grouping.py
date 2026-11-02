@@ -20,7 +20,10 @@ class BankContentGroupingTests(unittest.TestCase):
             f.tasks[index]['fixture_digest'] = digest(folder)
         f.write()
         self.assertNotEqual(f.tasks[0]['fixture_digest'], f.tasks[1]['fixture_digest'])
-        self.assertFalse(validate(f.path)['certification_eligible'])
+        checked = validate(f.path)
+        self.assertFalse(checked['certification_eligible'])
+        self.assertEqual(checked['content_grouping']['overlaps'], 1)
+        self.assertEqual(checked['issues'][0]['status'], 'content_overlap_unreviewed')
 
     def test_shared_prompt_with_different_inputs_is_exposure_without_lineage_merge(self):
         import json
@@ -44,7 +47,7 @@ class BankContentGroupingTests(unittest.TestCase):
                 folder = f.root/f'fixture{index}'; (folder/'value').write_text(content)
                 f.tasks[index]['fixture_digest'] = digest(folder)
             f.write(); result = validate(f.path)
-            self.assertTrue(result['certification_eligible']); self.assertEqual(result['content_grouping']['overlaps'], 0)
+            self.assertFalse(result['certification_eligible']); self.assertTrue(result['review_declarations_complete']); self.assertEqual(result['content_grouping']['overlaps'], 0)
 
     def test_revisions_change_with_source_and_policy_and_old_receipts_are_not_reused(self):
         f = self.fixture; f.write()
@@ -70,7 +73,11 @@ class BankContentGroupingTests(unittest.TestCase):
         for index in range(2):
             folder = f.root/f'fixture{index}'; (folder/'value').write_bytes(bytes([255-index]))
             f.tasks[index]['fixture_digest'] = digest(folder)
-        f.write(); self.assertTrue(validate(f.path)['certification_eligible'])
+        f.write(); checked = validate(f.path)
+        self.assertTrue(checked['review_declarations_complete'])
+        self.assertFalse(checked['certification_eligible'])
+        self.assertEqual(checked['content_grouping']['overlaps'], 0)
+        self.assertEqual(checked['issues'], [])
         with patch('agent_harness_lab.evaluation.content_grouping.MAX_BANK_BYTES', 1):
             with self.assertRaises(ValueError): validate(f.path)
         with patch('agent_harness_lab.evaluation.content_grouping.digest', return_value='a'*64):
@@ -104,10 +111,16 @@ class BankContentGroupingTests(unittest.TestCase):
             folder = f.root/f'fixture{index}'; (folder/'value').unlink()
             path = folder/'data.json'; path.write_text(raw); path.chmod(0o600 if index else 0o644)
             f.tasks[index]['fixture_digest'] = digest(folder)
-        f.write(); self.assertFalse(validate(f.path)['certification_eligible'])
+        f.write(); checked = validate(f.path)
+        self.assertFalse(checked['certification_eligible'])
+        self.assertEqual(checked['content_grouping']['overlaps'], 1)
         (f.root/'fixture1/data.json').write_text('{"alpha":1,"beta":[3,2]}')
         f.tasks[1]['fixture_digest'] = digest(f.root/'fixture1'); f.write()
-        self.assertTrue(validate(f.path)['certification_eligible'])
+        checked = validate(f.path)
+        self.assertTrue(checked['review_declarations_complete'])
+        self.assertFalse(checked['certification_eligible'])
+        self.assertEqual(checked['content_grouping']['overlaps'], 0)
+        self.assertEqual(checked['issues'], [])
 
 
     def test_ambiguous_json_cannot_hide_the_effective_prompt_from_exposure_checks(self):
