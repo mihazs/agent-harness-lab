@@ -1,0 +1,38 @@
+name: Feature request
+description: Describe a user problem and the result you need.
+body:
+- type: markdown
+  attributes:
+    value: Use synthetic inputs or public fixtures only. Do not include private traces, analyzed-project
+      identities, credentials, or findings derived from private histories. Report security vulnerabilities
+      privately via [SECURITY.md](https://github.com/mihazs/agent-harness-lab/blob/main/SECURITY.md).
+- type: textarea
+  id: problem
+  attributes:
+    label: Problem or blocked workflow
+    description: Who is affected and which step is difficult? Give a concrete synthetic or public example.
+  validations:
+    required: true
+- type: textarea
+  id: outcome
+  attributes:
+    label: Desired result
+    description: What observable behavior would solve the problem? Describe success without needing to
+      design the implementation.
+  validations:
+    required: true
+- type: textarea
+  id: alternatives
+  attributes:
+    label: Current workaround (optional)
+    description: What do you do today? What simpler alternative could work?
+  validations:
+    required: false
+- type: textarea
+  id: scope
+  attributes:
+    label: Implementation and acceptance ideas (optional)
+    description: Relevant commands/files, dependencies, tests or related issues. Maintainers assign priority
+      based on impact and dependencies.
+  validations:
+    required: false
