@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.46.1
+
+### Patch Changes
+
+- Fix task-bank exports to relative output directories by using one absolute destination for fixtures and grader controls. Reject parent traversal before creating output, preserve existing destinations and retain symlink/source-overlap checks.
+
 ## 0.46.0
 
 ### Minor Changes
