@@ -453,11 +453,14 @@ def evaluate(args):
         grade_workspace = workspace
         if controlled:
             try:
-                run = response_runtime.run_trial(client,backend,workspace,root,prompt,task['artifacts'],trial/'artifacts',min(timeout,remaining))
+                run = response_runtime.run_trial(client,backend,workspace,root,prompt,task['artifacts'],trial/'artifacts',min(timeout,remaining),
+                    trial_id=record.get('trial_id') or 'trial-'+str(len(results['trials'])+1))
+                record['controller_actions'] = run.pop('controller_actions')
                 grade_workspace = Path(run.pop('artifact_workspace'))
             except (response_runtime.InferenceError,ValueError,OSError,subprocess.SubprocessError) as exc:
                 client.abort()
-                record.update(status='budget_exhausted' if isinstance(exc,TimeoutError) else 'execution_error',error=str(exc),inference=client.report())
+                record.update(status='budget_exhausted' if isinstance(exc,TimeoutError) else 'execution_error',error=str(exc),
+                    inference=client.report(),controller_actions=client.action_report())
                 results['trials'].append(record)
                 continue
         elif offline:

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.49.0
+
+### Minor Changes
+
+- Record bounded private controller observations for Responses tool requests and results, including denied requests and missing visibility. Preserve existing execution quotas and offline history admission; observations alone do not establish safe behavior.
+
 ## 0.48.0
 
 ### Minor Changes

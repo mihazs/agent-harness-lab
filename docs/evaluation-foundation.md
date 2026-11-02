@@ -295,6 +295,14 @@ and derives frozen grader commands. Native CLI modes remain cooperative and
 automatic promotion remains disabled. Full model-backed qualification is unknown.
 See the [settings, cap and state contract](../skills/harness-evaluation/references/execution.md#controller-owned-responses-executor).
 
+Each controlled trial also records private controller observations of tool requests,
+validation decisions, reservations, backend invocation and returned output. Controller
+IDs and ordering do not depend on model-supplied call IDs. Retention and output are
+bounded; omissions, redaction and unavailable streams remain explicit. These records
+preserve observed output across later workspace changes, but do not establish semantic
+argv authorization, hidden reads, transient writes, provider effects or crash durability.
+They are not admitted into sealed offline experiment history or used as a safety grade.
+
 ## Offline validation and limits
 
 The tests cover exact coverage/provenance rejection, clustered repeats, critical
