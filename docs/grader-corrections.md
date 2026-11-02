@@ -225,3 +225,66 @@ disposable delegated scope. Installed layouts support
 `test:evaluation:correction-application:installed` with explicit `LAYOUT_DIR`,
 `EXPECTED_PACKAGE_ROOT`, and installed `PYTHON`; the kernel target accepts the
 same layout settings. These controls use independently synthetic fixtures only.
+
+## Requalify corrected preservation cohorts
+
+For a cohort-enabled prior plan, use the same `rerun` command with
+`schema_version=2` and one additional `qualification` field. Version 1 continues
+to refuse these plans. The new field contains exactly:
+
+```json
+{
+  "protocol": {"path": "/absolute/path/protocol.json", "sha256": "PROTOCOL_SHA256"},
+  "review": {
+    "identity": "REVIEWER_LABEL",
+    "source": "operator_attestation",
+    "basis_kind": "independent_artifact_review",
+    "evidence_refs": [{"ref": "local:protocol-review", "sha256": "PROTOCOL_SHA256"}]
+  }
+}
+```
+
+The private protocol has exactly `schema_version=2`,
+`algorithm=corrected-cohort-qualification-v1`, `prior_run_id`, `prior_plan_sha256`,
+the original `cohort_manifest_sha256`, `author`, `image_sha256`,
+`max_total_trials`, and `before_harnesses`. The reviewer must differ from the
+protocol author and explicitly reference its exact raw SHA-256. This records
+review of the predeclared protocol, without claiming review of future outputs.
+
+Each `before_harnesses` entry contains exactly `history_store`, `run_id`, and
+`path`: the original qualification source and its still-available failing
+harness. Entries must cover exactly the distinct qualification sources used by
+`previously_repaired` cohorts. `historical_pass` needs only the original
+comparison baseline. The controller freezes the presented baseline, candidate
+and earlier failing harnesses before dispatch; missing or changed bytes reject.
+Present-day file modes are pinned separately; historical harness modes stay
+unknown.
+
+Membership, roles, count rules, required flags, margins and exposure come from
+the original frozen controller binding. Fresh qualification runs use baseline /
+baseline for historical-pass cohorts and earlier-failing / original-baseline
+for repaired cohorts. Shared source/role groups run once. Original qualification
+task schedules, seeds, repeats and execution policies remain bound. A corrected
+grader that removes the observed repair cannot trigger relabelling or dropping
+members: qualification fails and the new comparison does not execute.
+
+The aggregate trial ceiling covers all fresh qualification schedules plus the
+entire original comparison, and is checked before any worker runs. It counts
+scheduled trial rows, each requiring executor and grader workers. One original
+deadline covers preparation, qualification, cohort freezing, both comparison
+arms and completion validation; existing per-stage limits remain in force.
+
+Actual sealed qualification runs supply the new cohort pins. The fresh comparison
+retains the original plan except its corrected oracle and newly frozen cohort
+identities. Immutable per-phase start records bind actual generated run IDs.
+Interrupted attempts remain retained; retries require a new request CAS and fresh
+execution. Completion verification reopens sealed controller evidence instead of
+accepting copied success JSON. Later revocation preserves historical completion
+while blocking current eligibility. All results remain private and confer no
+adoption or publication authority.
+
+Run `task test:evaluation:requalification` for native synthetic workflow and
+legacy-compatibility checks. That target uses simulated isolation attestations.
+The opt-in `task test:sandbox:kernel:preservation` also exercises a fresh
+qualification phase with real pinned workers. Neither establishes native identity,
+independent roots or model effectiveness.
