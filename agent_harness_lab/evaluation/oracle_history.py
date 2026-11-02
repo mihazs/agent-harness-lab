@@ -444,6 +444,7 @@ class HistoryStore(PrivateJournal):
             with self.locked():
                 if bound_tasks is not None: bank_authority(source,export_root=manifest.parent,expected=bound_tasks)
                 current = self.history(case)
+                if time.monotonic()>=deadline: raise TimeoutError('history authority validation exhausted sealing budget')
                 self.append(case,current,'run_finished','sealed',dict(evidence_sha256=record(case/'evidence.json')[1]))
         except (OSError,ValueError,TypeError,KeyError,subprocess.SubprocessError,KeyboardInterrupt) as error:
             with self.locked():
