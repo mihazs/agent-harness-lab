@@ -1,13 +1,20 @@
 """Offline release update contracts; never fetch a live release."""
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 from agent_harness_lab import updater
+import agent_harness_lab
 
 
 class UpdateTests(unittest.TestCase):
+    def test_selected_installed_package_root(self):
+        expected = os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
+        if expected:
+            self.assertTrue(Path(agent_harness_lab.__file__).resolve().is_relative_to(Path(expected).resolve()))
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

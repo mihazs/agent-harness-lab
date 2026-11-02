@@ -61,6 +61,8 @@ checks integrity relative to that file, not independent publisher authentication
 Updates reuse the same checksum checks, ownership protections and link rollback.
 A failed receipt write also rolls back link changes. Previous release directories
 remain available; updates do not start evaluation or a background process.
+Concurrent installs or updates to the same root are refused while its transaction
+is active; retry after the other command finishes.
 
 ## Common setup problems
 

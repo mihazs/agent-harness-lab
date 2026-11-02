@@ -8,6 +8,7 @@ from pathlib import Path, PurePosixPath
 import re
 import shutil
 import shlex
+import stat
 import sys
 import tarfile
 import tempfile
@@ -93,7 +94,28 @@ def owned_link(link, root, relative):
 def install(archive, checksums, root, bin_dir, skill_dirs):
     root, bin_dir = Path(root).resolve(), Path(bin_dir).resolve()
     archive_hash = verify(archive, checksums)
+    try:
+        import fcntl
+    except ImportError:
+        raise ValueError('release installation requires POSIX advisory file locking') from None
+    if not hasattr(os, 'O_NOFOLLOW'):
+        raise ValueError('release installation requires no-follow file support')
     root.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(root / '.install.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid():
+            raise ValueError('installation lock must be an owned regular file')
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ValueError('another installation or update is in progress for this root') from None
+        return _install_locked(archive, archive_hash, root, bin_dir, skill_dirs)
+    finally:
+        os.close(descriptor)
+
+
+def _install_locked(archive, archive_hash, root, bin_dir, skill_dirs):
     receipt = root / 'installation.json'
     if receipt.is_symlink() or (receipt.exists() and not receipt.is_file()):
         raise ValueError('installation receipt must be a regular file')
