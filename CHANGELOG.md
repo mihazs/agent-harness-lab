@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.62.0
+
+### Minor Changes
+
+- 4f13fdd: Connect private one-shot protected-diagnostic reservations and durable exposure accounting to actual controller dispatch. Preserve unverified qualification, reject unsupported certification claims, and refuse known retired-asset reuse without preventing ordinary development comparisons.
+
+### Patch Changes
+
+- f2516f7: Clarify permission-audit inference stopping: proposer, evaluator-author and executor command failures stop continuation; grader audit failures block final qualification while remaining trials can still run.
+
 ## 0.61.0
 
 ### Minor Changes
