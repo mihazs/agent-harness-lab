@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.60.0
+
+### Minor Changes
+
+- 290366c: Add opt-in hash-only ai-memory MCP selected-page captures through the existing source registry and journal, with shared bounds, scoped readbacks and explicitly partial retrieved-context coverage.
+
 ## 0.59.1
 
 ### Patch Changes
