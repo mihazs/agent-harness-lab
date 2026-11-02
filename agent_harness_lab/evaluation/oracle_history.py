@@ -17,7 +17,7 @@ from .plan import ExperimentSpec, schedule
 from .regression_controls import containment
 from .regressions import fields, references, sha256, text
 from .statistics import TrialRecord, analyze
-from . import behavior
+from . import behavior,cohort_history
 
 MAX_CASES = 256
 MAX_BYTES = 64*1024*1024
@@ -186,9 +186,10 @@ class HistoryStore(PrivateJournal):
         inputs, inputs_hash = record(case/'inputs.json')
         version = inputs.get('schema_version')
         fields(inputs,'schema_version run_id source_manifest_sha256 plan_sha256 oracle_sha256 dependencies versions image_sha256'
-            + (' bank_authority bank_tasks' if type(version) is int and version in (2,3) else '')
-            + (' behavior_policies' if type(version) is int and version==3 else ''))
-        if (type(version) is not int or version not in (1,2,3) or inputs['run_id'] != run_id
+            + (' bank_authority bank_tasks' if type(version) is int and version in (2,3,4) else '')
+            + (' behavior_policies' if type(version) is int and version in (3,4) else '')
+            + (' cohort_binding_sha256' if type(version) is int and version==4 else ''))
+        if (type(version) is not int or version not in (1,2,3,4) or inputs['run_id'] != run_id
                 or events[0][0]['kind'] != 'run_started' or events[0][0]['payload'] != dict(inputs_sha256=inputs_hash)):
             raise ValueError('controller run input binding changed')
         source, manifest_hash = record(case/'manifest.json',1024*1024)
@@ -210,7 +211,7 @@ class HistoryStore(PrivateJournal):
             if current_bank: bank_authority(source,expected=inputs['bank_tasks'])
         elif source.get('bank_authority') is not None:
             raise ValueError('bound bank history cannot use the unbound input schema')
-        elif version==3 and inputs['bank_tasks'] is not None:
+        elif version in (3,4) and inputs['bank_tasks'] is not None:
             raise ValueError('unbound behavior history cannot invent bank task authority')
         if not isinstance(inputs['dependencies'],dict) or not inputs['dependencies']:
             raise ValueError('controller run has no oracle dependencies')
@@ -220,10 +221,18 @@ class HistoryStore(PrivateJournal):
             sha256(event_hash)
             if self.oracle_events(bundle)[0][1] != event_hash: raise ValueError('oracle dependency registration changed')
             if digest(contained(case,'oracles/'+bundle)) != bundle: raise ValueError('frozen historical oracle changed')
-        if version==3:
+        if version in (3,4):
             policies = behavior_policies({bundle:contained(case,'oracles/'+bundle) for bundle in inputs['dependencies']},source,spec)
-            if not policies or policies!=inputs['behavior_policies']:
+            if (not policies and version==3) or policies!=inputs['behavior_policies']:
                 raise ValueError('frozen behavior policy binding changed')
+        if version==4:
+            binding,binding_hash=record(case/'cohort-binding.json',1024*1024)
+            if (binding_hash!=inputs['cohort_binding_sha256']
+                    or binding.get('manifest_path')!=str(case/'cohort-manifest.json')):
+                raise ValueError('frozen preservation qualification binding changed')
+            cohort_history.validate(binding,source,spec,inputs['bank_tasks'],current=current_bank)
+        elif spec.cohort_manifest_sha256 is not None:
+            raise ValueError('preservation plans require explicit controller qualification binding')
         return case,events,inputs,spec
 
     def checked(self, run_id):
@@ -248,7 +257,6 @@ class HistoryStore(PrivateJournal):
         with self.locked(): return self._historical_plan(run_id)
 
     def _historical_plan(self,run_id,*,event_sha256=None):
-        from dataclasses import asdict
         case,events,inputs,spec = self._opened(run_id,current_bank=False)
         if event_sha256 is not None:
             sha256(event_sha256)
@@ -268,7 +276,7 @@ class HistoryStore(PrivateJournal):
             raise ValueError('earlier fixture identities unavailable')
         for value in fixtures.values(): sha256(value)
         return dict(run_id=run_id,event_sha256=events[-1][1],inputs_sha256=record(case/'inputs.json')[1],
-            evidence_sha256=evidence_hash,plan=asdict(spec),plan_sha256=spec.digest,manifest=source,
+            evidence_sha256=evidence_hash,plan=spec.to_dict(),plan_sha256=spec.digest,manifest=source,
             manifest_sha256=inputs['source_manifest_sha256'],fixtures=fixtures,bank_tasks=inputs.get('bank_tasks'),
             state=events[-1][0]['state'],historical_outcome='observed' if evidence_hash else 'unknown',
             fixture_mode_evidence='pinned' if inputs.get('bank_tasks') is not None else 'unknown',
@@ -279,6 +287,11 @@ class HistoryStore(PrivateJournal):
         from agent_harness_lab.cli import evaluator
         grade_status = evaluator().grading_status
         if not isinstance(result.get('runtime'),dict): raise ValueError('missing observed runtime')
+        if spec.cohort_manifest_sha256 is not None and (inputs['schema_version']!=4
+                or result.get('cohort_manifest_sha256')!=spec.cohort_manifest_sha256
+                or result.get('cohort_qualification')!='current_membership_only'
+                or result.get('publication_allowed') is not False):
+            raise ValueError('executed preservation preflight differs from frozen controller inputs')
         if inputs.get('bank_tasks') is not None and result.get('fixtures')!={
                 name:value['execution_fixture_sha256'] for name,value in inputs['bank_tasks'].items()}:
             raise ValueError('executed fixtures differ from authoritative materialized bank inputs')
@@ -332,6 +345,10 @@ class HistoryStore(PrivateJournal):
             controller_observed=events[-1][0]['state']=='sealed',oracle_review='unverified',
             independence='unverified',automatic_promotion=False,publication_allowed=False)
         if inputs.get('bank_tasks') is not None: result['bank_authority']='current_eligible'
+        if inputs['schema_version']==4:
+            result['cohort_manifest_sha256']=checked[3].cohort_manifest_sha256
+            result['cohort_qualification']='current_membership_only'
+            result['cohort_frozen_at']=events[0][0]['recorded_at']
         return result
 
     def show(self, run_id):
@@ -353,6 +370,9 @@ class HistoryStore(PrivateJournal):
                 independence='unverified',automatic_promotion=False,publication_allowed=False)
             if inputs.get('bank_tasks') is not None: result['bank_authority']='current_eligible'
             if effects is not None: result['behavior']=effects
+            if inputs['schema_version']==4:
+                result['cohort_manifest_sha256']=spec.cohort_manifest_sha256
+                result['cohort_qualification']='current_membership_only'
             return result
 
     def run(self, manifest, baseline, candidate, *, cgroup_root, image_root, image_sha256, disk_bytes, budget_seconds=60,parent_deadline=None,on_started=None):
@@ -399,6 +419,8 @@ class HistoryStore(PrivateJournal):
             folder,_ = frozen_grader(manifest.parent,task,declaration)
             folders[captured['tasks'][task['id']]['bundle_sha256']] = folder
         policies = behavior_policies(folders,source,spec)
+        membership=cohort_history.capture(manifest.parent,source,spec,bound_tasks)
+        if time.monotonic()>=deadline: raise TimeoutError('history qualification preflight budget exhausted')
         run_id = hashlib.sha256(('run:'+secrets.token_hex(32)).encode()).hexdigest()
         with self.locked(create=True):
             dependencies = {}
@@ -417,6 +439,10 @@ class HistoryStore(PrivateJournal):
                 inputs.update(schema_version=2,bank_authority=source['bank_authority'],bank_tasks=bound_tasks)
             if policies:
                 inputs.update(schema_version=3,bank_authority=source.get('bank_authority'),bank_tasks=bound_tasks,behavior_policies=policies)
+            if membership is not None:
+                binding_hash=cohort_history.freeze(case,membership,source,spec,bound_tasks)
+                inputs.update(schema_version=4,bank_authority=source['bank_authority'],bank_tasks=bound_tasks,
+                    behavior_policies=policies,cohort_binding_sha256=binding_hash)
             if len(encoded(inputs))>256*1024: raise ValueError('history input metadata limit exceeded')
             write_bytes(case/'manifest.json',raw); write_bytes(case/'inputs.json',encoded(inputs)); sync_tree(case)
             events = []; self.append(case,events,'run_started','running',dict(inputs_sha256=record(case/'inputs.json')[1]))
@@ -430,10 +456,12 @@ class HistoryStore(PrivateJournal):
                 except Exception: raise ValueError('history start observation failed') from None
             if time.monotonic()>=deadline: raise TimeoutError('history deadline exhausted before dispatch')
             if bound_tasks is not None: bank_authority(source,export_root=manifest.parent,expected=bound_tasks)
+            if membership is not None: cohort_history.validate(membership,source,spec,bound_tasks)
             runner.evaluate(args)
             result,result_hash = record(case/'execution/results.json',8*1024*1024)
             self.trials(inputs,spec,result)
             if bound_tasks is not None: bank_authority(source,export_root=manifest.parent,expected=bound_tasks)
+            if membership is not None: cohort_history.validate(membership,source,spec,bound_tasks)
             if (record(manifest,1024*1024)[1] != manifest_hash
                     or identity(manifest.parent,selected,source['grader_bundles']) != spec.grader_hash
                     or time.monotonic() >= deadline):
@@ -443,6 +471,7 @@ class HistoryStore(PrivateJournal):
             if time.monotonic() >= deadline: raise TimeoutError('history sealing budget exhausted')
             with self.locked():
                 if bound_tasks is not None: bank_authority(source,export_root=manifest.parent,expected=bound_tasks)
+                if membership is not None: cohort_history.validate(membership,source,spec,bound_tasks)
                 current = self.history(case)
                 if time.monotonic()>=deadline: raise TimeoutError('history authority validation exhausted sealing budget')
                 self.append(case,current,'run_finished','sealed',dict(evidence_sha256=record(case/'evidence.json')[1]))

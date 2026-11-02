@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.51.0
+
+### Minor Changes
+
+- Freeze preservation-cohort membership from reviewed prior controller executions and bind it to optional experiment plans and private history. Preserve legacy plan digests and trial IDs, enforce current task/oracle and exposure checks before dispatch, and keep favorable cohort decisions blocked while preservation analysis and decision-receipt integration remain pending.
+
 ## 0.50.0
 
 ### Minor Changes

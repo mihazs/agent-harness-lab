@@ -14,6 +14,8 @@ def decide(spec, analysis, *, isolation_verified=False, effective_runtime_verifi
     spec.validate()
     if analysis['status'] in ('rejected', 'blocked', 'incomplete'):
         return PromotionDecision(analysis['status'], analysis.get('reason', 'invalid_evidence'))
+    if spec.cohort_manifest_sha256 is not None:
+        return PromotionDecision('blocked','preservation_analysis_unavailable')
     if spec.profile != 'certification':
         return PromotionDecision('inconclusive', 'descriptive_smoke_cannot_certify')
     if analysis.get('oracle_validity') != 'current':

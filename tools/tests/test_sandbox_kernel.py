@@ -289,6 +289,40 @@ except OSError: pass
 
 @unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
 class RegressionDraftKernelTests(KernelFixture):
+    def test_preservation_qualification_uses_real_prior_and_fresh_pinned_workers(self):
+        from dataclasses import replace
+        from test_preservation_cohorts import PreservationCohortTests
+        from agent_harness_lab.evaluation.plan import ExperimentSpec
+        fixture=PreservationCohortTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        value=fixture.fixture; runtime=self.root/'runtime'; pinned=pinned_runtime(runtime)
+        value.image_hash=pinned['sha256']; value.install_plan()
+        profile=dict(cgroup_root=self.cgroup_root,image_root=runtime,image_sha256=pinned['sha256'],
+            disk_bytes=64*1024*1024,budget_seconds=60)
+        prior=value.store.run(value.export/'manifest.json',value.baseline,value.candidate,**profile)
+        self.assertEqual(prior['state'],'sealed',prior)
+        captured=value.store.historical_plan(prior['run_id'])
+        qualification=fixture.value['cohorts'][0]['qualification']
+        qualification.update(run_id=prior['run_id'],event_sha256=captured['event_sha256'],
+            evidence_sha256=captured['evidence_sha256'],plan_sha256=captured['plan_sha256'])
+        pin=fixture.write(); shutil.copy2(fixture.path,value.export/'cohorts.json')
+        value.baseline=value.candidate
+        next_candidate=value.root/'kernel-next-candidate'; shutil.copytree(value.candidate,next_candidate)
+        value.candidate=next_candidate; value.install_plan()
+        value.manifest['cohort_manifest']=dict(path='cohorts.json',sha256=pin)
+        spec=replace(ExperimentSpec.parse(value.manifest['experiment']),cohort_manifest_sha256=pin)
+        value.manifest['experiment']=spec.to_dict(); value.write_manifest()
+        observed=value.store.run(value.export/'manifest.json',value.baseline,value.candidate,**profile)
+        self.assertEqual(observed['state'],'sealed',observed)
+        self.assertEqual(observed['cohort_qualification'],'current_membership_only')
+        self.assertEqual(value.store.analyze(observed['run_id'])['reason'],'preservation_analysis_unavailable')
+        for run_id in (prior['run_id'],observed['run_id']):
+            trials=value.store.checked(run_id)[4]['trials']; self.assertEqual(len(trials),4)
+            for trial in trials:
+                for execution in (trial['execution'],trial['grader']['execution']):
+                    image=execution['attestation']['runtime_image']
+                    self.assertEqual(image['sha256'],pinned['sha256'])
+                    self.assertTrue(image['verified_before'] and image['verified_after'])
+
     def test_adversarial_final_effects_are_sealed_and_veto_the_candidate(self):
         from test_oracle_behavior import fixture
         value=fixture(self,all_tasks=True,

@@ -135,8 +135,9 @@ A changed bundle needs a new aggregate oracle identity, a new frozen plan and a
 fresh complete both-arm execution. Merely regrading old artifacts or supplying
 one arm is insufficient. New bundles remain unaudited by history. Dedicated
 [correction controls and operator review](grader-corrections.md) can freeze and
-review a declared replacement. Approved immutable bank replacement and native
-provenance binding remain subsequent work in issue #8. This command does
+review a declared replacement. Reviewed immutable bank replacement and fresh
+both-arm reruns are available through that workflow; native provenance binding
+remains work in issue #8. This command does
 not relax regression-bank duplicate/admission checks or approve a correction.
 
 `run` returns 0 only for a sealed, non-quarantined comparison; it does not imply
@@ -152,3 +153,10 @@ acceptance; they are not containment or authentication evidence.
 Run `task test:evaluation:bank-authority` for approval/fixture/version controls and
 `task test:sandbox:kernel:bank-authority` for real replay, admission, paired
 execution and later approval revocation over synthetic inputs.
+
+Opt-in [preservation cohorts](preservation-cohorts.md) bind reviewed prior execution
+and exact member contracts into a new plan and private history inputs schema 4.
+The controller freezes membership before dispatch and revalidates current authority.
+Cohort-enabled plans currently block favorable decisions while preservation analysis
+and decision-receipt integration remain pending. Legacy plans retain their original
+digests, trial IDs and history interpretation.
