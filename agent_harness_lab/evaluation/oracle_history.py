@@ -265,15 +265,14 @@ class HistoryStore(PrivateJournal):
 
 def main(argv=None):
     import argparse
+    from .cli import pinned_arguments
     parser = argparse.ArgumentParser(prog='ahl experiment-history',description=__doc__)
     parser.add_argument('--store',type=Path,required=True,help='Explicit private controller history')
     actions = parser.add_subparsers(dest='action',required=True)
     run = actions.add_parser('run',help='Execute a fresh full pinned offline comparison; never import results')
-    for name in ('manifest','baseline','candidate','cgroup-root','image-root'):
+    for name in ('manifest','baseline','candidate'):
         run.add_argument('--'+name,type=Path,required=True)
-    run.add_argument('--image-sha256',required=True)
-    run.add_argument('--disk-bytes',type=int,required=True)
-    run.add_argument('--budget-seconds',type=float,default=60)
+    pinned_arguments(run)
     for name in ('show','analyze'):
         command = actions.add_parser(name)
         command.add_argument('--run',dest='run_id',required=True)

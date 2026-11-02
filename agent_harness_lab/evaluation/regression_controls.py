@@ -10,7 +10,7 @@ import time
 from agent_harness_lab.monitoring.state import atomic_json
 from .bank_tools import materialize_sources, regrade_artifacts
 from .integrity import artifacts, contained, digest, read_regular, unique_object
-from .regressions import fields, invalid_constant, load, sha256
+from .regressions import fields, invalid_constant, load, sha256, text
 from .sandbox import Limits
 from .task_bank import TaskSpec
 from .workspace import names
@@ -119,16 +119,72 @@ def audit(proposal_path, draft_path, output, backend, *, budget_seconds=60, pare
                   task_fixture_sha256=task.fixture_digest, grader_bundle_sha256=task.grader_digest,
                   draft_review_status='unreviewed', independence='unverified', checks=[],
                   budget_seconds=budget_seconds, execution_mode='offline_grader_controls')
+    declarations = [dict(state=state,fixture=source,digest=frozen[source]) for state,source in controls]
+    return audit_controls(bundle,task.grader_digest,declarations,task.artifacts,task.grader_version,
+        output,backend,deadline=deadline,started=started,integrity=unchanged,receipt_fields=report)
+
+
+def audit_controls(bundle, bundle_sha256, controls, artifact_names, grader_version, output, backend,
+                   *, deadline, started, integrity, receipt_fields=None):
+    """Execute five frozen declared controls, without asserting a task failure or review.
+
+    The controller supplies an absolute monotonic deadline and a declaration hash
+    check. Receipt metadata is descriptive; status and checks are always produced
+    by this execution and cannot be supplied as successful audit evidence.
+    """
+    if any(type(v) not in (int,float) or not math.isfinite(v) for v in (deadline,started)):
+        raise ValueError('control audit needs finite inherited monotonic bounds')
+    if not callable(integrity): raise ValueError('control audit needs a declaration integrity check')
+    sha256(bundle_sha256); text(grader_version)
+    if len(grader_version)>128: raise ValueError('bounded grader version required')
+    allowed = names(artifact_names)
+    if not allowed: raise ValueError('control audit requires explicit artifact names')
+    if backend.cgroup_root is None or backend.image is None or backend.disk_bytes is None:
+        raise ValueError('draft controls require aggregate cgroups, a pinned image and private disk quotas')
+    sha256(backend.image.sha256)
+    bundle,output = Path(bundle),Path(output)
+    if any('..' in p.parts for p in (bundle,output)):
+        raise ValueError('control paths must be canonical without parent traversal')
+    # contained rejects symlinks in all ancestors, including absolute paths.
+    bundle = contained(bundle.absolute().parent,bundle.name)
+    if not isinstance(controls,list) or len(controls)!=len(STATES):
+        raise ValueError('control audit requires five distinct controls')
+    frozen = {bundle:bundle_sha256}; selected = []
+    for control in controls:
+        fields(control,'state fixture digest'); sha256(control['digest'])
+        if not isinstance(control['state'],str) or control['state'] not in STATES:
+            raise ValueError('unsupported draft control')
+        path = Path(control['fixture'])
+        if '..' in path.parts: raise ValueError('control paths must be canonical without parent traversal')
+        path = contained(path.absolute().parent,path.name)
+        if path in frozen and frozen[path]!=control['digest']:
+            raise ValueError('conflicting frozen draft identities')
+        frozen[path] = control['digest']; selected.append((control['state'],path))
+    if {state for state,_ in selected}!=set(STATES): raise ValueError('duplicate or missing draft control')
+    if any(output.absolute().is_relative_to(p.absolute()) or p.absolute().is_relative_to(output.absolute())
+           for p in (*frozen,backend.image.root)):
+        raise ValueError('draft output and readonly inputs must not overlap')
+    if any(p.is_symlink() for p in (output,*output.absolute().parents)):
+        raise ValueError('draft output crosses a symlink')
+    for name in ('grade.py.txt','expected.json'): read_regular(bundle/name,1024*1024)
+
+    def unchanged():
+        try: return integrity() is True and all(digest(path)==expected for path,expected in frozen.items())
+        except (OSError,ValueError): return False
+
+    if not unchanged(): raise ValueError('draft input integrity mismatch')
+    report = dict(receipt_fields or {})
+    report.update(status='incomplete',checks=[],execution_mode='offline_grader_controls')
     with tempfile.TemporaryDirectory() as folder:
         staging = Path(folder)
         oracle = staging/'oracle'; shutil.copytree(bundle, oracle)
-        if digest(oracle) != task.grader_digest: raise ValueError('draft grader changed during freezing')
+        if digest(oracle) != bundle_sha256: raise ValueError('draft grader changed during freezing')
         prepared = []
-        for index, (state, source) in enumerate(controls):
+        for index, (state, source) in enumerate(selected):
             workspace = staging/str(index); shutil.copytree(source, workspace)
             if digest(workspace) != frozen[source]: raise ValueError('draft control changed during freezing')
             materialize_sources(workspace)
-            artifacts(workspace, task.artifacts)
+            artifacts(workspace, allowed)
             prepared.append((state, source, workspace, digest(workspace)))
         if not unchanged(): raise ValueError('draft inputs changed during preflight')
         output.mkdir(mode=0o700, exist_ok=False)
@@ -147,18 +203,19 @@ def audit(proposal_path, draft_path, output, backend, *, budget_seconds=60, pare
                         remaining = deadline-time.monotonic()
                         if remaining <= 0:
                             report['status'] = 'budget_exhausted'; break
-                        if not unchanged() or digest(oracle) != task.grader_digest or digest(workspace) != materialized:
+                        if not unchanged() or digest(oracle) != bundle_sha256 or digest(workspace) != materialized:
                             report['status'] = 'invalid_input'; break
                         remaining = deadline-time.monotonic()
                         if remaining <= 0:
                             report['status'] = 'budget_exhausted'; break
-                        grade = regrade_artifacts(workspace, task.artifacts, oracle, task.grader_digest,
+                        grade = regrade_artifacts(workspace, allowed, oracle, bundle_sha256,
                                                   backend, limits=Limits(seconds=min(5, remaining)))
                         run = grade['execution']
                         expected = state in ('complete', 'alternative_valid')
                         report['checks'].append(dict(control=state, expected=expected, observed=grade['outcome'],
                             input_sha256=frozen[source], materialized_sha256=materialized,
-                            grader_status=grade['status'], attestation=run.get('attestation')))
+                            grader_status=grade['status'], grader_identity=grade['grader_identity'],
+                            attestation=run.get('attestation')))
                         if not unchanged() or digest(workspace) != materialized:
                             report['status'] = 'invalid_input'; break
                         if time.monotonic() >= deadline:
@@ -167,7 +224,7 @@ def audit(proposal_path, draft_path, output, backend, *, budget_seconds=60, pare
                             report['status'] = 'grader_timeout'; break
                         if not containment(run, backend.image.sha256):
                             report['status'] = 'containment_error'; break
-                        if grade['outcome'] is None or grade['grader_identity']['grader_version'] != task.grader_version:
+                        if grade['outcome'] is None or grade['grader_identity']['grader_version'] != grader_version:
                             report['status'] = 'grader_error'; break
                         if grade['outcome'] is not expected:
                             report['status'] = 'controls_failed'; break

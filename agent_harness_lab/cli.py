@@ -45,6 +45,9 @@ def main(argv=None):
     if argv and argv[0] == 'experiment-history':
         from agent_harness_lab.evaluation.oracle_history import main as history_main
         return history_main(argv[1:])
+    if argv and argv[0] == 'grader-correction':
+        from agent_harness_lab.evaluation.grader_correction import main as correction_main
+        return correction_main(argv[1:])
     if argv and argv[0] in ('doctor', 'init'):
         from agent_harness_lab.onboarding import main as onboarding_main
         return onboarding_main(argv)
@@ -74,7 +77,7 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog='ahl', description=__doc__)
     parser.add_argument('--version', action='version', version=version())
     sub = parser.add_subparsers(dest='command', required=True)
-    for name in ('mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'experiment', 'experiment-history', 'regression', 'regression-review', 'sandbox-check', 'research-simulate', 'incident-search', 'promotion', 'benchmark-report', 'doctor', 'init', 'sources'):
+    for name in ('mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'experiment', 'experiment-history', 'grader-correction', 'regression', 'regression-review', 'sandbox-check', 'research-simulate', 'incident-search', 'promotion', 'benchmark-report', 'doctor', 'init', 'sources'):
         sub.add_parser(name, help=f'{name} tools; use ahl {name} --help')
     for name in ('analyze', 'improve', 'watch'):
         helps = {'analyze': 'Discover project evidence and failure candidates',

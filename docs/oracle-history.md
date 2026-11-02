@@ -99,9 +99,10 @@ history in addition to its other existing prerequisites.
 
 A changed bundle needs a new aggregate oracle identity, a new frozen plan and a
 fresh complete both-arm execution. Merely regrading old artifacts or supplying
-one arm is insufficient. New bundles remain unaudited. Positive correction
-audits, independent artifact review, approved immutable bank replacement and
-native provenance binding remain subsequent work in issue #8. This command does
+one arm is insufficient. New bundles remain unaudited by history. Dedicated
+[correction controls and operator review](grader-corrections.md) can freeze and
+review a declared replacement. Approved immutable bank replacement and native
+provenance binding remain subsequent work in issue #8. This command does
 not relax regression-bank duplicate/admission checks or approve a correction.
 
 `run` returns 0 only for a sealed, non-quarantined comparison; it does not imply

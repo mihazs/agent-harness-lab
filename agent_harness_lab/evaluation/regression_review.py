@@ -319,6 +319,7 @@ class ReviewStore(PrivateJournal):
 
 def main(argv=None):
     import argparse
+    from .cli import pinned_arguments
     parser = argparse.ArgumentParser(prog='ahl regression-review', description=__doc__)
     parser.add_argument('--store', type=Path, required=True, help='Explicit private owner-only controller store')
     actions = parser.add_subparsers(dest='action', required=True)
@@ -333,11 +334,7 @@ def main(argv=None):
         if name in ('review','accept'): command.add_argument('--record', type=Path, required=True)
         if name == 'accept': command.add_argument('--parent-bank', type=Path, required=True)
         if name == 'reproduce':
-            command.add_argument('--cgroup-root', type=Path, required=True)
-            command.add_argument('--image-root', type=Path, required=True)
-            command.add_argument('--image-sha256', required=True)
-            command.add_argument('--disk-bytes', type=int, required=True)
-            command.add_argument('--budget-seconds', type=float, default=60)
+            pinned_arguments(command)
     args = parser.parse_args(argv)
     try:
         store = ReviewStore(args.store)

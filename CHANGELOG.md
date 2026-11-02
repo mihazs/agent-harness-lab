@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.46.0
+
+### Minor Changes
+
+- Add private frozen grader-correction proposals, controlled old/replacement audits and explicit operator artifact review. Preserve failed and retryable observations, reject forged or changed evidence, and keep grading defects separate from historical task failure. Reuse the existing audit core and retain bank/root/exposure metadata; approved immutable bank replacement remains separate work.
+
 ## 0.45.0
 
 ### Minor Changes
