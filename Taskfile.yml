@@ -232,6 +232,14 @@ tasks:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_adversarial_bank.py" -v'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_behavior.py" -v'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_oracle_behavior.py" -v'
+  test:evaluation:controller-emissions:
+    desc: Run private bounded assistant emission observation contracts with synthetic transports
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_controller_emissions.py" -v'
   test:evaluation:roles:
     desc: Run controlled preparation views, authored contracts and workflow cases
     cmds:
@@ -377,6 +385,11 @@ tasks:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_claude_native.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_sandbox_*.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_controller_actions.py"'
+      - task: test:evaluation:controller-emissions
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_behavior.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_adversarial_bank.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_offline_evaluation.py"'

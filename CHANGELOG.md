@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.57.0
+
+### Minor Changes
+
+- Retain bounded private assistant text and refusal observations separately from tool actions, with explicit protocol, quota, omission and visibility metadata. Preserve malformed or denied-response observations without treating text as task success or proof of external delivery. Enforce UTF-8 retention bounds and mark lossy invalid-Unicode observations unknown. Keep execution quotas, worker policy and automatic-adoption restrictions unchanged.
+
 ## 0.56.0
 
 ### Minor Changes
