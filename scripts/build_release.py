@@ -19,7 +19,7 @@ def build(root, output):
     version = json.loads((root / 'package.json').read_text())['version']
     if not re.fullmatch(r'\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?', version):
         raise ValueError('invalid version')
-    files = [root / name for name in ('ahl', 'LICENSE', 'README.md', 'package.json')]
+    files = [root / name for name in ('ahl', 'LICENSE', 'README.md', 'package.json', 'install.py')]
     files += sorted((root / 'agent_harness_lab').rglob('*.py'))
     files += sorted((root / 'tools').glob('*.py'))
     fixture_root = root / 'agent_harness_lab/evaluation/fixtures'
