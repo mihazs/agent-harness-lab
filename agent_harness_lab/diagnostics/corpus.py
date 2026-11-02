@@ -149,6 +149,8 @@ class CorpusStore(PrivateJournal):
                 _,old,_,_,_=self._opened(inputs['supersedes'])
                 if old['incident_id']!=inputs['incident_id'] or all(old[k]==inputs[k] for k in ('source_revision_sha256','rubric_sha256')):
                     raise ValueError('requeue requires changed source/rubric for the same incident')
+                if any(old[k]!=inputs[k] for k in ('root_id','family','project_id','time_group','partition','source_kind')):
+                    raise ValueError('requeue cannot relabel lineage/privacy/partition identity')
             for key in existing:
                 _,prior,_,_,_=self._opened(key)
                 if inputs['supersedes'] is None and prior['incident_id']==inputs['incident_id']:

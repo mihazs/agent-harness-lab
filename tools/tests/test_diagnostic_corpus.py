@@ -184,6 +184,17 @@ class DiagnosticCorpusTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'explicit'): self.enqueue(second)
         self.assertEqual(len(self.store.snapshot()['items']),1)
 
+    def test_requeues_cannot_relabel_partition_lineage_or_source_privacy(self):
+        for key,new_value in (('partition','validation'),('root_id','renamed-root'),('family','renamed-family'),
+                ('project_id','renamed-project'),('time_group','renamed-window'),('source_kind','public')):
+            store=CorpusStore(Path(self.temp.name)/('variant-'+key))
+            old=store.enqueue(sample(partition='fitting'))
+            changed=sample(partition='fitting')
+            changed.update(rubric_sha256='b'*64,supersedes=old['case_id']); changed[key]=new_value
+            with self.subTest(key=key),self.assertRaisesRegex(ValueError,'lineage/privacy/partition'):
+                store.enqueue(changed)
+            self.assertEqual(len(store.snapshot()['items']),1)
+
     def test_schema_bounds_duplicate_ids_changed_fragments_and_unsafe_store(self):
         for change in (dict(schema_version=True),dict(extra='field'),dict(ambiguity=1),dict(summary='x'*4097),
                 dict(evidence=[dict(id='x',content='changed',sha256='0'*64)])):

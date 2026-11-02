@@ -62,7 +62,8 @@ retirement persists through all source/rubric requeues. Export preserves the
 original frozen record alongside its effective partition rather than rewriting
 history. Source/rubric changes require an explicit `supersedes` revision and fresh
 pending reviews; existing agreement is never carried forward. Competing requeues
-are rejected atomically. Export revisions bind every immutable journal head,
+are rejected atomically. Root/family/project/time, declared partition and source
+privacy identities cannot be relabeled by requeue. Export revisions bind every immutable journal head,
 the existing whole-application evaluator engine identity and the named
 `whitespace-casefold-v1` preprocessing rule. Stale export revisions fail.
 Re-importing an exported record starts pending; review history is not imported as
