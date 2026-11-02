@@ -5,6 +5,8 @@ import importlib.util
 import hashlib
 from pathlib import Path
 import shutil
+import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -13,6 +15,7 @@ from agent_harness_lab.private_journal import encoded
 from agent_harness_lab.evaluation.bank_tools import export_manifest
 from agent_harness_lab.evaluation.oracle import identity
 from agent_harness_lab.evaluation.oracle_history import HistoryStore
+from agent_harness_lab.evaluation import oracle_history as controller
 from agent_harness_lab.evaluation.plan import ExperimentSpec
 from agent_harness_lab.evaluation.sandbox import SandboxBackend
 if __package__:
@@ -137,6 +140,18 @@ class OracleBankAuthorityTests(unittest.TestCase):
         self.assertEqual(set(bindings),{t['id'] for t in self.manifest['tasks']})
         self.manifest['experiment'] = None
         with self.assertRaises(ValueError): bank_authority(self.manifest,export_root=self.export)
+
+    def test_final_authority_validation_cannot_seal_after_the_original_deadline(self):
+        clock=[time.monotonic()]; validations=[0]; original=controller.bank_authority
+        def validate(*args,**kwargs):
+            result=original(*args,**kwargs); validations[0]+=1
+            if validations[0]==4: clock[0]+=61
+            return result
+        with patch.object(controller,'time',SimpleNamespace(monotonic=lambda:clock[0])), \
+                patch.object(controller,'bank_authority',side_effect=validate):
+            result,calls=self.run_history()
+        self.assertEqual(calls,8)
+        self.assertEqual(result['state'],'incomplete')
 
     def test_materialized_fixture_is_compared_to_original_bank_not_export_claims(self):
         task = next(t for t in self.manifest['tasks'] if (self.export/t['fixture']/'app').is_dir())

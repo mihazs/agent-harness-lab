@@ -20,11 +20,13 @@ def main(argv):
     source=bank.add_mutually_exclusive_group(required=True)
     source.add_argument('--manifest', type=Path)
     source.add_argument('--starter',action='store_true',help='Use the bundled public synthetic starter bank')
+    source.add_argument('--adversarial',action='store_true',help='Use the exposed synthetic final-artifact behavior bank')
     bank.add_argument('--audit',action='store_true',help='Falsify graders against frozen synthetic controls')
     execution = bank.add_mutually_exclusive_group()
     execution.add_argument('--cooperative-controls',action='store_true',help='Explicitly trust grader code for diagnostic-only local execution')
     execution.add_argument('--sandbox-controls',action='store_true',help='Regrade bounded artifacts offline with bubblewrap; block if unavailable')
     bank.add_argument('--export',type=Path,help='Create a new descriptive manifest directory without running agents')
+    bank.add_argument('--max-trials',type=int,default=24,help='Explicit export trial ceiling; default 24')
     bank.add_argument('--list', action='store_true')
     experiment = commands.add_parser('experiment', help='Analyze a frozen repeated paired experiment')
     experiment.add_argument('--spec', type=Path, required=True)
@@ -50,13 +52,17 @@ def main(argv):
             from .task_bank import validate
             if args.starter:
                 args.manifest=Path(__file__).parent/'fixtures/starter-v1/bank.json'
+            if args.adversarial:
+                args.manifest=Path(__file__).parent/'fixtures/adversarial-v1/bank.json'
+            if args.max_trials!=24 and not args.export:
+                raise ValueError('trial ceiling requires an explicit export')
             result = validate(args.manifest)
             if args.audit:
                 from .bank_tools import audit_graders
                 result['grader_audit']=audit_graders(args.manifest,cooperative=args.cooperative_controls,sandbox=args.sandbox_controls)
             if args.export:
                 from .bank_tools import export_manifest
-                result['export']=dict(tasks=len(export_manifest(args.manifest,args.export)['tasks']),profile='descriptive_smoke')
+                result['export']=dict(tasks=len(export_manifest(args.manifest,args.export,args.max_trials)['tasks']),profile='descriptive_smoke')
             if args.list:
                 result['task_index'] = [{k: t[k] for k in ('task_id', 'root_id', 'family', 'partition', 'review_status')}
                                         for t in json.loads(args.manifest.read_text())['tasks']]

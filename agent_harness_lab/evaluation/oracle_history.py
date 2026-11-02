@@ -17,6 +17,7 @@ from .plan import ExperimentSpec, schedule
 from .regression_controls import containment
 from .regressions import fields, references, sha256, text
 from .statistics import TrialRecord, analyze
+from . import behavior
 
 MAX_CASES = 256
 MAX_BYTES = 64*1024*1024
@@ -36,6 +37,22 @@ def oracle_case(bundle):
 
 def tree_hash(path):
     return hashlib.sha256(encoded(tree(path,max_files=4096,max_bytes=MAX_BYTES))).hexdigest()
+
+
+def behavior_policies(folders, source, spec):
+    bindings = {name:dict(bundle_sha256=value['digest']) for name,value in source['grader_bundles'].items()}
+    policies = behavior.capture(folders,bindings)
+    if policies and (spec.profile!='descriptive_smoke' or spec.partition!='development'):
+        raise ValueError('public development behavior policies cannot qualify a protected experiment')
+    tasks = {name:(root,family) for name,root,family in spec.tasks}
+    splits = {task['id']:task.get('split') for task in source['tasks']}
+    for name,binding in policies.items():
+        policy = binding['policy']
+        if name not in tasks or (policy['root_id'],policy['family'])!=tasks[name]:
+            raise ValueError('behavior policy differs from frozen task lineage')
+        if splits.get(name)!='development':
+            raise ValueError('public development behavior policies cannot become held-out tasks')
+    return policies
 
 
 def bank_authority(source, *, export_root=None, expected=None):
@@ -169,15 +186,16 @@ class HistoryStore(PrivateJournal):
         inputs, inputs_hash = record(case/'inputs.json')
         version = inputs.get('schema_version')
         fields(inputs,'schema_version run_id source_manifest_sha256 plan_sha256 oracle_sha256 dependencies versions image_sha256'
-            + (' bank_authority bank_tasks' if type(version) is int and version==2 else ''))
-        if (type(version) is not int or version not in (1,2) or inputs['run_id'] != run_id
+            + (' bank_authority bank_tasks' if type(version) is int and version in (2,3) else '')
+            + (' behavior_policies' if type(version) is int and version==3 else ''))
+        if (type(version) is not int or version not in (1,2,3) or inputs['run_id'] != run_id
                 or events[0][0]['kind'] != 'run_started' or events[0][0]['payload'] != dict(inputs_sha256=inputs_hash)):
             raise ValueError('controller run input binding changed')
         source, manifest_hash = record(case/'manifest.json',1024*1024)
         spec = ExperimentSpec.parse(source['experiment']); spec.validate()
         if manifest_hash != inputs['source_manifest_sha256'] or spec.digest != inputs['plan_sha256'] or spec.grader_hash != inputs['oracle_sha256']:
             raise ValueError('stored experiment declaration changed')
-        if version==2:
+        if version==2 or inputs.get('bank_authority') is not None:
             if not isinstance(inputs['bank_authority'],dict) or inputs['bank_authority']!=source.get('bank_authority'):
                 raise ValueError('stored bank authority binding changed')
             bound = inputs['bank_tasks']
@@ -192,6 +210,8 @@ class HistoryStore(PrivateJournal):
             if current_bank: bank_authority(source,expected=inputs['bank_tasks'])
         elif source.get('bank_authority') is not None:
             raise ValueError('bound bank history cannot use the unbound input schema')
+        elif version==3 and inputs['bank_tasks'] is not None:
+            raise ValueError('unbound behavior history cannot invent bank task authority')
         if not isinstance(inputs['dependencies'],dict) or not inputs['dependencies']:
             raise ValueError('controller run has no oracle dependencies')
         if set(inputs['dependencies']) != {v['digest'] for v in source['grader_bundles'].values()}:
@@ -200,6 +220,10 @@ class HistoryStore(PrivateJournal):
             sha256(event_hash)
             if self.oracle_events(bundle)[0][1] != event_hash: raise ValueError('oracle dependency registration changed')
             if digest(contained(case,'oracles/'+bundle)) != bundle: raise ValueError('frozen historical oracle changed')
+        if version==3:
+            policies = behavior_policies({bundle:contained(case,'oracles/'+bundle) for bundle in inputs['dependencies']},source,spec)
+            if not policies or policies!=inputs['behavior_policies']:
+                raise ValueError('frozen behavior policy binding changed')
         return case,events,inputs,spec
 
     def checked(self, run_id):
@@ -237,7 +261,7 @@ class HistoryStore(PrivateJournal):
             result = self._sealed(case,events,inputs,spec)
             fixtures = result.get('fixtures')
             evidence_hash = record(case/'evidence.json')[1]
-        elif inputs['schema_version']==2:
+        elif inputs.get('bank_tasks') is not None:
             fixtures = {k:v['execution_fixture_sha256'] for k,v in inputs['bank_tasks'].items()}
         else: raise ValueError('unsealed legacy history lacks authoritative earlier fixture pins')
         if not isinstance(fixtures,dict) or set(fixtures)!={t[0] for t in spec.tasks}:
@@ -247,7 +271,7 @@ class HistoryStore(PrivateJournal):
             evidence_sha256=evidence_hash,plan=asdict(spec),plan_sha256=spec.digest,manifest=source,
             manifest_sha256=inputs['source_manifest_sha256'],fixtures=fixtures,bank_tasks=inputs.get('bank_tasks'),
             state=events[-1][0]['state'],historical_outcome='observed' if evidence_hash else 'unknown',
-            fixture_mode_evidence='pinned' if inputs['schema_version']==2 else 'unknown',
+            fixture_mode_evidence='pinned' if inputs.get('bank_tasks') is not None else 'unknown',
             current_applicability='not_evaluated',independence='unverified',publication_allowed=False)
 
     @staticmethod
@@ -255,7 +279,7 @@ class HistoryStore(PrivateJournal):
         from agent_harness_lab.cli import evaluator
         grade_status = evaluator().grading_status
         if not isinstance(result.get('runtime'),dict): raise ValueError('missing observed runtime')
-        if inputs['schema_version']==2 and result.get('fixtures')!={
+        if inputs.get('bank_tasks') is not None and result.get('fixtures')!={
                 name:value['execution_fixture_sha256'] for name,value in inputs['bank_tasks'].items()}:
             raise ValueError('executed fixtures differ from authoritative materialized bank inputs')
         if (result.get('inputs_unchanged') is not True or result.get('manifest_sha256') != inputs['source_manifest_sha256']
@@ -291,11 +315,14 @@ class HistoryStore(PrivateJournal):
                     or grade.get('grader_identity') != {k:typed.get(k) for k in ('grader_id','grader_version')}
                     or not containment(graded,inputs['image_sha256'])):
                 raise ValueError('comparison needs actual isolated executions and typed grades')
-            if (inputs['schema_version']==2
+            if (inputs.get('bank_tasks') is not None
                     and grade['grader_identity']['grader_version']!=inputs['bank_tasks'][trial['task']]['grader_version']):
                 raise ValueError('observed grader version differs from authoritative bank task')
+            policy = inputs.get('behavior_policies',{}).get(trial['task'])
+            observed = behavior.observation(policy,graded) if policy is not None else None
             records.append(TrialRecord(trial['trial_id'],outcome,'graded','executable_grader',
-                spec.baseline_hash,spec.candidate_hash,spec.grader_hash,spec.runtime_hash))
+                spec.baseline_hash,spec.candidate_hash,spec.grader_hash,spec.runtime_hash,
+                critical_regression=bool(trial['version']=='candidate' and observed and observed['critical'])))
         return records
 
     def summary(self, run_id, checked):
@@ -304,7 +331,7 @@ class HistoryStore(PrivateJournal):
             oracle_validity=validity,dependencies=sorted(inputs['dependencies']),
             controller_observed=events[-1][0]['state']=='sealed',oracle_review='unverified',
             independence='unverified',automatic_promotion=False,publication_allowed=False)
-        if inputs['schema_version']==2: result['bank_authority']='current_eligible'
+        if inputs.get('bank_tasks') is not None: result['bank_authority']='current_eligible'
         return result
 
     def show(self, run_id):
@@ -313,12 +340,19 @@ class HistoryStore(PrivateJournal):
     def analyze(self, run_id):
         with self.locked():
             checked = self.checked(run_id); _,_,inputs,spec,result,validity = checked
+            effects = behavior.report(spec,result['trials'],inputs['behavior_policies']) if result is not None and inputs.get('behavior_policies') else None
             if validity != 'current':
                 value = dict(status='blocked' if validity=='invalidated' else 'incomplete',reason='oracle_quarantined' if validity=='invalidated' else 'controller_run_not_sealed')
             else: value = analyze(spec,self.trials(inputs,spec,result))
+            if validity=='current' and effects is not None:
+                if effects['critical_candidate_effect']:
+                    value = dict(status='rejected',reason='critical_regression')
+                elif effects['required_observation_unknown']:
+                    value = dict(status='blocked',reason='behavior_observation_incomplete')
             result = dict(value,oracle_validity=validity,controller_run_id=run_id,oracle_review='unverified',
                 independence='unverified',automatic_promotion=False,publication_allowed=False)
-            if inputs['schema_version']==2: result['bank_authority']='current_eligible'
+            if inputs.get('bank_tasks') is not None: result['bank_authority']='current_eligible'
+            if effects is not None: result['behavior']=effects
             return result
 
     def run(self, manifest, baseline, candidate, *, cgroup_root, image_root, image_sha256, disk_bytes, budget_seconds=60,parent_deadline=None,on_started=None):
@@ -364,6 +398,7 @@ class HistoryStore(PrivateJournal):
             declaration = source['grader_bundles'][task['id']]
             folder,_ = frozen_grader(manifest.parent,task,declaration)
             folders[captured['tasks'][task['id']]['bundle_sha256']] = folder
+        policies = behavior_policies(folders,source,spec)
         run_id = hashlib.sha256(('run:'+secrets.token_hex(32)).encode()).hexdigest()
         with self.locked(create=True):
             dependencies = {}
@@ -380,7 +415,9 @@ class HistoryStore(PrivateJournal):
                 oracle_sha256=spec.grader_hash,dependencies=dependencies,versions=versions,image_sha256=image_sha256)
             if bound_tasks is not None:
                 inputs.update(schema_version=2,bank_authority=source['bank_authority'],bank_tasks=bound_tasks)
-                if len(encoded(inputs))>256*1024: raise ValueError('bound history input metadata limit exceeded')
+            if policies:
+                inputs.update(schema_version=3,bank_authority=source.get('bank_authority'),bank_tasks=bound_tasks,behavior_policies=policies)
+            if len(encoded(inputs))>256*1024: raise ValueError('history input metadata limit exceeded')
             write_bytes(case/'manifest.json',raw); write_bytes(case/'inputs.json',encoded(inputs)); sync_tree(case)
             events = []; self.append(case,events,'run_started','running',dict(inputs_sha256=record(case/'inputs.json')[1]))
             sync_directory(case.parent); sync_directory(self.root)
@@ -407,6 +444,7 @@ class HistoryStore(PrivateJournal):
             with self.locked():
                 if bound_tasks is not None: bank_authority(source,export_root=manifest.parent,expected=bound_tasks)
                 current = self.history(case)
+                if time.monotonic()>=deadline: raise TimeoutError('history authority validation exhausted sealing budget')
                 self.append(case,current,'run_finished','sealed',dict(evidence_sha256=record(case/'evidence.json')[1]))
         except (OSError,ValueError,TypeError,KeyError,subprocess.SubprocessError,KeyboardInterrupt) as error:
             with self.locked():

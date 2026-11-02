@@ -56,6 +56,8 @@ def _external_controls(bank_path, tasks, admission):
 
 
 def export_manifest(bank_path,output,max_trials=24,*,task_ids=None):
+    if type(max_trials) is not int or not 1<=max_trials<=10000:
+        raise ValueError('explicit export trial ceiling must be an integer from 1 to 10000')
     bank_path,output=Path(bank_path),Path(output).absolute()
     if '..' in output.parts: raise ValueError('bank export output must not contain parent traversal')
     if output.absolute().is_relative_to(bank_path.parent.resolve()) or bank_path.parent.resolve().is_relative_to(output.absolute()):
