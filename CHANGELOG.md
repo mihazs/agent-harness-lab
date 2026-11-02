@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.63.0
+
+### Minor Changes
+
+- 2bef4b9: Capture explicitly selected controller sources from actual pinned offline workers and fresh artifact graders. Exact live capabilities support bounded runtime and grader-attempt projections; private journals preserve declared metadata and candidate relationships without replaying verification from serialized claims.
+
+### Patch Changes
+
+- b5a0c1b: Bind optional live source receipts to the existing permission monitor's privately owned launch and wire completion. Preserve declared journal replay, exact grader command and independent permission qualification.
+
 ## 0.62.0
 
 ### Minor Changes
