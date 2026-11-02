@@ -7,6 +7,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
+import shlex
 import sys
 import tarfile
 import tempfile
@@ -93,6 +94,10 @@ def install(archive, checksums, root, bin_dir, skill_dirs):
     root, bin_dir = Path(root).resolve(), Path(bin_dir).resolve()
     archive_hash = verify(archive, checksums)
     root.mkdir(parents=True, exist_ok=True)
+    receipt = root / 'installation.json'
+    if receipt.is_symlink() or (receipt.exists() and not receipt.is_file()):
+        raise ValueError('installation receipt must be a regular file')
+    skill_dirs = [str(Path(folder).expanduser().resolve()) for folder in skill_dirs]
     with tempfile.TemporaryDirectory(prefix='.stage-', dir=root) as temporary:
         unpacked = extract(archive, temporary)
         version = json.loads((unpacked / 'package.json').read_text())['version']
@@ -140,6 +145,12 @@ def install(archive, checksums, root, bin_dir, skill_dirs):
                     moved.append((saved, link))
                 link.symlink_to(target, target_is_directory=relative != Path('ahl'))
                 installed.append(link)
+            # Keep update settings in the same rollback boundary as launcher links.
+            state = Path(temporary) / 'installation.json'
+            state.write_text(json.dumps(dict(schema_version=1, version=version,
+                bin_dir=str(bin_dir), skill_dirs=skill_dirs)) + '\n')
+            state.chmod(0o600)
+            state.replace(receipt)
         except BaseException:
             for link in reversed(installed):
                 link.unlink()
@@ -151,7 +162,7 @@ def install(archive, checksums, root, bin_dir, skill_dirs):
         return destination, backup
 
 
-def main(argv=None):
+def main(argv=None, *, skill_dirs=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--version', default='latest', help='Release version, e.g. 0.2.0 (default: latest)')
     parser.add_argument('--root', type=Path, default=Path.home() / '.local/share/agent-harness-lab')
@@ -171,6 +182,8 @@ def main(argv=None):
         directories.append(Path.home() / '.agents/skills')
     if args.agent in ('claude', 'both'):
         directories.append(Path.home() / '.claude/skills')
+    if skill_dirs is not None:
+        directories = skill_dirs
     try:
         with tempfile.TemporaryDirectory(prefix='ahl-download-') as temporary:
             archive, checksums = args.archive, args.checksums
@@ -191,7 +204,11 @@ def main(argv=None):
         print(f'Installed {destination.name}: {args.bin_dir / "ahl"}')
         if backup:
             print(f'Previous installations backed up at {backup}')
-        print(f'Ensure {args.bin_dir} is on PATH. Run: ahl --help')
+        bin_dir = args.bin_dir.expanduser().resolve()
+        if str(bin_dir) not in os.environ.get('PATH', '').split(os.pathsep):
+            print('For this POSIX shell, run: export PATH=' + shlex.quote(str(bin_dir)) + ':"$PATH"')
+        print(f'Check: {shlex.quote(str(bin_dir / "ahl"))} --help')
+        print('Update later: ahl update (after a release containing this command is installed)')
     except (ValueError, OSError, KeyError, tarfile.TarError) as exc:
         parser.exit(2, f'installation error: {exc}\n')
 

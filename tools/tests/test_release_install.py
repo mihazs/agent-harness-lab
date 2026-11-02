@@ -81,6 +81,37 @@ class ReleaseTests(unittest.TestCase):
         _, backup = installer.install(archive, checksums, self.install_root, self.bin, self.dirs)
         self.assertEqual((backup/'0/SKILL.md').read_text(), 'original')
 
+    def test_update_uses_bundled_installer_and_preserves_selected_paths(self):
+        from agent_harness_lab.updater import main
+        archive, checksums, _ = self.release()
+        current, _ = installer.install(archive, checksums, self.install_root, self.bin, self.dirs[:1])
+        archive, checksums, _ = self.release('0.2.0')
+        def response(request, timeout):
+            url = request.full_url
+            if url.endswith('/releases/latest'):
+                return io.BytesIO(b'{"tag_name":"v0.2.0"}')
+            if url.endswith('/' + archive.name): return io.BytesIO(archive.read_bytes())
+            if url.endswith('/SHA256SUMS'): return io.BytesIO(checksums.read_bytes())
+            raise AssertionError(url)
+        with patch('agent_harness_lab.cli.assets', return_value=current), patch('urllib.request.urlopen', side_effect=response):
+            self.assertEqual(main([]), 0)
+        self.assertEqual((self.bin/'ahl').resolve(), self.install_root/'releases/0.2.0/ahl')
+        self.assertFalse(self.dirs[1].exists())
+        self.assertEqual(json.loads((self.install_root/'installation.json').read_text())['version'], '0.2.0')
+
+    def test_receipt_failure_rolls_back_upgrade(self):
+        archive, checksums, _ = self.release()
+        current, _ = installer.install(archive, checksums, self.install_root, self.bin, self.dirs)
+        receipt = self.install_root/'installation.json'
+        old = receipt.read_bytes()
+        archive, checksums, _ = self.release('0.2.0')
+        with patch.object(Path, 'replace', side_effect=OSError('synthetic receipt failure')):
+            with self.assertRaises(OSError):
+                installer.install(archive, checksums, self.install_root, self.bin, self.dirs)
+        self.assertEqual(receipt.read_bytes(), old)
+        self.assertEqual((self.bin/'ahl').resolve(), current/'ahl')
+        self.assertFalse((self.install_root/'releases/0.2.0').exists())
+
     def test_checksum_failure_has_no_install_side_effects(self):
         archive, checksums, _ = self.release()
         archive.write_bytes(archive.read_bytes()+b'changed')
