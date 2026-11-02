@@ -3,8 +3,9 @@
 A preservation cohort identifies behavior that worked in a prior execution and
 must be evaluated separately from aggregate gains. Frozen membership and resolved
 prior qualification feed the existing paired-root analysis. Each required cohort
-gets its own noninferiority endpoint. Bound decision and optimization receipts remain
-pending; conditional statistical support cannot authorize adoption.
+gets its own noninferiority endpoint. [Private decision receipts](decision-receipts.md)
+bind the analysis to current evidence; optimization/report integration remains
+pending. Conditional statistical support cannot authorize adoption.
 
 Existing plans keep their original serialization, digest and scheduled trial IDs.
 An optional `cohort_manifest_sha256` field binds the exact bytes of a new sidecar.
@@ -76,7 +77,7 @@ declarations with current applicability unevaluated.
 An oracle correction needs fresh qualification and a newly frozen cohort manifest,
 followed by both comparison arms under a new plan. The existing correction-rerun
 operation refuses cohort-enabled plans rather than silently retaining old qualification.
-Automatic requalification and bound decision/optimization receipt integration remain work
+Automatic requalification and optimization/report receipt integration remain work
 for issue #122. Automatic promotion and publication remain disabled.
 
 ## Conditional preservation analysis
@@ -114,8 +115,8 @@ unknown when required observations are missing. One stochastic pass-to-fail pair
 is descriptive evidence, not proof of a stable regression. Reports preserve these
 counts before early negative decisions and remain private.
 
-Promotion of cohort-enabled plans remains blocked while bound decision receipts,
-optimization/report integration and corrected-oracle requalification are pending.
+Promotion of cohort-enabled plans remains blocked while optimization/report
+integration and corrected-oracle requalification are pending.
 Run `task test:evaluation:preservation-analysis` for the synthetic aggregate-gain
 counterexample, powered preservation, sparse data, overlap, missing outcomes,
 selection-bias construction and legacy compatibility checks.

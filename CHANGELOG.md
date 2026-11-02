@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.53.0
+
+### Minor Changes
+
+- Persist bounded private analysis receipts bound to current controller evidence, frozen qualification, paired analysis and the analysis engine. Reopen authority and recompute results when verifying a receipt, with explicit regeneration after engine changes. Add receipt creation and verification CLI commands and prevent controller/cohort data from being publicly exported through spoofed publication labels. Receipts confer no adoption authority; optimization/report integration and corrected-oracle requalification remain pending.
+
 ## 0.52.0
 
 ### Minor Changes

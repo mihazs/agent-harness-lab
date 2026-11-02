@@ -37,6 +37,19 @@ class BenchmarkContracts(unittest.TestCase):
         self.assertIn('inconclusive',markdown); self.assertIn('skipped',html)
         self.assertNotIn('<script>',html); self.assertIn('&lt;script&gt;',html)
 
+    def test_private_controller_claims_cannot_be_relabelled_public(self):
+        for fields in (dict(publication_allowed=False),dict(publication_allowed=None),
+                dict(controller_run_id='1'*64),dict(cohort_manifest_sha256='2'*64),
+                dict(preservation={}),dict(receipt_sha256='3'*64),
+                dict(algorithm='private-preservation-decision-v1'),
+                dict(receipt=dict(algorithm='private-preservation-decision-v1')),
+                dict(analysis=dict(controller_run_id='4'*64))):
+            item=dict(record(),publication_allowed=True)
+            item.update(fields)
+            with self.subTest(fields=fields):
+                self.assertFalse(public_export_allowed([item]))
+                with self.assertRaises(ValueError): summary([item],public=True)
+
     def test_cost_is_unknown_without_measured_usage_or_dated_pricing(self):
         self.assertIsNone(measured_cost({'input_tokens':100}))
         prices=dict(as_of='2026-10-31',currency='test-units',input_per_token=1,output_per_token=2)

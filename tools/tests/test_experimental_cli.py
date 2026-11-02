@@ -46,3 +46,14 @@ class ExperimentalCliTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 main(['benchmark-report','--input',str(source),'--output',str(root/'blocked'),'--public'])
             self.assertFalse((root/'blocked').exists())
+            for index,fields in enumerate((dict(publication_allowed=False),
+                    dict(publication_allowed=True,receipt_sha256='1'*64),
+                    dict(publication_allowed=True,algorithm='private-preservation-decision-v1'),
+                    dict(publication_allowed=True,receipt=dict(algorithm='private-preservation-decision-v1')),
+                    dict(publication_allowed=True,analysis=dict(controller_run_id='2'*64)))):
+                forged=record(); forged.update(fields)
+                source.write_text(json.dumps([forged])); output=root/f'blocked-controller-{index}'
+                with self.assertRaises(SystemExit) as exit:
+                    main(['benchmark-report','--input',str(source),'--output',str(output),'--public'])
+                self.assertEqual(exit.exception.code,2)
+                self.assertFalse(output.exists())

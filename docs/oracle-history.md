@@ -158,6 +158,7 @@ Opt-in [preservation cohorts](preservation-cohorts.md) bind reviewed prior execu
 and exact member contracts into a new plan and private history inputs schema 4.
 The controller freezes membership before dispatch and revalidates current authority.
 History analysis now includes conditional cohort noninferiority endpoints and
-descriptive losses/recoveries. Cohort-enabled promotion remains blocked while bound
-decision-receipt integration is pending. Legacy plans retain their original
+descriptive losses/recoveries. [Private decision receipts](decision-receipts.md)
+bind analysis to current controller evidence. Cohort-enabled promotion remains
+blocked while optimization/report integration is pending. Legacy plans retain their original
 digests, trial IDs and history interpretation.

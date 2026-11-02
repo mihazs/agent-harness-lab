@@ -317,6 +317,10 @@ class RegressionDraftKernelTests(KernelFixture):
         analysis=value.store.analyze(observed['run_id'])
         self.assertEqual(analysis['reason'],'uncertainty_or_margin_not_met')
         self.assertEqual(analysis['preservation']['cohorts']['preserved']['endpoint']['mean'],0)
+        receipt=value.store.decision(observed['run_id'])
+        self.assertEqual(receipt['analysis'],analysis)
+        self.assertEqual(value.store.verify_decision(observed['run_id'],receipt['receipt_sha256']),receipt)
+        self.assertFalse(receipt['adoption_authority'])
         for run_id in (prior['run_id'],observed['run_id']):
             trials=value.store.checked(run_id)[4]['trials']; self.assertEqual(len(trials),4)
             for trial in trials:

@@ -21,6 +21,11 @@ def validate_pair(baseline,candidate,strict=True):
 def public_export_allowed(records):
     if not records: return False
     for record in records:
+        for metadata in (record,record.get('receipt'),record.get('analysis')):
+            if isinstance(metadata,dict) and (metadata.get('publication_allowed',True) is not True
+                    or any(key in metadata for key in ('controller_run_id','cohort_manifest_sha256','preservation','receipt_sha256'))
+                    or metadata.get('algorithm')=='private-preservation-decision-v1'):
+                return False
         provenance=record.get('provenance',{})
         if provenance.get('source_kind') not in ('synthetic','public') or provenance.get('approved_publication') is not True:
             return False

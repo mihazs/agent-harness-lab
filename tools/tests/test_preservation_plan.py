@@ -52,6 +52,6 @@ class PreservationPlanTests(unittest.TestCase):
         final=replace(spec,profile='certification',partition='certification')
         decision=decide(final,dict(status='supported',oracle_validity='current'),isolation_verified=True,
             effective_runtime_verified=True,graders_audited=True,lineage_reviewed=True,certification_reserved=True)
-        self.assertEqual((decision.status,decision.reason),('blocked','preservation_analysis_unavailable'))
+        self.assertEqual((decision.status,decision.reason),('blocked','preservation_promotion_integration_unavailable'))
         rejected=analyze(spec,[replace(row,critical_regression=True) for row in rows])
         self.assertEqual((rejected['status'],rejected['reason']),('rejected','critical_regression'))
