@@ -2,6 +2,10 @@ version: '3'
 vars:
   PYTHON: '{{default "python3" .PYTHON}}'
 tasks:
+  docs:check:
+    desc: Validate relative links in tracked Markdown without scanning private artifacts
+    cmds:
+      - '{{.PYTHON | shellQuote}} scripts/check_docs.py'
   test:
     desc: Run both native README test suites
     cmds:
@@ -41,6 +45,10 @@ tasks:
     desc: Run native controller history, quarantine and guarded-analysis cases
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_oracle_history*.py" -v'
+  test:evaluation:bank-authority:
+    desc: Run native controlled-bank authority, fixture-binding and revocation cases
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_oracle_bank_authority.py" -v'
   test:evaluation:grader-controls:
     desc: Run native proposal-wrapper and shared controlled grader-audit cases
     cmds:
@@ -219,6 +227,12 @@ tasks:
       - task: test:sandbox:kernel
         vars:
           KERNEL_TEST_FILTER: oracle_history
+  test:sandbox:kernel:bank-authority:
+    desc: Admit a synthetic controlled bank and verify real comparisons retain revocation authority
+    cmds:
+      - task: test:sandbox:kernel
+        vars:
+          KERNEL_TEST_FILTER: bank_authority
   test:sandbox:kernel:corrections:
     desc: Audit old/new grader controls and explicit operator review with real pinned workers
     cmds:

@@ -107,7 +107,10 @@ def export_manifest(bank_path,output,max_trials=24):
                   grader_bundles=bundles,max_trials=max_trials,budget_seconds=300,timeout_seconds=10,
                   bank_digest=reviewed['bank_sha256'],grouping_revision_sha256=reviewed['content_grouping']['revision_sha256'],
                   independence_verified=reviewed['certification_eligible'],automatic_promotion=False)
-    if admission is not None: manifest['bank_revision_sha256']=admission['revision_sha256']
+    if admission is not None:
+        manifest['bank_revision_sha256']=admission['revision_sha256']
+        manifest['bank_authority']=dict(schema_version=1,bank_path=str(bank_path.absolute()),
+            bank_sha256=reviewed['bank_sha256'],revision_sha256=admission['revision_sha256'])
     (output/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     return manifest
 

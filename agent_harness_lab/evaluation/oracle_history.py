@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import secrets
 import subprocess
+import tempfile
 import time
 from types import SimpleNamespace
 
@@ -35,6 +36,73 @@ def oracle_case(bundle):
 
 def tree_hash(path):
     return hashlib.sha256(encoded(tree(path,max_files=4096,max_bytes=MAX_BYTES))).hexdigest()
+
+
+def bank_authority(source, *, export_root=None, expected=None):
+    """Validate actual current bank authority and selected materialized inputs."""
+    from agent_harness_lab.cli import evaluator
+    from .bank_tools import materialize_sources
+    from .bank_revisions import task_identity
+    from .task_bank import validate
+    authority = source.get('bank_authority')
+    if authority is None:
+        if 'bank_revision_sha256' in source or expected is not None:
+            raise ValueError('controlled history requires its explicit bank authority')
+        return None
+    fields(authority,'schema_version bank_path bank_sha256 revision_sha256')
+    if type(authority['schema_version']) is not int or authority['schema_version']!=1:
+        raise ValueError('unsupported history bank authority')
+    for key in ('bank_sha256','revision_sha256'): sha256(authority[key])
+    location = authority['bank_path']
+    if not isinstance(location,str) or not 0<len(location)<=4096 or '\0' in location:
+        raise ValueError('bounded explicit bank authority path required')
+    path = Path(location)
+    if (not path.is_absolute() or '..' in path.parts or str(path)!=location
+            or any(p.is_symlink() for p in (path,*path.parents))):
+        raise ValueError('bank authority path must be canonical and symlink-free')
+    checked = validate(path); admission = checked.get('admission')
+    experiment = source.get('experiment',{})
+    if not isinstance(experiment,dict): raise ValueError('bank authority experiment must be an object')
+    if experiment.get('profile','descriptive_smoke')=='certification' and not checked['certification_eligible']:
+        raise ValueError('bank authority is not eligible for certification')
+    bank,bank_hash = record(path,1024*1024)
+    if (bank_hash!=authority['bank_sha256'] or checked['bank_sha256']!=bank_hash or source.get('bank_digest')!=bank_hash
+            or not isinstance(admission,dict) or admission.get('current_eligible') is not True
+            or admission.get('revision_sha256')!=authority['revision_sha256']
+            or source.get('bank_revision_sha256')!=authority['revision_sha256']):
+        raise ValueError('bank authority is stale, ineligible or mismatched')
+    tasks = source.get('tasks')
+    if not isinstance(tasks,list) or not 0<len(tasks)<=1000:
+        raise ValueError('bounded selected bank tasks required')
+    indexed = {t['task_id']:t for t in bank['tasks']}; bindings = {}; files_total = bytes_total = 0
+    runtime_digest = evaluator().digest
+    for task in tasks:
+        name = task['id']; original = indexed.get(name)
+        if original is None or name in bindings: raise ValueError('unknown or duplicate selected bank task')
+        split = {'calibration':'regression','certification':'heldout','transfer':'heldout'}.get(original['partition'],'development')
+        if (task.get('root')!=original['root_id'] or task.get('family')!=original['family']
+                or task.get('split')!=split or task.get('artifacts')!=original['artifacts']
+                or source.get('grader_bundles',{}).get(name,{}).get('digest')!=original['grader_digest']):
+            raise ValueError('selected task differs from authoritative bank policy')
+        fixture = contained(path.parent,original['fixture']); entries = tree(fixture)
+        files_total += len(entries)
+        bytes_total += sum(len(read_regular(contained(fixture,p),MAX_BYTES)) for p in entries)
+        if files_total>4096 or bytes_total>MAX_BYTES: raise ValueError('bank selection bound exceeded')
+        with tempfile.TemporaryDirectory() as temporary:
+            prepared = Path(temporary)/'fixture'; copy_frozen(fixture,prepared,original['fixture_digest'])
+            materialize_sources(prepared)
+            declaration,_ = record(prepared/'task.json',1024*1024)
+            if task.get('prompt')!=declaration.get('prompt'): raise ValueError('bank task prompt changed')
+            materialized = digest(prepared)
+            bindings[name] = dict(task_revision_sha256=task_identity(original),
+                materialized_sha256=materialized,execution_fixture_sha256=runtime_digest(prepared),
+                grader_version=original['grader_version'])
+        if export_root is not None and digest(contained(export_root,task['fixture']))!=materialized:
+            raise ValueError('exported fixture differs from original materialized bank fixture')
+    if expected is not None and bindings!=expected: raise ValueError('sealed bank task authority changed')
+    current = validate(path)
+    if current!=checked: raise ValueError('bank authority changed during validation')
+    return bindings
 
 
 class HistoryStore(PrivateJournal):
@@ -96,14 +164,31 @@ class HistoryStore(PrivateJournal):
     def opened(self, run_id):
         case = self.case(run_id); events = self.history(case)
         inputs, inputs_hash = record(case/'inputs.json')
-        fields(inputs,'schema_version run_id source_manifest_sha256 plan_sha256 oracle_sha256 dependencies versions image_sha256')
-        if (type(inputs['schema_version']) is not int or inputs['schema_version'] != 1 or inputs['run_id'] != run_id
+        version = inputs.get('schema_version')
+        fields(inputs,'schema_version run_id source_manifest_sha256 plan_sha256 oracle_sha256 dependencies versions image_sha256'
+            + (' bank_authority bank_tasks' if type(version) is int and version==2 else ''))
+        if (type(version) is not int or version not in (1,2) or inputs['run_id'] != run_id
                 or events[0][0]['kind'] != 'run_started' or events[0][0]['payload'] != dict(inputs_sha256=inputs_hash)):
             raise ValueError('controller run input binding changed')
         source, manifest_hash = record(case/'manifest.json',1024*1024)
         spec = ExperimentSpec.parse(source['experiment']); spec.validate()
         if manifest_hash != inputs['source_manifest_sha256'] or spec.digest != inputs['plan_sha256'] or spec.grader_hash != inputs['oracle_sha256']:
             raise ValueError('stored experiment declaration changed')
+        if version==2:
+            if not isinstance(inputs['bank_authority'],dict) or inputs['bank_authority']!=source.get('bank_authority'):
+                raise ValueError('stored bank authority binding changed')
+            bound = inputs['bank_tasks']
+            if not isinstance(bound,dict) or not 0<len(bound)<=1000:
+                raise ValueError('bounded nonempty bank task authority required')
+            for name,value in bound.items():
+                if not isinstance(name,str) or not 0<len(name)<=128:
+                    raise ValueError('bounded bank task identity required')
+                fields(value,'task_revision_sha256 materialized_sha256 execution_fixture_sha256 grader_version')
+                for key in ('task_revision_sha256','materialized_sha256','execution_fixture_sha256'): sha256(value[key])
+                text(value['grader_version'])
+            bank_authority(source,expected=inputs['bank_tasks'])
+        elif source.get('bank_authority') is not None:
+            raise ValueError('bound bank history cannot use the unbound input schema')
         if not isinstance(inputs['dependencies'],dict) or not inputs['dependencies']:
             raise ValueError('controller run has no oracle dependencies')
         if set(inputs['dependencies']) != {v['digest'] for v in source['grader_bundles'].values()}:
@@ -132,6 +217,9 @@ class HistoryStore(PrivateJournal):
         from agent_harness_lab.cli import evaluator
         grade_status = evaluator().grading_status
         if not isinstance(result.get('runtime'),dict): raise ValueError('missing observed runtime')
+        if inputs['schema_version']==2 and result.get('fixtures')!={
+                name:value['execution_fixture_sha256'] for name,value in inputs['bank_tasks'].items()}:
+            raise ValueError('executed fixtures differ from authoritative materialized bank inputs')
         if (result.get('inputs_unchanged') is not True or result.get('manifest_sha256') != inputs['source_manifest_sha256']
                 or result.get('plan_digest') != spec.digest or result.get('grader_hash') != spec.grader_hash
                 or result.get('versions') != inputs['versions'] or result.get('runtime',{}).get('agent') != 'offline'
@@ -165,16 +253,21 @@ class HistoryStore(PrivateJournal):
                     or grade.get('grader_identity') != {k:typed.get(k) for k in ('grader_id','grader_version')}
                     or not containment(graded,inputs['image_sha256'])):
                 raise ValueError('comparison needs actual isolated executions and typed grades')
+            if (inputs['schema_version']==2
+                    and grade['grader_identity']['grader_version']!=inputs['bank_tasks'][trial['task']]['grader_version']):
+                raise ValueError('observed grader version differs from authoritative bank task')
             records.append(TrialRecord(trial['trial_id'],outcome,'graded','executable_grader',
                 spec.baseline_hash,spec.candidate_hash,spec.grader_hash,spec.runtime_hash))
         return records
 
     def summary(self, run_id, checked):
         _,events,inputs,_,_,validity = checked
-        return dict(schema_version=1,run_id=run_id,state=events[-1][0]['state'],event_sha256=events[-1][1],
+        result = dict(schema_version=1,run_id=run_id,state=events[-1][0]['state'],event_sha256=events[-1][1],
             oracle_validity=validity,dependencies=sorted(inputs['dependencies']),
             controller_observed=events[-1][0]['state']=='sealed',oracle_review='unverified',
             independence='unverified',automatic_promotion=False,publication_allowed=False)
+        if inputs['schema_version']==2: result['bank_authority']='current_eligible'
+        return result
 
     def show(self, run_id):
         with self.locked(): return self.summary(run_id,self.checked(run_id))
@@ -185,8 +278,10 @@ class HistoryStore(PrivateJournal):
             if validity != 'current':
                 value = dict(status='blocked' if validity=='invalidated' else 'incomplete',reason='oracle_quarantined' if validity=='invalidated' else 'controller_run_not_sealed')
             else: value = analyze(spec,self.trials(inputs,spec,result))
-            return dict(value,oracle_validity=validity,controller_run_id=run_id,oracle_review='unverified',
+            result = dict(value,oracle_validity=validity,controller_run_id=run_id,oracle_review='unverified',
                 independence='unverified',automatic_promotion=False,publication_allowed=False)
+            if inputs['schema_version']==2: result['bank_authority']='current_eligible'
+            return result
 
     def run(self, manifest, baseline, candidate, *, cgroup_root, image_root, image_sha256, disk_bytes, budget_seconds=60):
         from agent_harness_lab.cli import evaluator
@@ -208,6 +303,11 @@ class HistoryStore(PrivateJournal):
         raw = read_regular(manifest,1024*1024); source,manifest_hash = record(manifest,1024*1024)
         if hashlib.sha256(raw).hexdigest() != manifest_hash: raise ValueError('manifest changed during history preflight')
         spec = ExperimentSpec.parse(source['experiment']); spec.validate()
+        bound_tasks = bank_authority(source,export_root=manifest.parent)
+        if bound_tasks is not None:
+            owner = Path(source['bank_authority']['bank_path']).parents[2]
+            if self.root.is_relative_to(owner) or owner.is_relative_to(self.root):
+                raise ValueError('history store and bank authority trees must not overlap')
         selected = source['tasks']; captured = capture(manifest.parent,selected,source.get('grader_bundles',{}))
         if identity(manifest.parent,selected,source.get('grader_bundles',{})) != spec.grader_hash or spec.runtime_hash != image_sha256:
             raise ValueError('history plan must bind the current oracle and pinned image')
@@ -235,6 +335,9 @@ class HistoryStore(PrivateJournal):
             for bundle,folder in folders.items(): copy_frozen(folder,case/'oracles'/bundle,bundle)
             inputs = dict(schema_version=1,run_id=run_id,source_manifest_sha256=manifest_hash,plan_sha256=spec.digest,
                 oracle_sha256=spec.grader_hash,dependencies=dependencies,versions=versions,image_sha256=image_sha256)
+            if bound_tasks is not None:
+                inputs.update(schema_version=2,bank_authority=source['bank_authority'],bank_tasks=bound_tasks)
+                if len(encoded(inputs))>256*1024: raise ValueError('bound history input metadata limit exceeded')
             write_bytes(case/'manifest.json',raw); write_bytes(case/'inputs.json',encoded(inputs)); sync_tree(case)
             events = []; self.append(case,events,'run_started','running',dict(inputs_sha256=record(case/'inputs.json')[1]))
             sync_directory(case.parent); sync_directory(self.root)
@@ -242,9 +345,11 @@ class HistoryStore(PrivateJournal):
             agent='offline',codex='must-not-launch',claude='must-not-launch',cgroup_root=Path(cgroup_root),
             image_root=image_root,image_sha256=image_sha256,disk_bytes=disk_bytes,parent_deadline=deadline)
         try:
+            if bound_tasks is not None: bank_authority(source,export_root=manifest.parent,expected=bound_tasks)
             runner.evaluate(args)
             result,result_hash = record(case/'execution/results.json',8*1024*1024)
             self.trials(inputs,spec,result)
+            if bound_tasks is not None: bank_authority(source,export_root=manifest.parent,expected=bound_tasks)
             if (record(manifest,1024*1024)[1] != manifest_hash
                     or identity(manifest.parent,selected,source['grader_bundles']) != spec.grader_hash
                     or time.monotonic() >= deadline):
@@ -253,6 +358,7 @@ class HistoryStore(PrivateJournal):
             sync_tree(case/'execution'); write_bytes(case/'evidence.json',encoded(evidence)); sync_directory(case)
             if time.monotonic() >= deadline: raise TimeoutError('history sealing budget exhausted')
             with self.locked():
+                if bound_tasks is not None: bank_authority(source,export_root=manifest.parent,expected=bound_tasks)
                 current = self.history(case)
                 self.append(case,current,'run_finished','sealed',dict(evidence_sha256=record(case/'evidence.json')[1]))
         except (OSError,ValueError,TypeError,KeyError,subprocess.SubprocessError,KeyboardInterrupt) as error:

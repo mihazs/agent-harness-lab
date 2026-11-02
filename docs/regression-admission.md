@@ -110,7 +110,10 @@ not evidence of independent task roots.
 ## Limits and validation
 
 Already exported manifests and completed comparisons are not retroactively
-rewritten. [Controller history](oracle-history.md) can invalidate recorded
+rewritten. New controlled exports bind [controller history](oracle-history.md)
+to current admission authority, so later case revocation also blocks guarded
+comparison reads. Legacy unbound histories retain their original semantics.
+Controller history can invalidate recorded
 comparisons through grader quarantine. [Correction audits and operator review](grader-corrections.md)
 remain separate from bank application. Approved oracle replacement, coordinated
 rerun integration and the explicit opaque-to-native provenance bridge remain

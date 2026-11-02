@@ -53,7 +53,41 @@ The store must be separate from selected worker inputs. It uses owner-only
 directories, strict regular-file reads, immutable event chains and the existing
 file-tree digest semantics; empty directories/root-directory modes are not
 included in those digests. Source inputs must remain stable through completion.
-Historical reads use the retained evidence without reopening original inputs.
+Legacy unbound reads use retained evidence without reopening original inputs.
+Bound controlled-bank runs additionally require their live bank authority below.
+
+## Controlled-bank approval and fixture binding
+
+New controlled-bank exports retain `bank_authority` with exactly
+`schema_version=1`, the absolute `bank_path`, `bank_sha256`, and
+`revision_sha256`. Keep this controller-generated binding intact. A controlled
+revision label without its authority rejects new execution.
+
+The controller checks the actual immutable bank and current admission decisions,
+including inherited admissions. Selected task identities, roots, families,
+splits, prompts, artifact policy and oracle digests must match that bank. Raw bank
+fixtures are materialized and compared with the selected exported fixtures;
+an edited export cannot substitute its own task state. Bound input records use
+schema version 2 and seal task identities, materialized fixture hashes, execution
+fixture hashes and expected grader versions. Actual typed grades must use those
+versions. Legacy unbound input records retain schema version 1 and their bytes.
+
+Approval is checked before dispatch, during sealing, and on guarded reads. A
+missing, changed or revoked authority refuses `show`/`analyze` with a validation
+error; it cannot return current supported evidence. An in-flight offline batch
+may finish after revocation, but cannot become current guarded evidence. Original
+reports remain intact. The live bank/controller must remain available; original
+export and harness directories need not remain available for historical reads.
+Keep history outside the bank controller tree as well as worker inputs.
+
+Successful bound summaries and analyses include
+`bank_authority=current_eligible`. This validates the existing operator-attested
+admission chain; it does not authenticate reviewers or establish independent
+roots. Historical version 1 runs remain unbound and lack this field. They are
+not retroactively approved by adding a label; obtain bound evidence through a
+fresh complete both-arm run.
+An operator-approved development bank is still ineligible for certification;
+labeling its new bound plan as `certification` rejects before dispatch.
 
 ## Inspect and quarantine a grader dependency
 
@@ -115,3 +149,6 @@ Run `task test:evaluation:history` for native contracts, and
 `task test:sandbox:kernel:history` for the separately selected real pinned-kernel
 canary using reproducible synthetic fixtures. Mocked attestations test controller
 acceptance; they are not containment or authentication evidence.
+Run `task test:evaluation:bank-authority` for approval/fixture/version controls and
+`task test:sandbox:kernel:bank-authority` for real replay, admission, paired
+execution and later approval revocation over synthetic inputs.

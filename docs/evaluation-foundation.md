@@ -45,7 +45,9 @@ oracle correction/invalidation and protected certification remain separate work.
   Unknown semantic independence/review blocks certification eligibility. Public
   tasks are explicitly not secret. Grader integrity mismatches reject execution.
   [Controller history](oracle-history.md) can quarantine a grader dependency
-  across recorded comparisons while preserving old report bytes. Dedicated
+  across recorded comparisons while preserving old report bytes. New controlled
+  exports also bind current bank admission authority, materialized fixtures and
+  observed grader versions through dispatch, sealing and guarded analysis. Dedicated
   [correction audits/review](grader-corrections.md) preserve grader defects as
   grading observations. Immutable corrected-bank replacement remains pending
   in #8. These checks do not authenticate runtime/import dependencies.

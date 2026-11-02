@@ -170,7 +170,7 @@ notes for privacy just like any other staged content.
 
 ## Offline documentation links
 
-Run `python3 scripts/check_docs.py` to check local destinations in tracked `.md`
+Run `task docs:check` to check local destinations in tracked `.md`
 files. It resolves inline links and images relative to their containing file,
 decodes URL-encoded paths, and ignores fragments, query strings, external URLs,
 code fences and simple same-line code spans. Missing destinations report the
