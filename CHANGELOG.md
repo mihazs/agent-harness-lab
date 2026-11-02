@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.60.1
+
+### Patch Changes
+
+- d5c2884: Separate task-bank review declarations from certification authority. Keep structural validation and descriptive export available without falsely marking self-labeled banks certification-eligible or their roots verified independent.
+
 ## 0.60.0
 
 ### Minor Changes
