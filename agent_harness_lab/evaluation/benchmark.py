@@ -4,6 +4,7 @@ from datetime import date
 import html
 import json
 import math
+from .history_report import summary as history_summary
 
 MATCH_FIELDS=('provider','runtime','model_revision','reasoning','task_bank_revision',
               'sandbox_image','permissions','controller_version')
@@ -21,10 +22,11 @@ def validate_pair(baseline,candidate,strict=True):
 def public_export_allowed(records):
     if not records: return False
     for record in records:
-        for metadata in (record,record.get('receipt'),record.get('analysis')):
+        for metadata in (record,record.get('receipt'),record.get('analysis'),record.get('context')):
             if isinstance(metadata,dict) and (metadata.get('publication_allowed',True) is not True
                     or any(key in metadata for key in ('controller_run_id','cohort_manifest_sha256','preservation','receipt_sha256'))
-                    or metadata.get('algorithm')=='private-preservation-decision-v1'):
+                    or metadata.get('algorithm') in ('private-preservation-decision-v1','private-controller-history-report-v1','guarded-preservation-search-v1')
+                    or metadata.get('evidence_source')=='controller_verified_development_only'):
                 return False
         provenance=record.get('provenance',{})
         if provenance.get('source_kind') not in ('synthetic','public') or provenance.get('approved_publication') is not True:
@@ -70,6 +72,9 @@ def summary(records,*,public=False):
 
 
 def render(result):
+    if result.get('report_kind')=='controller_history':
+        from .history_report import render as render_history
+        return render_history(result)
     lines=['# Matched benchmark summary','','| Runtime stratum | Runs | Statuses | Settings verified |',
            '| --- | ---: | --- | --- |']
     rows=[]
