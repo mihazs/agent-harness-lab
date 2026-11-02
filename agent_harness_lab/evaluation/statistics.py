@@ -46,6 +46,8 @@ def analyze(spec, records):
             return dict(status='incomplete', reason='unknown_or_invalid_grade')
         trial = expected[record.trial_id]
         roots[(trial['family'], trial['root'])][(trial['task'], trial['repetition'])][trial['version']] = record.outcome
+    if spec.cohort_manifest_sha256 is not None:
+        return dict(status='blocked',reason='preservation_analysis_unavailable')
     families = defaultdict(list)
     for (family, _), pairs in roots.items():
         differences = [int(pair['candidate']) - int(pair['baseline']) for pair in pairs.values()]

@@ -1,5 +1,5 @@
 """Fresh entire paired execution from pinned prior declarations, never receipt import."""
-from dataclasses import asdict,replace
+from dataclasses import replace
 import hashlib
 import math
 from pathlib import Path,PurePosixPath
@@ -193,6 +193,8 @@ def rerun(store,case_id,request_path,baseline,candidate,*,cgroup_root,image_root
             raise ValueError('rerun authority differs from applied correction')
         with history.locked(): prior = prior_binding(history,request)
         old = ExperimentSpec.parse(prior['plan'])
+        if old.cohort_manifest_sha256 is not None:
+            raise ValueError('corrected preservation plans require fresh qualification and a newly frozen cohort manifest')
         if old.profile!='descriptive_smoke' or old.partition!='development': raise ValueError('correction reruns cannot upgrade protected/certification exposure')
         if image_sha256!=old.runtime_hash or image_sha256!=spec['image_sha256']:
             raise ValueError('rerun runtime differs from observed prior/audited image')
@@ -233,7 +235,7 @@ def rerun(store,case_id,request_path,baseline,candidate,*,cgroup_root,image_root
             declared_inputs(prior,manifest,task.task_id)
             new = replace(old,grader_hash=identity(attempt/'export',manifest['tasks'],manifest['grader_bundles']))
             if new.grader_hash==old.grader_hash: raise ValueError('rerun requires a newly pinned corrected oracle')
-            manifest['experiment'] = asdict(new); write_path = attempt/'export/manifest.json'
+            manifest['experiment'] = new.to_dict(); write_path = attempt/'export/manifest.json'
             write_path.write_bytes(encoded(manifest)); sync_tree(attempt)
             remaining = deadline-time.monotonic()
             if remaining<=0: raise TimeoutError('rerun preparation exhausted parent deadline')

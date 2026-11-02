@@ -311,11 +311,18 @@ def evaluate(args):
         oracle_hash = oracle_identity(manifest_path.parent, tasks, declared_bundles)
         if plan.grader_hash != oracle_hash:
             raise ValueError('experiment oracle differs from frozen plan; create a new plan and rerun both arms')
+        if plan.cohort_manifest_sha256 is not None:
+            from agent_harness_lab.evaluation import cohort_history
+            from agent_harness_lab.evaluation.oracle_history import bank_authority
+            bank_tasks=bank_authority(manifest,export_root=manifest_path.parent)
+            cohort_history.capture(manifest_path.parent,manifest,plan,bank_tasks)
         ordered = schedule(plan)
         if len(ordered) > trial_limit:
             raise ValueError('repeated plan exceeds caller trial ceiling')
     else:
         ordered = [dict(version=version, task=task['id'], repetition=0) for version in versions for task in tasks]
+    if manifest.get('cohort_manifest') is not None and (plan is None or plan.cohort_manifest_sha256 is None):
+        raise ValueError('cohort declarations require a frozen experiment plan pin')
     blocked = configured and configured['blocked_reason']
     if configured and not evaluation_unchanged(Path(args.config), configured):
         blocked = 'configuration_changed_before_execution'
@@ -391,6 +398,9 @@ def evaluate(args):
         results['experiment'] = manifest['experiment']
         results['plan_digest'] = plan.digest
         results['grader_hash'] = oracle_hash
+        if plan.cohort_manifest_sha256 is not None:
+            results.update(cohort_manifest_sha256=plan.cohort_manifest_sha256,
+                cohort_qualification='current_membership_only',publication_allowed=False)
     results['profile'] = plan.profile if plan else 'descriptive_smoke'
     results['automatic_promotion'] = False
     for scheduled in ordered:
