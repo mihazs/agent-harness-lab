@@ -192,8 +192,10 @@ class CertificationAccessTests(unittest.TestCase):
             for child in children: child.start()
             for child in children: child.join(25); self.assertFalse(child.is_alive())
             rows=[q.get(timeout=5) for _ in children]
-            self.assertEqual(sum(r['calls'] for r in rows),8)
-            self.assertEqual(sum(r['state']=='sealed' for r in rows),1)
+            self.assertEqual(sum(r['calls'] for r in rows),8,rows)
+            winners=[row for row in rows if row['state']=='sealed']
+            self.assertEqual(len(winners),1,rows)
+            self.assertEqual(winners[0]['calls'],8,rows)
             for child in children: self.assertEqual(child.exitcode,0)
         finally:
             for child in children:
@@ -355,7 +357,7 @@ def _controller_child(f, ident, queue, ready=None, release=None):
             ready.set()
             if not release.wait(15): raise ValueError('synthetic lock barrier expired')
         return original(path,state)
-    calls=0
+    calls=0; workers=None
     try:
         with patch.object(access,'atomic_json',side_effect=gate), \
                 patch.object(SandboxBackend,'capability',return_value={'status':'available'}), \
@@ -365,4 +367,6 @@ def _controller_child(f, ident, queue, ready=None, release=None):
                 access_reservation=ident)
             calls=workers.call_count
         queue.put(dict(state=result['state'],calls=calls))
-    except (ValueError,OSError): queue.put(dict(state='blocked',calls=calls))
+    except (ValueError,OSError) as exc:
+        calls=workers.call_count if workers is not None else calls
+        queue.put(dict(state='blocked',calls=calls,error_type=type(exc).__name__,reason=str(exc)[:240]))
