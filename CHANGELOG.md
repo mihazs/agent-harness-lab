@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.54.0
+
+### Minor Changes
+
+- Generate private JSON, Markdown and HTML reports from freshly verified controller receipt references. Retain qualification provenance, preservation endpoints, losses and recoveries, intervals, assumptions and unknown observations. Recheck current authority before writing output, escape untrusted report content and refuse public export regardless of publication labels. Keep optimization integration, corrected-oracle requalification and adoption authority pending.
+
 ## 0.53.0
 
 ### Minor Changes

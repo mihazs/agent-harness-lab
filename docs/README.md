@@ -12,6 +12,7 @@
 | Accept a reviewed private regression | [Immutable development-bank admission](regression-admission.md) |
 | Record comparisons and invalidate defective graders | [Controller oracle history](oracle-history.md) |
 | Bind private analysis to current controller evidence | [Decision receipts](decision-receipts.md) |
+| Render current private qualification and preservation evidence | [Controller history reports](history-reports.md) |
 | Audit and review a proposed grader correction | [Frozen correction controls](grader-corrections.md) |
 | Check implemented/pending capabilities | [Controlled experiments](controlled-experiments.md) |
 | Inspect original smoke results | [Initial validation](validation.md) |

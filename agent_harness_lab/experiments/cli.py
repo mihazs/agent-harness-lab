@@ -20,6 +20,7 @@ def main(argv):
     benchmark=commands.add_parser('benchmark-report',help='Create a local matched-runtime report with explicit provenance checks')
     benchmark.add_argument('--input',type=Path,required=True); benchmark.add_argument('--output',type=Path,required=True)
     benchmark.add_argument('--public',action='store_true',help='Explicitly create public-source-only export; never publishes online')
+    benchmark.add_argument('--history-store',type=Path,help='Resolve private controller receipt references instead of importing benchmark records')
     args=parser.parse_args(argv)
     try:
         if args.command=='research-simulate':
@@ -42,11 +43,17 @@ def main(argv):
             # Snapshot bytes never enter ordinary command output.
             result={k:v for k,v in result.items() if k not in ('before','after','metadata')}
         else:
-            from agent_harness_lab.evaluation.benchmark import summary,render
+            from agent_harness_lab.evaluation.benchmark import summary,history_summary,render
             from agent_harness_lab.monitoring.state import atomic_json
+            if args.history_store is not None and args.public:
+                raise ValueError('controller history reports cannot be exported publicly')
             if args.input.stat().st_size>10*1024*1024: raise ValueError('benchmark input byte bound')
-            result=summary(json.loads(args.input.read_text()),public=args.public)
+            records=json.loads(args.input.read_text())
+            result=(history_summary(args.history_store,records) if args.history_store is not None
+                    else summary(records,public=args.public))
             markdown,document=render(result)
+            if args.history_store is not None and history_summary(args.history_store,records)!=result:
+                raise ValueError('controller report authority changed before output')
             args.output.mkdir(parents=True,exist_ok=False,mode=0o700)
             atomic_json(args.output/'results.json',result)
             for name,content in (('report.md',markdown),('report.html',document)):

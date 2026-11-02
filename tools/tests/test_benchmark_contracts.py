@@ -43,7 +43,9 @@ class BenchmarkContracts(unittest.TestCase):
                 dict(preservation={}),dict(receipt_sha256='3'*64),
                 dict(algorithm='private-preservation-decision-v1'),
                 dict(receipt=dict(algorithm='private-preservation-decision-v1')),
-                dict(analysis=dict(controller_run_id='4'*64))):
+                dict(analysis=dict(controller_run_id='4'*64)),
+                dict(context=dict(algorithm='guarded-preservation-search-v1')),
+                dict(evidence_source='controller_verified_development_only')):
             item=dict(record(),publication_allowed=True)
             item.update(fields)
             with self.subTest(fields=fields):
