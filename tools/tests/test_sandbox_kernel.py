@@ -288,6 +288,33 @@ except OSError: pass
 
 @unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
 class RegressionDraftKernelTests(KernelFixture):
+    def test_grader_correction_audits_real_controls_without_a_behavioral_failure_claim(self):
+        from test_grader_correction import GraderCorrectionTests
+        fixture = GraderCorrectionTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        rootfs = self.root/'runtime'; frozen = pinned_runtime(rootfs)
+        fixture.spec_value['image_sha256'] = frozen['sha256']; fixture.write_spec()
+        parent = fixture.bank.read_bytes(); proposed = fixture.propose()
+        backend = SandboxBackend(cgroup_root=self.cgroup_root,image_root=rootfs,
+            image_sha256=frozen['sha256'],disk_bytes=64*1024*1024)
+        audited = fixture.store.audit(proposed['case_id'],backend)
+        self.assertEqual(audited['state'],'audited',audited)
+        self.assertEqual(audited['old_audit_status'],'controls_failed')
+        self.assertEqual(audited['replacement_audit_status'],'grader_controls_passed')
+        reports = [json.loads(p.read_text()) for p in fixture.store.root.rglob('review.json')]
+        old = next(r for r in reports if r['status']=='controls_failed')
+        new = next(r for r in reports if r['status']=='grader_controls_passed')
+        self.assertTrue(next(c for c in old['checks'] if c['control']=='complete')['observed'])
+        self.assertFalse(next(c for c in old['checks'] if c['control']=='alternative_valid')['observed'])
+        self.assertTrue(next(c for c in new['checks'] if c['control']=='alternative_valid')['observed'])
+        self.assertFalse(next(c for c in new['checks'] if c['control']=='superficial')['observed'])
+        for report in reports:
+            for check in report['checks']:
+                self.assertEqual(check['attestation']['runtime_image']['sha256'],frozen['sha256'])
+                self.assertTrue(check['attestation']['cgroup_v2']['empty_after_cleanup'])
+        reviewed = fixture.store.review(fixture.case_id,fixture.review_file())
+        self.assertEqual(reviewed['state'],'reviewed'); self.assertEqual(fixture.bank.read_bytes(),parent)
+        self.assertFalse(reviewed['task_failure_verified']); self.assertFalse(reviewed['bank_replacement'])
+
     def test_regression_review_lifecycle_seals_real_replay_with_operator_attestation(self):
         from test_regression_replay import make_replay, SOLVER
         from agent_harness_lab.evaluation.regression_review import ReviewStore

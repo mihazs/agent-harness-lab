@@ -24,6 +24,15 @@ tasks:
         {{.PYTHON | shellQuote}} -c
         'from pathlib import Path; import sys; from agent_harness_lab.private_journal import record; from agent_harness_lab.evaluation.oracle import identity; p=Path(sys.argv[1]); m,_=record(p,1024*1024); print(identity(p.parent,m["tasks"],m.get("grader_bundles",{})))'
         {{.MANIFEST | shellQuote}}
+  input:digest:
+    desc: Compute the bounded file-tree identity of an explicitly selected fixture or oracle
+    requires:
+      vars: [INPUT_DIR]
+    cmds:
+      - >-
+        {{.PYTHON | shellQuote}} -c
+        'import sys; from agent_harness_lab.evaluation.integrity import digest; print(digest(sys.argv[1]))'
+        {{.INPUT_DIR | shellQuote}}
   test:evaluation:oracle:
     desc: Run native oracle identity and stale-plan execution cases
     cmds:
@@ -32,6 +41,15 @@ tasks:
     desc: Run native controller history, quarantine and guarded-analysis cases
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_oracle_history*.py" -v'
+  test:evaluation:grader-controls:
+    desc: Run native proposal-wrapper and shared controlled grader-audit cases
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_regression_controls.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_grader_control_core.py" -v'
+  test:evaluation:corrections:
+    desc: Run native private grader correction audit and review cases
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_grader_correction*.py" -v'
   test:sources:
     desc: Run source contracts and checkpoint unittest cases
     cmds:
@@ -201,6 +219,12 @@ tasks:
       - task: test:sandbox:kernel
         vars:
           KERNEL_TEST_FILTER: oracle_history
+  test:sandbox:kernel:corrections:
+    desc: Audit old/new grader controls and explicit operator review with real pinned workers
+    cmds:
+      - task: test:sandbox:kernel
+        vars:
+          KERNEL_TEST_FILTER: grader_correction
   test:sandbox:kernel:
     desc: Run native kernel canaries in a disposable foreground user scope (Linux/systemd)
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -243,6 +267,8 @@ tasks:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_regression_*.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_grader_budget.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_oracle_*.py"'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_grader_correction*.py"'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_grader_control_core.py"'
   test:installed:sources:
     desc: Run native source checks against an installed layout, including optional extras when installed
     dir: '{{.LAYOUT_DIR}}'

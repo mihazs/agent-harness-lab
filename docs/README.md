@@ -11,6 +11,7 @@
 | Understand evaluation and safety gates | [Evaluation foundation](evaluation-foundation.md) |
 | Accept a reviewed private regression | [Immutable development-bank admission](regression-admission.md) |
 | Record comparisons and invalidate defective graders | [Controller oracle history](oracle-history.md) |
+| Audit and review a proposed grader correction | [Frozen correction controls](grader-corrections.md) |
 | Check implemented/pending capabilities | [Controlled experiments](controlled-experiments.md) |
 | Inspect original smoke results | [Initial validation](validation.md) |
 | Develop, test and submit a PR | [Contributor guide](../CONTRIBUTING.md) |

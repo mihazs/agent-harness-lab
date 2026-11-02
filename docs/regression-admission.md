@@ -111,8 +111,9 @@ not evidence of independent task roots.
 
 Already exported manifests and completed comparisons are not retroactively
 rewritten. [Controller history](oracle-history.md) can invalidate recorded
-comparisons through grader quarantine. Positive oracle correction/replacement,
-approved rerun integration and the explicit opaque-to-native provenance bridge remain
+comparisons through grader quarantine. [Correction audits and operator review](grader-corrections.md)
+remain separate from bank application. Approved oracle replacement, coordinated
+rerun integration and the explicit opaque-to-native provenance bridge remain
 subsequent work in [issue #8](https://github.com/mihazs/agent-harness-lab/issues/8).
 This milestone does not close that issue or provide authenticated lineage.
 
