@@ -357,32 +357,45 @@ class HistoryStore(PrivateJournal):
         with self.locked(): return self.summary(run_id,self.checked(run_id))
 
     def analyze(self, run_id):
-        with self.locked():
-            checked = self.checked(run_id); case,_,inputs,spec,result,validity = checked
-            membership=None
-            if spec.cohort_manifest_sha256 is not None:
-                membership,membership_hash=record(case/'cohort-binding.json',1024*1024)
-                if membership_hash!=inputs['cohort_binding_sha256']:
-                    raise ValueError('preservation analysis binding changed after validation')
-                membership['manifest_json']=read_regular(case/'cohort-manifest.json',1024*1024)
-            effects = behavior.report(spec,result['trials'],inputs['behavior_policies']) if result is not None and inputs.get('behavior_policies') else None
-            if validity != 'current':
-                value = dict(status='blocked' if validity=='invalidated' else 'incomplete',reason='oracle_quarantined' if validity=='invalidated' else 'controller_run_not_sealed')
-            else: value = analyze(spec,self.trials(inputs,spec,result),cohort_binding=membership)
-            retained=dict(preservation=value['preservation']) if 'preservation' in value else {}
-            if validity=='current' and effects is not None:
-                if effects['critical_candidate_effect']:
-                    value = dict(status='rejected',reason='critical_regression',**retained)
-                elif effects['required_observation_unknown']:
-                    value = dict(status='blocked',reason='behavior_observation_incomplete',**retained)
-            result = dict(value,oracle_validity=validity,controller_run_id=run_id,oracle_review='unverified',
-                independence='unverified',automatic_promotion=False,publication_allowed=False)
-            if inputs.get('bank_tasks') is not None: result['bank_authority']='current_eligible'
-            if effects is not None: result['behavior']=effects
-            if inputs['schema_version']==4:
-                result['cohort_manifest_sha256']=spec.cohort_manifest_sha256
-                result['cohort_qualification']='current_membership_only'
-            return result
+        with self.locked(): return self._analyze_checked(self.checked(run_id))
+
+    def _analyze_checked(self, checked):
+        case,_,inputs,spec,result,validity = checked
+        run_id=inputs['run_id']
+        membership=None
+        if spec.cohort_manifest_sha256 is not None:
+            membership,membership_hash=record(case/'cohort-binding.json',1024*1024)
+            if membership_hash!=inputs['cohort_binding_sha256']:
+                raise ValueError('preservation analysis binding changed after validation')
+            membership['manifest_json']=read_regular(case/'cohort-manifest.json',1024*1024)
+        effects = behavior.report(spec,result['trials'],inputs['behavior_policies']) if result is not None and inputs.get('behavior_policies') else None
+        if validity != 'current':
+            value = dict(status='blocked' if validity=='invalidated' else 'incomplete',reason='oracle_quarantined' if validity=='invalidated' else 'controller_run_not_sealed')
+        else: value = analyze(spec,self.trials(inputs,spec,result),cohort_binding=membership)
+        retained=dict(preservation=value['preservation']) if 'preservation' in value else {}
+        if validity=='current' and effects is not None:
+            if effects['critical_candidate_effect']:
+                value = dict(status='rejected',reason='critical_regression',**retained)
+            elif effects['required_observation_unknown']:
+                value = dict(status='blocked',reason='behavior_observation_incomplete',**retained)
+        result = dict(value,oracle_validity=validity,controller_run_id=run_id,oracle_review='unverified',
+            independence='unverified',automatic_promotion=False,publication_allowed=False)
+        if inputs.get('bank_tasks') is not None: result['bank_authority']='current_eligible'
+        if effects is not None: result['behavior']=effects
+        if inputs['schema_version']==4:
+            result['cohort_manifest_sha256']=spec.cohort_manifest_sha256
+            result['cohort_qualification']='current_membership_only'
+        return result
+
+    def decision(self, run_id):
+        """Persist private recomputed analysis evidence, never adoption authority."""
+        from .decision_receipts import create
+        with self.locked(): return create(self,run_id)
+
+    def verify_decision(self, run_id, receipt_sha256):
+        """Reopen live authority and recompute; a supplied JSON label is not proof."""
+        from .decision_receipts import verify
+        with self.locked(): return verify(self,run_id,receipt_sha256)
 
     def run(self, manifest, baseline, candidate, *, cgroup_root, image_root, image_sha256, disk_bytes, budget_seconds=60,parent_deadline=None,on_started=None):
         from agent_harness_lab.cli import evaluator
@@ -502,9 +515,10 @@ def main(argv=None):
     for name in ('manifest','baseline','candidate'):
         run.add_argument('--'+name,type=Path,required=True)
     pinned_arguments(run)
-    for name in ('show','analyze','historical-plan'):
+    for name in ('show','analyze','historical-plan','decision','verify-decision'):
         command = actions.add_parser(name)
         command.add_argument('--run',dest='run_id',required=True)
+        if name=='verify-decision': command.add_argument('--receipt-sha256',required=True)
     oracle = actions.add_parser('oracle',help='Read an observed bundle registration and current CAS identity')
     oracle.add_argument('--bundle',required=True)
     quarantine = actions.add_parser('quarantine',help='Revoke a known bundle across all dependent comparisons')
@@ -519,6 +533,8 @@ def main(argv=None):
         elif args.action == 'quarantine': result,code = store.quarantine(args.record),0
         elif args.action == 'oracle': result,code = store.oracle(args.bundle),0
         elif args.action == 'analyze': result,code = store.analyze(args.run_id),3
+        elif args.action=='decision': result,code = store.decision(args.run_id),3
+        elif args.action=='verify-decision': result,code = store.verify_decision(args.run_id,args.receipt_sha256),0
         elif args.action=='historical-plan': result,code = store.historical_plan(args.run_id),0
         else: result,code = store.show(args.run_id),0
         print(json.dumps(result,indent=2,allow_nan=False))
