@@ -56,8 +56,9 @@ upgrade their exposure role or authorize certification.
 Keep all receipts private. They include controller evidence and provenance;
 synthetic-looking labels and publication claims cannot authorize public export.
 [Private history reports](history-reports.md) resolve current receipts and retain
-qualification provenance, preservation intervals and unknowns. Guarded optimization
-and corrected-oracle requalification remain separate work in issue #122.
+qualification provenance, preservation intervals and unknowns. [Guarded development
+search](guarded-search.md) consumes fresh controller receipts. Corrected-oracle
+requalification remains separate work in issue #122.
 Cohort-enabled promotion remains blocked until integration.
 
 Use `task test:evaluation:receipts` for the focused native receipt and CLI cases,

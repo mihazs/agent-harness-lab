@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.55.0
+
+### Minor Changes
+
+- Add opt-in guarded development search using actual controller executions and freshly verified preservation receipts. Bind authorized patches to prepared harness identities, preserve charges and genuine run custody across interruption, revalidate cached results and require fresh paired confirmation before a development recommendation for review. Enforce early input-entry limits and deadlines through final verification. Keep callback results unverified and certification, automatic adoption and corrected-oracle requalification disabled.
+
 ## 0.54.0
 
 ### Minor Changes

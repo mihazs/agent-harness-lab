@@ -77,6 +77,11 @@ tasks:
       PYTHONPATH: ''
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_history_report.py" -v'
+  test:optimization:history:
+    desc: Verify guarded controller search and legacy callback compatibility
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_optimization_history.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_search_history.py" -v'
   test:evaluation:grader-controls:
     desc: Run native proposal-wrapper and shared controlled grader-audit cases
     cmds:
@@ -372,6 +377,8 @@ tasks:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_benchmark_contracts.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_experimental_cli.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_history_report.py"'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_optimization_history.py"'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_search_history.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_preservation_*.py"'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_correction_rerun.py"'
   test:installed:sources:

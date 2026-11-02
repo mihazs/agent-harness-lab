@@ -321,6 +321,17 @@ class RegressionDraftKernelTests(KernelFixture):
         self.assertEqual(receipt['analysis'],analysis)
         self.assertEqual(value.store.verify_decision(observed['run_id'],receipt['receipt_sha256']),receipt)
         self.assertFalse(receipt['adoption_authority'])
+        from agent_harness_lab.optimization.history_evidence import HistorySearchContext
+        from agent_harness_lab.optimization.search import CandidateRecord
+        context=HistorySearchContext(value.store.root,value.baseline,value.export/'manifest.json',
+            dict(cgroup_root=self.cgroup_root,image_root=runtime,image_sha256=pinned['sha256'],
+                 disk_bytes=64*1024*1024,budget_seconds=45,work_root=self.root/'prepared-search'),['solve.py'])
+        control=CandidateRecord('baseline',(),'synthetic-kernel-control',{},('synthetic:pinned-workers',),
+            'Observe a frozen no-op comparison','Any changed input invalidates the result')
+        checked=context.evaluate(control,stage='baseline',event_id='synthetic:kernel-search')
+        self.assertFalse(checked['qualified_feasible'])
+        self.assertTrue(checked['retain_no_op'])
+        self.assertEqual(context.verify(checked['binding']),checked)
         for run_id in (prior['run_id'],observed['run_id']):
             trials=value.store.checked(run_id)[4]['trials']; self.assertEqual(len(trials),4)
             for trial in trials:
