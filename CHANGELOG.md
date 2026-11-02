@@ -8,7 +8,7 @@
 
 ### Patch Changes
 
-- b5a0c1b: Bind optional live source receipts to the existing permission monitor's privately owned launch and wire completion. Preserve declared journal replay, exact grader command and independent permission qualification.
+- b5a0c1b: Bind optional live source receipts to the existing permission monitor's privately owned launch and wire completion. Preserve declared journal replay, exact grader command and independent permission qualification. Retire source-session authority on normal and exceptional exit, including saved Python-context reuse, and bind live authority to its issuing process.
 
 ## 0.62.0
 

@@ -5,6 +5,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
 import math
+import os
 import secrets
 import time
 from weakref import WeakKeyDictionary
@@ -17,6 +18,7 @@ _ACTIVE = ContextVar('ahl_source_attempt', default=None)
 _ISSUED = WeakKeyDictionary()
 _PENDING = WeakKeyDictionary()
 _DISPATCHES = WeakKeyDictionary()
+_LIVE_SESSIONS = WeakKeyDictionary()
 MAX_WORKERS = 128
 MAX_RECEIPT_BYTES = 256*1024
 GRADER_ARGV = ['/usr/bin/python3','-I','/inputs/oracle/grade.py.txt','/inputs/fixture','/inputs/oracle/expected.json']
@@ -33,12 +35,24 @@ def _artifact_fingerprints(items):
     return tuple(sorted((hashlib.sha256(name.encode()).hexdigest(),hashlib.sha256(raw).hexdigest()) for name,raw in items))
 
 
+class _SessionToken:
+    __slots__=('__weakref__',)
+
+
+def _live(owner):
+    return (type(owner) is tuple and len(owner)==2 and type(owner[0]) is _SessionToken
+        and _LIVE_SESSIONS.get(owner[0])==os.getpid())
+
+
 @contextmanager
 def session():
     if _SESSION.get() is not None: raise ValueError('nested controller source session')
-    token = _SESSION.set((object(),_hash(('ahl.controller-session-v1',secrets.token_hex(32)))))
+    owner=(_SessionToken(),_hash(('ahl.controller-session-v1',secrets.token_hex(32))))
+    _LIVE_SESSIONS[owner[0]]=os.getpid()
+    token = _SESSION.set(owner)
     try: yield
     finally:
+        _LIVE_SESSIONS.pop(owner[0],None)
         active = _ACTIVE.get()
         if active is not None: active.cancel()
         _SESSION.reset(token)
@@ -46,7 +60,7 @@ def session():
 
 class _Attempt:
     def __init__(self, source, artifacts, deadline):
-        if _SESSION.get() is None or _ACTIVE.get() is not None: raise ValueError('one owned attempt context required')
+        if not _live(_SESSION.get()) or _ACTIVE.get() is not None: raise ValueError('one owned attempt context required')
         if type(deadline) not in (int,float) or not math.isfinite(deadline): raise ValueError('finite controller source deadline required')
         if time.monotonic() >= deadline: raise TimeoutError('controller source deadline exhausted')
         self.owner, self.deadline = _SESSION.get(), deadline
@@ -86,14 +100,14 @@ class _Attempt:
 
     def read(self):
         raw = _ISSUED.get(self)
-        if (raw is None or not self.closed or self.lost or self.owner is not _SESSION.get()
+        if (raw is None or not self.closed or self.lost or not _live(self.owner) or self.owner is not _SESSION.get()
                 or time.monotonic() >= self.deadline or self._state() != raw):
             raise ValueError('closed live controller capability required')
         return deepcopy(self.data)
 
 
 def _current(capture):
-    valid = (not capture.closed and not capture.lost and _ACTIVE.get() is capture
+    valid = (_live(capture.owner) and not capture.closed and not capture.lost and _ACTIVE.get() is capture
         and _SESSION.get() is capture.owner and _PENDING.get(capture)==capture._state())
     if not valid: capture.lost=True
     return valid

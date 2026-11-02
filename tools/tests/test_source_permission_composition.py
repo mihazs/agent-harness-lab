@@ -1,9 +1,11 @@
 """Owned permission-wire/source composition; actual workers, synthetic tasks only."""
 import unittest
 import os
+import signal
 import gc
 import time
 from copy import copy
+from contextvars import copy_context
 from unittest.mock import patch
 
 from agent_harness_lab.evaluation import controller_receipts as owned, responses
@@ -22,6 +24,72 @@ else:
 
 @unittest.skipUnless(kernel.ENABLED, 'explicit delegated kernel composition probe required')
 class PermissionSourceCompositionTests(kernel.KernelFixture):
+    def source_pair(self,name,*,finish=True,exception=False,fork_check=False):
+        from agent_harness_lab.evaluation.bank_tools import regrade_artifacts
+        from agent_harness_lab.evaluation.integrity import digest as tree_digest
+        root=self.root/name;root.mkdir()
+        runtime=root/'runtime';pin=kernel.pinned_runtime(runtime)
+        backend=SandboxBackend(cgroup_root=self.cgroup_root,image_root=runtime,image_sha256=pin['sha256'],
+            disk_bytes=64*1024*1024,permission_audit=PROFILE)
+        oracle=root/'oracle';oracle.mkdir();(oracle/'expected.json').write_text('{}')
+        (oracle/'grade.py.txt').write_text("import json;print(json.dumps(dict(schema_version=1,valid=True,outcome=True,grader_id='synthetic',grader_version='v1')))")
+        sink=SourceSink(root/'journal.json',digest('synthetic-project'),digest('synthetic-scope'))
+        try:
+            with owned.session():
+                capture=sink.begin(['result.txt'],time.monotonic()+15)
+                backend.run(['/usr/bin/python3','-c',"from pathlib import Path;Path('result.txt').write_text('synthetic')"],
+                    self.work,{},'executor',artifact_allowlist=['result.txt'])
+                regrade_artifacts(self.work,['result.txt'],oracle,tree_digest(oracle),backend)
+                if finish:self.assertEqual(sink.finish(capture,True)['status'],'observed')
+                saved=copy_context()
+                if finish:self.assertEqual(saved.run(capture.read)['attempt_sha256'],capture.read()['attempt_sha256'])
+                if fork_check:
+                    child=os.fork()
+                    if child==0:
+                        try:capture.read()
+                        except ValueError:pass
+                        except BaseException:os._exit(2)
+                        else:os._exit(3)
+                        try:sink.begin(['result.txt'],time.monotonic()+5)
+                        except ValueError:os._exit(0)
+                        except BaseException:os._exit(2)
+                        os._exit(4)
+                    until=time.monotonic()+2;found=0
+                    while time.monotonic()<until:
+                        found,status=os.waitpid(child,os.WNOHANG)
+                        if found:break
+                        time.sleep(.01)
+                    if not found:
+                        os.kill(child,signal.SIGKILL);os.waitpid(child,0)
+                        self.fail('forked authority check exceeded its bound')
+                    self.assertEqual(os.waitstatus_to_exitcode(status),0,'fork inherited controller source authority')
+                    self.assertTrue(capture.read())
+                if exception:raise RuntimeError('synthetic controller interruption')
+        except RuntimeError:
+            if not exception:raise
+        return sink,capture,saved
+
+    def test_closed_source_session_cannot_be_revived_by_a_copied_context(self):
+        for exception in (False,True):
+            with self.subTest(exception=exception):
+                _,capture,saved=self.source_pair(str(exception),exception=exception)
+                with self.assertRaises(ValueError):capture.read()
+                with self.assertRaises(ValueError):saved.run(capture.read)
+
+    @unittest.skipUnless(hasattr(os,'fork'),'POSIX fork required')
+    def test_forked_process_cannot_inherit_live_controller_source_authority(self):
+        self.source_pair('fork',fork_check=True)
+
+    def test_stale_copied_context_cannot_finish_a_pending_native_attempt(self):
+        for exception in (False,True):
+            with self.subTest(exception=exception):
+                sink,capture,saved=self.source_pair(str(exception),finish=False,exception=exception)
+                capture.lost=False  # Restoring its earlier value cannot undo session retirement.
+                self.assertFalse(saved.run(owned._current,capture))
+                capture.lost=False
+                self.assertEqual(saved.run(sink.finish,capture,True)['status'],'unknown')
+                self.assertFalse(sink.store.path.exists())
+
     def run_actual(self):
         fixture=inference_fixtures.ResponsesEvaluationTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
         task=next(row for row in fixture.fixture.manifest['tasks'] if row['id']=='adversarial-input')

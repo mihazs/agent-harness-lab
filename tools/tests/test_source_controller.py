@@ -1,5 +1,6 @@
 """Live-source negative controls; dictionaries and labels never issue proof."""
 import json
+from contextvars import copy_context
 import os
 from pathlib import Path
 import tempfile
@@ -39,6 +40,19 @@ class ControllerSourceTests(unittest.TestCase):
                 with owned.session(): pass
         with self.assertRaises(ValueError): capture.read()
         with owned.session(),self.assertRaises(ValueError): ControllerCapture(self.sink.source,capture).read(self.sink.source)
+
+    def test_copied_closed_context_cannot_create_an_attempt(self):
+        with owned.session():saved=copy_context()
+        with self.assertRaises(ValueError):saved.run(self.sink.begin,['result.txt'],time.monotonic()+5)
+
+    def test_exception_exit_retires_owner_shared_with_copied_context(self):
+        with self.assertRaises(RuntimeError):
+            with owned.session():
+                saved=copy_context();owner=owned._SESSION.get()
+                self.assertTrue(owned._live(owner))
+                raise RuntimeError('synthetic controller interruption')
+        self.assertFalse(owned._live(owner))
+        with self.assertRaises(ValueError):saved.run(self.sink.begin,['result.txt'],time.monotonic()+5)
 
     def test_probe_does_not_execute_read_or_enable_sources(self):
         from agent_harness_lab.sources.registry import Capability, Registry

@@ -71,6 +71,10 @@ The selected sink calls actual `Registry.preview`, `Registry.ingest` and
 `Registry.recheck`. It uses the explicit `controller/ahl-controller/v1` capability,
 with behavioral executor and grader-reference records. Live recheck requires the
 same closed capability, active controller session and exact stored revisions.
+Session exit explicitly retires its shared issuer on both normal and exceptional
+paths. A saved Python context cannot begin, finish or read source authority after
+that retirement; copying ContextVar values does not reopen the session. Issuance
+is bound to the controller process ID; a forked process inherits no live authority.
 The grader-to-executor `same_execution` link is verified only for that observed
 artifact handoff. It does not prove causal origin or independent task roots.
 
