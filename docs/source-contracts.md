@@ -89,6 +89,17 @@ Scope mismatch, disabled sources and unattributed identities block writes before
 records are consumed. The caller must independently verify identity and permissions
 before collecting source data; a stored provenance label is not that verification.
 
+Normalized local v1–v3 exports require matching readbacks of their selected
+payload and declaration before returning a checkpoint-ready snapshot. The reader
+rechecks project/scope, enablement and the original data-file selection before
+each bounded payload read. An observed edit, removal, oversized file or symlink
+blocks the operation and leaves an existing committed checkpoint unchanged. A
+changed selector is rejected before reading its replacement, even if its bytes
+would match. Declaration formatting and payload mtime alone do not change the
+snapshot identity. This detects changes seen at the read boundaries; it is not
+an atomic filesystem snapshot or proof that no transient change occurred. Stable
+exports retain their previous raw-byte SHA-256, v1–v3 metadata and cursor behavior.
+
 An import atomically replaces the journal containing source specifications, record
 history and cursor fingerprints. A failed input iterator or rejected batch leaves
 the previous journal byte-for-byte intact. Compare-and-swap checks reject stale
