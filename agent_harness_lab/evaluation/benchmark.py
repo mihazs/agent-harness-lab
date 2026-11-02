@@ -31,7 +31,7 @@ def public_export_allowed(records):
                         'classifier_selection_allowed','review_event_sha256','protected_access','protected_access_sha256'))
                     or metadata.get('algorithm') in ('private-preservation-decision-v1','private-controller-history-report-v1',
                         'guarded-preservation-search-v1','corrected-cohort-qualification-v1')
-                    or metadata.get('profile') in ('controller-trajectory-v1','diagnostic-corpus-v1','permission-results-v1','ahl-controller-live-v1','protected-diagnostic-access-v1')
+                    or metadata.get('profile') in ('controller-trajectory-v1','diagnostic-corpus-v1','ahl-controller-live-v1','permission-results-v1','protected-diagnostic-access-v1')
                     or metadata.get('purpose')=='protected-diagnostic-access-v1'
                     or metadata.get('report_kind')=='controller_trajectory'
                     or metadata.get('outcome_mapping')=='artifact_and_required_v1'
