@@ -4,7 +4,9 @@ Serialized projections describe observations. Only the issuing process and live
 workflow scope can join them to later owned construction outputs.
 """
 from copy import deepcopy
+from dataclasses import replace
 import hashlib
+import json
 import os
 from pathlib import Path
 import stat
@@ -180,6 +182,38 @@ def attach(handle,access):
     value['access']=access
 
 
+def _refinement_snapshot(original,context,binding,feedback,deadline):
+    if tree_pin(original['path'],deadline)!=original['snapshot_sha256']:
+        raise ValueError('original role view differs from the stored full projection')
+    if (binding is None or binding['path']!=str(Path(context).absolute())
+            or binding['feedback_sha256']!=pin(feedback)):
+        raise ValueError('actual controller-written feedback context required')
+    expected=binding['file'];snapshot=WorkingState(context,deadline).snapshot
+    selected=tuple(row for row in snapshot.files if row[0]=='feedback.json')
+    if expected[0]!='feedback.json' or selected!=(expected,):
+        raise ValueError('feedback bytes or mode differ from the actual controller writer')
+    normalized=replace(snapshot,files=tuple(row for row in snapshot.files if row!=expected))
+    if snapshot_pin(normalized)!=original['snapshot_sha256']:
+        raise ValueError('refinement context has unbound full snapshot inputs')
+    return snapshot
+
+
+def write_feedback(handle,path,rows):
+    """Bind the existing controller writer's exact file to owned native feedback."""
+    value=owned(handle);original=value['views']['proposer'];path=Path(path).absolute()
+    if value['feedback'] is None or value['feedback']['rows']!=rows or path.name!='feedback.json' or path.exists() or path.is_symlink():
+        raise ValueError('fresh controller feedback from actual native trials required')
+    if (tree_pin(original['path'],value['deadline'])!=original['snapshot_sha256']
+            or tree_pin(path.parent,value['deadline'])!=original['snapshot_sha256']):
+        raise ValueError('feedback insertion requires the unchanged full owned role view')
+    raw=(json.dumps(dict(trials=rows),indent=2,allow_nan=False)+'\n').encode()
+    binding=dict(path=str(path.parent),file=('feedback.json',0o600,raw),feedback_sha256=pin(value['feedback']))
+    from agent_harness_lab.workflow import write_json
+    write_json(path,dict(trials=rows))
+    _refinement_snapshot(original,path.parent,binding,value['feedback'],value['deadline'])
+    value['feedback_context']=binding
+
+
 def stage_input(handle,access,role,context,*,parent=None,feedback=None):
     value=owned(handle)
     if value['access'] is not access or value['views'] is None:raise ValueError('actual closed workflow required')
@@ -193,11 +227,7 @@ def stage_input(handle,access,role,context,*,parent=None,feedback=None):
             raise ValueError('complete same-workflow feedback closure required')
         if value['feedback'] is None or value['feedback']['rows']!=feedback:
             raise ValueError('actual completed native trial feedback required')
-        from .integrity import tree
-        from agent_harness_lab.private_journal import record
-        original_files=tree(original['path']);actual=tree(context)
-        if {k:v for k,v in actual.items() if k!='feedback.json'}!=original_files or record(Path(context)/'feedback.json')[0]!={'trials':feedback}:
-            raise ValueError('refinement context has unbound external inputs')
+        _refinement_snapshot(original,context,value.get('feedback_context'),value['feedback'],value['deadline'])
     return dict(projection=deepcopy(value['projection']),parent_construction_id=parent,
         feedback=None if feedback is None else deepcopy(value['feedback']))
 

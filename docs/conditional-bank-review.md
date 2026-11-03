@@ -152,7 +152,10 @@ Actual Responses requests, tool policy, input bundles, initial state, native wor
 completion, exported state and deterministic publication normalization join each
 owned construction output. Later outputs may have new bytes and task identifiers;
 they must descend entirely from those observed inputs. Refinement feedback also
-requires actual owned executor/grader pairs. Unknown parents, source aliases,
+requires actual owned executor/grader pairs. Its context preserves the stored full
+original view, including root and directory modes; the sole permitted addition is
+the exact canonical feedback file and mode produced by the existing controller
+writer from that native feedback. Unknown parents, source aliases,
 pending work, related assets or an unexplained exposure change block renewal.
 Provider identity and pretraining history remain unknown.
 

@@ -63,6 +63,14 @@ tasks:
       PYTHONPATH: ''
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_construction_access.py" -k test_actual_public_controlled_improve_automatically_records_both_roles -v'
+  test:evaluation:refinement-inputs:
+    desc: Preserve full owned projection ancestry across exact feedback insertion
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_refinement_input_snapshot.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_construction_access.py" -k test_actual_refinement_uses_same_completed_author_feedback_custody -v'
   test:workflow:change-plan:
     desc: Verify immutable shared plans and guarded public application receipts
     cmds:

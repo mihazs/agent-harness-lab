@@ -497,7 +497,10 @@ def _improve(args):
             if attempt:
                 context = prepare / f'proposer-context-{attempt}'
                 shutil.copytree(role_views['proposer'],context,symlinks=True)
-                write_json(context/'feedback.json',dict(trials=refinement_feedback))
+                if getattr(args,'_closed_input_domain',None) is not None:
+                    from .evaluation.closed_inputs import write_feedback
+                    write_feedback(args._closed_input_domain,context/'feedback.json',refinement_feedback)
+                else:write_json(context/'feedback.json',dict(trials=refinement_feedback))
                 WorkingState(context,deadline)
                 if access is None: construction.proposer_seed(candidate,prepare/f'proposer-work-{attempt}',deadline)
             if access is None:
