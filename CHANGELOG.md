@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.64.0
+
+### Minor Changes
+
+- ec4d8d5: Add `ahl update` for release installations, preserving installation locations and selected skill directories. Bundle the installer, retain update settings transactionally, and explain one-line installation and agent-assisted setup.
+
+### Patch Changes
+
+- 8e51403: Make installation and project usage prominent in the README, shorten command discovery, and document evidence-informed newcomer guidance.
+
 ## 0.63.0
 
 ### Minor Changes
