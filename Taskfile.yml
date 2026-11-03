@@ -17,6 +17,40 @@ tasks:
           LAYOUT_DIR: '{{.LAYOUT_DIR}}'
           EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
           REPEATED_TEST_PATTERN: test_configured_delegation_packet.py
+  test:application:creation:design:
+    desc: Check prospective candidate creation and predeclared response controls without native execution
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_conditional_creation_native.py" -k CreationDesignTests -v'
+  test:application:creation:kernel:
+    desc: Run positive creation and equal/harmful controls in separate unchanged native scopes
+    vars:
+      CREATION_SCOPE_ID:
+        sh: 'date +%s%N'
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    cmds:
+      - task: test:application:creation:design
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+      - for:
+          - test_creation_applies_exact_file_consumes_replay_and_rollback_restores_absence
+          - test_equal_final_creation_preserves_absence_and_spent_access
+          - test_harmful_creation_regresses_final_preserves_absence_and_spent_access
+        task: test:evaluation:bank-requalification:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          SCOPE_ID: '{{.CREATION_SCOPE_ID}}-{{.ITEM}}'
+          TEST_NAME: conditional_creation_native
+          KERNEL_TEST_FILTER: '{{.ITEM}}'
   test:application:removal:design:
     desc: Check prospective candidate-removal worker and predeclared response controls without native execution
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'

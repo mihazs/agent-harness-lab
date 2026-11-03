@@ -113,6 +113,9 @@ class ConditionalApplicationKernelTests(kernel.KernelFixture):
         self.assertEqual((code, qualified and qualified['qualification']), (0, 'qualified_under_protocol'))
         return case_id
 
+    def allocate_authorization(self):
+        return application.allocate(self.store,self.project)['authorization_id']
+
     def setup_authorities(self, *, max_requests=60):
         self.runtime=self.root/'runtime';self.image=kernel.pinned_runtime(self.runtime)['sha256']
         self.operator=self.root/'operator';self.operator.mkdir(mode=0o700);self.key=self.operator/'reviewer'
@@ -120,8 +123,9 @@ class ConditionalApplicationKernelTests(kernel.KernelFixture):
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=5)
         self.public_key=' '.join(self.key.with_suffix('.pub').read_text().split()[:2])
         self.store=ReviewStore(self.root/'review');case_id=self.reviewed_bank()
-        self.project=self.root/'project';self.project.mkdir();(self.project/'AGENTS.md').write_bytes(self.INITIAL_INSTRUCTION)
-        authorization=application.allocate(self.store, self.project)['authorization_id'];self.authorization=authorization
+        self.project=self.root/'project';self.project.mkdir()
+        if self.INITIAL_INSTRUCTION is not None:(self.project/'AGENTS.md').write_bytes(self.INITIAL_INSTRUCTION)
+        authorization=self.allocate_authorization();self.authorization=authorization
         locator=renewal.allocate_delegation(self.store)
         credential=self.root/'synthetic-unused-token';credential.write_text('SYNTHETIC_UNUSED');credential.chmod(0o600)
         self.settings=self.root/'settings.json'
