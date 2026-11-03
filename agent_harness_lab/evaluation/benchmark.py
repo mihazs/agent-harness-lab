@@ -40,7 +40,7 @@ def public_export_allowed(records):
                     or metadata.get('format') in ('promptfoo-cases-json-v1','promptfoo-results-jsonl-v1','openai-evals-match-jsonl-v1')
                     or metadata.get('purpose')=='protected-diagnostic-access-v1'
                     or metadata.get('profile') in ('ahl-improve-fixed-bank-v1','ahl-fresh-responses-comparison-v1',
-                        'controller-request-reservation-v1','controller-realized-schedule-v1','ahl-live-construction-stage-v1',
+                        'controller-request-reservation-v1','controller-realized-schedule-v1','ahl-live-construction-stage-v1','ahl-skill-invocation-context-v1',
                         'conditional-bank-requalification-v2','conditional-bank-closed-input-domain-v2','owned-evidence-views-v1','owned-closed-input-closure-v1',
                         'controller-agents-conditional-apply-v1','controller-instruction-authorization-v1')
                     or metadata.get('purpose')=='conditional_instruction_application'

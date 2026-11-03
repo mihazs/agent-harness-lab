@@ -46,7 +46,9 @@ def install(source, destination, backup_root):
 
 
 def main(argv=None, source=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__,
+        epilog="Run this project's harness-self-improvement once with: ahl skills invoke [PROJECT]. "
+               "PROJECT defaults to the current directory; installation alone does not start a run.")
     target = parser.add_mutually_exclusive_group()
     target.add_argument('--agent', choices=('codex', 'claude'), default='codex',
                         help='Skill discovery directory (default: codex)')

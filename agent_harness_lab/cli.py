@@ -36,6 +36,10 @@ def evaluator():
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if 'AHL_MANAGED_PREPARATION' in os.environ:
+        argparse.ArgumentParser(prog='ahl').exit(3,'ahl: managed preparation cannot start a CLI operation\n')
+    skill_invocation=argv[:2]==['skills','invoke']
+    if skill_invocation:argv=['improve',*argv[2:]]
     if argv and argv[0] == 'update':
         from agent_harness_lab.updater import main as update_main
         return update_main(argv[1:])
@@ -139,6 +143,7 @@ def main(argv=None):
             command.add_argument('--watch-budget', type=int, help='Total execution seconds per evidence/configuration (default: timeout)')
             command.add_argument('--once', action='store_true', help='Check once then exit')
     args = parser.parse_args(argv)
+    if skill_invocation:args._invocation_origin='skill'
     from agent_harness_lab.workflow import analyze_project, improve, watch
     try:
         if not args.project.is_dir():

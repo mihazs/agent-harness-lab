@@ -32,12 +32,18 @@ def digest(root):
     return h.hexdigest()
 
 
-def execute(argv, cwd, timeout, stdin=None):
+def managed_environment(parent_id):
+    environment=dict(os.environ)
+    environment['AHL_MANAGED_PREPARATION']=str(parent_id)
+    return environment
+
+
+def execute(argv, cwd, timeout, stdin=None,*,env=None):
     start = time.monotonic()
     try:
         process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   text=True, start_new_session=True)
+                                   text=True, start_new_session=True,**({} if env is None else dict(env=env)))
         try:
             out, err = process.communicate(stdin, timeout=timeout)
             return dict(exit_code=process.returncode, stdout=out, stderr=err,
@@ -730,6 +736,8 @@ def _evaluate(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    if 'AHL_MANAGED_PREPARATION' in os.environ:
+        parser.exit(3,'evaluation: managed preparation cannot start nested trials\n')
     for name in ('manifest', 'baseline', 'candidate', 'output'):
         parser.add_argument('--' + name, required=True)
     parser.add_argument('--config', help='Explicit project configuration; restricts bank, harness scope, runtime and resource caps')
