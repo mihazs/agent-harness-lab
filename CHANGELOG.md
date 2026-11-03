@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.66.0
+
+### Minor Changes
+
+- d6efb7a: Add an explicit owned development-variant lane using existing controlled authoring and the access ledger. Bind actual input/output bytes, preserve conservative may-derived exposure through transitive variants, and block managed freshness while construction is pending or unresolved. Raw unconfigured authoring remains outside this lane; no independence or certification authority is introduced.
+
+### Patch Changes
+
+- f1b048c: Bind owned author output once inside the actual role before returning it. Reject re-registration and later artifact rewrites before registration or external publication, retaining unresolved exposure without a refund.
+
 ## 0.65.0
 
 ### Minor Changes
