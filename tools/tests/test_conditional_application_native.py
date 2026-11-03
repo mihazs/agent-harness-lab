@@ -316,6 +316,13 @@ NO_CHANGE_PROPOSER="from pathlib import Path\nPath('proposal.json').write_text('
 INVALID_AUTHOR=roles.AUTHOR.replace('valid=True,outcome=outcome','valid=False,outcome=outcome')
 
 
+def promotion_inventory(state_home,project):
+    from agent_harness_lab.workflow import state_root,identity
+    with patch.dict(os.environ,{'XDG_STATE_HOME':str(state_home)}):folder=state_root()/'promotions'/identity(project)
+    records=[json.loads(path.read_bytes()) for path in folder.glob('*.json') if path.name!='active.json']
+    return records,(folder/'active.json').exists()
+
+
 class ConditionalFinalDesignTests(unittest.TestCase):
     def precision(self,method,tasks):
         spec=ExperimentSpec(method['experiment_id'],tuple(tasks),method['repeats'],method['seed'],method['max_trials'],method['min_roots'],
@@ -335,6 +342,22 @@ class ConditionalFinalDesignTests(unittest.TestCase):
         self.assertEqual(result['declared_roots'],10);self.assertTrue(result['execution_allowed'])
         self.assertTrue(all(value['criteria_possible'] for value in result['endpoints'].values() if value['required']))
         self.assertEqual(result['root_independence'],'unverified')
+
+    def test_inventory_reads_real_journal_namespace_and_active_pointer_separately(self):
+        # This ordinary physical transaction tests observation, never scientific grant authority.
+        from agent_harness_lab.promotion.journal import Journal,file_record
+        from agent_harness_lab.workflow import state_root,identity
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);project=root/'project';project.mkdir();target=project/'AGENTS.md';target.write_text('before\n')
+            candidate=root/'candidate';candidate.write_text('after\n');state=root/'state'
+            self.assertEqual(promotion_inventory(state,project),([],False));self.assertFalse(state.exists())
+            with patch.dict(os.environ,{'XDG_STATE_HOME':str(state)}):
+                journal=Journal(project,state_root()/'promotions'/identity(project))
+                prepared=journal.prepare({'AGENTS.md':file_record(target)},{'AGENTS.md':file_record(candidate)})
+                self.assertEqual(promotion_inventory(state,project),([prepared],False))
+                committed=journal.execute(prepared['deployment'])
+            self.assertEqual(target.read_bytes(),b'after\n')
+            self.assertEqual(promotion_inventory(state,project),([committed],True))
 
     def test_negative_workers_are_predeclared_without_changing_fixed_final_inputs(self):
         compile(NO_CHANGE_PROPOSER,'synthetic-no-change','exec')
@@ -419,11 +442,11 @@ class TenRootConditionalApplicationKernelTests(ConditionalApplicationKernelTests
         if expected_calls:
             self.assertEqual(len(receipts),1)
             self.assertEqual(json.loads(receipts[0].read_bytes())['request_attempts'],expected_calls)
-        records=[json.loads(path.read_bytes()) for path in (self.root/'state'/'promotions').rglob('*.json') if path.name!='active.json']
-        if journal is None:self.assertEqual(records,[])
+        records,active=promotion_inventory(self.root/'state',self.project)
+        if journal is None:self.assertEqual((records,active),([],False))
         else:
             self.assertEqual(len(records),1);self.assertEqual(records[0]['status'],journal)
-            self.assertFalse(list((self.root/'state'/'promotions').rglob('active.json')))
+            self.assertFalse(active)
         before=len(self.calls);target=self.target()
         counts=tuple(map(len,(application._SESSIONS,application._FINAL_RUNS,application._GRANTS)))
         with patch.dict(os.environ,{'XDG_STATE_HOME':str(self.root/'state')}), \
