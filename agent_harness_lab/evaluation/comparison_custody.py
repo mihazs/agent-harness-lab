@@ -140,7 +140,13 @@ class Comparison:
             raise ValueError('comparison response remains unresolved')
         if client.requests<=self.active['request_start'] or client.requests in self.active['requests']:
             raise ValueError('comparison response is not fresh')
-        self.active['requests'].append(client.requests);self._save()
+        self.active['requests'].append(client.requests)
+        if client.settings.get('instruction_protocol') is not None:
+            from .responses import _read_request
+            value=_read_request(client,complete=True)
+            if value['trial_id']!=self.active['scheduled']['trial_id']:raise ValueError('instruction request trial changed')
+            self.active.setdefault('instruction_requests',[]).append(value)
+        self._save()
 
     def reservation(self,client,trial_id):
         self.before_request(client)
@@ -232,6 +238,11 @@ class Comparison:
             raise ValueError('comparison trial lacks fresh transport, worker or artifact-grade custody')
         if any(row.get(k)!=v for k,v in self.active['scheduled'].items()):
             raise ValueError('comparison trial identity changed')
+        if self.client.settings.get('instruction_protocol') is not None:
+            requests=self.active.get('instruction_requests',[])
+            if ([value['request_ordinal'] for value in requests]!=self.active['requests']
+                    or any(value['instruction_binding']['harness_bundle']!=self.bundles[self.active['scheduled']['version']] for value in requests)):
+                raise ValueError('owned instruction request coverage or frozen bundle differs')
         execution=row.get('execution',{});grade=row.get('grader',{})
         binding=self.trajectories.get(row['task'])
         if binding is not None:
@@ -255,9 +266,11 @@ class Comparison:
             raise ValueError('comparison transport remained pending or changed outside admitted trials')
         if [value['trial_sha256'] for value in self.rows]!=[hashed(row) for row in result['trials']]:
             raise ValueError('fresh comparison final trial bytes changed')
-        return dict(profile=PROFILE,plan_sha256=self.spec.digest,result_sha256=hashed(result),
+        value=dict(profile=PROFILE,plan_sha256=self.spec.digest,result_sha256=hashed(result),
             permission_profile=self.permission_profile,bundles=self.bundles,fixtures=self.fixtures,seed_states=self.seeds,rows=deepcopy(self.rows),served_model='unverified',native_identity='unverified',
             independence='unverified',publication_allowed=False,adoption_authority=False)
+        if self.client.settings.get('instruction_protocol') is not None:value['instruction_protocol']=self.client.settings['instruction_protocol']
+        return value
 
 
 def validate(value,spec,result):
@@ -272,6 +285,14 @@ def validate(value,spec,result):
     for row in value['rows']:
         custody=row['custody']
         frozen=value['bundles'][custody['scheduled']['version']]
+        if value.get('instruction_protocol') is not None:
+            from .instruction_context import PROFILE as INSTRUCTION_PROFILE
+            requests=custody.get('instruction_requests',[])
+            if (value['instruction_protocol']!=INSTRUCTION_PROFILE
+                    or [request['request_ordinal'] for request in requests]!=custody['requests']
+                    or any(request['instruction_binding']['profile']!=INSTRUCTION_PROFILE
+                        or request['instruction_binding']['harness_bundle']!=frozen for request in requests)):
+                raise ValueError('sealed instruction request coverage changed')
         if custody['harness']!=frozen['file_tree_sha256']:raise ValueError('sealed bundle inventory changed')
         for worker in custody['workers']:
             if worker['fact'].get('input_bundles')!={'harness':frozen} or worker['fact'].get('input_bundles_unchanged') is not True:
