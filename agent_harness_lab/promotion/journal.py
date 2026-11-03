@@ -132,6 +132,7 @@ class Journal:
             destination.parent.mkdir(parents=True,exist_ok=True)
             temporary=destination.with_name(destination.name+'.ahl-'+uuid.uuid4().hex)
             try:
+                self._pending_snapshot=(temporary,target['sha256'],target['mode'])
                 fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
                 with os.fdopen(fd,'wb') as stream:
                     stream.write(raw); stream.flush(); os.fsync(stream.fileno())
@@ -140,6 +141,7 @@ class Journal:
                 if pre_write: pre_write()
                 os.replace(temporary,destination)
             finally:
+                self._pending_snapshot=None
                 temporary.unlink(missing_ok=True)
 
     def _restore_guarded(self,record):

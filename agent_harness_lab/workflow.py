@@ -120,7 +120,7 @@ def skill_roots(project):
             yield skill
 
 
-def snapshot(project, target, *, allowed_paths=None):
+def harness_files(project, allowed_paths=None):
     if allowed_paths is None:
         files = [project / name for name in ('AGENTS.md', 'CLAUDE.md') if (project / name).exists()]
         for skill in skill_roots(project):
@@ -128,10 +128,14 @@ def snapshot(project, target, *, allowed_paths=None):
     else:
         # Select before opening content, including otherwise unreadable files.
         files = [project / name for name in allowed_paths if os.path.lexists(project / name)]
+    return sorted(set(files))
+
+
+def snapshot(project, target, *, allowed_paths=None):
     states = {}
     total = 0
     target.mkdir()
-    for path in sorted(set(files)):
+    for path in harness_files(project,allowed_paths):
         relative = str(path.relative_to(project))
         if any(p.is_symlink() for p in (path, *path.parents) if p.is_relative_to(project)):
             raise ValueError('Snapshot path crosses a symlink')
@@ -682,15 +686,22 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if evaluated['inputs_unchanged'] and candidate_pass and controls_pass and improvement:
             if any(file_state(args.project / name) != value for name, value in original.items()):
                 raise ValueError('Project harness changed during evaluation; recommendation is stale')
-            write_json(output / 'change-plan.json', dict(schema_version=1, kind='behavioral_candidate',
+            from .harness_change_plan import produce,attach
+            common_plan=produce(args,original,proposed,analysis=data,evidence=evaluated,
+                diagnosis=proposal.get('mechanisms',[]),falsifiers=proposal.get('falsifiers',[]),
+                controls=dict(evaluation_sha256=runner.digest(Path(options.output)),candidate_pass=candidate_pass,controls_pass=controls_pass),
+                deferred=['behavioral_application_pending_independent_certification','skill_lifecycle','hooks'])
+            common_plan.validate_inventories(candidate_states(baseline,original),candidate_states(frozen,original))
+            write_json(output / 'change-plan.json', attach(dict(schema_version=1, kind='behavioral_candidate',
                 profile='one-call-improvement-v1', publication_allowed=False,
                 baseline_sha256=baseline_hash, candidate_sha256=frozen_hash,
                 operations=[dict(path=name, before=original.get(name), after=proposed.get(name),
                                  profile='one-call-improvement-v1', publication_allowed=False)
                             for name in sorted(original.keys() | proposed.keys())
                             if original.get(name) != proposed.get(name)],
-                evaluation=str(options.output), application_eligible=False))
+                evaluation=str(options.output), application_eligible=False),common_plan))
             result['plan'] = str(output / 'change-plan.json')
+            result['plan_sha256'] = common_plan.sha256
             result['status'] = 'inconclusive'
             result['recommendation'] = 'candidate_requires_independent_certification'
             break

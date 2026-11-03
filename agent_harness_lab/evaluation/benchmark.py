@@ -27,13 +27,14 @@ def public_export_allowed(records):
                     or any(key in metadata for key in ('controller_run_id','cohort_manifest_sha256','preservation','receipt_sha256',
                         'cohort_binding','controller_qualification','qualification_sha256','controller_grade',
                         'sequential_profile','sequential_analysis','sampling_sha256','trajectory_profile','trajectory_analysis','precision_preflight','policy_sha256','permission_audit','isolation_qualification',
-                        'controller_source_profile','source_capture','live_verification','verified_execution','implementation_prerequisites','restricted_process_protocol','controlled_instruction_protocol','configured_response_references_sha256',
+                        'controller_source_profile','source_capture','live_verification','verified_execution','implementation_prerequisites','restricted_process_protocol','controlled_instruction_protocol','configured_response_references_sha256','harness_change_plan','plan_sha256',
                         'classifier_selection_allowed','review_event_sha256','protected_access','protected_access_sha256','import_sha256','foreign_claims','proposal_id',
                         'controller_derivation','derivation_id','derivation_binding_sha256','review_authentication','authentication','bank_qualification','construction_access','construction_id'))
 
                     or metadata.get('algorithm') in ('private-preservation-decision-v1','private-controller-history-report-v1',
                         'guarded-preservation-search-v1','corrected-cohort-qualification-v1')
-                    or metadata.get('profile') in ('ahl-controlled-agents-v1','conditional-finite-bank-sequential-v1','ahl-linux-restricted-process-v1','ahl-implementation-prerequisites-v1','controller-trajectory-v1','diagnostic-corpus-v1','ahl-controller-live-v1','permission-results-v1','protected-diagnostic-access-v1','external-evaluation-data-v1','one-call-improvement-v1','controlled-development-derivation-v1','fixed-root-precision-v1','authenticated-artifact-review-v1','review-authority-policy-v1','conditional-final-bank-v1','owned-final-bank-controls-v1','canonical-construction-access-v1')
+                    or metadata.get('profile') in ('ahl-harness-change-plan-v1','ahl-controlled-agents-v1','conditional-finite-bank-sequential-v1','ahl-linux-restricted-process-v1','ahl-implementation-prerequisites-v1','controller-trajectory-v1','diagnostic-corpus-v1','ahl-controller-live-v1','permission-results-v1','protected-diagnostic-access-v1','external-evaluation-data-v1','one-call-improvement-v1','controlled-development-derivation-v1','fixed-root-precision-v1','authenticated-artifact-review-v1','review-authority-policy-v1','conditional-final-bank-v1','owned-final-bank-controls-v1','canonical-construction-access-v1')
+
 
                     or metadata.get('format') in ('promptfoo-cases-json-v1','promptfoo-results-jsonl-v1','openai-evals-match-jsonl-v1')
                     or metadata.get('purpose')=='protected-diagnostic-access-v1'

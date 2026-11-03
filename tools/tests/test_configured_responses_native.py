@@ -96,6 +96,7 @@ class ConfiguredResponsesKernelTests(kernel.KernelFixture):
         observed=result['implementation_prerequisites']
         self.assertEqual(set(observed['coverage']['roles']),{'proposer','evaluator_author','executor','grader'})
         self.assertEqual(observed['controlled_instruction_protocol']['status'],'qualified',observed)
+        self.assertEqual(observed['restricted_process_protocol']['status'],'qualified',observed)
         self.assertTrue(all(row['status']=='unverified' for row in observed['mandatory_certification'].values()))
         self.assertFalse(observed['adoption_authority']);self.assertFalse(result['automatic_promotion'])
         self.assertEqual([role for role,_ in workers].count('proposer'),1)
@@ -107,6 +108,18 @@ class ConfiguredResponsesKernelTests(kernel.KernelFixture):
             self.assertEqual(run['attestation']['runtime_image']['sha256'],image)
         self.assertEqual((project/'AGENTS.md').read_text(),'bad');self.assertEqual(result['changed_files'],[])
         self.assertEqual(config.load(project/'ahl.json')[1],configuration_pin)
+        from agent_harness_lab.harness_change_plan import HarnessChangePlan
+        plan=json.loads(Path(result['plan']).read_bytes())
+        contract=HarnessChangePlan.parse(plan['harness_change_plan'])
+        self.assertEqual(contract.document()['profile'],'ahl-harness-change-plan-v1')
+        self.assertEqual(plan['plan_sha256'],contract.sha256)
+        self.assertEqual(result['plan_sha256'],contract.sha256)
+        self.assertEqual(dict(contract.document()['references'])['configuration'],configuration_pin)
+        baseline=output()/'preparation/baseline';frozen=output()/'candidate-0'
+        contract.validate_inventories(workflow.candidate_states(baseline,{}),workflow.candidate_states(frozen,{}))
+        self.assertEqual((baseline/'AGENTS.md').read_bytes(),b'bad')
+        self.assertEqual((frozen/'AGENTS.md').read_bytes(),b'good\nSYNTHETIC_CANDIDATE_SECRET\n')
+        self.assertFalse(contract.document()['adoption_authority'])
 
 
 if __name__=='__main__':unittest.main()

@@ -2,6 +2,20 @@ version: '3'
 vars:
   PYTHON: '{{default "python3" .PYTHON}}'
 tasks:
+  test:workflow:change-plan:
+    desc: Verify immutable shared plans and guarded public application receipts
+    cmds:
+      - task: test:workflow:repeated
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          REPEATED_TEST_PATTERN: test_harness_change_plan.py
+      - task: test:workflow:one-call
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
   test:configuration:responses:
     desc: Verify configured Responses selection and metadata-only readiness
     cmds:
