@@ -331,6 +331,8 @@ def _evaluate(args):
             except TimeoutError:
                 pass  # Budget reporting below blocks before credentials or inference.
     plan = None
+    precision_report = None
+    precision_cohorts = None
     if 'experiment' in manifest:
         application_modules()
         from agent_harness_lab.evaluation.plan import ExperimentSpec, schedule
@@ -349,7 +351,10 @@ def _evaluate(args):
             from agent_harness_lab.evaluation import cohort_history
             from agent_harness_lab.evaluation.oracle_history import bank_authority
             bank_tasks=bank_authority(manifest,export_root=manifest_path.parent)
-            cohort_history.capture(manifest_path.parent,manifest,plan,bank_tasks)
+            captured_cohorts=cohort_history.capture(manifest_path.parent,manifest,plan,bank_tasks)
+            from agent_harness_lab.evaluation.integrity import read_regular
+            from agent_harness_lab.evaluation.cohorts import MAX_BYTES
+            precision_cohorts=read_regular(captured_cohorts['manifest_path'],MAX_BYTES)
         ordered = schedule(plan)
         if len(ordered) > trial_limit:
             raise ValueError('repeated plan exceeds caller trial ceiling')
@@ -369,7 +374,13 @@ def _evaluate(args):
                 if plan is not None and (task.get('root'), task.get('family')) != next(t[1:] for t in plan.tasks if t[0] == task['id']):
                     raise ValueError('trajectory lineage differs from frozen experiment')
                 trajectories[task['id']] = binding
+    if plan is not None and budget > 0:
+        from agent_harness_lab.evaluation.precision import preflight as precision_preflight
+        precision_report=precision_preflight(plan,cohort_manifest_json=precision_cohorts,
+            trial_limit=trial_limit,budget_seconds=budget)
     blocked = configured and configured['blocked_reason']
+    if precision_report is not None and not precision_report['execution_allowed'] and not blocked:
+        blocked='precision_target_infeasible'
     if configured and not evaluation_unchanged(Path(args.config), configured):
         blocked = 'configuration_changed_before_execution'
     available = budget - (time.monotonic() - started)
@@ -401,6 +412,10 @@ def _evaluate(args):
                    isolation=('cooperative trusted fixtures; ' + ('workspace-write; ' if agent == 'codex' else 'inherited Claude permissions/sandbox; ') + 'inherited configuration/auth/hooks; no security or network isolation claim'))
     results['grader_bundle_digests'] = frozen_bundles
     if permission_audit is not None:results['isolation_qualification']=backend.permission_qualification()
+    if precision_report is not None:
+        results['precision_preflight']=precision_report
+        (output/'precision-preflight.json').write_text(json.dumps(precision_report,indent=2,allow_nan=False)+'\n')
+        (output/'precision-preflight.json').chmod(0o600)
     if sandbox_graders:
         results['runtime']['grader_capability'] = capability
         results['isolation'] = dict(executor='cooperative native CLI; no role isolation claim',

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.67.0
+
+### Minor Changes
+
+- 14eb7d8: Report exact frozen-plan root-level precision before repeated execution, with an optional pinned half-width target that blocks infeasible dispatch without changing legacy plan identities or fixed-final inference.
+
 ## 0.66.0
 
 ### Minor Changes

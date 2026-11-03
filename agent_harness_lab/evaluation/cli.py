@@ -30,7 +30,10 @@ def main(argv):
     bank.add_argument('--list', action='store_true')
     experiment = commands.add_parser('experiment', help='Analyze a frozen repeated paired experiment')
     experiment.add_argument('--spec', type=Path, required=True)
-    experiment.add_argument('--records', type=Path, required=True)
+    experiment_mode=experiment.add_mutually_exclusive_group(required=True)
+    experiment_mode.add_argument('--records', type=Path)
+    experiment_mode.add_argument('--preflight',action='store_true',help='Compute exact frozen-plan precision without running workers or models')
+    experiment.add_argument('--cohorts',type=Path,help='Exact raw frozen preservation manifest; preflight only')
     regression = commands.add_parser('regression', help='Validate declarations, audit draft graders or replay frozen snapshots; no bank admission')
     regression.add_argument('--proposal', type=Path, required=True)
     regression.add_argument('--draft', type=Path, help='Explicit frozen unreviewed TaskSpec/control descriptor to audit offline')
@@ -95,12 +98,22 @@ def main(argv):
             from .plan import ExperimentSpec
             from .statistics import TrialRecord, analyze
             from agent_harness_lab.promotion.policy import decide
-            spec = ExperimentSpec.parse(json.loads(args.spec.read_text()))
-            records = [TrialRecord(**r) for r in json.loads(args.records.read_text())]
-            result = analyze(spec, records)
-            result['oracle_validity'] = 'unverified'
-            result['promotion'] = asdict(decide(spec, result))
-            code = 3
+            if args.preflight:
+                from agent_harness_lab.private_journal import record
+                from .precision import preflight
+                from .integrity import read_regular
+                from .cohorts import MAX_BYTES
+                spec=ExperimentSpec.parse(record(args.spec,MAX_BYTES)[0])
+                result=preflight(spec,cohort_manifest_json=read_regular(args.cohorts,MAX_BYTES) if args.cohorts else None)
+                code=0 if result['status']=='feasible' else 3
+            else:
+                if args.cohorts:raise ValueError('--cohorts requires --preflight')
+                spec = ExperimentSpec.parse(json.loads(args.spec.read_text()))
+                records = [TrialRecord(**r) for r in json.loads(args.records.read_text())]
+                result = analyze(spec, records)
+                result['oracle_validity'] = 'unverified'
+                result['promotion'] = asdict(decide(spec, result))
+                code = 3
         else:
             from .sandbox import SandboxBackend
             result = SandboxBackend(cgroup_root=args.cgroup_root, image_root=args.image_root,
