@@ -100,8 +100,8 @@ def capture(manifest, baseline, candidate, check=lambda: None):
 def _state(path):
     if not path.exists(): return dict(schema_version=2, profile=PROFILE, reservations={}, observed_assets={})
     _private(path); state, _ = record(path, MAX_BYTES)
-    fields(state, 'schema_version profile reservations observed_assets')
-    if type(state['schema_version']) is not int or state['schema_version'] != 2 or state['profile'] != PROFILE:
+    fields(state, 'schema_version profile reservations observed_assets'+(' derivations' if state.get('schema_version')==3 else ''))
+    if type(state['schema_version']) is not int or state['schema_version'] not in (2,3) or state['profile'] != PROFILE:
         raise ValueError('legacy access state cannot authorize managed diagnostics')
     if not isinstance(state['reservations'], dict): raise ValueError('invalid access reservation index')
     if not isinstance(state['observed_assets'], dict): raise ValueError('invalid observed access index')
@@ -116,6 +116,34 @@ def _state(path):
         assets = set(entry['binding']['assets'])
         if used & assets: raise ValueError('managed assets were reserved more than once')
         used.update(assets)
+    if state['schema_version']==3:
+        derivations=state['derivations']
+        if not isinstance(derivations,dict): raise ValueError('invalid derivation index')
+        for ident,entry in derivations.items():
+            sha256(ident); fields(entry,'state root_run_id source_derivation_id parent_assets input_binding_sha256 children output_binding_sha256')
+            sha256(entry['root_run_id']); sha256(entry['input_binding_sha256'])
+            if entry['state'] not in ('pending','complete','unresolved'): raise ValueError('invalid derivation state')
+            for key in ('parent_assets','children'):
+                values=entry[key]
+                if not isinstance(values,list) or len(values)>3000 or values!=sorted(set(values)):
+                    raise ValueError('bounded unique derivation assets required')
+                for value in values: sha256(value)
+            if not entry['parent_assets']: raise ValueError('derivation needs actual scientific inputs')
+            if entry['state']=='complete':
+                if not entry['children']: raise ValueError('completed derivation needs actual children')
+                sha256(entry['output_binding_sha256'])
+            elif entry['children'] or entry['output_binding_sha256'] is not None:
+                raise ValueError('incomplete derivation cannot claim published children')
+            source=entry['source_derivation_id']
+            if source is not None:
+                sha256(source)
+                parent=derivations.get(source)
+                if source==ident or parent is None or parent['state']!='complete' or parent['root_run_id']!=entry['root_run_id']:
+                    raise ValueError('invalid owned derivation ancestry')
+            seen={ident}; current=source
+            while current is not None:
+                if current in seen or len(seen)>64: raise ValueError('cyclic or excessive derivation ancestry')
+                seen.add(current); current=derivations[current]['source_derivation_id']
     return state
 
 
@@ -135,6 +163,10 @@ def _save(path, state):
     terminal=deepcopy(state)
     for entry in terminal['reservations'].values():
         if entry['state']=='reserved': entry.update(state='retired',run_id='0'*64)
+    for entry in terminal.get('derivations',{}).values():
+        if entry['state'] in ('pending','unresolved'):
+            # Capacity planning only: never persist invented children/evidence.
+            entry.update(state='complete',children=['0'*64]*3000,output_binding_sha256='0'*64)
     if len(encoded(terminal)) > MAX_BYTES:
         raise ValueError('exposure ledger capacity exhausted; observations cannot be evicted')
     atomic_json(path,state); sync_directory(path.parent)
@@ -143,6 +175,7 @@ def _save(path, state):
 def reserve(path, binding):
     _binding(binding)
     with _locked(path) as (path, state):
+        _managed_available(state,binding['assets'])
         if (set(binding['assets']) & set(state['observed_assets'])
                 or any(set(binding['assets']) & set(e['binding']['assets']) for e in state['reservations'].values())):
             raise ValueError('diagnostic assets are reserved or retired; use exposed development data instead')
@@ -168,6 +201,7 @@ def admit(path, assets, run_id, *, ident=None, binding=None):
                 raise ValueError('known protected assets require their reservation; retirement cannot be bypassed')
             for asset in assets: state['observed_assets'].setdefault(asset, run_id)
         else:
+            _managed_available(state,assets)
             entry = state['reservations'].get(ident)
             if entry is None or entry['binding'] != binding or entry['state'] != 'reserved':
                 raise ValueError('managed reservation mismatched, consumed or retired')
@@ -178,6 +212,88 @@ def admit(path, assets, run_id, *, ident=None, binding=None):
                    run_id=run_id, state='retired', qualification='unverified')
     handle = _Access(); _OWNED[handle] = (str(_path(path)), deepcopy(receipt), os.getpid())
     return handle, receipt
+
+
+def _managed_available(state,assets):
+    for entry in state.get('derivations',{}).values():
+        if entry['state']!='complete':
+            raise ValueError('managed access blocked by pending or unresolved owned derivation')
+        if set(assets)&set(entry['children']):
+            raise ValueError('known may-derived development assets cannot receive fresh managed access')
+
+
+def begin_derivation(path,root_run_id,input_binding_sha256,parents,source_derivation_id=None):
+    sha256(root_run_id); sha256(input_binding_sha256)
+    if not isinstance(parents,list) or not parents or len(parents)>3000 or parents!=sorted(set(parents)):
+        raise ValueError('bounded actual derivation parent assets required')
+    for parent in parents: sha256(parent)
+    with _locked(path) as (path,state):
+        known=set(state['observed_assets'])
+        for entry in state['reservations'].values():
+            if set(parents)&set(entry['binding']['assets']) and entry['state']!='retired':
+                raise ValueError('reserved scientific inputs cannot be exposed for construction')
+            if entry['state']=='retired': known.update(entry['binding']['assets'])
+        for entry in state.get('derivations',{}).values():
+            if entry['state']!='complete': raise ValueError('owned derivation requires unresolved work to be reconciled')
+            known.update(entry['children'])
+        if not set(parents)<=known: raise ValueError('derivation input exposure is not controller known')
+        if source_derivation_id is not None:
+            entry=state.get('derivations',{}).get(source_derivation_id)
+            if entry is None or entry['state']!='complete' or entry['root_run_id']!=root_run_id or not set(parents)<=set(entry['children']):
+                raise ValueError('derived source does not match actual completed custody')
+        state.update(schema_version=3)
+        state.setdefault('derivations',{})
+        ident=secrets.token_hex(32)
+        state['derivations'][ident]=dict(state='pending',root_run_id=root_run_id,source_derivation_id=source_derivation_id,
+            parent_assets=parents,input_binding_sha256=input_binding_sha256,children=[],output_binding_sha256=None)
+        _save(path,state)
+        return ident
+
+
+def derivation_record(path,ident):
+    sha256(ident)
+    with _locked(path) as (_,state):
+        value=state.get('derivations',{}).get(ident)
+        if value is None: raise ValueError('unknown owned derivation')
+        return deepcopy(value)
+
+
+def finish_derivation(path,ident,input_binding_sha256,children=None,output_binding_sha256=None):
+    sha256(ident); sha256(input_binding_sha256)
+    if children is not None:
+        if not isinstance(children,list) or not children or len(children)>3000 or children!=sorted(set(children)):
+            raise ValueError('bounded actual child assets required')
+        for child in children: sha256(child)
+        sha256(output_binding_sha256)
+    with _locked(path) as (path,state):
+        entry=state.get('derivations',{}).get(ident)
+        if entry is None or entry['state']!='pending' or entry['input_binding_sha256']!=input_binding_sha256:
+            raise ValueError('derivation transaction is not the actual pending invocation')
+        entry.update(state='unresolved' if children is None else 'complete',children=[] if children is None else children,
+            output_binding_sha256=output_binding_sha256)
+        _save(path,state)
+
+
+def known_derivations(path,assets):
+    with _locked(path) as (_,state):
+        links={ident:dict(record_sha256=hashed(entry),assets=sorted(set(assets)&set(entry['children'])))
+            for ident,entry in state.get('derivations',{}).items()
+            if entry['state']=='complete' and set(assets)&set(entry['children'])}
+    return dict(schema_version=1,profile='controlled-development-derivation-v1',links=links) if links else None
+
+
+def validate_derivations(path,value):
+    fields(value,'schema_version profile links')
+    if type(value['schema_version']) is not int or value['schema_version']!=1 or value['profile']!='controlled-development-derivation-v1' or not isinstance(value['links'],dict):
+        raise ValueError('invalid frozen derivation binding')
+    with _locked(path) as (_,state):
+        for ident,link in value['links'].items():
+            sha256(ident); fields(link,'record_sha256 assets'); sha256(link['record_sha256'])
+            entry=state.get('derivations',{}).get(ident)
+            if (entry is None or entry['state']!='complete' or hashed(entry)!=link['record_sha256']
+                    or not isinstance(link['assets'],list) or not link['assets'] or link['assets']!=sorted(set(link['assets']))
+                    or not set(link['assets'])<=set(entry['children'])):
+                raise ValueError('frozen derivation binding differs from actual completed custody')
 
 
 def consumed(path, ident, binding, run_id):

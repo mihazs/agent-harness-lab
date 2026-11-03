@@ -189,7 +189,8 @@ class HistoryStore(PrivateJournal):
             + (' bank_authority bank_tasks' if type(version) is int and version in (2,3,4) else '')
             + (' behavior_policies' if type(version) is int and version in (3,4) else '')
             + (' cohort_binding_sha256' if type(version) is int and version==4 else '')
-            + (' protected_access_sha256' if 'protected_access_sha256' in inputs else ''))
+            + (' protected_access_sha256' if 'protected_access_sha256' in inputs else '')
+            + (' derivation_binding_sha256' if 'derivation_binding_sha256' in inputs else ''))
         if (type(version) is not int or version not in (1,2,3,4) or inputs['run_id'] != run_id
                 or events[0][0]['kind'] != 'run_started' or events[0][0]['payload'] != dict(inputs_sha256=inputs_hash)):
             raise ValueError('controller run input binding changed')
@@ -197,6 +198,11 @@ class HistoryStore(PrivateJournal):
         spec = ExperimentSpec.parse(source['experiment']); spec.validate()
         if manifest_hash != inputs['source_manifest_sha256'] or spec.digest != inputs['plan_sha256'] or spec.grader_hash != inputs['oracle_sha256']:
             raise ValueError('stored experiment declaration changed')
+        if 'derivation_binding_sha256' in inputs:
+            from .certification_access import validate_derivations
+            derivation,derivation_pin=record(case/'derivation.json',1024*1024)
+            if derivation_pin!=inputs['derivation_binding_sha256']: raise ValueError('historical derivation binding changed')
+            validate_derivations(self.access_ledger().path,derivation)
         if 'protected_access_sha256' in inputs:
             receipt, receipt_hash = record(case/'protected-access.json',1024*1024)
             if receipt_hash != inputs['protected_access_sha256'] or receipt.get('run_id') != run_id:
@@ -417,6 +423,14 @@ class HistoryStore(PrivateJournal):
         from .task_bank import CertificationLedger
         return CertificationLedger(self.root/'protected-access.json')
 
+    def derive_variants(self,output,inference_settings,**options):
+        from .derivations import derive
+        return derive(self,output,inference_settings,**options)
+
+    def derivation_status(self,ident):
+        from .derivations import status
+        return status(self,ident)
+
     def reserve_access(self, manifest, baseline, candidate, *, budget_seconds=60,parent_deadline=None):
         from .certification_access import capture
         if type(budget_seconds) not in (int,float) or not math.isfinite(budget_seconds) or not 0<budget_seconds<=300:
@@ -505,6 +519,8 @@ class HistoryStore(PrivateJournal):
         with self.locked(create=True):
             access_handle,access_receipt = self.access_ledger().admit_managed(assets,run_id,
                 reservation_id=access_reservation,binding=binding)
+            from .certification_access import known_derivations
+            derived=known_derivations(self.access_ledger().path,assets)
             dependencies = {}
             for bundle in sorted(folders):
                 if not self.case(oracle_case(bundle)).exists():
@@ -528,6 +544,9 @@ class HistoryStore(PrivateJournal):
             if access_receipt is not None:
                 write_bytes(case/'protected-access.json',encoded(access_receipt))
                 inputs['protected_access_sha256'] = record(case/'protected-access.json',1024*1024)[1]
+            if derived is not None:
+                write_bytes(case/'derivation.json',encoded(derived))
+                inputs['derivation_binding_sha256']=record(case/'derivation.json',1024*1024)[1]
             if len(encoded(inputs))>256*1024: raise ValueError('history input metadata limit exceeded')
             write_bytes(case/'manifest.json',raw); write_bytes(case/'inputs.json',encoded(inputs)); sync_tree(case)
             events = []; self.append(case,events,'run_started','running',dict(inputs_sha256=record(case/'inputs.json')[1]))
@@ -583,6 +602,14 @@ def main(argv=None):
     reserve.add_argument('--budget-seconds',type=float,default=60)
     status = actions.add_parser('access-status',help='Inspect private reservation retirement without inferring worker access')
     status.add_argument('--reservation-id',required=True)
+    derive = actions.add_parser('derive-variants',help='Explicit owned development variants; no independence or certification')
+    sources=derive.add_mutually_exclusive_group(required=True)
+    sources.add_argument('--source-run'); sources.add_argument('--source-derivation')
+    derive.add_argument('--task',action='append',dest='task_ids')
+    derive.add_argument('--output',type=Path,required=True); derive.add_argument('--inference-settings',type=Path,required=True)
+    pinned_arguments(derive)
+    derive_status=actions.add_parser('derivation-status',help='Read actual private owned construction custody')
+    derive_status.add_argument('--derivation-id',required=True)
     run.add_argument('--access-reservation',help='Actual controller-owned protected diagnostic reservation ID')
     pinned_arguments(run)
     for name in ('show','analyze','historical-plan','decision','verify-decision'):
@@ -601,6 +628,12 @@ def main(argv=None):
                 image_root=args.image_root,image_sha256=args.image_sha256,disk_bytes=args.disk_bytes,budget_seconds=args.budget_seconds,
                 access_reservation=args.access_reservation)
             code = 0 if result['state']=='sealed' and result['oracle_validity']=='current' else 3 if result['oracle_validity']=='invalidated' else 1
+        elif args.action == 'derive-variants':
+            result=store.derive_variants(args.output,args.inference_settings,source_run=args.source_run,
+                source_derivation=args.source_derivation,task_ids=args.task_ids,cgroup_root=args.cgroup_root,
+                image_root=args.image_root,image_sha256=args.image_sha256,disk_bytes=args.disk_bytes,budget_seconds=args.budget_seconds)
+            code=0
+        elif args.action == 'derivation-status': result,code=store.derivation_status(args.derivation_id),0
         elif args.action == 'access-status':
             with store.locked(): result=store.access_ledger().managed_status(args.reservation_id)
             code=0

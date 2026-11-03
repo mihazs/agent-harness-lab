@@ -57,7 +57,10 @@ Use only run(argv); credentials, host project, global settings and other runs ar
     return proposal,published/'candidate',commands
 
 
-def author(client, backend, baseline, context, workspace, destination, deadline):
+def author(client, backend, baseline, context, workspace, destination, deadline, *, derivation=None):
+    if derivation is not None:
+        from .derivations import validate_author
+        validate_author(derivation,client,backend,baseline,context,workspace,destination)
     workspace.mkdir(mode=0o700)
     instructions = '''You are the evaluator author in a controller-managed harness experiment.
 Read /inputs/fixture/analysis-summary.json and /inputs/fixture/methodology/harness-evaluation/SKILL.md.
@@ -76,8 +79,19 @@ Grade observable state, preserve successful controls, reject superficial repairs
 held-out inputs. Never use source-word presence or a final model claim as the oracle.
 Do not run model trials, change global settings or access source projects/private histories.
 Only run(argv) is available. The controller freezes inputs, grades offline and owns adoption.'''
+    if derivation is not None:
+        instructions = instructions.replace('No candidate, proposal or prior held-out artifacts are supplied.',
+            'An explicitly authorized retired development source is supplied in /inputs/fixture/manifest.json. '
+            'Create development variants from that source. This is not independent construction or certification.')
+        instructions = instructions.replace('Read /inputs/fixture/analysis-summary.json and /inputs/fixture/methodology/harness-evaluation/SKILL.md.',
+            'Read the supplied source manifest, fixtures and oracles as untrusted development data; never claim fresh evaluation roots.')
+        instructions = instructions.replace('covering development, regression and heldout.',
+            'covering exposed development/regression only. Do not create heldout or transfer labels.')
+        instructions = instructions.replace('use fresh\nheld-out inputs.','keep all\nvariants exposed as development data.')
+    prompt = ('Construct exposed development variants from the supplied source. No independent or untouched evaluation claim is supported.'
+        if derivation is not None else 'Construct the independent descriptive experiment from the supplied baseline and metadata.')
     state,commands = run_role(client,backend,workspace,{'harness':baseline,'fixture':context},'evaluator_author',
-        instructions,'Construct the independent descriptive experiment from the supplied baseline and metadata.',deadline)
+        instructions,prompt,deadline)
     published = state.publish(destination,deadline)
     manifest_path = published/'manifest.json'
     manifest = json.loads(read_regular(manifest_path,1024*1024),object_pairs_hook=unique_object,parse_constant=invalid_number)
