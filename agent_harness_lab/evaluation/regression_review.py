@@ -43,6 +43,17 @@ def review_value(review, case_id):
     return review
 
 
+def source_trees(origins, descriptor, task, spec):
+    draft_root, spec_root = Path(origins['draft.json']).parent, Path(origins['spec.json']).parent
+    protected = [contained(draft_root, value) for value in (task.fixture, task.grader_bundle)]
+    protected.extend(contained(draft_root, c['fixture']) for c in descriptor['controls'])
+    protected.append(contained(spec_root, spec['task_start']))
+    snapshots = [spec['before'], spec['after']]
+    if spec['earlier_valid'] is not None: snapshots.append(spec['earlier_valid']['paths'])
+    protected.extend(contained(spec_root, value) for snapshot in snapshots for value in snapshot.values())
+    return protected
+
+
 class ReviewStore(PrivateJournal):
     def __init__(self, root):
         super().__init__(root, 'regression-review-store', transition)
@@ -66,7 +77,7 @@ class ReviewStore(PrivateJournal):
                 raise ValueError('stored case declaration changed')
         return case, inputs, events
 
-    def summary(self, case_id, inputs, events):
+    def summary(self, case_id, inputs, events, *, deadline=None):
         last = events[-1]
         evidence = next((e['payload']['evidence_sha256'] for e, _ in reversed(events) if e['kind'] in ('reproduced', 'drafted')), None)
         attempt = next((e for e, _ in reversed(events) if e['kind'] in ('attempt_started', 'attempt_finished', 'attempt_abandoned', 'reproduced')), None)
@@ -86,11 +97,18 @@ class ReviewStore(PrivateJournal):
             review_independence='operator_attested' if last[0]['state'] == 'reviewed' else 'unverified',
             historical_verification='unverified', independence='unverified', bank_admission=False,
             automatic_promotion=False, publication_allowed=False)
+        reviewed=next((event for event,_ in reversed(events) if event['kind']=='reviewed'),None)
+        if reviewed is not None and 'authentication' in reviewed['payload']:
+            from .review_authority import validate_event, current
+            proof=validate_event(self,reviewed,case_id,require_current=False,deadline=deadline)
+            result['review_authentication']=dict(status='authenticated_key_approval' if current(self,reviewed) else 'policy_unavailable_or_revoked',
+                policy_sha256=proof['policy_sha256'],key_sha256=proof['key_sha256'],
+                independence='review_judgment_unverified',publication_allowed=False)
         accepted = next((e for e,_ in reversed(events) if e['kind'] == 'accepted'),None)
         if accepted is not None:
             from .bank_revisions import revision_path, validate_admission
             revision = accepted['payload']['revision_sha256']
-            checked = validate_admission(revision_path(self,revision)/'bank.json')
+            checked = validate_admission(revision_path(self,revision)/'bank.json',deadline=deadline)
             result.update(bank_revision_sha256=revision,bank_admission=checked['current_eligible'])
         return result
 
@@ -114,20 +132,16 @@ class ReviewStore(PrivateJournal):
             raise ValueError('case declaration identities mismatch')
         if not all(getattr(task, key) == proposal.value[key] for key in ('root_id', 'family')) or task.source_kind != proposal.value['source']['kind']:
             raise ValueError('case task provenance mismatch')
-        draft_root, spec_root = origins['draft.json'].parent, origins['spec.json'].parent
-        protected = [contained(draft_root, value) for value in (task.fixture, task.grader_bundle)]
-        protected.extend(contained(draft_root, c['fixture']) for c in descriptor['controls'])
-        protected.append(contained(spec_root, spec['task_start']))
-        snapshots = [spec['before'], spec['after']]
-        if spec['earlier_valid'] is not None: snapshots.append(spec['earlier_valid']['paths'])
-        protected.extend(contained(spec_root, value) for snapshot in snapshots for value in snapshot.values())
+        protected=source_trees(origins,descriptor,task,spec)
         if any(self.root.is_relative_to(p) or p.is_relative_to(self.root) for p in protected):
             raise ValueError('controller store and case source trees must not overlap')
+        from .review_authority import check_sources
         hashes = dict(zip(origins, (p_hash, d_hash, s_hash)))
         case_id = hashlib.sha256(encoded(hashes)).hexdigest()
         inputs = dict(schema_version=1, author=author, origins={n:str(p) for n, p in origins.items()}, hashes=hashes,
                       privacy='private' if task.source_kind == 'private' else 'public_or_synthetic_source')
         with self.locked(create=True), tempfile.TemporaryDirectory(dir=self.root, prefix='.case-stage-') as folder:
+            check_sources(self,protected)
             staged = Path(folder)/'case'; staged.mkdir(mode=0o700); (staged/'events').mkdir(mode=0o700)
             for name, value in raw.items(): write_bytes(staged/name, value)
             write_bytes(staged/'inputs.json', encoded(inputs)); sync_directory(staged)
@@ -298,11 +312,48 @@ class ReviewStore(PrivateJournal):
         from .bank_revisions import accept
         return accept(self, case_id, parent_path, record_path)
 
-    def review(self, case_id, review_path):
-        review, _ = record(review_path, 64*1024)
+    def install_review_policy(self,path):
+        from .review_authority import install, require_host
+        require_host()
+        with self.locked(create=True):
+            roots=[]
+            for case_id in self.case_ids(256):
+                case,inputs,_=self.opened(case_id)
+                descriptor,task,_=read_draft(case/'draft.json');spec,_=read_spec(case/'spec.json')
+                roots.extend(source_trees(inputs['origins'],descriptor,task,spec))
+            return install(self,path,roots)
+
+    def prepare_review(self,case_id,review_path):
+        from .review_authority import PROFILE, request, require_host
+        require_host()
+        review,_=record(review_path,64*1024);review_value(review,case_id)
+        with self.locked():
+            case,inputs,events=self.opened(case_id);current=self.summary(case_id,inputs,events)
+            if (review['decision']!='reviewed' or current['state']!='drafted'
+                    or review['expected_event_sha256']!=current['event_sha256'] or review['evidence_sha256']!=current['evidence_sha256']):
+                raise ValueError('authenticated review requires exact current drafted evidence')
+            self.checked_evidence(case,inputs,events)
+            value=request(self,review);raw=encoded(value);pin=hashlib.sha256(raw).hexdigest()
+            folder=self.root/'review-requests';folder.mkdir(mode=0o700,exist_ok=True)
+            path=folder/(pin+'.json')
+            if path.exists():
+                if read_regular(path,128*1024)!=raw:raise ValueError('frozen review request changed')
+            else:write_bytes(path,raw);sync_directory(folder)
+            return dict(profile=PROFILE,request_sha256=pin,qualification='unverified',publication_allowed=False)
+
+    def review(self, case_id, review_path, *, signature_path=None, budget_seconds=10):
+        if type(budget_seconds) not in (int,float) or not 0<budget_seconds<=60 or not math.isfinite(budget_seconds):
+            raise ValueError('bounded review verification budget required')
+        deadline=time.monotonic()+budget_seconds
+        value, _ = record(review_path,64*1024 if signature_path is None else 2*64*1024)
+        if signature_path is None:review=value
+        else:
+            from .review_authority import request_value, require_host
+            require_host()
+            review=request_value(self,value)
         review_value(review, case_id); reviewer = review['reviewer']
         with self.locked():
-            case, inputs, events = self.opened(case_id); current = self.summary(case_id, inputs, events)
+            case, inputs, events = self.opened(case_id); current = self.summary(case_id, inputs, events,deadline=deadline)
             if review['expected_event_sha256'] != current['event_sha256'] or review['evidence_sha256'] != current['evidence_sha256']:
                 raise ValueError('stale review event/evidence identity')
             decision = review['decision']
@@ -312,13 +363,25 @@ class ReviewStore(PrivateJournal):
                 if reviewer['basis_kind'] != 'independent_artifact_review' or not review['evidence_refs']:
                     raise ValueError('fresh sessions alone do not establish independent artifact review')
                 self.checked_evidence(case, inputs, events)
+            payload=dict(review=review)
+            if signature_path is not None:
+                from .review_authority import verify, save
+                if decision!='reviewed':raise ValueError('authenticated artifact review requires positive reviewed decision')
+                signature=read_regular(signature_path,16*1024).decode('ascii')
+                proof=verify(self,value,signature,deadline=deadline)
+                self.checked_evidence(case,inputs,events)
+                payload['authentication']=save(self,value,signature,proof)
+                from .review_authority import active
+                if active(self)[1]!=proof['policy_sha256']:raise ValueError('review policy changed before publication')
+                if time.monotonic()>=deadline:raise TimeoutError('review verification deadline exhausted')
             kind = 'attempt_abandoned' if decision == 'reported' else decision
-            self.append(case, events, kind, decision, dict(review=review))
-            return self.summary(case_id, inputs, events)
+            self.append(case, events, kind, decision, payload)
+            return self.summary(case_id, inputs, events,deadline=deadline)
 
 
 def main(argv=None):
     import argparse
+    from .review_authority import VerifierUnavailable
     from .cli import pinned_arguments
     parser = argparse.ArgumentParser(prog='ahl regression-review', description=__doc__)
     parser.add_argument('--store', type=Path, required=True, help='Explicit private owner-only controller store')
@@ -328,24 +391,31 @@ def main(argv=None):
     propose.add_argument('--draft', type=Path, required=True)
     propose.add_argument('--replay', type=Path, required=True)
     propose.add_argument('--author', required=True)
-    for name in ('show', 'reproduce', 'draft', 'review', 'accept'):
+    trust=actions.add_parser('trust-reviewers',help='Install an explicit external host reviewer public-key policy')
+    trust.add_argument('--policy',type=Path,required=True)
+    for name in ('show', 'reproduce', 'draft', 'prepare-review', 'review', 'accept'):
         command = actions.add_parser(name)
         command.add_argument('--case', required=True)
-        if name in ('review','accept'): command.add_argument('--record', type=Path, required=True)
+        if name in ('prepare-review','review','accept'): command.add_argument('--record', type=Path, required=True)
+        if name=='review':
+            command.add_argument('--signature',type=Path)
+            command.add_argument('--budget-seconds',type=float,default=10)
         if name == 'accept': command.add_argument('--parent-bank', type=Path, required=True)
         if name == 'reproduce':
             pinned_arguments(command)
     args = parser.parse_args(argv)
     try:
         store = ReviewStore(args.store)
-        if args.action == 'propose': result = store.propose(args.proposal, args.draft, args.replay, args.author)
+        if args.action == 'trust-reviewers':result=store.install_review_policy(args.policy)
+        elif args.action == 'propose': result = store.propose(args.proposal, args.draft, args.replay, args.author)
         elif args.action == 'reproduce':
             from .sandbox import SandboxBackend
             backend = SandboxBackend(cgroup_root=args.cgroup_root, image_root=args.image_root,
                                      image_sha256=args.image_sha256, disk_bytes=args.disk_bytes)
             result = store.reproduce(args.case, backend, budget_seconds=args.budget_seconds)
         elif args.action == 'draft': result = store.draft(args.case)
-        elif args.action == 'review': result = store.review(args.case, args.record)
+        elif args.action == 'prepare-review':result=store.prepare_review(args.case,args.record)
+        elif args.action == 'review': result = store.review(args.case, args.record,signature_path=args.signature,budget_seconds=args.budget_seconds)
         elif args.action == 'accept': result = store.accept(args.case, args.parent_bank, args.record)
         else: result = store.show(args.case)
         print(json.dumps(result, indent=2, allow_nan=False))
@@ -354,6 +424,12 @@ def main(argv=None):
         return 0
     except BlockingIOError:
         print(json.dumps(dict(status='busy', bank_admission=False, publication_allowed=False)))
+        return 3
+    except VerifierUnavailable:
+        print(json.dumps(dict(status='unsupported',reason='openssh_review_verifier_unavailable',publication_allowed=False)))
+        return 3
+    except TimeoutError:
+        print(json.dumps(dict(status='blocked',reason='review_verification_deadline_exhausted',publication_allowed=False)))
         return 3
     except (ValueError, OSError, TypeError, KeyError, StopIteration):
         parser.exit(2, 'regression case error: invalid or unavailable local input; private case history retained\n')

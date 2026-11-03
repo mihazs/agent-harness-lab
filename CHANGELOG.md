@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.68.0
+
+### Minor Changes
+
+- e289aae: Add optional offline OpenSSH key approvals to private regression review under an explicitly installed host public-key policy. Bind approvals to frozen case evidence and current policy, preserve unsigned review compatibility and historical verdicts on revocation, and retain development-only admission without scientific certification.
+
 ## 0.67.0
 
 ### Minor Changes

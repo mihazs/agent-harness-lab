@@ -53,16 +53,19 @@ def admission_record(value, case_id):
     return value
 
 
-def positive_review(store, case_id, inputs, events, evidence):
+def positive_review(store, case_id, inputs, events, evidence, *, require_current=True, deadline=None):
     from .regression_review import review_value
     if events[-1][0]['state'] != 'reviewed': raise ValueError('bank admission requires a reviewed case')
     event = events[-1][0]
-    if set(event['payload']) != {'review'}: raise ValueError('invalid positive review event')
+    if set(event['payload']) not in ({'review'},{'review','authentication'}): raise ValueError('invalid positive review event')
     value = review_value(event['payload']['review'], case_id)
     if (value['decision'] != 'reviewed' or value['expected_event_sha256'] != event['previous_sha256']
             or value['evidence_sha256'] != evidence or value['reviewer']['identity'].casefold() == inputs['author'].casefold()
             or value['reviewer']['basis_kind'] != 'independent_artifact_review' or not value['evidence_refs']):
         raise ValueError('positive review does not bind this sealed case')
+    if 'authentication' in event['payload']:
+        from .review_authority import validate_event
+        validate_event(store,event,case_id,require_current=require_current,deadline=deadline)
     return value
 
 
@@ -77,7 +80,7 @@ def accepted_marker(events):
     return accepted[0]
 
 
-def revision_metadata(bank_path, *, check_current=True):
+def revision_metadata(bank_path, *, check_current=True, deadline=None):
     from .regression_review import ReviewStore
     path = Path(bank_path).absolute()
     if record(path,1024*1024)[0].get('controller_profile')=='grader-correction-bank-v1':
@@ -114,8 +117,10 @@ def revision_metadata(bank_path, *, check_current=True):
             or event['previous_sha256'] != descriptor['reviewed_event_sha256']
             or events[index-1][1] != descriptor['reviewed_event_sha256']):
         raise ValueError('bank revision acceptance binding is missing or changed')
-    positive_review(store, descriptor['case_id'], inputs, events[:index], descriptor['sealed_evidence_sha256'])
+    positive_review(store, descriptor['case_id'], inputs, events[:index], descriptor['sealed_evidence_sha256'],require_current=False,deadline=deadline)
     current = events[-1][0]['state'] == 'accepted'
+    from .review_authority import current as review_current
+    current=current and review_current(store,events[index-1][0])
     admissions = descriptor['admissions']
     if not isinstance(admissions, dict) or len(admissions) > 1000: raise ValueError('invalid admission catalog')
     for task_id, entry in admissions.items():
@@ -141,12 +146,17 @@ def revision_metadata(bank_path, *, check_current=True):
             if entry['accepted_event_sha256']!=marker_hash:
                 raise ValueError('inherited accepted marker changed')
         if check_current and related_events[-1][0]['state'] != 'accepted': current = False
+        prior,_=accepted_marker(related_events)
+        from .review_authority import validate_event
+        related_review=related_events[prior['index']-1][0]
+        validate_event(store,related_review,entry['case_id'],require_current=False,deadline=deadline)
+        if check_current and not review_current(store,related_review):current=False
     return dict(revision_sha256=revision, bank_manifest_sha256=bank_hash, descriptor=descriptor, bank=value, current_eligible=current,
         historical_verification='unverified', independence='unverified', publication_allowed=False)
 
 
-def validate_admission(bank_path):
-    value = revision_metadata(bank_path)
+def validate_admission(bank_path, *, deadline=None):
+    value = revision_metadata(bank_path,deadline=deadline)
     return {k:v for k,v in value.items() if k not in ('descriptor','bank')}
 
 
