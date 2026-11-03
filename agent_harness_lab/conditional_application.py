@@ -17,6 +17,8 @@ from .harness_change_plan import HarnessChangePlan
 from .promotion.journal import file_record
 
 POLICY='controller-agents-conditional-apply-v1'
+REMOVE_POLICY='controller-agents-remove-conditional-apply-v1'
+ACTION_MARKER='\n\nAHL signed root instruction operation:\n'
 AUTH_PROFILE='controller-instruction-authorization-v1'
 PURPOSE='conditional_instruction_application'
 METHOD_FIELDS='experiment_id repeats seed max_trials min_roots effect_margin family_margin alpha family_weights precision_half_width'
@@ -43,9 +45,18 @@ def method(value):
     return deepcopy(value)
 
 
+def action(policy):
+    if policy==POLICY:return 'update'
+    if policy==REMOVE_POLICY:return 'remove'
+    raise ValueError('unsupported conditional application policy')
+
+
+def guard_count(policy):return 4 if action(policy)=='remove' else 5
+
+
 def validate_settings(value):
     fields(value,APPLICATION_FIELDS)
-    if value['policy']!=POLICY:raise ValueError('unsupported conditional application policy')
+    action(value['policy'])
     for key in ('authorization_id','bank_case_id'):sha256(value[key])
     from .config import reference_path
     for key in ('review_store','delegation_request','delegation_signature'):reference_path(Path('/'),value[key])
@@ -292,6 +303,26 @@ def close(session):
         if _SESSIONS.get(session) is data:_SESSIONS.pop(session,None)
 
 
+def proposer_hint(exposure):
+    """Derive bounded descriptive input from this live stage's signed removal policy."""
+    if exposure is None:return ''
+    from .evaluation.construction_access import _Stage,_STAGES,_scope,_check
+    stage=_STAGES.get(exposure) if type(exposure) is _Stage else None
+    if stage is None:raise ValueError('actual canonical proposer stage required')
+    scope=_scope(stage['scope']());session=getattr(scope['args'],'_application_session',None)
+    if session is None:return ''
+    data=_owned(session)
+    if data['binding']['policy']==POLICY:return ''
+    if data['phase']!='construction' or stage['role']!='proposer':
+        raise ValueError('current construction proposer required')
+    if (scope['args'] is not data['args'] or scope.get('closed_domain') is not data['domain']
+            or stage['client'] is not scope['client'] or stage['backend'] is not data['backend']):
+        raise ValueError('same application proposer client and runtime required')
+    _check(stage)
+    with data['store'].locked():_approved(data['store'],data['authorization_id'],data['args'],data['deadline'],state='application_running')
+    return ACTION_MARKER+encoded(dict(policy=REMOVE_POLICY,path='AGENTS.md',action='remove')).decode('utf-8')
+
+
 def prepare_bank(session,output):
     """Freeze reviewed final inputs before any development/model exposure."""
     data=_owned(session)
@@ -321,20 +352,28 @@ def prepare_bank(session,output):
     return None
 
 
-def prepare_final(session,plan,baseline,candidate,client,backend,*,trials_left):
-    """Bind the actual owned proposal and the complete predeclared fixed schedule."""
-    data=_owned(session);args=data['args']
-    if data['phase']!='construction' or type(plan) is not HarnessChangePlan or data['backend'] is not backend:
-        raise ValueError('owned construction phase and immutable plan required')
+def validate_plan(plan,policy,baseline,candidate):
+    operation=action(policy)
+    if type(plan) is not HarnessChangePlan:raise ValueError('immutable instruction plan required')
     operations=plan.operations
-    if (len(operations)!=1 or operations[0].path!='AGENTS.md' or operations[0].action!='update'
+    if (len(operations)!=1 or operations[0].path!='AGENTS.md' or operations[0].action!=operation
             or operations[0].facets!=('instruction',) or plan.unresolved_operations):
-        raise ValueError('conditional application supports one root instruction update only')
+        raise ValueError('conditional application requires its exact signed root instruction operation')
     from .workflow import candidate_states
     original={row.path:(row.sha256,row.mode) for row in plan.before}
     plan.validate_inventories(candidate_states(baseline,original),candidate_states(candidate,original))
     if set(original)!={'AGENTS.md'} or any(row.mode&0o111 for row in (*plan.before,*plan.after)):
         raise ValueError('conditional instruction inventory changed')
+    if operation=='remove' and any(Path(candidate).iterdir()):
+        raise ValueError('conditional instruction removal requires an empty candidate')
+
+
+def prepare_final(session,plan,baseline,candidate,client,backend,*,trials_left):
+    """Bind the actual owned proposal and the complete predeclared fixed schedule."""
+    data=_owned(session);args=data['args']
+    if data['phase']!='construction' or type(plan) is not HarnessChangePlan or data['backend'] is not backend:
+        raise ValueError('owned construction phase and immutable plan required')
+    validate_plan(plan,data['binding']['policy'],baseline,candidate)
     from .promotion.prerequisites import current
     from .evaluation import closed_inputs
     from .evaluation.construction_access import _scope
@@ -352,7 +391,7 @@ def prepare_final(session,plan,baseline,candidate,client,backend,*,trials_left):
     precision=preflight(spec,trial_limit=trials_left,budget_seconds=data['deadline']-time.monotonic())
     if not precision['execution_allowed'] or precision['status']!='feasible':
         return dict(status='inconclusive',reason='precision_target_infeasible',precision_preflight=precision)
-    request=dict(schema_version=1,profile=POLICY,authorization_id=data['authorization_id'],
+    request=dict(schema_version=1,profile=data['binding']['policy'],authorization_id=data['authorization_id'],
         plan_sha256=plan.sha256,configuration_sha256=args.configuration_sha256,method=declared)
     request_path=path.parent/'application-request.json';write_bytes(request_path,encoded(request))
     source.update(experiment=spec.to_dict(),workflow_request_sha256=hashed(request),
@@ -398,7 +437,7 @@ def _final_admission(session,domain,manifest,baseline,candidate):
         raise ValueError('application frozen schedule or harness changed')
     if data['client'].pending or data['client'].poisoned:raise ValueError('application provider attempt unresolved')
     return dict(plan_sha256=data['plan'].sha256,experiment_sha256=data['spec'].digest,
-        configuration_sha256=args.configuration_sha256,policy=POLICY)
+        configuration_sha256=args.configuration_sha256,policy=data['binding']['policy'])
 
 
 def _domain(session):return _owned(session)['domain']
@@ -458,7 +497,7 @@ def _final_history(session,run_id,source):
             or hashed(record(case/'execution/results.json',8*1024*1024)[0])!=final['result_sha256']
             or hashed(record(case/'responses-custody.json',8*1024*1024)[0])!=final['proof_sha256']):
         raise ValueError('owned final completion or result changed')
-    return dict(policy=POLICY,plan_sha256=data['plan'].sha256,experiment_sha256=data['spec'].digest)
+    return dict(policy=data['binding']['policy'],plan_sha256=data['plan'].sha256,experiment_sha256=data['spec'].digest)
 
 
 class _Grant:
@@ -494,16 +533,35 @@ def committed_outcome(session):
     if data is None or data['pid']!=os.getpid():return None
     grant=data.get('grant');permitted=_GRANTS.get(grant) if type(grant) is _Grant else None
     if (permitted is None or permitted['pid']!=os.getpid() or permitted['session'] is not session
-            or permitted['guard_active'] or permitted['checks']!=5):return None
+            or permitted['guard_active'] or permitted['checks']!=guard_count(data['binding']['policy'])):return None
     handle=data['final_run'];final=_FINAL_RUNS.get(handle) if type(handle) is _FinalRun else None
     if final is None or not final['sealed'] or final['session'] is not session:return None
     observed=_journal_outcome(permitted['journal'],permitted['record'],permitted['after_project'])
     if observed is None:return None
     data['phase']='applied'
-    observed.update(conditional_claim=POLICY,general_certification=False,served_model='unverified',native_activation='unverified',
+    observed.update(conditional_claim=data['binding']['policy'],general_certification=False,served_model='unverified',native_activation='unverified',
         independence='unverified',bank_review='authenticated_conditional_judgments',external_exposure='unknown',pretraining_exposure='unknown',
         controller_run_id=final['run_id'],analysis=deepcopy(permitted['analysis']),automatic_promotion=False,publication_allowed=False)
     return observed
+
+
+def mutation_checkpoint(permitted,project,policy):
+    """Validate the existing physical Journal checkpoint; never issue authority."""
+    journal=permitted['journal'];index=permitted['checks'];pending=getattr(journal,'_pending_snapshot',None)
+    operation=action(policy);count=guard_count(policy)
+    if index not in range(count):raise ValueError('application commit guard replayed')
+    if (permitted['record']['metadata']['source']!=policy or (permitted['after'] is None)!=(operation=='remove')):
+        raise ValueError('application grant operation differs from signed policy')
+    expected_record=dict(permitted['record'],status='prepared' if index==0 else 'committed' if index==count-1 else 'applying')
+    if index:expected_record['commit_guarded']=True
+    if journal.load(permitted['record']['deployment'])!=expected_record:
+        raise ValueError('actual application Journal record changed')
+    if operation=='update' and index==2:
+        if (pending is None or pending[0].parent!=project or not pending[0].name.startswith('AGENTS.md.ahl-')
+                or pending[1:]!=(permitted['after']['sha256'],permitted['after']['mode'])
+                or file_record(pending[0])!=permitted['after']):raise ValueError('actual Journal staging snapshot changed')
+    elif pending is not None:raise ValueError('unexpected Journal staging checkpoint')
+    return permitted['before_project'] if index<(2 if operation=='remove' else 3) else permitted['after_project']
 
 
 def _bank_guard(grant,domain):
@@ -521,18 +579,7 @@ def _bank_guard(grant,domain):
     if (hashed(auth)!=permitted['authentication_sha256']
             or authority.active(data['store'],purpose=PURPOSE)[1]!=auth['request']['policy_sha256']):
         raise ValueError('application authority changed before mutation')
-    journal=permitted['journal'];index=permitted['checks'];pending=getattr(journal,'_pending_snapshot',None)
-    if index not in range(5):raise ValueError('application commit guard replayed')
-    expected_record=dict(permitted['record'],status='prepared' if index==0 else 'committed' if index==4 else 'applying')
-    if index:expected_record['commit_guarded']=True
-    if journal.load(permitted['record']['deployment'])!=expected_record:
-        raise ValueError('actual application Journal record changed')
-    if index==2:
-        if (pending is None or pending[0].parent!=args.project or not pending[0].name.startswith('AGENTS.md.ahl-')
-                or pending[1:]!=(permitted['after']['sha256'],permitted['after']['mode'])
-                or file_record(pending[0])!=permitted['after']):raise ValueError('actual Journal staging snapshot changed')
-    elif pending is not None:raise ValueError('unexpected Journal staging checkpoint')
-    expected=permitted['before_project'] if index<3 else permitted['after_project']
+    expected=mutation_checkpoint(permitted,args.project,data['binding']['policy'])
     from .evaluation.closed_inputs import snapshot_pin
     return dict(original_project_sha256=snapshot_pin(permitted['before_project']),expected_current_project_snapshot=expected,
         reservation_id=data['reservation_id'],run_id=final['run_id'])
@@ -583,13 +630,17 @@ def execute(session):
     declaration=closed_inputs.owned(data['domain'])['declaration']
     before_project=closed_inputs.project_snapshot(args.project,declaration['project_inputs'],deadline)
     before=target_record(args.project);after=file_record(data['candidate']/'AGENTS.md')
-    if after is None or before==after or after['mode']&0o111:raise ValueError('unsupported or unchanged final target')
-    data['plan'].validate_inventories({'AGENTS.md':(before['sha256'],before['mode'])},{'AGENTS.md':(after['sha256'],after['mode'])})
+    selected_policy=data['binding']['policy'];operation=action(selected_policy)
+    if (before==after or (after is None)!=(operation=='remove') or after is not None and after['mode']&0o111):
+        raise ValueError('unsupported or unchanged final target')
+    validate_plan(data['plan'],selected_policy,data['baseline'],data['candidate'])
+    data['plan'].validate_inventories({'AGENTS.md':(before['sha256'],before['mode'])},
+        {} if after is None else {'AGENTS.md':(after['sha256'],after['mode'])})
     after_project=Snapshot(before_project.root_mode,before_project.directories,tuple(
         (name,after['mode'],base64.b64decode(after['content'],validate=True)) if name=='AGENTS.md' else (name,mode,raw)
-        for name,mode,raw in before_project.files))
+        for name,mode,raw in before_project.files if name!='AGENTS.md' or after is not None))
     journal=Journal(args.project,state_root()/'promotions'/identity(args.project))
-    record_value=journal.prepare({'AGENTS.md':before},{'AGENTS.md':after},dict(source=POLICY,plan_sha256=data['plan'].sha256,
+    record_value=journal.prepare({'AGENTS.md':before},{'AGENTS.md':after},dict(source=selected_policy,plan_sha256=data['plan'].sha256,
         conditional_final_run=final['run_id'],general_certification=False))
     grant=_Grant();permitted=dict(pid=os.getpid(),session=session,journal=journal,checks=0,guard_active=False,
         before_project=before_project,after_project=after_project,before=before,after=after,authentication_sha256=authentication,record=deepcopy(record_value))
@@ -665,12 +716,12 @@ def binding(project,settings,configuration_sha256,options):
     inference,_=read_settings(options['inference_settings'])
     if inference.get('instruction_protocol')!=INSTRUCTION_PROFILE:raise ValueError('conditional application requires actual controller-loaded instructions')
     request=reference_path(project,application['delegation_request']);signature=reference_path(project,application['delegation_signature'])
-    return dict(policy=POLICY,project_sha256=hashed(str(authority._path(project))),baseline=_target_binding(project),
+    return dict(policy=application['policy'],project_sha256=hashed(str(authority._path(project))),baseline=_target_binding(project),
         configuration_sha256=configuration_sha256,configuration_references_sha256=hashed(references),
         runtime=dict(agent=options['agent'],image_sha256=options['image_sha256'],permission_audit=options['permission_audit'],
             settings_sha256=references['settings_sha256']),bank_case_id=application['bank_case_id'],
         delegation_request_sha256=hashlib.sha256(read_regular(request,authority.MAX_BYTES)).hexdigest(),
         delegation_signature_sha256=hashlib.sha256(read_regular(signature,16*1024)).hexdigest(),
         method=method(application['method']),limits=deepcopy(settings['limits']),
-        allowed_operations=[dict(path='AGENTS.md',action='update',facets=['instruction'])],
+        allowed_operations=[dict(path='AGENTS.md',action=action(application['policy']),facets=['instruction'])],
         served_model='unverified',native_activation='unverified',external_exposure='unknown',pretraining_exposure='unknown')

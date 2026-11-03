@@ -42,7 +42,7 @@ def public_export_allowed(records):
                     or metadata.get('profile') in ('ahl-improve-fixed-bank-v1','ahl-fresh-responses-comparison-v1',
                         'controller-request-reservation-v1','controller-realized-schedule-v1','ahl-live-construction-stage-v1',
                         'conditional-bank-requalification-v2','conditional-bank-closed-input-domain-v2','owned-evidence-views-v1','owned-closed-input-closure-v1',
-                        'controller-agents-conditional-apply-v1','controller-instruction-authorization-v1')
+                        'controller-agents-conditional-apply-v1','controller-agents-remove-conditional-apply-v1','controller-instruction-authorization-v1')
                     or metadata.get('purpose')=='conditional_instruction_application'
                     or any(key in metadata for key in ('request_sha256','workflow_request_sha256','responses_binding','responses_custody_sha256','request_binding'))
                     or metadata.get('report_kind')=='controller_trajectory'

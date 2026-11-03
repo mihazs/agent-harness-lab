@@ -53,6 +53,8 @@ Write proposal.json as {"status":"no_change","reason":"supported explanation"} i
 or {"status":"candidate","mechanisms":[...],"falsifiers":[...]} after a bounded repair.
 Do not leave other top-level files. The controller owns validation, execution and adoption.
 Use only run(argv); credentials, host project, global settings and other runs are unavailable.'''
+    from agent_harness_lab.conditional_application import proposer_hint
+    instructions+=proposer_hint(exposure)
     state,commands = run_role(client,backend,workspace,{'harness':baseline,'fixture':context},'proposer',
         instructions,json.dumps(dict(focus=focus)),deadline)
     published = state.publish(destination,deadline)

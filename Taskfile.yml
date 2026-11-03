@@ -13,6 +13,17 @@ tasks:
           LAYOUT_DIR: '{{.LAYOUT_DIR}}'
           EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
           REPEATED_TEST_PATTERN: test_configured_delegation_packet.py
+  test:application:conditional:removal:
+    desc: Check separate signed removal intent, exact inventories and physical Journal absence
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    cmds:
+      - task: test:workflow:repeated
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          REPEATED_TEST_PATTERN: test_conditional_removal.py
   test:application:conditional:
     desc: Verify bounded application selection and explicit authority requirements
     cmds:

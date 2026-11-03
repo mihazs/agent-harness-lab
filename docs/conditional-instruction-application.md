@@ -164,3 +164,38 @@ native case uses the existing 300-second test wrapper and unchanged signed
 150-second application limit. The positive ten-root inputs, oracles, method and
 request caps stay fixed. Native tests require explicit delegated Linux execution;
 ordinary test discovery skips them.
+
+
+## Remove an existing root instruction file
+
+Removal requires the separate explicit policy
+`controller-agents-remove-conditional-apply-v1`. Retain the same schema 2 fields,
+root `AGENTS.md` scope, controlled Responses runtime, bank, predeclared fixed
+method and limits. Allocate fresh authority/delegation locators, set this policy
+before preparing the public delegation packet and application request, and sign
+those full final inputs. An update-policy signature never authorizes removal;
+changing the policy after signing invalidates the approval.
+
+The controller supplies the signed removal action to its actual proposer context.
+The native proposer must produce the candidate absence itself; the controller
+never deletes a candidate after publication. The only eligible plan removes the
+existing nonexecutable UTF-8 root `AGENTS.md` and leaves an empty candidate. Create,
+update, mixed surfaces and unresolved operations are rejected under this policy.
+
+The same complete fixed-final comparison decides whether the removal is supported.
+Deleting a useful rule must fail that comparison; absence alone is not evidence
+of improvement. A qualifying one-use grant binds four exact Journal checkpoints:
+before the transaction, before unlink, after unlink and after the committed record.
+Target readback verifies actual absence and preserves the selected configuration.
+Public rollback restores the original instruction bytes and mode. Foreign
+recreation blocks rollback and reports ownership as unverified.
+
+Run ordinary signed-intent and physical-Journal checks with:
+
+```sh
+task test:application:conditional:removal
+```
+
+These ordinary checks never issue scientific application authority. Runtime,
+served-model, semantic-independence and general-certification qualifications remain
+limited as described above.
