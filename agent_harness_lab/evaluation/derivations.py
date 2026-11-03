@@ -35,11 +35,11 @@ def _tree_pin(path,deadline):
     return _snapshot_pin(WorkingState(path,deadline).snapshot)
 
 
-def _rebased_output(snapshot,manifest_bytes):
+def _rebased_output(snapshot,manifest_bytes,manifest_mode=None):
     if 'manifest.json' not in {name for name,_,_ in snapshot.files}:
         raise ValueError('actual produced manifest missing')
     return replace(snapshot,root_mode=0o700,files=tuple(
-        (name,mode,manifest_bytes if name=='manifest.json' else raw)
+        (name,manifest_mode if name=='manifest.json' and manifest_mode is not None else mode,manifest_bytes if name=='manifest.json' else raw)
         for name,mode,raw in snapshot.files))
 
 
@@ -142,7 +142,10 @@ def _handoff(store,ident,folder,client,backend,baseline,context,deadline,inputs,
 
 
 def validate_author(handle,client,backend,baseline,context,workspace,destination):
-    if type(handle) is not _Handoff or handle not in _OWNED: raise ValueError('author requires actual owned derivation handoff')
+    if type(handle) is not _Handoff:
+        from .construction_access import validate_role
+        return validate_role(handle,'evaluator_author',client,backend,baseline,context,workspace,destination)
+    if handle not in _OWNED: raise ValueError('author requires actual owned derivation handoff')
     owned=_OWNED[handle]; check_deadline(owned['deadline'])
     if (owned['pid']!=os.getpid() or owned['used'] or owned['client'] is not client or owned['backend'] is not backend
             or Path(baseline)!=owned['baseline'] or Path(context)!=owned['context']
@@ -153,34 +156,41 @@ def validate_author(handle,client,backend,baseline,context,workspace,destination
 
 
 def record_author_output(handle,published):
-    if type(handle) is not _Handoff or handle not in _OWNED:
-        raise ValueError('actual owned author output required')
-    owned=_OWNED[handle]; _check_custody(owned)
-    if 'produced_pin' in owned:
-        raise ValueError('owned author output was already registered')
-    if not owned['used'] or Path(published)!=owned['folder']/'published':
-        raise ValueError('actual owned author output path required')
-    owned['produced_state']=WorkingState(published,owned['deadline'])
-    owned['produced_pin']=_snapshot_pin(owned['produced_state'].snapshot)
+    if type(handle) is _Handoff and handle in _OWNED:
+        owned=_OWNED[handle]; _check_custody(owned)
+        if 'produced_pin' in owned:
+            raise ValueError('owned author output was already registered')
+        if not owned['used'] or Path(published)!=owned['folder']/'published':
+            raise ValueError('actual owned author output required')
+        owned['produced_state']=WorkingState(published,owned['deadline'])
+        owned['produced_pin']=_snapshot_pin(owned['produced_state'].snapshot)
+    else:
+        from .construction_access import record_role_output
+        record_role_output(handle,published)
+
+
+def _check_role_custody(owned):
+    if owned['pid']!=os.getpid(): raise ValueError('owned construction cannot continue in a different process')
+    check_deadline(owned['deadline'])
+    value=owned['value']; folder=owned['folder']; inputs=owned['inputs']
+    if (record(folder/'handoff.json',ledger.MAX_BYTES)[1]!=_hash(value)
+            or _tree_pin(owned['context'],owned['deadline'])!=value['context_tree_sha256']
+            or _tree_pin(owned['baseline'],owned['deadline'])!=value['baseline_tree_sha256']
+            or _hash(engine())!=value['engine_sha256'] or value['engine_sha256']!=inputs['engine_sha256']
+            or record(folder/'inputs.json',ledger.MAX_BYTES)[1]!=_hash(inputs)
+            or record(folder/'engine.json',ledger.MAX_BYTES)[1]!=inputs['engine_sha256']
+            or record(folder/'settings.json',ledger.MAX_BYTES)[1]!=inputs['settings_snapshot_sha256']
+            or owned['client'].settings!=owned['settings']
+            or record(owned['settings_path'],65536)[1]!=inputs['settings_sha256']):
+        raise ValueError('actual construction input bytes, settings or engine changed')
 
 
 def _check_custody(owned):
-    if owned['pid']!=os.getpid(): raise ValueError('owned derivation cannot continue in a different process')
-    check_deadline(owned['deadline'])
-    context,baseline,client=owned['context'],owned['baseline'],owned['client']
-    value=owned['value']; folder=owned['folder']
-    source,_=record(context/'manifest.json',ledger.MAX_BYTES)
-    if _hash(source)!=owned['inputs']['source_view_sha256']: raise ValueError('actual source view declaration changed')
-    actual_parents,_=ledger.exposure(context,source['tasks'],source['grader_bundles'],lambda:check_deadline(owned['deadline']))
-    if (record(folder/'handoff.json',ledger.MAX_BYTES)[1]!=_hash(value) or _tree_pin(context,owned['deadline'])!=value['context_tree_sha256']
-            or _tree_pin(baseline,owned['deadline'])!=value['baseline_tree_sha256'] or _hash(engine())!=value['engine_sha256']
-            or record(folder/'inputs.json',ledger.MAX_BYTES)[1]!=_hash(owned['inputs'])
-            or record(folder/'engine.json',ledger.MAX_BYTES)[1]!=owned['inputs']['engine_sha256']
-            or record(folder/'settings.json',ledger.MAX_BYTES)[1]!=owned['inputs']['settings_snapshot_sha256']
-            or actual_parents!=owned['inputs']['parent_assets'] or _hash(source)!=owned['inputs']['source_view_sha256']
-            or value['engine_sha256']!=owned['inputs']['engine_sha256'] or client.settings!=owned['settings']
-            or record(owned['settings_path'],65536)[1]!=owned['inputs']['settings_sha256']):
-        raise ValueError('actual author input bytes or engine changed')
+    _check_role_custody(owned)
+    source,_=record(owned['context']/'manifest.json',ledger.MAX_BYTES)
+    actual_parents,_=ledger.exposure(owned['context'],source['tasks'],source['grader_bundles'],lambda:check_deadline(owned['deadline']))
+    if actual_parents!=owned['inputs']['parent_assets'] or _hash(source)!=owned['inputs']['source_view_sha256']:
+        raise ValueError('actual author source view changed')
     entry=ledger.derivation_record(owned['store'].access_ledger().path,owned['ident'])
     if (entry['state']!='pending' or entry['input_binding_sha256']!=_hash(owned['inputs'])
             or entry['parent_assets']!=owned['inputs']['parent_assets'] or entry['root_run_id']!=owned['inputs']['origin']['root_run_id']):

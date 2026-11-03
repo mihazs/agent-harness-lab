@@ -74,9 +74,13 @@ def tree(root, max_files=1000, max_bytes=10 * 1024 * 1024):
     return dict(sorted(result.items()))
 
 
-def digest(root):
+def tree_digest(files):
     import json
-    return hashlib.sha256(json.dumps(tree(root), sort_keys=True).encode()).hexdigest()
+    return hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
+
+
+def digest(root):
+    return tree_digest(tree(root))
 
 
 def copy_frozen(source, destination, expected):

@@ -91,9 +91,28 @@ remain unverified. Repeats are grouped within declared roots; assertions and wor
 counts do not create independent roots. All records and receipts remain private,
 including results from synthetic banks, and automatic promotion remains false.
 
+## Shared construction store
+
+Pass `--evaluation-store PATH` with `--experiment-request` to use the same private
+HistoryStore for the owned proposer stage and the repeated comparison. Without the
+selector, the existing per-output `private-history` location remains in use.
+The selected store must be outside the project, fixed bank, bank owner, runtime,
+settings, credentials and output. Selection is checked before creating store
+metadata, and the request digest remains bound through proposer execution.
+Configured trial limits cover the proposer and all frozen repeated trials; an
+insufficient limit blocks execution without reducing repeats or changing margins.
+
+The fixed bank is not supplied to the proposer and does not become its scientific
+parent merely because the controller selected it. Recording construction and
+comparison in one store does not establish independent roots, certification or
+automatic adoption.
+
 ## Verification
 
 `task test:workflow:repeated` runs native unittest admission and custody cases.
 `task test:workflow:repeated:kernel` uses the existing explicitly delegated Linux
 profile for public-CLI synthetic transport tests with actual isolated workers.
 It makes no real provider calls and authenticates no real model or native agent.
+`task test:workflow:repeated-access` checks the shared-store selection boundaries;
+`task test:workflow:repeated-access:kernel` exercises their actual public controller
+composition under the same delegated profile.

@@ -594,6 +594,51 @@ except OSError: pass
 
 @unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel:roles')
 class ControlledWorkflowKernelTests(KernelFixture):
+    def test_canonical_construction_access_uses_actual_workers_and_same_store_assets(self):
+        from agent_harness_lab import workflow
+        from agent_harness_lab.evaluation.oracle_history import HistoryStore
+        from agent_harness_lab.evaluation.oracle import identity
+        from agent_harness_lab.evaluation.plan import ExperimentSpec
+        improve=workflow.improve; execute=SandboxBackend.run
+        selected=self.root/'private-evaluation-store'; results=[]; runs=[]
+        def configured(args):
+            args.evaluation_store=selected
+            result=improve(args); results.append((result,args.image_sha256))
+            return result
+        def observed(backend,argv,workspace,inputs,role,limits,**options):
+            for path in [Path(workspace),*map(Path,inputs.values())]:
+                self.assertFalse(path.is_relative_to(selected) or selected.is_relative_to(path))
+            result=execute(backend,argv,workspace,inputs,role,limits,**options)
+            if argv[0]=='/usr/bin/python3': runs.append((role,result))
+            return result
+        with patch.object(workflow,'improve',side_effect=configured),patch.object(SandboxBackend,'run',new=observed):
+            self.test_controlled_workflow_role_views_deny_source_key_candidate_and_prior_heldout_reads()
+        result,image_sha=results[0]
+        self.assertEqual(len(runs),23)
+        self.assertEqual([role for role,_ in runs].count('proposer'),1)
+        self.assertEqual([role for role,_ in runs].count('evaluator_author'),1)
+        self.assertEqual([role for role,_ in runs].count('executor'),6)
+        self.assertEqual([role for role,_ in runs].count('grader'),15)
+        for _,run in runs:
+            self.assertTrue(run['inputs_unchanged'])
+            self.assertTrue(run['attestation']['cgroup_v2']['empty_after_cleanup'])
+            self.assertEqual(run['attestation']['runtime_image']['sha256'],image_sha)
+        observed=result['construction_access']
+        self.assertEqual(observed['qualification'],'unverified'); self.assertFalse(observed['publication_allowed'])
+        self.assertTrue(all(row['scientific_parentage']=='unknown' for row in observed['stages']))
+        output=Path(result['output']); path=output/'preparation/evaluation-0/manifest.json'
+        source=json.loads(path.read_bytes())
+        for task in source['tasks']: task.update(root='one-correlated-synthetic-construction',family='kernel-construction')
+        baseline=output/'preparation/baseline'; candidate=output/'candidate-0'
+        from agent_harness_lab.cli import evaluator
+        runner=evaluator()
+        source['experiment']=ExperimentSpec('synthetic-kernel-canonical',tuple((t['id'],t['root'],t['family']) for t in source['tasks']),
+            1,0,6,2,0,0,.05,(('kernel-construction',1),),runner.digest(baseline),runner.digest(candidate),
+            identity(path.parent,source['tasks'],source['grader_bundles']),image_sha).to_dict()
+        path.write_text(json.dumps(source))
+        with self.assertRaisesRegex(ValueError,'may-derived'):
+            HistoryStore(selected).reserve_access(path,baseline,candidate)
+
     def test_controlled_workflow_role_views_deny_source_key_candidate_and_prior_heldout_reads(self):
         from test_sandbox_construction import ControlledWorkflowTests,PROPOSER,AUTHOR,EXECUTOR,wire,workflow,responses
         fixture = ControlledWorkflowTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
