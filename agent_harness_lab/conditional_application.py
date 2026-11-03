@@ -312,13 +312,10 @@ def prepare_final(session,plan,baseline,candidate,client,backend,*,trials_left):
     with data['store'].locked():_approved(data['store'],data['authorization_id'],args,data['deadline'],state='application_running')
     path=data['bank_manifest'];source,pin=record(path,1024*1024)
     if pin!=data['bank_manifest_sha256'] or source!=data['bank_export']:raise ValueError('frozen final bank changed')
-    from .evaluation.oracle import identity
     from .evaluation.comparison_custody import bundle_binding
     from .evaluation.precision import preflight
-    from .cli import evaluator
-    declared=args.project_settings['application']['method'];runner=evaluator()
-    spec=_spec(declared,((t['id'],t['root'],t['family']) for t in source['tasks']),runner.digest(baseline),runner.digest(candidate),
-        identity(path.parent,source['tasks'],source['grader_bundles']),args.image_sha256)
+    declared=args.project_settings['application']['method']
+    spec=_bind_spec(declared,source,path.parent,baseline,candidate,args.image_sha256)
     precision=preflight(spec,trial_limit=trials_left,budget_seconds=data['deadline']-time.monotonic())
     if not precision['execution_allowed'] or precision['status']!='feasible':
         return dict(status='inconclusive',reason='precision_target_infeasible',precision_preflight=precision)
@@ -328,13 +325,23 @@ def prepare_final(session,plan,baseline,candidate,client,backend,*,trials_left):
     source.update(experiment=spec.to_dict(),workflow_request_sha256=hashed(request),
         workflow_bundles=dict(baseline=bundle_binding(baseline,data['deadline']),candidate=bundle_binding(candidate,data['deadline'])),
         no_nested_agents=True)
-    for task in source['tasks']:
-        bundle=path.parent/source['grader_bundles'][task['id']]['path']
-        task['grader']=['/usr/bin/python3',str(bundle/'grade.py.txt'),'{workspace}',str(bundle/'expected.json')]
     bound=path.parent/'bound-manifest.json';write_bytes(bound,encoded(source))
     data.update(phase='final_prepared',plan=plan,scope=scope,client=client,baseline=Path(baseline),candidate=Path(candidate),
         manifest=bound,manifest_sha256=record(bound,1024*1024)[1],spec=spec,request_path=request_path,precision=precision)
     return None
+
+
+def _bind_spec(declared,source,root,baseline,candidate,image):
+    """Pin the exact materialized native grader commands, including their interpreter."""
+    from .evaluation.integrity import contained
+    from .evaluation.oracle import identity
+    from .cli import evaluator
+    for task in source['tasks']:
+        bundle=contained(root,source['grader_bundles'][task['id']]['path'])
+        task['grader']=['/usr/bin/python3',str(bundle/'grade.py.txt'),'{workspace}',str(bundle/'expected.json')]
+    runner=evaluator()
+    return _spec(declared,((t['id'],t['root'],t['family']) for t in source['tasks']),runner.digest(baseline),runner.digest(candidate),
+        identity(root,source['tasks'],source['grader_bundles']),image)
 
 
 def _final_admission(session,domain,manifest,baseline,candidate):

@@ -29,6 +29,23 @@ def settings():
 
 
 class ConditionalConfigurationTests(unittest.TestCase):
+    def test_frozen_oracle_pins_actual_native_interpreter_before_spec_construction(self):
+        from agent_harness_lab.evaluation.bank_tools import export_manifest
+        from agent_harness_lab.evaluation.oracle import identity
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);source=export_manifest(config.starter(),root/'bank',max_trials=4,task_ids=['regression','tool-recovery'])
+            for version in ('baseline','candidate'):
+                (root/version).mkdir();(root/version/'AGENTS.md').write_text('Synthetic '+version)
+            families={task['family'] for task in source['tasks']}
+            declared=dict(application()['method'],max_trials=4,family_weights={name:1/len(families) for name in families})
+            # An exported host interpreter is a real input to the oracle identity.
+            for task in source['tasks']:task['grader'][0]='/synthetic/source/python'
+            before=identity(root/'bank',source['tasks'],source['grader_bundles'])
+            spec=application_protocol._bind_spec(declared,source,root/'bank',root/'baseline',root/'candidate','d'*64)
+            self.assertNotEqual(spec.grader_hash,before)
+            self.assertTrue(all(task['grader'][0]=='/usr/bin/python3' for task in source['tasks']))
+            self.assertEqual(spec.grader_hash,identity(root/'bank',source['tasks'],source['grader_bundles']))
+
     def test_additive_schema_two_accepts_only_the_explicit_bounded_policy(self):
         value=config.prepare(settings())
         self.assertEqual(value['schema_version'],2);self.assertEqual(value['application'],application())
