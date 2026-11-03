@@ -1,0 +1,148 @@
+"""Synthetic public repair controls for interruption and last-moment custody."""
+from contextlib import redirect_stderr
+import io
+import json
+import multiprocessing
+import unittest
+from unittest.mock import patch
+
+from agent_harness_lab import config, one_call, workflow
+from agent_harness_lab.promotion.journal import Journal
+if __package__:
+    from . import test_one_call as fixtures
+else:
+    import test_one_call as fixtures
+
+
+class OneCallCustodyTests(unittest.TestCase):
+    def setUp(self):
+        fixtures.OneCallTests.setUp(self)
+
+    invoke = fixtures.OneCallTests.invoke
+
+    def invoke_interrupted(self):
+        try:
+            return self.invoke('--repair-contracts')
+        except KeyboardInterrupt:
+            self.fail('Public repair leaked interruption instead of persisting its result')
+
+    def run_record(self):
+        paths = list((self.root/'state/runs').rglob('workflow.json'))
+        self.assertEqual(len(paths), 1)
+        return json.loads(paths[0].read_bytes())
+
+    def assert_unapplied(self, status, *, prepared):
+        self.assertEqual(self.skill.read_bytes(), b'\xef\xbb\xbf'+self.valid)
+        self.assertEqual(self.skill.stat().st_mode & 0o777, 0o640)
+        result = self.run_record()
+        self.assertEqual(result['status'], status)
+        self.assertEqual(result['changed_files'], [])
+        records = list((self.root/'state/promotions').rglob('*.json'))
+        self.assertEqual(len(records), int(prepared))
+        for path in records:
+            record = json.loads(path.read_bytes())
+            self.assertEqual(record['status'], 'prepared')
+            self.assertFalse((path.parent/'active.json').exists())
+
+    def test_configuration_created_during_journal_preparation_prevents_application(self):
+        original = Journal.prepare
+        def changed(journal, *args, **kwargs):
+            record = original(journal, *args, **kwargs)
+            settings = config.defaults()
+            settings['harness_paths'] = ['.agents/skills/example/SKILL.md']
+            config.create(self.project, settings)
+            return record
+        with patch.object(Journal, 'prepare', changed):
+            try:
+                code, _ = self.invoke('--repair-contracts')
+            except SystemExit as exc:
+                code = exc.code
+        self.assertEqual(code, 2)
+        self.assert_unapplied('invalid_input', prepared=True)
+
+    def test_deadline_elapsed_during_journal_preparation_prevents_application(self):
+        original = Journal.prepare
+        now = [0]
+        def elapsed(journal, *args, **kwargs):
+            record = original(journal, *args, **kwargs)
+            now[0] = 2
+            return record
+        with patch.object(one_call.time, 'monotonic', side_effect=lambda: now[0]), \
+                patch.object(Journal, 'prepare', elapsed):
+            code, result = self.invoke('--repair-contracts', '--timeout', '1')
+        self.assertEqual(code, 1)
+        self.assertEqual(result['status'], 'budget_exhausted')
+        self.assert_unapplied('budget_exhausted', prepared=True)
+
+    def test_interrupt_after_journal_preparation_is_persisted_without_target_writes(self):
+        original = Journal.prepare
+        def interrupted(journal, *args, **kwargs):
+            original(journal, *args, **kwargs)
+            raise KeyboardInterrupt()
+        with patch.object(Journal, 'prepare', interrupted):
+            code, result = self.invoke_interrupted()
+        self.assertEqual(code, 1)
+        self.assertEqual(result['status'], 'interrupted')
+        self.assert_unapplied('interrupted', prepared=True)
+
+    def test_interrupt_after_snapshot_is_persisted_without_target_writes(self):
+        original = workflow.snapshot
+        def interrupted(*args, **kwargs):
+            original(*args, **kwargs)
+            raise KeyboardInterrupt()
+        with patch.object(workflow, 'snapshot', interrupted):
+            code, result = self.invoke_interrupted()
+        self.assertEqual(code, 1)
+        self.assertEqual(result['status'], 'interrupted')
+        self.assert_unapplied('interrupted', prepared=False)
+
+    def test_forked_public_repair_cannot_overlap_the_parent_transaction(self):
+        if 'fork' not in multiprocessing.get_all_start_methods():
+            self.skipTest('fork unavailable')
+        context = multiprocessing.get_context('fork')
+        original = Journal.prepare
+        before = self.skill.read_bytes()
+        def competing(journal, *args, **kwargs):
+            reader, writer = context.Pipe(duplex=False)
+            def child():
+                reader.close()
+                stderr = io.StringIO()
+                try:
+                    with patch.object(Journal, 'prepare', original), redirect_stderr(stderr):
+                        try:
+                            code, _ = self.invoke('--repair-contracts')
+                        except SystemExit as exc:
+                            code = exc.code
+                    writer.send(dict(code=code, error=stderr.getvalue(), unchanged=self.skill.read_bytes() == before))
+                finally:
+                    writer.close()
+            process = context.Process(target=child)
+            process.start()
+            writer.close()
+            try:
+                process.join(timeout=5)
+                self.assertFalse(process.is_alive(), 'Competing public repair did not terminate')
+                self.assertEqual(process.exitcode, 0)
+                self.assertTrue(reader.poll(1), 'Competing repair returned no result')
+                outcome = reader.recv()
+                self.assertEqual(outcome['code'], 2)
+                self.assertIn('Another run or stale lock exists', outcome['error'])
+                self.assertTrue(outcome['unchanged'])
+                self.assertEqual(self.skill.read_bytes(), before)
+            finally:
+                if process.is_alive():
+                    process.terminate()
+                    process.join(timeout=5)
+                reader.close()
+                process.close()
+            return original(journal, *args, **kwargs)
+        with patch.object(Journal, 'prepare', competing):
+            code, result = self.invoke('--repair-contracts')
+        self.assertEqual(code, 0)
+        self.assertEqual(result['status'], 'applied')
+        self.assertEqual(self.skill.read_bytes(), self.valid)
+        self.assertEqual(self.run_record()['status'], 'applied')
+        journal = Journal(self.project, result['journal'])
+        self.assertEqual(journal.active, result['deployment'])
+        self.assertEqual(journal.load(journal.active)['status'], 'committed')
+        self.assertEqual(len(list(journal.folder.glob('*.json'))), 2)

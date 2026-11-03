@@ -19,6 +19,14 @@ tasks:
     desc: Run evaluator unittest cases
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s skills/harness-evaluation/scripts -p "test_*.py"'
+  test:workflow:one-call:
+    desc: Verify public configured improvement, deterministic repair and rollback
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_one_call*.py" -v'
   test:release:update:
     desc: Verify release installer transactions and installed updater ownership offline
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -379,6 +387,11 @@ tasks:
       AHL_EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_installed_layout.py"'
+      - task: test:workflow:one-call
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_bank_corrections.py"'
       - task: test:evaluation:requalification
         vars:
