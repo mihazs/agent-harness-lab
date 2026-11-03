@@ -210,6 +210,15 @@ class _Session:
 _SESSIONS=weakref.WeakKeyDictionary()
 
 
+def _running_authorization(data):
+    case,inputs,events=opened(data['store'],data['authorization_id'])
+    event,pin=events[-1]
+    if (pin!=data['running_head'] or event['kind']!='application_started' or event['state']!='application_running'
+            or event['payload']!={'binding_sha256':hashed(data['binding'])}):
+        raise ValueError('application running authorization changed or was retired')
+    return case,inputs,events
+
+
 def _owned(session):
     data=_SESSIONS.get(session) if type(session) is _Session else None
     if data is None or data['pid']!=os.getpid() or data['closed'] or time.monotonic()>=data['deadline']:
@@ -218,6 +227,7 @@ def _owned(session):
     if (hashed(args.project_settings)!=hashed(data['settings']) or args.timeout!=data['timeout']
             or args.trial_limit!=data['trial_limit'] or args.configuration_sha256!=data['binding']['configuration_sha256']):
         raise ValueError('application session configuration or budget changed')
+    if data['phase']!='applied':_running_authorization(data)
     return data
 
 
@@ -232,6 +242,7 @@ def begin(args,*,deadline,backend):
         case,inputs,events,current=_approved(store,application['authorization_id'],args,deadline,state='application_authorized')
         # Journal intent precedes external work. A failed or interrupted begin is not retryable.
         store.append(case,events,'application_started','application_running',dict(binding_sha256=hashed(current)))
+        running_head=events[-1][1]
     from .evaluation import bank_requalification,closed_inputs
     domain=None
     try:
@@ -248,7 +259,7 @@ def begin(args,*,deadline,backend):
         args.evaluation_store=Path(checked['history_store']);args._closed_input_domain=domain
         session=_Session();_SESSIONS[session]=dict(pid=os.getpid(),args=args,store=store,
             authorization_id=application['authorization_id'],deadline=deadline,domain=domain,backend=backend,
-            binding=current,settings=deepcopy(settings),timeout=args.timeout,trial_limit=args.trial_limit,
+            binding=current,running_head=running_head,settings=deepcopy(settings),timeout=args.timeout,trial_limit=args.trial_limit,
             closed=False,phase='construction',plan=None,final_run=None)
         history=closed_inputs.owned(domain)['history'];history._application_session=session
         _SESSIONS[session]['history']=history
@@ -259,9 +270,10 @@ def begin(args,*,deadline,backend):
 
 
 def close(session):
-    data=_SESSIONS.get(session) if type(session) is _Session else None
-    if data is None or data['pid']!=os.getpid():raise ValueError('owned application session required for cleanup')
-    if data['closed']:return
+    if type(session) is not _Session:raise ValueError('owned application session required for cleanup')
+    data=_SESSIONS.get(session)
+    if data is None:return
+    if data['pid']!=os.getpid():raise ValueError('owned application session required for cleanup')
     from .evaluation import closed_inputs
     try:
         closed_inputs.close(data['domain'])
@@ -270,7 +282,14 @@ def close(session):
                 case,_,events=opened(data['store'],data['authorization_id'])
                 if events[-1][0]['state']=='application_running':
                     data['store'].append(case,events,'application_finished','application_not_applied',dict(reason='invocation_closed_without_application'))
-    finally:data['closed']=True
+    finally:
+        data['closed']=True
+        history=data.get('history')
+        if history is not None and getattr(history,'_application_session',None) is session:del history._application_session
+        for name,registry,kind in (('grant',_GRANTS,_Grant),('final_run',_FINAL_RUNS,_FinalRun)):
+            handle=data.get(name);registered=registry.get(handle) if type(handle) is kind else None
+            if registered is not None and registered['session'] is session:registry.pop(handle,None)
+        if _SESSIONS.get(session) is data:_SESSIONS.pop(session,None)
 
 
 def prepare_bank(session,output):
@@ -554,6 +573,7 @@ def execute(session):
     # Recheck every input before minting the one-use target capability.
     with data['store'].locked():
         _,_,events,_=_approved(data['store'],data['authorization_id'],args,deadline,state='application_running')
+        _running_authorization(data)
     authentication=next(event['payload']['authentication']['record_sha256'] for event,_ in events if event['kind']=='application_authorized')
     from .evaluation import closed_inputs
     from .evaluation.working_state import Snapshot

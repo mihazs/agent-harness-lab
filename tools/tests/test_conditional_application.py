@@ -1,9 +1,12 @@
 """Conditional application selection never grants authority from configuration."""
 from copy import deepcopy
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from agent_harness_lab import config
 from agent_harness_lab import conditional_application as application_protocol
@@ -138,6 +141,57 @@ class AuthorizationLocatorTests(unittest.TestCase):
             path=store.case(created['authorization_id'])/'inputs.json';value=json.loads(path.read_text())
             value['project']=str(root/'different');path.write_text(json.dumps(value))
             with self.assertRaises(ValueError):store.show(created['authorization_id'])
+
+
+class SessionCleanupTests(unittest.TestCase):
+    """Unissued placeholders test lifecycle cleanup, never execution or grant authority."""
+    def registered(self):
+        from agent_harness_lab.evaluation.closed_inputs import ClosedDomain
+        temporary=tempfile.TemporaryDirectory();self.addCleanup(temporary.cleanup)
+        root=Path(temporary.name);project=root/'project';project.mkdir();(project/'AGENTS.md').write_text('Synthetic baseline\n')
+        store=ReviewStore(root/'review');authorization=application_protocol.allocate(store,project)['authorization_id']
+        session=application_protocol._Session();grant=application_protocol._Grant();final=application_protocol._FinalRun()
+        history=SimpleNamespace(_application_session=session)
+        data=dict(pid=os.getpid(),deadline=0,closed=False,phase='construction',domain=ClosedDomain(),
+            store=store,authorization_id=authorization,history=history,grant=grant,final_run=final)
+        for handle,registry,value in ((session,application_protocol._SESSIONS,data),
+                (grant,application_protocol._GRANTS,dict(session=session)),
+                (final,application_protocol._FINAL_RUNS,dict(session=session))):
+            registry[handle]=value;self.addCleanup(registry.pop,handle,None)
+        return session,data,grant,final
+
+    def assert_detached(self,session,data,grant,final):
+        self.assertNotIn(session,application_protocol._SESSIONS)
+        self.assertNotIn(grant,application_protocol._GRANTS)
+        self.assertNotIn(final,application_protocol._FINAL_RUNS)
+        self.assertFalse(hasattr(data['history'],'_application_session'));self.assertTrue(data['closed'])
+        application_protocol.close(session)
+
+    def test_expired_session_detaches_private_cycles_and_close_is_idempotent(self):
+        session,data,grant,final=self.registered()
+        application_protocol.close(session);self.assert_detached(session,data,grant,final)
+
+    def test_cleanup_finally_detaches_after_domain_or_journal_error(self):
+        from agent_harness_lab.evaluation import closed_inputs
+        for seam in ('domain','journal'):
+            with self.subTest(seam=seam):
+                session,data,grant,final=self.registered()
+                target=patch.object(closed_inputs,'close',side_effect=OSError('synthetic')) if seam=='domain' else \
+                    patch.object(application_protocol,'opened',side_effect=OSError('synthetic'))
+                with target,self.assertRaises(OSError):application_protocol.close(session)
+                self.assert_detached(session,data,grant,final)
+
+    def test_foreign_pid_or_foreign_backrefs_are_not_cleaned(self):
+        session,data,grant,final=self.registered();data['pid']=-1
+        with self.assertRaises(ValueError):application_protocol.close(session)
+        self.assertIn(session,application_protocol._SESSIONS);self.assertIn(grant,application_protocol._GRANTS)
+        data['pid']=os.getpid();other=application_protocol._Session()
+        data['history']._application_session=other
+        application_protocol._GRANTS[grant]['session']=other
+        application_protocol._FINAL_RUNS[final]['session']=other
+        application_protocol.close(session)
+        self.assertIs(data['history']._application_session,other)
+        self.assertIn(grant,application_protocol._GRANTS);self.assertIn(final,application_protocol._FINAL_RUNS)
 
 
 if __name__=='__main__':unittest.main()

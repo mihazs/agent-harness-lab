@@ -92,6 +92,26 @@ class ConditionalApplicationAuthorityTests(unittest.TestCase):
         with self.assertRaises(ValueError):application._bank_guard(application._Grant(), None)
         self.assertEqual((self.project/'AGENTS.md').read_text(), 'Synthetic baseline\n')
 
+    def test_running_head_rejects_public_retirement_without_issuing_authority(self):
+        self.invoke('authorize',self.authorization,str(self.request),str(self.sign()))
+        settings,pin=config.load(self.project/'ahl.json')
+        options=config.execution_options(self.project,settings,{},set())
+        binding=application.binding(self.project,settings,pin,options)
+        before=(len(application._SESSIONS),len(application._FINAL_RUNS),len(application._GRANTS))
+        with self.store.locked():
+            case,_,events=application.opened(self.store,self.authorization)
+            self.store.append(case,events,'application_started','application_running',
+                dict(binding_sha256=application.hashed(binding)))
+        data=dict(store=self.store,authorization_id=self.authorization,binding=binding,running_head=events[-1][1])
+        self.assertEqual(application._running_authorization(data)[2][-1][1],data['running_head'])
+        with self.assertRaisesRegex(ValueError,'running authorization changed'):
+            application._running_authorization({**data,'running_head':'0'*64})
+        self.invoke('retire',self.authorization)
+        with self.assertRaisesRegex(ValueError,'running authorization changed'):
+            application._running_authorization(data)
+        self.assertEqual(before,(len(application._SESSIONS),len(application._FINAL_RUNS),len(application._GRANTS)))
+        self.assertEqual((self.project/'AGENTS.md').read_text(),'Synthetic baseline\n')
+
     def test_signature_for_another_namespace_cannot_append_an_approval(self):
         self.rejected(self.sign('ahl.artifact-review.v1'), 'signature is invalid')
 
