@@ -56,6 +56,8 @@ class ConditionalApplicationKernelTests(kernel.KernelFixture):
     FINAL_TASKS={'regression', 'tool-recovery'}
     FEASIBLE=False
     WORKER=EXECUTOR
+    APPLICATION_POLICY=application.POLICY
+    INITIAL_INSTRUCTION=b'bad\n'
 
     def sign(self, path, namespace):
         subprocess.run(['/usr/bin/ssh-keygen', '-Y', 'sign', '-f', str(self.key), '-n', namespace, str(path)],
@@ -118,7 +120,7 @@ class ConditionalApplicationKernelTests(kernel.KernelFixture):
             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=5)
         self.public_key=' '.join(self.key.with_suffix('.pub').read_text().split()[:2])
         self.store=ReviewStore(self.root/'review');case_id=self.reviewed_bank()
-        self.project=self.root/'project';self.project.mkdir();(self.project/'AGENTS.md').write_text('bad\n')
+        self.project=self.root/'project';self.project.mkdir();(self.project/'AGENTS.md').write_bytes(self.INITIAL_INSTRUCTION)
         authorization=application.allocate(self.store, self.project)['authorization_id'];self.authorization=authorization
         locator=renewal.allocate_delegation(self.store)
         credential=self.root/'synthetic-unused-token';credential.write_text('SYNTHETIC_UNUSED');credential.chmod(0o600)
@@ -129,7 +131,7 @@ class ConditionalApplicationKernelTests(kernel.KernelFixture):
         value=config.prepare(dict(schema_version=2, profile='cooperative', recommendation_only=False, harness_paths=['AGENTS.md'],
             runtime=dict(name='responses', inference_settings=str(self.settings), cgroup_root=str(self.cgroup_root),
                 image_root=str(self.runtime), image_sha256=self.image, disk_bytes=64*1024*1024, permission_audit='permission-results-v1'),
-            limits=dict(seconds=150, trials=self.TRIAL_LIMIT), application=dict(policy=application.POLICY, review_store=str(self.store.root),
+            limits=dict(seconds=150, trials=self.TRIAL_LIMIT), application=dict(policy=self.APPLICATION_POLICY, review_store=str(self.store.root),
                 authorization_id=authorization, bank_case_id=case_id, delegation_request=locator['request_path'],
                 delegation_signature=locator['signature_path'], method=self.FINAL_METHOD)))
         config.create(self.project, value)

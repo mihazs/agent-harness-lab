@@ -2,6 +2,39 @@ version: '3'
 vars:
   PYTHON: '{{default "python3" .PYTHON}}'
 tasks:
+  test:application:removal:design:
+    desc: Check prospective candidate-removal worker and predeclared response controls without native execution
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_conditional_removal_native.py" -k RemovalDesignTests -v'
+  test:application:removal:kernel:
+    desc: Run positive removal and useful-rule regression separately with unchanged native scope limits
+    vars:
+      REMOVAL_SCOPE_ID:
+        sh: 'date +%s%N'
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    cmds:
+      - task: test:application:removal:design
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+      - for:
+          - test_removal_applies_absence_consumes_replay_and_rollback_restores
+          - test_useful_rule_removal_regresses_same_final_and_keeps_target
+        task: test:evaluation:bank-requalification:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          SCOPE_ID: '{{.REMOVAL_SCOPE_ID}}-{{.ITEM}}'
+          TEST_NAME: conditional_removal_native
+          KERNEL_TEST_FILTER: '{{.ITEM}}'
   test:configuration:delegation-packet:
     desc: Verify unsigned configured packet preparation without inference or signing
     env:
