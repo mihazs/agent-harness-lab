@@ -376,6 +376,10 @@ def _improve(args):
             result=dict(status='blocked',reason=repeated.blocked_reason or 'precision_target_infeasible',output=str(output),changed_files=[],
                 precision_preflight=repeated.precision,automatic_promotion=False,publication_allowed=False)
             write_json(output/'workflow.json',result);return result
+    application_session=getattr(args,'_application_session',None)
+    if application_session is not None:
+        from .conditional_application import prepare_bank
+        prepare_bank(application_session,output)
     data = evidence(args, output)
     grading = None
     permission_audit=getattr(args,'permission_audit',None)

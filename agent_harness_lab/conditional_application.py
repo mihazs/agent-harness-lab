@@ -243,6 +243,94 @@ def close(session):
     closed_inputs.close(data['domain']);data['closed']=True
 
 
+def prepare_bank(session,output):
+    """Freeze reviewed final inputs before any development/model exposure."""
+    data=_owned(session)
+    if data['phase']!='construction' or 'bank_manifest' in data:raise ValueError('final bank already prepared')
+    from .evaluation.bank_tools import export_manifest
+    store=data['store'];application=data['args'].project_settings['application']
+    with store.locked():
+        case,inputs,events=store.opened(application['bank_case_id'])
+        qualified=next((event for event,_ in events if event['kind']=='bank_qualified'),None)
+        if qualified is None:raise ValueError('reviewed final bank required')
+        bank=store.root/'revisions'/qualified['payload']['revision_sha256']/'bank.json'
+        manifest=export_manifest(bank,Path(output)/'conditional-final-bank',max_trials=application['method']['max_trials'])
+    path=Path(output)/'conditional-final-bank'/'manifest.json'
+    data['bank_manifest']=path;data['bank_manifest_sha256']=record(path,1024*1024)[1]
+    data['bank_export']=deepcopy(manifest)
+
+
+def prepare_final(session,plan,baseline,candidate,client,backend,*,trials_left):
+    """Bind the actual owned proposal and the complete predeclared fixed schedule."""
+    data=_owned(session);args=data['args']
+    if data['phase']!='construction' or type(plan) is not HarnessChangePlan or data['backend'] is not backend:
+        raise ValueError('owned construction phase and immutable plan required')
+    operations=plan.operations
+    if (len(operations)!=1 or operations[0].path!='AGENTS.md' or operations[0].action!='update'
+            or operations[0].facets!=('instruction',) or plan.unresolved_operations):
+        raise ValueError('conditional application supports one root instruction update only')
+    from .workflow import candidate_states
+    original={row.path:(row.sha256,row.mode) for row in plan.before}
+    plan.validate_inventories(candidate_states(baseline,original),candidate_states(candidate,original))
+    if set(original)!={'AGENTS.md'} or any(row.mode&0o111 for row in (*plan.before,*plan.after)):
+        raise ValueError('conditional instruction inventory changed')
+    from .promotion.prerequisites import current
+    from .evaluation import closed_inputs
+    from .evaluation.construction_access import _scope
+    scope=current();access=_scope(args._construction_access)
+    if scope is None or not scope._valid() or access['client'] is not client or access['backend'] is not backend:
+        raise ValueError('same live construction, client and runtime required')
+    closed_inputs.check(data['domain'])
+    with data['store'].locked():_approved(data['store'],data['authorization_id'],args,data['deadline'],state='application_running')
+    path=data['bank_manifest'];source,pin=record(path,1024*1024)
+    if pin!=data['bank_manifest_sha256'] or source!=data['bank_export']:raise ValueError('frozen final bank changed')
+    from .evaluation.plan import ExperimentSpec
+    from .evaluation.oracle import identity
+    from .evaluation.comparison_custody import bundle_binding
+    from .evaluation.precision import preflight
+    from .cli import evaluator
+    declared=args.project_settings['application']['method'];runner=evaluator()
+    spec=ExperimentSpec(declared['experiment_id'],tuple((t['id'],t['root'],t['family']) for t in source['tasks']),
+        declared['repeats'],declared['seed'],declared['max_trials'],declared['min_roots'],
+        declared['effect_margin'],declared['family_margin'],declared['alpha'],tuple(sorted(declared['family_weights'].items())),
+        runner.digest(baseline),runner.digest(candidate),identity(path.parent,source['tasks'],source['grader_bundles']),args.image_sha256,
+        profile='certification',partition='certification',precision_half_width=declared['precision_half_width'])
+    spec.validate();precision=preflight(spec,trial_limit=trials_left,budget_seconds=data['deadline']-time.monotonic())
+    if not precision['execution_allowed']:return dict(status='inconclusive',reason='precision_target_infeasible',precision_preflight=precision)
+    request=dict(schema_version=1,profile=POLICY,authorization_id=data['authorization_id'],
+        plan_sha256=plan.sha256,configuration_sha256=args.configuration_sha256,method=declared)
+    request_path=path.parent/'application-request.json';write_bytes(request_path,encoded(request))
+    source.update(experiment=spec.to_dict(),workflow_request_sha256=hashed(request),
+        workflow_bundles=dict(baseline=bundle_binding(baseline,data['deadline']),candidate=bundle_binding(candidate,data['deadline'])),
+        no_nested_agents=True)
+    bound=path.parent/'bound-manifest.json';write_bytes(bound,encoded(source))
+    data.update(phase='final_prepared',plan=plan,scope=scope,client=client,baseline=Path(baseline),candidate=Path(candidate),
+        manifest=bound,manifest_sha256=record(bound,1024*1024)[1],spec=spec,request_path=request_path,precision=precision)
+    return None
+
+
+def _final_admission(session,domain,manifest,baseline,candidate):
+    data=_owned(session);args=data['args']
+    if (data['domain'] is not domain or data['phase'] not in ('final_prepared','final_reserved','final_running')
+            or (Path(manifest),Path(baseline),Path(candidate))!=(data['manifest'],data['baseline'],data['candidate'])
+            or record(manifest,1024*1024)[1]!=data['manifest_sha256']):
+        raise ValueError('exact owned fixed final application required')
+    from .promotion.prerequisites import current
+    if current() is not data['scope'] or not data['scope']._valid():raise ValueError('current application Scope required')
+    from .one_call import check_configuration
+    check_configuration(args)
+    _approved(data['store'],data['authorization_id'],args,data['deadline'],state='application_running')
+    from .evaluation.comparison_custody import bundle_binding
+    source,_=record(manifest,1024*1024)
+    from .evaluation.plan import ExperimentSpec
+    if (ExperimentSpec.parse(source['experiment']).digest!=data['spec'].digest or source['workflow_bundles']!=dict(
+            baseline=bundle_binding(baseline,data['deadline']),candidate=bundle_binding(candidate,data['deadline']))):
+        raise ValueError('application frozen schedule or harness changed')
+    if data['client'].pending or data['client'].poisoned:raise ValueError('application provider attempt unresolved')
+    return dict(plan_sha256=data['plan'].sha256,experiment_sha256=data['spec'].digest,
+        configuration_sha256=args.configuration_sha256,policy=POLICY)
+
+
 def main(argv):
     """Explicit host authorization setup; init and doctor never enter this path."""
     import argparse
