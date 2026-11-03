@@ -404,8 +404,9 @@ class TenRootConditionalApplicationKernelTests(ConditionalApplicationKernelTests
         observed=self.target() # Read bytes/mode even when the public endpoint rejects the invocation.
         self.assertEqual(tuple(map(len,registries)),counts)
         results=list((self.root/'state').rglob('workflow.json'))
-        result=json.loads(output.getvalue()) if output.getvalue().strip() else json.loads(results[-1].read_bytes()) if results else None
-        return observed,code,result,errors.getvalue()
+        public_result=json.loads(output.getvalue()) if output.getvalue().strip() else None
+        persisted_result=json.loads(results[-1].read_bytes()) if results else None
+        return observed,code,public_result,persisted_result,errors.getvalue()
 
     def assert_spent(self,expected_calls,*,state='application_not_applied',journal=None):
         self.assertEqual(len(self.calls),expected_calls)
@@ -451,7 +452,7 @@ class TenRootConditionalApplicationKernelTests(ConditionalApplicationKernelTests
 
     def test_negative_no_change_consumes_intent_without_final_or_mutation(self):
         self.negative='no_change';self.setup_authorities();before=self.target()
-        observed,code,result,_=self.invoke_negative()
+        observed,code,result,_,_=self.invoke_negative()
         self.assertEqual(observed,before)
         self.assertEqual((code,result['status']),(0,'no_change'),result)
         self.assert_spent(2)
@@ -459,7 +460,7 @@ class TenRootConditionalApplicationKernelTests(ConditionalApplicationKernelTests
 
     def test_negative_equal_final_outcomes_do_not_support_application(self):
         self.negative='insufficient';self.setup_authorities();before=self.target()
-        observed,code,result,_=self.invoke_negative()
+        observed,code,result,_,_=self.invoke_negative()
         self.assertEqual(observed,before)
         self.assertEqual((code,result['status'],result['reason']),(3,'inconclusive','conditional_final_not_supported'),result)
         self.assertNotEqual(result['analysis']['status'],'supported')
@@ -467,7 +468,7 @@ class TenRootConditionalApplicationKernelTests(ConditionalApplicationKernelTests
 
     def test_negative_failed_final_outcomes_do_not_support_application(self):
         self.negative='failed_final';self.setup_authorities();before=self.target()
-        observed,code,result,_=self.invoke_negative()
+        observed,code,result,_,_=self.invoke_negative()
         self.assertEqual(observed,before)
         self.assertEqual((code,result['status'],result['reason']),(3,'inconclusive','conditional_final_not_supported'),result)
         self.assertNotEqual(result['analysis']['status'],'supported')
@@ -475,18 +476,19 @@ class TenRootConditionalApplicationKernelTests(ConditionalApplicationKernelTests
 
     def test_negative_invalid_authored_grader_blocks_before_final(self):
         self.negative='invalid_grader';self.setup_authorities();before=self.target()
-        observed,code,result,error=self.invoke_negative()
+        observed,code,result,persisted,error=self.invoke_negative()
         self.assertEqual(observed,before)
-        self.assertEqual((code,result['status'],result['error_type']),(2,'invalid_input','ValueError'),result)
+        self.assertEqual(code,2);self.assertIsNone(result)
+        self.assertEqual((persisted['status'],persisted['error_type']),('invalid_input','ValueError'),persisted)
         self.assertIn('Grader self-test rejected',error)
         self.assert_spent(4)
         self.assertEqual(self.reservations(),{})
 
     def test_negative_unavailable_runtime_does_not_consume_authorization(self):
         self.setup_authorities();before=self.target();self.runtime.rename(self.root/'unavailable-runtime')
-        observed,code,result,error=self.invoke_negative()
+        observed,code,result,persisted,error=self.invoke_negative()
         self.assertEqual(observed,before)
-        self.assertEqual(code,2);self.assertIsNone(result)
+        self.assertEqual(code,2);self.assertIsNone(result);self.assertIsNone(persisted)
         self.assertIn('controlled Responses reference is unavailable',error)
         self.assert_spent(0,state='application_authorized')
 
@@ -494,7 +496,7 @@ class TenRootConditionalApplicationKernelTests(ConditionalApplicationKernelTests
         self.setup_authorities();before=self.target()
         def interrupted(*args):
             self.calls.append(json.loads(args[1]));raise KeyboardInterrupt
-        observed,code,result,_=self.invoke_negative(fault=interrupted)
+        observed,code,result,_,_=self.invoke_negative(fault=interrupted)
         self.assertEqual(observed,before)
         self.assertEqual((code,result['status']),(1,'interrupted'),result)
         self.assert_spent(1)
@@ -503,7 +505,7 @@ class TenRootConditionalApplicationKernelTests(ConditionalApplicationKernelTests
 
     def test_negative_signed_request_budget_exhausts_without_reset_or_replay(self):
         self.setup_authorities(max_requests=1);before=self.target()
-        observed,code,result,_=self.invoke_negative()
+        observed,code,result,_,_=self.invoke_negative()
         self.assertEqual(observed,before)
         self.assertEqual((code,result['status'],result['reason']),(1,'budget_exhausted','inference_request_count_exhausted'),result)
         self.assert_spent(1)
@@ -516,7 +518,7 @@ class TenRootConditionalApplicationKernelTests(ConditionalApplicationKernelTests
             if not written:
                 written.append(self.target());raise KeyboardInterrupt
             return value
-        with patch.object(Journal,'_write_snapshot',interrupted):observed,code,result,_=self.invoke_negative()
+        with patch.object(Journal,'_write_snapshot',interrupted):observed,code,result,_,_=self.invoke_negative()
         self.assertEqual(observed,before)
         self.assertEqual(written,[(b'good\nSYNTHETIC_CANDIDATE_SECRET\n',before[1])])
         self.assertEqual((code,result['status']),(1,'interrupted'),result)
@@ -529,9 +531,10 @@ class TenRootConditionalApplicationKernelTests(ConditionalApplicationKernelTests
         def changed(journal,*args,**kwargs):
             (self.project/'AGENTS.md').write_text('synthetic foreign edit\n')
             return execute(journal,*args,**kwargs)
-        with patch.object(Journal,'_execute',changed):observed,code,result,error=self.invoke_negative()
+        with patch.object(Journal,'_execute',changed):observed,code,result,persisted,error=self.invoke_negative()
         self.assertEqual(observed,(b'synthetic foreign edit\n',before[1]))
-        self.assertEqual((code,result['status'],result['error_type']),(2,'invalid_input','ValueError'),result)
+        self.assertEqual(code,2);self.assertIsNone(result)
+        self.assertEqual((persisted['status'],persisted['error_type']),('invalid_input','ValueError'),persisted)
         self.assertIn('intervening edit/mode/path conflict',error)
         self.assert_spent(56,journal='prepared');self.assert_final_spent()
         self.assertEqual(self.target(),observed)
@@ -543,10 +546,11 @@ class TenRootConditionalApplicationKernelTests(ConditionalApplicationKernelTests
             with redirect_stdout(io.StringIO()):
                 retired.append(main(['application-review','--store',str(self.store.root),'retire',self.authorization]))
             return execute(journal,*args,**kwargs)
-        with patch.object(Journal,'_execute',revoke):observed,code,result,error=self.invoke_negative()
+        with patch.object(Journal,'_execute',revoke):observed,code,result,persisted,error=self.invoke_negative()
         self.assertEqual(observed,before)
         self.assertEqual(retired,[0])
-        self.assertEqual((code,result['status'],result['error_type']),(2,'invalid_input','ValueError'),result)
+        self.assertEqual(code,2);self.assertIsNone(result)
+        self.assertEqual((persisted['status'],persisted['error_type']),('invalid_input','ValueError'),persisted)
         self.assertIn('application running authorization changed or was retired',error)
         records=self.assert_spent(56,state='retired',journal='conflict');self.assert_final_spent()
         self.assertEqual((records[0]['restoration'],records[0]['remaining_changes']),('restored',[]))

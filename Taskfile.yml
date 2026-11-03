@@ -65,71 +65,30 @@ tasks:
     env:
       PYTHONDONTWRITEBYTECODE: '1'
     cmds:
-      - task: test:application:conditional:kernel
+      - task: test:application:conditional:design
         vars:
           PYTHON: '{{.PYTHON}}'
           LAYOUT_DIR: '{{.LAYOUT_DIR}}'
           EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - task: test:application:conditional:kernel
+      - for:
+          - test_plain_improve_consumes_signed_final_then_applies_and_public_rollback_restores
+          - test_negative_no_change_consumes_intent_without_final_or_mutation
+          - test_negative_equal_final_outcomes_do_not_support_application
+          - test_negative_failed_final_outcomes_do_not_support_application
+          - test_negative_invalid_authored_grader_blocks_before_final
+          - test_negative_unavailable_runtime_does_not_consume_authorization
+          - test_negative_interrupted_transport_keeps_spent_request_and_blocks_replay
+          - test_negative_signed_request_budget_exhausts_without_reset_or_replay
+          - test_negative_partial_journal_write_interrupt_restores_owned_target
+          - test_negative_foreign_target_conflict_preserves_foreign_bytes
+          - test_negative_public_retirement_before_mutation_invalidates_grant
+        task: test:evaluation:bank-requalification:kernel
         vars:
           PYTHON: '{{.PYTHON}}'
           LAYOUT_DIR: '{{.LAYOUT_DIR}}'
           EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-          KERNEL_TEST_FILTER: test_negative_no_change_consumes_intent_without_final_or_mutation
-      - task: test:application:conditional:kernel
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-          KERNEL_TEST_FILTER: test_negative_equal_final_outcomes_do_not_support_application
-      - task: test:application:conditional:kernel
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-          KERNEL_TEST_FILTER: test_negative_failed_final_outcomes_do_not_support_application
-      - task: test:application:conditional:kernel
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-          KERNEL_TEST_FILTER: test_negative_invalid_authored_grader_blocks_before_final
-      - task: test:application:conditional:kernel
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-          KERNEL_TEST_FILTER: test_negative_unavailable_runtime_does_not_consume_authorization
-      - task: test:application:conditional:kernel
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-          KERNEL_TEST_FILTER: test_negative_interrupted_transport_keeps_spent_request_and_blocks_replay
-      - task: test:application:conditional:kernel
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-          KERNEL_TEST_FILTER: test_negative_signed_request_budget_exhausts_without_reset_or_replay
-      - task: test:application:conditional:kernel
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-          KERNEL_TEST_FILTER: test_negative_partial_journal_write_interrupt_restores_owned_target
-      - task: test:application:conditional:kernel
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-          KERNEL_TEST_FILTER: test_negative_foreign_target_conflict_preserves_foreign_bytes
-      - task: test:application:conditional:kernel
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-          KERNEL_TEST_FILTER: test_negative_public_retirement_before_mutation_invalidates_grant
+          TEST_NAME: conditional_application_native
+          KERNEL_TEST_FILTER: '{{.ITEM}}'
   test:evaluation:construction-seals:
     desc: Run closed construction custody cases
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
