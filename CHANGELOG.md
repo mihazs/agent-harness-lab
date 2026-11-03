@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.65.0
+
+### Minor Changes
+
+- 1d686ac: Resolve project runtime, harness scope and budgets before improvement or monitoring, and emit private operation-level change plans. Add explicitly requested minimal skill-header BOM repairs with verified journaled application and public rollback. Recheck configuration and deadlines at mutation checkpoints, safely recover interrupted writes, preserve foreign edits, and prevent inherited child cleanup from releasing the parent's project lock. Behavioral promotion and native activation remain unverified.
+
 ## 0.64.0
 
 ### Minor Changes

@@ -58,13 +58,14 @@ def project_lock(project):
         descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
         raise ValueError(f'Another run or stale lock exists: {path}; verify its PID before removing it') from None
-    token = f'{os.getpid()}:{uuid.uuid4().hex}'
+    owner = os.getpid()
+    token = f'{owner}:{uuid.uuid4().hex}'
     with os.fdopen(descriptor, 'w') as stream:
         stream.write(token)
     try:
         yield
     finally:
-        if path.exists() and path.read_text() == token:
+        if os.getpid() == owner and path.exists() and path.read_text() == token:
             path.unlink()
 
 
@@ -106,8 +107,8 @@ def file_state(path):
     return digest, stat.S_IMODE(path.stat().st_mode)
 
 
-def snapshot(project, target):
-    files = [project / name for name in ('AGENTS.md', 'CLAUDE.md') if (project / name).exists()]
+def skill_roots(project):
+    """Discover immediate project-owned skill bundles without following links."""
     for prefix in ('.agents/skills', '.claude/skills', 'skills'):
         folder = project / prefix
         if not folder.is_dir() or any(p.is_symlink() for p in (folder, *folder.parents)
@@ -116,7 +117,17 @@ def snapshot(project, target):
         for skill in folder.iterdir():
             if skill.is_symlink() or not (skill / 'SKILL.md').is_file():
                 continue
+            yield skill
+
+
+def snapshot(project, target, *, allowed_paths=None):
+    if allowed_paths is None:
+        files = [project / name for name in ('AGENTS.md', 'CLAUDE.md') if (project / name).exists()]
+        for skill in skill_roots(project):
             files += [p for p in skill.rglob('*') if p.is_file() and '__pycache__' not in p.parts]
+    else:
+        # Select before opening content, including otherwise unreadable files.
+        files = [project / name for name in allowed_paths if os.path.lexists(project / name)]
     states = {}
     total = 0
     target.mkdir()
@@ -336,7 +347,9 @@ def _improve(args):
     prepare = output / 'preparation'
     prepare.mkdir()
     baseline, candidate = prepare / 'baseline', prepare / 'candidate'
-    original = snapshot(args.project, baseline)
+    from .one_call import allowed_paths, check_configuration, check_scope
+    original = snapshot(args.project, baseline, allowed_paths=allowed_paths(args))
+    candidate_states(baseline, original)
     shutil.copytree(baseline, candidate)
     baseline_hash = runner.digest(baseline)
     agent = args.agent
@@ -368,10 +381,16 @@ def _improve(args):
     result = dict(status='evaluation_failed', output=str(output), changed_files=[], agent=agent)
     protected = {}
     refinement_feedback = []
+    trials_left = getattr(args, "trial_limit", 24)
     for attempt in range(2):
+        check_configuration(args)
         if remaining() <= 0:
             result['status'] = 'budget_exhausted'
             break
+        if trials_left < 8:
+            result.update(status='budget_exhausted', reason='shared_trial_budget_exhausted')
+            break
+        trials_left -= 2
         proposal_folder = prepare / f'proposal-{attempt}'
         proposal_folder.mkdir()
         proposal_path = proposal_folder / 'proposal.json'
@@ -408,8 +427,8 @@ If none is supported, write {proposal_path} as {{"status":"no_change","reason":"
 Otherwise modify only project instructions AGENTS.md/CLAUDE.md or project-owned skill files in candidate.
 Do not build evaluation tests, launch model trials, or inspect previous held-out inputs.
 The parent freezes the patch; a separate fresh session constructs evaluation without seeing it.
-Shared ceiling is 24 agent trials and {args.timeout} seconds; up to four planning sessions
-and 20 task trials across two attempts.
+Shared ceiling is {getattr(args, 'trial_limit', 24)} preparation/task roles and {args.timeout} seconds;
+{trials_left} paired task or later preparation roles remain after this attempt's two reserved roles.
 Write {proposal_path} as {{"status":"candidate","mechanisms":[...],"falsifiers":[...]}} when ready.
 The parent will reject incomplete/changed inputs, regressions, unsupported ties, and concurrent edits.
 '''
@@ -442,6 +461,8 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         if proposal.get('status') != 'candidate':
             raise ValueError('Proposal must declare candidate or no_change')
         proposed = candidate_states(candidate, original)
+        check_scope(args, proposed)
+        check_configuration(args)
         if proposed == original:
             result['status'] = 'no_change'
             break
@@ -500,6 +521,17 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if runner.digest(frozen) != frozen_hash or runner.digest(baseline) != baseline_hash:
             raise ValueError('Evaluation construction changed frozen harness inputs')
         validate_manifest(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, grader_backend=grading)
+        manifest = json.loads(manifest_path.read_text())
+        required_trials = 2 * len(manifest["tasks"])
+        if required_trials > trials_left:
+            result.update(status="budget_exhausted", reason="shared_trial_budget_exhausted")
+            break
+        trials_left -= required_trials
+        if hasattr(args, "project_settings"):
+            from .one_call import unchanged
+            if not unchanged(args):
+                raise ValueError("project configuration changed during improvement")
+            check_scope(args, proposed)
         options = argparse.Namespace(manifest=str(manifest_path), baseline=str(baseline),
             candidate=str(frozen), output=str(output / f'evaluation-{attempt}'),
             agent=agent, codex=args.codex, claude=args.claude, parent_deadline=started + args.timeout)
@@ -512,6 +544,10 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             options.sandbox_backend = grading
         runner.evaluate(options)
         evaluated = json.loads((Path(options.output) / 'results.json').read_text())
+        if hasattr(args, 'project_settings'):
+            from .one_call import unchanged
+            if not unchanged(args):
+                raise ValueError('project configuration changed during evaluation')
         protected[evaluation] = runner.digest(evaluation)
         protected[frozen] = runner.digest(frozen)
         if permission_audit is not None:
@@ -540,6 +576,15 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if evaluated['inputs_unchanged'] and candidate_pass and controls_pass and improvement:
             if any(file_state(args.project / name) != value for name, value in original.items()):
                 raise ValueError('Project harness changed during evaluation; recommendation is stale')
+            write_json(output / 'change-plan.json', dict(schema_version=1, kind='behavioral_candidate',
+                profile='one-call-improvement-v1', publication_allowed=False,
+                baseline_sha256=baseline_hash, candidate_sha256=frozen_hash,
+                operations=[dict(path=name, before=original.get(name), after=proposed.get(name),
+                                 profile='one-call-improvement-v1', publication_allowed=False)
+                            for name in sorted(original.keys() | proposed.keys())
+                            if original.get(name) != proposed.get(name)],
+                evaluation=str(options.output), application_eligible=False))
+            result['plan'] = str(output / 'change-plan.json')
             result['status'] = 'inconclusive'
             result['recommendation'] = 'candidate_requires_independent_certification'
             result['blocked_prerequisites'] = ['role_isolation', 'audited_task_lineage',
@@ -562,15 +607,29 @@ def _run_improvement(args):
     for name in ('_run_output','_permission_backend'):
         if hasattr(args,name):delattr(args,name)
     try:
+        from .one_call import contracts, preflight, check_configuration
+        check_configuration(args)
+        if getattr(args, 'repair_contracts', False):
+            return contracts(args)
+        if hasattr(args, 'project_settings'):
+            reason = preflight(args)
+            if reason:
+                output = output_dir(args)
+                result = dict(status='blocked', reason=reason, output=str(output), changed_files=[],
+                              remediation='Select a supported runtime/profile and budget; see ahl improve --help')
+                write_json(output/'workflow.json', result)
+                return result
         return _improve(args)
     except BaseException as exc:
         from .evaluation.responses import InferenceError
+        from .promotion.journal import GuardedTransactionError
         inference_error = isinstance(exc,InferenceError)
         # output_dir registers only this invocation's output on its Namespace.
         status = ('interrupted' if isinstance(exc, KeyboardInterrupt) else
                   'budget_exhausted' if isinstance(exc, TimeoutError) or inference_error and str(exc).endswith('_exhausted') else
                   'invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error')
         result = dict(status=status, changed_files=[], failure_class='requires_intervention', error_type=type(exc).__name__)
+        if isinstance(exc,GuardedTransactionError): result.update(exc.receipt)
         if inference_error: result['reason'] = str(exc)
         permission_backend=getattr(args,'_permission_backend',None)
         if permission_backend is not None:
@@ -597,7 +656,7 @@ def improve(args):
 def watch_configuration(args):
     settings = {k: getattr(args, k, None) for k in ('agent', 'codex', 'claude', 'timeout', 'format',
                 'focus', 'max_attempts', 'retry_delay', 'watch_budget', 'sandbox_graders',
-                'image_sha256', 'disk_bytes', 'permission_audit')}
+                'image_sha256', 'disk_bytes', 'permission_audit', 'configuration_sha256', 'trial_limit')}
     for key in ('cgroup_root', 'image_root'):
         value = getattr(args, key, None)
         settings[key] = str(value.resolve()) if value is not None else None

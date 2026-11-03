@@ -112,9 +112,20 @@ class MonitoringTests(unittest.TestCase):
         with self.assertRaises(ValueError): watch(self.args)
 
     def test_improve_runtime_exceptions_keep_shared_nonzero_status_contract(self):
+        runtime=self.root/'synthetic-runtime'
+        runtime.write_bytes(b''); runtime.chmod(0o700)
         for error in (TimeoutError('synthetic budget'),ConnectionError('synthetic outage')):
-            with patch('agent_harness_lab.workflow._improve',side_effect=error):
-                self.assertEqual(main(['improve',str(self.root)]),1)
+            with patch.dict('os.environ',{'PATH':''}),patch('agent_harness_lab.workflow._improve',side_effect=error) as run:
+                self.assertEqual(main(['improve',str(self.root),'--agent','codex','--codex',str(runtime)]),1)
+                run.assert_called_once()
+
+    def test_unavailable_runtime_blocks_before_runtime_execution(self):
+        missing=self.root/'missing-runtime'
+        with patch.dict('os.environ',{'PATH':''}),patch('agent_harness_lab.workflow._improve') as run:
+            self.assertEqual(main(['improve',str(self.root),'--agent','codex','--codex',str(missing)]),3)
+            run.assert_not_called()
+        result=json.loads(next((self.root/'state/runs').glob('*/run-*/workflow.json')).read_bytes())
+        self.assertEqual(result['reason'],'agent_runtime_unavailable')
 
     def test_corrupt_configuration_or_clock_cannot_reenable_paid_work(self):
         path=self.root/'checkpoint.json'
