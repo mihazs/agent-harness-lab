@@ -127,6 +127,7 @@ def main(argv=None):
             command.add_argument('--image-root', type=Path, help='Explicit extracted readonly runtime image for controlled roles or graders')
             command.add_argument('--image-sha256', help='Required content pin for --image-root')
             command.add_argument('--permission-audit',choices=('permission-results-v1',),help='Require controller-role permission-result qualification; Responses mode only')
+            command.add_argument('--evaluation-store',type=Path,help='Explicit private HistoryStore for automatic controlled construction/feedback exposure; never certification')
             command.add_argument('--disk-bytes', type=int, help='Bound offline role scratch storage; requires --cgroup-root')
         if name == 'improve':
             command.add_argument('--repair-contracts', action='store_true', help='Evaluate and apply supported deterministic skill format repairs only; no model calls')

@@ -11,6 +11,7 @@ from .precision import preflight
 from .regressions import fields,sha256,text
 
 PROFILE='ahl-improve-fixed-bank-v1'
+REQUEST_FIELDS='schema_version profile manifest manifest_sha256 bank_sha256 experiment_id repeats seed max_trials min_roots effect_margin family_margin alpha family_weights precision_half_width operator_review cache_policy'
 
 
 def disjoint(paths,inputs):
@@ -27,6 +28,30 @@ def canonical(value):
     return path
 
 
+def selected_store(args,output=None):
+    value=getattr(args,'evaluation_store',None)
+    if value is None:return None,None
+    path=canonical(value);request=canonical(args.experiment_request)
+    declaration,pin=record(request,64*1024);fields(declaration,REQUEST_FIELDS)
+    if type(declaration['schema_version']) is not int or declaration['schema_version']!=1 or declaration['profile']!=PROFILE:
+        raise ValueError('unsupported repeated workflow request')
+    previous=getattr(args,'_evaluation_request_sha256',None)
+    if previous is not None and previous!=pin:raise ValueError('fixed request changed after selected-store preflight')
+    source=canonical(declaration['manifest']);manifest,source_pin=record(source,1024*1024)
+    if source_pin!=declaration['manifest_sha256']:raise ValueError('selected-store source manifest changed')
+    inputs=[request,source.parent,canonical(args.project),canonical(args.image_root),canonical(args.inference_settings)]
+    authority=manifest.get('bank_authority')
+    if authority is not None:
+        if not isinstance(authority,dict) or not isinstance(authority.get('bank_path'),str):
+            raise ValueError('invalid selected-store bank authority locator')
+        bank=canonical(authority['bank_path'])
+        if len(bank.parents)<3:raise ValueError('bounded bank owner locator required')
+        inputs.append(bank.parents[2])
+    if output is not None:inputs.append(canonical(output))
+    disjoint([path],inputs)
+    return path,pin
+
+
 class Request:
     def __init__(self,args,output,deadline):
         if args.agent!='responses' or getattr(args,'command','improve')!='improve':
@@ -35,7 +60,10 @@ class Request:
         self.baseline_bundle=None
         self.path=canonical(args.experiment_request);self.deadline=deadline
         self.value,self.request_hash=record(self.path,64*1024)
-        fields(self.value,'schema_version profile manifest manifest_sha256 bank_sha256 experiment_id repeats seed max_trials min_roots effect_margin family_margin alpha family_weights precision_half_width operator_review cache_policy')
+        fields(self.value,REQUEST_FIELDS)
+        selected,pin=selected_store(args,output)
+        if pin is not None and pin!=self.request_hash:raise ValueError('selected-store request changed')
+        self.store=selected if selected is not None else output/'private-history'
         value=self.value
         if type(value['schema_version']) is not int or value['schema_version']!=1 or value['profile']!=PROFILE:
             raise ValueError('unsupported repeated workflow request')
@@ -94,12 +122,13 @@ class Request:
         trials=2*len(tasks)*self.template.repeats
         self.blocked_reason=('fixed_comparison_inference_budget_infeasible'
             if 2+2*trials>settings['max_requests'] or 1+trials>settings['max_tool_calls'] else None)
+        if getattr(args,'project_settings',None) is not None and 1+trials>args.trial_limit:
+            self.blocked_reason='configured_shared_trial_budget_infeasible'
         remaining=self.check()
         self.precision=preflight(self.template,trial_limit=value['max_trials'],budget_seconds=remaining)
         write_bytes(output/'fixed-request.json',read_regular(self.path,64*1024))
         write_bytes(output/'fixed-request-binding.json',encoded(dict(profile=PROFILE,request_sha256=self.request_hash,
             operator_review_status='operator_declared_unverified',publication_allowed=False)))
-        self.store=output/'private-history'
         self.frozen_hash=digest(self.root)
 
     def check(self):

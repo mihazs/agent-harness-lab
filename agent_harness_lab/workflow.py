@@ -181,8 +181,19 @@ def bounded_fixture(folder, runner):
     return runner.digest(folder)
 
 
-def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_heldout, *, grader_backend=None, experiment_spec=None, control_custody=None):
-    manifest = json.loads(path.read_text())
+def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_heldout, *, grader_backend=None, experiment_spec=None, control_custody=None, expected_snapshot=None, expected_deadline=None):
+    def check_owned():
+        if expected_snapshot is not None:
+            from .evaluation.working_state import WorkingState
+            if WorkingState(path.parent,expected_deadline).snapshot!=expected_snapshot:
+                raise ValueError('evaluation input differs from actual author output')
+    def owned_digest(name):
+        from .evaluation.certification_access import snapshot_tree
+        from .evaluation.integrity import tree_digest
+        return tree_digest(snapshot_tree(expected_snapshot,name))
+    check_owned()
+    if expected_snapshot is None:manifest=json.loads(path.read_text())
+    else:manifest=json.loads(next(raw for name,_,raw in expected_snapshot.files if name=='manifest.json'))
     if not isinstance(manifest, dict):
         raise ValueError('Evaluation manifest must be an object')
     from .evaluation.certification_access import reject_claims
@@ -224,6 +235,8 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
             if not isinstance(declaration, dict) or set(declaration) not in ({'path'}, {'path', 'digest'}):
                 raise ValueError('invalid grader bundle declaration')
             folder = contained(path.parent, declaration['path']); frozen = digest(folder)
+            if expected_snapshot is not None and frozen!=owned_digest(declaration['path']):
+                raise ValueError('grader capture differs from actual author output')
             if 'digest' in declaration and declaration['digest'] != frozen:
                 raise ValueError('declared grader bundle integrity mismatch')
             bundles[task['id']] = dict(path=declaration['path'], digest=frozen)
@@ -247,7 +260,10 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
                     if '{workspace}' not in a and '{trace}' not in a]
         if any(p.is_file() and p.is_relative_to(fixture) for p in programs):
             raise ValueError('Graders must be outside fixtures')
+        if expected_snapshot is not None and digest(fixture)!=owned_digest(task['fixture']):
+            raise ValueError('task fixture differs from actual author output')
         fingerprint = bounded_fixture(fixture, runner)
+        check_owned()
         if task['split'] == 'heldout':
             if fingerprint in used_heldout:
                 raise ValueError('Refinement must use fresh held-out inputs')
@@ -256,7 +272,10 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
             workspace = (path.parent / check['fixture']).resolve()
             if not workspace.is_relative_to(path.parent.resolve()):
                 raise ValueError('Grader controls must stay in the evaluation directory')
+            if expected_snapshot is not None and digest(workspace)!=owned_digest(check['fixture']):
+                raise ValueError('grader control differs from actual author output')
             bounded_fixture(workspace, runner)
+            check_owned()
             if any(p.is_file() and p.is_relative_to(workspace) for p in programs):
                 raise ValueError('Graders must be outside control fixtures')
             available = remaining()
@@ -291,6 +310,7 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
                     raise ValueError('Grader self-test rejected: broken/partial must fail and complete must pass')
     if remaining() <= 0:
         raise TimeoutError('Improvement budget exhausted before evaluation')
+    check_owned()
     manifest['no_nested_agents'] = True
     manifest['max_trials'] = 10 if experiment_spec is None else experiment_spec.max_trials
     manifest['budget_seconds'] = remaining()
@@ -333,9 +353,15 @@ def _improve(args):
     if controlled != (inference_path is not None):
         raise ValueError('controlled improvement requires --agent responses and explicit --inference-settings together')
     started = time.monotonic()
+    if getattr(args,'evaluation_store',None) is not None:
+        started=min(started,getattr(args,'_construction_started',started))
     remaining = lambda: args.timeout - (time.monotonic() - started)
     runner = evaluator()
     output = output_dir(args)
+    access_path=None
+    if getattr(args,'evaluation_store',None) is not None:
+        from .evaluation.construction_access import selection
+        access_path=selection(args,output)
     print(f'Private run artifacts: {output}', file=sys.stderr)
     repeated=None
     if getattr(args,'experiment_request',None) is not None:
@@ -382,6 +408,7 @@ def _improve(args):
     baseline_hash = runner.digest(baseline)
     agent = args.agent
     client = None
+    access = None
     if controlled:
         from .evaluation import construction, responses
         from .evaluation.working_state import WorkingState
@@ -391,13 +418,17 @@ def _improve(args):
         settings,settings_hash = responses.read_settings(inference_path)
         if repeated is not None:repeated.protect([baseline,candidate,assets()/'skills'],settings)
         role_views = construction.views(data,assets(),prepare/'role-inputs',deadline)
-        construction.proposer_seed(candidate,prepare/'proposer-work-0',deadline)
-        credential = responses.read_credential(settings,[args.project,output,grader_options['image_root'],assets()/'skills'])
+        if access_path is None: construction.proposer_seed(candidate,prepare/'proposer-work-0',deadline)
+        credential = responses.read_credential(settings,[args.project,output,grader_options['image_root'],assets()/'skills',*([access_path] if access_path is not None else [])])
         def record(receipt):
             if responses.read_settings(inference_path)[1] != settings_hash:
                 raise ValueError('inference settings changed during the controlled run')
             write_json(output/'inference.json',receipt)
         client = responses.Client(settings,credential,deadline,record=record)
+        if access_path is not None:
+            from .evaluation.construction_access import WorkflowAccess
+            access=WorkflowAccess(args,output,baseline,client,grading,deadline)
+            args._construction_access=access
     else:
         if agent == 'auto':
             agent = 'codex' if shutil.which(args.codex) else 'claude'
@@ -434,9 +465,12 @@ def _improve(args):
                 shutil.copytree(role_views['proposer'],context,symlinks=True)
                 write_json(context/'feedback.json',dict(trials=refinement_feedback))
                 WorkingState(context,deadline)
-                construction.proposer_seed(candidate,prepare/f'proposer-work-{attempt}',deadline)
-            proposal,candidate,commands = construction.propose(client,grading,baseline,context,
-                prepare/f'proposer-work-{attempt}',output/f'proposer-{attempt}',deadline,focus=getattr(args,'focus',None))
+                if access is None: construction.proposer_seed(candidate,prepare/f'proposer-work-{attempt}',deadline)
+            if access is None:
+                proposal,candidate,commands = construction.propose(client,grading,baseline,context,
+                    prepare/f'proposer-work-{attempt}',output/f'proposer-{attempt}',deadline,focus=getattr(args,'focus',None))
+            else:
+                proposal,candidate,commands=access.propose(context,candidate,output/f'proposer-{attempt}',focus=getattr(args,'focus',None))
             write_json(proposal_path,proposal)
             write_json(output/f'preparation-{attempt}.json',dict(inference=client.report(),worker_commands=commands))
             protected[output/f'proposer-{attempt}'] = runner.digest(output/f'proposer-{attempt}')
@@ -483,7 +517,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         if not proposal_path.is_file():
             result['status'] = 'invalid_proposal'
             break
-        proposal = json.loads(proposal_path.read_text())
+        if access is None:proposal = json.loads(proposal_path.read_text())
         if not isinstance(proposal, dict):
             raise ValueError('Proposal must be an object')
         if proposal.get('status') == 'no_change':
@@ -499,7 +533,8 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             break
         paths = [] if controlled else original.keys() | proposed.keys()
         frozen = output / f'candidate-{attempt}'
-        shutil.copytree(candidate, frozen)
+        if access is None:shutil.copytree(candidate, frozen)
+        else:access.freeze_candidate(candidate,frozen)
         if candidate_states(frozen, original) != proposed:
             raise ValueError('Candidate changed while freezing it')
         frozen_hash = runner.digest(frozen)
@@ -527,8 +562,11 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             result.update(compared)
             break
         if controlled:
-            manifest_path,commands = construction.author(client,grading,baseline,role_views['evaluator_author'],
-                prepare/f'author-work-{attempt}',evaluation,deadline)
+            if access is None:
+                manifest_path,commands = construction.author(client,grading,baseline,role_views['evaluator_author'],
+                    prepare/f'author-work-{attempt}',evaluation,deadline)
+            else:
+                manifest_path,commands=access.author(role_views['evaluator_author'],evaluation)
             write_json(output/f'evaluation-construction-{attempt}.json',dict(inference=client.report(),worker_commands=commands))
         else:
             evaluation.mkdir()
@@ -574,7 +612,10 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 break
         if runner.digest(frozen) != frozen_hash or runner.digest(baseline) != baseline_hash:
             raise ValueError('Evaluation construction changed frozen harness inputs')
-        validate_manifest(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, grader_backend=grading)
+        (validate_manifest if access is None else access.validate_manifest)(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, grader_backend=grading)
+
+        prerequisite_scope=getattr(args,'_prerequisite_scope',None)
+        if prerequisite_scope is not None:prerequisite_scope.bind(manifest_path,baseline,frozen)
         manifest = json.loads(manifest_path.read_text())
         required_trials = 2 * len(manifest["tasks"])
         if required_trials > trials_left:
@@ -586,8 +627,6 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             if not unchanged(args):
                 raise ValueError("project configuration changed during improvement")
             check_scope(args, proposed)
-        prerequisite_scope=getattr(args,'_prerequisite_scope',None)
-        if prerequisite_scope is not None:prerequisite_scope.bind(manifest_path,baseline,frozen)
         options = argparse.Namespace(manifest=str(manifest_path), baseline=str(baseline),
             candidate=str(frozen), output=str(output / f'evaluation-{attempt}'),
             agent=agent, codex=args.codex, claude=args.claude, parent_deadline=started + args.timeout)
@@ -626,6 +665,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             trials=[t for t in trials if t['split'] != 'heldout']))
         refinement_feedback = [{key:trial.get(key) for key in ('task','version','split','status')}
             for trial in trials if trial.get('split') in ('development','regression')]
+        if access is not None: access.feedback(refinement_feedback)
         candidate_pass = all(t['status'] == 'passed' for t in trials if t['version'] == 'candidate')
         controls_pass = all(t['status'] == 'passed' for t in trials
                             if t['version'] == 'baseline' and t['split'] == 'regression')
@@ -663,17 +703,29 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             result.pop('recommendation',None)
             result.update(status='blocked',reason='restricted_process_protocol_unqualified')
     result['automatic_promotion']=False
+    if access is not None:
+        result['construction_access']=access.report()
+        result['publication_allowed']=False
     write_json(output / 'workflow.json', result)
     return result
 
 
-def _run_improvement(args):
+def _run_improvement(args, *, parent_started=None):
     """Persist truthful completion even when a run is interrupted or raises."""
-    for name in ('_run_output','_permission_backend','_prerequisite_scope'):
+    issuer=os.getpid(); managed=getattr(args,'evaluation_store',None) is not None
+    started=time.monotonic() if managed else None
+    if managed and parent_started is not None: started=min(started,parent_started)
+    for name in ('_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256'):
         if hasattr(args,name):delattr(args,name)
+    if managed: args._construction_started=started
     try:
         from .one_call import contracts, preflight, check_configuration
         check_configuration(args)
+        if managed:
+            from .evaluation.construction_access import selection
+            selection(args)
+            if time.monotonic()>=started+args.timeout: raise TimeoutError('construction preflight exhausted improvement budget')
+
         if getattr(args, 'repair_contracts', False):
             return contracts(args)
         if hasattr(args, 'project_settings'):
@@ -686,6 +738,7 @@ def _run_improvement(args):
                 return result
         return _improve(args)
     except BaseException as exc:
+        if managed and os.getpid()!=issuer: raise
         from .evaluation.responses import InferenceError
         from .promotion.journal import GuardedTransactionError
         inference_error = isinstance(exc,InferenceError)
@@ -695,6 +748,10 @@ def _run_improvement(args):
                   'invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error')
         result = dict(status=status, changed_files=[], failure_class='requires_intervention', error_type=type(exc).__name__)
         if isinstance(exc,GuardedTransactionError): result.update(exc.receipt)
+        if hasattr(args,'_construction_access'):
+            try: result['construction_access']=args._construction_access.failure_report()
+            except (ValueError,OSError,KeyError,TypeError): result['construction_access_observation']='unknown'
+
         if inference_error: result['reason'] = str(exc)
         permission_backend=getattr(args,'_permission_backend',None)
         if permission_backend is not None:
@@ -717,8 +774,13 @@ def _run_improvement(args):
             raise
         raise
     finally:
-        scope=getattr(args,'_prerequisite_scope',None)
-        if scope is not None:scope.end()
+        try:
+            scope=getattr(args,'_prerequisite_scope',None)
+            if scope is not None:scope.end()
+        finally:
+            access=getattr(args,'_construction_access',None)
+            if access is not None and os.getpid()==issuer:
+                access.retire()
 
 
 def improve(args):
@@ -733,6 +795,12 @@ def watch_configuration(args):
     for key in ('cgroup_root', 'image_root'):
         value = getattr(args, key, None)
         settings[key] = str(value.resolve()) if value is not None else None
+    if getattr(args,'evaluation_store',None) is not None:
+        from .evaluation.construction_access import selection,store_identity
+        from .one_call import check_configuration
+        check_configuration(args)
+        selected=selection(args)
+        settings['evaluation_store']={'path':str(selected),'profile':'canonical-construction-access-v1','store_identity':store_identity(selected)}
     inference_path = getattr(args,'inference_settings',None)
     if (args.agent == 'responses') != (inference_path is not None):
         raise ValueError('watch requires responses and explicit inference settings together')
@@ -748,6 +816,8 @@ def watch_configuration(args):
 
 
 def watch(args):
+    issuer=os.getpid(); managed=getattr(args,'evaluation_store',None) is not None
+    first_started=time.monotonic() if managed else None
     attempts = getattr(args, 'max_attempts', 3)
     delay = getattr(args, 'retry_delay', 60)
     budget = getattr(args, 'watch_budget', None)
@@ -763,6 +833,9 @@ def watch(args):
         while True:
             # The same lock covers scheduling, execution and final checkpoint write.
             with project_lock(args.project):
+                iteration_started=(first_started if first_started is not None else time.monotonic()) if managed else None
+                first_started=None
+                if managed: configuration=watch_configuration(args)
                 state = checkpoint_state.load(checkpoint)
                 fingerprint = collect(args.project, events=args.events, source_format=args.format)['fingerprint']
                 now = time.time()
@@ -778,12 +851,14 @@ def watch(args):
                     state.update(disposition='in_progress', last_attempt=now,
                                  attempt_count=state['attempt_count'] + 1, run_id=uuid.uuid4().hex)
                     write_json(checkpoint, state)
-                    started = time.monotonic()
+                    started = iteration_started if managed else time.monotonic()
                     try:
-                        result = _run_improvement(options)
+                        result = _run_improvement(options,parent_started=started) if managed else _run_improvement(options)
                     except (ValueError, OSError, TypeError, KeyError) as exc:
+                        if managed and os.getpid()!=issuer: raise
                         result = dict(status='invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error',
                                       failure_class='transient_infrastructure' if isinstance(exc, ConnectionError) else 'requires_intervention')
+                    if managed and os.getpid()!=issuer: raise ValueError('watch completion requires its actual issuer process')
                     state = checkpoint_state.finish(state, result, time.time(), time.monotonic() - started, delay, random.random())
                     write_json(checkpoint, state)
                     print(json.dumps(result), flush=True)

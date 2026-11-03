@@ -14,6 +14,11 @@ unmanaged; the original raw-path freshness assertion still fails. The new comman
 does not fix or certify every controlled-author path. Missing, unmanaged and
 cross-store ancestry remains unknown, and true certification remains unavailable.
 
+Normal controlled `improve` and `watch` can separately select
+[`--evaluation-store`](canonical-construction-access.md). That automatically owns
+their proposer/author/feedback handoffs in the selected store, with initial
+scientific parentage unknown. It does not reinterpret the raw API as tracked.
+
 ## Explicit source and execution
 
 The initial source must be an actual sealed managed run in this configured
