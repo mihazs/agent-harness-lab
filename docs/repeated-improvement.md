@@ -84,6 +84,14 @@ unresolved requests, incomplete custody or expired budgets cannot produce a favo
 decision. No ambiguous request is automatically retried, and cold execution resume is
 unsupported. Tampered sealed inputs, results, custody or receipt bytes fail verification.
 
+Before dispatch, the private store records the realized trial schedule. The existing
+inference checkpoint binds the reserved cumulative budget to the issuing process's
+active role, actual trial and frozen comparison schedule. Interrupted checkpoint writes
+prevent dispatch and retain the spent reservation. These records are diagnostic data;
+they cannot restore a live completion handle, authorize retries or count local replay
+as fresh execution. Legacy histories without this additional schedule record remain
+readable. Cold resume and provider-side reconciliation remain unsupported.
+
 Fresh controller calls and worker execution do not authenticate the served model or
 prove uncached provider computation. Native agent identity, effective provider
 configuration, scientific independence, oracle review and untouched certification
