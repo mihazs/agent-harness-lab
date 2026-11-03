@@ -387,11 +387,6 @@ tasks:
       AHL_EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_installed_layout.py"'
-      - task: test:workflow:one-call
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_bank_corrections.py"'
       - task: test:evaluation:requalification
         vars:
@@ -520,6 +515,11 @@ tasks:
       AHL_EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_installed_layout.py"'
+      - task: test:workflow:one-call
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
       - task: test:release:update
         vars:
           PYTHON: '{{.PYTHON}}'
