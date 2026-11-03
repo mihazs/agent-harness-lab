@@ -326,6 +326,8 @@ def summary(store,case_id,*,deadline=None):
 def access_guard(binding,state,*,reservation_id=None,deadline=None):
     qualification=binding.get('bank_qualification')
     if qualification is None:return
+    from .bank_requalification import access_guard as renewal_guard
+    if renewal_guard(binding,state,reservation_id=reservation_id,deadline=deadline):return
     path=Path(qualification['bank_path']);actual=revision_metadata(path,deadline=deadline)
     if not actual['current_eligible'] or actual!=qualification['metadata']:
         raise ValueError('protected bank qualification is stale or revoked')
@@ -347,6 +349,13 @@ def main(argv=None):
     parser.add_argument('--store',type=Path,required=True)
     actions=parser.add_subparsers(dest='action',required=True)
     trust=actions.add_parser('trust-reviewers');trust.add_argument('--policy',type=Path,required=True)
+    delegated=actions.add_parser('trust-delegation-reviewers');delegated.add_argument('--policy',type=Path,required=True)
+    actions.add_parser('allocate-delegation')
+    delegated=actions.add_parser('prepare-delegation')
+    delegated.add_argument('--case',required=True);delegated.add_argument('--reviewer',required=True)
+    for name in ('domain','runtime'):delegated.add_argument('--'+name,type=Path,required=True)
+    delegated.add_argument('--request',type=Path)
+    delegated.add_argument('--budget-seconds',type=float,default=30)
     propose=actions.add_parser('intake');propose.add_argument('--bank',type=Path,required=True);propose.add_argument('--declaration',type=Path,required=True)
     for name in ('audit','prepare-review','qualify','show','retire'):
         command=actions.add_parser(name);command.add_argument('--case',required=True)
@@ -358,6 +367,12 @@ def main(argv=None):
     args=parser.parse_args(argv);store=ReviewStore(args.store)
     try:
         if args.action=='trust-reviewers':result=install_policy(store,args.policy)
+        elif args.action in ('trust-delegation-reviewers','allocate-delegation','prepare-delegation'):
+            from . import bank_requalification as renewal
+            if args.action=='trust-delegation-reviewers':result=renewal.install_policy(store,args.policy)
+            elif args.action=='allocate-delegation':result=renewal.allocate_delegation(store)
+            else:result=renewal.prepare(store,args.case,args.reviewer,record(args.domain,authority.MAX_BYTES)[0],
+                record(args.runtime,authority.MAX_BYTES)[0],deadline=deadline_for(args.budget_seconds),request_path=args.request)
         elif args.action=='intake':result=intake(store,args.bank,args.declaration)
         elif args.action=='audit':
             from .sandbox import SandboxBackend

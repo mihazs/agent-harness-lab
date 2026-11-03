@@ -21,11 +21,15 @@ NAMESPACE='ahl.artifact-review.v1'
 VERIFIER=Path('/usr/bin/ssh-keygen')
 MAX_BYTES=64*1024
 BANK_PURPOSE='conditional_final_bank_review'
+REQUALIFICATION_PURPOSE='conditional_final_bank_requalification'
+APPLICATION_PURPOSE='conditional_instruction_application'
 
 
 def authority_names(purpose):
     if purpose==PURPOSE:return 'review-authority.json',NAMESPACE
     if purpose==BANK_PURPOSE:return 'bank-review-authority.json','ahl.final-bank-review.v1'
+    if purpose==REQUALIFICATION_PURPOSE:return 'bank-requalification-authority.json','ahl.final-bank-requalification.v1'
+    if purpose==APPLICATION_PURPOSE:return 'application-authority.json','ahl.instruction-application.v1'
     raise ValueError('unsupported review authority purpose')
 
 
@@ -82,7 +86,7 @@ def _outside(path,roots):
 
 
 def check_sources(store,roots):
-    for name in ('review-authority.json','bank-review-authority.json'):
+    for name in ('review-authority.json','bank-review-authority.json','bank-requalification-authority.json','application-authority.json'):
         marker=store.root/name
         if marker.exists():
             value,_=record(marker,4096)

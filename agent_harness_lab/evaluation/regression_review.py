@@ -26,6 +26,8 @@ def transition(state, kind, target, previous_kind=None):
     if kind=='bank_audit_started':return state=='bank_intake' and target=='bank_auditing'
     if kind=='bank_audited':return state=='bank_auditing' and target=='bank_audited'
     if kind=='bank_qualified':return state=='bank_audited' and target=='bank_qualified'
+    if kind in ('bank_requalification_delegated','bank_requalified','bank_requalification_consumed'):
+        return state==target=='bank_qualified'
     if kind == 'attempt_started': return state == target == 'reported' and previous_kind != 'attempt_started'
     if kind == 'attempt_finished': return state == target == 'reported' and previous_kind == 'attempt_started'
     if kind == 'attempt_abandoned': return state == target == 'reported' and previous_kind == 'attempt_started'
@@ -332,6 +334,10 @@ class ReviewStore(PrivateJournal):
     def accept(self, case_id, parent_path, record_path):
         from .bank_revisions import accept
         return accept(self, case_id, parent_path, record_path)
+
+    def requalify_bank(self,case_id,domain,manifest,baseline,candidate,*,deadline):
+        from .bank_requalification import requalify
+        return requalify(self,case_id,domain,manifest,baseline,candidate,deadline=deadline)
 
     def install_review_policy(self,path):
         from .review_authority import install, require_host

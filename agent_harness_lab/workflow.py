@@ -71,11 +71,18 @@ def project_lock(project):
 
 def evidence(args, output, source_context=None):
     from agent_harness_lab.telemetry.ledger import Ledger
+    closed=getattr(args,'_closed_input_domain',None)
+    if closed is not None:
+        from .evaluation.closed_inputs import before_collection
+        before_collection(closed,args)
     events = []
     data = collect(args.project, events=args.events, source_format=args.format, event_sink=events.append,
         source_version=getattr(args, 'source_version', None), source_root=getattr(args, 'source_root', None),
         session=getattr(args, 'session', None), max_files=getattr(args, 'max_captures', 100),
         max_scan_files=getattr(args, 'max_capture_scan', 2000), max_events=getattr(args, 'max_events', 100000))
+    if closed is not None:
+        from .evaluation.closed_inputs import collected
+        collected(closed,data)
     if source_context is not None: data['source_context'] = source_context
     Ledger(output / 'events.v2.jsonl').ingest(events)
     write_json(output / 'analysis.json', data)
@@ -688,6 +695,9 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             trials=[t for t in trials if t['split'] != 'heldout']))
         refinement_feedback = [{key:trial.get(key) for key in ('task','version','split','status')}
             for trial in trials if trial.get('split') in ('development','regression')]
+        if getattr(args,'_closed_input_domain',None) is not None:
+            from .evaluation.closed_inputs import record_feedback
+            record_feedback(args._closed_input_domain,refinement_feedback,evaluated)
         if access is not None: access.feedback(refinement_feedback)
         candidate_pass = all(t['status'] == 'passed' for t in trials if t['version'] == 'candidate')
         controls_pass = all(t['status'] == 'passed' for t in trials

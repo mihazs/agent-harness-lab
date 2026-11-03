@@ -8,7 +8,7 @@ from .responses import invalid_number, run_role
 from .working_state import WorkingState, check_deadline
 
 
-def views(data, assets, root, deadline):
+def views(data, assets, root, deadline, *, closed_domain=None):
     analysis = data['analysis']
     summary = {key:analysis.get(key) for key in ('events','cases','activities','field_coverage','deferred_mechanisms')}
     summary['findings'] = [{key:finding.get(key) for key in ('kind','status','explanation')} for finding in analysis.get('findings',[])]
@@ -25,6 +25,9 @@ def views(data, assets, root, deadline):
                 ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
         WorkingState(folder,deadline)
         result[role] = folder
+    if closed_domain is not None:
+        from .closed_inputs import bind_views
+        bind_views(closed_domain,data,result)
     return result
 
 
@@ -104,7 +107,17 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
     state,commands = run_role(client,backend,workspace,{'harness':baseline,'fixture':context},'evaluator_author',
         instructions,prompt,deadline)
     check_deadline(deadline)
-    raw=next((raw for name,_,raw in state.snapshot.files if name=='manifest.json'),None)
+    state.snapshot=normalize_author_snapshot(state.snapshot,destination,deadline=deadline)
+    published=state.publish(destination,deadline);manifest_path=published/'manifest.json'
+    if derivation is not None:
+        from .derivations import record_author_output
+        record_author_output(derivation,published)
+    return manifest_path,commands
+
+
+def normalize_author_snapshot(snapshot,destination,*,deadline=None):
+    """Apply the existing controller-owned manifest normalization exactly once."""
+    raw=next((raw for name,_,raw in snapshot.files if name=='manifest.json'),None)
     if raw is None: raise ValueError('authored manifest required')
     manifest = json.loads(raw,object_pairs_hook=unique_object,parse_constant=invalid_number)
     if not isinstance(manifest,dict) or manifest.get('skills') != [] or manifest.get('harness_paths') != []:
@@ -113,7 +126,7 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
     if not isinstance(tasks,list) or not isinstance(bundles,dict): raise ValueError('authored tasks and grader bundles are required')
     identifiers = []
     for task in tasks:
-        check_deadline(deadline)
+        if deadline is not None:check_deadline(deadline)
         if not isinstance(task,dict) or 'grader' in task: raise ValueError('controller owns authored grader commands')
         ident = task.get('id'); relative(ident)
         if '/' in ident or len(ident)>128: raise ValueError('invalid authored task ID')
@@ -125,12 +138,8 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
     if len(identifiers) != len(set(identifiers)) or set(identifiers) != set(bundles):
         raise ValueError('authored task/bundle identities must match exactly')
     normalized=json.dumps(manifest,allow_nan=False).encode('utf-8')
-    files=tuple((name,mode,normalized if name=='manifest.json' else raw) for name,mode,raw in state.snapshot.files)
+    files=tuple((name,mode,normalized if name=='manifest.json' else raw) for name,mode,raw in snapshot.files)
     if sum(len(raw) for _,_,raw in files)>1024*1024:
         raise ValueError('normalized authored output exceeds working-state byte bound')
-    check_deadline(deadline);state.snapshot=replace(state.snapshot,files=files)
-    published=state.publish(destination,deadline);manifest_path=published/'manifest.json'
-    if derivation is not None:
-        from .derivations import record_author_output
-        record_author_output(derivation,published)
-    return manifest_path,commands
+    if deadline is not None:check_deadline(deadline)
+    return replace(snapshot,files=files)

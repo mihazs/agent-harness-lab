@@ -260,9 +260,12 @@ def _kernel_finished(ticket, run, argv, exports):
         requested_argv_sha256=_hash(list(ticket.requested)),binary_sha256=attestation['binary_sha256'],image_sha256=image['sha256'],
         input_digests=deepcopy(attestation['input_digests']),argv_sha256=_hash(argv),
         result_sha256=_hash(run),observed_at=datetime.now(timezone.utc).isoformat(),permission=permission,boundary=boundary)
-    if ticket.comparison is not None:
+    from .construction_seals import current as construction_current
+    construction=construction_current()
+    if ticket.comparison is not None or construction is not None:
         from .comparison_custody import bundle_binding
-        checked={name:bundle_binding(path,ticket.comparison.deadline) for name,path in scratch.comparison_roots.items()}
+        deadline=ticket.comparison.deadline if ticket.comparison is not None else ticket.scope.deadline
+        checked={name:bundle_binding(path,deadline) for name,path in scratch.comparison_roots.items()}
         value.update(seed_state_sha256=seed_state,captured_state_sha256=scratch.comparison_captured_sha256,
             input_bundles=input_bundles,input_bundles_unchanged=(input_bundles==checked if input_bundles is not None else None))
     fact=_Fact();_FACTS[fact]=(ref(ticket),ref(scope) if scope is not None else lambda:None,encoded(dict(value,exports=exports)),ref(ticket.comparison) if ticket.comparison is not None else lambda:None)
