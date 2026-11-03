@@ -146,3 +146,62 @@ class OneCallCustodyTests(unittest.TestCase):
         self.assertEqual(journal.active, result['deployment'])
         self.assertEqual(journal.load(journal.active)['status'], 'committed')
         self.assertEqual(len(list(journal.folder.glob('*.json'))), 2)
+
+    def failed_compensation(self, *, foreign=None, interrupt=False, interrupt_after_restore=False):
+        second = self.project/'.agents/skills/zsecond/SKILL.md'
+        second.parent.mkdir(parents=True)
+        raw = b'\xef\xbb\xbf'+self.valid.replace(b'name: example', b'name: zsecond')
+        second.write_bytes(raw)
+        original = Journal._write_snapshot
+        written = []
+        def fault(journal, name, current, target, pre_write=None):
+            if pre_write is None and interrupt:
+                raise KeyboardInterrupt()
+            result = original(journal, name, current, target, pre_write)
+            if pre_write is None and interrupt_after_restore:
+                raise KeyboardInterrupt()
+            if pre_write is not None:
+                written.append(name)
+                if len(written) == 1:
+                    if foreign is not None:
+                        (self.project/name).write_bytes(foreign)
+                    config.create(self.project, config.defaults())
+            return result
+        with patch.object(Journal, '_write_snapshot', fault):
+            try:
+                code, result = self.invoke('--repair-contracts')
+            except SystemExit as exc:
+                code, result = exc.code, self.run_record()
+        self.assertEqual(code, 2 if interrupt_after_restore else 1)
+        self.assertEqual(second.read_bytes(), raw)
+        self.assertEqual(written, ['.agents/skills/example/SKILL.md'])
+        self.assertEqual(result['status'], 'invalid_input' if interrupt_after_restore else 'requires_intervention')
+        remaining = [] if interrupt_after_restore else written
+        self.assertEqual(result['changed_files'], remaining)
+        self.assertEqual(self.run_record(), result)
+        records = list((self.root/'state/promotions').rglob('*.json'))
+        self.assertEqual(len(records), 1)
+        journal = Journal(self.project, records[0].parent)
+        record = journal.load(records[0].stem)
+        if not interrupt_after_restore:
+            self.assertEqual(result['journal'], str(journal.folder))
+            self.assertEqual(result['deployment'], record['deployment'])
+            self.assertEqual(result['restoration'], 'conflict')
+        self.assertEqual(record['status'], 'conflict')
+        self.assertTrue(record['guard_rejected'])
+        self.assertEqual(record['remaining_changes'], remaining)
+        self.assertEqual(record['restoration'], 'restored' if interrupt_after_restore else 'conflict')
+        self.assertIsNone(journal.active)
+
+    def test_foreign_edit_during_compensation_is_preserved_and_reported(self):
+        foreign = b'SYNTHETIC_INTERVENING_EDIT\n'
+        self.failed_compensation(foreign=foreign)
+        self.assertEqual(self.skill.read_bytes(), foreign)
+
+    def test_interrupt_during_compensation_reports_remaining_target_change(self):
+        self.failed_compensation(interrupt=True)
+        self.assertEqual(self.skill.read_bytes(), self.valid)
+
+    def test_interrupt_after_compensation_replace_reports_exact_restoration(self):
+        self.failed_compensation(interrupt_after_restore=True)
+        self.assertEqual(self.skill.read_bytes(), b'\xef\xbb\xbf'+self.valid)

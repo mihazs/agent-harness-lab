@@ -578,7 +578,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             write_json(output / 'change-plan.json', dict(schema_version=1, kind='behavioral_candidate',
                 profile='one-call-improvement-v1', publication_allowed=False,
                 baseline_sha256=baseline_hash, candidate_sha256=frozen_hash,
-                operations=[dict(path=name, before=original.get(name), after=proposed.get(name))
+                operations=[dict(path=name, before=original.get(name), after=proposed.get(name),
+                                 profile='one-call-improvement-v1', publication_allowed=False)
                             for name in sorted(original.keys() | proposed.keys())
                             if original.get(name) != proposed.get(name)],
                 evaluation=str(options.output), application_eligible=False))
@@ -620,12 +621,14 @@ def _run_improvement(args):
         return _improve(args)
     except BaseException as exc:
         from .evaluation.responses import InferenceError
+        from .promotion.journal import GuardedTransactionError
         inference_error = isinstance(exc,InferenceError)
         # output_dir registers only this invocation's output on its Namespace.
         status = ('interrupted' if isinstance(exc, KeyboardInterrupt) else
                   'budget_exhausted' if isinstance(exc, TimeoutError) or inference_error and str(exc).endswith('_exhausted') else
                   'invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error')
         result = dict(status=status, changed_files=[], failure_class='requires_intervention', error_type=type(exc).__name__)
+        if isinstance(exc,GuardedTransactionError): result.update(exc.receipt)
         if inference_error: result['reason'] = str(exc)
         permission_backend=getattr(args,'_permission_backend',None)
         if permission_backend is not None:

@@ -35,6 +35,16 @@ def validate_snapshot(record):
         raise ValueError('snapshot integrity mismatch')
 
 
+class GuardedTransactionError(OSError):
+    """A guarded transaction needs manual recovery; its journal retains snapshots."""
+    def __init__(self, journal, record, remaining):
+        super().__init__('guarded transaction restoration requires intervention')
+        self.receipt=dict(status='requires_intervention', deployment=record['deployment'],
+            journal=str(journal.folder), changed_files=remaining, restoration='conflict',
+            remaining_change_ownership='unverified',
+            profile='one-call-improvement-v1', publication_allowed=False)
+
+
 class Journal:
     def __init__(self,project,folder):
         self.project=Path(project).resolve(); self.folder=Path(folder)
@@ -108,37 +118,82 @@ class Journal:
         with project_lock(self.project):
             return self._execute(deployment)
 
-    def _execute(self,deployment):
+    def _write_snapshot(self,name,current,target,pre_write=None):
+        destination=self.owned(name)
+        if target is None:
+            if pre_write: pre_write()
+            if file_record(destination)!=current: raise ValueError('target changed during transaction')
+            destination.unlink()
+        else:
+            raw=base64.b64decode(target['content'],validate=True)
+            if hashlib.sha256(raw).hexdigest()!=target['sha256']: raise ValueError('journal snapshot corrupted')
+            if pre_write: pre_write()
+            destination.parent.mkdir(parents=True,exist_ok=True)
+            temporary=destination.with_name(destination.name+'.ahl-'+uuid.uuid4().hex)
+            try:
+                fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
+                with os.fdopen(fd,'wb') as stream:
+                    stream.write(raw); stream.flush(); os.fsync(stream.fileno())
+                temporary.chmod(target['mode'])
+                if file_record(destination)!=current: raise ValueError('target changed during transaction')
+                if pre_write: pre_write()
+                os.replace(temporary,destination)
+            finally:
+                temporary.unlink(missing_ok=True)
+
+    def _restore_guarded(self,record):
+        remaining=[]
+        # Inspect every path: interruption may occur after replace but before return.
+        for name in sorted(record['before'].keys()|record['after'].keys(),reverse=True):
+            before=record['before'].get(name)
+            try:
+                current=file_record(self.owned(name))
+                if current==before: continue
+                if current!=record['after'].get(name): raise ValueError('intervening change during restoration')
+                self._write_snapshot(name,current,before)
+                if file_record(self.owned(name))!=before: raise ValueError('restoration verification failed')
+            except BaseException:
+                try:
+                    restored=file_record(self.owned(name))==before
+                except BaseException:
+                    restored=False
+                if not restored: remaining.append(name)
+        record.update(status='conflict',guard_rejected=True,restoration='conflict' if remaining else 'restored',
+                      remaining_changes=remaining)
+        try:
+            atomic_json(self.folder/(record['deployment']+'.json'),record)
+        except BaseException:
+            if remaining: raise GuardedTransactionError(self,record,remaining)
+            raise
+        return remaining
+
+    def _execute(self,deployment,*,pre_write=None):
         # Internal operation for callers already holding the project lock.
         record=self.load(deployment)
+        if record.get('guard_rejected'): raise ValueError('rejected guarded transaction cannot be resumed')
         if record['status']=='committed' and self.active==deployment: return record
+        if record.get('commit_guarded') and pre_write is None:
+            raise ValueError('guarded transaction requires its original commit checks')
         self._check(record)
-        record['status']='applying'; atomic_json(self.folder/(deployment+'.json'),record)
-        for name in sorted(record['before'].keys()|record['after'].keys()):
-            destination=self.owned(name)
-            target=record['after'].get(name)
-            current=file_record(destination)
-            if current==target: continue
-            if current!=record['before'].get(name): raise ValueError('target changed during transaction')
-            if target is None:
-                destination.unlink()
-            else:
-                raw=base64.b64decode(target['content'],validate=True)
-                if hashlib.sha256(raw).hexdigest()!=target['sha256']: raise ValueError('journal snapshot corrupted')
-                destination.parent.mkdir(parents=True,exist_ok=True)
-                temporary=destination.with_name(destination.name+'.ahl-'+uuid.uuid4().hex)
-                try:
-                    fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
-                    with os.fdopen(fd,'wb') as stream:
-                        stream.write(raw); stream.flush(); os.fsync(stream.fileno())
-                    temporary.chmod(target['mode'])
-                    if file_record(destination)!=current: raise ValueError('target changed during transaction')
-                    os.replace(temporary,destination)
-                finally:
-                    temporary.unlink(missing_ok=True)
-        if any(file_record(self.owned(name))!=record['after'].get(name)
-               for name in record['before'].keys()|record['after'].keys()):
-            raise ValueError('post-write verification failed')
+        try:
+            if pre_write: pre_write()
+            record['status']='applying'
+            if pre_write: record['commit_guarded']=True
+            atomic_json(self.folder/(deployment+'.json'),record)
+            for name in sorted(record['before'].keys()|record['after'].keys()):
+                current=file_record(self.owned(name)); target=record['after'].get(name)
+                if current==target: continue
+                if current!=record['before'].get(name): raise ValueError('target changed during transaction')
+                self._write_snapshot(name,current,target,pre_write)
+            if any(file_record(self.owned(name))!=record['after'].get(name)
+                   for name in record['before'].keys()|record['after'].keys()):
+                raise ValueError('post-write verification failed')
+            if pre_write: pre_write()
+        except BaseException:
+            if pre_write:
+                remaining=self._restore_guarded(record)
+                if remaining: raise GuardedTransactionError(self,record,remaining)
+            raise
         record['status']='committed'; atomic_json(self.folder/(deployment+'.json'),record)
         atomic_json(self.folder/'active.json',dict(deployment=deployment))
         return record

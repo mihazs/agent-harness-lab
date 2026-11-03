@@ -55,6 +55,15 @@ Rollback preserves intervening edits by reporting a conflict. The deployment ID
 and journal location are included in the repair result. Runtime activation stays
 unknown. Plans and receipts contain private paths and must remain local.
 
+Configuration and deadline checks run at the owned journal's mutation checkpoints.
+If a check fails or execution is interrupted, exact owned writes are restored when
+their current snapshots still match the transaction. Foreign edits are preserved;
+an interrupted or conflicting restoration reports `requires_intervention`, remaining
+changed paths and the journal location. Those paths may include foreign changes and
+do not imply verified change ownership. A rejected transaction cannot be resumed
+as an unguarded write. These checks do not provide continuous atomic policy
+enforcement against unrelated host writers that ignore the project lock.
+
 ## Remaining implementation
 
 This is the first deterministic application slice of #77, not completion of its

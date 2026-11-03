@@ -127,6 +127,7 @@ def contracts(args):
             continue
         path.write_bytes(repaired)
         operations.append(dict(path=name, surface='skill', operation='update',
+            profile='one-call-improvement-v1', publication_allowed=False,
             contract='minimal-agent-skill-header-without-bom-v1',
             before_sha256=hashlib.sha256(raw).hexdigest(), after_sha256=hashlib.sha256(repaired).hexdigest()))
     proposed = candidate_states(candidate, original)
@@ -159,10 +160,12 @@ def contracts(args):
             record = journal.prepare({o['path']: file_record(baseline/o['path']) for o in operations},
                 {o['path']: file_record(candidate/o['path']) for o in operations},
                 dict(source='deterministic_contract_v1', behavioral_certification=False))
-            check_configuration(args)
-            if time.monotonic()-started >= args.timeout:
-                raise TimeoutError('Contract repair budget exhausted before target mutation')
-            receipt = journal._execute(record['deployment'])
+            def permitted():
+                check_configuration(args)
+                if time.monotonic()-started >= args.timeout:
+                    raise TimeoutError('Contract repair budget exhausted before target mutation')
+            permitted()
+            receipt = journal._execute(record['deployment'],pre_write=permitted)
             result.update(status='applied', changed_files=sorted(o['path'] for o in operations),
                           deployment=receipt['deployment'], journal=str(journal.folder),
                           rollback=f'ahl rollback {receipt["deployment"]} --project {shlex.quote(str(args.project))}')
@@ -184,7 +187,9 @@ def rollback_main(argv):
             raise ValueError('project must be a directory')
         journal = Journal(project, state_root()/'promotions'/identity(project))
         result = journal.rollback(args.deployment)
-        print(json.dumps({key: result[key] for key in ("deployment", "kind", "status")}, indent=2))
+        receipt={key: result[key] for key in ('deployment','kind','status')}
+        receipt.update(profile='one-call-improvement-v1',publication_allowed=False)
+        print(json.dumps(receipt, indent=2))
         return 0
     except (ValueError, OSError, KeyError, TypeError) as exc:
         parser.exit(2, f'rollback: {exc}\n')
