@@ -1,21 +1,66 @@
 # Agent Harness Lab
 
-**Improve coding-agent harnesses with evidence, not guesswork.**
+**Find problems in your coding-agent workflow. Test harness changes before adopting them.**
 
-An experimental open-source toolkit for diagnosing coding-agent behavior,
-evaluating harness changes against baselines, and reviewing evidence before adoption.
-For developers maintaining `AGENTS.md`, `CLAUDE.md`, project skills and repeated
-coding-agent workflows, and engineers investigating agent evaluation.
+Agent Harness Lab (AHL) helps developers maintain `AGENTS.md`, `CLAUDE.md` and
+project skills for **Codex and Claude Code**. Inspect local evidence, stage a
+candidate change, and compare it with the original on executable tasks.
 
-**Experimental:** broad improvements in agent success are unproven. Automatic
-behavioral adoption is blocked pending independent certification safeguards.
+**Python 3.11+ · Standard-library core · MIT · Experimental**
 
-Agent-backed workflows support **Claude Code and Codex**. The offline example below
-needs neither runtime, credentials nor model inference. Python 3.11+ is required;
-the default core uses only the standard library.
+[Install](#install) · [Try without credentials](#try-it-without-credentials) ·
+[Use on your project](#use-on-your-project) · [Documentation](docs/README.md) ·
+[Contribute](#contribute)
 
-[Quickstart](#try-it-without-credentials) · [Install](docs/installation.md) ·
-[Documentation](docs/README.md) · [Contribute](CONTRIBUTING.md) · [Support](SUPPORT.md)
+## Why use it?
+
+- **Investigate repeated behavior:** inspect explicit traces and recurring patterns.
+- **Check an instruction or skill change:** compare baseline and candidate outputs.
+- **Keep the evidence:** review task results, limitations and local artifacts.
+
+A repeated tool call is a clue, not proof of waste. A passing synthetic test is
+not proof of a general improvement. The current CLI **stages, evaluates and
+recommends; it does not automatically apply behavioral changes**.
+[One-call application is being implemented](https://github.com/mihazs/agent-harness-lab/issues/77).
+
+## Install
+
+Python 3.11+, `curl`, a POSIX shell and symlink support are required:
+
+```sh
+curl -fsSL https://github.com/mihazs/agent-harness-lab/releases/latest/download/install.py | python3 -
+```
+
+Installs `ahl` and both bundled skills for Codex and Claude Code, without Git,
+pip or Node.js. This executes the official release installer; see
+[installation details](docs/installation.md) for inspection, pinned versions,
+updates and custom locations. Nothing starts in the background.
+If `ahl` is not on PATH, use `~/.local/bin/ahl --help` or add that directory to PATH.
+
+## Use on your project
+
+Start with local evidence discovery; this does not call a model:
+
+```sh
+ahl analyze .
+```
+
+With a supported, authenticated Codex or Claude Code runtime and a trusted project,
+request candidate preparation and evaluation:
+
+```sh
+ahl improve .
+```
+
+This may incur model costs. It writes private run artifacts and reports the result;
+current CLI behavioral candidates remain recommendations. Use `ahl improve --help`
+for runtime selection and budgets, and [workflows](docs/workflows.md) for details.
+
+Already working inside an agent session? Invoke the installed
+`harness-self-improvement` skill and ask it to improve this project's harness.
+The skill describes an assisted evaluation-and-edit loop; it is distinct from the
+CLI's current recommendation-only controller. Supported autonomous application
+and matching CLI/skill receipts are tracked in [#77](https://github.com/mihazs/agent-harness-lab/issues/77).
 
 ## Try it without credentials
 
@@ -47,44 +92,16 @@ input, result and recorded state. This is an **observed pattern**, not proof of
 waste or a recommendation to remove a check. Outcomes and independence are unknown.
 Read the [full output, controls and interpretation](docs/getting-started.md).
 
-## How it works
+## Choose your next step
 
-1. **Inspect evidence:** analyze scoped traces or supplied synthetic events.
-2. **Compare a candidate:** stage instruction/skill changes and run prepared
-   baseline/candidate tasks under a selected runtime.
-3. **Review limitations:** inspect outcomes, grader controls and uncertainty before
-   making a decision. Behavioral changes remain recommendations.
-
-```mermaid
-flowchart TD
-  A[Trace or evaluation evidence] --> B[Diagnosis and candidate]
-  B --> C[Baseline and candidate tasks]
-  C --> D[Evidence and limitations review]
-  D --> E[Human decision]
-```
-
-Editing `AGENTS.md` changes instructions; AHL adds an evidence collection,
-diagnosis and comparison workflow around those changes. It does not establish
-that an instruction edit caused better performance.
-
-## What you can try
-
-| Need | Entry point | Inference |
-| --- | --- | --- |
-| Inspect an explicit event file | `ahl diagnose --events FILE --output NEW_DIR` | None |
-| Discover local project evidence | `ahl analyze [project]` | None |
-| Inspect recurring transitions | `ahl mine FILE` | None |
-| Inspect bundled synthetic tasks | `ahl bank --starter --list` | None |
-| Validate a declared regression reproduction | `ahl regression --proposal PATH` | Explicitly authorized local record; no replay or admission |
-| Accept a reviewed private regression | [`ahl regression-review ... accept`](docs/regression-admission.md) | None; explicit sealed case and immutable parent bank |
-| Record comparisons and quarantine defective graders | [`ahl experiment-history`](docs/oracle-history.md) | None; explicit pinned offline profile |
-| Audit and review a grader-defect proposal | [`ahl grader-correction`](docs/grader-corrections.md) | None; frozen controls and explicit pinned offline profile |
-| Stage and evaluate a candidate | `ahl improve [project]` | Codex/Claude Code or explicit Responses settings |
-| Recheck changed evidence | `ahl watch [project]` | Each triggered improvement may use inference |
-| Run prepared tasks with controller inference | `ahl evaluate --agent responses ...` | Explicit private API settings and resource profiles |
-
-See [all workflows and commands](docs/workflows.md). Installed skills can also run
-inside an agent session. Never enable runtime permission bypass to use AHL.
+| Goal | Start here |
+| --- | --- |
+| Understand the example and its limits | [First diagnosis walkthrough](docs/getting-started.md) |
+| Analyze traces or compare a candidate | [Commands and workflows](docs/workflows.md) |
+| Understand what a result establishes | [Evaluation contracts](docs/evaluation-foundation.md) |
+| Explore task banks and experiments | [Controlled experiments](docs/controlled-experiments.md) |
+| Report a problem or ask a question | [Support](SUPPORT.md) |
+| Help deliver autonomous optimization | [Priority implementation issue](https://github.com/mihazs/agent-harness-lab/issues/77) |
 
 ## Safety, privacy and evidence
 
@@ -108,12 +125,17 @@ inside an agent session. Never enable runtime permission bypass to use AHL.
 
 ## Contribute
 
+New contributors are welcome. You can improve an unclear example, add a synthetic
+reproduction, or tackle a focused implementation task. Browse
+[good first issues](https://github.com/mihazs/agent-harness-lab/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22)
+and ask scope questions on the issue before starting a larger change.
+
 Start with the [contributor guide](CONTRIBUTING.md) for setup, architecture, tests
 and choosing a bounded task. Documentation, synthetic fixtures and focused tests
 are useful contributions alongside research work.
 
-Questions and reproducible bugs belong in [Issues](https://github.com/mihazs/agent-harness-lab/issues)
-while Discussions is unavailable. See [support](SUPPORT.md), [private security reporting](SECURITY.md)
+Questions and reproducible bugs belong in [Issues](https://github.com/mihazs/agent-harness-lab/issues).
+See [support](SUPPORT.md), [private security reporting](SECURITY.md)
 and the [code of conduct](CODE_OF_CONDUCT.md). No response-time commitment is made.
 
 Versions use Changesets; do not change version numbers manually. For a releasable
