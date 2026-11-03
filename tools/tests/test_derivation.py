@@ -458,6 +458,36 @@ class DerivationTests(unittest.TestCase):
                     self.assertEqual(next(iter(state['derivations'].values()))['state'],'unresolved')
                 finally:control.doCleanups()
 
+    def test_legacy_version_one_output_binding_remains_readable(self):
+        result=self.derive(source_run=self.parent());ident=result['derivation_id']
+        folder=self.f.store.root/'derivations'/ident
+        binding=json.loads((folder/'output.json').read_bytes())
+        self.assertEqual(binding['schema_version'],2)
+        shutil.rmtree(folder/'published');shutil.copytree(folder/'registered',folder/'published')
+        binding['schema_version']=1;binding.pop('producer_tree_sha256')
+        (folder/'output.json').write_bytes(derivations.encoded(binding))
+        path=self.f.store.root/'protected-access.json';state=json.loads(path.read_bytes())
+        state['derivations'][ident]['output_binding_sha256']=derivations._hash(binding)
+        path.write_bytes(derivations.encoded(state))
+        self.assertEqual(self.f.store.derivation_status(ident)['state'],'complete')
+
+    def test_rebasing_never_writes_through_a_late_producer_manifest_symlink(self):
+        parent=self.parent();victim=self.f.root/'synthetic-outside-victim'
+        before=b'SYNTHETIC OUTSIDE CONTENT MUST SURVIVE';victim.write_bytes(before)
+        publish=derivations.WorkingState.publish;swapped=[]
+        def materialize(state,destination,deadline):
+            destination=Path(destination)
+            if destination.name=='registered' and not swapped:
+                manifest=destination.parent/'published'/'manifest.json'
+                manifest.unlink();manifest.symlink_to(victim);swapped.append(True)
+            return publish(state,destination,deadline)
+        with patch.object(derivations.WorkingState,'publish',materialize),self.assertRaises((ValueError,OSError)):
+            self.derive(source_run=parent)
+        self.assertTrue(swapped);self.assertEqual(victim.read_bytes(),before)
+        self.assertFalse(self.output.exists())
+        state=json.loads((self.f.store.root/'protected-access.json').read_bytes())
+        self.assertEqual(next(iter(state['derivations'].values()))['state'],'unresolved')
+
     @unittest.skipUnless(hasattr(os,'fork'),'requires native fork custody control')
     def test_post_author_fork_cannot_finish_or_poison_the_owner_transaction(self):
         from agent_harness_lab.evaluation import construction

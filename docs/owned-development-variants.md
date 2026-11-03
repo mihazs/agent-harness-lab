@@ -79,7 +79,9 @@ mode evidence in older source histories.
 The producing role registers its output snapshot once. Asset capture must match
 that snapshot's bytes and file modes, including changes restored before readback.
 Only the controller's manifest rebasing and private root mode may change afterward;
-publication copies the expected snapshot rather than recapturing mutable files.
+the rebased snapshot is materialized in a new private directory without rewriting
+the producer tree. Publication copies that expected snapshot rather than recapturing
+mutable files. New output bindings are version 2; version-1 bindings remain readable.
 These checks do not make the host filesystem atomic against external writers.
 
 Before returning or exporting child data, the transaction records computed prompt,

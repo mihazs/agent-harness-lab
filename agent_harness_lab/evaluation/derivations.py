@@ -65,11 +65,14 @@ def _derived_source(store,ident,deadline):
     entry=ledger.derivation_record(store.access_ledger().path,ident)
     if entry['state']!='complete': raise ValueError('owned source derivation is incomplete')
     folder=_folder(store,ident); output,pin=record(folder/'output.json',ledger.MAX_BYTES)
-    fields(output,'schema_version profile derivation_id root_run_id input_binding_sha256 handoff_sha256 tree_sha256 assets')
-    if (type(output['schema_version']) is not int or output['schema_version']!=1 or output['profile']!=PROFILE
+    fields(output,'schema_version profile derivation_id root_run_id input_binding_sha256 handoff_sha256 tree_sha256 assets'
+        +(' producer_tree_sha256' if output.get('schema_version')==2 else ''))
+    published=folder/('registered' if output.get('schema_version')==2 else 'published')
+    if (type(output['schema_version']) is not int or output['schema_version'] not in (1,2) or output['profile']!=PROFILE
             or output['derivation_id']!=ident or pin!=entry['output_binding_sha256']
             or output['root_run_id']!=entry['root_run_id'] or output['input_binding_sha256']!=entry['input_binding_sha256']
-            or output['assets']!=entry['children'] or _tree_pin(folder/'published',deadline)!=output['tree_sha256']):
+            or output['assets']!=entry['children'] or _tree_pin(published,deadline)!=output['tree_sha256']
+            or (output['schema_version']==2 and _tree_pin(folder/'published',deadline)!=output['producer_tree_sha256'])):
         raise ValueError('owned derived source bytes or binding changed')
     inputs,input_pin=record(folder/'inputs.json',ledger.MAX_BYTES)
     handoff,handoff_pin=record(folder/'handoff.json',ledger.MAX_BYTES)
@@ -81,7 +84,7 @@ def _derived_source(store,ident,deadline):
             or _tree_pin(folder/'baseline',deadline)!=handoff['baseline_tree_sha256']
             or _tree_pin(folder/'context',deadline)!=handoff['context_tree_sha256']):
         raise ValueError('owned derived source custody changed')
-    return entry,inputs,folder
+    return entry,inputs,folder,published
 
 
 def _selection(source,task_ids):
@@ -106,8 +109,8 @@ def _source(store,source_run,source_derivation,task_ids,deadline):
             inputs_sha256=prior['inputs_sha256'],oracle_sha256=prior['plan']['grader_hash'],
             bank_authority=source.get('bank_authority'),runtime_sha256=prior['plan']['runtime_hash'])
     else:
-        entry,inputs,folder=_derived_source(store,source_derivation,deadline)
-        root=folder/'published'; baseline=folder/'baseline'; source,_=record(root/'manifest.json',ledger.MAX_BYTES)
+        entry,inputs,folder,root=_derived_source(store,source_derivation,deadline)
+        baseline=folder/'baseline'; source,_=record(root/'manifest.json',ledger.MAX_BYTES)
         prior,_=_root_source(store,entry['root_run_id'])
         origin=dict(inputs['origin'],kind='owned_derivation',id=source_derivation)
     tasks=_selection(source,task_ids)
@@ -278,17 +281,20 @@ def derive(store,output,inference_settings,*,source_run=None,source_derivation=N
         if _tree_pin(manifest.parent,deadline)!=owned['produced_pin']:
             raise ValueError('actual author output changed before manifest rebasing')
         expected=_rebased_output(original,encoded(child))
-        manifest.write_bytes(encoded(child))
-        manifest.parent.chmod(0o700)
-        if WorkingState(manifest.parent,deadline).snapshot!=expected:
-            raise ValueError('actual author output changed during manifest rebasing')
         produced.snapshot=expected
+        registered=folder/'registered'
+        produced.publish(registered,deadline)
+        if (_tree_pin(manifest.parent,deadline)!=owned['produced_pin']
+                or WorkingState(registered,deadline).snapshot!=expected):
+            raise ValueError('actual author output changed during manifest rebasing')
         handoff_pin=_hash(owned['value'])
-        binding=dict(schema_version=1,profile=PROFILE,derivation_id=ident,root_run_id=origin['root_run_id'],
+        binding=dict(schema_version=2,profile=PROFILE,derivation_id=ident,root_run_id=origin['root_run_id'],
+            producer_tree_sha256=owned['produced_pin'],
             input_binding_sha256=_hash(inputs),handoff_sha256=handoff_pin,tree_sha256=_snapshot_pin(expected),assets=children)
         write_bytes(folder/'output.json',encoded(binding)); sync_directory(folder)
         _check_custody(owned)
-        if (_tree_pin(folder/'published',deadline)!=binding['tree_sha256']
+        if (_tree_pin(registered,deadline)!=binding['tree_sha256']
+                or _tree_pin(manifest.parent,deadline)!=owned['produced_pin']
                 or record(folder/'output.json',ledger.MAX_BYTES)[1]!=_hash(binding)):
             raise ValueError('derived output changed before registration')
         check(); ledger.finish_derivation(store.access_ledger().path,ident,_hash(inputs),children,_hash(binding)); completed=True
