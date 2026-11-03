@@ -445,13 +445,13 @@ class HistoryStore(PrivateJournal):
         if any(self.root.is_relative_to(p if p.is_dir() else p.parent)
                 or (p if p.is_dir() else p.parent).is_relative_to(self.root) for p in paths):
             raise ValueError('access ledger must remain outside controller input views')
-        binding = capture(manifest,baseline,candidate,check)
+        binding = capture(manifest,baseline,candidate,check,access_ledger=self.access_ledger().path,deadline=deadline)
         declared,_ = record(manifest,1024*1024)
         if ExperimentSpec.parse(declared['experiment']).cohort_manifest_sha256 is not None:
             raise ValueError('managed diagnostics do not qualify preservation cohorts')
         with self.locked(create=True): pass
         check()
-        return self.access_ledger().reserve_managed(binding)
+        return self.access_ledger().reserve_managed(binding,deadline=deadline)
 
     def run(self, manifest, baseline, candidate, *, cgroup_root, image_root, image_sha256, disk_bytes, budget_seconds=60,parent_deadline=None,on_started=None,access_reservation=None):
         from agent_harness_lab.cli import evaluator
@@ -509,7 +509,7 @@ class HistoryStore(PrivateJournal):
         def check_access_budget():
             if time.monotonic() >= deadline: raise TimeoutError('access observation budget exhausted')
         if access_reservation is not None:
-            binding = capture_access(manifest,baseline,candidate,check_access_budget)
+            binding = capture_access(manifest,baseline,candidate,check_access_budget,access_ledger=self.access_ledger().path,deadline=deadline)
             if spec.cohort_manifest_sha256 is not None:
                 raise ValueError('managed diagnostics do not qualify preservation cohorts')
             assets = binding['assets']
@@ -518,7 +518,7 @@ class HistoryStore(PrivateJournal):
         if time.monotonic() >= deadline: raise TimeoutError('managed access preflight budget exhausted')
         with self.locked(create=True):
             access_handle,access_receipt = self.access_ledger().admit_managed(assets,run_id,
-                reservation_id=access_reservation,binding=binding)
+                reservation_id=access_reservation,binding=binding,deadline=deadline)
             from .certification_access import known_derivations
             derived=known_derivations(self.access_ledger().path,assets)
             dependencies = {}

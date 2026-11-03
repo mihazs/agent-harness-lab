@@ -2,6 +2,48 @@ version: '3'
 vars:
   PYTHON: '{{default "python3" .PYTHON}}'
 tasks:
+  test:evaluation:bank-qualification:wheel:
+    desc: Run focused bank qualification cases from an installed wheel
+    vars:
+      PACKAGE_VERSION:
+        sh: '{{.PYTHON | shellQuote}} -m agent_harness_lab --version'
+      LABEL:
+        sh: '{{.PYTHON | shellQuote}} -c "import sys; print(str(sys.version_info.major)+str(sys.version_info.minor))"'
+      WHEEL_ENV: '{{.ROOT_DIR}}/dist/bank-wheel-{{.LABEL}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m venv {{.WHEEL_ENV | shellQuote}}'
+      - '{{.WHEEL_ENV | shellQuote}}/bin/python -m pip install --no-index --no-deps --force-reinstall {{printf "%s/dist/wheels/agent_harness_lab-%s-py3-none-any.whl" .ROOT_DIR .PACKAGE_VERSION | shellQuote}}'
+      - mkdir -p '{{.ROOT_DIR}}/dist/bank-wheel-cwd'
+      - task: test:evaluation:bank-qualification
+        vars:
+          PYTHON: '{{.WHEEL_ENV}}/bin/python'
+          LAYOUT_DIR: '{{.ROOT_DIR}}/dist/bank-wheel-cwd'
+          EXPECTED_PACKAGE_ROOT: '{{.WHEEL_ENV}}'
+  test:evaluation:bank-qualification:archive:
+    desc: Run focused bank qualification cases from the allowlisted archive
+    vars:
+      PACKAGE_VERSION:
+        sh: '{{.PYTHON | shellQuote}} -m agent_harness_lab --version'
+    cmds:
+      - mkdir -p '{{.ROOT_DIR}}/dist/bank-archive'
+      - 'tar -xzf {{printf "%s/dist/release/agent-harness-lab-%s.tar.gz" .ROOT_DIR .PACKAGE_VERSION | shellQuote}} -C {{printf "%s/dist/bank-archive" .ROOT_DIR | shellQuote}}'
+      - task: test:evaluation:bank-qualification
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.ROOT_DIR}}/dist/bank-archive/agent-harness-lab-{{.PACKAGE_VERSION}}'
+          EXPECTED_PACKAGE_ROOT: '{{.ROOT_DIR}}/dist/bank-archive/agent-harness-lab-{{.PACKAGE_VERSION}}'
+  test:evaluation:bank-qualification:kernel:
+    desc: Execute actual pinned final-bank controls and protected diagnostic admission
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    vars:
+      SCOPE_ID:
+        sh: cat /proc/sys/kernel/random/uuid
+    env:
+      AHL_TEST_SYSTEMD_SCOPE: '1'
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=180 -- {{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_bank_qualification{{default "*" .TEST_SUFFIX}}.py" -v'
   test:evaluation:review-authority:
     desc: Verify optional offline reviewer key approvals and existing development admission
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -170,7 +212,7 @@ tasks:
       PYTHONPATH: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_bank_qualification.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_bank_qualification*.py" -v'
   test:evaluation:bank-export:
     desc: Run native bank export path and frozen-manifest cases
     cmds:

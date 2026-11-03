@@ -18,7 +18,10 @@ from .regressions import fields, load, references, sha256, text
 from .task_bank import identifier
 
 def transition(state, kind, target, previous_kind=None):
-    if state is None: return kind == 'reported' and target == 'reported'
+    if state is None: return (kind,target) in (('reported','reported'),('bank_intake','bank_intake'))
+    if kind=='bank_audit_started':return state=='bank_intake' and target=='bank_auditing'
+    if kind=='bank_audited':return state=='bank_auditing' and target=='bank_audited'
+    if kind=='bank_qualified':return state=='bank_audited' and target=='bank_qualified'
     if kind == 'attempt_started': return state == target == 'reported' and previous_kind != 'attempt_started'
     if kind == 'attempt_finished': return state == target == 'reported' and previous_kind == 'attempt_started'
     if kind == 'attempt_abandoned': return state == target == 'reported' and previous_kind == 'attempt_started'
@@ -61,6 +64,9 @@ class ReviewStore(PrivateJournal):
     def opened(self, case_id):
         case = self.case(case_id); events = self.history(case)
         inputs, identity = record(case/'inputs.json')
+        if inputs.get('profile')=='conditional-final-bank-v1':
+            from .bank_qualification import opened
+            return opened(self,case_id)
         fields(inputs, 'schema_version author origins hashes privacy')
         if (type(inputs['schema_version']) is not int or inputs['schema_version'] != 1
                 or set(inputs['origins']) != {'proposal.json', 'draft.json', 'spec.json'}
@@ -78,6 +84,9 @@ class ReviewStore(PrivateJournal):
         return case, inputs, events
 
     def summary(self, case_id, inputs, events, *, deadline=None):
+        if inputs.get('profile')=='conditional-final-bank-v1':
+            from .bank_qualification import summary
+            return summary(self,case_id,deadline=deadline)
         last = events[-1]
         evidence = next((e['payload']['evidence_sha256'] for e, _ in reversed(events) if e['kind'] in ('reproduced', 'drafted')), None)
         attempt = next((e for e, _ in reversed(events) if e['kind'] in ('attempt_started', 'attempt_finished', 'attempt_abandoned', 'reproduced')), None)
@@ -316,11 +325,8 @@ class ReviewStore(PrivateJournal):
         from .review_authority import install, require_host
         require_host()
         with self.locked(create=True):
-            roots=[]
-            for case_id in self.case_ids(256):
-                case,inputs,_=self.opened(case_id)
-                descriptor,task,_=read_draft(case/'draft.json');spec,_=read_spec(case/'spec.json')
-                roots.extend(source_trees(inputs['origins'],descriptor,task,spec))
+            from .bank_qualification import source_roots
+            roots=source_roots(self)
             return install(self,path,roots)
 
     def prepare_review(self,case_id,review_path):

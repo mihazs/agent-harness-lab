@@ -83,7 +83,11 @@ def accepted_marker(events):
 def revision_metadata(bank_path, *, check_current=True, deadline=None):
     from .regression_review import ReviewStore
     path = Path(bank_path).absolute()
-    if record(path,1024*1024)[0].get('controller_profile')=='grader-correction-bank-v1':
+    profile=record(path,1024*1024)[0].get('controller_profile')
+    if profile=='conditional-final-bank-v1':
+        from .bank_qualification import revision_metadata as final_metadata
+        return final_metadata(path,deadline=deadline)
+    if profile=='grader-correction-bank-v1':
         from .bank_corrections import revision_metadata as corrected_metadata
         return corrected_metadata(path)
     if path.name != 'bank.json' or path.parent.parent.name != 'revisions':
@@ -167,6 +171,10 @@ def controls_for_manifest(bank_path, task_id):
     if not metadata['current_eligible']: raise ValueError('bank revision is quarantined or retired')
     task = next((t for t in value['tasks'] if t['task_id'] == task_id), None)
     if task is None: raise ValueError('unknown bank task')
+    if value.get('controller_profile')=='conditional-final-bank-v1':
+        raw=json.loads(read_regular(contained(path.parent,task['grader_bundle'])/'controls.json',1024*1024))
+        return [dict(state=c['state'],fixture=contained(contained(path.parent,task['grader_bundle']),c['fixture']),
+            digest=digest(contained(contained(path.parent,task['grader_bundle']),c['fixture']))) for c in raw]
     if value.get('controller_profile')=='grader-correction-bank-v1':
         return [dict(state=c['state'],fixture=contained(path.parent,c['fixture']),digest=c['digest'])
             for c in metadata['descriptor']['controls'][task_id]]

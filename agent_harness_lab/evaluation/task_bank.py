@@ -114,12 +114,17 @@ def validate(path, *, verify_contents=True):
     if profile is not None:
         from .bank_revisions import PROFILE, validate_admission
         from .bank_corrections import PROFILE as CORRECTION_PROFILE
-        if profile not in (PROFILE,CORRECTION_PROFILE): raise ValueError('unsupported controller bank profile')
+        from .bank_qualification import PROFILE as FINAL_PROFILE
+        if profile not in (PROFILE,CORRECTION_PROFILE,FINAL_PROFILE): raise ValueError('unsupported controller bank profile')
         result['admission'] = validate_admission(path)
         if profile==CORRECTION_PROFILE: result['certification_eligible']=False
         if result['admission']['bank_manifest_sha256'] != result['bank_sha256']:
             raise ValueError('bank changed during admission validation')
         result['certification_eligible'] = False
+        if profile==FINAL_PROFILE:
+            result['bank_qualification']=result['admission']
+            result['certification_status']='qualified_under_conditional_bank_protocol'
+            result['certification_reason']='final_runtime_and_comparison_qualification_still_required'
         result['privacy'] = 'private'
         if not result['admission']['current_eligible']:
             result['issues'].append(dict(status='admission_quarantined_or_retired'))
@@ -161,9 +166,9 @@ class CertificationLedger:
         atomic_json(self.path, state)
         return state['bank']
 
-    def reserve_managed(self, binding):
+    def reserve_managed(self, binding,*,deadline=None):
         from .certification_access import reserve
-        return reserve(self.path, binding)
+        return reserve(self.path, binding,deadline=deadline)
 
     def consume_managed(self, reservation_id, binding, run_id):
         from .certification_access import consumed
@@ -173,9 +178,9 @@ class CertificationLedger:
         from .certification_access import historical
         historical(self.path, receipt)
 
-    def admit_managed(self, assets, run_id, *, reservation_id=None, binding=None):
+    def admit_managed(self, assets, run_id, *, reservation_id=None, binding=None,deadline=None):
         from .certification_access import admit
-        return admit(self.path, assets, run_id, ident=reservation_id, binding=binding)
+        return admit(self.path, assets, run_id, ident=reservation_id, binding=binding,deadline=deadline)
 
     def managed_status(self, reservation_id):
         from .certification_access import status

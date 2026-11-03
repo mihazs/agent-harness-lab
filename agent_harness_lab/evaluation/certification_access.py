@@ -35,7 +35,7 @@ def _path(value):
 
 
 def _binding(value):
-    fields(value, 'schema_version purpose manifest_path baseline_path candidate_path manifest_sha256 plan_sha256 baseline_tree_sha256 candidate_tree_sha256 input_trees_sha256 oracle_sha256 runtime_sha256 controller_engine_sha256 assets qualification')
+    fields(value, 'schema_version purpose manifest_path baseline_path candidate_path manifest_sha256 plan_sha256 baseline_tree_sha256 candidate_tree_sha256 input_trees_sha256 oracle_sha256 runtime_sha256 controller_engine_sha256 assets qualification'+(' bank_qualification access_ledger' if 'bank_qualification' in value else ''))
     if (type(value['schema_version']) is not int or value['schema_version'] != 1
             or value['purpose'] != PROFILE or value['qualification'] != 'unverified'):
         raise ValueError('unsupported diagnostic access binding')
@@ -79,7 +79,7 @@ def snapshot_exposure(snapshot,tasks,bundles,check=lambda:None):
     return _exposure(tasks,bundles,read_tree,check)
 
 
-def capture(manifest, baseline, candidate, check=lambda: None):
+def capture(manifest, baseline, candidate, check=lambda: None,*,access_ledger=None,deadline=None):
     """Read actual frozen content, never a supplied qualification receipt."""
     from agent_harness_lab.cli import evaluator
     from .decision_receipts import engine
@@ -105,6 +105,20 @@ def capture(manifest, baseline, candidate, check=lambda: None):
         baseline_tree_sha256=hashed(tree(baseline)), candidate_tree_sha256=hashed(tree(candidate)),
         input_trees_sha256=input_trees, oracle_sha256=oracle, runtime_sha256=spec.runtime_hash, controller_engine_sha256=hashed(engine()),
         assets=assets, qualification='unverified')
+    authority=source.get('bank_authority')
+    if authority is not None:
+        from .bank_qualification import PROFILE as BANK_PROFILE,revision_metadata
+        bank_path=Path(authority['bank_path'])
+        bank,_=record(bank_path,MAX_BYTES)
+        if bank.get('controller_profile')==BANK_PROFILE:
+            from .oracle_history import bank_authority
+            bank_authority(source,export_root=manifest.parent)
+            qualified=revision_metadata(bank_path,deadline=deadline)
+            if (not qualified['current_eligible'] or access_ledger is None
+                    or qualified['history_store']!=str(_path(access_ledger).parent)
+                    or qualified['image_sha256']!=spec.runtime_hash):
+                raise ValueError('qualified bank needs its configured history and audited runtime')
+            value.update(bank_qualification=dict(bank_path=str(bank_path),metadata=qualified),access_ledger=str(_path(access_ledger)))
     check(); _binding(value)
     if len(encoded(value)) > MAX_BYTES: raise ValueError('managed binding byte bound exceeded')
     if record(manifest, MAX_BYTES)[1] != pin: raise ValueError('managed declaration changed during capture')
@@ -186,10 +200,14 @@ def _save(path, state):
     atomic_json(path,state); sync_directory(path.parent)
 
 
-def reserve(path, binding):
+def reserve(path, binding,*,deadline=None):
     _binding(binding)
     with _locked(path) as (path, state):
         _managed_available(state,binding['assets'])
+        if 'bank_qualification' in binding:
+            if str(path)!=binding['access_ledger']:raise ValueError('qualified bank access controller changed')
+            from .bank_qualification import access_guard
+            access_guard(binding,state,deadline=deadline)
         if (set(binding['assets']) & set(state['observed_assets'])
                 or any(set(binding['assets']) & set(e['binding']['assets']) for e in state['reservations'].values())):
             raise ValueError('diagnostic assets are reserved or retired; use exposed development data instead')
@@ -200,7 +218,7 @@ def reserve(path, binding):
                 automatic_promotion=False, publication_allowed=False)
 
 
-def admit(path, assets, run_id, *, ident=None, binding=None):
+def admit(path, assets, run_id, *, ident=None, binding=None,deadline=None):
     """One lock linearizes ordinary exposure, reservation and managed consumption."""
     sha256(run_id)
     if not isinstance(assets,list) or not 1 <= len(assets) <= 3000 or assets != sorted(set(assets)):
@@ -216,6 +234,10 @@ def admit(path, assets, run_id, *, ident=None, binding=None):
             for asset in assets: state['observed_assets'].setdefault(asset, run_id)
         else:
             _managed_available(state,assets)
+            if 'bank_qualification' in binding:
+                if str(path)!=binding['access_ledger']:raise ValueError('qualified bank access controller changed')
+                from .bank_qualification import access_guard
+                access_guard(binding,state,reservation_id=ident,deadline=deadline)
             entry = state['reservations'].get(ident)
             if entry is None or entry['binding'] != binding or entry['state'] != 'reserved':
                 raise ValueError('managed reservation mismatched, consumed or retired')
@@ -364,7 +386,7 @@ def admission(args, manifest):
         import time
         if time.monotonic() >= getattr(args,'parent_deadline',float('inf')):
             raise TimeoutError('managed invocation deadline exhausted')
-    actual = capture(args.manifest, args.baseline, args.candidate, check)
+    actual = capture(args.manifest, args.baseline, args.candidate, check,access_ledger=path,deadline=getattr(args,'parent_deadline',None))
     if actual != receipt['binding']: raise ValueError('managed inputs changed before execution')
 
 
