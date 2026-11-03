@@ -55,7 +55,7 @@ def fixture_seed(path,deadline):
 
 
 class Comparison:
-    def __init__(self,spec,fixtures,client,deadline,trajectories=None,seeds=None,*,permission_profile=None,controls=False,bundles=None):
+    def __init__(self,spec,fixtures,client,deadline,trajectories=None,seeds=None,*,permission_profile=None,controls=False,bundles=None,journal_binding=None):
         from .responses import Client
         if type(client) is not Client or _ACTIVE.get() is not None or spec.sequential is not None:
             raise ValueError('one fresh fixed Responses comparison required')
@@ -63,6 +63,7 @@ class Comparison:
             raise ValueError('supported expected permission profile required')
         self.permission_profile,self.controls=permission_profile,controls
         self.bundles=deepcopy(bundles or {})
+        self.journal_binding=deepcopy(journal_binding)
         self.spec,self.fixtures,self.client,self.deadline=spec,dict(fixtures),client,deadline
         self.trajectories=trajectories or {};self.seeds=seeds or {}
         self.settings_pin=hashed(client.settings)
@@ -72,7 +73,7 @@ class Comparison:
 
     def _state(self):
         return encoded(dict(spec=self.spec.digest,fixtures=self.fixtures,client=id(self.client),settings_pin=self.settings_pin,deadline=self.deadline,
-            permission_profile=self.permission_profile,controls=self.controls,bundles=self.bundles,trajectories=self.trajectories,seeds=self.seeds,expected=self.expected,rows=self.rows,active=self.active,pending=self.pending,latest=None if self.latest is None else id(self.latest),
+            permission_profile=self.permission_profile,controls=self.controls,bundles=self.bundles,journal_binding=self.journal_binding,trajectories=self.trajectories,seeds=self.seeds,expected=self.expected,rows=self.rows,active=self.active,pending=self.pending,latest=None if self.latest is None else id(self.latest),
             lost=self.lost,closed=self.closed))
 
     def _save(self):
@@ -140,6 +141,17 @@ class Comparison:
         if client.requests<=self.active['request_start'] or client.requests in self.active['requests']:
             raise ValueError('comparison response is not fresh')
         self.active['requests'].append(client.requests);self._save()
+
+    def reservation(self,client,trial_id):
+        self.before_request(client)
+        selected = self.active['scheduled']
+        if selected['trial_id'] != trial_id:
+            raise ValueError('request differs from actual admitted trial')
+        binding = dict(plan_sha256=self.spec.digest,schedule_sha256=hashed(self.expected),
+            scheduled_trial_sha256=hashed(selected),trial_id=trial_id,
+            repetition=selected['repetition'],version=selected['version'])
+        if self.journal_binding is not None:binding['journal']=deepcopy(self.journal_binding)
+        return binding
 
     def _admit(self,role,stage):
         if not self._valid() or self.active is None or stage!='role' or role not in ('executor','grader') or self.controls and role!='grader':

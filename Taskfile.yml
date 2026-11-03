@@ -873,6 +873,17 @@ tasks:
     desc: Require zero clones in working source
     cmds:
       - node_modules/.bin/jscpd --config .jscpd.json --no-colors
+  test:evaluation:recovery-gap:kernel:
+    cmds:
+      - task: test:workflow:repeated:kernel
+        vars:
+          REPEATED_TEST_PATTERN: test_experiment_recovery_gap.py
+          KERNEL_TEST_FILTER: RecoveryHistoryTests
+          PYTHON: '{{.PYTHON}}'
+  test:evaluation:recovery-gap:
+    desc: Probe durable trial binding and ambiguous-request refusal without provider calls
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_experiment_recovery_gap.py" -v'
   setup:
     desc: Install development dependencies and guarded Git hooks
     cmds:

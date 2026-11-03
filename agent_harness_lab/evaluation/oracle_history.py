@@ -269,7 +269,16 @@ class HistoryStore(PrivateJournal):
         if version==6:
             from .comparison_custody import PROFILE
             binding=inputs['responses_binding']
-            fields(binding,'profile settings_sha256 request_sha256 fixtures seed_states permission_profile bundles')
+            fields(binding,'profile settings_sha256 request_sha256 fixtures seed_states permission_profile bundles'
+                +(' schedule_sha256' if 'schedule_sha256' in binding else ''))
+            if 'schedule_sha256' in binding:
+                from .comparison_custody import hashed
+                from .plan import schedule
+                realized,_=record(case/'realized-schedule.json',8*1024*1024)
+                fields(realized,'profile trials')
+                if (realized['profile']!='controller-realized-schedule-v1' or realized['trials']!=schedule(spec)
+                        or hashed(realized['trials'])!=binding['schedule_sha256']):
+                    raise ValueError('stored realized trial schedule changed')
             if binding['profile']!=PROFILE or spec.sequential is not None or binding['permission_profile'] not in (None,'permission-results-v1'):raise ValueError('invalid fresh Responses history profile')
             if binding['bundles']!=source.get('workflow_bundles') or set(binding['bundles'])!={'baseline','candidate'}:
                 raise ValueError('stored bundle pins differ from original workflow binding')
@@ -591,7 +600,6 @@ class HistoryStore(PrivateJournal):
                 binding=capture_policy(contained(manifest.parent,declaration['path']),declaration['digest'],
                     dict(task_id=task['id'],root_id=task['root'],family=task['family']))
                 if binding is not None:trajectories[task['id']]=binding
-            custody=Comparison(spec,fixtures,inference_client,deadline,trajectories,seeds,permission_profile=permission_profile,bundles=bundles)
         elif any(value is not None for value in (inference_settings,sandbox_backend,source_sink,workflow_request,permission_profile)):
             raise ValueError('partial Responses history context')
         if spec.profile == 'certification':
@@ -623,6 +631,9 @@ class HistoryStore(PrivateJournal):
         membership=cohort_history.capture(manifest.parent,source,spec,bound_tasks)
         if time.monotonic()>=deadline: raise TimeoutError('history qualification preflight budget exhausted')
         run_id = hashlib.sha256(('run:'+secrets.token_hex(32)).encode()).hexdigest()
+        if controlled:
+            custody=Comparison(spec,fixtures,inference_client,deadline,trajectories,seeds,permission_profile=permission_profile,
+                bundles=bundles,journal_binding=dict(run_id=run_id,source_manifest_sha256=manifest_hash))
         from .certification_access import capture as capture_access, exposure
         binding = None
         def check_access_budget():
@@ -677,6 +688,13 @@ class HistoryStore(PrivateJournal):
                     behavior_policies=policies,cohort_binding_sha256=inputs.get('cohort_binding_sha256'),
                     sequential_binding_sha256=record(case/'sequential/binding.json',1024*1024)[1],sequential_fixtures=sequential_fixtures)
             if controlled:
+                from .comparison_custody import hashed
+                from .plan import schedule
+                realized=schedule(spec)
+                raw_schedule=encoded(dict(profile='controller-realized-schedule-v1',trials=realized))
+                if len(raw_schedule)>8*1024*1024:raise ValueError('realized trial schedule exceeds metadata bound')
+                write_bytes(case/'realized-schedule.json',raw_schedule)
+                response_binding['schedule_sha256']=hashed(realized)
                 write_bytes(case/'workflow-request.json',request_raw)
                 inputs.update(schema_version=6,bank_authority=source.get('bank_authority'),bank_tasks=bound_tasks,
                     behavior_policies=policies,cohort_binding_sha256=None,responses_binding=response_binding)
