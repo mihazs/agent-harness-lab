@@ -3,9 +3,11 @@ from contextlib import contextmanager
 from copy import deepcopy
 import fcntl
 import hashlib
+import math
 import os
 from pathlib import Path
 import secrets
+import time
 from weakref import WeakKeyDictionary
 
 from agent_harness_lab.monitoring.state import atomic_json
@@ -186,7 +188,15 @@ def _locked(path):
     finally: os.close(fd)
 
 
-def _save(path, state):
+def check_deadline(deadline):
+    if deadline is None:return
+    try:finite=type(deadline) in (int,float) and math.isfinite(deadline)
+    except OverflowError:finite=False
+    if not finite:raise ValueError('finite inherited access deadline required')
+    if time.monotonic()>=deadline:raise TimeoutError('access publication deadline exhausted')
+
+
+def _save(path, state, *, deadline=None):
     # Reserve terminal-record space so unrelated observations cannot strand a grant.
     terminal=deepcopy(state)
     for entry in terminal['reservations'].values():
@@ -197,7 +207,9 @@ def _save(path, state):
             entry.update(state='complete',children=['0'*64]*3000,output_binding_sha256='0'*64)
     if len(encoded(terminal)) > MAX_BYTES:
         raise ValueError('exposure ledger capacity exhausted; observations cannot be evicted')
-    atomic_json(path,state); sync_directory(path.parent)
+    check_deadline(deadline)
+    atomic_json(path,state,before_replace=None if deadline is None else lambda:check_deadline(deadline))
+    sync_directory(path.parent)
 
 
 def reserve(path, binding,*,deadline=None):
@@ -213,7 +225,7 @@ def reserve(path, binding,*,deadline=None):
             raise ValueError('diagnostic assets are reserved or retired; use exposed development data instead')
         ident = secrets.token_hex(32)
         state['reservations'][ident] = dict(binding=binding, state='reserved', run_id=None)
-        _save(path,state)
+        _save(path,state,deadline=deadline)
     return dict(reservation_id=ident, purpose=PROFILE, binding_sha256=hashed(binding), qualification='unverified',
                 automatic_promotion=False, publication_allowed=False)
 
@@ -242,7 +254,7 @@ def admit(path, assets, run_id, *, ident=None, binding=None,deadline=None):
             if entry is None or entry['binding'] != binding or entry['state'] != 'reserved':
                 raise ValueError('managed reservation mismatched, consumed or retired')
             entry.update(state='retired', run_id=run_id)
-        _save(path,state)
+        _save(path,state,deadline=deadline)
     if ident is None: return None, None
     receipt = dict(schema_version=1, profile=PROFILE, reservation_id=ident, binding=deepcopy(binding),
                    run_id=run_id, state='retired', qualification='unverified')

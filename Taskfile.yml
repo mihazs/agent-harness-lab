@@ -43,7 +43,11 @@ tasks:
       PYTHONPATH: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=180 -- {{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_bank_qualification{{default "*" .TEST_SUFFIX}}.py" -v'
+      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=180 -- {{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_bank_qualification{{default "*" .TEST_SUFFIX}}.py" -k {{default "" .KERNEL_TEST_FILTER | shellQuote}} -v'
+  test:monitoring:
+    desc: Verify native monitoring checkpoints and watch retry semantics
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_monitoring.py" -v'
   test:evaluation:review-authority:
     desc: Verify optional offline reviewer key approvals and existing development admission
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'

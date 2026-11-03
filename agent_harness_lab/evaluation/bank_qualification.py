@@ -326,6 +326,8 @@ def access_guard(binding,state,*,reservation_id=None,deadline=None):
     store=ReviewStore(actual['review_store']);case=store.case(actual['case_id'])
     epoch,_=exposure_check(store,case,state,reservation_id=reservation_id)
     if epoch!=actual['exposure_epoch']:raise ValueError('qualified exposure epoch changed')
+    from .certification_access import check_deadline
+    check_deadline(deadline)
 
 
 def main(argv=None):

@@ -3,14 +3,17 @@ from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import asdict, replace
 import io
 import json
+import os
 import shutil
 from pathlib import Path
 import subprocess
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
 from agent_harness_lab.cli import evaluator, main
+from agent_harness_lab.monitoring import state as monitoring_state
 from agent_harness_lab.evaluation import bank_qualification as bankq, review_authority
 from agent_harness_lab.evaluation.bank_tools import export_manifest
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
@@ -115,7 +118,7 @@ class BankQualificationBoundaryTests(unittest.TestCase):
 
 @unittest.skipUnless(kernel.ENABLED,'explicit delegated kernel profile required')
 class QualifiedBankKernelTests(kernel.KernelFixture):
-    def test_signed_native_bank_qualification_is_consumed_by_protected_diagnostic(self):
+    def qualified_comparison(self):
         bank,declaration=proposal(self.root)
         store=self.root/'review';runtime=self.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
         operator=self.root/'operator';operator.mkdir(mode=0o700)
@@ -160,6 +163,53 @@ class QualifiedBankKernelTests(kernel.KernelFixture):
         manifest['experiment']=asdict(spec)
         path=exported/'manifest.json';path.write_text(json.dumps(manifest))
         history=HistoryStore(self.root/'history')
+        return actual,qualified,policy,runtime,pin,manifest,spec,path,history
+
+    def test_reservation_expiry_after_real_exposure_check_does_not_publish(self):
+        *_,path,history=self.qualified_comparison()
+        ledger=history.access_ledger().path
+        before=ledger.read_bytes() if ledger.exists() else None
+        clock=[time.monotonic()];deadline=clock[0]+30
+        exposure=bankq.exposure_check;expired=[]
+        def finish_then_expire(*args,**kwargs):
+            result=exposure(*args,**kwargs)
+            clock[0]=deadline+1;expired.append(True)
+            return result
+        timed_out=False
+        with patch('time.monotonic',side_effect=lambda:clock[0]),patch.object(bankq,'exposure_check',side_effect=finish_then_expire):
+            try:history.reserve_access(path,self.root/'baseline',self.root/'candidate',budget_seconds=30)
+            except TimeoutError:timed_out=True
+        after=ledger.read_bytes() if ledger.exists() else None
+        self.assertTrue(expired,'test must expire only after the actual exposure check')
+        self.assertEqual((timed_out,after==before,history.case_ids(256)),(True,True,[]))
+
+    def test_consumption_expiry_after_checkpoint_fsync_preserves_reservation(self):
+        *_,runtime,pin,manifest,spec,path,history=self.qualified_comparison()
+        reservation=history.reserve_access(path,self.root/'baseline',self.root/'candidate')
+        ledger=history.access_ledger().path;before=ledger.read_bytes()
+        clock=[time.monotonic()];deadline=clock[0]+30
+        fsync=monitoring_state.os.fsync;expired=[]
+        def fsync_then_expire(descriptor):
+            result=fsync(descriptor)
+            target=Path(os.readlink('/proc/self/fd/'+str(descriptor)))
+            if target.parent==ledger.parent and target.name.startswith('.'+ledger.name):
+                clock[0]=deadline+1;expired.append(True)
+            return result
+        timed_out=False
+        with patch('time.monotonic',side_effect=lambda:clock[0]),patch.object(monitoring_state.os,'fsync',side_effect=fsync_then_expire):
+            try:
+                history.run(path,self.root/'baseline',self.root/'candidate',cgroup_root=self.cgroup_root,
+                    image_root=runtime,image_sha256=pin,disk_bytes=64*1024*1024,budget_seconds=30,
+                    access_reservation=reservation['reservation_id'])
+            except TimeoutError:timed_out=True
+        self.assertTrue(expired,'test must expire only after actual checkpoint temporary-file fsync')
+        after=ledger.read_bytes()
+        status=history.access_ledger().managed_status(reservation['reservation_id'])
+        self.assertEqual((timed_out,after==before,status['state'],history.case_ids(256)),(True,True,'reserved',[]))
+        self.assertEqual(list(ledger.parent.glob('.'+ledger.name+'*')),[])
+
+    def test_signed_native_bank_qualification_is_consumed_by_protected_diagnostic(self):
+        actual,qualified,policy,runtime,pin,manifest,spec,path,history=self.qualified_comparison()
         reservation=history.reserve_access(path,self.root/'baseline',self.root/'candidate')
         ident=reservation['reservation_id']
         with self.assertRaises(ValueError):
