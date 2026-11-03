@@ -187,6 +187,9 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
         raise ValueError('Evaluation manifest must be an object')
     from .evaluation.certification_access import reject_claims
     reject_claims(manifest)
+    experiment=manifest.get('experiment',{})
+    if isinstance(experiment,dict) and experiment.get('sequential') is not None:
+        raise ValueError('legacy improvement workflow does not consume sequential experiments')
     if manifest.get('skills', []) or sorted(manifest.get('harness_paths', [])) != sorted(paths):
         raise ValueError('Evaluation must inject exactly the staged harness_paths, with skills empty')
     tasks = manifest['tasks']

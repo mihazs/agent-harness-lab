@@ -14,6 +14,7 @@ def decide(spec, analysis, *, isolation_verified=False, effective_runtime_verifi
     spec.validate()
     if analysis['status'] in ('rejected', 'blocked', 'incomplete'):
         return PromotionDecision(analysis['status'], analysis.get('reason', 'invalid_evidence'))
+    if spec.sequential is not None:return PromotionDecision('blocked','conditional_sequential_cannot_certify')
     if spec.cohort_manifest_sha256 is not None:
         return PromotionDecision('blocked','preservation_promotion_integration_unavailable')
     if spec.profile != 'certification':

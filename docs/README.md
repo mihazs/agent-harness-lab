@@ -10,6 +10,7 @@
 | Build explicit source adapters | [Source evidence contracts](source-contracts.md) |
 | Understand evaluation and safety gates | [Evaluation foundation](evaluation-foundation.md) |
 | Accept a reviewed private regression | [Immutable development-bank admission](regression-admission.md) |
+| Run conditional finite-bank sequential diagnostics | [Sequential experiments](sequential-experiments.md) |
 | Inspect selected-plan precision before execution | [Frozen-plan precision](experiment-precision.md) |
 | Record comparisons and invalidate defective graders | [Controller oracle history](oracle-history.md) |
 | Bind private analysis to current controller evidence | [Decision receipts](decision-receipts.md) |
