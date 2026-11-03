@@ -176,6 +176,7 @@ class ConditionalApplicationKernelTests(kernel.KernelFixture):
 
     def test_plain_improve_consumes_signed_final_then_applies_and_public_rollback_restores(self):
         self.setup_authorities();self.assertNotIn('AGENTS.md', self.WORKER)
+        initial_target=((self.project/'AGENTS.md').read_bytes(),(self.project/'AGENTS.md').stat().st_mode&0o777)
         output=io.StringIO()
         with patch.dict(os.environ, {'XDG_STATE_HOME':str(self.root/'state')}), \
                 patch.object(responses, 'read_credential', return_value=None), \
@@ -183,6 +184,9 @@ class ConditionalApplicationKernelTests(kernel.KernelFixture):
                 redirect_stdout(output), redirect_stderr(io.StringIO()):
             code=main(['improve', str(self.project)])
         result=json.loads(output.getvalue())
+        observed_target=((self.project/'AGENTS.md').read_bytes(),(self.project/'AGENTS.md').stat().st_mode&0o777)
+        if code!=0:self.assertEqual(observed_target,initial_target,result)
+        else:self.assertEqual(observed_target,(b'good\nSYNTHETIC_CANDIDATE_SECRET\n',initial_target[1]),result)
         if not self.FEASIBLE:
             self.assertEqual((code,result['status'],result['reason']), (3,'inconclusive','precision_target_infeasible'),result)
             self.assertEqual(result['precision_preflight']['status'],'infeasible')

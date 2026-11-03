@@ -53,14 +53,18 @@ ahl improve .
 ```
 
 This may incur model costs. It writes private run artifacts and reports the result;
-current CLI behavioral candidates remain recommendations. Use `ahl improve --help`
+default CLI behavioral candidates remain recommendations. Use `ahl improve --help`
 for runtime selection and budgets, and [workflows](docs/workflows.md) for details.
 
 Already working inside an agent session? Invoke the installed
 `harness-self-improvement` skill and ask it to improve this project's harness.
 The skill describes an assisted evaluation-and-edit loop; it is distinct from the
-CLI's current recommendation-only controller. Supported autonomous application
-and matching CLI/skill receipts are tracked in [#77](https://github.com/mihazs/agent-harness-lab/issues/77).
+CLI's default recommendation-only controller. A separately signed
+[conditional root instruction policy](docs/conditional-instruction-application.md)
+can apply an existing `AGENTS.md` update through controlled Responses and a complete
+protected final comparison. Configuration alone cannot authorize it. Broader
+autonomous application and matching CLI/skill receipts remain tracked in
+[#77](https://github.com/mihazs/agent-harness-lab/issues/77).
 
 ## Try it without credentials
 

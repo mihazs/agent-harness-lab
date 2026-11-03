@@ -2,6 +2,7 @@
 from contextlib import redirect_stdout
 import io
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -113,6 +114,28 @@ class ConditionalApplicationAuthorityTests(unittest.TestCase):
         signature=self.sign();result=self.invoke('retire', self.authorization)
         self.assertEqual(result['state'], 'retired')
         self.rejected(signature, 'request is stale')
+
+    def test_actual_timeout_and_trial_caps_cannot_exceed_the_signed_configuration(self):
+        settings,pin=config.load(self.project/'ahl.json');options=config.execution_options(self.project,settings,{},set())
+        for changes in (dict(timeout=151),dict(trial_limit=25)):
+            with self.subTest(changes=changes),self.assertRaisesRegex(ValueError,'signed budget'):
+                application.binding(self.project,settings,pin,{**options,**changes})
+        lowered=application.binding(self.project,settings,pin,{**options,'timeout':75})
+        self.assertEqual(lowered['limits'],settings['limits'])
+        changed=json.loads(json.dumps(settings));changed['harness_paths']=[]
+        with self.assertRaisesRegex(ValueError,'effective configuration'):
+            application.binding(self.project,changed,pin,options)
+
+    def test_unsupported_explicit_store_and_contract_route_stop_before_side_effects(self):
+        from agent_harness_lab import one_call
+        foreign=self.root/'foreign-history'
+        for extra in (['--evaluation-store',str(foreign)],['--repair-contracts']):
+            output=io.StringIO()
+            with self.subTest(extra=extra),patch.dict(os.environ,{'XDG_STATE_HOME':str(self.root/'state')}), \
+                    patch.object(one_call,'contracts',side_effect=AssertionError('unsupported contract route')),redirect_stdout(output):
+                self.assertEqual(main(['improve',str(self.project),*extra]),3)
+            self.assertEqual(json.loads(output.getvalue())['reason'],'conditional_application_requires_plain_controlled_improve')
+            self.assertFalse(foreign.exists())
 
 
 if __name__=='__main__':unittest.main()

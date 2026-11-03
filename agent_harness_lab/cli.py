@@ -99,7 +99,7 @@ def main(argv=None):
         sub.add_parser(name, help=f'{name} tools; use ahl {name} --help')
     for name in ('analyze', 'improve', 'watch'):
         helps = {'analyze': 'Discover project evidence and failure candidates',
-            'improve': 'Discover, stage, evaluate, and recommend supported harness repairs (no automatic adoption)',
+            'improve': 'Prepare and evaluate repairs; apply only under an explicitly authorized supported policy',
             'watch': 'Recheck evidence and recommend improvements only when project evidence changes (recommendation-only)'}
         command = sub.add_parser(name, help=helps[name], description=helps[name])
         command.add_argument('project', nargs='?', type=Path, default=Path.cwd())

@@ -77,11 +77,8 @@ class Comparison:
             lost=self.lost,closed=self.closed))
 
     def _save(self):
-        owner=_STATES.get(self)
-        if owner is None or owner[0]!=os.getpid():self.lost=True;return
-        raw=self._state()
-        if len(raw)>MAX_BYTES:self.lost=True;return
-        _STATES[self]=(owner[0],owner[1],raw)
+        from .controller_receipts import _cache_state
+        _cache_state(self,_STATES,MAX_BYTES)
 
     def _valid(self):
         value=_STATES.get(self)

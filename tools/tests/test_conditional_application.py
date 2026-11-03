@@ -121,7 +121,9 @@ class AuthorizationLocatorTests(unittest.TestCase):
     def test_incomplete_final_diagnostics_never_record_provider_exception_text(self):
         from types import SimpleNamespace
         from agent_harness_lab.evaluation.oracle_history import _conditional_failure
+        from agent_harness_lab.promotion.prerequisites import encode_receipt
         scope=SimpleNamespace(lost=True,closed=False,data=dict(events=[dict(complete=True)],instruction_requests=[],pairs=[]))
+        scope._state=lambda:encode_receipt(scope.data)
         comparison=SimpleNamespace(active=None,lost=True,closed=True,rows=[],expected=[1,2],pending=[])
         diagnostic=_conditional_failure(ValueError('SYNTHETIC_PRIVATE_PROVIDER_BODY'),'trial_evaluation',scope,comparison)
         self.assertNotIn('SYNTHETIC_PRIVATE_PROVIDER_BODY',json.dumps(diagnostic))

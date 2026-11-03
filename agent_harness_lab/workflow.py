@@ -764,6 +764,13 @@ All bundles and controls stay outside task fixtures; no grader command is execut
     return result
 
 
+def _blocked_improvement(args,reason):
+    output=output_dir(args)
+    result=dict(status='blocked',reason=reason,output=str(output),changed_files=[],
+        remediation='Select a supported runtime/profile and budget; see ahl improve --help')
+    write_json(output/'workflow.json',result);return result
+
+
 def _run_improvement(args, *, parent_started=None):
     """Persist truthful completion even when a run is interrupted or raises."""
     issuer=os.getpid(); managed=getattr(args,'evaluation_store',None) is not None
@@ -775,8 +782,10 @@ def _run_improvement(args, *, parent_started=None):
     if managed: args._construction_started=started
     if configured:args._configured_started=started
     try:
-        from .one_call import contracts, preflight, check_configuration
+        from .one_call import contracts, preflight, check_configuration,conditional_selection
         check_configuration(args)
+        unsupported=conditional_selection(args)
+        if unsupported:return _blocked_improvement(args,unsupported)
         if managed:
             from .evaluation.construction_access import selection
             selection(args)
@@ -788,11 +797,7 @@ def _run_improvement(args, *, parent_started=None):
             reason = preflight(args)
             if configured and time.monotonic()>=started+args.timeout:raise TimeoutError('configured preflight exhausted improvement budget')
             if reason:
-                output = output_dir(args)
-                result = dict(status='blocked', reason=reason, output=str(output), changed_files=[],
-                              remediation='Select a supported runtime/profile and budget; see ahl improve --help')
-                write_json(output/'workflow.json', result)
-                return result
+                return _blocked_improvement(args,reason)
         from .conditional_application import selected,begin
         if selected(getattr(args,'project_settings',None)):
             from .evaluation.sandbox import SandboxBackend
@@ -812,6 +817,9 @@ def _run_improvement(args, *, parent_started=None):
                   'invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error')
         result = dict(status=status, changed_files=[], failure_class='requires_intervention', error_type=type(exc).__name__)
         if isinstance(exc,GuardedTransactionError): result.update(exc.receipt)
+        from .conditional_application import committed_outcome
+        committed=committed_outcome(getattr(args,'_application_session',None))
+        if committed is not None:result.update(committed,post_commit_error_type=type(exc).__name__)
         if hasattr(args,'_construction_access'):
             try: result['construction_access']=args._construction_access.failure_report()
             except (ValueError,OSError,KeyError,TypeError): result['construction_access_observation']='unknown'
@@ -831,7 +839,11 @@ def _run_improvement(args, *, parent_started=None):
         output = getattr(args, '_run_output', None)
         if output:
             result['output'] = str(output)
-            write_json(output / 'workflow.json', result)
+            try:write_json(output / 'workflow.json', result)
+            except OSError:
+                if committed is None:raise
+                result['workflow_completion']='unrecorded'
+        if committed is not None:return result
         if isinstance(exc, (KeyboardInterrupt, OSError)) or inference_error:
             return result
         if not isinstance(exc, Exception):

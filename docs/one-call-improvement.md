@@ -20,7 +20,7 @@ preserves unrelated changes, and uses the existing guarded journal and rollback.
 If any changed operation has an unresolved executable or hook facet, the entire
 repair batch is blocked before journal preparation. Its plan remains reviewable;
 no nonexecutable subset is applied and all target bytes and modes are preserved.
-Behavioral plans remain review-only with their actual certification prerequisite;
+Default behavioral plans remain review-only with their actual certification prerequisite;
 the shared contract adds no application command or new eligible repair.
 
 `ahl improve .` collects scoped evidence, prepares candidate and independent
@@ -38,6 +38,12 @@ and worker references in the [Responses configuration variant](onboarding.md#con
 Then plain `ahl improve .` resolves that pipeline without a native agent
 executable or repeated resource flags. Its broker reads the explicitly selected
 private credential only during actual execution; doctor checks metadata only.
+
+The separate [conditional instruction application policy](conditional-instruction-application.md)
+connects signed preauthorization, actual development custody, protected fixed-final
+evaluation and guarded application for an existing root `AGENTS.md` only. It keeps
+general certification and adoption APIs conservative and does not activate native
+agent CLIs or infer served-model identity from configuration.
 
 When `ahl.json` exists, its profile, executable, scope and limits constrain the run.
 Explicit CLI runtime/binary/time options take precedence; configuration never

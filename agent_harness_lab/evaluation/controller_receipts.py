@@ -54,6 +54,16 @@ def _worker_command(run):
     return {name:deepcopy(run[name]) for name in ('status','exit_code','attestation')}
 
 
+def _cache_state(handle,registry,maximum):
+    """Keep one bounded issuing-process cache for live custody owners."""
+    owner=registry.get(handle)
+    if owner is None or owner[0]!=os.getpid():handle.lost=True;return
+    raw=handle._state()
+    if len(raw)>maximum:
+        handle.lost=True;raw=None
+    registry[handle]=(owner[0],owner[1],raw)
+
+
 class _SessionToken:
     __slots__=('__weakref__',)
 

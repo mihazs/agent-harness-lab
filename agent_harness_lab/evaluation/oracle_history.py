@@ -36,9 +36,10 @@ def _conditional_failure(error,stage,scope,custody):
     message=error.args[0] if error.args and type(error.args[0]) is str else None
     result=dict(stage=stage,error_type=type(error).__name__,reason=reasons.get(message,'unclassified'))
     try:
+        from agent_harness_lab.promotion.prerequisites import RECEIPT_ENCODING
         result['scope']=dict(lost=scope.lost,closed=scope.closed,events=len(scope.data['events']),
             completed=sum(row['complete'] for row in scope.data['events']),requests=len(scope.data.get('instruction_requests',[])),
-            receipt_bytes=len(encoded(scope.data)),pairs=len(scope.data['pairs']))
+            receipt_bytes=len(scope._state()),receipt_encoding=RECEIPT_ENCODING,pairs=len(scope.data['pairs']))
         active=custody.active
         result['comparison']=dict(lost=custody.lost,closed=custody.closed,rows=len(custody.rows),expected=len(custody.expected),
             pending=len(custody.pending),active=active is not None,

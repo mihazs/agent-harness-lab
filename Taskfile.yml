@@ -17,6 +17,12 @@ tasks:
           LAYOUT_DIR: '{{.LAYOUT_DIR}}'
           EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
           REPEATED_TEST_PATTERN: test_conditional_application_authority.py
+      - task: test:workflow:repeated
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          REPEATED_TEST_PATTERN: test_conditional_commit_observation.py
   test:application:conditional:kernel:
     desc: Exercise explicitly authorized final evaluation and guarded root instruction application
     cmds:
@@ -767,6 +773,7 @@ tasks:
       AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_workflow_prerequisites.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_scope_receipt_encoding.py" -v'
   test:runtime:boundary:
     desc: Verify bounded runtime startup transport and untrusted report rejection
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'

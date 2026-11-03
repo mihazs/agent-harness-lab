@@ -140,7 +140,7 @@ def prepare(store,authorization_id,project,settings,configuration_sha256,options
             if read_regular(path,authority.MAX_BYTES)!=raw:raise ValueError('application request changed')
         else:write_bytes(path,raw);sync_directory(folder)
         store.append(case,events,'application_authorization_prepared','application_prepared',dict(request_sha256=pin))
-        return dict(profile=AUTH_PROFILE,authorization_id=authorization_id,request_sha256=pin,
+        return dict(profile=AUTH_PROFILE,authorization_id=authorization_id,request_sha256=pin,request_path=str(path),
             authorization='not_authorized',publication_allowed=False)
 
 
@@ -214,6 +214,10 @@ def _owned(session):
     data=_SESSIONS.get(session) if type(session) is _Session else None
     if data is None or data['pid']!=os.getpid() or data['closed'] or time.monotonic()>=data['deadline']:
         raise ValueError('current controller-owned application session required')
+    args=data['args']
+    if (hashed(args.project_settings)!=hashed(data['settings']) or args.timeout!=data['timeout']
+            or args.trial_limit!=data['trial_limit'] or args.configuration_sha256!=data['binding']['configuration_sha256']):
+        raise ValueError('application session configuration or budget changed')
     return data
 
 
@@ -244,7 +248,8 @@ def begin(args,*,deadline,backend):
         args.evaluation_store=Path(checked['history_store']);args._closed_input_domain=domain
         session=_Session();_SESSIONS[session]=dict(pid=os.getpid(),args=args,store=store,
             authorization_id=application['authorization_id'],deadline=deadline,domain=domain,backend=backend,
-            binding=current,closed=False,phase='construction',plan=None,final_run=None)
+            binding=current,settings=deepcopy(settings),timeout=args.timeout,trial_limit=args.trial_limit,
+            closed=False,phase='construction',plan=None,final_run=None)
         history=closed_inputs.owned(domain)['history'];history._application_session=session
         _SESSIONS[session]['history']=history
         return session
@@ -260,10 +265,11 @@ def close(session):
     from .evaluation import closed_inputs
     try:
         closed_inputs.close(data['domain'])
-        with data['store'].locked():
-            case,_,events=opened(data['store'],data['authorization_id'])
-            if events[-1][0]['state']=='application_running':
-                data['store'].append(case,events,'application_finished','application_not_applied',dict(reason='invocation_closed_without_application'))
+        if data['phase']!='applied':
+            with data['store'].locked():
+                case,_,events=opened(data['store'],data['authorization_id'])
+                if events[-1][0]['state']=='application_running':
+                    data['store'].append(case,events,'application_finished','application_not_applied',dict(reason='invocation_closed_without_application'))
     finally:data['closed']=True
 
 
@@ -443,6 +449,44 @@ class _Grant:
 _GRANTS=weakref.WeakKeyDictionary()
 
 
+def _journal_outcome(journal,original,expected_project):
+    """Observe physical committed state; this function never authorizes a write."""
+    expected=dict(original,status='committed',commit_guarded=True)
+    try:
+        if journal.active!=original['deployment'] or journal.load(original['deployment'])!=expected:return None
+    except (OSError,ValueError,KeyError,TypeError):return None
+    from .evaluation.closed_inputs import project_selection,project_snapshot
+    observed=False
+    try:
+        observed=(project_snapshot(journal.project,project_selection(journal.project),time.monotonic()+1)==expected_project
+            and all(file_record(journal.owned(name))==target for name,target in original['after'].items()))
+    except (OSError,ValueError,TimeoutError):pass
+    import shlex
+    result=dict(status='applied' if observed else 'requires_intervention',deployment=original['deployment'],journal=str(journal.folder),
+        changed_files=sorted(original['after']),commit_observation='committed',target_readback='matched' if observed else 'changed_or_unavailable',
+        rollback=f'ahl rollback {original["deployment"]} --project {shlex.quote(str(journal.project))}')
+    if not observed:result['remaining_change_ownership']='unverified'
+    return result
+
+
+def committed_outcome(session):
+    """Recover truthful reporting from this invocation's consumed grant, never resume."""
+    data=_SESSIONS.get(session) if type(session) is _Session else None
+    if data is None or data['pid']!=os.getpid():return None
+    grant=data.get('grant');permitted=_GRANTS.get(grant) if type(grant) is _Grant else None
+    if (permitted is None or permitted['pid']!=os.getpid() or permitted['session'] is not session
+            or permitted['guard_active'] or permitted['checks']!=5):return None
+    handle=data['final_run'];final=_FINAL_RUNS.get(handle) if type(handle) is _FinalRun else None
+    if final is None or not final['sealed'] or final['session'] is not session:return None
+    observed=_journal_outcome(permitted['journal'],permitted['record'],permitted['after_project'])
+    if observed is None:return None
+    data['phase']='applied'
+    observed.update(conditional_claim=POLICY,general_certification=False,served_model='unverified',native_activation='unverified',
+        independence='unverified',bank_review='authenticated_conditional_judgments',external_exposure='unknown',pretraining_exposure='unknown',
+        controller_run_id=final['run_id'],analysis=deepcopy(permitted['analysis']),automatic_promotion=False,publication_allowed=False)
+    return observed
+
+
 def _bank_guard(grant,domain):
     permitted=_GRANTS.get(grant) if type(grant) is _Grant else None
     if permitted is None or permitted['pid']!=os.getpid() or not permitted['guard_active']:
@@ -530,24 +574,22 @@ def execute(session):
     grant=_Grant();permitted=dict(pid=os.getpid(),session=session,journal=journal,checks=0,guard_active=False,
         before_project=before_project,after_project=after_project,before=before,after=after,authentication_sha256=authentication,record=deepcopy(record_value))
     _GRANTS[grant]=permitted;data['phase']='grant_consuming'
+    permitted['analysis']=deepcopy(analysis);data['grant']=grant
     def guard():
         permitted['guard_active']=True
         try:closed_inputs.application_guard(data['domain'],grant)
         finally:permitted['guard_active']=False
         permitted['checks']+=1
-    receipt=journal._execute(record_value['deployment'],pre_write=guard)
-    if (permitted['checks']!=5 or journal.active!=receipt['deployment'] or file_record(args.project/'AGENTS.md')!=after
-            or closed_inputs.project_snapshot(args.project,declaration['project_inputs'],deadline)!=after_project):
-        raise ValueError('conditional application post-write verification changed')
-    data['phase']='applied'
-    with data['store'].locked():
-        case,_,events=opened(data['store'],data['authorization_id'])
-        data['store'].append(case,events,'application_finished','application_applied',dict(plan_sha256=data['plan'].sha256,
-            run_id=final['run_id'],deployment=receipt['deployment']))
-    return dict(status='applied',changed_files=['AGENTS.md'],deployment=receipt['deployment'],journal=str(journal.folder),
-        conditional_claim=POLICY,general_certification=False,served_model='unverified',native_activation='unverified',
-        independence='unverified',bank_review='authenticated_conditional_judgments',external_exposure='unknown',pretraining_exposure='unknown',
-        controller_run_id=final['run_id'],analysis=analysis,automatic_promotion=False,publication_allowed=False)
+    journal._execute(record_value['deployment'],pre_write=guard)
+    outcome=committed_outcome(session)
+    if outcome is None:raise ValueError('conditional application commit could not be observed')
+    try:
+        with data['store'].locked():
+            case,_,events=opened(data['store'],data['authorization_id'])
+            data['store'].append(case,events,'application_finished','application_applied',dict(plan_sha256=data['plan'].sha256,
+                run_id=final['run_id'],deployment=outcome['deployment']))
+    except (OSError,ValueError,TimeoutError):outcome['authorization_completion']='unrecorded'
+    return outcome
 
 
 def main(argv):
@@ -589,10 +631,16 @@ def main(argv):
 
 def binding(project,settings,configuration_sha256,options):
     """Capture selected inputs, never permission to apply or a claim about future trials."""
-    from .config import response_references,reference_path
+    from .config import response_references,reference_path,load
     from .evaluation.responses import read_settings
     from .evaluation.instruction_context import PROFILE as INSTRUCTION_PROFILE
     application=settings['application'];validate_settings(application)
+    loaded,pin=load(Path(project)/'ahl.json')
+    seconds=options.get('timeout',settings['limits']['seconds']);trials=options.get('trial_limit',settings['limits']['trials'])
+    if (hashed(loaded)!=hashed(settings) or pin!=configuration_sha256 or options.get('agent')!='responses'
+            or type(seconds) not in (int,float) or not math.isfinite(seconds) or not 0<seconds<=settings['limits']['seconds']
+            or type(trials) is not int or trials!=settings['limits']['trials']):
+        raise ValueError('application effective configuration or signed budget changed')
     references=response_references(project,options)
     inference,_=read_settings(options['inference_settings'])
     if inference.get('instruction_protocol')!=INSTRUCTION_PROFILE:raise ValueError('conditional application requires actual controller-loaded instructions')
