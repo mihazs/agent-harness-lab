@@ -389,7 +389,7 @@ def _improve(args):
     if controlled or getattr(args, 'sandbox_graders', False):
         from .evaluation.sandbox import SandboxBackend
         if permission_audit is not None:grader_options['permission_audit']=permission_audit
-        grading = SandboxBackend(**grader_options)
+        grading = getattr(args,'_application_backend',None) or SandboxBackend(**grader_options)
         if permission_audit is not None:args._permission_backend=grading
         available = remaining()
         if available <= 0: raise TimeoutError('Improvement budget exhausted before grader preflight')
@@ -420,9 +420,16 @@ def _improve(args):
         deadline = started+args.timeout
         from .promotion.prerequisites import _begin
         args._prerequisite_scope=_begin(baseline,grader_options['image_sha256'],deadline)
+        application_session=getattr(args,'_application_session',None)
+        if application_session is not None:
+            from .conditional_application import _owned
+            from .evaluation.closed_inputs import bind_scope
+            bind_scope(_owned(application_session)['domain'],args._prerequisite_scope,baseline)
         settings,settings_hash = responses.read_settings(inference_path)
         if repeated is not None:repeated.protect([baseline,candidate,assets()/'skills'],settings)
-        role_views = construction.views(data,assets(),prepare/'role-inputs',deadline)
+        view_options={}
+        if application_session is not None:view_options['closed_domain']=_owned(application_session)['domain']
+        role_views = construction.views(data,assets(),prepare/'role-inputs',deadline,**view_options)
         if access_path is None: construction.proposer_seed(candidate,prepare/'proposer-work-0',deadline)
         credential = responses.read_credential(settings,[args.project,output,grader_options['image_root'],assets()/'skills',*([access_path] if access_path is not None else [])])
         def record(receipt):
@@ -758,6 +765,13 @@ def _run_improvement(args, *, parent_started=None):
                               remediation='Select a supported runtime/profile and budget; see ahl improve --help')
                 write_json(output/'workflow.json', result)
                 return result
+        from .conditional_application import selected,begin
+        if selected(getattr(args,'project_settings',None)):
+            from .evaluation.sandbox import SandboxBackend
+            options={name:getattr(args,name,None) for name in ('cgroup_root','image_root','image_sha256','disk_bytes','permission_audit')}
+            args._application_backend=SandboxBackend(**options)
+            args._application_session=begin(args,deadline=started+args.timeout,backend=args._application_backend)
+            args._construction_started=started
         return _improve(args)
     except BaseException as exc:
         if managed and os.getpid()!=issuer: raise
@@ -800,9 +814,15 @@ def _run_improvement(args, *, parent_started=None):
             scope=getattr(args,'_prerequisite_scope',None)
             if scope is not None:scope.end()
         finally:
-            access=getattr(args,'_construction_access',None)
-            if access is not None and os.getpid()==issuer:
-                access.retire()
+            try:
+                access=getattr(args,'_construction_access',None)
+                if access is not None and os.getpid()==issuer:
+                    access.retire()
+            finally:
+                application_session=getattr(args,'_application_session',None)
+                if application_session is not None and os.getpid()==issuer:
+                    from .conditional_application import close
+                    close(application_session)
 
 
 def improve(args):

@@ -2,6 +2,15 @@ version: '3'
 vars:
   PYTHON: '{{default "python3" .PYTHON}}'
 tasks:
+  test:application:conditional:
+    desc: Verify bounded application selection and explicit authority requirements
+    cmds:
+      - task: test:workflow:repeated
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          REPEATED_TEST_PATTERN: test_conditional_application.py
   test:workflow:change-plan:
     desc: Verify immutable shared plans and guarded public application receipts
     cmds:

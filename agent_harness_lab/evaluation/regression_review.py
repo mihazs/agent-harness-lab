@@ -18,7 +18,11 @@ from .regressions import fields, load, references, sha256, text
 from .task_bank import identifier
 
 def transition(state, kind, target, previous_kind=None):
-    if state is None: return (kind,target) in (('reported','reported'),('bank_intake','bank_intake'))
+    if state is None: return (kind,target) in (('reported','reported'),('bank_intake','bank_intake'),('application_authorization_created','application_authorization'))
+    if kind=='application_authorization_prepared':return state=='application_authorization' and target=='application_prepared'
+    if kind=='application_authorized':return state=='application_prepared' and target=='application_authorized'
+    if kind=='application_started':return state=='application_authorized' and target=='application_running'
+    if kind=='application_finished':return state=='application_running' and target in ('application_applied','application_not_applied')
     if kind=='bank_audit_started':return state=='bank_intake' and target=='bank_auditing'
     if kind=='bank_audited':return state=='bank_auditing' and target=='bank_audited'
     if kind=='bank_qualified':return state=='bank_audited' and target=='bank_qualified'
@@ -64,6 +68,9 @@ class ReviewStore(PrivateJournal):
     def opened(self, case_id):
         case = self.case(case_id); events = self.history(case)
         inputs, identity = record(case/'inputs.json')
+        if inputs.get('profile')=='controller-instruction-authorization-v1':
+            from agent_harness_lab.conditional_application import opened
+            return opened(self,case_id)
         if inputs.get('profile')=='conditional-final-bank-v1':
             from .bank_qualification import opened
             return opened(self,case_id)
@@ -84,6 +91,9 @@ class ReviewStore(PrivateJournal):
         return case, inputs, events
 
     def summary(self, case_id, inputs, events, *, deadline=None):
+        if inputs.get('profile')=='controller-instruction-authorization-v1':
+            from agent_harness_lab.conditional_application import summary
+            return summary(case_id,inputs,events)
         if inputs.get('profile')=='conditional-final-bank-v1':
             from .bank_qualification import summary
             return summary(self,case_id,deadline=deadline)
@@ -224,6 +234,8 @@ class ReviewStore(PrivateJournal):
                     historical_verification='unverified', independence='unverified', bank_admission=False)
 
     def checked_evidence(self, case, inputs, events):
+        if inputs.get('profile')=='controller-instruction-authorization-v1':
+            raise ValueError('application authorization is not reproduced regression evidence')
         try:
             event = next(e for e, _ in reversed(events) if e['kind'] == 'reproduced')
             attempt = contained(case, event['payload']['attempt'])
@@ -360,6 +372,8 @@ class ReviewStore(PrivateJournal):
         review_value(review, case_id); reviewer = review['reviewer']
         with self.locked():
             case, inputs, events = self.opened(case_id); current = self.summary(case_id, inputs, events,deadline=deadline)
+            if inputs.get('profile')=='controller-instruction-authorization-v1':
+                raise ValueError('application authorizations require their dedicated signed approval purpose')
             if review['expected_event_sha256'] != current['event_sha256'] or review['evidence_sha256'] != current['evidence_sha256']:
                 raise ValueError('stale review event/evidence identity')
             decision = review['decision']

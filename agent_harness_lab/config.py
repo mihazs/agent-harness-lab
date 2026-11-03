@@ -33,10 +33,19 @@ def defaults():
 
 def validate(value):
     fields = {'schema_version', 'profile', 'runtime', 'bank', 'harness_paths', 'limits', 'recommendation_only'}
-    if not isinstance(value, dict) or set(value) != fields or type(value['schema_version']) is not int or value['schema_version'] != 1:
+    version=value.get('schema_version') if isinstance(value,dict) else None
+    if (type(version) is not int or version not in (1,2)
+            or set(value)!=(fields if version==1 else fields|{'application'})):
         raise ValueError('unsupported project configuration schema')
-    if value['profile'] not in ('offline', 'cooperative', 'isolated') or value['recommendation_only'] is not True:
+    if value['profile'] not in ('offline','cooperative','isolated') or value['recommendation_only'] is not (version==1):
         raise ValueError('invalid profile or recommendation policy')
+    if version==2:
+        from .conditional_application import validate_settings
+        validate_settings(value['application'])
+        if (value['profile']!='cooperative' or value['harness_paths']!=['AGENTS.md']
+                or not isinstance(value['runtime'],dict) or value['runtime'].get('name')!='responses'
+                or value['runtime'].get('permission_audit')!='permission-results-v1'):
+            raise ValueError('conditional application requires audited controlled root AGENTS scope')
     runtime = value['runtime']
     if not isinstance(runtime,dict):
         raise ValueError('invalid configured runtime')
@@ -97,6 +106,7 @@ def read_json(path):
 
 def prepare(settings):
     result = defaults()
+    if isinstance(settings,dict) and settings.get('schema_version')==2:result['application']={}
     if not isinstance(settings, dict) or set(settings) - set(result):
         raise ValueError('unknown initialization settings')
     for key, value in settings.items():

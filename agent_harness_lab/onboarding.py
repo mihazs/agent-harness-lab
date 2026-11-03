@@ -45,7 +45,7 @@ def doctor(project, profile=None, *, probe_runtime=False, proposed=None, source_
             raise NotImplementedError()
         value = proposed if proposed is not None else (config.read_json(project/'ahl.json') if os.path.lexists(project/'ahl.json') else config.defaults())
         effective = config.validate(value)
-        add('configuration', 'pass', True, 'validated_schema', 'version_1', 'Use ahl init to preview a valid configuration.')
+        add('configuration', 'pass', True, 'validated_schema', 'version_'+str(effective['schema_version']), 'Use ahl init to preview a valid configuration.')
     except (ValueError, OSError, TypeError, KeyError, NotImplementedError) as exc:
         invalid_config = supported and not isinstance(exc, PermissionError) and safe and (proposed is not None or os.path.lexists(project/'ahl.json'))
         add('configuration', 'blocked', True, 'validated_schema', 'permission_denied' if isinstance(exc, PermissionError) else 'invalid_or_unreadable',

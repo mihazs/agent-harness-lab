@@ -51,6 +51,9 @@ def main(argv=None):
     if argv and argv[0] == 'bank-review':
         from agent_harness_lab.evaluation.bank_qualification import main as bank_review_main
         return bank_review_main(argv[1:])
+    if argv and argv[0] == 'application-review':
+        from agent_harness_lab.conditional_application import main as application_review_main
+        return application_review_main(argv[1:])
     if argv and argv[0] == 'bank-interchange':
         from agent_harness_lab.evaluation.interchange import main as interchange_main
         return interchange_main(argv[1:])
@@ -91,7 +94,7 @@ def main(argv=None):
     sub = parser.add_subparsers(dest='command', required=True)
     sub.add_parser('rollback', help='Restore a journaled deployment; use ahl rollback --help')
     sub.add_parser('update', help='Update a release installation and its existing skill links')
-    for name in ('mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'bank-interchange', 'bank-review', 'experiment', 'experiment-history', 'grader-correction', 'regression', 'regression-review', 'sandbox-check', 'research-simulate', 'incident-search', 'promotion', 'benchmark-report', 'doctor', 'init', 'sources'):
+    for name in ('mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'bank-interchange', 'bank-review', 'application-review', 'experiment', 'experiment-history', 'grader-correction', 'regression', 'regression-review', 'sandbox-check', 'research-simulate', 'incident-search', 'promotion', 'benchmark-report', 'doctor', 'init', 'sources'):
 
         sub.add_parser(name, help=f'{name} tools; use ahl {name} --help')
     for name in ('analyze', 'improve', 'watch'):
