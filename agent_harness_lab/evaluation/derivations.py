@@ -140,6 +140,8 @@ def record_author_output(handle,published):
     if type(handle) is not _Handoff or handle not in _OWNED:
         raise ValueError('actual owned author output required')
     owned=_OWNED[handle]; _check_custody(owned)
+    if 'produced_pin' in owned:
+        raise ValueError('owned author output was already registered')
     if not owned['used'] or Path(published)!=owned['folder']/'published':
         raise ValueError('actual owned author output path required')
     owned['produced_pin']=_tree_pin(published,owned['deadline'])

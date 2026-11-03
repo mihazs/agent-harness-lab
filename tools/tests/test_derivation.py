@@ -399,7 +399,7 @@ class DerivationTests(unittest.TestCase):
                     self.assertTrue(all(value['state']=='retired' for value in state['reservations'].values()))
                 finally: control.doCleanups()
 
-    def test_actual_role_output_pin_rejects_post_author_artifact_rewrite(self):
+    def _reject_post_author_rewrite(self,repin=False):
         from agent_harness_lab.evaluation import construction
         run_id=self.parent(); author=construction.author
         def changed(*args,**kwargs):
@@ -407,12 +407,19 @@ class DerivationTests(unittest.TestCase):
             source=json.loads(result[0].read_bytes())
             bundle=next(iter(source['grader_bundles'].values()))['path']
             (result[0].parent/bundle/'expected.json').write_text('{"synthetic_late_rewrite":true}')
+            if repin: derivations.record_author_output(kwargs['derivation'],result[0].parent)
             return result
         with patch.object(construction,'author',side_effect=changed),self.assertRaises(ValueError):
             self.derive(source_run=run_id)
         self.assertFalse(self.output.exists()); self.assertEqual(self.worker_calls,1)
         state=json.loads((self.f.store.root/'protected-access.json').read_bytes())
         self.assertEqual(next(iter(state['derivations'].values()))['state'],'unresolved')
+
+    def test_actual_role_output_pin_rejects_post_author_artifact_rewrite(self):
+        self._reject_post_author_rewrite()
+
+    def test_actual_role_output_pin_cannot_be_registered_again(self):
+        self._reject_post_author_rewrite(repin=True)
 
     @unittest.skipUnless(hasattr(os,'fork'),'requires native fork custody control')
     def test_post_author_fork_cannot_finish_or_poison_the_owner_transaction(self):
