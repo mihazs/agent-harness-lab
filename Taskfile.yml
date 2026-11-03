@@ -1132,7 +1132,7 @@ tasks:
       - npm run version-packages
   changeset:
     cmds:
-      - npm run changeset
+      - npm run changeset -- {{.CLI_ARGS}}
   release:
     cmds:
       - '{{.PYTHON | shellQuote}} scripts/publish_release.py'
