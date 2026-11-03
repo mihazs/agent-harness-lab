@@ -202,3 +202,8 @@ Run `task test:evaluation:review` for native lifecycle/falsifier tests. The exis
 `task test:sandbox:kernel:regressions` also exercises the actual pinned-image
 workflow with resource controls and a synthetic operator attestation; that fixture
 does not establish authenticated human independence.
+
+Separate final-bank intake uses [conditional bank review](conditional-bank-review.md).
+Its purpose-specific key policy and native control audits can qualify a bank for
+protected diagnostic access; existing exposed development regressions remain
+ineligible for conversion into final-bank inputs.

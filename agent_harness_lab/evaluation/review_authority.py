@@ -20,6 +20,13 @@ PURPOSE='development_artifact_review'
 NAMESPACE='ahl.artifact-review.v1'
 VERIFIER=Path('/usr/bin/ssh-keygen')
 MAX_BYTES=64*1024
+BANK_PURPOSE='conditional_final_bank_review'
+
+
+def authority_names(purpose):
+    if purpose==PURPOSE:return 'review-authority.json',NAMESPACE
+    if purpose==BANK_PURPOSE:return 'bank-review-authority.json','ahl.final-bank-review.v1'
+    raise ValueError('unsupported review authority purpose')
 
 
 class VerifierUnavailable(ValueError):
@@ -50,10 +57,10 @@ def _private(path):
     return read_regular(path,MAX_BYTES)
 
 
-def policy_value(raw):
+def policy_value(raw,*,purpose=PURPOSE):
     value,pin=record_bytes(raw,MAX_BYTES)
     fields(value,'schema_version profile purpose reviewers')
-    if type(value['schema_version']) is not int or value['schema_version']!=1 or value['profile']!=POLICY or value['purpose']!=PURPOSE:
+    if type(value['schema_version']) is not int or value['schema_version']!=1 or value['profile']!=POLICY or value['purpose']!=purpose:
         raise ValueError('unsupported review authority policy')
     reviewers=value['reviewers']
     if not isinstance(reviewers,dict) or not 0<len(reviewers)<=32: raise ValueError('bounded reviewer keys required')
@@ -75,15 +82,17 @@ def _outside(path,roots):
 
 
 def check_sources(store,roots):
-    marker=store.root/'review-authority.json'
-    if marker.exists():
-        value,_=record(marker,4096)
-        _outside(_path(value['source_path']),list(roots))
+    for name in ('review-authority.json','bank-review-authority.json'):
+        marker=store.root/name
+        if marker.exists():
+            value,_=record(marker,4096)
+            _outside(_path(value['source_path']),list(roots))
 
 
-def install(store,path,roots=()):
+def install(store,path,roots=(),*,purpose=PURPOSE):
+    marker,_=authority_names(purpose)
     path=_path(path); _outside(path,[store.root,*map(_path,roots)])
-    raw=_private(path); _,pin=policy_value(raw)
+    raw=_private(path); _,pin=policy_value(raw,purpose=purpose)
     folder=contained(store.root,'review-policies');folder.mkdir(mode=0o700,exist_ok=True)
     target=folder/(pin+'.json')
     if target.exists():
@@ -92,44 +101,46 @@ def install(store,path,roots=()):
         if len(list(folder.iterdir()))>=32:raise ValueError('reviewer policy capacity exhausted')
         write_bytes(target,raw);sync_directory(folder)
     if _private(path)!=raw:raise ValueError('review policy changed during installation')
-    atomic_json(store.root/'review-authority.json',dict(schema_version=1,profile=POLICY,source_path=str(path),policy_sha256=pin))
+    atomic_json(store.root/marker,dict(schema_version=1,profile=POLICY,source_path=str(path),policy_sha256=pin))
     return dict(profile=PROFILE,policy_sha256=pin,qualification='unverified',publication_allowed=False)
 
 
-def active(store):
-    value,_=record(store.root/'review-authority.json',4096)
+def active(store,*,purpose=PURPOSE):
+    marker,_=authority_names(purpose)
+    value,_=record(store.root/marker,4096)
     fields(value,'schema_version profile source_path policy_sha256')
     if type(value['schema_version']) is not int or value['schema_version']!=1 or value['profile']!=POLICY:
         raise ValueError('review authority is not installed')
     sha256(value['policy_sha256']); source=_path(value['source_path']); _outside(source,[store.root])
-    raw=_private(source); policy,pin=policy_value(raw)
+    raw=_private(source); policy,pin=policy_value(raw,purpose=purpose)
     if pin!=value['policy_sha256']: raise ValueError('installed reviewer policy changed or was revoked')
     if _private(store.root/'review-policies'/(pin+'.json'))!=raw:raise ValueError('frozen reviewer policy differs')
     return policy,pin
 
 
-def request(store,review):
-    _,pin=active(store)
-    value=dict(schema_version=1,profile=PROFILE,purpose=PURPOSE,store_sha256=_hash(str(store.root).encode()),
+def request(store,review,*,purpose=PURPOSE):
+    _,pin=active(store,purpose=purpose)
+    value=dict(schema_version=1,profile=PROFILE,purpose=purpose,store_sha256=_hash(str(store.root).encode()),
         policy_sha256=pin,review=review)
     if len(encoded(value))>MAX_BYTES:raise ValueError('authenticated review request capacity exhausted')
     return value
 
 
-def request_value(store,value):
+def request_value(store,value,*,purpose=PURPOSE):
     if len(encoded(value))>MAX_BYTES:raise ValueError('authenticated review request capacity exhausted')
     fields(value,'schema_version profile purpose store_sha256 policy_sha256 review')
     if (type(value['schema_version']) is not int or value['schema_version']!=1 or value['profile']!=PROFILE
-            or value['purpose']!=PURPOSE or value['store_sha256']!=_hash(str(store.root).encode())):
+            or value['purpose']!=purpose or value['store_sha256']!=_hash(str(store.root).encode())):
         raise ValueError('authenticated review request scope changed')
     sha256(value['policy_sha256'])
     return value['review']
 
 
-def verify(store,value,signature,*,require_current=True,deadline=None):
-    review=request_value(store,value)
+def verify(store,value,signature,*,require_current=True,deadline=None,purpose=PURPOSE):
+    _,namespace=authority_names(purpose)
+    review=request_value(store,value,purpose=purpose)
     raw=_private(store.root/'review-policies'/(value['policy_sha256']+'.json'))
-    policy,pin=policy_value(raw)
+    policy,pin=policy_value(raw,purpose=purpose)
     if pin!=value['policy_sha256']:raise ValueError('authenticated policy snapshot changed')
     identity=review['reviewer']['identity'];key=policy['reviewers'].get(identity)
     if key is None:raise ValueError('reviewer key is not authorized by policy')
@@ -143,15 +154,15 @@ def verify(store,value,signature,*,require_current=True,deadline=None):
         folder=Path(temporary);allowed=folder/'signers';detached=folder/'signature'
         write_bytes(allowed,(identity+' '+key+'\n').encode());write_bytes(detached,signature.encode())
         try:
-            result=subprocess.run([str(VERIFIER),'-Y','verify','-f',str(allowed),'-I',identity,'-n',NAMESPACE,'-s',str(detached)],
+            result=subprocess.run([str(VERIFIER),'-Y','verify','-f',str(allowed),'-I',identity,'-n',namespace,'-s',str(detached)],
                 input=encoded(value),stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=remaining,
                 env={'PATH':'/usr/bin:/bin','LC_ALL':'C'},check=False)
         except subprocess.TimeoutExpired:raise TimeoutError('review verification deadline exhausted') from None
     if result.returncode!=0:raise ValueError('review signature is invalid or unsupported')
     if time.monotonic()>=deadline:raise TimeoutError('review verification deadline exhausted')
-    if require_current and active(store)[1]!=pin:raise ValueError('review policy is no longer current')
+    if require_current and active(store,purpose=purpose)[1]!=pin:raise ValueError('review policy is no longer current')
     return dict(profile=PROFILE,policy_sha256=pin,key_sha256=_hash(key.encode()),
-        signer=identity,namespace=NAMESPACE,request_sha256=_hash(encoded(value)))
+        signer=identity,namespace=namespace,request_sha256=_hash(encoded(value)))
 
 
 def save(store,value,signature,proof):

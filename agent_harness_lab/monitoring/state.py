@@ -19,7 +19,9 @@ def exit_code(status):
     return EXIT_CODES.get(status, 1)
 
 
-def atomic_json(path, value):
+def atomic_json(path, value, *, before_replace=None):
+    if before_replace is not None and not callable(before_replace):
+        raise ValueError('atomic publication guard must be callable')
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     descriptor, temporary = tempfile.mkstemp(prefix='.' + path.name, dir=path.parent)
@@ -29,6 +31,7 @@ def atomic_json(path, value):
             stream.write('\n')
             stream.flush()
             os.fsync(stream.fileno())
+        if before_replace is not None: before_replace()
         os.replace(temporary, path)
         directory = os.open(path.parent, os.O_RDONLY)
         try:

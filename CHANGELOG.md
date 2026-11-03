@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.69.0
+
+### Minor Changes
+
+- bf1ff81: Add purpose-specific signed final-bank review with actual native control audits and conditional qualification consumed by protected diagnostic access. Preserve explicit external-exposure unknowns and the remaining certification and adoption gates.
+
 ## 0.68.0
 
 ### Minor Changes

@@ -352,11 +352,11 @@ class CertificationAccessTests(unittest.TestCase):
 def _controller_child(f, ident, queue, ready=None, release=None):
     from agent_harness_lab.evaluation import certification_access as access
     original=access.atomic_json
-    def gate(path,state):
+    def gate(path,state,**kwargs):
         if ready is not None:
             ready.set()
             if not release.wait(15): raise ValueError('synthetic lock barrier expired')
-        return original(path,state)
+        return original(path,state,**kwargs)
     calls=0; workers=None
     try:
         with patch.object(access,'atomic_json',side_effect=gate), \
