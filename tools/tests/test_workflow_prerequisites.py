@@ -227,7 +227,7 @@ class PublicControllerPrerequisiteTests(PublicCase,kernel.KernelFixture):
         def missing(ticket,run,*args):
             if ticket is not None and ticket.scope is not None and ticket.stage=='role' and not removed:
                 producer=owned._DISPATCHES[ticket]
-                owned._DISPATCHES[ticket]=(*producer[:-1],None)
+                owned._DISPATCHES[ticket]=(*producer[:6],None,*producer[7:])
                 run['attestation']['restricted_process_protocol']=dict(status='qualified')
                 removed.append((run['status'],run['exit_code']))
             return finish(ticket,run,*args)
