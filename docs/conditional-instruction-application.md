@@ -148,3 +148,19 @@ Scope facts retain their existing 128-dispatch and 262144-byte ceilings. Their
 authoritative cache uses `canonical-compact-json-v1`; reported receipt bytes count
 that exact full state. The representation preserves every field. Global journal
 digests and actual provider request bytes retain their existing formats.
+
+The synthetic acceptance commands are reusable Task targets:
+
+```sh
+task test:application:conditional:design
+task test:application:conditional:matrix:kernel
+```
+
+The matrix runs the original positive cases followed by separately scoped negative
+cases for no change, equal or failed final outcomes, invalid authored grading,
+unavailable runtime, interrupted transport, signed request exhaustion, interrupted
+Journal writes, foreign target conflicts and public authorization retirement. Each
+native case uses the existing 300-second test wrapper and unchanged signed
+150-second application limit. The positive ten-root inputs, oracles, method and
+request caps stay fixed. Native tests require explicit delegated Linux execution;
+ordinary test discovery skips them.

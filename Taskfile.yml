@@ -34,18 +34,102 @@ tasks:
           LAYOUT_DIR: '{{.LAYOUT_DIR}}'
           EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
           REPEATED_TEST_PATTERN: test_conditional_commit_observation.py
+  test:application:conditional:design:
+    desc: Check fixed final-bank design and predeclared negative worker variants
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_conditional_application_native.py" -k ConditionalFinalDesignTests -v'
   test:application:conditional:kernel:
-    desc: Exercise explicitly authorized final evaluation and guarded root instruction application
+    desc: Check final design and exercise the original fixed positive application cases
     env:
       PYTHONDONTWRITEBYTECODE: '1'
     cmds:
+      - task: test:application:conditional:design
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
       - task: test:evaluation:bank-requalification:kernel
         vars:
           PYTHON: '{{.PYTHON}}'
           LAYOUT_DIR: '{{.LAYOUT_DIR}}'
           EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
           TEST_NAME: conditional_application_native
-          KERNEL_TEST_FILTER: '{{default "ConditionalApplication" .KERNEL_TEST_FILTER}}'
+          KERNEL_TEST_FILTER: '{{default "test_plain_improve_consumes_signed_final_then_applies_and_public_rollback_restores" .KERNEL_TEST_FILTER}}'
+  test:application:conditional:matrix:kernel:
+    desc: Run fixed positive cases and each negative in separate unchanged 300-second native scopes
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    cmds:
+      - task: test:application:conditional:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+      - task: test:application:conditional:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          KERNEL_TEST_FILTER: test_negative_no_change_consumes_intent_without_final_or_mutation
+      - task: test:application:conditional:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          KERNEL_TEST_FILTER: test_negative_equal_final_outcomes_do_not_support_application
+      - task: test:application:conditional:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          KERNEL_TEST_FILTER: test_negative_failed_final_outcomes_do_not_support_application
+      - task: test:application:conditional:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          KERNEL_TEST_FILTER: test_negative_invalid_authored_grader_blocks_before_final
+      - task: test:application:conditional:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          KERNEL_TEST_FILTER: test_negative_unavailable_runtime_does_not_consume_authorization
+      - task: test:application:conditional:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          KERNEL_TEST_FILTER: test_negative_interrupted_transport_keeps_spent_request_and_blocks_replay
+      - task: test:application:conditional:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          KERNEL_TEST_FILTER: test_negative_signed_request_budget_exhausts_without_reset_or_replay
+      - task: test:application:conditional:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          KERNEL_TEST_FILTER: test_negative_partial_journal_write_interrupt_restores_owned_target
+      - task: test:application:conditional:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          KERNEL_TEST_FILTER: test_negative_foreign_target_conflict_preserves_foreign_bytes
+      - task: test:application:conditional:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          KERNEL_TEST_FILTER: test_negative_public_retirement_before_mutation_invalidates_grant
   test:evaluation:construction-seals:
     desc: Run closed construction custody cases
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'

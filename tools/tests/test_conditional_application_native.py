@@ -1,5 +1,5 @@
 """Signed conditional application through public improve and native isolated roles."""
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 import io
 import json
 import os
@@ -111,7 +111,7 @@ class ConditionalApplicationKernelTests(kernel.KernelFixture):
         self.assertEqual((code, qualified and qualified['qualification']), (0, 'qualified_under_protocol'))
         return case_id
 
-    def setup_authorities(self):
+    def setup_authorities(self, *, max_requests=60):
         self.runtime=self.root/'runtime';self.image=kernel.pinned_runtime(self.runtime)['sha256']
         self.operator=self.root/'operator';self.operator.mkdir(mode=0o700);self.key=self.operator/'reviewer'
         subprocess.run(['/usr/bin/ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-C', 'synthetic', '-f', str(self.key)],
@@ -119,12 +119,12 @@ class ConditionalApplicationKernelTests(kernel.KernelFixture):
         self.public_key=' '.join(self.key.with_suffix('.pub').read_text().split()[:2])
         self.store=ReviewStore(self.root/'review');case_id=self.reviewed_bank()
         self.project=self.root/'project';self.project.mkdir();(self.project/'AGENTS.md').write_text('bad\n')
-        authorization=application.allocate(self.store, self.project)['authorization_id']
+        authorization=application.allocate(self.store, self.project)['authorization_id'];self.authorization=authorization
         locator=renewal.allocate_delegation(self.store)
         credential=self.root/'synthetic-unused-token';credential.write_text('SYNTHETIC_UNUSED');credential.chmod(0o600)
         self.settings=self.root/'settings.json'
         self.settings.write_bytes(encoded(dict(schema_version=1, model='synthetic-controlled', credential_file=str(credential),
-            max_requests=60, max_tool_calls=40, max_output_tokens=100, max_request_bytes=65536, max_response_bytes=32768,
+            max_requests=max_requests, max_tool_calls=40, max_output_tokens=100, max_request_bytes=65536, max_response_bytes=32768,
             instruction_protocol=INSTRUCTION_PROFILE)))
         value=config.prepare(dict(schema_version=2, profile='cooperative', recommendation_only=False, harness_paths=['AGENTS.md'],
             runtime=dict(name='responses', inference_settings=str(self.settings), cgroup_root=str(self.cgroup_root),
@@ -155,16 +155,25 @@ class ConditionalApplicationKernelTests(kernel.KernelFixture):
         self.assertIsNone(credential);request=json.loads(body);self.calls.append(request);ident=str(len(self.calls))
         developer=request['input'][0]['content']
         if 'You are the proposer' in developer:
-            self.assertNotIn(MARKER, developer);argv=['/usr/bin/python3', '-c', roles.PROPOSER, 'good']
+            self.assertNotIn(MARKER, developer);argv=self.proposer_argv()
         elif 'You are the evaluator author' in developer:
-            self.assertNotIn(MARKER, developer);argv=['/usr/bin/python3', '-c', roles.AUTHOR, '1', 'complete']
+            self.assertNotIn(MARKER, developer);argv=self.author_argv()
         else:
             context=json.loads(developer.split(MARKER, 1)[1]);self.instruction_contexts.append(context)
             self.assertEqual(context['profile'], INSTRUCTION_PROFILE)
-            argv=['/usr/bin/python3', '-c', self.WORKER, 'good' if context['content'].startswith('good') else 'bad']
+            argv=self.executor_argv(request,context)
         if any(row.get('type')=='function_call_output' for row in request['input']):
             return wire.reply([wire.message('final-'+ident)])
         return wire.reply([wire.call(ident, arguments=json.dumps(dict(argv=argv)))])
+
+    def proposer_argv(self):
+        return ['/usr/bin/python3','-c',roles.PROPOSER,'good']
+
+    def author_argv(self):
+        return ['/usr/bin/python3','-c',roles.AUTHOR,'1','complete']
+
+    def executor_argv(self,request,context):
+        return ['/usr/bin/python3','-c',self.WORKER,'good' if context['content'].startswith('good') else 'bad']
 
     def test_plain_improve_consumes_signed_final_then_applies_and_public_rollback_restores(self):
         self.setup_authorities();self.assertNotIn('AGENTS.md', self.WORKER)
@@ -303,6 +312,10 @@ def ten_root_bank(source):
     return bank,tasks
 
 
+NO_CHANGE_PROPOSER="from pathlib import Path\nPath('proposal.json').write_text('{\"status\":\"no_change\",\"reason\":\"No supported synthetic change\"}')\n"
+INVALID_AUTHOR=roles.AUTHOR.replace('valid=True,outcome=outcome','valid=False,outcome=outcome')
+
+
 class ConditionalFinalDesignTests(unittest.TestCase):
     def precision(self,method,tasks):
         spec=ExperimentSpec(method['experiment_id'],tuple(tasks),method['repeats'],method['seed'],method['max_trials'],method['min_roots'],
@@ -322,6 +335,14 @@ class ConditionalFinalDesignTests(unittest.TestCase):
         self.assertEqual(result['declared_roots'],10);self.assertTrue(result['execution_allowed'])
         self.assertTrue(all(value['criteria_possible'] for value in result['endpoints'].values() if value['required']))
         self.assertEqual(result['root_independence'],'unverified')
+
+    def test_negative_workers_are_predeclared_without_changing_fixed_final_inputs(self):
+        compile(NO_CHANGE_PROPOSER,'synthetic-no-change','exec')
+        compile(INVALID_AUTHOR,'synthetic-invalid-author','exec')
+        self.assertNotEqual(INVALID_AUTHOR,roles.AUTHOR)
+        self.assertIn('valid=False,outcome=outcome',INVALID_AUTHOR)
+        self.assertNotIn('AGENTS.md',NO_CHANGE_PROPOSER)
+        self.assertEqual(TEN_METHOD['alpha'],.05);self.assertEqual(TEN_METHOD['max_trials'],20)
 
     def test_new_prospective_bank_has_ten_distinct_fixed_inputs_and_complete_controls(self):
         from agent_harness_lab.evaluation.task_bank import validate
@@ -349,6 +370,186 @@ class TenRootConditionalApplicationKernelTests(ConditionalApplicationKernelTests
     def reviewed_bank(self):
         bank,tasks=ten_root_bank(self.root/'ten-root-final-source')
         return self.qualify_bank(bank,tasks)
+
+    def proposer_argv(self):
+        if getattr(self,'negative',None)=='no_change':return ['/usr/bin/python3','-c',NO_CHANGE_PROPOSER]
+        return super().proposer_argv()
+
+    def author_argv(self):
+        if getattr(self,'negative',None)=='invalid_grader':return ['/usr/bin/python3','-c',INVALID_AUTHOR,'1','complete']
+        return super().author_argv()
+
+    def executor_argv(self,request,context):
+        # The fake model sees only the actual serialized request, including the task prompt.
+        if getattr(self,'negative',None) in ('insufficient','failed_final') and any(
+                prompt in request['input'][1]['content'] for _,prompt,_,_ in TEN_CASES):
+            return ['/usr/bin/python3','-c',self.WORKER,'good' if self.negative=='insufficient' else 'bad']
+        return super().executor_argv(request,context)
+
+    def target(self):
+        path=self.project/'AGENTS.md'
+        return path.read_bytes(),path.stat().st_mode&0o777
+
+    def invoke_negative(self,*,fault=None):
+        output=io.StringIO();errors=io.StringIO()
+        registries=(application._SESSIONS,application._FINAL_RUNS,application._GRANTS)
+        counts=tuple(map(len,registries))
+        with ExitStack() as stack:
+            stack.enter_context(patch.dict(os.environ,{'XDG_STATE_HOME':str(self.root/'state')}))
+            stack.enter_context(patch.object(responses,'read_credential',return_value=None))
+            stack.enter_context(patch.object(responses,'request',side_effect=fault or self.transport))
+            stack.enter_context(redirect_stdout(output));stack.enter_context(redirect_stderr(errors))
+            try:code=main(['improve',str(self.project)])
+            except SystemExit as exc:code=exc.code
+        observed=self.target() # Read bytes/mode even when the public endpoint rejects the invocation.
+        self.assertEqual(tuple(map(len,registries)),counts)
+        results=list((self.root/'state').rglob('workflow.json'))
+        result=json.loads(output.getvalue()) if output.getvalue().strip() else json.loads(results[-1].read_bytes()) if results else None
+        return observed,code,result,errors.getvalue()
+
+    def assert_spent(self,expected_calls,*,state='application_not_applied',journal=None):
+        self.assertEqual(len(self.calls),expected_calls)
+        _,_,events=self.store.opened(self.authorization)
+        self.assertEqual(events[-1][0]['state'],state)
+        started=[event for event,_ in events if event['kind']=='application_started']
+        self.assertEqual(len(started),0 if state=='application_authorized' else 1)
+        receipts=list((self.root/'state').rglob('inference.json'))
+        if not expected_calls:self.assertEqual(receipts,[])
+        if expected_calls:
+            self.assertEqual(len(receipts),1)
+            self.assertEqual(json.loads(receipts[0].read_bytes())['request_attempts'],expected_calls)
+        records=[json.loads(path.read_bytes()) for path in (self.root/'state'/'promotions').rglob('*.json') if path.name!='active.json']
+        if journal is None:self.assertEqual(records,[])
+        else:
+            self.assertEqual(len(records),1);self.assertEqual(records[0]['status'],journal)
+            self.assertFalse(list((self.root/'state'/'promotions').rglob('active.json')))
+        before=len(self.calls);target=self.target()
+        counts=tuple(map(len,(application._SESSIONS,application._FINAL_RUNS,application._GRANTS)))
+        with patch.dict(os.environ,{'XDG_STATE_HOME':str(self.root/'state')}), \
+                patch.object(responses,'read_credential',side_effect=AssertionError('replay credential read')), \
+                patch.object(responses,'request',side_effect=AssertionError('replay transport')), \
+                redirect_stdout(io.StringIO()),redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):main(['improve',str(self.project)])
+        self.assertEqual(self.target(),target)
+        self.assertEqual(tuple(map(len,(application._SESSIONS,application._FINAL_RUNS,application._GRANTS))),counts)
+        self.assertEqual(len(self.calls),before)
+        self.assertEqual(self.store.opened(self.authorization)[2][-1][1],events[-1][1])
+        return records
+
+    def reservations(self):
+        path=self.root/'history'/'protected-access.json'
+        return json.loads(path.read_bytes())['reservations'] if path.exists() else {}
+
+    def assert_final_spent(self,*,outcome=None):
+        entries=list(self.reservations().values());self.assertEqual(len(entries),1)
+        self.assertEqual(entries[0]['state'],'retired')
+        history=HistoryStore(self.root/'history');case=history.case(entries[0]['run_id'])
+        self.assertEqual(history.history(case)[-1][0]['state'],'sealed')
+        trials=json.loads((case/'execution/results.json').read_bytes())['trials']
+        self.assertEqual(len(trials),20)
+        if outcome is not None:self.assertEqual({trial['status'] for trial in trials},{outcome})
+
+    def test_negative_no_change_consumes_intent_without_final_or_mutation(self):
+        self.negative='no_change';self.setup_authorities();before=self.target()
+        observed,code,result,_=self.invoke_negative()
+        self.assertEqual(observed,before)
+        self.assertEqual((code,result['status']),(0,'no_change'),result)
+        self.assert_spent(2)
+        self.assertEqual(self.reservations(),{})
+
+    def test_negative_equal_final_outcomes_do_not_support_application(self):
+        self.negative='insufficient';self.setup_authorities();before=self.target()
+        observed,code,result,_=self.invoke_negative()
+        self.assertEqual(observed,before)
+        self.assertEqual((code,result['status'],result['reason']),(3,'inconclusive','conditional_final_not_supported'),result)
+        self.assertNotEqual(result['analysis']['status'],'supported')
+        self.assert_spent(56);self.assert_final_spent(outcome='passed')
+
+    def test_negative_failed_final_outcomes_do_not_support_application(self):
+        self.negative='failed_final';self.setup_authorities();before=self.target()
+        observed,code,result,_=self.invoke_negative()
+        self.assertEqual(observed,before)
+        self.assertEqual((code,result['status'],result['reason']),(3,'inconclusive','conditional_final_not_supported'),result)
+        self.assertNotEqual(result['analysis']['status'],'supported')
+        self.assert_spent(56);self.assert_final_spent(outcome='failed')
+
+    def test_negative_invalid_authored_grader_blocks_before_final(self):
+        self.negative='invalid_grader';self.setup_authorities();before=self.target()
+        observed,code,result,error=self.invoke_negative()
+        self.assertEqual(observed,before)
+        self.assertEqual((code,result['status'],result['error_type']),(2,'invalid_input','ValueError'),result)
+        self.assertIn('Grader self-test rejected',error)
+        self.assert_spent(4)
+        self.assertEqual(self.reservations(),{})
+
+    def test_negative_unavailable_runtime_does_not_consume_authorization(self):
+        self.setup_authorities();before=self.target();self.runtime.rename(self.root/'unavailable-runtime')
+        observed,code,result,error=self.invoke_negative()
+        self.assertEqual(observed,before)
+        self.assertEqual(code,2);self.assertIsNone(result)
+        self.assertIn('controlled Responses reference is unavailable',error)
+        self.assert_spent(0,state='application_authorized')
+
+    def test_negative_interrupted_transport_keeps_spent_request_and_blocks_replay(self):
+        self.setup_authorities();before=self.target()
+        def interrupted(*args):
+            self.calls.append(json.loads(args[1]));raise KeyboardInterrupt
+        observed,code,result,_=self.invoke_negative(fault=interrupted)
+        self.assertEqual(observed,before)
+        self.assertEqual((code,result['status']),(1,'interrupted'),result)
+        self.assert_spent(1)
+        receipt=json.loads(next((self.root/'state').rglob('inference.json')).read_bytes())
+        self.assertTrue(receipt['request_pending']);self.assertTrue(receipt['further_requests_blocked'])
+
+    def test_negative_signed_request_budget_exhausts_without_reset_or_replay(self):
+        self.setup_authorities(max_requests=1);before=self.target()
+        observed,code,result,_=self.invoke_negative()
+        self.assertEqual(observed,before)
+        self.assertEqual((code,result['status'],result['reason']),(1,'budget_exhausted','inference_request_count_exhausted'),result)
+        self.assert_spent(1)
+
+    def test_negative_partial_journal_write_interrupt_restores_owned_target(self):
+        from agent_harness_lab.promotion.journal import Journal
+        self.setup_authorities();before=self.target();write=Journal._write_snapshot;written=[]
+        def interrupted(journal,*args,**kwargs):
+            value=write(journal,*args,**kwargs)
+            if not written:
+                written.append(self.target());raise KeyboardInterrupt
+            return value
+        with patch.object(Journal,'_write_snapshot',interrupted):observed,code,result,_=self.invoke_negative()
+        self.assertEqual(observed,before)
+        self.assertEqual(written,[(b'good\nSYNTHETIC_CANDIDATE_SECRET\n',before[1])])
+        self.assertEqual((code,result['status']),(1,'interrupted'),result)
+        records=self.assert_spent(56,journal='conflict');self.assert_final_spent()
+        self.assertEqual((records[0]['restoration'],records[0]['remaining_changes']),('restored',[]))
+
+    def test_negative_foreign_target_conflict_preserves_foreign_bytes(self):
+        from agent_harness_lab.promotion.journal import Journal
+        self.setup_authorities();before=self.target();execute=Journal._execute
+        def changed(journal,*args,**kwargs):
+            (self.project/'AGENTS.md').write_text('synthetic foreign edit\n')
+            return execute(journal,*args,**kwargs)
+        with patch.object(Journal,'_execute',changed):observed,code,result,error=self.invoke_negative()
+        self.assertEqual(observed,(b'synthetic foreign edit\n',before[1]))
+        self.assertEqual((code,result['status'],result['error_type']),(2,'invalid_input','ValueError'),result)
+        self.assertIn('intervening edit/mode/path conflict',error)
+        self.assert_spent(56,journal='prepared');self.assert_final_spent()
+        self.assertEqual(self.target(),observed)
+
+    def test_negative_public_retirement_before_mutation_invalidates_grant(self):
+        from agent_harness_lab.promotion.journal import Journal
+        self.setup_authorities();before=self.target();execute=Journal._execute;retired=[]
+        def revoke(journal,*args,**kwargs):
+            with redirect_stdout(io.StringIO()):
+                retired.append(main(['application-review','--store',str(self.store.root),'retire',self.authorization]))
+            return execute(journal,*args,**kwargs)
+        with patch.object(Journal,'_execute',revoke):observed,code,result,error=self.invoke_negative()
+        self.assertEqual(observed,before)
+        self.assertEqual(retired,[0])
+        self.assertEqual((code,result['status'],result['error_type']),(2,'invalid_input','ValueError'),result)
+        self.assertIn('application running authorization changed or was retired',error)
+        records=self.assert_spent(56,state='retired',journal='conflict');self.assert_final_spent()
+        self.assertEqual((records[0]['restoration'],records[0]['remaining_changes']),('restored',[]))
 
 
 if __name__=='__main__':unittest.main()
