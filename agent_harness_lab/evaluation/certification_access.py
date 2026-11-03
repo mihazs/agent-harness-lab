@@ -10,7 +10,7 @@ from weakref import WeakKeyDictionary
 
 from agent_harness_lab.monitoring.state import atomic_json
 from agent_harness_lab.private_journal import encoded, record, sync_directory
-from .integrity import contained, tree
+from .integrity import contained, relative, tree
 from .plan import ExperimentSpec
 from .regressions import fields, sha256
 from .decision_receipts import private as _private
@@ -52,17 +52,31 @@ def _binding(value):
     for value in assets: sha256(value)
 
 
-def exposure(root, tasks, bundles, check=lambda: None):
-    """Observe content reuse without imposing managed plan/candidate requirements."""
+def _exposure(tasks,bundles,read_tree,check):
     assets = set(); complete = []
     for task in tasks:
         check()
         assets.add(hashed(['prompt',task['prompt']]))
         for kind, name in (('fixture', task['fixture']), ('oracle', bundles[task['id']]['path'])):
-            files = tree(contained(root, name))
+            files = read_tree(name)
             assets.add(hashed([kind, {p:v['sha256'] for p,v in files.items()}]))
             complete.append([task['id'], kind, files])
     return sorted(assets), hashed(complete)
+
+
+def exposure(root, tasks, bundles, check=lambda: None):
+    """Observe content reuse without imposing managed plan/candidate requirements."""
+    return _exposure(tasks,bundles,lambda name:tree(contained(root,name)),check)
+
+
+def snapshot_exposure(snapshot,tasks,bundles,check=lambda:None):
+    def read_tree(name):
+        relative(name)
+        if name not in dict(snapshot.directories): raise ValueError('frozen exposure directory missing')
+        prefix=name+'/'
+        return {path[len(prefix):]:dict(sha256=hashlib.sha256(raw).hexdigest(),mode=mode)
+                for path,mode,raw in snapshot.files if path.startswith(prefix)}
+    return _exposure(tasks,bundles,read_tree,check)
 
 
 def capture(manifest, baseline, candidate, check=lambda: None):

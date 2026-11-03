@@ -1,5 +1,6 @@
 """Owned development variants; available inputs imply possible derivation, not causality."""
 from copy import deepcopy
+from dataclasses import replace
 import hashlib
 import math
 import os
@@ -26,8 +27,20 @@ class _Handoff:
 def _hash(value): return hashlib.sha256(encoded(value)).hexdigest()
 
 
+def _snapshot_pin(snapshot):
+    return hashlib.sha256(repr(snapshot).encode()).hexdigest()
+
+
 def _tree_pin(path,deadline):
-    return hashlib.sha256(repr(WorkingState(path,deadline).snapshot).encode()).hexdigest()
+    return _snapshot_pin(WorkingState(path,deadline).snapshot)
+
+
+def _rebased_output(snapshot,manifest_bytes):
+    if 'manifest.json' not in {name for name,_,_ in snapshot.files}:
+        raise ValueError('actual produced manifest missing')
+    return replace(snapshot,root_mode=0o700,files=tuple(
+        (name,mode,manifest_bytes if name=='manifest.json' else raw)
+        for name,mode,raw in snapshot.files))
 
 
 def _folder(store,ident):
@@ -144,7 +157,8 @@ def record_author_output(handle,published):
         raise ValueError('owned author output was already registered')
     if not owned['used'] or Path(published)!=owned['folder']/'published':
         raise ValueError('actual owned author output path required')
-    owned['produced_pin']=_tree_pin(published,owned['deadline'])
+    owned['produced_state']=WorkingState(published,owned['deadline'])
+    owned['produced_pin']=_snapshot_pin(owned['produced_state'].snapshot)
 
 
 def _check_custody(owned):
@@ -240,8 +254,16 @@ def derive(store,output,inference_settings,*,source_run=None,source_derivation=N
         _OWNED.pop(handle)
         if responses.read_settings(inference_settings)[1]!=settings_pin or client.settings!=settings:
             raise ValueError('variant inference settings changed')
-        child,_=record(manifest,ledger.MAX_BYTES)
-        children,_=ledger.exposure(manifest.parent,child['tasks'],child['grader_bundles'],check)
+        produced=owned['produced_state']; original=produced.snapshot
+        original_manifest=next(raw for name,_,raw in original.files if name=='manifest.json')
+        if Path(manifest)!=folder/'published'/'manifest.json': raise ValueError('actual author manifest path changed')
+        child,manifest_pin=record(manifest,ledger.MAX_BYTES)
+        if manifest_pin!=hashlib.sha256(original_manifest).hexdigest(): raise ValueError('actual author manifest changed during capture')
+        expected_capture=ledger.snapshot_exposure(original,child['tasks'],child['grader_bundles'],check)
+        captured=ledger.exposure(manifest.parent,child['tasks'],child['grader_bundles'],check)
+        children,_=captured
+        if captured!=expected_capture or _tree_pin(manifest.parent,deadline)!=owned['produced_pin']:
+            raise ValueError('actual author output changed during asset capture')
         for task in child['tasks']:
             if task.get('split') not in ('development','regression'): task['split']='development'
             bundle=contained(manifest.parent,child['grader_bundles'][task['id']]['path'])
@@ -253,11 +275,17 @@ def derive(store,output,inference_settings,*,source_run=None,source_derivation=N
         child['controller_derivation']=dict(profile=PROFILE,derivation_id=ident,source_run_id=origin['root_run_id'],
             relation='may_derived',qualification='unverified',publication_allowed=False)
         # Controller-owned argv rebasing changes no scientific fixture/oracle asset.
+        if _tree_pin(manifest.parent,deadline)!=owned['produced_pin']:
+            raise ValueError('actual author output changed before manifest rebasing')
+        expected=_rebased_output(original,encoded(child))
         manifest.write_bytes(encoded(child))
         manifest.parent.chmod(0o700)
+        if WorkingState(manifest.parent,deadline).snapshot!=expected:
+            raise ValueError('actual author output changed during manifest rebasing')
+        produced.snapshot=expected
         handoff_pin=_hash(owned['value'])
         binding=dict(schema_version=1,profile=PROFILE,derivation_id=ident,root_run_id=origin['root_run_id'],
-            input_binding_sha256=_hash(inputs),handoff_sha256=handoff_pin,tree_sha256=_tree_pin(folder/'published',deadline),assets=children)
+            input_binding_sha256=_hash(inputs),handoff_sha256=handoff_pin,tree_sha256=_snapshot_pin(expected),assets=children)
         write_bytes(folder/'output.json',encoded(binding)); sync_directory(folder)
         _check_custody(owned)
         if (_tree_pin(folder/'published',deadline)!=binding['tree_sha256']
@@ -265,7 +293,7 @@ def derive(store,output,inference_settings,*,source_run=None,source_derivation=N
             raise ValueError('derived output changed before registration')
         check(); ledger.finish_derivation(store.access_ledger().path,ident,_hash(inputs),children,_hash(binding)); completed=True
         output.parent.mkdir(parents=True,exist_ok=True)
-        WorkingState(folder/'published',deadline).publish(output,deadline)
+        produced.publish(output,deadline)
         result=status(store,ident,parent_deadline=deadline); result.update(output=str(output),author_worker_calls=len(commands),inference=client.report())
         write_bytes(folder/'result.json',encoded(result)); sync_directory(folder)
         check(); return result

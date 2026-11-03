@@ -421,6 +421,43 @@ class DerivationTests(unittest.TestCase):
     def test_actual_role_output_pin_cannot_be_registered_again(self):
         self._reject_post_author_rewrite(repin=True)
 
+    def test_capture_cannot_replace_or_transiently_substitute_produced_bytes(self):
+        for phase in ('before','after','aba','mode','manifest'):
+            with self.subTest(phase=phase):
+                control=DerivationTests();control.setUp()
+                try:
+                    parent=control.parent(); exposure=ledger.exposure; read=derivations.record; changed=[]
+                    def capture(root,*args,**kwargs):
+                        if Path(root).name!='published' or changed or phase=='manifest':
+                            return exposure(root,*args,**kwargs)
+                        source=json.loads((Path(root)/'manifest.json').read_bytes())
+                        bundle=next(iter(source['grader_bundles'].values()))['path']
+                        target=Path(root)/bundle/'expected.json'; before=target.read_bytes()
+                        changed.append(True)
+                        if phase=='after': result=exposure(root,*args,**kwargs)
+                        mode=target.stat().st_mode & 0o777
+                        if phase=='mode':target.chmod(mode ^ 0o100)
+                        else:target.write_bytes(b'{"synthetic_capture_rewrite":true}')
+                        if phase!='after': result=exposure(root,*args,**kwargs)
+                        if phase=='aba': target.write_bytes(before)
+                        if phase=='mode':target.chmod(mode)
+                        return result
+                    def manifest_read(path,*args,**kwargs):
+                        path=Path(path)
+                        if phase!='manifest' or changed or path.name!='manifest.json' or path.parent.name!='published':
+                            return read(path,*args,**kwargs)
+                        before=path.read_bytes(); source=json.loads(before)
+                        source['tasks'][0]['prompt']='SYNTHETIC_TRANSIENT_MANIFEST'
+                        changed.append(True);path.write_text(json.dumps(source))
+                        try:return read(path,*args,**kwargs)
+                        finally:path.write_bytes(before)
+                    with patch.object(ledger,'exposure',side_effect=capture),patch.object(derivations,'record',side_effect=manifest_read),self.assertRaises(ValueError):
+                        control.derive(source_run=parent)
+                    self.assertTrue(changed);self.assertFalse(control.output.exists())
+                    state=json.loads((control.f.store.root/'protected-access.json').read_bytes())
+                    self.assertEqual(next(iter(state['derivations'].values()))['state'],'unresolved')
+                finally:control.doCleanups()
+
     @unittest.skipUnless(hasattr(os,'fork'),'requires native fork custody control')
     def test_post_author_fork_cannot_finish_or_poison_the_owner_transaction(self):
         from agent_harness_lab.evaluation import construction

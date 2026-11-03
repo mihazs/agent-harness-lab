@@ -76,6 +76,12 @@ them before author dispatch and publication. Current handoff snapshots cover fil
 bytes/modes and root/directory modes. It does not invent missing original directory
 mode evidence in older source histories.
 
+The producing role registers its output snapshot once. Asset capture must match
+that snapshot's bytes and file modes, including changes restored before readback.
+Only the controller's manifest rebasing and private root mode may change afterward;
+publication copies the expected snapshot rather than recapturing mutable files.
+These checks do not make the host filesystem atomic against external writers.
+
 Before returning or exporting child data, the transaction records computed prompt,
 fixture and oracle identities, frozen source/engine/settings/output bindings and
 the may-derived parent relation. Child/grandchild assets cannot receive fresh
