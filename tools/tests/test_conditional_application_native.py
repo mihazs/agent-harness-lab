@@ -13,17 +13,15 @@ from unittest.mock import patch
 
 import agent_harness_lab
 from agent_harness_lab import conditional_application as application, config
-from agent_harness_lab.cli import assets, main
+from agent_harness_lab.cli import main
 from agent_harness_lab.evaluation import bank_qualification as bankq, bank_requalification as renewal
-from agent_harness_lab.evaluation import closed_inputs, responses, review_authority as authority
-from agent_harness_lab.evaluation.decision_receipts import engine
+from agent_harness_lab.evaluation import responses, review_authority as authority
 from agent_harness_lab.evaluation.integrity import digest
 from agent_harness_lab.evaluation.instruction_context import MARKER, PROFILE as INSTRUCTION_PROFILE
 from agent_harness_lab.evaluation.oracle_history import HistoryStore
 from agent_harness_lab.evaluation.plan import ExperimentSpec
 from agent_harness_lab.evaluation.precision import preflight
 from agent_harness_lab.evaluation.regression_review import ReviewStore
-from agent_harness_lab.evaluation.sandbox import SandboxBackend
 from agent_harness_lab.private_journal import encoded
 if __package__:
     from . import test_bank_qualification_final as bank_fixture
@@ -136,20 +134,14 @@ class ConditionalApplicationKernelTests(kernel.KernelFixture):
                 delegation_signature=locator['signature_path'], method=self.FINAL_METHOD)))
         config.create(self.project, value)
         events=self.root/'events.jsonl';events.write_text('')
-        baseline=self.root/'signed-baseline';baseline.mkdir();shutil.copyfile(self.project/'AGENTS.md', baseline/'AGENTS.md')
         deadline=time.monotonic()+240
-        source=dict(kind='events_file', selection=str(events), snapshot_sha256='0'*64, format='normalized', version=None, session=None)
-        source['snapshot_sha256']=closed_inputs.source_pin(source, deadline)
-        domain=dict(schema_version=2, profile='conditional-bank-closed-input-domain-v2', project_inputs=closed_inputs.project_selection(self.project),
-            project_sha256=closed_inputs.snapshot_pin(closed_inputs.project_snapshot(self.project, closed_inputs.project_selection(self.project), deadline)),
-            baseline_sha256=closed_inputs.tree_pin(baseline, deadline), engine_sha256=closed_inputs.pin(engine()),
-            methodology_sha256=closed_inputs.tree_pin(assets()/'skills', deadline),
-            history_identity_sha256=closed_inputs.store_identity(HistoryStore(self.root/'history').root), sources=[source])
         renewal.install_policy(self.store, self.policy('delegation', renewal.PURPOSE))
-        backend=SandboxBackend(cgroup_root=self.cgroup_root, image_root=self.runtime, image_sha256=self.image,
-            disk_bytes=64*1024*1024, permission_audit='permission-results-v1')
-        prepared=renewal.prepare(self.store, case_id, 'synthetic-reviewer', domain, renewal.runtime_binding(backend, self.settings),
-            deadline=deadline, request_path=locator['request_path'])
+        packet_output=io.StringIO()
+        with redirect_stdout(packet_output):
+            code=main(['bank-review','--store',str(self.store.root),'prepare-delegation','--project',str(self.project),
+                '--events',str(events),'--format','normalized','--reviewer','synthetic-reviewer','--budget-seconds','240'])
+        self.assertEqual(code,0)
+        prepared=json.loads(packet_output.getvalue())
         self.sign(Path(prepared['request_path']), 'ahl.final-bank-requalification.v1')
         application.install_policy(self.store, self.policy('application', application.PURPOSE))
         current,pin=config.load(self.project/'ahl.json');options=config.execution_options(self.project, current, {}, set())
@@ -177,12 +169,15 @@ class ConditionalApplicationKernelTests(kernel.KernelFixture):
     def test_plain_improve_consumes_signed_final_then_applies_and_public_rollback_restores(self):
         self.setup_authorities();self.assertNotIn('AGENTS.md', self.WORKER)
         initial_target=((self.project/'AGENTS.md').read_bytes(),(self.project/'AGENTS.md').stat().st_mode&0o777)
+        registries=(application._SESSIONS,application._FINAL_RUNS,application._GRANTS)
+        initial_registry_counts=tuple(len(registry) for registry in registries)
         output=io.StringIO()
         with patch.dict(os.environ, {'XDG_STATE_HOME':str(self.root/'state')}), \
                 patch.object(responses, 'read_credential', return_value=None), \
                 patch.object(responses, 'request', side_effect=self.transport), \
                 redirect_stdout(output), redirect_stderr(io.StringIO()):
             code=main(['improve', str(self.project)])
+        self.assertEqual(tuple(len(registry) for registry in registries),initial_registry_counts)
         result=json.loads(output.getvalue())
         observed_target=((self.project/'AGENTS.md').read_bytes(),(self.project/'AGENTS.md').stat().st_mode&0o777)
         if code!=0:self.assertEqual(observed_target,initial_target,result)
