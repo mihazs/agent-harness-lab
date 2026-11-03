@@ -87,7 +87,7 @@ def source_roots(store):
     for case_id in store.case_ids(256):
         case,inputs,_=store.opened(case_id)
         if inputs.get('profile')==PROFILE:roots.append(case/'bank')
-        elif inputs.get('profile')=='controller-instruction-authorization-v1':
+        elif inputs.get('profile') in ('controller-instruction-authorization-v1','controller-instruction-creation-authorization-v1'):
             from agent_harness_lab.conditional_application import source_roots as application_sources
             roots.extend(application_sources(inputs))
         else:
@@ -151,7 +151,7 @@ def exposure_check(store,case,state,*,reservation_id=None):
     for case_id in store.case_ids(256):
         other=store.case(case_id);inputs,_=record(other/'inputs.json')
         if inputs.get('profile')==PROFILE:continue
-        if inputs.get('profile')=='controller-instruction-authorization-v1':
+        if inputs.get('profile') in ('controller-instruction-authorization-v1','controller-instruction-creation-authorization-v1'):
             # Authorization declarations contain no regression fixture or task lineage.
             # Validate their complete private case contract before classifying them.
             store.opened(case_id)

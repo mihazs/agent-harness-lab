@@ -199,3 +199,37 @@ task test:application:conditional:removal
 These ordinary checks never issue scientific application authority. Runtime,
 served-model, semantic-independence and general-certification qualifications remain
 limited as described above.
+
+## Create a missing root instruction file
+
+Creation requires the separate `controller-agents-create-conditional-apply-v1`
+policy and genuine absence of root `AGENTS.md`. Allocate its unsigned locator with:
+
+```sh
+ahl application-review --store /private/review allocate /project --operation create
+```
+
+Omitting `--operation` retains the existing-file enrollment contract. An empty
+file, directory or symlink does not count as absence. The creation authorization
+profile records only `{"membership":"absent"}` for its baseline. Set the creation
+policy and fresh authorization/delegation locators before the public configured
+packet preparation and external signing steps above. The same packet command
+snapshots an empty baseline; no dummy instruction file or manual domain is needed.
+Existing update/removal approvals cannot authorize creation, and creation approval
+cannot authorize update/removal.
+
+The actual proposer must publish exactly one nonexecutable UTF-8 `AGENTS.md`.
+The immutable plan binds absent before membership and exact candidate bytes/mode;
+the controller does not synthesize a file after publication. The existing final
+comparison and one-use application authority remain required. A physical creation
+uses five guarded Journal checkpoints, including its exact staging snapshot, and
+readback verifies the complete expected project. Public rollback removes only the
+owned created file; foreign edits or modes block rollback without overwriting them.
+
+```sh
+task test:workflow:conditional-creation
+```
+
+This ordinary acceptance covers signed intent, unsigned packet mechanics and real
+Journal operations. It does not establish native proposer execution or scientific
+application eligibility; native acceptance is a separate required checkpoint.

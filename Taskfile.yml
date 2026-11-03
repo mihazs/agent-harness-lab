@@ -2,6 +2,21 @@ version: '3'
 vars:
   PYTHON: '{{default "python3" .PYTHON}}'
 tasks:
+  test:workflow:conditional-creation:
+    desc: Verify absent instruction enrollment, signed creation intent and physical Journal checkpoints
+    cmds:
+      - task: test:workflow:repeated
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          REPEATED_TEST_PATTERN: test_conditional_creation.py
+      - task: test:workflow:repeated
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          REPEATED_TEST_PATTERN: test_configured_delegation_packet.py
   test:application:removal:design:
     desc: Check prospective candidate-removal worker and predeclared response controls without native execution
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'

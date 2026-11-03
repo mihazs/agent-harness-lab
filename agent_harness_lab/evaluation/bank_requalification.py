@@ -149,7 +149,11 @@ def prepare_project(store,project,reviewer,*,source,deadline,case_id=None,reques
         with tempfile.TemporaryDirectory(dir=store.root,prefix='.delegation-baseline-') as temporary:
             baseline=Path(temporary)/'baseline'
             snapshot(project,baseline,allowed_paths=settings['harness_paths'])
-            if set(path.name for path in baseline.iterdir())!={'AGENTS.md'}:raise ValueError('existing root instruction required')
+            from agent_harness_lab.conditional_application import CREATE_POLICY,target_record
+            creating=application['policy']==CREATE_POLICY
+            target_record(project,application['policy'])
+            if set(path.name for path in baseline.iterdir())!=(set() if creating else {'AGENTS.md'}):
+                raise ValueError('configured root instruction membership changed')
             baseline_pin=closed_inputs.tree_pin(baseline,deadline)
         domain=dict(schema_version=2,profile='conditional-bank-closed-input-domain-v2',
             project_inputs=closed_inputs.project_selection(project),project_sha256=closed_inputs.snapshot_pin(project_snapshot),

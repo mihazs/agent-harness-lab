@@ -18,8 +18,10 @@ from .promotion.journal import file_record
 
 POLICY='controller-agents-conditional-apply-v1'
 REMOVE_POLICY='controller-agents-remove-conditional-apply-v1'
+CREATE_POLICY='controller-agents-create-conditional-apply-v1'
 ACTION_MARKER='\n\nAHL signed root instruction operation:\n'
 AUTH_PROFILE='controller-instruction-authorization-v1'
+CREATE_AUTH_PROFILE='controller-instruction-creation-authorization-v1'
 PURPOSE='conditional_instruction_application'
 METHOD_FIELDS='experiment_id repeats seed max_trials min_roots effect_margin family_margin alpha family_weights precision_half_width'
 APPLICATION_FIELDS='policy review_store authorization_id bank_case_id delegation_request delegation_signature method'
@@ -48,6 +50,7 @@ def method(value):
 def action(policy):
     if policy==POLICY:return 'update'
     if policy==REMOVE_POLICY:return 'remove'
+    if policy==CREATE_POLICY:return 'create'
     raise ValueError('unsupported conditional application policy')
 
 
@@ -67,16 +70,20 @@ def validate_settings(value):
 def selected(settings):return bool(settings and settings.get('schema_version')==2)
 
 
-def target_record(project):
+def target_record(project,policy=POLICY):
     project=authority._path(project)
     current=file_record(project/'AGENTS.md')
+    if action(policy)=='create':
+        if current is not None:raise ValueError('conditional creation requires actual root AGENTS.md absence')
+        return None
     if current is None or current['mode']&0o111:raise ValueError('conditional application supports an existing nonexecutable root AGENTS.md only')
     return current
 
 
-def _target_binding(project):
+def _target_binding(project,policy=POLICY):
     import base64
-    current=target_record(project)
+    current=target_record(project,policy)
+    if current is None:return dict(membership='absent')
     base64.b64decode(current['content'],validate=True).decode('utf-8')
     return {name:current[name] for name in ('sha256','mode')}
 
@@ -84,21 +91,29 @@ def _target_binding(project):
 def opened(store,authorization_id):
     case=store.case(authorization_id);events=store.history(case);inputs,pin=record(case/'inputs.json')
     fields(inputs,'schema_version profile project baseline nonce')
-    if (type(inputs['schema_version']) is not int or inputs['schema_version']!=1 or inputs['profile']!=AUTH_PROFILE or hashed(inputs)!=authorization_id
+    if (type(inputs['schema_version']) is not int or inputs['schema_version']!=1 or inputs['profile'] not in (AUTH_PROFILE,CREATE_AUTH_PROFILE) or hashed(inputs)!=authorization_id
             or events[0][0]['kind']!='application_authorization_created'
             or events[0][0]['payload']!=dict(inputs_sha256=pin)):
         raise ValueError('invalid application authorization locator')
     authority._path(inputs['project']);sha256(inputs['nonce'])
-    baseline=inputs['baseline'];fields(baseline,'sha256 mode');sha256(baseline['sha256'])
-    if type(baseline['mode']) is not int or not 0<=baseline['mode']<=0o777 or baseline['mode']&0o111:
+    baseline=inputs['baseline']
+    if inputs['profile']==CREATE_AUTH_PROFILE:
+        fields(baseline,'membership')
+        if baseline['membership']!='absent':raise ValueError('creation authorization requires absent baseline')
+    else:
+        fields(baseline,'sha256 mode');sha256(baseline['sha256'])
+    if inputs['profile']==AUTH_PROFILE and (type(baseline['mode']) is not int or not 0<=baseline['mode']<=0o777 or baseline['mode']&0o111):
         raise ValueError('unsupported application baseline mode')
     return case,inputs,events
 
 
-def allocate(store,project):
+def allocate(store,project,*,operation=None):
     project=authority._path(project)
     if project.is_relative_to(store.root) or store.root.is_relative_to(project):raise ValueError('application authorization store overlaps project')
-    inputs=dict(schema_version=1,profile=AUTH_PROFILE,project=str(project),baseline=_target_binding(project),nonce=secrets.token_hex(32))
+    if operation not in (None,'create'):raise ValueError('unsupported authorization allocation operation')
+    profile=CREATE_AUTH_PROFILE if operation=='create' else AUTH_PROFILE
+    inputs=dict(schema_version=1,profile=profile,project=str(project),
+        baseline=_target_binding(project,CREATE_POLICY if operation=='create' else POLICY),nonce=secrets.token_hex(32))
     ident=hashed(inputs)
     with store.locked(create=True),tempfile.TemporaryDirectory(dir=store.root,prefix='.application-stage-') as folder:
         authority.check_sources(store,[project])
@@ -110,7 +125,7 @@ def allocate(store,project):
         destination=store.case(ident)
         if destination.exists():raise ValueError('application authorization already exists')
         case.rename(destination);sync_directory(cases);sync_directory(store.root)
-    return dict(profile=AUTH_PROFILE,authorization_id=ident,authorization='not_authorized',publication_allowed=False)
+    return dict(profile=profile,authorization_id=ident,authorization='not_authorized',publication_allowed=False)
 
 
 def install_policy(store,path):
@@ -120,7 +135,7 @@ def install_policy(store,path):
 
 def summary(case_id,inputs,events):
     """Metadata only: the locator and a recorded state never issue a live grant."""
-    return dict(schema_version=1,profile=AUTH_PROFILE,case_id=case_id,state=events[-1][0]['state'],
+    return dict(schema_version=1,profile=inputs['profile'],case_id=case_id,state=events[-1][0]['state'],
         event_sha256=events[-1][1],authorization='not_authorized',automatic_promotion=False,publication_allowed=False)
 
 
@@ -140,10 +155,12 @@ def prepare(store,authorization_id,project,settings,configuration_sha256,options
     with store.locked():
         case,inputs,events=opened(store,authorization_id)
         if events[-1][0]['state']!='application_authorization':raise ValueError('application authorization is not preparable')
-        if authority._path(project)!=Path(inputs['project']) or _target_binding(project)!=inputs['baseline']:
+        policy=settings['application']['policy']
+        if (inputs['profile']!=(CREATE_AUTH_PROFILE if action(policy)=='create' else AUTH_PROFILE)
+                or authority._path(project)!=Path(inputs['project']) or _target_binding(project,policy)!=inputs['baseline']):
             raise ValueError('application baseline changed before authorization')
         pinned=binding(project,settings,configuration_sha256,options)
-        review=dict(schema_version=1,profile=AUTH_PROFILE,case_id=authorization_id,
+        review=dict(schema_version=1,profile=inputs['profile'],case_id=authorization_id,
             expected_event_sha256=events[-1][1],reviewer=dict(identity=reviewer),binding=pinned)
         value=authority.request(store,review,purpose=PURPOSE);raw=encoded(value);pin=hashed(value)
         folder=store.root/'review-requests';folder.mkdir(mode=0o700,exist_ok=True);path=folder/(pin+'.json')
@@ -151,7 +168,7 @@ def prepare(store,authorization_id,project,settings,configuration_sha256,options
             if read_regular(path,authority.MAX_BYTES)!=raw:raise ValueError('application request changed')
         else:write_bytes(path,raw);sync_directory(folder)
         store.append(case,events,'application_authorization_prepared','application_prepared',dict(request_sha256=pin))
-        return dict(profile=AUTH_PROFILE,authorization_id=authorization_id,request_sha256=pin,request_path=str(path),
+        return dict(profile=inputs['profile'],authorization_id=authorization_id,request_sha256=pin,request_path=str(path),
             authorization='not_authorized',publication_allowed=False)
 
 
@@ -165,11 +182,13 @@ def authorize(store,authorization_id,request_path,signature_path,*,deadline):
             raise ValueError('application authorization request is stale')
         review=authority.request_value(store,value,purpose=PURPOSE)
         fields(review,'schema_version profile case_id expected_event_sha256 reviewer binding')
-        if (type(review['schema_version']) is not int or review['schema_version']!=1 or review['profile']!=AUTH_PROFILE
+        if (type(review['schema_version']) is not int or review['schema_version']!=1 or review['profile']!=inputs['profile']
                 or review['case_id']!=authorization_id or review['expected_event_sha256']!=events[-2][1]):
             raise ValueError('application authorization scope changed')
         fields(review['reviewer'],'identity');text(review['reviewer']['identity'])
-        if review['binding']['baseline']!=inputs['baseline'] or _target_binding(inputs['project'])!=inputs['baseline']:
+        policy=review['binding']['policy']
+        if (inputs['profile']!=(CREATE_AUTH_PROFILE if action(policy)=='create' else AUTH_PROFILE)
+                or review['binding']['baseline']!=inputs['baseline'] or _target_binding(inputs['project'],policy)!=inputs['baseline']):
             raise ValueError('application baseline changed before approval')
         from . import config
         project=Path(inputs['project']);settings,configuration_sha256=config.load(project/'ahl.json')
@@ -201,13 +220,14 @@ def _approved(store,authorization_id,args,deadline,*,state):
     review=authority.request_value(store,saved['request'],purpose=PURPOSE)
     fields(review,'schema_version profile case_id expected_event_sha256 reviewer binding')
     prepared=next((event for event,_ in events if event['kind']=='application_authorization_prepared'),None)
-    if (review['profile']!=AUTH_PROFILE or review['case_id']!=authorization_id or prepared is None
+    if (review['profile']!=inputs['profile'] or review['case_id']!=authorization_id or prepared is None
             or review['expected_event_sha256']!=prepared['previous_sha256']
             or prepared['payload']!={'request_sha256':hashed(saved['request'])}
             or event['payload']['request_sha256']!=hashed(saved['request'])):
         raise ValueError('application authenticated parent/request changed')
     current=binding(args.project,args.project_settings,args.configuration_sha256,vars(args))
-    if inputs['project']!=str(authority._path(args.project)) or review['binding']!=current:
+    if (inputs['profile']!=(CREATE_AUTH_PROFILE if action(current['policy'])=='create' else AUTH_PROFILE)
+            or inputs['project']!=str(authority._path(args.project)) or review['binding']!=current):
         raise ValueError('application signed inputs changed')
     proof=authority.verify(store,saved['request'],saved['signature'],purpose=PURPOSE,deadline=deadline)
     if proof!=saved['proof']:raise ValueError('application authentication proof changed')
@@ -320,7 +340,8 @@ def proposer_hint(exposure):
         raise ValueError('same application proposer client and runtime required')
     _check(stage)
     with data['store'].locked():_approved(data['store'],data['authorization_id'],data['args'],data['deadline'],state='application_running')
-    return ACTION_MARKER+encoded(dict(policy=REMOVE_POLICY,path='AGENTS.md',action='remove')).decode('utf-8')
+    policy=data['binding']['policy']
+    return ACTION_MARKER+encoded(dict(policy=policy,path='AGENTS.md',action=action(policy))).decode('utf-8')
 
 
 def prepare_bank(session,output):
@@ -362,8 +383,13 @@ def validate_plan(plan,policy,baseline,candidate):
     from .workflow import candidate_states
     original={row.path:(row.sha256,row.mode) for row in plan.before}
     plan.validate_inventories(candidate_states(baseline,original),candidate_states(candidate,original))
-    if set(original)!={'AGENTS.md'} or any(row.mode&0o111 for row in (*plan.before,*plan.after)):
+    if (set(original)!=(set() if operation=='create' else {'AGENTS.md'})
+            or any(row.mode&0o111 for row in (*plan.before,*plan.after))):
         raise ValueError('conditional instruction inventory changed')
+    if operation=='create':
+        if any(Path(baseline).iterdir()) or sorted(path.name for path in Path(candidate).iterdir())!=['AGENTS.md']:
+            raise ValueError('conditional creation requires an empty baseline and exact root instruction candidate')
+        read_regular(Path(candidate)/'AGENTS.md',1024*1024).decode('utf-8')
     if operation=='remove' and any(Path(candidate).iterdir()):
         raise ValueError('conditional instruction removal requires an empty candidate')
 
@@ -550,13 +576,14 @@ def mutation_checkpoint(permitted,project,policy):
     journal=permitted['journal'];index=permitted['checks'];pending=getattr(journal,'_pending_snapshot',None)
     operation=action(policy);count=guard_count(policy)
     if index not in range(count):raise ValueError('application commit guard replayed')
-    if (permitted['record']['metadata']['source']!=policy or (permitted['after'] is None)!=(operation=='remove')):
+    if (permitted['record']['metadata']['source']!=policy or (permitted['after'] is None)!=(operation=='remove')
+            or (permitted['record']['before']['AGENTS.md'] is None)!=(operation=='create')):
         raise ValueError('application grant operation differs from signed policy')
     expected_record=dict(permitted['record'],status='prepared' if index==0 else 'committed' if index==count-1 else 'applying')
     if index:expected_record['commit_guarded']=True
     if journal.load(permitted['record']['deployment'])!=expected_record:
         raise ValueError('actual application Journal record changed')
-    if operation=='update' and index==2:
+    if operation!='remove' and index==2:
         if (pending is None or pending[0].parent!=project or not pending[0].name.startswith('AGENTS.md.ahl-')
                 or pending[1:]!=(permitted['after']['sha256'],permitted['after']['mode'])
                 or file_record(pending[0])!=permitted['after']):raise ValueError('actual Journal staging snapshot changed')
@@ -583,6 +610,15 @@ def _bank_guard(grant,domain):
     from .evaluation.closed_inputs import snapshot_pin
     return dict(original_project_sha256=snapshot_pin(permitted['before_project']),expected_current_project_snapshot=expected,
         reservation_id=data['reservation_id'],run_id=final['run_id'])
+
+
+def _after_project(before_project,after):
+    """Preserve full project membership while adding, replacing or removing AGENTS."""
+    from .evaluation.working_state import Snapshot
+    import base64
+    files=[row for row in before_project.files if row[0]!='AGENTS.md']
+    if after is not None:files.append(('AGENTS.md',after['mode'],base64.b64decode(after['content'],validate=True)))
+    return Snapshot(before_project.root_mode,before_project.directories,tuple(sorted(files)))
 
 
 def execute(session):
@@ -623,22 +659,18 @@ def execute(session):
         _running_authorization(data)
     authentication=next(event['payload']['authentication']['record_sha256'] for event,_ in events if event['kind']=='application_authorized')
     from .evaluation import closed_inputs
-    from .evaluation.working_state import Snapshot
     from .promotion.journal import Journal
     from .workflow import state_root,identity
-    import base64
     declaration=closed_inputs.owned(data['domain'])['declaration']
     before_project=closed_inputs.project_snapshot(args.project,declaration['project_inputs'],deadline)
-    before=target_record(args.project);after=file_record(data['candidate']/'AGENTS.md')
     selected_policy=data['binding']['policy'];operation=action(selected_policy)
+    before=target_record(args.project,selected_policy);after=file_record(data['candidate']/'AGENTS.md')
     if (before==after or (after is None)!=(operation=='remove') or after is not None and after['mode']&0o111):
         raise ValueError('unsupported or unchanged final target')
     validate_plan(data['plan'],selected_policy,data['baseline'],data['candidate'])
-    data['plan'].validate_inventories({'AGENTS.md':(before['sha256'],before['mode'])},
+    data['plan'].validate_inventories({} if before is None else {'AGENTS.md':(before['sha256'],before['mode'])},
         {} if after is None else {'AGENTS.md':(after['sha256'],after['mode'])})
-    after_project=Snapshot(before_project.root_mode,before_project.directories,tuple(
-        (name,after['mode'],base64.b64decode(after['content'],validate=True)) if name=='AGENTS.md' else (name,mode,raw)
-        for name,mode,raw in before_project.files if name!='AGENTS.md' or after is not None))
+    after_project=_after_project(before_project,after)
     journal=Journal(args.project,state_root()/'promotions'/identity(args.project))
     record_value=journal.prepare({'AGENTS.md':before},{'AGENTS.md':after},dict(source=selected_policy,plan_sha256=data['plan'].sha256,
         conditional_final_run=final['run_id'],general_certification=False))
@@ -673,6 +705,7 @@ def main(argv):
     parser.add_argument('--store',type=Path,required=True)
     commands=parser.add_subparsers(dest='command',required=True)
     allocate_command=commands.add_parser('allocate');allocate_command.add_argument('project',type=Path)
+    allocate_command.add_argument('--operation',choices=('create',))
     policy_command=commands.add_parser('install-policy');policy_command.add_argument('policy',type=Path)
     prepare_command=commands.add_parser('prepare');prepare_command.add_argument('authorization_id')
     prepare_command.add_argument('project',type=Path);prepare_command.add_argument('--reviewer',required=True)
@@ -682,7 +715,7 @@ def main(argv):
         command=commands.add_parser(name);command.add_argument('authorization_id')
     args=parser.parse_args(argv);store=ReviewStore(args.store)
     try:
-        if args.command=='allocate':result=allocate(store,args.project)
+        if args.command=='allocate':result=allocate(store,args.project,operation=args.operation)
         elif args.command=='install-policy':result=install_policy(store,args.policy)
         elif args.command=='prepare':
             project=authority._path(args.project);settings,pin=config.load(project/'ahl.json')
@@ -716,7 +749,7 @@ def binding(project,settings,configuration_sha256,options):
     inference,_=read_settings(options['inference_settings'])
     if inference.get('instruction_protocol')!=INSTRUCTION_PROFILE:raise ValueError('conditional application requires actual controller-loaded instructions')
     request=reference_path(project,application['delegation_request']);signature=reference_path(project,application['delegation_signature'])
-    return dict(policy=application['policy'],project_sha256=hashed(str(authority._path(project))),baseline=_target_binding(project),
+    return dict(policy=application['policy'],project_sha256=hashed(str(authority._path(project))),baseline=_target_binding(project,application['policy']),
         configuration_sha256=configuration_sha256,configuration_references_sha256=hashed(references),
         runtime=dict(agent=options['agent'],image_sha256=options['image_sha256'],permission_audit=options['permission_audit'],
             settings_sha256=references['settings_sha256']),bank_case_id=application['bank_case_id'],

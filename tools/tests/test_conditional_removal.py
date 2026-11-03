@@ -33,7 +33,7 @@ class RemovalPolicyTests(unittest.TestCase):
         self.assertFalse(accepted['recommendation_only'])
         self.assertEqual(application.action(application.POLICY),'update')
         self.assertEqual(application.action(REMOVE_POLICY),'remove')
-        for policy in ('controller-agents-create-conditional-apply-v1',None,[]):
+        for policy in ('unsupported-policy',None,[]):
             with self.subTest(policy=policy),self.assertRaises(ValueError):application.action(policy)
 
     def test_removal_profile_stays_private_even_with_a_public_label(self):
@@ -57,6 +57,7 @@ class RemovalPolicyTests(unittest.TestCase):
             removal=declared_plan(before,{})
             application.validate_plan(removal,REMOVE_POLICY,baseline,candidate)
             with self.assertRaises(ValueError):application.validate_plan(removal,application.POLICY,baseline,candidate)
+            with self.assertRaises(ValueError):application.validate_plan(removal,application.CREATE_POLICY,baseline,candidate)
             (candidate/'AGENTS.md').write_text('changed\n');after=candidate_states(candidate,before)
             with self.assertRaises(ValueError):application.validate_plan(removal,REMOVE_POLICY,baseline,candidate)
             update=declared_plan(before,after)

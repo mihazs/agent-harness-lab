@@ -41,7 +41,8 @@ private credential only during actual execution; doctor checks metadata only.
 
 The separate [conditional instruction application policy](conditional-instruction-application.md)
 connects signed preauthorization, actual development custody, protected fixed-final
-evaluation and guarded application for an existing root `AGENTS.md` only. It keeps
+evaluation and guarded update, removal or explicitly authorized creation of root
+`AGENTS.md` only. It keeps
 general certification and adoption APIs conservative and does not activate native
 agent CLIs or infer served-model identity from configuration.
 

@@ -86,6 +86,25 @@ class ConfiguredDelegationPacketTests(unittest.TestCase):
                 self.invoke('--project',self.project,*([] if not extra else ['--events',self.events]),*extra)
             self.assertFalse(self.request.exists())
 
+    def test_public_creation_packet_pins_a_genuinely_empty_baseline_without_a_dummy_instruction(self):
+        from agent_harness_lab.conditional_application import CREATE_POLICY
+        self.instruction.unlink();path=self.project/'ahl.json';value=json.loads(path.read_bytes())
+        value['application']['policy']=CREATE_POLICY;path.write_text(json.dumps(config.prepare(value)))
+        code,result=self.invoke('--project',self.project,'--events',self.events)
+        self.assertEqual(code,0);self.assertFalse(self.instruction.exists());self.assertFalse(result['publication_allowed'])
+        with tempfile.TemporaryDirectory() as folder:
+            baseline=Path(folder)/'baseline';self.assertEqual(workflow.snapshot(self.project,baseline,allowed_paths=['AGENTS.md']),{})
+            self.assertEqual(json.loads(self.request.read_bytes())['review']['domain']['baseline_sha256'],
+                closed_inputs.tree_pin(baseline,self.deadline))
+        self.assertEqual(list(self.store.root.glob('.delegation-baseline-*')),[])
+
+    def test_creation_packet_rejects_an_existing_empty_instruction(self):
+        from agent_harness_lab.conditional_application import CREATE_POLICY
+        self.instruction.write_bytes(b'');path=self.project/'ahl.json';value=json.loads(path.read_bytes())
+        value['application']['policy']=CREATE_POLICY;path.write_text(json.dumps(config.prepare(value)))
+        with self.assertRaises(SystemExit):self.invoke('--project',self.project,'--events',self.events)
+        self.assertFalse(self.request.exists());self.assertEqual(self.instruction.read_bytes(),b'')
+
     def test_changed_source_or_configuration_before_publication_rejects(self):
         for path in (self.events,self.project/'ahl.json'):
             before=path.read_bytes()
