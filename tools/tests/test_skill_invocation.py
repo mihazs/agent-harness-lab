@@ -8,11 +8,13 @@ import re
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 import agent_harness_lab
 from agent_harness_lab import cli,workflow
+from agent_harness_lab.one_call import invocation_context
 from agent_harness_lab.evaluation import responses
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
 from agent_harness_lab.promotion.journal import Journal
@@ -147,3 +149,15 @@ class SkillInvocationTests(unittest.TestCase):
     def test_invocation_metadata_cannot_be_relabelled_for_public_export(self):
         self.assertFalse(public_export_allowed([dict(profile='ahl-skill-invocation-context-v1',publication_allowed=True,
             provenance=dict(source_kind='synthetic',approved_publication=True,source_ref='synthetic:context',derived_from_private=False))]))
+
+    def test_actual_invocation_stays_private_inside_preparation_context(self):
+        public=dict(publication_allowed=True,provenance=dict(source_kind='synthetic',approved_publication=True,
+            source_ref='synthetic:stage-context',derived_from_private=False))
+        self.assertTrue(public_export_allowed([public]))
+        invocation=invocation_context(SimpleNamespace(project=Path('/synthetic/project'),agent='codex'),
+            Path('/synthetic/output/run'),10,remaining_seconds=1,remaining_trials=2)
+        stage=dict(project='/synthetic/project',baseline='baseline',candidate='candidate',evaluation='evaluation',
+            phase='candidate',invocation=invocation)
+        for shape in (invocation,stage,dict(context=stage)):
+            with self.subTest(shape=shape):
+                self.assertFalse(public_export_allowed([{**shape,**public}]))
