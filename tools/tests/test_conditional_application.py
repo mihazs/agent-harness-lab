@@ -72,6 +72,22 @@ class ConditionalConfigurationTests(unittest.TestCase):
 
 
 class AuthorizationLocatorTests(unittest.TestCase):
+    def test_baseline_body_is_not_duplicated_into_authorization_metadata(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder);project=root/'project';project.mkdir();(project/'AGENTS.md').write_text('SYNTHETIC_BODY\n'*8192)
+            store=ReviewStore(root/'review');created=application_protocol.allocate(store,project)
+            case,inputs,_=store.opened(created['authorization_id'])
+            self.assertEqual(set(inputs['baseline']),{'sha256','mode'})
+            self.assertNotIn('SYNTHETIC_BODY',(case/'inputs.json').read_text())
+            self.assertLess((case/'inputs.json').stat().st_size,4096)
+
+    def test_private_application_profiles_cannot_be_relabelled_for_public_export(self):
+        from agent_harness_lab.evaluation.benchmark import public_export_allowed
+        for profile in (application_protocol.POLICY,application_protocol.AUTH_PROFILE):
+            value=dict(profile=profile,publication_allowed=True,provenance=dict(source_kind='synthetic',approved_publication=True,
+                source_ref='synthetic:application',derived_from_private=False))
+            self.assertFalse(public_export_allowed([value]))
+
     def test_labels_and_unregistered_handles_do_not_mint_a_live_application_session(self):
         for value in ({'authorized':True},application_protocol._Session(),None):
             with self.subTest(kind=type(value).__name__):
@@ -97,7 +113,21 @@ class AuthorizationLocatorTests(unittest.TestCase):
             target=project/'AGENTS.md';target.write_text('Synthetic baseline\n');target.chmod(0o755)
             with self.assertRaises(ValueError):application_protocol.allocate(store,project)
             target.chmod(0o644)
+            target.write_bytes(b'\xff')
+            with self.assertRaises(ValueError):application_protocol.allocate(store,project)
+            target.write_text('Synthetic baseline\n')
             with self.assertRaises(ValueError):application_protocol.allocate(ReviewStore(project/'review'),project)
+
+    def test_incomplete_final_diagnostics_never_record_provider_exception_text(self):
+        from types import SimpleNamespace
+        from agent_harness_lab.evaluation.oracle_history import _conditional_failure
+        scope=SimpleNamespace(lost=True,closed=False,data=dict(events=[dict(complete=True)],instruction_requests=[],pairs=[]))
+        comparison=SimpleNamespace(active=None,lost=True,closed=True,rows=[],expected=[1,2],pending=[])
+        diagnostic=_conditional_failure(ValueError('SYNTHETIC_PRIVATE_PROVIDER_BODY'),'trial_evaluation',scope,comparison)
+        self.assertNotIn('SYNTHETIC_PRIVATE_PROVIDER_BODY',json.dumps(diagnostic))
+        self.assertEqual(diagnostic['reason'],'unclassified');self.assertEqual(diagnostic['comparison']['expected'],2)
+        known=_conditional_failure(ValueError('fresh comparison is incomplete'),'comparison_finish',scope,comparison)
+        self.assertEqual(known['reason'],'comparison_incomplete')
 
     def test_changed_locator_input_cannot_become_an_authorization_case(self):
         with tempfile.TemporaryDirectory() as folder:

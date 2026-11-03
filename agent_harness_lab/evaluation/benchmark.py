@@ -30,7 +30,7 @@ def public_export_allowed(records):
                         'controller_source_profile','source_capture','live_verification','verified_execution','implementation_prerequisites','restricted_process_protocol','controlled_instruction_protocol','configured_response_references_sha256','harness_change_plan','plan_sha256',
                         'classifier_selection_allowed','review_event_sha256','protected_access','protected_access_sha256','import_sha256','foreign_claims','proposal_id',
                         'controller_derivation','derivation_id','derivation_binding_sha256','review_authentication','authentication','bank_qualification','construction_access','construction_id',
-                        'closed_input','domain_sha256','qualification_event_sha256','delegation_sha256'))
+                        'closed_input','domain_sha256','qualification_event_sha256','delegation_sha256','authorization_id','conditional_claim'))
 
                     or metadata.get('algorithm') in ('private-preservation-decision-v1','private-controller-history-report-v1',
                         'guarded-preservation-search-v1','corrected-cohort-qualification-v1')
@@ -41,7 +41,9 @@ def public_export_allowed(records):
                     or metadata.get('purpose')=='protected-diagnostic-access-v1'
                     or metadata.get('profile') in ('ahl-improve-fixed-bank-v1','ahl-fresh-responses-comparison-v1',
                         'controller-request-reservation-v1','controller-realized-schedule-v1','ahl-live-construction-stage-v1',
-                        'conditional-bank-requalification-v2','conditional-bank-closed-input-domain-v2','owned-evidence-views-v1','owned-closed-input-closure-v1')
+                        'conditional-bank-requalification-v2','conditional-bank-closed-input-domain-v2','owned-evidence-views-v1','owned-closed-input-closure-v1',
+                        'controller-agents-conditional-apply-v1','controller-instruction-authorization-v1')
+                    or metadata.get('purpose')=='conditional_instruction_application'
                     or any(key in metadata for key in ('request_sha256','workflow_request_sha256','responses_binding','responses_custody_sha256','request_binding'))
                     or metadata.get('report_kind')=='controller_trajectory'
                     or metadata.get('outcome_mapping')=='artifact_and_required_v1'

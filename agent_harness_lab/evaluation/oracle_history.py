@@ -23,6 +23,31 @@ MAX_CASES = 256
 MAX_BYTES = 64*1024*1024
 
 
+def _conditional_failure(error,stage,scope,custody):
+    """Content-free first-failure diagnostics; these observations issue no authority."""
+    reasons={
+        'genuine certification qualification issuer is unavailable':'certification_admission_unavailable',
+        'fresh comparison is incomplete':'comparison_incomplete',
+        'comparison trial lacks fresh transport, worker or artifact-grade custody':'trial_custody_incomplete',
+        'comparison results differ from actual owned completions':'trial_completion_mismatch',
+        'current unchanged live workflow scope required':'workflow_scope_unavailable',
+        'instruction request metadata bound exceeded':'instruction_metadata_capacity',
+        'current instruction scope required':'instruction_scope_unavailable'}
+    message=error.args[0] if error.args and type(error.args[0]) is str else None
+    result=dict(stage=stage,error_type=type(error).__name__,reason=reasons.get(message,'unclassified'))
+    try:
+        result['scope']=dict(lost=scope.lost,closed=scope.closed,events=len(scope.data['events']),
+            completed=sum(row['complete'] for row in scope.data['events']),requests=len(scope.data.get('instruction_requests',[])),
+            receipt_bytes=len(encoded(scope.data)),pairs=len(scope.data['pairs']))
+        active=custody.active
+        result['comparison']=dict(lost=custody.lost,closed=custody.closed,rows=len(custody.rows),expected=len(custody.expected),
+            pending=len(custody.pending),active=active is not None,
+            active_workers=0 if active is None else len(active['workers']),
+            active_requests=0 if active is None else len(active['requests']),active_grade=active is not None and active['grade'] is not None)
+    except (TypeError,ValueError,KeyError,AttributeError):result['counts']='unavailable'
+    return result
+
+
 def transition(state, kind, target, previous_kind=None):
     if state is None:
         return (kind,target) in (('oracle_registered','active'),('run_started','running'))
@@ -621,13 +646,17 @@ class HistoryStore(PrivateJournal):
                 if binding is not None:trajectories[task['id']]=binding
         elif any(value is not None for value in (inference_settings,sandbox_backend,source_sink,workflow_request,permission_profile)):
             raise ValueError('partial Responses history context')
-        if spec.profile == 'certification':
-            if application_session is None:
-                raise ValueError('genuine certification qualification issuer is unavailable; public development remains unqualified')
-            from agent_harness_lab.conditional_application import _final_admission,_domain
+        if application_session is not None:
+            from agent_harness_lab.conditional_application import _final_admission,_domain,_owned
             _final_admission(application_session,_domain(application_session),manifest,baseline,candidate)
-            if not controlled or access_reservation is None:raise ValueError('conditional final requires fresh protected controlled execution')
+            actual=_owned(application_session)
+            if (spec.profile!='certification' or not controlled or access_reservation is None
+                    or inference_client is not actual['client'] or sandbox_backend is not actual['backend']
+                    or Path(inference_settings)!=Path(actual['args'].inference_settings)):
+                raise ValueError('conditional final requires exact fresh protected controlled execution')
             self._application_session=application_session
+        elif spec.profile == 'certification':
+            raise ValueError('genuine certification qualification issuer is unavailable; public development remains unqualified')
         if 'protected_access' in source and access_reservation is None:
             raise ValueError('managed access declaration requires its controller reservation')
         if spec.sequential is not None:
@@ -729,6 +758,7 @@ class HistoryStore(PrivateJournal):
         args = SimpleNamespace(manifest=manifest,baseline=baseline,candidate=candidate,output=case/'execution',
             agent='offline',codex='must-not-launch',claude='must-not-launch',cgroup_root=Path(cgroup_root),
             image_root=image_root,image_sha256=image_sha256,disk_bytes=disk_bytes,parent_deadline=deadline)
+        if application_session is not None:args._application_session=application_session
         if access_handle is not None: args._protected_access = access_handle
         if sequential_controller is not None:
             args._sequential_controller=sequential_controller
@@ -743,6 +773,7 @@ class HistoryStore(PrivateJournal):
                 if membership is not None:cohort_history.validate(membership,source,spec,bound_tasks)
                 if record(manifest,1024*1024)[1]!=manifest_hash:raise ValueError('sequential source manifest changed')
             sequential_controller.checker=validate_rows;sequential_controller.guard=live_guard
+        failure_stage='before_dispatch'
         try:
             if on_started is not None:
                 try: on_started(run_id)
@@ -756,7 +787,9 @@ class HistoryStore(PrivateJournal):
                 args.permission_audit=permission_profile
                 if source_sink is not None:args.source_sink=source_sink
                 with custody:
+                    failure_stage='trial_evaluation'
                     runner.evaluate(args)
+                    failure_stage='comparison_finish'
                     result,result_hash=record(case/'execution/results.json',8*1024*1024)
                     if read_settings(inference_settings)[1]!=settings_hash or inference_client.settings!=settings:
                         raise ValueError('comparison inference settings changed')
@@ -766,8 +799,10 @@ class HistoryStore(PrivateJournal):
                         observe_final(application_session,self,run_id,custody,result,proof)
                 write_bytes(case/'responses-custody.json',encoded(proof))
             else:
+                failure_stage='trial_evaluation'
                 runner.evaluate(args)
                 result,result_hash = record(case/'execution/results.json',8*1024*1024)
+            failure_stage='trial_validation'
             if sequential_controller is not None:
                 from .sequential_state import replay
                 checked=replay(spec,case/'sequential',result['trials'],validate_rows,cohort_json=cohort_raw)
@@ -779,6 +814,7 @@ class HistoryStore(PrivateJournal):
                     or identity(manifest.parent,selected,source['grader_bundles']) != spec.grader_hash
                     or time.monotonic() >= deadline):
                 raise ValueError('history inputs changed or sealing budget exhausted')
+            failure_stage='evidence_seal'
             evidence = dict(results_sha256=result_hash,execution_tree_sha256=tree_hash(case/'execution'))
             if controlled:evidence['responses_custody_sha256']=record(case/'responses-custody.json',8*1024*1024)[1]
             if sequential_controller is not None:evidence['sequential_tree_sha256']=tree_hash(case/'sequential')
@@ -794,11 +830,17 @@ class HistoryStore(PrivateJournal):
                 from agent_harness_lab.conditional_application import seal_final
                 seal_final(application_session,self,run_id)
         except (OSError,ValueError,TypeError,KeyError,subprocess.SubprocessError,KeyboardInterrupt) as error:
+            diagnostics=_conditional_failure(error,failure_stage,scope,custody) if application_session is not None else None
             with self.locked():
                 current = self.history(case)
                 if current[-1][0]['state']!='running':raise
-                self.append(case,current,'run_finished','incomplete',dict(reason='execution_or_evidence_incomplete'))
+                payload=dict(reason='execution_or_evidence_incomplete')
+                if diagnostics is not None:payload['diagnostics']=diagnostics
+                self.append(case,current,'run_finished','incomplete',payload)
             if isinstance(error,KeyboardInterrupt): raise
+            if diagnostics is not None:
+                return dict(schema_version=1,run_id=run_id,state='incomplete',diagnostics=diagnostics,
+                    qualification='unverified',automatic_promotion=False,publication_allowed=False)
         return self.show(run_id)
 
 

@@ -63,23 +63,31 @@ def target_record(project):
     return current
 
 
+def _target_binding(project):
+    import base64
+    current=target_record(project)
+    base64.b64decode(current['content'],validate=True).decode('utf-8')
+    return {name:current[name] for name in ('sha256','mode')}
+
+
 def opened(store,authorization_id):
     case=store.case(authorization_id);events=store.history(case);inputs,pin=record(case/'inputs.json')
     fields(inputs,'schema_version profile project baseline nonce')
-    if (inputs['schema_version']!=1 or inputs['profile']!=AUTH_PROFILE or hashed(inputs)!=authorization_id
+    if (type(inputs['schema_version']) is not int or inputs['schema_version']!=1 or inputs['profile']!=AUTH_PROFILE or hashed(inputs)!=authorization_id
             or events[0][0]['kind']!='application_authorization_created'
             or events[0][0]['payload']!=dict(inputs_sha256=pin)):
         raise ValueError('invalid application authorization locator')
     authority._path(inputs['project']);sha256(inputs['nonce'])
-    from .promotion.journal import validate_snapshot
-    validate_snapshot(inputs['baseline'])
+    baseline=inputs['baseline'];fields(baseline,'sha256 mode');sha256(baseline['sha256'])
+    if type(baseline['mode']) is not int or not 0<=baseline['mode']<=0o777 or baseline['mode']&0o111:
+        raise ValueError('unsupported application baseline mode')
     return case,inputs,events
 
 
 def allocate(store,project):
     project=authority._path(project)
     if project.is_relative_to(store.root) or store.root.is_relative_to(project):raise ValueError('application authorization store overlaps project')
-    inputs=dict(schema_version=1,profile=AUTH_PROFILE,project=str(project),baseline=target_record(project),nonce=secrets.token_hex(32))
+    inputs=dict(schema_version=1,profile=AUTH_PROFILE,project=str(project),baseline=_target_binding(project),nonce=secrets.token_hex(32))
     ident=hashed(inputs)
     with store.locked(create=True),tempfile.TemporaryDirectory(dir=store.root,prefix='.application-stage-') as folder:
         authority.check_sources(store,[project])
@@ -121,7 +129,7 @@ def prepare(store,authorization_id,project,settings,configuration_sha256,options
     with store.locked():
         case,inputs,events=opened(store,authorization_id)
         if events[-1][0]['state']!='application_authorization':raise ValueError('application authorization is not preparable')
-        if authority._path(project)!=Path(inputs['project']) or target_record(project)!=inputs['baseline']:
+        if authority._path(project)!=Path(inputs['project']) or _target_binding(project)!=inputs['baseline']:
             raise ValueError('application baseline changed before authorization')
         pinned=binding(project,settings,configuration_sha256,options)
         review=dict(schema_version=1,profile=AUTH_PROFILE,case_id=authorization_id,
@@ -150,7 +158,7 @@ def authorize(store,authorization_id,request_path,signature_path,*,deadline):
                 or review['case_id']!=authorization_id or review['expected_event_sha256']!=events[-2][1]):
             raise ValueError('application authorization scope changed')
         fields(review['reviewer'],'identity');text(review['reviewer']['identity'])
-        if review['binding']['baseline']!=inputs['baseline'] or target_record(inputs['project'])!=inputs['baseline']:
+        if review['binding']['baseline']!=inputs['baseline'] or _target_binding(inputs['project'])!=inputs['baseline']:
             raise ValueError('application baseline changed before approval')
         from . import config
         project=Path(inputs['project']);settings,configuration_sha256=config.load(project/'ahl.json')
@@ -352,6 +360,8 @@ def _final_admission(session,domain,manifest,baseline,candidate):
         raise ValueError('exact owned fixed final application required')
     from .promotion.prerequisites import current
     if current() is not data['scope'] or not data['scope']._valid():raise ValueError('current application Scope required')
+    from .evaluation.closed_inputs import check
+    check(data['domain'])
     from .one_call import check_configuration
     check_configuration(args)
     _approved(data['store'],data['authorization_id'],args,data['deadline'],state='application_running')
@@ -392,7 +402,7 @@ def observe_final(session,history,run_id,custody,result,proof):
 
 
 def seal_final(session,history,run_id):
-    data=_owned(session);handle=data['final_run'];final=_FINAL_RUNS.get(handle)
+    data=_owned(session);handle=data['final_run'];final=_FINAL_RUNS.get(handle) if type(handle) is _FinalRun else None
     if (final is None or final['session'] is not session or final['history'] is not history
             or final['run_id']!=run_id or final['sealed']):raise ValueError('owned pending final run required')
     case,events,inputs,spec=history._opened(run_id,current_bank=False)
@@ -411,7 +421,7 @@ def seal_final(session,history,run_id):
 
 def _final_history(session,run_id,source):
     """Live read custody only. This route cannot admit another execution or grant."""
-    data=_owned(session);final=_FINAL_RUNS.get(data['final_run'])
+    data=_owned(session);handle=data['final_run'];final=_FINAL_RUNS.get(handle) if type(handle) is _FinalRun else None
     if (final is None or not final['sealed'] or final['pid']!=os.getpid() or final['session'] is not session
             or final['run_id']!=run_id or hashed(source)!=data['manifest_sha256']
             or data['phase'] not in ('final_complete','grant_consuming','applied')
@@ -437,7 +447,7 @@ def _bank_guard(grant,domain):
     permitted=_GRANTS.get(grant) if type(grant) is _Grant else None
     if permitted is None or permitted['pid']!=os.getpid() or not permitted['guard_active']:
         raise ValueError('actual consuming application grant required')
-    data=_owned(permitted['session']);final=_FINAL_RUNS.get(data['final_run'])
+    data=_owned(permitted['session']);handle=data['final_run'];final=_FINAL_RUNS.get(handle) if type(handle) is _FinalRun else None
     if data['domain'] is not domain or data['phase']!='grant_consuming' or final is None or not final['sealed']:
         raise ValueError('same completed application session required')
     source,_=record(data['manifest'],1024*1024);_final_history(permitted['session'],final['run_id'],source)
@@ -484,9 +494,10 @@ def execute(session):
         inference_client=data['client'],inference_settings=args.inference_settings,sandbox_backend=data['backend'],
         source_sink=getattr(args,'source_sink',None),workflow_request=data['request_path'],permission_profile=args.permission_audit,
         application_session=session)
-    final=_FINAL_RUNS.get(data['final_run'])
+    handle=data['final_run'];final=_FINAL_RUNS.get(handle) if type(handle) is _FinalRun else None
     if final is None or not final['sealed'] or result['state']!='sealed':
-        return dict(status='incomplete',reason='final_comparison_incomplete',changed_files=[],automatic_promotion=False,publication_allowed=False)
+        return dict(status='incomplete',reason='final_comparison_incomplete',changed_files=[],
+            diagnostics=result.get('diagnostics'),automatic_promotion=False,publication_allowed=False)
     analysis=history.analyze(final['run_id'])
     from .promotion.policy import implementation_prerequisites
     observed=implementation_prerequisites(data['scope'])
@@ -586,7 +597,7 @@ def binding(project,settings,configuration_sha256,options):
     inference,_=read_settings(options['inference_settings'])
     if inference.get('instruction_protocol')!=INSTRUCTION_PROFILE:raise ValueError('conditional application requires actual controller-loaded instructions')
     request=reference_path(project,application['delegation_request']);signature=reference_path(project,application['delegation_signature'])
-    return dict(policy=POLICY,project_sha256=hashed(str(authority._path(project))),baseline=target_record(project),
+    return dict(policy=POLICY,project_sha256=hashed(str(authority._path(project))),baseline=_target_binding(project),
         configuration_sha256=configuration_sha256,configuration_references_sha256=hashed(references),
         runtime=dict(agent=options['agent'],image_sha256=options['image_sha256'],permission_audit=options['permission_audit'],
             settings_sha256=references['settings_sha256']),bank_case_id=application['bank_case_id'],

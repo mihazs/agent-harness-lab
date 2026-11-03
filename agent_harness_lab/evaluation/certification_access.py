@@ -94,10 +94,10 @@ def capture(manifest, baseline, candidate, check=lambda: None,*,access_ledger=No
     manifest, baseline, candidate = map(_path, (manifest, baseline, candidate))
     source, pin = record(manifest, MAX_BYTES)
     spec = ExperimentSpec.parse(source['experiment']); spec.validate()
-    if spec.profile != 'descriptive_smoke':
-        if application_session is None:raise ValueError('genuine certification qualification issuer is unavailable')
+    if application_session is not None:
         from agent_harness_lab.conditional_application import _final_admission,_domain
         _final_admission(application_session,_domain(application_session),manifest,baseline,candidate)
+    elif spec.profile != 'descriptive_smoke':raise ValueError('genuine certification qualification issuer is unavailable')
     tasks = source['tasks']
     if not isinstance(tasks, list) or not 1 <= len(tasks) <= 1000: raise ValueError('bounded diagnostic task list required')
     if {t[0]:t[1:] for t in spec.tasks} != {t['id']:(t.get('root'),t.get('family')) for t in tasks}:
@@ -486,19 +486,31 @@ def admission(args, manifest):
         reject_claims(manifest); return
     if type(handle) is not _Access or handle not in _OWNED: raise ValueError('managed access requires an owned controller invocation')
     path, receipt, producer_pid = _OWNED.pop(handle)
-    reject_claims(manifest,owned=True)
+    session=getattr(args,'_application_session',None)
+    if session is None:reject_claims(manifest,owned=True)
+    else:
+        from agent_harness_lab.conditional_application import _final_admission,_domain,_owned
+        from .comparison_custody import current
+        _final_admission(session,_domain(session),args.manifest,args.baseline,args.candidate)
+        comparison=current()
+        if (comparison is None or not comparison._valid() or comparison.client is not _owned(session)['client']
+                or comparison.spec.digest!=receipt['binding']['plan_sha256']
+                or comparison.journal_binding!=dict(run_id=receipt['run_id'],source_manifest_sha256=receipt['binding']['manifest_sha256'])):
+            raise ValueError('current owned conditional final comparison required')
     if producer_pid != os.getpid(): raise ValueError('owned diagnostic invocation cannot cross process boundaries')
     expected = Path(path).parent/'cases'/receipt['run_id']/'execution'
     if _path(args.output) != expected: raise ValueError('managed invocation output custody differs')
     historical(path, receipt)
     from .oracle_history import HistoryStore
-    _, events, _, _ = HistoryStore(Path(path).parent).opened(receipt['run_id'])
+    store=HistoryStore(Path(path).parent)
+    _,events,_,_=store.opened(receipt['run_id']) if session is None else store._opened(receipt['run_id'],current_bank=False)
     if events[-1][0]['state'] != 'running': raise ValueError('managed invocation is no longer running')
     def check():
         import time
         if time.monotonic() >= getattr(args,'parent_deadline',float('inf')):
             raise TimeoutError('managed invocation deadline exhausted')
-    actual = capture(args.manifest, args.baseline, args.candidate, check,access_ledger=path,deadline=getattr(args,'parent_deadline',None))
+    actual = capture(args.manifest, args.baseline, args.candidate, check,access_ledger=path,
+        deadline=getattr(args,'parent_deadline',None),application_session=session)
     expected_binding=receipt['binding']
     if expected_binding.get('bank_qualification',{}).get('renewal') is not None:
         expected_binding=deepcopy(expected_binding);expected_binding['bank_qualification'].pop('renewal')

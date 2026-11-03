@@ -84,6 +84,7 @@ class ConditionalApplicationAuthorityTests(unittest.TestCase):
         self.assertEqual(saved['proof']['namespace'], 'ahl.instruction-application.v1')
         self.assertEqual(saved['request']['purpose'], application.PURPOSE)
         self.assertEqual(saved['proof']['signer'], 'synthetic-reviewer')
+        self.assertNotIn('Synthetic baseline', json.dumps(saved))
         for value in (result, saved['request'], {'authorization_id':self.authorization}, application._Session()):
             with self.subTest(kind=type(value).__name__):
                 with self.assertRaises(ValueError):application._owned(value)
