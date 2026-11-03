@@ -128,6 +128,8 @@ def owned(handle):
 
 def before_collection(handle,args):
     value=owned(handle)
+    if getattr(args,'focus',None) is not None:
+        raise ValueError('focus is unsupported by the closed input profile')
     if value['projection'] is not None or value.get('collection_started'):
         raise ValueError('closed inputs cannot be recollected')
     from agent_harness_lab.one_call import allowed_paths

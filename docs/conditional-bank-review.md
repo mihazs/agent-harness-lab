@@ -143,6 +143,8 @@ classified as observed inputs and do not consume this snapshot's bounds. Other
 harness selections need a separately complete supported profile. Baseline, source
 and methodology snapshots retain their existing bounds; unsafe or oversized actual
 inputs are unsupported, not partially accepted.
+This profile rejects every non-`None` focus input before collection and at the direct
+proposal boundary. Legacy workflows retain their existing focus behavior.
 
 The controller verifies the signed request before collection, records the actual
 evidence-to-role-view projection, and binds that projection to the live workflow.

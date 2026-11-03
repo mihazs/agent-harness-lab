@@ -100,9 +100,10 @@ class ConstructionAccessTests(unittest.TestCase):
         with self.controller(),redirect_stdout(io.StringIO()) as stdout:
             code=main(['improve',str(f.project),'--agent','responses','--inference-settings',str(f.args.inference_settings),
                 '--evaluation-store',str(self.store),'--cgroup-root',str(f.args.cgroup_root),'--image-root',str(f.args.image_root),
-                '--image-sha256',f.args.image_sha256,'--disk-bytes',str(f.args.disk_bytes),'--timeout','30'])
+                '--image-sha256',f.args.image_sha256,'--disk-bytes',str(f.args.disk_bytes),'--timeout','30','--focus','Synthetic focus.'])
         result=json.loads(stdout.getvalue())
         self.assertEqual(code,3,result); self.assertEqual(result['status'],'inconclusive',result)
+        self.assertEqual(json.loads(f.histories[0]['input'][1]['content'])['focus'],'Synthetic focus.')
         self.assertEqual(f.roles.count('evaluator_author'),1); self.assertEqual(f.roles.count('proposer'),1)
         observed=result['construction_access']; self.assertEqual(observed['profile'],access.PROFILE)
         self.assertEqual([s['role'] for s in observed['stages']],['proposer','evaluator_author'])

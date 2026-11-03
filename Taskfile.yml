@@ -40,6 +40,13 @@ tasks:
       AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
       - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=300 -- {{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_{{default "bank_requalification" .TEST_NAME}}.py" -k {{default "" .KERNEL_TEST_FILTER | shellQuote}} -v'
+  test:evaluation:legacy-focus:
+    desc: Preserve explicit focus input on the unprofiled public workflow
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_construction_access.py" -k test_actual_public_controlled_improve_automatically_records_both_roles -v'
   test:workflow:change-plan:
     desc: Verify immutable shared plans and guarded public application receipts
     cmds:

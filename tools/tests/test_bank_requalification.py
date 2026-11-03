@@ -54,7 +54,7 @@ class BankRequalificationBoundaryTests(unittest.TestCase):
 
 @unittest.skipUnless(kernel.ENABLED,'explicit delegated native scope required')
 class BankRequalificationKernelTests(kernel.KernelFixture):
-    def owned_case(self,*,unbound_source=False):
+    def owned_case(self,*,unbound_source=False,focus_check=None):
         actual,qualified,_,runtime,image,manifest,spec,path,history=bank_fixtures.QualifiedBankKernelTests.qualified_comparison(self)
         deadline=time.monotonic()+120
         project=self.root/'project';project.mkdir();(project/'AGENTS.md').write_text('Synthetic baseline.')
@@ -98,6 +98,12 @@ class BankRequalificationKernelTests(kernel.KernelFixture):
         if unbound_source:
             extra=self.root/'unreviewed-events.jsonl';extra.write_text('');args.events=extra
         output=self.root/'owned-workflow';output.mkdir()
+        if focus_check=='collection':
+            args.focus='Synthetic focus.'
+            with patch.object(workflow,'collect',side_effect=AssertionError('focus must reject before collection')) as collect:
+                with self.assertRaisesRegex(ValueError,'focus'):workflow.evidence(args,output)
+                collect.assert_not_called()
+            return
         data=workflow.evidence(args,output)
         scope=prerequisites._begin(baseline,image,deadline);self.addCleanup(scope.end)
         closed_inputs.bind_scope(handle,scope,baseline)
@@ -114,6 +120,13 @@ class BankRequalificationKernelTests(kernel.KernelFixture):
         client=responses.Client(settings,None,deadline,transport=transport)
         access=WorkflowAccess(args,output,baseline,client,backend,deadline);self.addCleanup(access.retire)
         seed=self.root/'seed';shutil.copytree(baseline,seed)
+        if focus_check=='direct':
+            with patch.object(WorkflowAccess,'_run',side_effect=AssertionError('focus must reject before stage dispatch')) as run:
+                with self.assertRaisesRegex(ValueError,'focus'):
+                    access.propose(views['proposer'],seed,output/'proposal',focus='Synthetic focus.')
+                run.assert_not_called()
+            self.assertEqual(client.requests,0)
+            return
         _,candidate,_=access.propose(views['proposer'],seed,output/'proposal')
         frozen=output/'candidate';access.freeze_candidate(candidate,frozen)
         access.author(views['evaluator_author'],output/'development')
@@ -154,6 +167,12 @@ class BankRequalificationKernelTests(kernel.KernelFixture):
         before=store.history(store.case(case));policy.write_text('{}')
         with self.assertRaises(ValueError):store.requalify_bank(case,domain,path,baseline,candidate,deadline=deadline)
         self.assertEqual(store.history(store.case(case)),before)
+
+    def test_focus_with_reviewed_source_rejects_before_collection(self):
+        self.owned_case(focus_check='collection')
+
+    def test_focus_at_direct_proposal_boundary_rejects_before_stage_dispatch(self):
+        self.owned_case(focus_check='direct')
 
     def test_unbound_capture_selection_rejects_before_collection_or_model(self):
         with patch.object(workflow,'collect',side_effect=AssertionError('unreviewed source must not be collected')):

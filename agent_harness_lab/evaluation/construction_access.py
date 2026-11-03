@@ -325,6 +325,9 @@ class WorkflowAccess:
             if handle is not None: _STAGES.pop(handle,None)
 
     def propose(self,context,candidate,destination,*,focus=None):
+        if (focus is not None and type(self) is WorkflowAccess and self in _SCOPES
+                and _SCOPES[self].get('closed_domain') is not None):
+            raise ValueError('focus is unsupported by the closed input profile')
         return self._run('proposer',context,destination,candidate=candidate,focus=focus)
 
     def author(self,context,destination):
