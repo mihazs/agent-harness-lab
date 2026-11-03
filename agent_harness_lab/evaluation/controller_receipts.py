@@ -206,7 +206,7 @@ def _kernel_spawned(ticket, process, scratch, group, audit=None):
         if ticket.capture is not None:ticket.capture.lost=True
         if ticket.scope is not None:ticket.scope.lost=True
         return
-    _DISPATCHES[ticket] = process,scratch,group,audit
+    _DISPATCHES[ticket] = process,scratch,group,audit,deepcopy(scratch.boundary_contract),deepcopy(scratch.boundary_work_identity),deepcopy(scratch.boundary_observation)
 
 
 def _kernel_finished(ticket, run, argv, exports):
@@ -219,7 +219,7 @@ def _kernel_finished(ticket, run, argv, exports):
         if capture is not None:capture.lost=True
         if scope is not None:scope.lost=True
         return
-    process,scratch,group,audit = producer
+    process,scratch,group,audit,boundary_contract,work_identity,boundary_observation = producer
     attestation = run['attestation']; image = attestation.get('runtime_image') or {}
     storage = attestation.get('storage_policy') or {}; cgroup = attestation.get('cgroup_v2') or {}
     from .permission_audit import canonical_argv, _take_completion
@@ -244,10 +244,13 @@ def _kernel_finished(ticket, run, argv, exports):
         return
     if permission is not None:
         permission={key:permission[key] for key in ('profile','status','qualification','role_coverage','setup_coverage')}
+    from .runtime_boundary import qualify
+    boundary=qualify(boundary_contract,boundary_observation if boundary_contract is not None and boundary_contract['image_sha256']==image['sha256'] else None,
+        work_identity,scratch.seeded_bytes,group,permission,ticket.stage)
     value=dict(complete=True,role=event['role'],stage=ticket.stage,dispatch_sha256=ticket.nonce,
         requested_argv_sha256=_hash(list(ticket.requested)),binary_sha256=attestation['binary_sha256'],image_sha256=image['sha256'],
         input_digests=deepcopy(attestation['input_digests']),argv_sha256=_hash(argv),
-        result_sha256=_hash(run),observed_at=datetime.now(timezone.utc).isoformat(),permission=permission)
+        result_sha256=_hash(run),observed_at=datetime.now(timezone.utc).isoformat(),permission=permission,boundary=boundary)
     fact=_Fact();_FACTS[fact]=(ref(ticket),ref(scope) if scope is not None else lambda:None,encoded(dict(value,exports=exports)))
     if capture is not None:
         event.update(value);capture.latest=run,event

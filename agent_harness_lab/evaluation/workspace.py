@@ -11,6 +11,7 @@ import tempfile
 import time
 from .integrity import contained, digest, read_regular, relative, tree
 from .seccomp import ordinary_filesystems, sealed_filter
+from . import runtime_boundary
 
 MAGIC = b'ahl-tmpfs-v1'
 READY = b'ahl-storage-verified-v1'
@@ -45,10 +46,12 @@ for path,key in (('/work','work'),('/tmp','tmp'),('/dev/shm','shm')):
  assert not info.f_flag & os.ST_RDONLY
 for path in ('/','/dev','/inputs'):
  assert os.statvfs(path).f_flag & os.ST_RDONLY
+if len(sys.argv)>3:
+ exec(BOUNDARY_READBACK)
 os.write(1,b'ahl-storage-verified-v1')
 command=json.loads(sys.argv[2])
 os.execvp(command[0],command)
-'''
+'''.replace('BOUNDARY_READBACK',repr(runtime_boundary.VERIFY))
 
 
 def policy(total):
@@ -94,7 +97,7 @@ def names(values):
 
 
 class PrivateWorkspace:
-    def __init__(self, backend, workspace, inputs, role, argv, total, deadline, outputs, working_state=None):
+    def __init__(self, backend, workspace, inputs, role, argv, total, deadline, outputs, working_state=None, *, limits=None):
         runtime = [backend.image.root] if backend.image else [Path(p) for p in ('/usr', '/bin', '/lib', '/lib64') if Path(p).exists()]
         ordinary_filesystems([workspace, *inputs.values(), *runtime])
         self.backend, self.workspace = backend, Path(workspace)
@@ -106,8 +109,11 @@ class PrivateWorkspace:
         self.filter_fd = self.filter_policy = None
         self.receiver = self.sender = None
         self.export_fingerprints = None
+        self.boundary_contract=runtime_boundary.contract(backend,inputs,role,limits,deadline,self.policy)
+        self.boundary_observation=self.boundary_work_identity=None
         self.command = self.layout(backend.command(['/usr/bin/python3', '-I', '-c', BOOTSTRAP], workspace, inputs, role), bootstrap=True)
         inner_argv = ['/usr/bin/python3', '-I', '-c', VERIFY, json.dumps(self.policy), json.dumps(argv)]
+        if self.boundary_contract is not None:inner_argv.append(json.dumps(self.boundary_contract))
         inner = backend.command(inner_argv, workspace, inputs, role)
         inner[0] = '/usr/bin/bwrap'
         for index, value in enumerate(inner):
@@ -177,12 +183,14 @@ class PrivateWorkspace:
                     or os.listdir(descriptors[0])):
                 raise ValueError('invalid private storage directory')
             self.fd = descriptors.pop()
+            self.boundary_work_identity=[info.st_dev,info.st_ino]
             self.seed()
             usage = os.fstatvfs(self.fd)
             self.seeded_bytes = (usage.f_blocks-usage.f_bfree)*usage.f_frsize
             # Controller-seeded pages are charged outside the worker's cgroup.
             group.limit_memory(min(int(group.controls['memory.max']), self.policy['total']-self.seeded_bytes))
             self.timeout(); self.receiver.sendall(struct.pack('!I', len(self.frame))+self.frame)
+            if self.boundary_contract is not None:self.boundary_observation=runtime_boundary.receive(self)
             ready = b''
             while len(ready) < len(READY):
                 self.timeout()
