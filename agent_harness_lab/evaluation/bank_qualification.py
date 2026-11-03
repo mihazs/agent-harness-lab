@@ -352,8 +352,12 @@ def main(argv=None):
     delegated=actions.add_parser('trust-delegation-reviewers');delegated.add_argument('--policy',type=Path,required=True)
     actions.add_parser('allocate-delegation')
     delegated=actions.add_parser('prepare-delegation')
-    delegated.add_argument('--case',required=True);delegated.add_argument('--reviewer',required=True)
-    for name in ('domain','runtime'):delegated.add_argument('--'+name,type=Path,required=True)
+    delegated.add_argument('--case');delegated.add_argument('--reviewer',required=True)
+    for name in ('domain','runtime','project','history-store'):delegated.add_argument('--'+name,type=Path)
+    source=delegated.add_mutually_exclusive_group()
+    source.add_argument('--events',type=Path);source.add_argument('--source-root',type=Path)
+    delegated.add_argument('--format',default='normalized',choices=('normalized','codex','claude','ai-memory'))
+    delegated.add_argument('--source-version');delegated.add_argument('--session')
     delegated.add_argument('--request',type=Path)
     delegated.add_argument('--budget-seconds',type=float,default=30)
     propose=actions.add_parser('intake');propose.add_argument('--bank',type=Path,required=True);propose.add_argument('--declaration',type=Path,required=True)
@@ -371,8 +375,19 @@ def main(argv=None):
             from . import bank_requalification as renewal
             if args.action=='trust-delegation-reviewers':result=renewal.install_policy(store,args.policy)
             elif args.action=='allocate-delegation':result=renewal.allocate_delegation(store)
-            else:result=renewal.prepare(store,args.case,args.reviewer,record(args.domain,authority.MAX_BYTES)[0],
-                record(args.runtime,authority.MAX_BYTES)[0],deadline=deadline_for(args.budget_seconds),request_path=args.request)
+            elif args.project is not None:
+                if args.domain is not None or args.runtime is not None or (args.events is None)==(args.source_root is None):
+                    raise ValueError('configured project requires one explicit source and no manual packet')
+                result=renewal.prepare_project(store,args.project,args.reviewer,deadline=deadline_for(args.budget_seconds),
+                    case_id=args.case,request_path=args.request,history_path=args.history_store,
+                    source=dict(kind='events_file' if args.events is not None else 'native_source_root',
+                        selection=args.events if args.events is not None else args.source_root,format=args.format,version=args.source_version,session=args.session))
+            else:
+                if args.case is None or args.domain is None or args.runtime is None or any(value is not None for value in
+                        (args.events,args.source_root,args.history_store,args.source_version,args.session)) or args.format!='normalized':
+                    raise ValueError('explicit delegation requires case, domain and runtime only')
+                result=renewal.prepare(store,args.case,args.reviewer,record(args.domain,authority.MAX_BYTES)[0],
+                    record(args.runtime,authority.MAX_BYTES)[0],deadline=deadline_for(args.budget_seconds),request_path=args.request)
         elif args.action=='intake':result=intake(store,args.bank,args.declaration)
         elif args.action=='audit':
             from .sandbox import SandboxBackend

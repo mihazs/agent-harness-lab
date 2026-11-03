@@ -7,6 +7,7 @@ from copy import deepcopy
 import os
 from pathlib import Path
 import secrets
+import tempfile
 from weakref import WeakKeyDictionary
 
 from agent_harness_lab.private_journal import encoded,record,write_bytes,sync_directory
@@ -70,7 +71,7 @@ def allocate_delegation(store):
         return dict(request_path=str(request),signature_path=str(request)+'.sig',publication_allowed=False)
 
 
-def prepare(store,case_id,reviewer,domain,runtime,*,deadline,request_path=None):
+def prepare(store,case_id,reviewer,domain,runtime,*,deadline,request_path=None,_before_publish=None):
     """Prepare an unsigned request for an external trusted reviewer's signature."""
     ledger.check_deadline(deadline)
     if deadline is None:raise ValueError('finite inherited delegation deadline required')
@@ -101,11 +102,65 @@ def prepare(store,case_id,reviewer,domain,runtime,*,deadline,request_path=None):
                 sha256(path.parent.name)
                 from .decision_receipts import private
                 private(path.parent,directory=True)
+            if _before_publish is not None:_before_publish()
             if path.exists():
                 if record(path,authority.MAX_BYTES)[0]!=value:raise ValueError('delegation request changed')
             else:write_bytes(path,encoded(value));sync_directory(path.parent)
             ledger.check_deadline(deadline)
             return dict(request_path=str(path),request_sha256=pin,publication_allowed=False)
+
+
+def prepare_project(store,project,reviewer,*,source,deadline,case_id=None,request_path=None,history_path=None):
+    """Produce an unsigned packet from explicit configured inputs, without execution."""
+    from agent_harness_lab import config
+    from agent_harness_lab.cli import assets
+    from agent_harness_lab.workflow import snapshot
+    from .decision_receipts import engine
+    from .sandbox import SandboxBackend
+    project=authority._path(project)
+    settings,configuration_pin=config.load(project/'ahl.json')
+    application=settings.get('application')
+    if settings['schema_version']!=2 or not application or settings['runtime']['name']!='responses' or settings['harness_paths']!=['AGENTS.md']:
+        raise ValueError('configured conditional root-instruction project required')
+    if config.reference_path(project,application['review_store'])!=store.root:
+        raise ValueError('configured review store differs')
+    selected_case=application['bank_case_id'];selected_request=config.reference_path(project,application['delegation_request'])
+    if case_id is not None and case_id!=selected_case or request_path is not None and authority._path(request_path)!=selected_request:
+        raise ValueError('explicit delegation overrides differ from configured selection')
+    with store.locked():_,_,_,metadata=parent(store,selected_case,deadline)
+    history=ledger._path(metadata['history_store'])
+    if history_path is not None and ledger._path(history_path)!=history:raise ValueError('explicit history differs from bank controller')
+    history_pin=closed_inputs.store_identity(history);history_info=history.stat();history_marker=record(history/'.store.json',4096)
+    options=config.execution_options(project,settings,dict(agent='auto',timeout=None),set())
+    source=dict(source,selection=str(ledger._path(source['selection'])),snapshot_sha256='0'*64)
+    # Validate adapter/selection before reading selected source bytes.
+    from .bank_requalification_domain import _source
+    source=_source(source)
+    def capture():
+        ledger.check_deadline(deadline)
+        if config.load(project/'ahl.json')[1]!=configuration_pin:raise ValueError('project configuration changed during packet preparation')
+        references=config.response_references(project,options)
+        current=ledger._path(history).stat()
+        if ((current.st_dev,current.st_ino)!=(history_info.st_dev,history_info.st_ino)
+                or record(history/'.store.json',4096)!=history_marker):raise ValueError('history controller changed during preparation')
+        backend=SandboxBackend(**{name:options[name] for name in ('cgroup_root','image_root','image_sha256','disk_bytes','permission_audit')})
+        selected_source=dict(source,snapshot_sha256=closed_inputs.source_pin(source,deadline))
+        project_snapshot=closed_inputs.project_snapshot(project,closed_inputs.project_selection(project),deadline)
+        with tempfile.TemporaryDirectory(dir=store.root,prefix='.delegation-baseline-') as temporary:
+            baseline=Path(temporary)/'baseline'
+            snapshot(project,baseline,allowed_paths=settings['harness_paths'])
+            if set(path.name for path in baseline.iterdir())!={'AGENTS.md'}:raise ValueError('existing root instruction required')
+            baseline_pin=closed_inputs.tree_pin(baseline,deadline)
+        domain=dict(schema_version=2,profile='conditional-bank-closed-input-domain-v2',
+            project_inputs=closed_inputs.project_selection(project),project_sha256=closed_inputs.snapshot_pin(project_snapshot),
+            baseline_sha256=baseline_pin,engine_sha256=closed_inputs.pin(engine()),
+            methodology_sha256=closed_inputs.tree_pin(assets()/'skills',deadline),history_identity_sha256=history_pin,sources=[selected_source])
+        ledger.check_deadline(deadline)
+        return parse(domain),runtime_binding(backend,options['inference_settings']),references
+    domain,runtime,references=capture()
+    def current():
+        if capture()!=(domain,runtime,references):raise ValueError('configured packet inputs changed before publication')
+    return prepare(store,selected_case,reviewer,domain,runtime,deadline=deadline,request_path=selected_request,_before_publish=current)
 
 
 def begin(store,case_id,request_path,signature_path,*,project,deadline):

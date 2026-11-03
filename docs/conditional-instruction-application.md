@@ -71,6 +71,25 @@ and exact evidence source. The initial application policy accepts one signed
 source. An explicitly signed empty events file is supported. Future proposal
 outputs are admitted through actual same-invocation producer custody.
 
+The existing preparation command can derive that mechanical packet directly from
+the configured project, without copying a baseline or writing domain/runtime JSON:
+
+```sh
+ahl bank-review --store /private/review prepare-delegation --project /project --events /private/evidence.jsonl --format normalized --reviewer PRINCIPAL
+```
+
+It takes the bank case and preallocated request path from `ahl.json`, and derives
+the history controller from the reviewed bank. An optional `--history-store` must
+match that controller. Source selection is mandatory: the alternative
+`--source-root` route requires the explicit pinned Codex format/version and optional
+session supported by the existing domain validator. Sources are snapshotted, never
+discovered or collected by this command. A temporary private baseline uses the same
+workflow snapshot mechanism as improve and is removed afterward. No provider call,
+worker, signing process or credential-content read occurs. The resulting request is
+unsigned and grants no authority; externally sign the returned request as before.
+The explicit `--case --domain --runtime` preparation route remains available and
+cannot be mixed with `--project`.
+
 Then install and prepare the separate application approval:
 
 ```sh
