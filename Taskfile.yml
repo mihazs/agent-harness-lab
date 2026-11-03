@@ -62,6 +62,9 @@ tasks:
           KERNEL_TEST_FILTER: '{{default "test_plain_improve_consumes_signed_final_then_applies_and_public_rollback_restores" .KERNEL_TEST_FILTER}}'
   test:application:conditional:matrix:kernel:
     desc: Run fixed positive cases and each negative in separate unchanged 300-second native scopes
+    vars:
+      MATRIX_SCOPE_ID:
+        sh: 'date +%s%N'
     env:
       PYTHONDONTWRITEBYTECODE: '1'
     cmds:
@@ -87,6 +90,7 @@ tasks:
           PYTHON: '{{.PYTHON}}'
           LAYOUT_DIR: '{{.LAYOUT_DIR}}'
           EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          SCOPE_ID: '{{.MATRIX_SCOPE_ID}}-{{.ITEM}}'
           TEST_NAME: conditional_application_native
           KERNEL_TEST_FILTER: '{{.ITEM}}'
   test:evaluation:construction-seals:
@@ -110,14 +114,14 @@ tasks:
     desc: Run native closed input and conditional bank requalification cases
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
     vars:
-      SCOPE_ID:
+      DEFAULT_SCOPE_ID:
         sh: 'date +%s%N'
     env:
       AHL_TEST_SYSTEMD_SCOPE: '1'
       PYTHONPATH: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=300 -- {{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_{{default "bank_requalification" .TEST_NAME}}.py" -k {{default "" .KERNEL_TEST_FILTER | shellQuote}} -v'
+      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{default .DEFAULT_SCOPE_ID .SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=300 -- {{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_{{default "bank_requalification" .TEST_NAME}}.py" -k {{default "" .KERNEL_TEST_FILTER | shellQuote}} -v'
   test:evaluation:legacy-focus:
     desc: Preserve explicit focus input on the unprofiled public workflow
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
