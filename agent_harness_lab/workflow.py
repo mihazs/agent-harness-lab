@@ -421,10 +421,11 @@ def _improve(args):
         if access_path is None: construction.proposer_seed(candidate,prepare/'proposer-work-0',deadline)
         credential = responses.read_credential(settings,[args.project,output,grader_options['image_root'],assets()/'skills',*([access_path] if access_path is not None else [])])
         def record(receipt):
+            if settings.get('instruction_protocol') is not None:check_configuration(args)
             if responses.read_settings(inference_path)[1] != settings_hash:
                 raise ValueError('inference settings changed during the controlled run')
             write_json(output/'inference.json',receipt)
-        client = responses.Client(settings,credential,deadline,record=record)
+        client = responses.Client(settings,credential,deadline,record=record,configuration_sha256=getattr(args,'configuration_sha256',None))
         if access_path is not None:
             from .evaluation.construction_access import WorkflowAccess
             access=WorkflowAccess(args,output,baseline,client,grading,deadline)

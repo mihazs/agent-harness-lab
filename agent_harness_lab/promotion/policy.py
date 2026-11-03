@@ -85,6 +85,16 @@ def implementation_prerequisites(scope=None, *, declarations=None):
             packet['checks']['fresh_grader_artifact_handoff']=dict(status='verified',observations=len(data['pairs']),
                 scope='observed_selected_path_and_byte_pairs_only',oracle_validity='unverified',
                 selected_paths_limit=100,selected_paths_observed=[pair['selected_paths'] for pair in data['pairs']])
+        requests=data.get('instruction_requests')
+        if requests:
+            from agent_harness_lab.evaluation.instruction_context import PROFILE as INSTRUCTION_PROFILE
+            executor_scopes={row['binding']['scope_id'] for row in requests if row['binding']['role']=='executor'}
+            observed_scopes={row.get('instruction_scope') for row in events if row['role']=='executor' and row['stage']=='role'}
+            packet['controlled_instruction_protocol']=dict(profile=INSTRUCTION_PROFILE,
+                status='qualified' if executor_scopes and executor_scopes<=observed_scopes and data['pairs'] else 'unknown',
+                requests=len(requests),completed=sum(row['complete'] for row in requests),
+                scope='controller_injection_and_transmission_only',instruction_loading='executor_root_AGENTS_only',served_model='unverified',native_identity='unverified',
+                semantic_adherence='unverified',publication_allowed=False)
         audits=[row['permission'] for row in events if row['stage']=='role']
         packet['capability_probe_permission_results']=[row['permission']['qualification'] if row['permission'] else 'unrequested'
             for row in events if row['stage']=='capability_probe']

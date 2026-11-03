@@ -270,7 +270,11 @@ class HistoryStore(PrivateJournal):
             from .comparison_custody import PROFILE
             binding=inputs['responses_binding']
             fields(binding,'profile settings_sha256 request_sha256 fixtures seed_states permission_profile bundles'
-                +(' schedule_sha256' if 'schedule_sha256' in binding else ''))
+                +(' schedule_sha256' if 'schedule_sha256' in binding else '')
+                +(' instruction_protocol' if 'instruction_protocol' in binding else ''))
+            if 'instruction_protocol' in binding:
+                from .instruction_context import PROFILE as INSTRUCTION_PROFILE
+                if binding['instruction_protocol']!=INSTRUCTION_PROFILE:raise ValueError('unsupported stored instruction protocol')
             if 'schedule_sha256' in binding:
                 from .comparison_custody import hashed
                 from .plan import schedule
@@ -316,7 +320,8 @@ class HistoryStore(PrivateJournal):
             if (pin!=evidence['responses_custody_sha256'] or custody.get('fixtures')!=inputs['responses_binding']['fixtures']
                     or custody.get('seed_states')!=inputs['responses_binding']['seed_states']
                     or custody.get('permission_profile')!=inputs['responses_binding']['permission_profile']
-                    or custody.get('bundles')!=inputs['responses_binding']['bundles']):
+                    or custody.get('bundles')!=inputs['responses_binding']['bundles']
+                    or custody.get('instruction_protocol')!=inputs['responses_binding'].get('instruction_protocol')):
                 raise ValueError('sealed Responses custody changed')
             validate(custody,spec,result)
         if inputs['schema_version']==5:
@@ -593,6 +598,7 @@ class HistoryStore(PrivateJournal):
             fixtures={t['id']:digest(contained(manifest.parent,t['fixture'])) for t in source['tasks']}
             seeds={t['id']:fixture_seed(contained(manifest.parent,t['fixture']),deadline) for t in source['tasks']}
             response_binding=dict(profile=PROFILE,settings_sha256=settings_hash,request_sha256=request_hash,fixtures=fixtures,seed_states=seeds,permission_profile=permission_profile,bundles=bundles)
+            if settings.get('instruction_protocol') is not None:response_binding['instruction_protocol']=settings['instruction_protocol']
             from .trajectory_assertions import capture_policy
             trajectories={}
             for task in source['tasks']:
