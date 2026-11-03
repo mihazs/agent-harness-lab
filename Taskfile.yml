@@ -25,6 +25,8 @@ tasks:
           REPEATED_TEST_PATTERN: test_conditional_commit_observation.py
   test:application:conditional:kernel:
     desc: Exercise explicitly authorized final evaluation and guarded root instruction application
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
     cmds:
       - task: test:evaluation:bank-requalification:kernel
         vars:

@@ -26,10 +26,27 @@ MAX_BYTES = 64*1024*1024
 def _conditional_failure(error,stage,scope,custody):
     """Content-free first-failure diagnostics; these observations issue no authority."""
     reasons={
+        'missing observed runtime':'observed_runtime_missing',
+        'executed preservation preflight differs from frozen controller inputs':'preservation_preflight_mismatch',
+        'trial objects required':'trial_objects_missing',
         'genuine certification qualification issuer is unavailable':'certification_admission_unavailable',
         'fresh comparison is incomplete':'comparison_incomplete',
         'comparison trial lacks fresh transport, worker or artifact-grade custody':'trial_custody_incomplete',
         'comparison results differ from actual owned completions':'trial_completion_mismatch',
+        'executed fixtures differ from authoritative materialized bank inputs':'authoritative_fixture_mismatch',
+        'controller comparison provenance is incomplete':'comparison_provenance_incomplete',
+        'both complete scheduled arms must be executed afresh':'full_schedule_incomplete',
+        'observed trial differs from frozen schedule':'trial_schedule_mismatch',
+        'comparison needs executable grade records':'grade_records_missing',
+        'missing actual grader execution':'grader_execution_missing',
+        'unknown comparison trajectory':'trajectory_unknown',
+        'comparison needs actual isolated executions and typed grades':'typed_grade_or_isolation_mismatch',
+        'observed grader version differs from authoritative bank task':'grader_version_mismatch',
+        'bank authority is stale, ineligible or mismatched':'bank_authority_stale',
+        'closed-input source, project, engine or history changed':'closed_input_currentness_changed',
+        'signed project inputs changed':'signed_project_changed',
+        'application signed inputs changed':'application_signed_inputs_changed',
+        'history inputs changed or sealing budget exhausted':'history_seal_inputs_or_budget',
         'current unchanged live workflow scope required':'workflow_scope_unavailable',
         'instruction request metadata bound exceeded':'instruction_metadata_capacity',
         'current instruction scope required':'instruction_scope_unavailable'}
@@ -809,8 +826,10 @@ class HistoryStore(PrivateJournal):
                 checked=replay(spec,case/'sequential',result['trials'],validate_rows,cohort_json=cohort_raw)
                 if checked!=result.get('sequential_analysis'):raise ValueError('online sequential inspection differs')
             else:self.trials(inputs,spec,result)
+            failure_stage='bank_currentness'
             if bound_tasks is not None: bank_authority(source,export_root=manifest.parent,expected=bound_tasks,application_session=application_session)
             if membership is not None: cohort_history.validate(membership,source,spec,bound_tasks)
+            failure_stage='final_input_currentness'
             if (record(manifest,1024*1024)[1] != manifest_hash
                     or identity(manifest.parent,selected,source['grader_bundles']) != spec.grader_hash
                     or time.monotonic() >= deadline):
