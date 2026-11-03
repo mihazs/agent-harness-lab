@@ -58,13 +58,14 @@ def project_lock(project):
         descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
         raise ValueError(f'Another run or stale lock exists: {path}; verify its PID before removing it') from None
-    token = f'{os.getpid()}:{uuid.uuid4().hex}'
+    owner = os.getpid()
+    token = f'{owner}:{uuid.uuid4().hex}'
     with os.fdopen(descriptor, 'w') as stream:
         stream.write(token)
     try:
         yield
     finally:
-        if path.exists() and path.read_text() == token:
+        if os.getpid() == owner and path.exists() and path.read_text() == token:
             path.unlink()
 
 

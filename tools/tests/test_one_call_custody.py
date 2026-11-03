@@ -3,6 +3,9 @@ from contextlib import redirect_stderr
 import io
 import json
 import multiprocessing
+import os
+import signal
+import time
 import unittest
 from unittest.mock import patch
 
@@ -20,6 +23,43 @@ class OneCallCustodyTests(unittest.TestCase):
         fixtures.OneCallTests.setUp(self)
 
     invoke = fixtures.OneCallTests.invoke
+
+    def test_forked_inherited_context_cannot_release_the_live_parent_lock(self):
+        if not hasattr(os,'fork'):
+            self.skipTest('fork unavailable')
+        path=self.root/'state/locks'/(workflow.identity(self.project)+'.lock')
+        child=False
+        pid=None
+        reaped=False
+        try:
+            with workflow.project_lock(self.project):
+                token=path.read_bytes()
+                pid=os.fork()
+                if pid==0:
+                    child=True
+                else:
+                    deadline=time.monotonic()+5
+                    while time.monotonic()<deadline:
+                        waited,status=os.waitpid(pid,os.WNOHANG)
+                        if waited:
+                            reaped=True
+                            self.assertEqual(status,0)
+                            break
+                        time.sleep(.01)
+                    self.assertTrue(reaped,'Inherited child did not terminate')
+                    self.assertEqual(path.read_bytes(),token)
+                    with self.assertRaises(ValueError):
+                        with workflow.project_lock(self.project): pass
+            if child: os._exit(0)
+            self.assertFalse(path.exists())
+            with workflow.project_lock(self.project):
+                self.assertNotEqual(path.read_bytes(),token)
+        finally:
+            if child: os._exit(90)
+            if pid and not reaped:
+                try: os.kill(pid,signal.SIGKILL)
+                except ProcessLookupError: pass
+                os.waitpid(pid,0)
 
     def invoke_interrupted(self):
         try:
