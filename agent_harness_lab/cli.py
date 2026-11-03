@@ -45,6 +45,9 @@ def main(argv=None):
     if argv and argv[0] == 'regression-review':
         from agent_harness_lab.evaluation.regression_review import main as review_main
         return review_main(argv[1:])
+    if argv and argv[0] == 'bank-interchange':
+        from agent_harness_lab.evaluation.interchange import main as interchange_main
+        return interchange_main(argv[1:])
     if argv and argv[0] == 'experiment-history':
         from agent_harness_lab.evaluation.oracle_history import main as history_main
         return history_main(argv[1:])
@@ -81,7 +84,7 @@ def main(argv=None):
     parser.add_argument('--version', action='version', version=version())
     sub = parser.add_subparsers(dest='command', required=True)
     sub.add_parser('update', help='Update a release installation and its existing skill links')
-    for name in ('mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'experiment', 'experiment-history', 'grader-correction', 'regression', 'regression-review', 'sandbox-check', 'research-simulate', 'incident-search', 'promotion', 'benchmark-report', 'doctor', 'init', 'sources'):
+    for name in ('mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'bank-interchange', 'experiment', 'experiment-history', 'grader-correction', 'regression', 'regression-review', 'sandbox-check', 'research-simulate', 'incident-search', 'promotion', 'benchmark-report', 'doctor', 'init', 'sources'):
         sub.add_parser(name, help=f'{name} tools; use ahl {name} --help')
     for name in ('analyze', 'improve', 'watch'):
         helps = {'analyze': 'Discover project evidence and failure candidates',

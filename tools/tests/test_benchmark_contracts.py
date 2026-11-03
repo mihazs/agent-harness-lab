@@ -58,6 +58,22 @@ class BenchmarkContracts(unittest.TestCase):
                 self.assertFalse(public_export_allowed([item]))
                 with self.assertRaises(ValueError): summary([item],public=True)
 
+    def test_interchange_preserves_existing_private_controller_export_guards(self):
+        claims=[dict.fromkeys([key]) for key in (
+            'protected_access','protected_access_sha256','controller_source_profile',
+            'source_capture','live_verification','verified_execution','import_sha256',
+            'foreign_claims','proposal_id')]
+        claims.extend(dict(profile=profile) for profile in (
+            'protected-diagnostic-access-v1','ahl-controller-live-v1','external-evaluation-data-v1'))
+        claims.extend(dict(format=profile) for profile in (
+            'promptfoo-cases-json-v1','promptfoo-results-jsonl-v1','openai-evals-match-jsonl-v1'))
+        for claim in claims:
+            for wrapper in (None,'receipt','analysis','context','binding'):
+                item=record()
+                item.update(claim if wrapper is None else {wrapper:claim})
+                with self.subTest(claim=claim,wrapper=wrapper):
+                    self.assertFalse(public_export_allowed([item]))
+
     def test_cost_is_unknown_without_measured_usage_or_dated_pricing(self):
         self.assertIsNone(measured_cost({'input_tokens':100}))
         prices=dict(as_of='2026-10-31',currency='test-units',input_per_token=1,output_per_token=2)
