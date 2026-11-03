@@ -39,9 +39,11 @@ def implementation_prerequisites(scope=None, *, declarations=None):
     """Read live producer facts; legacy recommendation flags stay declarations."""
     from .prerequisites import _Scope,PROFILE,MAX_DISPATCHES,MAX_BYTES
     from agent_harness_lab.private_journal import encoded
+    from agent_harness_lab.evaluation.runtime_boundary import PROFILE as BOUNDARY_PROFILE
     packet=dict(schema_version=1,profile=PROFILE,status='unrequested' if scope is None else 'unknown',
         verification_scope='post_preflight_owned_dispatches_only',publication_allowed=False,automatic_promotion=False,
         adoption_authority=False,native_identity='unverified',scientific_eligibility='unverified',
+        restricted_process_protocol=dict(profile=BOUNDARY_PROFILE,status='unknown',scope='post_preflight_owned_dispatches_only'),
         mandatory_certification={name:dict(status='unverified',reason=reason) for name,reason in (
             ('role_isolation','whole_boundary_qualification_unavailable'),
             ('audited_task_lineage','independent_root_authority_unavailable'),
@@ -70,6 +72,11 @@ def implementation_prerequisites(scope=None, *, declarations=None):
         bindings=[{key:binding[key] for key in ('sha256','baseline_sha256','candidate_sha256','manifest_sha256')}
             for binding in data['bindings']])
     if complete:
+        boundaries=[row.get('boundary',{}) for row in events]
+        packet['restricted_process_protocol'].update(status='qualified' if all(row.get('status')=='qualified' for row in boundaries) else 'unknown',
+            observations=len(boundaries),roles=sorted({row['role'] for row in events if row['stage']=='role'}),
+            first_unqualified=next((dict(ordinal=index,role=events[index]['role'],reason=row.get('reason','capture_unavailable'))
+                for index,row in enumerate(boundaries) if row.get('status')!='qualified'),None))
         packet['checks']['owned_dispatch_completion']=dict(status='verified',observations=len(events))
         if all(row['image_sha256']==scope.image for row in events):
             packet['checks']['checked_worker_rootfs']=dict(status='verified',sha256=scope.image)

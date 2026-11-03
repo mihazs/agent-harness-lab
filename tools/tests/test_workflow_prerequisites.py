@@ -178,7 +178,9 @@ class PolicyAuthorityTests(PublicCase,unittest.TestCase):
 
     def test_fully_labeled_fake_backend_cannot_issue_implementation_facts(self):
         result,_,_,_=self.run_public(mode='fake')
-        self.assertEqual(result['status'],'inconclusive')
+        self.assertEqual(result['status'],'blocked')
+        self.assertEqual(result['reason'],'restricted_process_protocol_unqualified')
+        self.assertNotIn('recommendation',result)
         self.assertEqual(result['isolation_qualification']['qualification'],'qualified')
         self.assertEqual(result['implementation_prerequisites']['status'],'unknown')
         self.assertTrue(all(row['status']=='unknown' for row in result['implementation_prerequisites']['checks'].values()))
@@ -208,6 +210,32 @@ class PolicyAuthorityTests(PublicCase,unittest.TestCase):
 
 @unittest.skipUnless(kernel.ENABLED,'explicit delegated kernel profile required')
 class PublicControllerPrerequisiteTests(PublicCase,kernel.KernelFixture):
+    def test_runtime_boundary_qualifies_actual_four_role_protocol_without_certification(self):
+        result,_,completions,output=self.run_public(source=True)
+        packet=result['implementation_prerequisites'];boundary=packet['restricted_process_protocol']
+        self.assertEqual(boundary['status'],'qualified',boundary)
+        self.assertEqual(boundary['observations'],packet['coverage']['admitted'])
+        self.assertEqual(set(boundary['roles']),{'proposer','evaluator_author','executor','grader'})
+        self.assertEqual(len(completions),len(set(completions)))
+        self.assertTrue(all(row['status']=='unverified' for row in packet['mandatory_certification'].values()))
+        self.assertEqual(packet['native_identity'],'unverified');self.assertFalse(packet['adoption_authority'])
+        trials=json.loads((output/'evaluation-0/results.json').read_text())['trials']
+        self.assertTrue(all(row['source_capture']['status']=='observed' for row in trials))
+
+    def test_runtime_boundary_missing_actual_startup_fact_blocks_passing_worker_claim(self):
+        finish=owned._kernel_finished;removed=[]
+        def missing(ticket,run,*args):
+            if ticket is not None and ticket.scope is not None and ticket.stage=='role' and not removed:
+                producer=owned._DISPATCHES[ticket]
+                owned._DISPATCHES[ticket]=(*producer[:-1],None)
+                run['attestation']['restricted_process_protocol']=dict(status='qualified')
+                removed.append((run['status'],run['exit_code']))
+            return finish(ticket,run,*args)
+        with patch.object(owned,'_kernel_finished',side_effect=missing):result,_,_,_=self.run_public()
+        self.assertEqual(removed,[('completed',0)])
+        self.assertEqual(result['implementation_prerequisites']['restricted_process_protocol']['status'],'unknown')
+        self.assertEqual(result['status'],'blocked');self.assertNotIn('recommendation',result)
+
     def test_real_public_all_role_workflow_shares_one_native_completion_with_source_and_rejects_replay(self):
         def consumer(scope,read):
             packet=self.assert_observed(scope,read)
