@@ -1,5 +1,6 @@
 """Controller-selected preparation views and bounded authored-tree publication."""
 import json
+from dataclasses import replace
 from pathlib import Path
 import shutil
 from .integrity import contained, read_regular, relative, unique_object
@@ -92,26 +93,33 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
         if derivation is not None else 'Construct the independent descriptive experiment from the supplied baseline and metadata.')
     state,commands = run_role(client,backend,workspace,{'harness':baseline,'fixture':context},'evaluator_author',
         instructions,prompt,deadline)
-    published = state.publish(destination,deadline)
-    manifest_path = published/'manifest.json'
-    manifest = json.loads(read_regular(manifest_path,1024*1024),object_pairs_hook=unique_object,parse_constant=invalid_number)
+    check_deadline(deadline)
+    raw=next((raw for name,_,raw in state.snapshot.files if name=='manifest.json'),None)
+    if raw is None: raise ValueError('authored manifest required')
+    manifest = json.loads(raw,object_pairs_hook=unique_object,parse_constant=invalid_number)
     if not isinstance(manifest,dict) or manifest.get('skills') != [] or manifest.get('harness_paths') != []:
         raise ValueError('controlled construction requires empty skill and harness injection lists')
     tasks,bundles = manifest.get('tasks'),manifest.get('grader_bundles')
     if not isinstance(tasks,list) or not isinstance(bundles,dict): raise ValueError('authored tasks and grader bundles are required')
     identifiers = []
     for task in tasks:
+        check_deadline(deadline)
         if not isinstance(task,dict) or 'grader' in task: raise ValueError('controller owns authored grader commands')
         ident = task.get('id'); relative(ident)
         if '/' in ident or len(ident)>128: raise ValueError('invalid authored task ID')
         identifiers.append(ident)
         declaration = bundles.get(ident)
         if not isinstance(declaration,dict) or set(declaration) != {'path'}: raise ValueError('controller owns bundle freezing')
-        bundle = contained(published,declaration['path'])
+        bundle = contained(destination,declaration['path'])
         task['grader'] = ['/usr/bin/python3',str(bundle/'grade.py.txt'),'{workspace}',str(bundle/'expected.json')]
     if len(identifiers) != len(set(identifiers)) or set(identifiers) != set(bundles):
         raise ValueError('authored task/bundle identities must match exactly')
-    manifest_path.write_text(json.dumps(manifest,allow_nan=False))
+    normalized=json.dumps(manifest,allow_nan=False).encode('utf-8')
+    files=tuple((name,mode,normalized if name=='manifest.json' else raw) for name,mode,raw in state.snapshot.files)
+    if sum(len(raw) for _,_,raw in files)>1024*1024:
+        raise ValueError('normalized authored output exceeds working-state byte bound')
+    check_deadline(deadline);state.snapshot=replace(state.snapshot,files=files)
+    published=state.publish(destination,deadline);manifest_path=published/'manifest.json'
     if derivation is not None:
         from .derivations import record_author_output
         record_author_output(derivation,published)

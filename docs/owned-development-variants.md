@@ -76,6 +76,8 @@ them before author dispatch and publication. Current handoff snapshots cover fil
 bytes/modes and root/directory modes. It does not invent missing original directory
 mode evidence in older source histories.
 
+Initial authored manifests are validated and normalized inside the role snapshot
+before its single publication, preserving modes and the shared byte/deadline bounds.
 The producing role registers its output snapshot once. Asset capture must match
 that snapshot's bytes and file modes, including changes restored before readback.
 Only the controller's manifest rebasing and private root mode may change afterward;
