@@ -63,6 +63,8 @@ changed paths and the journal location. Those paths may include foreign changes 
 do not imply verified change ownership. A rejected transaction cannot be resumed
 as an unguarded write. These checks do not provide continuous atomic policy
 enforcement against unrelated host writers that ignore the project lock.
+An interruption after the commit record, active pointer and exact target snapshots
+are all verified is reported as the actual committed result.
 
 ## Remaining implementation
 

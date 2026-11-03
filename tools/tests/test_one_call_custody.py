@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from agent_harness_lab import config, one_call, workflow
+from agent_harness_lab.promotion import journal as transactions
 from agent_harness_lab.promotion.journal import Journal
 if __package__:
     from . import test_one_call as fixtures
@@ -205,3 +206,60 @@ class OneCallCustodyTests(unittest.TestCase):
     def test_interrupt_after_compensation_replace_reports_exact_restoration(self):
         self.failed_compensation(interrupt_after_restore=True)
         self.assertEqual(self.skill.read_bytes(), b'\xef\xbb\xbf'+self.valid)
+
+    def interrupted_persistence(self, boundary):
+        code, parent = self.invoke('--repair-contracts')
+        self.assertEqual(code, 0)
+        journal = Journal(self.project, parent['journal'])
+        parent_record = journal.folder/(parent['deployment']+'.json')
+        parent_bytes = parent_record.read_bytes()
+        before = b'\xef\xbb\xbf'+self.valid
+        self.skill.write_bytes(before)
+        original = transactions.atomic_json
+        interrupted = []
+        def persist(path, value):
+            child = value.get('deployment') != parent['deployment']
+            record = child and value.get('status') == 'committed'
+            pointer = child and path.name == 'active.json'
+            selected = pointer if boundary == 'after_pointer' else record
+            if selected:
+                interrupted.append(value['deployment'])
+                if boundary != 'before_record':
+                    original(path, value)
+                raise KeyboardInterrupt()
+            return original(path, value)
+        with patch.object(transactions, 'atomic_json', persist):
+            code, result = self.invoke_interrupted()
+        self.assertEqual(len(interrupted), 1)
+        child = interrupted[0]
+        record = journal.load(child)
+        self.assertEqual(parent_record.read_bytes(), parent_bytes)
+        self.assertEqual(self.skill.stat().st_mode & 0o777, 0o640)
+        output = self.root/'state/runs'/workflow.identity(self.project)
+        runs = [json.loads(path.read_bytes()) for path in output.glob('*/workflow.json')]
+        self.assertEqual(len(runs), 2)
+        self.assertIn(result, runs)
+        if boundary == 'after_pointer':
+            self.assertEqual((code, result['status']), (0, 'applied'))
+            self.assertEqual(self.skill.read_bytes(), self.valid)
+            self.assertEqual(journal.active, child)
+            self.assertEqual(record['status'], 'committed')
+            self.assertEqual(result['deployment'], child)
+        else:
+            self.assertEqual((code, result['status']), (1, 'interrupted'))
+            self.assertEqual(result['changed_files'], [])
+            self.assertEqual(self.skill.read_bytes(), before)
+            self.assertEqual(journal.active, parent['deployment'])
+            self.assertEqual(record['status'], 'conflict')
+            self.assertTrue(record['guard_rejected'])
+            self.assertEqual(record['restoration'], 'restored')
+            self.assertEqual(record['remaining_changes'], [])
+
+    def test_interrupt_before_committed_record_preserves_existing_parent(self):
+        self.interrupted_persistence('before_record')
+
+    def test_interrupt_after_committed_record_preserves_existing_parent(self):
+        self.interrupted_persistence('after_record')
+
+    def test_interrupt_after_active_pointer_reports_actual_committed_child(self):
+        self.interrupted_persistence('after_pointer')

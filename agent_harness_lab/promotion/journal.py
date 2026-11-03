@@ -41,6 +41,7 @@ class GuardedTransactionError(OSError):
         super().__init__('guarded transaction restoration requires intervention')
         self.receipt=dict(status='requires_intervention', deployment=record['deployment'],
             journal=str(journal.folder), changed_files=remaining, restoration='conflict',
+            active_pointer_conflict=record.get('active_pointer_conflict',False),
             remaining_change_ownership='unverified',
             profile='one-call-improvement-v1', publication_allowed=False)
 
@@ -158,13 +159,23 @@ class Journal:
                 except BaseException:
                     restored=False
                 if not restored: remaining.append(name)
-        record.update(status='conflict',guard_rejected=True,restoration='conflict' if remaining else 'restored',
+        pointer_conflict=False
+        try:
+            if self.active==record['deployment']:
+                if record['parent'] is None: (self.folder/'active.json').unlink()
+                else: atomic_json(self.folder/'active.json',dict(deployment=record['parent']))
+            if self.active!=record['parent']: pointer_conflict=True
+        except BaseException:
+            pointer_conflict=True
+        record.update(status='conflict',guard_rejected=True,restoration='conflict' if remaining or pointer_conflict else 'restored',
+                      active_pointer_conflict=pointer_conflict,
                       remaining_changes=remaining)
         try:
             atomic_json(self.folder/(record['deployment']+'.json'),record)
         except BaseException:
-            if remaining: raise GuardedTransactionError(self,record,remaining)
+            if remaining or pointer_conflict: raise GuardedTransactionError(self,record,remaining)
             raise
+        if pointer_conflict: raise GuardedTransactionError(self,record,remaining)
         return remaining
 
     def _execute(self,deployment,*,pre_write=None):
@@ -189,13 +200,22 @@ class Journal:
                    for name in record['before'].keys()|record['after'].keys()):
                 raise ValueError('post-write verification failed')
             if pre_write: pre_write()
+            record['status']='committed'; atomic_json(self.folder/(deployment+'.json'),record)
+            if pre_write: pre_write()
+            atomic_json(self.folder/'active.json',dict(deployment=deployment))
         except BaseException:
             if pre_write:
+                try:
+                    observed=self.load(deployment)
+                    committed=(observed==record and observed['status']=='committed' and self.active==deployment
+                        and all(file_record(self.owned(name))==record['after'].get(name)
+                                for name in record['before'].keys()|record['after'].keys()))
+                except BaseException:
+                    committed=False
+                if committed: return observed
                 remaining=self._restore_guarded(record)
                 if remaining: raise GuardedTransactionError(self,record,remaining)
             raise
-        record['status']='committed'; atomic_json(self.folder/(deployment+'.json'),record)
-        atomic_json(self.folder/'active.json',dict(deployment=deployment))
         return record
 
     def preview_rollback(self,deployment):

@@ -99,3 +99,19 @@ class IndependentCommitBoundaryTests(unittest.TestCase):
         forged = dict(row, publication_allowed=True, provenance=dict(source_kind='synthetic',
             approved_publication=True, source_ref='synthetic:fixture', derived_from_private=False))
         self.assertFalse(public_export_allowed([forged]))
+
+    def test_interrupt_before_commit_record_persistence_restores_uncommitted_target(self):
+        from agent_harness_lab.promotion import journal as transaction
+        persist = transaction.atomic_json
+        interrupted = False
+        def interrupt_commit(path, value):
+            nonlocal interrupted
+            if value.get('status') == 'committed' and not interrupted:
+                interrupted = True
+                raise KeyboardInterrupt()
+            return persist(path, value)
+        before = self.skill.read_bytes()
+        with patch.object(transaction, 'atomic_json', interrupt_commit):
+            _, result = self.invoke('--repair-contracts')
+        self.assertEqual(result['status'], 'interrupted')
+        self.assertEqual(self.skill.read_bytes(), before)
