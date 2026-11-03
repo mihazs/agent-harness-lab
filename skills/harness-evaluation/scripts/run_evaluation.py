@@ -210,7 +210,18 @@ def _evaluate(args):
         budget = min(budget, configured['configuration']['limits']['seconds'])
         trial_limit = min(trial_limit, configured['configuration']['limits']['trials'])
         binary = configured['binary']
-    if not math.isfinite(timeout) or not math.isfinite(budget) or timeout <= 0 or budget <= 0 or len(tasks) * 2 > trial_limit:
+    initial_trial_ceiling = len(tasks) * 2
+    if isinstance(manifest.get('experiment'), dict) and manifest['experiment'].get('sequential') is not None:
+        application_modules()
+        from agent_harness_lab.evaluation.plan import ExperimentSpec
+        from agent_harness_lab.evaluation.sequential import planned_trials, validate_selection
+        selected_plan = ExperimentSpec.parse(manifest['experiment'])
+        selected_plan.validate()
+        validate_selection(manifest)
+        if {t[0]: t[1:] for t in selected_plan.tasks} != {t['id']: (t['root'], t['family']) for t in tasks}:
+            raise ValueError('experiment task lineage differs from manifest')
+        initial_trial_ceiling = planned_trials(selected_plan)
+    if not math.isfinite(timeout) or not math.isfinite(budget) or timeout <= 0 or budget <= 0 or initial_trial_ceiling > trial_limit:
         raise ValueError('invalid timeout/budget or trial limit exceeded')
     if parent_deadline is not None:
         budget = min(budget, max(0, parent_deadline - started))
@@ -333,6 +344,7 @@ def _evaluate(args):
     plan = None
     precision_report = None
     precision_cohorts = None
+    sequential_controller = None
     if 'experiment' in manifest:
         application_modules()
         from agent_harness_lab.evaluation.plan import ExperimentSpec, schedule
@@ -355,8 +367,27 @@ def _evaluate(args):
             from agent_harness_lab.evaluation.integrity import read_regular
             from agent_harness_lab.evaluation.cohorts import MAX_BYTES
             precision_cohorts=read_regular(captured_cohorts['manifest_path'],MAX_BYTES)
+        if plan.sequential is not None:
+            from agent_harness_lab.evaluation.sequential import validate_selection
+            validate_selection(manifest)
+        if plan.sequential is not None and not (offline or controlled):
+            raise ValueError('sequential execution requires the controlled offline or Responses path')
+        if plan.sequential is not None and budget>0:
+            if cgroup_root is None or image_root is None or disk_bytes is None or plan.runtime_hash!=image_sha256:
+                raise ValueError('sequential execution requires the full pinned resource profile and plan runtime')
+        supplied_sequential=getattr(args,'_sequential_controller',None)
+        if plan.sequential is not None and supplied_sequential is not None and budget>0:
+            from agent_harness_lab.evaluation.sequential_state import Controller
+            from agent_harness_lab.evaluation.sequential import input_pin
+            if type(supplied_sequential) is not Controller or supplied_sequential.path!=output.parent/'sequential' or output.name!='execution':
+                raise ValueError('sequential controller does not own this execution directory')
+            supplied_sequential.claim(plan,input_pin(manifest_hash,plan,frozen_fixtures))
         ordered = schedule(plan)
-        if len(ordered) > trial_limit:
+        selected_trial_ceiling=len(ordered)
+        if plan.sequential is not None:
+            from agent_harness_lab.evaluation.sequential import planned_trials
+            selected_trial_ceiling=planned_trials(plan)
+        if selected_trial_ceiling > trial_limit:
             raise ValueError('repeated plan exceeds caller trial ceiling')
     else:
         ordered = [dict(version=version, task=task['id'], repetition=0) for version in versions for task in tasks]
@@ -374,7 +405,7 @@ def _evaluate(args):
                 if plan is not None and (task.get('root'), task.get('family')) != next(t[1:] for t in plan.tasks if t[0] == task['id']):
                     raise ValueError('trajectory lineage differs from frozen experiment')
                 trajectories[task['id']] = binding
-    if plan is not None and budget > 0:
+    if plan is not None and plan.sequential is None and budget > 0:
         from agent_harness_lab.evaluation.precision import preflight as precision_preflight
         precision_report=precision_preflight(plan,cohort_manifest_json=precision_cohorts,
             trial_limit=trial_limit,budget_seconds=budget)
@@ -440,6 +471,40 @@ def _evaluate(args):
             results.update(status='blocked', reason='offline_sandbox_unavailable', elapsed_seconds=time.monotonic()-started)
             (output/'results.json').write_text(json.dumps(results, indent=2)+'\n')
             return 3
+    if plan is not None and plan.sequential is not None:
+        from agent_harness_lab.evaluation.sequential_state import Controller
+        from agent_harness_lab.evaluation.sequential import input_pin
+        sequential_inputs=input_pin(manifest_hash,plan,frozen_fixtures)
+        sequential_controller=getattr(args,'_sequential_controller',None)
+        if sequential_controller is None:
+            from agent_harness_lab.evaluation.oracle_history import behavior_policies
+            from agent_harness_lab.evaluation.sequential_state import records as sequential_records
+            policies=behavior_policies({pin:Path(folder) for folder,pin in frozen_bundles.items()},manifest,plan)
+            sequential_controller=Controller(plan,output/'sequential',started+budget,inputs_sha256=sequential_inputs,cohort_json=precision_cohorts,
+                checker=lambda rows:sequential_records(plan,rows,policies))
+            sequential_controller.claim(plan,sequential_inputs)
+        if type(sequential_controller) is not Controller:raise ValueError('owned sequential controller required')
+        sequential_controller.validate(plan,inputs_sha256=sequential_inputs)
+        original_guard=sequential_controller.guard
+        def sequential_guard():
+            if original_guard is not None:original_guard()
+            if not inputs_unchanged():raise ValueError('sequential frozen inputs changed')
+        sequential_controller.guard=sequential_guard
+        ordered=sequential_controller.schedule
+        results.update(sequential_profile='conditional-finite-bank-sequential-v1',publication_allowed=False)
+        results.update(experiment=manifest['experiment'],plan_digest=plan.digest,grader_hash=oracle_hash,
+            profile=plan.profile,automatic_promotion=False)
+        if plan.cohort_manifest_sha256 is not None:
+            results.update(cohort_manifest_sha256=plan.cohort_manifest_sha256,cohort_qualification='current_membership_only')
+        try:ready=sequential_controller.before(ordered[0],[])
+        except (ValueError,OSError,TimeoutError):
+            sequential_controller.stop('incomplete','root_evidence_or_authority_incomplete',[]);ready=False
+        if not ready:
+            results['sequential_analysis']=sequential_controller.finish([])
+            results['inputs_unchanged']=inputs_unchanged()
+            (output/'results.json').write_text(json.dumps(results,indent=2)+'\n')
+            return 3 if results['sequential_analysis']['status']=='inconclusive' else 1
+
     client = None
     if controlled:
         forbidden = [output,image_root,*versions.values(),*map(Path,frozen_bundles),
@@ -478,9 +543,16 @@ def _evaluate(args):
         record['controller_grade'] = grade
         return grade
     for scheduled in ordered:
+        if sequential_controller is not None:
+            try:
+                if not sequential_controller.before(scheduled,results['trials']):break
+            except (ValueError,OSError,TimeoutError):
+                sequential_controller.stop('incomplete','root_evidence_or_authority_incomplete',results['trials']);break
+            timeout=plan.sequential['arm_seconds']
         version, task = scheduled['version'], next(t for t in tasks if t['id'] == scheduled['task'])
         root = versions[version]
-        remaining = budget - (time.monotonic() - started)
+        remaining = (sequential_controller.root_deadline-time.monotonic() if sequential_controller is not None
+                     else budget - (time.monotonic() - started))
         record = dict(scheduled, split=task['split'])
         audit_offset=len(backend.permission_reports) if permission_audit is not None else 0
         record.setdefault('root',task.get('root'))
@@ -492,7 +564,7 @@ def _evaluate(args):
         if not verify_inputs(record):
             results['trials'].append(record)
             continue
-        if remaining <= 0:
+        if remaining < (timeout if sequential_controller is not None else 0) or remaining <= 0:
             record['status'] = 'budget_exhausted'
             results['trials'].append(record)
             continue
@@ -530,8 +602,9 @@ def _evaluate(args):
             prompt += 'Do not launch child agents or nested model trials; the parent owns the evaluation budget.\n'
         prompt += 'Operate only in this fixture workspace. Do not modify external files.\n' + task['prompt']
         record['injected_skill_hashes'] = {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in loaded}
-        remaining = budget - (time.monotonic() - started)
-        if remaining <= 0:
+        remaining = (sequential_controller.root_deadline-time.monotonic() if sequential_controller is not None
+                     else budget - (time.monotonic() - started))
+        if remaining < (timeout if sequential_controller is not None else 0) or remaining <= 0:
             record['status'] = 'budget_exhausted'
             results['trials'].append(record)
             continue
@@ -582,8 +655,9 @@ def _evaluate(args):
             record['status'], record['usage'] = trace_result(check, agent)
         record['skill_namespace'] = 'harness-trial' if agent == 'claude' else None
         if record['status'] == 'completed' and verify_inputs(record):
-            remaining = budget - (time.monotonic() - started)
-            if remaining <= 0:
+            remaining = (sequential_controller.root_deadline-time.monotonic() if sequential_controller is not None
+                     else budget - (time.monotonic() - started))
+            if remaining < (timeout if sequential_controller is not None else 0) or remaining <= 0:
                 record['status'] = 'budget_exhausted'
             else:
                 if offline or sandbox_graders or controlled:
@@ -617,7 +691,11 @@ def _evaluate(args):
     results['elapsed_seconds'] = time.monotonic() - started
     if client is not None: results['runtime']['inference'] = client.report()
     results['inputs_unchanged'] = inputs_unchanged()
-    if trajectories and plan is not None:
+    if sequential_controller is not None:
+        results['sequential_analysis']=sequential_controller.finish(results['trials'])
+        if not results['inputs_unchanged']:
+            results['sequential_analysis'].update(status='blocked',reason='frozen_inputs_changed')
+    if trajectories and plan is not None and sequential_controller is None:
         from agent_harness_lab.evaluation.statistics import TrialRecord, analyze
         records = []
         for trial in results['trials']:
@@ -635,7 +713,12 @@ def _evaluate(args):
             history_authority='unverified', automatic_promotion=False, publication_allowed=False)
     if permission_audit is not None:
         results['isolation_qualification']=backend.permission_qualification()
+        if sequential_controller is not None and results['isolation_qualification']['qualification']!='qualified' and results['sequential_analysis']['status']!='rejected':
+            results['sequential_analysis'].update(status='blocked',reason='isolation_qualification_unverified')
     (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
+    if sequential_controller is not None:
+        status=results['sequential_analysis']['status']
+        return {'supported':0,'rejected':0,'inconclusive':3,'blocked':3}.get(status,1)
     return 0 if (permission_audit is None or results['isolation_qualification']['qualification']=='qualified') and results['inputs_unchanged'] and all(t['status'] == 'passed' for t in results['trials']) else 1
 
 

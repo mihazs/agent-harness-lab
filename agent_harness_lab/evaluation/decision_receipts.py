@@ -54,6 +54,8 @@ def build(store,run_id):
     preservation=analysis.get('preservation',{})
     endpoints={name:dict(required=value['required'],disposition=value['disposition'])
         for name,value in preservation.get('cohorts',{}).items()}
+    if spec.sequential is not None:
+        endpoints={name:dict(required=True,disposition=value['disposition']) for name,value in analysis.get('endpoints',{}).items()}
     payload=dict(schema_version=1,algorithm=ALGORITHM,run_id=run_id,event_sha256=events[-1][1],
         inputs_sha256=record(case/'inputs.json')[1],evidence_sha256=record(case/'evidence.json')[1],
         results_sha256=record(case/'execution/results.json',8*1024*1024)[1],

@@ -26,6 +26,7 @@ class ExperimentSpec:
     partition: str = 'development'
     cohort_manifest_sha256: str | None = None
     precision_half_width: float | None = None
+    sequential: dict | None = None
 
     def validate(self):
         if not self.tasks or self.profile not in ('descriptive_smoke', 'certification'):
@@ -37,7 +38,11 @@ class ExperimentSpec:
             raise ValueError('bounded task/root/family identities required')
         if type(self.seed) is not int or len({t[0] for t in self.tasks}) != len(self.tasks):
             raise ValueError('duplicate task ID or invalid seed')
-        if 2 * len(self.tasks) * self.repeats > self.max_trials:
+        planned=2*len(self.tasks)*self.repeats
+        if self.sequential is not None:
+            from .sequential import validate, planned_trials
+            validate(self);planned=planned_trials(self)
+        if planned > self.max_trials:
             raise ValueError('planned experiment exceeds trial budget')
         for n in (self.effect_margin, self.family_margin, self.alpha):
             if type(n) not in (int, float) or not math.isfinite(n):
@@ -68,6 +73,7 @@ class ExperimentSpec:
         value = asdict(self)
         if self.cohort_manifest_sha256 is None: value.pop('cohort_manifest_sha256')
         if self.precision_half_width is None: value.pop('precision_half_width')
+        if self.sequential is None: value.pop('sequential')
         return value
 
     @property
@@ -83,6 +89,9 @@ class ExperimentSpec:
 
 def schedule(spec):
     spec.validate()
+    if spec.sequential is not None:
+        from .sequential import schedule as root_schedule
+        return root_schedule(spec)
     frozen_digest = spec.digest
     rng, pairs = random.Random(spec.seed), []
     tasks = list(spec.tasks); rng.shuffle(tasks)

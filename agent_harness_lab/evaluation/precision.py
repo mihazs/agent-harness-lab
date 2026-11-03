@@ -12,6 +12,7 @@ MAX_TASKS = 1000
 def preflight(spec, *, cohort_manifest_json=None, trial_limit=None, budget_seconds=None):
     if not isinstance(spec, ExperimentSpec): raise ValueError('a frozen experiment spec is required')
     spec.validate()
+    if spec.sequential is not None: raise ValueError('fixed precision calculation cannot admit sequential analysis')
     if len(spec.tasks)>MAX_TASKS: raise ValueError('precision planning exceeds the 1000-task bank cap')
     if trial_limit is not None and (type(trial_limit) is not int or trial_limit<=0):
         raise ValueError('positive bounded caller trial ceiling required')

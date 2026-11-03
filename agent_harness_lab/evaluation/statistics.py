@@ -34,6 +34,9 @@ def bound(values, weights, alpha):
 
 
 def analyze(spec, records, *, cohort_binding=None):
+    if spec.sequential is not None:
+        spec.validate()
+        return dict(status='blocked',reason='owned_sequential_inspection_required',automatic_promotion=False)
     if spec.cohort_manifest_sha256 is not None:
         from .preservation_analysis import analyze as preservation
         return preservation(spec, records, cohort_binding)
