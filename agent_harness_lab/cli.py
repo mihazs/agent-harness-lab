@@ -123,12 +123,10 @@ def main(argv=None):
             command.add_argument('--claude', default='claude')
             command.add_argument('--timeout', type=int, default=None, help='Whole improvement run budget in seconds')
             command.add_argument('--sandbox-graders', action='store_true', help='Require offline frozen grader controls and trial grading; agent CLI remains cooperative')
-            command.add_argument('--cgroup-root', type=Path, help='Explicit delegated cgroup v2 subtree for controlled roles or graders')
-            command.add_argument('--image-root', type=Path, help='Explicit extracted readonly runtime image for controlled roles or graders')
-            command.add_argument('--image-sha256', help='Required content pin for --image-root')
+            from .evaluation.cli import pinned_arguments
+            pinned_arguments(command,required=False,budget=False)
             command.add_argument('--permission-audit',choices=('permission-results-v1',),help='Require controller-role permission-result qualification; Responses mode only')
             command.add_argument('--evaluation-store',type=Path,help='Explicit private HistoryStore for automatic controlled construction/feedback exposure; never certification')
-            command.add_argument('--disk-bytes', type=int, help='Bound offline role scratch storage; requires --cgroup-root')
         if name == 'improve':
             command.add_argument('--repair-contracts', action='store_true', help='Evaluate and apply supported deterministic skill format repairs only; no model calls')
         if name == 'watch':

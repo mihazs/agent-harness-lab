@@ -41,6 +41,7 @@ def prepare(client,backend,inputs,role,instructions,prompt,deadline):
     from .responses import _CLIENT_PIDS
     owner=_CLIENT_PIDS[client]
     if isinstance(owner,tuple) and owner[1] is not None:data['project_configuration_sha256']=owner[1]
+    if isinstance(owner,tuple) and owner[5] is not None:data['configuration_references_sha256']=owner[5]
     return dict(prefix=prefix,data=data,inputs=dict(inputs),backend=backend,deadline=deadline,snapshot=snapshot)
 
 

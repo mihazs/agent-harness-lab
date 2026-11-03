@@ -10,6 +10,12 @@ No manual analyze/manifest/evaluate sequence is required. Select `--agent codex`
 or `--agent claude` if both runtimes are available. Authentication remains the
 runtime's responsibility; AHL does not inspect credential contents.
 
+For an already prepared controlled Responses environment, persist its settings
+and worker references in the [Responses configuration variant](onboarding.md#configure-controlled-responses-once).
+Then plain `ahl improve .` resolves that pipeline without a native agent
+executable or repeated resource flags. Its broker reads the explicitly selected
+private credential only during actual execution; doctor checks metadata only.
+
 When `ahl.json` exists, its profile, executable, scope and limits constrain the run.
 Explicit CLI runtime/binary/time options take precedence; configuration never
 supplies execution authorization. Offline/unsupported profiles, unintegrated

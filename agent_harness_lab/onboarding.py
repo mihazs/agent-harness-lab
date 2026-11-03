@@ -66,18 +66,30 @@ def doctor(project, profile=None, *, probe_runtime=False, proposed=None, source_
         except (ValueError, OSError, TypeError, KeyError):
             add('bank', 'blocked', True, 'validated_bank_digest', 'invalid_or_unavailable', 'Select an existing supported task bank within the project, or the bundled starter bank.')
         runtime = effective['runtime']
-        executable = runtime['executable']
+        controlled=runtime['name']=='responses'
+        executable = runtime.get('executable')
         present = executable is not None and Path(executable).is_file() and os.access(executable, os.X_OK)
-        add('runtime_executable', 'pass' if present else 'not_checked' if profile == 'offline' else 'blocked',
-            profile != 'offline', 'filesystem_metadata', 'present' if present else 'not_configured_or_missing',
+        add('runtime_executable', 'not_checked' if controlled else 'pass' if present else 'not_checked' if profile == 'offline' else 'blocked',
+            profile != 'offline' and not controlled, 'filesystem_metadata', 'not_applicable_responses' if controlled else 'present' if present else 'not_configured_or_missing',
             'Configure an explicit trusted runtime executable; no PATH search or login is performed.')
-    add('authentication', 'unknown', profile != 'offline', 'not_observed', 'unverified',
+        if controlled:
+            selected=config.execution_options(project,effective,dict(agent='auto',timeout=None),set())
+            try:
+                config.response_references(project,selected)
+                ready=True
+            except (ValueError,OSError,TypeError,KeyError,NotImplementedError):ready=False
+            add('controlled_references','pass' if ready else 'blocked',profile!='offline','local_metadata_and_settings_schema',
+                'valid' if ready else 'unavailable_or_unsafe','Select readable settings, a private credential reference, pinned image, delegated cgroup and bounded disk profile.')
+            add('controlled_execution','not_checked',False,'not_observed','requires_actual_pipeline_preflight',
+                'ahl improve performs the actual bounded capability check; doctor starts no worker or provider.')
+    controlled=bool(effective and effective['runtime']['name']=='responses')
+    add('authentication', 'unknown', profile != 'offline' and not controlled, 'not_observed', 'unverified',
         'Verify authentication separately with your selected runtime; AHL does not inspect credential files.')
-    add('runtime_version', 'unknown' if probe_runtime else 'not_checked', profile != 'offline', 'not_observed',
+    add('runtime_version', 'unknown' if probe_runtime else 'not_checked', profile != 'offline' and not controlled, 'not_observed',
         'no_verified_offline_probe', 'Verify the runtime version separately; arbitrary configured executables are not launched by doctor.')
     if profile == 'isolated' or probe_runtime:
         capability = 'not_probed'
-        if probe_runtime and sys.platform == 'linux':
+        if probe_runtime and sys.platform == 'linux' and not controlled:
             binary = Path('/usr/bin/bwrap')
             try:
                 trusted = all(p.stat().st_uid == 0 and not p.stat().st_mode & 0o022 for p in (binary, *binary.parents))
@@ -87,7 +99,7 @@ def doctor(project, profile=None, *, probe_runtime=False, proposed=None, source_
             except (ValueError, OSError):
                 capability = 'unavailable'
         add('offline_namespace_probe', 'warn' if capability == 'available' else 'not_checked' if capability == 'not_probed' else 'blocked',
-            False, 'bounded_explicit_probe' if probe_runtime else 'not_observed', capability,
+            False, 'bounded_explicit_probe' if probe_runtime and not controlled else 'not_observed', capability,
             'Use sandbox-check on a supported Linux host; a successful offline probe does not certify model isolation.')
         add('isolated_execution', 'blocked', profile == 'isolated', 'current_contract', 'certification_prerequisites_pending',
             'Controlled Responses workflows remain recommendation-only; audited lineage and effective runtime verification are still required.')
@@ -98,6 +110,7 @@ def doctor(project, profile=None, *, probe_runtime=False, proposed=None, source_
             'Confirm target-project binding and declared coverage before using source context as evidence.')
     result = dict(schema_version=1, profile=profile, status='invalid' if invalid_config else 'blocked' if any(c['required_for_profile'] and c['status'] != 'pass' for c in checks) else 'ready',
                   checks=checks, automatic_promotion=False, external_runtime_executed=False)
+    if controlled:result['readiness_scope']='local_configuration_and_references_only'
     if context is not None: result['source_context'] = context
     return result
 
@@ -159,8 +172,13 @@ def main(argv):
                 raise ValueError('invalid runtime settings')
             if settings['profile'] != 'offline' or runtime.get('name', 'none') != 'none':
                 if 'name' not in runtime:
-                    runtime['name'] = ask('Runtime: codex, claude', 'codex')
-                if 'executable' not in runtime:
+                    runtime['name'] = ask('Runtime: codex, claude, responses', 'codex')
+                if runtime['name']=='responses':
+                    for key in config.RESPONSE_OPTIONS:
+                        if key=='permission_audit':continue
+                        if key not in runtime:runtime[key]=ask('Controlled '+key.replace('_',' '),'')
+                    runtime['disk_bytes']=int(runtime['disk_bytes'])
+                elif 'executable' not in runtime:
                     runtime['executable'] = ask('Trusted absolute executable path', '')
                 settings['runtime'] = runtime
         proposed = config.prepare(settings)

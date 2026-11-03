@@ -5,12 +5,12 @@ import json
 from pathlib import Path
 
 
-def pinned_arguments(parser):
+def pinned_arguments(parser,*,required=True,budget=True):
     """Require the shared offline controller profile without relaxing any boundary."""
-    for name in ('cgroup-root','image-root'): parser.add_argument('--'+name,type=Path,required=True)
-    parser.add_argument('--image-sha256',required=True)
-    parser.add_argument('--disk-bytes',type=int,required=True)
-    parser.add_argument('--budget-seconds',type=float,default=60)
+    for name in ('cgroup-root','image-root'): parser.add_argument('--'+name,type=Path,required=required)
+    parser.add_argument('--image-sha256',required=required)
+    parser.add_argument('--disk-bytes',type=int,required=required)
+    if budget:parser.add_argument('--budget-seconds',type=float,default=60)
 
 
 def main(argv):
