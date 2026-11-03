@@ -239,12 +239,12 @@ def contracts(args):
         try:
             observed=(journal.active==receipt['deployment'] and journal.load(receipt['deployment'])==receipt
                       and target_states()==proposed)
-        except (OSError,ValueError,KeyError,TypeError):pass
+        except (OSError,ValueError,KeyError,TypeError,KeyboardInterrupt):pass
         result.update(status='applied' if observed else 'requires_intervention',commit_observation='committed',
             target_readback='matched' if observed else 'changed_or_unavailable',post_commit_error_type=type(exc).__name__)
         if not observed:result['remaining_change_ownership']='unverified'
         try:write_json(output/'workflow.json',result)
-        except OSError:result['workflow_completion']='unrecorded'
+        except (OSError,KeyboardInterrupt):result['workflow_completion']='unrecorded'
     return result
 
 

@@ -107,6 +107,50 @@ class PresentationTests(unittest.TestCase):
                     self.assertEqual(result['commit_observation'],'committed');self.assertIn('rollback',result)
                 finally:fixture.doCleanups()
 
+    def test_public_postcommit_recovery_interrupt_preserves_actual_receipt(self):
+        from agent_harness_lab import workflow
+        for boundary in ('observer','retry','foreign_retry'):
+            with self.subTest(boundary=boundary):
+                fixture=one_call_fixture.OneCallTests();fixture.setUp()
+                try:
+                    original_write=workflow.write_json;original_load=one_call_fixture.Journal.load
+                    failures=[]
+                    def load(journal,deployment):
+                        if boundary=='observer' and failures==['metadata']:
+                            failures.append('observer');raise KeyboardInterrupt
+                        return original_load(journal,deployment)
+                    def write(path,value):
+                        if path.name=='workflow.json' and value['status'] in ('applied','requires_intervention'):
+                            if not failures:
+                                journal=one_call_fixture.Journal(fixture.project,value['journal'])
+                                self.assertEqual(original_load(journal,journal.active)['status'],'committed')
+                                self.assertEqual(fixture.skill.read_bytes(),fixture.valid)
+                                self.assertEqual(fixture.skill.stat().st_mode&0o777,0o640)
+                                failures.append('metadata')
+                                if boundary=='foreign_retry':fixture.skill.write_bytes(b'foreign edit')
+                                raise OSError('synthetic completion metadata failure')
+                            if boundary!='observer':
+                                failures.append('retry');raise KeyboardInterrupt
+                        return original_write(path,value)
+                    output=io.StringIO()
+                    with patch.object(workflow,'write_json',side_effect=write), \
+                            patch.object(one_call_fixture.Journal,'load',load),redirect_stdout(output):
+                        code=main(['improve',str(fixture.project),'--repair-contracts'])
+                    result=json.loads(output.getvalue())
+                    expected='applied' if boundary=='retry' else 'requires_intervention'
+                    self.assertEqual((code,result['status']),(0 if expected=='applied' else 1,expected))
+                    self.assertEqual(failures,['metadata','observer' if boundary=='observer' else 'retry'])
+                    self.assertEqual(result['changed_files'],['.agents/skills/example/SKILL.md'])
+                    self.assertEqual(result['commit_observation'],'committed');self.assertIn('rollback',result)
+                    self.assertEqual(result['target_readback'],'matched' if boundary=='retry' else 'changed_or_unavailable')
+                    if boundary!='observer':self.assertEqual(result['workflow_completion'],'unrecorded')
+                    if expected!='applied':self.assertEqual(result['remaining_change_ownership'],'unverified')
+                    journal=one_call_fixture.Journal(fixture.project,result['journal'])
+                    self.assertEqual(original_load(journal,result['deployment'])['status'],'committed')
+                    self.assertEqual(fixture.skill.read_bytes(),b'foreign edit' if boundary=='foreign_retry' else fixture.valid)
+                    self.assertEqual(fixture.skill.stat().st_mode&0o777,0o640)
+                finally:fixture.doCleanups()
+
     def test_public_precommit_progress_interrupt_keeps_target_unmodified(self):
         fixture=one_call_fixture.OneCallTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
         class InterruptApplication(TTY):
