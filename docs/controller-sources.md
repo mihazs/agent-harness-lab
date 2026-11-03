@@ -129,3 +129,8 @@ The full #42/#58 chain still requires supported effective configuration/memory/c
 receipts, authenticated cross-source native identity, protected corpus lineage
 integration and a reviewed diagnostic-utility study. This slice does not complete
 those issues.
+
+The controlled improvement workflow can consume the same owned producer facts for
+[implementation prerequisite reporting](implementation-prerequisites.md). The
+source and workflow projections share dispatches and native completion; neither
+fanout nor a stored report establishes independent evidence or certification.

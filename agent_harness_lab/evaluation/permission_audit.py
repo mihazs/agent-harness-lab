@@ -44,9 +44,13 @@ def _fd_identity(descriptor):
 class _Completion: pass
 
 
-def _consume_completion(completion,ticket,process):
+def _take_completion(completion,ticket,process):
     state=_COMPLETIONS.pop(completion,None) if type(completion) is _Completion else None
-    return state is not None and state[0] is ticket and state[1] is process
+    return json.loads(state[2]) if state is not None and state[0] is ticket and state[1] is process else None
+
+
+def _consume_completion(completion,ticket,process):
+    return _take_completion(completion,ticket,process) is not None
 
 
 def encoded(value): return json.dumps(value,sort_keys=True,allow_nan=False,separators=(',',':')).encode()
@@ -180,7 +184,7 @@ class Observation:
                 or tuple(process.args)!=state['launch'] or frame['command']!=command or frame['role']!=role
                 or time.monotonic()>=frame['deadline'] or report['status']!='complete'):
             return None
-        completion=_Completion();_COMPLETIONS[completion]=(ticket,process)
+        completion=_Completion();_COMPLETIONS[completion]=(ticket,process,encoded(report))
         return completion
 
     def close(self):
