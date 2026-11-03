@@ -112,4 +112,7 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
     if len(identifiers) != len(set(identifiers)) or set(identifiers) != set(bundles):
         raise ValueError('authored task/bundle identities must match exactly')
     manifest_path.write_text(json.dumps(manifest,allow_nan=False))
+    if derivation is not None:
+        from .derivations import record_author_output
+        record_author_output(derivation,published)
     return manifest_path,commands

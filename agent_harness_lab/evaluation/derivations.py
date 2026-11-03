@@ -136,6 +136,15 @@ def validate_author(handle,client,backend,baseline,context,workspace,destination
     owned['used']=True
 
 
+def record_author_output(handle,published):
+    if type(handle) is not _Handoff or handle not in _OWNED:
+        raise ValueError('actual owned author output required')
+    owned=_OWNED[handle]; _check_custody(owned)
+    if not owned['used'] or Path(published)!=owned['folder']/'published':
+        raise ValueError('actual owned author output path required')
+    owned['produced_pin']=_tree_pin(published,owned['deadline'])
+
+
 def _check_custody(owned):
     if owned['pid']!=os.getpid(): raise ValueError('owned derivation cannot continue in a different process')
     check_deadline(owned['deadline'])
@@ -225,6 +234,7 @@ def derive(store,output,inference_settings,*,source_run=None,source_derivation=N
         owned=_OWNED[handle]
         if not owned['used']: raise ValueError('author did not consume its owned handoff')
         _check_custody(owned)
+        if owned.get('produced_pin')!=_tree_pin(folder/'published',deadline): raise ValueError('actual author output changed after role completion')
         _OWNED.pop(handle)
         if responses.read_settings(inference_settings)[1]!=settings_pin or client.settings!=settings:
             raise ValueError('variant inference settings changed')
