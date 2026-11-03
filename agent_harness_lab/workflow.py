@@ -386,7 +386,9 @@ def _improve(args):
     application_session=getattr(args,'_application_session',None)
     if application_session is not None:
         from .conditional_application import prepare_bank
-        prepare_bank(application_session,output)
+        blocked=prepare_bank(application_session,output)
+        if blocked is not None:
+            blocked['output']=str(output);write_json(output/'workflow.json',blocked);return blocked
     data = evidence(args, output)
     grading = None
     permission_audit=getattr(args,'permission_audit',None)

@@ -26,17 +26,20 @@ APPLICATION_FIELDS='policy review_store authorization_id bank_case_id delegation
 def hashed(value):return hashlib.sha256(encoded(value)).hexdigest()
 
 
+def _spec(value,tasks,baseline,candidate,oracle,image):
+    from .evaluation.plan import ExperimentSpec
+    spec=ExperimentSpec(value['experiment_id'],tuple(tasks),value['repeats'],value['seed'],value['max_trials'],value['min_roots'],
+        value['effect_margin'],value['family_margin'],value['alpha'],tuple(sorted(value['family_weights'].items())),
+        baseline,candidate,oracle,image,profile='certification',partition='certification',precision_half_width=value['precision_half_width'])
+    spec.validate();return spec
+
+
 def method(value):
     fields(value,METHOD_FIELDS)
     if not isinstance(value['family_weights'],dict) or not value['family_weights']:raise ValueError('predeclared family weights required')
     for family in value['family_weights']:text(family)
-    from .evaluation.plan import ExperimentSpec
     tasks=tuple(('declared-'+str(index),'declared-root-'+str(index),family) for index,family in enumerate(sorted(value['family_weights'])))
-    spec=ExperimentSpec(value['experiment_id'],tasks,value['repeats'],value['seed'],value['max_trials'],value['min_roots'],
-        value['effect_margin'],value['family_margin'],value['alpha'],tuple(sorted(value['family_weights'].items())),
-        'unbound-baseline','unbound-candidate','unbound-oracle','unbound-runtime',profile='certification',partition='certification',
-        precision_half_width=value['precision_half_width'])
-    spec.validate();text(value['experiment_id'])
+    _spec(value,tasks,'unbound-baseline','unbound-candidate','unbound-oracle','unbound-runtime');text(value['experiment_id'])
     return deepcopy(value)
 
 
@@ -271,6 +274,18 @@ def prepare_bank(session,output):
     path=Path(output)/'conditional-final-bank'/'manifest.json'
     data['bank_manifest']=path;data['bank_manifest_sha256']=record(path,1024*1024)[1]
     data['bank_export']=deepcopy(manifest)
+    from .evaluation.precision import preflight
+    declared=application['method']
+    # This analytic plan never supplies execution, completion or grant identity.
+    planned=_spec(declared,((t['id'],t['root'],t['family']) for t in manifest['tasks']),
+        'unexecuted-preparation-planning-only','unexecuted-preparation-planning-only',
+        'unexecuted-preparation-planning-only',data['args'].image_sha256)
+    precision=preflight(planned,trial_limit=data['args'].trial_limit-8,budget_seconds=data['deadline']-time.monotonic())
+    precision['evidence_scope']='analytic_preparation_planning_only'
+    if precision['status']!='feasible' or not precision['execution_allowed']:
+        return dict(status='inconclusive',reason='precision_target_infeasible',changed_files=[],precision_preflight=precision,
+            automatic_promotion=False,publication_allowed=False)
+    return None
 
 
 def prepare_final(session,plan,baseline,candidate,client,backend,*,trials_left):
@@ -297,18 +312,14 @@ def prepare_final(session,plan,baseline,candidate,client,backend,*,trials_left):
     with data['store'].locked():_approved(data['store'],data['authorization_id'],args,data['deadline'],state='application_running')
     path=data['bank_manifest'];source,pin=record(path,1024*1024)
     if pin!=data['bank_manifest_sha256'] or source!=data['bank_export']:raise ValueError('frozen final bank changed')
-    from .evaluation.plan import ExperimentSpec
     from .evaluation.oracle import identity
     from .evaluation.comparison_custody import bundle_binding
     from .evaluation.precision import preflight
     from .cli import evaluator
     declared=args.project_settings['application']['method'];runner=evaluator()
-    spec=ExperimentSpec(declared['experiment_id'],tuple((t['id'],t['root'],t['family']) for t in source['tasks']),
-        declared['repeats'],declared['seed'],declared['max_trials'],declared['min_roots'],
-        declared['effect_margin'],declared['family_margin'],declared['alpha'],tuple(sorted(declared['family_weights'].items())),
-        runner.digest(baseline),runner.digest(candidate),identity(path.parent,source['tasks'],source['grader_bundles']),args.image_sha256,
-        profile='certification',partition='certification',precision_half_width=declared['precision_half_width'])
-    spec.validate();precision=preflight(spec,trial_limit=trials_left,budget_seconds=data['deadline']-time.monotonic())
+    spec=_spec(declared,((t['id'],t['root'],t['family']) for t in source['tasks']),runner.digest(baseline),runner.digest(candidate),
+        identity(path.parent,source['tasks'],source['grader_bundles']),args.image_sha256)
+    precision=preflight(spec,trial_limit=trials_left,budget_seconds=data['deadline']-time.monotonic())
     if not precision['execution_allowed'] or precision['status']!='feasible':
         return dict(status='inconclusive',reason='precision_target_infeasible',precision_preflight=precision)
     request=dict(schema_version=1,profile=POLICY,authorization_id=data['authorization_id'],

@@ -1,0 +1,355 @@
+"""Signed conditional application through public improve and native isolated roles."""
+from contextlib import redirect_stderr, redirect_stdout
+import io
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+import time
+import unittest
+from unittest.mock import patch
+
+import agent_harness_lab
+from agent_harness_lab import conditional_application as application, config
+from agent_harness_lab.cli import assets, main
+from agent_harness_lab.evaluation import bank_qualification as bankq, bank_requalification as renewal
+from agent_harness_lab.evaluation import closed_inputs, responses, review_authority as authority
+from agent_harness_lab.evaluation.decision_receipts import engine
+from agent_harness_lab.evaluation.integrity import digest
+from agent_harness_lab.evaluation.instruction_context import MARKER, PROFILE as INSTRUCTION_PROFILE
+from agent_harness_lab.evaluation.oracle_history import HistoryStore
+from agent_harness_lab.evaluation.plan import ExperimentSpec
+from agent_harness_lab.evaluation.precision import preflight
+from agent_harness_lab.evaluation.regression_review import ReviewStore
+from agent_harness_lab.evaluation.sandbox import SandboxBackend
+from agent_harness_lab.private_journal import encoded
+if __package__:
+    from . import test_bank_qualification_final as bank_fixture
+    from . import test_sandbox_construction as roles, test_sandbox_inference as wire, test_sandbox_kernel as kernel
+    from .test_offline_evaluation import SOLVER
+else:
+    import test_bank_qualification_final as bank_fixture
+    import test_sandbox_construction as roles
+    import test_sandbox_inference as wire
+    import test_sandbox_kernel as kernel
+    from test_offline_evaluation import SOLVER
+
+
+EXECUTOR = '''from pathlib import Path
+import json,sys
+task=json.loads(Path('task.json').read_text())
+good=sys.argv[1]=='good'
+if 'scenario' in task:
+ Path('result.json').write_text(json.dumps(dict(complete=good or task['split']=='regression',scenario=task['scenario'])))
+elif good:
+ exec(%r)
+else:
+ Path('result.json').write_text('{}')
+''' % SOLVER
+
+
+@unittest.skipUnless(kernel.ENABLED, 'explicit delegated native scope required')
+class ConditionalApplicationKernelTests(kernel.KernelFixture):
+    FINAL_METHOD=dict(experiment_id='synthetic-conditional-final', repeats=1, seed=7, max_trials=4, min_roots=2,
+        effect_margin=.01, family_margin=.01, alpha=.99, family_weights={'regression':.5, 'tool-recovery':.5}, precision_half_width=None)
+    TRIAL_LIMIT=24
+    FINAL_TASKS={'regression', 'tool-recovery'}
+    FEASIBLE=False
+    WORKER=EXECUTOR
+
+    def sign(self, path, namespace):
+        subprocess.run(['/usr/bin/ssh-keygen', '-Y', 'sign', '-f', str(self.key), '-n', namespace, str(path)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=5)
+        return Path(str(path)+'.sig')
+
+    def policy(self, name, purpose):
+        path=self.operator/(name+'.json')
+        path.write_bytes(encoded(dict(schema_version=1, profile=authority.POLICY, purpose=purpose,
+            reviewers={'synthetic-reviewer':self.public_key})))
+        path.chmod(0o600)
+        return path
+
+    def reviewed_bank(self):
+        original=Path(agent_harness_lab.__file__).parent/'evaluation/fixtures/starter-v1'
+        source=self.root/'final-source';source.mkdir()
+        declared=json.loads((original/'bank.json').read_bytes())
+        tasks=[]
+        for task in declared['tasks']:
+            if task['task_id'] not in ('regression', 'tool-recovery'):continue
+            task=dict(task)
+            shutil.copytree(original/task['fixture'], source/task['fixture'])
+            bundle=source/task['grader_bundle'];shutil.copytree(original/task['grader_bundle'], bundle)
+            shutil.copytree(bundle/'controls/complete', bundle/'controls/superficial')
+            (bundle/'controls/superficial/original.txt').write_text('damaged\n')
+            (bundle/'controls.json').write_bytes(encoded_controls())
+            task.update(partition='certification', review_status='accepted', independence='reviewed',
+                reviewer='synthetic-reviewer', grader_digest=digest(bundle))
+            tasks.append(task)
+        self.assertEqual({task['root_id'] for task in tasks}, {'calculator','recovery'})
+        bank=source/'bank.json';bank.write_bytes(encoded(dict(schema_version=1, separate_by=['root_id'], tasks=tasks)))
+        return self.qualify_bank(bank,tasks)
+
+    def qualify_bank(self,bank,tasks):
+        declaration=self.root/'bank-declaration.json'
+        declaration.write_bytes(encoded(dict(schema_version=1, author='synthetic-author', history_store=str(self.root/'history'),
+            protocol=bankq.PROTOCOL, judgments={task['task_id']:dict(source_permission='approved', lineage='reviewed',
+                split_separation='reviewed', evidence_refs=[dict(ref='synthetic:public-fixed-task', sha256='a'*64)]) for task in tasks},
+            external_exposure='unknown', pretraining_exposure='unknown')))
+        code,_=bank_fixture.invoke(self.store.root, 'trust-reviewers', '--policy', self.policy('bank', authority.BANK_PURPOSE))
+        self.assertEqual(code, 0)
+        code,intake=bank_fixture.invoke(self.store.root, 'intake', '--bank', bank, '--declaration', declaration)
+        self.assertEqual(code, 0)
+        case_id=intake['case_id']
+        code,audited=bank_fixture.invoke(self.store.root, 'audit', '--case', case_id,
+            '--cgroup-root', self.cgroup_root, '--image-root', self.runtime, '--image-sha256', self.image,
+            '--disk-bytes', 64*1024*1024, '--budget-seconds', 120 if self.FEASIBLE else 60)
+        self.assertEqual((code, audited and audited['state']), (0, 'bank_audited'))
+        code,prepared=bank_fixture.invoke(self.store.root, 'prepare-review', '--case', case_id, '--reviewer', 'synthetic-reviewer')
+        self.assertEqual(code, 0)
+        request=Path(prepared['request_path']);signature=self.sign(request, 'ahl.final-bank-review.v1')
+        code,qualified=bank_fixture.invoke(self.store.root, 'qualify', '--case', case_id, '--request', request, '--signature', signature)
+        self.assertEqual((code, qualified and qualified['qualification']), (0, 'qualified_under_protocol'))
+        return case_id
+
+    def setup_authorities(self):
+        self.runtime=self.root/'runtime';self.image=kernel.pinned_runtime(self.runtime)['sha256']
+        self.operator=self.root/'operator';self.operator.mkdir(mode=0o700);self.key=self.operator/'reviewer'
+        subprocess.run(['/usr/bin/ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-C', 'synthetic', '-f', str(self.key)],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True, timeout=5)
+        self.public_key=' '.join(self.key.with_suffix('.pub').read_text().split()[:2])
+        self.store=ReviewStore(self.root/'review');case_id=self.reviewed_bank()
+        self.project=self.root/'project';self.project.mkdir();(self.project/'AGENTS.md').write_text('bad\n')
+        authorization=application.allocate(self.store, self.project)['authorization_id']
+        locator=renewal.allocate_delegation(self.store)
+        credential=self.root/'synthetic-unused-token';credential.write_text('SYNTHETIC_UNUSED');credential.chmod(0o600)
+        self.settings=self.root/'settings.json'
+        self.settings.write_bytes(encoded(dict(schema_version=1, model='synthetic-controlled', credential_file=str(credential),
+            max_requests=60, max_tool_calls=40, max_output_tokens=100, max_request_bytes=65536, max_response_bytes=32768,
+            instruction_protocol=INSTRUCTION_PROFILE)))
+        value=config.prepare(dict(schema_version=2, profile='cooperative', recommendation_only=False, harness_paths=['AGENTS.md'],
+            runtime=dict(name='responses', inference_settings=str(self.settings), cgroup_root=str(self.cgroup_root),
+                image_root=str(self.runtime), image_sha256=self.image, disk_bytes=64*1024*1024, permission_audit='permission-results-v1'),
+            limits=dict(seconds=150, trials=self.TRIAL_LIMIT), application=dict(policy=application.POLICY, review_store=str(self.store.root),
+                authorization_id=authorization, bank_case_id=case_id, delegation_request=locator['request_path'],
+                delegation_signature=locator['signature_path'], method=self.FINAL_METHOD)))
+        config.create(self.project, value)
+        events=self.root/'events.jsonl';events.write_text('')
+        baseline=self.root/'signed-baseline';baseline.mkdir();shutil.copyfile(self.project/'AGENTS.md', baseline/'AGENTS.md')
+        deadline=time.monotonic()+240
+        source=dict(kind='events_file', selection=str(events), snapshot_sha256='0'*64, format='normalized', version=None, session=None)
+        source['snapshot_sha256']=closed_inputs.source_pin(source, deadline)
+        domain=dict(schema_version=2, profile='conditional-bank-closed-input-domain-v2', project_inputs=closed_inputs.project_selection(self.project),
+            project_sha256=closed_inputs.snapshot_pin(closed_inputs.project_snapshot(self.project, closed_inputs.project_selection(self.project), deadline)),
+            baseline_sha256=closed_inputs.tree_pin(baseline, deadline), engine_sha256=closed_inputs.pin(engine()),
+            methodology_sha256=closed_inputs.tree_pin(assets()/'skills', deadline),
+            history_identity_sha256=closed_inputs.store_identity(HistoryStore(self.root/'history').root), sources=[source])
+        renewal.install_policy(self.store, self.policy('delegation', renewal.PURPOSE))
+        backend=SandboxBackend(cgroup_root=self.cgroup_root, image_root=self.runtime, image_sha256=self.image,
+            disk_bytes=64*1024*1024, permission_audit='permission-results-v1')
+        prepared=renewal.prepare(self.store, case_id, 'synthetic-reviewer', domain, renewal.runtime_binding(backend, self.settings),
+            deadline=deadline, request_path=locator['request_path'])
+        self.sign(Path(prepared['request_path']), 'ahl.final-bank-requalification.v1')
+        application.install_policy(self.store, self.policy('application', application.PURPOSE))
+        current,pin=config.load(self.project/'ahl.json');options=config.execution_options(self.project, current, {}, set())
+        prepared=application.prepare(self.store, authorization, self.project, current, pin, options, 'synthetic-reviewer')
+        request=self.store.root/'review-requests'/(prepared['request_sha256']+'.json')
+        signature=self.sign(request, 'ahl.instruction-application.v1')
+        application.authorize(self.store, authorization, request, signature, deadline=deadline)
+        self.calls=[];self.instruction_contexts=[]
+
+    def transport(self, credential, body, *args):
+        self.assertIsNone(credential);request=json.loads(body);self.calls.append(request);ident=str(len(self.calls))
+        developer=request['input'][0]['content']
+        if 'You are the proposer' in developer:
+            self.assertNotIn(MARKER, developer);argv=['/usr/bin/python3', '-c', roles.PROPOSER, 'good']
+        elif 'You are the evaluator author' in developer:
+            self.assertNotIn(MARKER, developer);argv=['/usr/bin/python3', '-c', roles.AUTHOR, '1', 'complete']
+        else:
+            context=json.loads(developer.split(MARKER, 1)[1]);self.instruction_contexts.append(context)
+            self.assertEqual(context['profile'], INSTRUCTION_PROFILE)
+            argv=['/usr/bin/python3', '-c', self.WORKER, 'good' if context['content'].startswith('good') else 'bad']
+        if any(row.get('type')=='function_call_output' for row in request['input']):
+            return wire.reply([wire.message('final-'+ident)])
+        return wire.reply([wire.call(ident, arguments=json.dumps(dict(argv=argv)))])
+
+    def test_plain_improve_consumes_signed_final_then_applies_and_public_rollback_restores(self):
+        self.setup_authorities();self.assertNotIn('AGENTS.md', self.WORKER)
+        output=io.StringIO()
+        with patch.dict(os.environ, {'XDG_STATE_HOME':str(self.root/'state')}), \
+                patch.object(responses, 'read_credential', return_value=None), \
+                patch.object(responses, 'request', side_effect=self.transport), \
+                redirect_stdout(output), redirect_stderr(io.StringIO()):
+            code=main(['improve', str(self.project)])
+        result=json.loads(output.getvalue())
+        if not self.FEASIBLE:
+            self.assertEqual((code,result['status'],result['reason']), (3,'inconclusive','precision_target_infeasible'),result)
+            self.assertEqual(result['precision_preflight']['status'],'infeasible')
+            self.assertNotIn('controller_run_id',result)
+            self.assertEqual((self.project/'AGENTS.md').read_text(),'bad\n')
+            self.assertEqual(len(self.calls),0)
+            return
+        self.assertEqual((code, result['status']), (0, 'applied'), result)
+        self.assertEqual((self.project/'AGENTS.md').read_text(), 'good\nSYNTHETIC_CANDIDATE_SECRET\n')
+        self.assertEqual(result['conditional_claim'], application.POLICY)
+        self.assertFalse(result['general_certification']);self.assertFalse(result['automatic_promotion'])
+        self.assertEqual(result['served_model'], 'unverified');self.assertEqual(result['native_activation'], 'unverified')
+        self.assertEqual(result['external_exposure'], 'unknown');self.assertEqual(result['pretraining_exposure'], 'unknown')
+        self.assertEqual(result['analysis']['status'], 'supported')
+        self.assertEqual(len(self.calls),56)
+        contents=[context['content'] for context in self.instruction_contexts]
+        self.assertIn('bad\n', contents);self.assertIn('good\nSYNTHETIC_CANDIDATE_SECRET\n', contents)
+        executor_requests=[request for request in self.calls if MARKER in request['input'][0]['content']]
+        for content in ('bad\n', 'good\nSYNTHETIC_CANDIDATE_SECRET\n'):
+            selected=[request for request in executor_requests
+                if json.loads(request['input'][0]['content'].split(MARKER, 1)[1])['content']==content]
+            self.assertTrue(any(not any(row.get('type')=='function_call_output' for row in request['input']) for request in selected))
+            self.assertTrue(any(any(row.get('type')=='function_call_output' for row in request['input']) for request in selected))
+        final=HistoryStore(self.root/'history').case(result['controller_run_id'])
+        trials=json.loads((final/'execution/results.json').read_bytes())['trials']
+        self.assertEqual(len(trials), self.FINAL_METHOD['max_trials'])
+        self.assertEqual({trial['task'] for trial in trials}, self.FINAL_TASKS)
+        self.assertTrue(all(trial['status']==('passed' if trial['version']=='candidate' else 'failed') for trial in trials))
+        before=len(self.calls)
+        with patch.dict(os.environ, {'XDG_STATE_HOME':str(self.root/'state')}), \
+                patch.object(responses, 'read_credential', side_effect=AssertionError('consumed approval must not read credentials')), \
+                patch.object(responses, 'request', side_effect=AssertionError('consumed approval must not retry')), \
+                redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):main(['improve', str(self.project)])
+        self.assertEqual(len(self.calls), before)
+        with patch.dict(os.environ, {'XDG_STATE_HOME':str(self.root/'state')}), redirect_stdout(io.StringIO()):
+            self.assertEqual(main(['rollback', result['deployment'], '--project', str(self.project)]), 0)
+        self.assertEqual((self.project/'AGENTS.md').read_text(), 'bad\n')
+
+
+def encoded_controls():
+    return (json.dumps([dict(state=state, fixture='controls/'+state)
+        for state in ('broken','partial','complete','alternative_valid','superficial')], sort_keys=True)+'\n').encode()
+
+
+TEN_CASES=(
+    ('sum_numbers','Add the signed integer operands and return their total.',{'values':[4,-2,9]},11),
+    ('reverse_words','Reverse the ordered sequence of words without changing their spelling.',{'text':'maple quartz river'},['river','quartz','maple']),
+    ('sort_values','Sort the integer measurements in ascending numerical order.',{'values':[8,-3,5,1]},[-3,1,5,8]),
+    ('unique_items','Keep the first occurrence of each tree label while retaining input order.',{'values':['larch','elm','larch','ash']},['larch','elm','ash']),
+    ('count_tokens','Count whitespace separated color names in the supplied text.',{'text':'amber cobalt indigo sienna'},4),
+    ('positive_filter','Retain strictly positive readings and discard zero and negative readings.',{'values':[-4,6,0,9,-1]},[6,9]),
+    ('uppercase_labels','Convert every botanical label to uppercase ASCII letters.',{'values':['birch','cedar']},['BIRCH','CEDAR']),
+    ('map_squares','Square each signed coordinate while preserving sequence order.',{'values':[-3,2,5]},[9,4,25]),
+    ('zip_pairs','Pair each compass direction with the corresponding distance.',{'keys':['north','east','south'],'values':[2,7,4]},[['north',2],['east',7],['south',4]]),
+    ('checksum','Sum the Unicode code points of the supplied uppercase identifier.',{'text':'ABC'},198),
+)
+TEN_METHOD=dict(experiment_id='synthetic-ten-root-conditional-final', repeats=1, seed=7, max_trials=20, min_roots=10,
+    effect_margin=.01, family_margin=.01, alpha=.05, family_weights={'synthetic-artifact-transforms':1.}, precision_half_width=None)
+TEN_GRADER='''from pathlib import Path
+import json,sys
+try:
+ expected=json.loads(Path(sys.argv[2]).read_text())
+ actual=json.loads((Path(sys.argv[1])/'result.json').read_text())
+ outcome=(isinstance(actual,dict) and 'answer' in actual
+  and json.dumps(actual['answer'],sort_keys=True)==json.dumps(expected['answer'],sort_keys=True)
+  and (Path(sys.argv[1])/'original.txt').read_text()=='preserve\\n')
+except (OSError,ValueError,TypeError,KeyError):outcome=False
+print(json.dumps(dict(schema_version=1,valid=True,outcome=outcome,grader_id='synthetic-fixed-transforms',grader_version='v1')))
+sys.exit(0 if outcome else 1)
+'''
+TEN_EXECUTOR='''from pathlib import Path
+import json,sys
+task=json.loads(Path('task.json').read_text())
+good=sys.argv[1]=='good'
+if 'scenario' in task:
+ Path('result.json').write_text(json.dumps(dict(complete=good or task['split']=='regression',scenario=task['scenario'])))
+elif good:
+ values=task['inputs'];operation=task['operation']
+ if operation=='sum_numbers':answer=sum(values['values'])
+ elif operation=='reverse_words':answer=list(reversed(values['text'].split()))
+ elif operation=='sort_values':answer=sorted(values['values'])
+ elif operation=='unique_items':answer=list(dict.fromkeys(values['values']))
+ elif operation=='count_tokens':answer=len(values['text'].split())
+ elif operation=='positive_filter':answer=[value for value in values['values'] if value>0]
+ elif operation=='uppercase_labels':answer=[value.upper() for value in values['values']]
+ elif operation=='map_squares':answer=[value*value for value in values['values']]
+ elif operation=='zip_pairs':answer=list(zip(values['keys'],values['values']))
+ elif operation=='checksum':answer=sum(map(ord,values['text']))
+ else:raise ValueError('unknown predeclared synthetic operation')
+ Path('result.json').write_text(json.dumps(dict(answer=answer)))
+else:Path('result.json').write_text('{}')
+'''
+
+
+def ten_root_bank(source):
+    """New prospective inputs and frozen oracles; root independence remains an assumption."""
+    source.mkdir();tasks=[]
+    for ident,prompt,inputs,answer in TEN_CASES:
+        fixture=source/'tasks'/ident;fixture.mkdir(parents=True)
+        (fixture/'task.json').write_bytes(encoded(dict(prompt=prompt+' Write answer in result.json and preserve original.txt.',
+            operation=ident,inputs=inputs)))
+        (fixture/'original.txt').write_text('preserve\n')
+        bundle=source/'graders'/ident;bundle.mkdir(parents=True)
+        (bundle/'grade.py.txt').write_text(TEN_GRADER);(bundle/'expected.json').write_bytes(encoded(dict(answer=answer)))
+        for state in ('broken','partial','complete','alternative_valid','superficial'):
+            control=bundle/'controls'/state;shutil.copytree(fixture,control)
+            value={} if state=='broken' else dict(answer=None if state=='partial' else answer)
+            if state=='alternative_valid':value['extra']='allowed synthetic metadata'
+            (control/'result.json').write_bytes(encoded(value))
+            if state=='superficial':(control/'original.txt').write_text('damaged\n')
+        (bundle/'controls.json').write_bytes(encoded_controls())
+        tasks.append(dict(task_id=ident,root_id=ident,family='synthetic-artifact-transforms',partition='certification',
+            project_group='synthetic-ten-root',time_group='prospective-v1',fixture=str(fixture.relative_to(source)),fixture_digest=digest(fixture),
+            grader_bundle=str(bundle.relative_to(source)),grader_digest=digest(bundle),grader_version='v1',source_kind='synthetic',
+            source_ref='synthetic:conditional-ten-root-v1',permission='approved',reviewer='synthetic-reviewer',review_status='accepted',
+            independence='reviewed',safety=['Synthetic offline artifacts only; reviewed root independence is an assumption.'],artifacts=['result.json','original.txt']))
+    bank=source/'bank.json';bank.write_bytes(encoded(dict(schema_version=1,separate_by=['root_id'],tasks=tasks)))
+    return bank,tasks
+
+
+class ConditionalFinalDesignTests(unittest.TestCase):
+    def precision(self,method,tasks):
+        spec=ExperimentSpec(method['experiment_id'],tuple(tasks),method['repeats'],method['seed'],method['max_trials'],method['min_roots'],
+            method['effect_margin'],method['family_margin'],method['alpha'],tuple(sorted(method['family_weights'].items())),
+            'declared-baseline','declared-candidate','declared-oracle','declared-runtime',profile='certification',partition='certification')
+        return preflight(spec,trial_limit=method['max_trials'])
+
+    def test_original_two_root_two_family_design_remains_analytically_infeasible(self):
+        result=self.precision(ConditionalApplicationKernelTests.FINAL_METHOD,
+            [('regression','calculator','regression'),('tool-recovery','recovery','tool-recovery')])
+        self.assertEqual(result['status'],'infeasible')
+        self.assertFalse(result['endpoints']['primary']['criteria_possible'])
+
+    def test_new_ten_root_fixed_design_is_analytically_feasible_before_any_dispatch(self):
+        result=self.precision(TEN_METHOD,[(name,name,'synthetic-artifact-transforms') for name,_,_,_ in TEN_CASES])
+        self.assertEqual(result['status'],'feasible');self.assertEqual(result['planned_trials'],20)
+        self.assertEqual(result['declared_roots'],10);self.assertTrue(result['execution_allowed'])
+        self.assertTrue(all(value['criteria_possible'] for value in result['endpoints'].values() if value['required']))
+        self.assertEqual(result['root_independence'],'unverified')
+
+    def test_new_prospective_bank_has_ten_distinct_fixed_inputs_and_complete_controls(self):
+        from agent_harness_lab.evaluation.task_bank import validate
+        with tempfile.TemporaryDirectory() as folder:
+            bank,tasks=ten_root_bank(Path(folder)/'new-bank');checked=validate(bank)
+            self.assertEqual(checked['tasks'],10);self.assertEqual(checked['issues'],[])
+            self.assertEqual(checked['content_grouping']['overlaps'],0)
+            self.assertFalse(checked['certification_eligible'])
+            for task in tasks:
+                bundle=bank.parent/task['grader_bundle']
+                controls=json.loads((bundle/'controls.json').read_bytes())
+                self.assertEqual({control['state'] for control in controls},
+                    {'broken','partial','complete','alternative_valid','superficial'})
+                compile((bundle/'grade.py.txt').read_text(),str(bundle/'grade.py.txt'),'exec')
+
+
+@unittest.skipUnless(kernel.ENABLED, 'explicit delegated native scope required')
+class TenRootConditionalApplicationKernelTests(ConditionalApplicationKernelTests):
+    FINAL_METHOD=TEN_METHOD
+    TRIAL_LIMIT=32
+    FINAL_TASKS={name for name,_,_,_ in TEN_CASES}
+    FEASIBLE=True
+    WORKER=TEN_EXECUTOR
+
+    def reviewed_bank(self):
+        bank,tasks=ten_root_bank(self.root/'ten-root-final-source')
+        return self.qualify_bank(bank,tasks)
+
+
+if __name__=='__main__':unittest.main()
