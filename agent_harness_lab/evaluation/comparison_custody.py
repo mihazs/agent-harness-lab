@@ -190,7 +190,8 @@ class Comparison:
                 self.lost=True;return
             if not self.active['requests']:
                 self.lost=True;return
-            self.active['workers'].append(dict(fact=value,command={k:deepcopy(run[k]) for k in ('status','exit_code','attestation')}))
+            from .controller_receipts import _worker_command
+            self.active['workers'].append(dict(fact=value,command=_worker_command(run)))
         self.latest=run;self._save()
 
     def before_control(self,workspace,allowlist,oracle_sha256,expected):

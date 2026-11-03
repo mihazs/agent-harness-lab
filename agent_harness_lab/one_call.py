@@ -37,6 +37,7 @@ def preflight(args):
         if settings['schema_version']==2:
             if (getattr(args,'command','improve')!='improve' or getattr(args,'repair_contracts',False)
                     or getattr(args,'experiment_request',None) is not None
+                    or getattr(args,'focus',None) is not None
                     or getattr(args,'events',None) is not None or getattr(args,'source_root',None) is not None):
                 return 'conditional_application_requires_plain_controlled_improve'
         from .evaluation.task_bank import validate

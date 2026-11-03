@@ -149,6 +149,11 @@ def authorize(store,authorization_id,request_path,signature_path,*,deadline):
         fields(review['reviewer'],'identity');text(review['reviewer']['identity'])
         if review['binding']['baseline']!=inputs['baseline'] or target_record(inputs['project'])!=inputs['baseline']:
             raise ValueError('application baseline changed before approval')
+        from . import config
+        project=Path(inputs['project']);settings,configuration_sha256=config.load(project/'ahl.json')
+        options=config.execution_options(project,settings,{},set())
+        if review['binding']!=binding(project,settings,configuration_sha256,options):
+            raise ValueError('application configuration or references changed before approval')
         proof=authority.verify(store,value,signature,purpose=PURPOSE,deadline=deadline)
         authentication=authority.save(store,value,signature,proof)
         if authority.active(store,purpose=PURPOSE)[1]!=proof['policy_sha256'] or time.monotonic()>=deadline:
@@ -229,6 +234,8 @@ def begin(args,*,deadline,backend):
         session=_Session();_SESSIONS[session]=dict(pid=os.getpid(),args=args,store=store,
             authorization_id=application['authorization_id'],deadline=deadline,domain=domain,backend=backend,
             binding=current,closed=False,phase='construction',plan=None,final_run=None)
+        history=closed_inputs.owned(domain)['history'];history._application_session=session
+        _SESSIONS[session]['history']=history
         return session
     except BaseException:
         if domain is not None:closed_inputs.close(domain)
@@ -240,7 +247,13 @@ def close(session):
     if data is None or data['pid']!=os.getpid():raise ValueError('owned application session required for cleanup')
     if data['closed']:return
     from .evaluation import closed_inputs
-    closed_inputs.close(data['domain']);data['closed']=True
+    try:
+        closed_inputs.close(data['domain'])
+        with data['store'].locked():
+            case,_,events=opened(data['store'],data['authorization_id'])
+            if events[-1][0]['state']=='application_running':
+                data['store'].append(case,events,'application_finished','application_not_applied',dict(reason='invocation_closed_without_application'))
+    finally:data['closed']=True
 
 
 def prepare_bank(session,output):
@@ -296,13 +309,17 @@ def prepare_final(session,plan,baseline,candidate,client,backend,*,trials_left):
         runner.digest(baseline),runner.digest(candidate),identity(path.parent,source['tasks'],source['grader_bundles']),args.image_sha256,
         profile='certification',partition='certification',precision_half_width=declared['precision_half_width'])
     spec.validate();precision=preflight(spec,trial_limit=trials_left,budget_seconds=data['deadline']-time.monotonic())
-    if not precision['execution_allowed']:return dict(status='inconclusive',reason='precision_target_infeasible',precision_preflight=precision)
+    if not precision['execution_allowed'] or precision['status']!='feasible':
+        return dict(status='inconclusive',reason='precision_target_infeasible',precision_preflight=precision)
     request=dict(schema_version=1,profile=POLICY,authorization_id=data['authorization_id'],
         plan_sha256=plan.sha256,configuration_sha256=args.configuration_sha256,method=declared)
     request_path=path.parent/'application-request.json';write_bytes(request_path,encoded(request))
     source.update(experiment=spec.to_dict(),workflow_request_sha256=hashed(request),
         workflow_bundles=dict(baseline=bundle_binding(baseline,data['deadline']),candidate=bundle_binding(candidate,data['deadline'])),
         no_nested_agents=True)
+    for task in source['tasks']:
+        bundle=path.parent/source['grader_bundles'][task['id']]['path']
+        task['grader']=['/usr/bin/python3',str(bundle/'grade.py.txt'),'{workspace}',str(bundle/'expected.json')]
     bound=path.parent/'bound-manifest.json';write_bytes(bound,encoded(source))
     data.update(phase='final_prepared',plan=plan,scope=scope,client=client,baseline=Path(baseline),candidate=Path(candidate),
         manifest=bound,manifest_sha256=record(bound,1024*1024)[1],spec=spec,request_path=request_path,precision=precision)
@@ -329,6 +346,179 @@ def _final_admission(session,domain,manifest,baseline,candidate):
     if data['client'].pending or data['client'].poisoned:raise ValueError('application provider attempt unresolved')
     return dict(plan_sha256=data['plan'].sha256,experiment_sha256=data['spec'].digest,
         configuration_sha256=args.configuration_sha256,policy=POLICY)
+
+
+def _domain(session):return _owned(session)['domain']
+
+
+class _FinalRun:
+    __slots__=('__weakref__',)
+
+
+_FINAL_RUNS=weakref.WeakKeyDictionary()
+
+
+def observe_final(session,history,run_id,custody,result,proof):
+    """Only the still-live actual Comparison can issue pending final custody."""
+    data=_owned(session)
+    from .evaluation.comparison_custody import current
+    from .promotion.prerequisites import current as current_scope
+    if (data['phase']!='final_running' or current() is not custody or not custody._valid()
+            or custody.client is not data['client'] or current_scope() is not data['scope']
+            or custody.spec.digest!=data['spec'].digest or custody.finish(result)!=proof
+            or history.root!=data['history'].root or data['final_run'] is not None):
+        raise ValueError('actual complete owned final comparison required')
+    handle=_FinalRun();_FINAL_RUNS[handle]=dict(pid=os.getpid(),session=session,run_id=run_id,
+        history=history,proof_sha256=hashed(proof),result_sha256=hashed(result),sealed=False)
+    data['final_run']=handle
+
+
+def seal_final(session,history,run_id):
+    data=_owned(session);handle=data['final_run'];final=_FINAL_RUNS.get(handle)
+    if (final is None or final['session'] is not session or final['history'] is not history
+            or final['run_id']!=run_id or final['sealed']):raise ValueError('owned pending final run required')
+    case,events,inputs,spec=history._opened(run_id,current_bank=False)
+    if events[-1][0]['state']!='sealed' or spec.digest!=data['spec'].digest:
+        raise ValueError('actual final run_finished seal required')
+    result=history._sealed(case,events,inputs,spec)
+    proof,_=record(case/'responses-custody.json',8*1024*1024)
+    if (hashed(result)!=final['result_sha256'] or hashed(proof)!=final['proof_sha256']
+            or any(history.oracle_events(bundle)[-1][0]['state']!='active' for bundle in inputs['dependencies'])):
+        raise ValueError('final run custody or current oracle changed')
+    data['scope'].read()
+    final.update(sealed=True,evidence_sha256=record(case/'evidence.json')[1],
+        finished_event_sha256=events[-1][1],client_requests=data['client'].requests)
+    data['phase']='final_complete'
+
+
+def _final_history(session,run_id,source):
+    """Live read custody only. This route cannot admit another execution or grant."""
+    data=_owned(session);final=_FINAL_RUNS.get(data['final_run'])
+    if (final is None or not final['sealed'] or final['pid']!=os.getpid() or final['session'] is not session
+            or final['run_id']!=run_id or hashed(source)!=data['manifest_sha256']
+            or data['phase'] not in ('final_complete','grant_consuming','applied')
+            or data['client'].requests!=final['client_requests'] or data['client'].pending or data['client'].poisoned
+            or not data['scope']._valid()):raise ValueError('current sealed conditional final custody required')
+    case=final['history'].case(run_id)
+    if (final['history'].history(case)[-1][1]!=final['finished_event_sha256']
+            or record(case/'evidence.json')[1]!=final['evidence_sha256']
+            or hashed(record(case/'execution/results.json',8*1024*1024)[0])!=final['result_sha256']
+            or hashed(record(case/'responses-custody.json',8*1024*1024)[0])!=final['proof_sha256']):
+        raise ValueError('owned final completion or result changed')
+    return dict(policy=POLICY,plan_sha256=data['plan'].sha256,experiment_sha256=data['spec'].digest)
+
+
+class _Grant:
+    __slots__=('__weakref__',)
+
+
+_GRANTS=weakref.WeakKeyDictionary()
+
+
+def _bank_guard(grant,domain):
+    permitted=_GRANTS.get(grant) if type(grant) is _Grant else None
+    if permitted is None or permitted['pid']!=os.getpid() or not permitted['guard_active']:
+        raise ValueError('actual consuming application grant required')
+    data=_owned(permitted['session']);final=_FINAL_RUNS.get(data['final_run'])
+    if data['domain'] is not domain or data['phase']!='grant_consuming' or final is None or not final['sealed']:
+        raise ValueError('same completed application session required')
+    source,_=record(data['manifest'],1024*1024);_final_history(permitted['session'],final['run_id'],source)
+    args=data['args']
+    from .one_call import check_configuration
+    check_configuration(args)
+    auth,_=record(data['store'].root/'review-auth'/(permitted['authentication_sha256']+'.json'),2*authority.MAX_BYTES)
+    if (hashed(auth)!=permitted['authentication_sha256']
+            or authority.active(data['store'],purpose=PURPOSE)[1]!=auth['request']['policy_sha256']):
+        raise ValueError('application authority changed before mutation')
+    journal=permitted['journal'];index=permitted['checks'];pending=getattr(journal,'_pending_snapshot',None)
+    if index not in range(5):raise ValueError('application commit guard replayed')
+    expected_record=dict(permitted['record'],status='prepared' if index==0 else 'committed' if index==4 else 'applying')
+    if index:expected_record['commit_guarded']=True
+    if journal.load(permitted['record']['deployment'])!=expected_record:
+        raise ValueError('actual application Journal record changed')
+    if index==2:
+        if (pending is None or pending[0].parent!=args.project or not pending[0].name.startswith('AGENTS.md.ahl-')
+                or pending[1:]!=(permitted['after']['sha256'],permitted['after']['mode'])
+                or file_record(pending[0])!=permitted['after']):raise ValueError('actual Journal staging snapshot changed')
+    elif pending is not None:raise ValueError('unexpected Journal staging checkpoint')
+    expected=permitted['before_project'] if index<3 else permitted['after_project']
+    from .evaluation.closed_inputs import snapshot_pin
+    return dict(original_project_sha256=snapshot_pin(permitted['before_project']),expected_current_project_snapshot=expected,
+        reservation_id=data['reservation_id'],run_id=final['run_id'])
+
+
+def execute(session):
+    """Run the complete frozen final schedule once, then consume one exact write grant."""
+    data=_owned(session);args=data['args'];history=data['history']
+    _final_admission(session,data['domain'],data['manifest'],data['baseline'],data['candidate'])
+    application=args.project_settings['application'];deadline=data['deadline']
+    qualification=data['store'].requalify_bank(application['bank_case_id'],data['domain'],data['manifest'],
+        data['baseline'],data['candidate'],deadline=deadline,application_session=session)
+    reservation=history.reserve_access(data['manifest'],data['baseline'],data['candidate'],
+        budget_seconds=min(300,deadline-time.monotonic()),parent_deadline=deadline,
+        requalification=qualification,application_session=session)
+    data['reservation_id']=reservation['reservation_id'];data['phase']='final_reserved'
+    data['scope'].bind(data['manifest'],data['baseline'],data['candidate'])
+    data['phase']='final_running'
+    result=history.run(data['manifest'],data['baseline'],data['candidate'],cgroup_root=args.cgroup_root,
+        image_root=args.image_root,image_sha256=args.image_sha256,disk_bytes=args.disk_bytes,
+        budget_seconds=min(300,deadline-time.monotonic()),parent_deadline=deadline,access_reservation=data['reservation_id'],
+        inference_client=data['client'],inference_settings=args.inference_settings,sandbox_backend=data['backend'],
+        source_sink=getattr(args,'source_sink',None),workflow_request=data['request_path'],permission_profile=args.permission_audit,
+        application_session=session)
+    final=_FINAL_RUNS.get(data['final_run'])
+    if final is None or not final['sealed'] or result['state']!='sealed':
+        return dict(status='incomplete',reason='final_comparison_incomplete',changed_files=[],automatic_promotion=False,publication_allowed=False)
+    analysis=history.analyze(final['run_id'])
+    from .promotion.policy import implementation_prerequisites
+    observed=implementation_prerequisites(data['scope'])
+    if (analysis['status']!='supported' or observed['restricted_process_protocol']['status']!='qualified'
+            or observed.get('controlled_instruction_protocol',{}).get('status')!='qualified'
+            or observed['permission_result_capture']!='qualified'
+            or data['backend'].permission_qualification()['qualification']!='qualified'):
+        return dict(status='inconclusive',reason='conditional_final_not_supported',analysis=analysis,
+            changed_files=[],automatic_promotion=False,publication_allowed=False)
+    # Recheck every input before minting the one-use target capability.
+    with data['store'].locked():
+        _,_,events,_=_approved(data['store'],data['authorization_id'],args,deadline,state='application_running')
+    authentication=next(event['payload']['authentication']['record_sha256'] for event,_ in events if event['kind']=='application_authorized')
+    from .evaluation import closed_inputs
+    from .evaluation.working_state import Snapshot
+    from .promotion.journal import Journal
+    from .workflow import state_root,identity
+    import base64
+    declaration=closed_inputs.owned(data['domain'])['declaration']
+    before_project=closed_inputs.project_snapshot(args.project,declaration['project_inputs'],deadline)
+    before=target_record(args.project);after=file_record(data['candidate']/'AGENTS.md')
+    if after is None or before==after or after['mode']&0o111:raise ValueError('unsupported or unchanged final target')
+    data['plan'].validate_inventories({'AGENTS.md':(before['sha256'],before['mode'])},{'AGENTS.md':(after['sha256'],after['mode'])})
+    after_project=Snapshot(before_project.root_mode,before_project.directories,tuple(
+        (name,after['mode'],base64.b64decode(after['content'],validate=True)) if name=='AGENTS.md' else (name,mode,raw)
+        for name,mode,raw in before_project.files))
+    journal=Journal(args.project,state_root()/'promotions'/identity(args.project))
+    record_value=journal.prepare({'AGENTS.md':before},{'AGENTS.md':after},dict(source=POLICY,plan_sha256=data['plan'].sha256,
+        conditional_final_run=final['run_id'],general_certification=False))
+    grant=_Grant();permitted=dict(pid=os.getpid(),session=session,journal=journal,checks=0,guard_active=False,
+        before_project=before_project,after_project=after_project,before=before,after=after,authentication_sha256=authentication,record=deepcopy(record_value))
+    _GRANTS[grant]=permitted;data['phase']='grant_consuming'
+    def guard():
+        permitted['guard_active']=True
+        try:closed_inputs.application_guard(data['domain'],grant)
+        finally:permitted['guard_active']=False
+        permitted['checks']+=1
+    receipt=journal._execute(record_value['deployment'],pre_write=guard)
+    if (permitted['checks']!=5 or journal.active!=receipt['deployment'] or file_record(args.project/'AGENTS.md')!=after
+            or closed_inputs.project_snapshot(args.project,declaration['project_inputs'],deadline)!=after_project):
+        raise ValueError('conditional application post-write verification changed')
+    data['phase']='applied'
+    with data['store'].locked():
+        case,_,events=opened(data['store'],data['authorization_id'])
+        data['store'].append(case,events,'application_finished','application_applied',dict(plan_sha256=data['plan'].sha256,
+            run_id=final['run_id'],deployment=receipt['deployment']))
+    return dict(status='applied',changed_files=['AGENTS.md'],deployment=receipt['deployment'],journal=str(journal.folder),
+        conditional_claim=POLICY,general_certification=False,served_model='unverified',native_activation='unverified',
+        independence='unverified',bank_review='authenticated_conditional_judgments',external_exposure='unknown',pretraining_exposure='unknown',
+        controller_run_id=final['run_id'],analysis=analysis,automatic_promotion=False,publication_allowed=False)
 
 
 def main(argv):

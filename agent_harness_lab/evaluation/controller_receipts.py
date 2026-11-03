@@ -49,6 +49,11 @@ def _artifact_fingerprints(items):
     return tuple(sorted((hashlib.sha256(name.encode()).hexdigest(),hashlib.sha256(raw).hexdigest()) for name,raw in items))
 
 
+def _worker_command(run):
+    """One producer subset shared by native custody and controlled role results."""
+    return {name:deepcopy(run[name]) for name in ('status','exit_code','attestation')}
+
+
 class _SessionToken:
     __slots__=('__weakref__',)
 

@@ -335,9 +335,9 @@ class ReviewStore(PrivateJournal):
         from .bank_revisions import accept
         return accept(self, case_id, parent_path, record_path)
 
-    def requalify_bank(self,case_id,domain,manifest,baseline,candidate,*,deadline):
+    def requalify_bank(self,case_id,domain,manifest,baseline,candidate,*,deadline,application_session=None):
         from .bank_requalification import requalify
-        return requalify(self,case_id,domain,manifest,baseline,candidate,deadline=deadline)
+        return requalify(self,case_id,domain,manifest,baseline,candidate,deadline=deadline,application_session=application_session)
 
     def install_review_policy(self,path):
         from .review_authority import install, require_host

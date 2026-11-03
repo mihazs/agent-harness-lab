@@ -208,15 +208,18 @@ def _closure_state(value,closure,state):
     return sorted(assets)
 
 
-def requalify(store,case_id,domain,manifest,baseline,candidate,*,deadline):
+def requalify(store,case_id,domain,manifest,baseline,candidate,*,deadline,application_session=None):
     """Issue a fresh one-use bank capability for exact current final bindings."""
     value,closure=closed_inputs.closure(domain)
+    if application_session is not None:
+        from agent_harness_lab.conditional_application import _final_admission
+        _final_admission(application_session,domain,manifest,baseline,candidate)
     ledger.check_deadline(deadline)
     if deadline is None or deadline>value['deadline']:raise ValueError('same bounded parent deadline required')
     actual_store,review=_check_domain(value)
     if actual_store.root!=store.root or review['case_id']!=case_id:raise ValueError('actual delegated bank controller required')
     binding=ledger.capture(manifest,baseline,candidate,lambda:ledger.check_deadline(deadline),
-        access_ledger=value['history'].access_ledger().path,deadline=deadline)
+        access_ledger=value['history'].access_ledger().path,deadline=deadline,application_session=application_session)
     if (binding.get('bank_qualification',{}).get('metadata')!=review['static_parent']
             or binding['runtime_sha256']!=review['runtime']['image_sha256']):
         raise ValueError('final bank or runtime differs from signed delegation')

@@ -55,7 +55,7 @@ def behavior_policies(folders, source, spec):
     return policies
 
 
-def bank_authority(source, *, export_root=None, expected=None):
+def bank_authority(source, *, export_root=None, expected=None,application_session=None,conditional_history=None):
     """Validate actual current bank authority and selected materialized inputs."""
     from agent_harness_lab.cli import evaluator
     from .bank_tools import materialize_sources
@@ -81,7 +81,15 @@ def bank_authority(source, *, export_root=None, expected=None):
     experiment = source.get('experiment',{})
     if not isinstance(experiment,dict): raise ValueError('bank authority experiment must be an object')
     if experiment.get('profile','descriptive_smoke')=='certification' and not checked['certification_eligible']:
-        raise ValueError('bank authority is not eligible for certification')
+        from agent_harness_lab.conditional_application import _final_admission,_domain,_owned,_final_history
+        if conditional_history is not None:
+            _final_history(*conditional_history,source)
+        elif application_session is not None:
+            data=_owned(application_session)
+            _final_admission(application_session,_domain(application_session),data['manifest'],data['baseline'],data['candidate'])
+            if hashlib.sha256(encoded(source)).hexdigest()!=data['manifest_sha256']:
+                raise ValueError('conditional bank differs from actual frozen final manifest')
+        else:raise ValueError('bank authority is not eligible for certification')
     bank,bank_hash = record(path,1024*1024)
     if (bank_hash!=authority['bank_sha256'] or checked['bank_sha256']!=bank_hash or source.get('bank_digest')!=bank_hash
             or not isinstance(admission,dict) or admission.get('current_eligible') is not True
@@ -226,7 +234,9 @@ class HistoryStore(PrivateJournal):
                 fields(value,'task_revision_sha256 materialized_sha256 execution_fixture_sha256 grader_version')
                 for key in ('task_revision_sha256','materialized_sha256','execution_fixture_sha256'): sha256(value[key])
                 text(value['grader_version'])
-            if current_bank: bank_authority(source,expected=inputs['bank_tasks'])
+            if current_bank:
+                session=getattr(self,'_application_session',None)
+                bank_authority(source,expected=inputs['bank_tasks'],conditional_history=(session,run_id) if session is not None else None)
         elif source.get('bank_authority') is not None:
             raise ValueError('bound bank history cannot use the unbound input schema')
         elif version in (3,4,5,6) and inputs['bank_tasks'] is not None:
@@ -526,7 +536,7 @@ class HistoryStore(PrivateJournal):
         from .derivations import status
         return status(self,ident)
 
-    def reserve_access(self, manifest, baseline, candidate, *, budget_seconds=60,parent_deadline=None,requalification=None):
+    def reserve_access(self, manifest, baseline, candidate, *, budget_seconds=60,parent_deadline=None,requalification=None,application_session=None):
         from .certification_access import capture
         if type(budget_seconds) not in (int,float) or not math.isfinite(budget_seconds) or not 0<budget_seconds<=300:
             raise ValueError('access reservation budget must be positive and at most 300 seconds')
@@ -540,7 +550,7 @@ class HistoryStore(PrivateJournal):
         if any(self.root.is_relative_to(p if p.is_dir() else p.parent)
                 or (p if p.is_dir() else p.parent).is_relative_to(self.root) for p in paths):
             raise ValueError('access ledger must remain outside controller input views')
-        binding = capture(manifest,baseline,candidate,check,access_ledger=self.access_ledger().path,deadline=deadline)
+        binding = capture(manifest,baseline,candidate,check,access_ledger=self.access_ledger().path,deadline=deadline,application_session=application_session)
         declared,_ = record(manifest,1024*1024)
         if ExperimentSpec.parse(declared['experiment']).cohort_manifest_sha256 is not None:
             raise ValueError('managed diagnostics do not qualify preservation cohorts')
@@ -552,7 +562,7 @@ class HistoryStore(PrivateJournal):
         return self.access_ledger().reserve_managed(binding,deadline=deadline)
 
     def run(self, manifest, baseline, candidate, *, cgroup_root, image_root, image_sha256, disk_bytes, budget_seconds=60,parent_deadline=None,on_started=None,access_reservation=None,
-            inference_client=None,inference_settings=None,sandbox_backend=None,source_sink=None,workflow_request=None,permission_profile=None):
+            inference_client=None,inference_settings=None,sandbox_backend=None,source_sink=None,workflow_request=None,permission_profile=None,application_session=None):
         from agent_harness_lab.cli import evaluator
         from .bank_tools import frozen_grader
         from .bank_revisions import sync_tree
@@ -612,13 +622,18 @@ class HistoryStore(PrivateJournal):
         elif any(value is not None for value in (inference_settings,sandbox_backend,source_sink,workflow_request,permission_profile)):
             raise ValueError('partial Responses history context')
         if spec.profile == 'certification':
-            raise ValueError('genuine certification qualification issuer is unavailable; public development remains unqualified')
+            if application_session is None:
+                raise ValueError('genuine certification qualification issuer is unavailable; public development remains unqualified')
+            from agent_harness_lab.conditional_application import _final_admission,_domain
+            _final_admission(application_session,_domain(application_session),manifest,baseline,candidate)
+            if not controlled or access_reservation is None:raise ValueError('conditional final requires fresh protected controlled execution')
+            self._application_session=application_session
         if 'protected_access' in source and access_reservation is None:
             raise ValueError('managed access declaration requires its controller reservation')
         if spec.sequential is not None:
             from .sequential import validate_selection
             validate_selection(source)
-        bound_tasks = bank_authority(source,export_root=manifest.parent)
+        bound_tasks = bank_authority(source,export_root=manifest.parent,application_session=application_session)
         if bound_tasks is not None:
             owner = Path(source['bank_authority']['bank_path']).parents[2]
             if self.root.is_relative_to(owner) or owner.is_relative_to(self.root):
@@ -648,7 +663,7 @@ class HistoryStore(PrivateJournal):
         def check_access_budget():
             if time.monotonic() >= deadline: raise TimeoutError('access observation budget exhausted')
         if access_reservation is not None:
-            binding = capture_access(manifest,baseline,candidate,check_access_budget,access_ledger=self.access_ledger().path,deadline=deadline)
+            binding = capture_access(manifest,baseline,candidate,check_access_budget,access_ledger=self.access_ledger().path,deadline=deadline,application_session=application_session)
             if spec.cohort_manifest_sha256 is not None:
                 raise ValueError('managed diagnostics do not qualify preservation cohorts')
             assets = binding['assets']
@@ -724,7 +739,7 @@ class HistoryStore(PrivateJournal):
                     cohort_manifest_sha256=spec.cohort_manifest_sha256,cohort_qualification='current_membership_only',publication_allowed=False)
                 return self.trials(inputs,spec,envelope,sampling=sequential_controller.binding,subset=True)
             def live_guard():
-                if bound_tasks is not None:bank_authority(source,export_root=manifest.parent,expected=bound_tasks)
+                if bound_tasks is not None:bank_authority(source,export_root=manifest.parent,expected=bound_tasks,application_session=application_session)
                 if membership is not None:cohort_history.validate(membership,source,spec,bound_tasks)
                 if record(manifest,1024*1024)[1]!=manifest_hash:raise ValueError('sequential source manifest changed')
             sequential_controller.checker=validate_rows;sequential_controller.guard=live_guard
@@ -733,7 +748,7 @@ class HistoryStore(PrivateJournal):
                 try: on_started(run_id)
                 except Exception: raise ValueError('history start observation failed') from None
             if time.monotonic()>=deadline: raise TimeoutError('history deadline exhausted before dispatch')
-            if bound_tasks is not None: bank_authority(source,export_root=manifest.parent,expected=bound_tasks)
+            if bound_tasks is not None: bank_authority(source,export_root=manifest.parent,expected=bound_tasks,application_session=application_session)
             if membership is not None: cohort_history.validate(membership,source,spec,bound_tasks)
             if controlled:
                 args.agent='responses';args.inference_client=inference_client;args.inference_settings=inference_settings
@@ -746,6 +761,9 @@ class HistoryStore(PrivateJournal):
                     if read_settings(inference_settings)[1]!=settings_hash or inference_client.settings!=settings:
                         raise ValueError('comparison inference settings changed')
                     proof=custody.finish(result)
+                    if application_session is not None:
+                        from agent_harness_lab.conditional_application import observe_final
+                        observe_final(application_session,self,run_id,custody,result,proof)
                 write_bytes(case/'responses-custody.json',encoded(proof))
             else:
                 runner.evaluate(args)
@@ -755,7 +773,7 @@ class HistoryStore(PrivateJournal):
                 checked=replay(spec,case/'sequential',result['trials'],validate_rows,cohort_json=cohort_raw)
                 if checked!=result.get('sequential_analysis'):raise ValueError('online sequential inspection differs')
             else:self.trials(inputs,spec,result)
-            if bound_tasks is not None: bank_authority(source,export_root=manifest.parent,expected=bound_tasks)
+            if bound_tasks is not None: bank_authority(source,export_root=manifest.parent,expected=bound_tasks,application_session=application_session)
             if membership is not None: cohort_history.validate(membership,source,spec,bound_tasks)
             if (record(manifest,1024*1024)[1] != manifest_hash
                     or identity(manifest.parent,selected,source['grader_bundles']) != spec.grader_hash
@@ -767,14 +785,18 @@ class HistoryStore(PrivateJournal):
             sync_tree(case/'execution'); write_bytes(case/'evidence.json',encoded(evidence)); sync_directory(case)
             if time.monotonic() >= deadline: raise TimeoutError('history sealing budget exhausted')
             with self.locked():
-                if bound_tasks is not None: bank_authority(source,export_root=manifest.parent,expected=bound_tasks)
+                if bound_tasks is not None: bank_authority(source,export_root=manifest.parent,expected=bound_tasks,application_session=application_session)
                 if membership is not None: cohort_history.validate(membership,source,spec,bound_tasks)
                 current = self.history(case)
                 if time.monotonic()>=deadline: raise TimeoutError('history authority validation exhausted sealing budget')
                 self.append(case,current,'run_finished','sealed',dict(evidence_sha256=record(case/'evidence.json')[1]))
+            if application_session is not None:
+                from agent_harness_lab.conditional_application import seal_final
+                seal_final(application_session,self,run_id)
         except (OSError,ValueError,TypeError,KeyError,subprocess.SubprocessError,KeyboardInterrupt) as error:
             with self.locked():
                 current = self.history(case)
+                if current[-1][0]['state']!='running':raise
                 self.append(case,current,'run_finished','incomplete',dict(reason='execution_or_evidence_incomplete'))
             if isinstance(error,KeyboardInterrupt): raise
         return self.show(run_id)

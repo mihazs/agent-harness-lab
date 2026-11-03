@@ -553,7 +553,8 @@ def _run_role(client, backend, workspace, inputs, role, instructions, prompt, de
             if audit.get('status')!='complete' or audit.get('qualification')!='qualified':
                 raise InferenceError('permission_qualification_not_met')
         client.actions.update(action,containment_validated=True)
-        commands.append({key:run[key] for key in ('status','exit_code','attestation')})
+        from .controller_receipts import _worker_command
+        commands.append(_worker_command(run))
         history.append(dict(type='function_call_output',call_id=call_id,output=json.dumps(
             {key:run[key] for key in ('status','exit_code','stdout','stderr')},allow_nan=False)))
 

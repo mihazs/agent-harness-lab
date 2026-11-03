@@ -11,6 +11,22 @@ tasks:
           LAYOUT_DIR: '{{.LAYOUT_DIR}}'
           EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
           REPEATED_TEST_PATTERN: test_conditional_application.py
+      - task: test:workflow:repeated
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          REPEATED_TEST_PATTERN: test_conditional_application_authority.py
+  test:application:conditional:kernel:
+    desc: Exercise explicitly authorized final evaluation and guarded root instruction application
+    cmds:
+      - task: test:evaluation:bank-requalification:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          TEST_NAME: conditional_application_native
+          KERNEL_TEST_FILTER: '{{default "ConditionalApplication" .KERNEL_TEST_FILTER}}'
   test:evaluation:construction-seals:
     desc: Run closed construction custody cases
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'

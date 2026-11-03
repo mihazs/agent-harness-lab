@@ -118,11 +118,12 @@ class _Scope:
         return event
 
     def _observe(self,ticket,fact,run):
-        from agent_harness_lab.evaluation.controller_receipts import _read_fact
+        from agent_harness_lab.evaluation.controller_receipts import _read_fact,_worker_command
         if not self._valid():return
         value=_read_fact(fact,self,ticket)
         event=ticket.scope_event
-        if value is None or event is None or self.data['events'][event['ordinal']] is not event or event['complete']:
+        if (value is None or value['result_sha256']!=_hash(run) or event is None
+                or self.data['events'][event['ordinal']] is not event or event['complete']):
             self.lost=True;return
         if 'instruction_request' in event:
             request=self.data['instruction_requests'][event['instruction_request']-1]['binding']['instruction_binding']
@@ -131,6 +132,7 @@ class _Scope:
         exports=value.pop('exports')
         exports=tuple(tuple(pair) for pair in exports) if exports is not None else None
         event.update(value)
+        if event['role']=='executor':event['command_sha256']=_hash(_worker_command(run))
         self.latest=run,event,fact
         if event['role']=='executor' and event['stage']=='role':self.executor=(event['ordinal'],exports)
         if len(encoded(self.data))>MAX_BYTES:self.lost=True

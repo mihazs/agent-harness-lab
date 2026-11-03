@@ -206,18 +206,51 @@ def record_feedback(handle,rows,evaluated):
     """Join feedback to actual native outcomes before a later proposer sees it."""
     value=owned(handle);scope=value['scope']
     if scope is None:raise ValueError('actual workflow scope required')
-    observed=scope.read();events={event['result_sha256']:event for event in observed['events']
-        if event.get('complete') and event.get('stage')=='role'}
-    actual=[];joins=[]
+    observed=scope.read();events=[event for event in observed['events']
+        if event.get('complete') and event.get('stage')=='role']
+    bindings=[binding for binding in observed['bindings'] if binding['manifest_sha256']==evaluated.get('manifest_sha256')]
+    if len(bindings)!=1:raise ValueError('feedback requires its actual bound author manifest')
+    binding=bindings[0]
+    from agent_harness_lab.private_journal import record
+    from agent_harness_lab.cli import evaluator
+    from .integrity import contained
+    manifest,manifest_pin=record(binding['manifest'],1024*1024)
+    if manifest_pin!=binding['manifest_sha256'] or 'experiment' in manifest:
+        raise ValueError('feedback requires the unchanged bounded development schedule')
+    scheduled=[(version,task) for version in ('baseline','candidate') for task in manifest['tasks']]
+    if len(scheduled)!=len(evaluated['trials']):raise ValueError('feedback trial coverage differs from actual schedule')
+    actual=[];joins=[];used=set();grading_status=evaluator().grading_status
     if evaluated.get('inputs_unchanged') is not True:raise ValueError('unchanged native trial inputs required')
-    for trial in evaluated['trials']:
+    for index,(trial,(version,task)) in enumerate(zip(evaluated['trials'],scheduled)):
+        if (trial.get('version')!=version or trial.get('task')!=task['id'] or trial.get('split')!=task['split']
+                or trial.get('repetition')!=0):raise ValueError('feedback task differs from actual frozen schedule')
         if trial.get('split') not in ('development','regression'):continue
         execution=trial.get('execution');grade=trial.get('grader',{}).get('execution')
-        worker=events.get(pin(execution));grader=events.get(pin(grade))
-        if (worker is None or grader is None or worker['role']!='executor' or grader['role']!='grader'
-                or not any(pair['executor']==worker['dispatch_sha256'] and pair['grader']==grader['dispatch_sha256']
-                    for pair in observed['pairs'])):
+        request=execution.get('inference',{}).get('request_binding') if isinstance(execution,dict) else None
+        requests=[row for row in observed.get('instruction_requests',[]) if request is not None
+            and row['binding']['scope_id']==request.get('scope_id')]
+        workers=[event for event in events if event['role']=='executor' and request is not None
+            and event.get('instruction_scope')==request.get('scope_id')]
+        if (not requests or any(not row['complete'] for row in requests) or requests[-1]['binding']!=request
+                or request['role']!='executor' or request['trial_id']!='trial-'+str(index+1)
+                or not workers or [pin(command) for command in execution.get('worker_commands',[])]
+                    !=[event.get('command_sha256') for event in workers]
+                or any(event['input_digests']!={'harness':binding[version+'_sha256']} for event in workers)):
             raise ValueError('feedback lacks actual owned executor/grader completion')
+        worker=workers[-1]
+        graders=[event for event in events if event['role']=='grader' and event['result_sha256']==pin(grade)
+            and any(pair['executor']==worker['dispatch_sha256'] and pair['grader']==event['dispatch_sha256'] for pair in observed['pairs'])]
+        if len(graders)!=1:raise ValueError('feedback lacks an exact actual artifact-grade pair')
+        grader=graders[0];selected={event['dispatch_sha256'] for event in [*workers,grader]}
+        oracle=str(contained(Path(binding['manifest']).parent,manifest['grader_bundles'][task['id']]['path']))
+        typed=dict(grade,timeout=grade.get('status')=='timeout');status=grading_status(typed,typed=True)
+        if (used&selected or grader['input_digests'].get('oracle')!=binding['oracle_roots'][oracle]
+                or execution.get('status')!='completed' or execution.get('exit_code')!=0 or execution.get('inputs_unchanged') is not True
+                or status not in ('passed','failed') or trial.get('status')!=status or trial['grader'].get('status')!=status
+                or trial['grader'].get('outcome') is not typed.get('outcome')
+                or trial['grader'].get('grader_identity')!={name:typed.get(name) for name in ('grader_id','grader_version')}):
+            raise ValueError('feedback status, oracle or distinct owned trial differs')
+        used.update(selected)
         actual.append({key:trial.get(key) for key in ('task','version','split','status')})
         joins.append(dict(executor=worker['dispatch_sha256'],grader=grader['dispatch_sha256']))
     if not actual or actual!=rows:raise ValueError('feedback differs from actual native trials')

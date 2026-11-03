@@ -84,7 +84,7 @@ def snapshot_exposure(snapshot,tasks,bundles,check=lambda:None):
     return _exposure(tasks,bundles,lambda name:snapshot_tree(snapshot,name),check)
 
 
-def capture(manifest, baseline, candidate, check=lambda: None,*,access_ledger=None,deadline=None):
+def capture(manifest, baseline, candidate, check=lambda: None,*,access_ledger=None,deadline=None,application_session=None):
 
     """Read actual frozen content, never a supplied qualification receipt."""
     from agent_harness_lab.cli import evaluator
@@ -95,7 +95,9 @@ def capture(manifest, baseline, candidate, check=lambda: None,*,access_ledger=No
     source, pin = record(manifest, MAX_BYTES)
     spec = ExperimentSpec.parse(source['experiment']); spec.validate()
     if spec.profile != 'descriptive_smoke':
-        raise ValueError('genuine certification qualification issuer is unavailable')
+        if application_session is None:raise ValueError('genuine certification qualification issuer is unavailable')
+        from agent_harness_lab.conditional_application import _final_admission,_domain
+        _final_admission(application_session,_domain(application_session),manifest,baseline,candidate)
     tasks = source['tasks']
     if not isinstance(tasks, list) or not 1 <= len(tasks) <= 1000: raise ValueError('bounded diagnostic task list required')
     if {t[0]:t[1:] for t in spec.tasks} != {t['id']:(t.get('root'),t.get('family')) for t in tasks}:
@@ -118,7 +120,7 @@ def capture(manifest, baseline, candidate, check=lambda: None,*,access_ledger=No
         bank,_=record(bank_path,MAX_BYTES)
         if bank.get('controller_profile')==BANK_PROFILE:
             from .oracle_history import bank_authority
-            bank_authority(source,export_root=manifest.parent)
+            bank_authority(source,export_root=manifest.parent,application_session=application_session)
             qualified=revision_metadata(bank_path,deadline=deadline)
             if (not qualified['current_eligible'] or access_ledger is None
                     or qualified['history_store']!=str(_path(access_ledger).parent)

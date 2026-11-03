@@ -444,6 +444,10 @@ def _improve(args):
         if access_path is None: construction.proposer_seed(candidate,prepare/'proposer-work-0',deadline)
         credential = responses.read_credential(settings,[args.project,output,grader_options['image_root'],assets()/'skills',*([access_path] if access_path is not None else [])])
         def record(receipt):
+            if application_session is not None:
+                from .conditional_application import _owned
+                if _owned(application_session)['phase'] not in ('construction','final_prepared','final_reserved','final_running'):
+                    raise ValueError('application proposal and inference phase is sealed')
             if settings.get('instruction_protocol') is not None or getattr(args,'_configured_responses',False):check_configuration(args)
             if responses.read_settings(inference_path)[1] != settings_hash:
                 raise ValueError('inference settings changed during the controlled run')
@@ -723,6 +727,11 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 evaluation=str(options.output), application_eligible=False),common_plan))
             result['plan'] = str(output / 'change-plan.json')
             result['plan_sha256'] = common_plan.sha256
+            if application_session is not None:
+                from .conditional_application import prepare_final,execute
+                blocked=prepare_final(application_session,common_plan,baseline,frozen,client,grading,trials_left=trials_left)
+                result.update(blocked if blocked is not None else execute(application_session))
+                break
             result['status'] = 'inconclusive'
             result['recommendation'] = 'candidate_requires_independent_certification'
             break
