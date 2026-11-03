@@ -181,7 +181,7 @@ def bounded_fixture(folder, runner):
     return runner.digest(folder)
 
 
-def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_heldout, *, grader_backend=None):
+def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_heldout, *, grader_backend=None, experiment_spec=None, control_custody=None):
     manifest = json.loads(path.read_text())
     if not isinstance(manifest, dict):
         raise ValueError('Evaluation manifest must be an object')
@@ -199,8 +199,17 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
            or not isinstance(t.get('grader'), list) or not t['grader']
            or not all(isinstance(a, str) for a in t['grader']) for t in tasks):
         raise ValueError('Tasks require ids, fixtures and grader argument lists')
-    if not 3 <= len(tasks) <= 5 or {t['split'] for t in tasks} != {'development', 'regression', 'heldout'}:
-        raise ValueError('Provide 3–5 tasks covering development, regression, and heldout')
+    if experiment_spec is None:
+        if not 3 <= len(tasks) <= 5 or {t['split'] for t in tasks} != {'development', 'regression', 'heldout'}:
+            raise ValueError('Provide 3–5 tasks covering development, regression, and heldout')
+    else:
+        from .evaluation.plan import ExperimentSpec
+        if type(experiment_spec) is not ExperimentSpec:raise ValueError('validated fixed experiment required')
+        experiment_spec.validate()
+        if (experiment_spec.sequential is not None or experiment_spec.profile!='descriptive_smoke'
+                or any(t['split'] not in ('development','regression') for t in tasks)
+                or {t[0]:t[1:] for t in experiment_spec.tasks}!={t['id']:(t.get('root'),t.get('family')) for t in tasks}):
+            raise ValueError('fixed improvement experiment selection differs')
     bundles = manifest.get('grader_bundles', {})
     grader_contracts = {}
     if grader_backend is not None:
@@ -256,10 +265,14 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
                 bundle, allowed, frozen = grader_contracts[task['id']]
                 if workspace == bundle or bundle.is_relative_to(workspace):
                     raise ValueError('grader bundle must not be inside a control fixture')
+                if control_custody is not None:control_custody.before_control(workspace,allowed,frozen,check['state']=='complete')
                 grade = regrade_artifacts(workspace, allowed, bundle, frozen,
                     grader_backend, limits=Limits(seconds=min(30, available)))
                 if grade['status'] != ('passed' if check['state'] == 'complete' else 'failed'):
                     raise ValueError('Grader self-test rejected: broken/partial must fail and complete must pass')
+                if control_custody is not None:
+                    try:control_custody.after_control(grade)
+                    except ValueError:return None
             else:
                 argv = [a.replace('{workspace}', str(workspace)).replace('{trace}', str(path.parent / 'empty-trace.jsonl')) for a in task['grader']]
                 available = remaining()
@@ -279,7 +292,7 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
     if remaining() <= 0:
         raise TimeoutError('Improvement budget exhausted before evaluation')
     manifest['no_nested_agents'] = True
-    manifest['max_trials'] = 10
+    manifest['max_trials'] = 10 if experiment_spec is None else experiment_spec.max_trials
     manifest['budget_seconds'] = remaining()
     manifest['timeout_seconds'] = min(float(manifest.get('timeout_seconds', 180)), manifest['budget_seconds'])
     write_json(path, manifest)
@@ -324,6 +337,14 @@ def _improve(args):
     runner = evaluator()
     output = output_dir(args)
     print(f'Private run artifacts: {output}', file=sys.stderr)
+    repeated=None
+    if getattr(args,'experiment_request',None) is not None:
+        from .evaluation.repeated_workflow import Request
+        repeated=Request(args,output,started+args.timeout)
+        if repeated.blocked_reason or not repeated.precision['execution_allowed']:
+            result=dict(status='blocked',reason=repeated.blocked_reason or 'precision_target_infeasible',output=str(output),changed_files=[],
+                precision_preflight=repeated.precision,automatic_promotion=False,publication_allowed=False)
+            write_json(output/'workflow.json',result);return result
     data = evidence(args, output)
     grading = None
     permission_audit=getattr(args,'permission_audit',None)
@@ -357,6 +378,7 @@ def _improve(args):
     original = snapshot(args.project, baseline, allowed_paths=allowed_paths(args))
     candidate_states(baseline, original)
     shutil.copytree(baseline, candidate)
+    if repeated is not None:repeated.freeze_baseline(baseline)
     baseline_hash = runner.digest(baseline)
     agent = args.agent
     client = None
@@ -367,6 +389,7 @@ def _improve(args):
         from .promotion.prerequisites import _begin
         args._prerequisite_scope=_begin(baseline,grader_options['image_sha256'],deadline)
         settings,settings_hash = responses.read_settings(inference_path)
+        if repeated is not None:repeated.protect([baseline,candidate,assets()/'skills'],settings)
         role_views = construction.views(data,assets(),prepare/'role-inputs',deadline)
         construction.proposer_seed(candidate,prepare/'proposer-work-0',deadline)
         credential = responses.read_credential(settings,[args.project,output,grader_options['image_root'],assets()/'skills'])
@@ -480,6 +503,29 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         if candidate_states(frozen, original) != proposed:
             raise ValueError('Candidate changed while freezing it')
         frozen_hash = runner.digest(frozen)
+        if repeated is not None:
+            repeated.protect([baseline,candidate,frozen,*role_views.values()],settings)
+            manifest_path=repeated.bind(baseline,frozen,grader_options['image_sha256'])
+            from .evaluation.plan import ExperimentSpec
+            selected=ExperimentSpec.parse(json.loads(manifest_path.read_text())['experiment'])
+            from .evaluation.comparison_custody import Comparison
+            controls=(Comparison(selected,{},client,deadline,permission_profile=repeated.permission_profile,controls=True)
+                if repeated.permission_profile is not None else None)
+            with controls or contextlib.nullcontext():
+                validated=validate_manifest(manifest_path,baseline,frozen,paths,runner,remaining,used_heldout,
+                    grader_backend=grading,experiment_spec=selected,control_custody=controls)
+            if validated is None:
+                result.update(status='requires_intervention',reason='permission_qualification_not_met')
+                break
+            args._prerequisite_scope.bind(manifest_path,baseline,frozen)
+            if permission_audit is not None and grading.permission_qualification()['qualification']!='qualified':
+                result.update(status='requires_intervention',reason='permission_qualification_not_met')
+                break
+            compared=repeated.execute(manifest_path,baseline,frozen,args,client,grading)
+            if any(file_state(args.project/name)!=value for name,value in original.items()):
+                raise ValueError('project harness changed during fixed comparison')
+            result.update(compared)
+            break
         if controlled:
             manifest_path,commands = construction.author(client,grading,baseline,role_views['evaluator_author'],
                 prepare/f'author-work-{attempt}',evaluation,deadline)

@@ -35,6 +35,12 @@ def _scope():
     return current()
 
 
+def _comparison():
+    from .comparison_custody import current
+    value=current()
+    return value if value is not None and value.active is not None else None
+
+
 def _enabled(): return _ACTIVE.get() is not None or _scope() is not None
 
 
@@ -138,11 +144,13 @@ class _Ticket:
         self.capture,self.event,self.requested=capture,event,tuple(argv)
         self.scope,self.scope_event=scope,scope_event
         self.stage=stage
+        self.comparison=_comparison()
+        self.comparison_event=self.comparison._admit((event or scope_event)['role'],stage) if self.comparison is not None else None
         self.nonce=_hash(('ahl.owned-dispatch-v1',secrets.token_hex(32)))
         _TICKETS[self]=self._state()
 
     def _state(self):
-        return encoded((id(self.capture),id(self.event),self.requested,id(self.scope),id(self.scope_event),self.nonce,self.stage))
+        return encoded((id(self.capture),id(self.event),self.requested,id(self.scope),id(self.scope_event),self.nonce,self.stage,id(self.comparison),id(self.comparison_event)))
 
 
 class _Fact:pass
@@ -150,7 +158,7 @@ class _Fact:pass
 
 def _read_fact(fact,scope,ticket=None):
     value=_FACTS.get(fact) if type(fact) is _Fact else None
-    if value is None or value[1]() is not scope or ticket is not None and value[0]() is not ticket:return None
+    if value is None or (value[1]() is not scope and (len(value)<4 or value[3]() is not scope)) or ticket is not None and value[0]() is not ticket:return None
     import json
     return json.loads(value[2])
 
@@ -158,7 +166,8 @@ def _read_fact(fact,scope,ticket=None):
 def _ticket_current(ticket):
     valid=(type(ticket) is _Ticket and _TICKETS.get(ticket)==ticket._state()
         and (ticket.capture is None or _current(ticket.capture))
-        and (ticket.scope is None or ticket.scope._valid()))
+        and (ticket.scope is None or ticket.scope._valid())
+        and (ticket.comparison is None or ticket.comparison_event is not None and ticket.comparison._valid()))
     if not valid and type(ticket) is _Ticket:
         if ticket.capture is not None:ticket.capture.lost=True
         if ticket.scope is not None:ticket.scope.lost=True
@@ -206,7 +215,7 @@ def _kernel_spawned(ticket, process, scratch, group, audit=None):
         if ticket.capture is not None:ticket.capture.lost=True
         if ticket.scope is not None:ticket.scope.lost=True
         return
-    _DISPATCHES[ticket] = process,scratch,group,audit,deepcopy(scratch.boundary_contract),deepcopy(scratch.boundary_work_identity),deepcopy(scratch.boundary_observation)
+    _DISPATCHES[ticket] = process,scratch,group,audit,deepcopy(scratch.boundary_contract),deepcopy(scratch.boundary_work_identity),deepcopy(scratch.boundary_observation),scratch.comparison_seed_sha256,deepcopy(scratch.comparison_inputs)
 
 
 def _kernel_finished(ticket, run, argv, exports):
@@ -219,7 +228,7 @@ def _kernel_finished(ticket, run, argv, exports):
         if capture is not None:capture.lost=True
         if scope is not None:scope.lost=True
         return
-    process,scratch,group,audit,boundary_contract,work_identity,boundary_observation = producer
+    process,scratch,group,audit,boundary_contract,work_identity,boundary_observation,seed_state,input_bundles = producer
     attestation = run['attestation']; image = attestation.get('runtime_image') or {}
     storage = attestation.get('storage_policy') or {}; cgroup = attestation.get('cgroup_v2') or {}
     from .permission_audit import canonical_argv, _take_completion
@@ -251,7 +260,12 @@ def _kernel_finished(ticket, run, argv, exports):
         requested_argv_sha256=_hash(list(ticket.requested)),binary_sha256=attestation['binary_sha256'],image_sha256=image['sha256'],
         input_digests=deepcopy(attestation['input_digests']),argv_sha256=_hash(argv),
         result_sha256=_hash(run),observed_at=datetime.now(timezone.utc).isoformat(),permission=permission,boundary=boundary)
-    fact=_Fact();_FACTS[fact]=(ref(ticket),ref(scope) if scope is not None else lambda:None,encoded(dict(value,exports=exports)))
+    if ticket.comparison is not None:
+        from .comparison_custody import bundle_binding
+        checked={name:bundle_binding(path,ticket.comparison.deadline) for name,path in scratch.comparison_roots.items()}
+        value.update(seed_state_sha256=seed_state,captured_state_sha256=scratch.comparison_captured_sha256,
+            input_bundles=input_bundles,input_bundles_unchanged=(input_bundles==checked if input_bundles is not None else None))
+    fact=_Fact();_FACTS[fact]=(ref(ticket),ref(scope) if scope is not None else lambda:None,encoded(dict(value,exports=exports)),ref(ticket.comparison) if ticket.comparison is not None else lambda:None)
     if capture is not None:
         event.update(value);capture.latest=run,event
         if event['role']=='executor':
@@ -259,6 +273,7 @@ def _kernel_finished(ticket, run, argv, exports):
             capture.executor=event['ordinal'],selected
         _PENDING[capture]=capture._state()
     if scope is not None:scope._observe(ticket,fact,run)
+    if ticket.comparison is not None:ticket.comparison._observe(ticket,fact,run)
 
 
 def _matches_grade(run,event,oracle_sha256,fixture_sha256,outcome):
@@ -268,6 +283,8 @@ def _matches_grade(run,event,oracle_sha256,fixture_sha256,outcome):
 
 
 def _artifact_grade(run, extracted, oracle_sha256, fixture_sha256, outcome):
+    comparison=_comparison()
+    if comparison is not None:comparison._grade(run,extracted,oracle_sha256,fixture_sha256,outcome)
     scope=_scope()
     if scope is not None:scope._grade(run,extracted,oracle_sha256,fixture_sha256,outcome)
     capture = _ACTIVE.get()

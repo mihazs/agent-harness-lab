@@ -115,6 +115,7 @@ def main(argv=None):
             command.add_argument('--source-project-sha256')
             command.add_argument('--source-scope-sha256')
         if name != 'analyze':
+            if name=='improve':command.add_argument('--experiment-request',type=Path,help='Explicit private fixed development/regression bank request; recommendation only')
             command.add_argument('--focus', help='Optional focus hint; discovery does not require one')
             command.add_argument('--agent', choices=('auto', 'codex', 'claude', 'responses'), default='auto')
             command.add_argument('--inference-settings', type=Path, help='Explicit settings/key-file and shared caps for controlled Responses roles')

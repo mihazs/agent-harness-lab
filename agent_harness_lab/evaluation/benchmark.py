@@ -35,6 +35,8 @@ def public_export_allowed(records):
                     or metadata.get('profile') in ('conditional-finite-bank-sequential-v1','ahl-linux-restricted-process-v1','ahl-implementation-prerequisites-v1','controller-trajectory-v1','diagnostic-corpus-v1','ahl-controller-live-v1','permission-results-v1','protected-diagnostic-access-v1','external-evaluation-data-v1','one-call-improvement-v1','controlled-development-derivation-v1','fixed-root-precision-v1','authenticated-artifact-review-v1','review-authority-policy-v1','conditional-final-bank-v1','owned-final-bank-controls-v1')
                     or metadata.get('format') in ('promptfoo-cases-json-v1','promptfoo-results-jsonl-v1','openai-evals-match-jsonl-v1')
                     or metadata.get('purpose')=='protected-diagnostic-access-v1'
+                    or metadata.get('profile') in ('ahl-improve-fixed-bank-v1','ahl-fresh-responses-comparison-v1')
+                    or any(key in metadata for key in ('request_sha256','workflow_request_sha256','responses_binding','responses_custody_sha256'))
                     or metadata.get('report_kind')=='controller_trajectory'
                     or metadata.get('outcome_mapping')=='artifact_and_required_v1'
                     or metadata.get('evidence_source')=='controller_verified_development_only'):
