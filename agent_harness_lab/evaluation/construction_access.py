@@ -70,6 +70,20 @@ def store_identity(path):
         return _hash([str(store.root),info.st_dev,info.st_ino])
 
 
+def current_store_identity(path):
+    """Read an initialized store's identity without acquiring its writer lock."""
+    from .oracle_history import HistoryStore
+    from .decision_receipts import private
+    store=HistoryStore(ledger._path(path))
+    private(store.root,directory=True)
+    for name in ('.store.json','.lock'):private(store.root/name)
+    marker,_=record(store.root/'.store.json',4096)
+    if marker!={'schema_version':1,'format':store.format} or type(marker.get('schema_version')) is not int:
+        raise ValueError('unsupported controller case store')
+    info=store.root.stat()
+    return _hash([str(store.root),info.st_dev,info.st_ino])
+
+
 def _resources(args):
     result={key:str(value) if isinstance(value,Path) else value for key in
         ('timeout','trial_limit','cgroup_root','image_root','image_sha256','disk_bytes','permission_audit')

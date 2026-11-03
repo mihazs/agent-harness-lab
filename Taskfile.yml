@@ -326,6 +326,10 @@ tasks:
     desc: Reject mutation during canonical asset capture before publication
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_construction_access.py" -k asset_capture_never_publishes -v'
+  test:evaluation:history-identity:
+    desc: Check read-only history identity inside an existing controller lock
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_construction_access.py" -k HistoryIdentityTests -v'
   test:evaluation:construction-access:
     desc: Verify canonical same-store construction, feedback custody and honest unmanaged boundaries
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'

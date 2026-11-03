@@ -15,7 +15,7 @@ from weakref import WeakKeyDictionary
 from agent_harness_lab.private_journal import encoded
 from .bank_requalification_domain import parse,PROJECT_INPUT_PROFILE,PROJECT_INPUT_PATHS
 from .comparison_custody import snapshot_pin
-from .construction_access import store_identity
+from .construction_access import store_identity,current_store_identity
 from .decision_receipts import engine
 from .integrity import read_regular
 from .working_state import WorkingState
@@ -116,7 +116,7 @@ def _resources(value):
     check_deadline(value['deadline']);declaration=value['declaration']
     if (pin(engine())!=declaration['engine_sha256']
             or tree_pin(assets()/'skills',value['deadline'])!=declaration['methodology_sha256']
-            or store_identity(value['history'].root)!=declaration['history_identity_sha256']
+            or current_store_identity(value['history'].root)!=declaration['history_identity_sha256']
             or any(source_pin(source,value['deadline'])!=source['snapshot_sha256'] for source in declaration['sources'])):
         raise ValueError('closed-input source, project, engine or history changed')
     if value['scope'] is not None and not value['scope']._valid():raise ValueError('closed-input workflow scope expired')
