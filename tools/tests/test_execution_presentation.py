@@ -77,6 +77,49 @@ class PresentationTests(unittest.TestCase):
         with patch.object(presenter.stderr,'write',side_effect=KeyboardInterrupt),self.assertRaises(KeyboardInterrupt):
             presenter.stage('preflight')
 
+    def test_public_postcommit_completion_interrupt_preserves_actual_commit_and_conflicts(self):
+        for change in ('none','body','mode','readback'):
+            with self.subTest(change=change):
+                fixture=one_call_fixture.OneCallTests();fixture.setUp()
+                try:
+                    class InterruptCompletion(TTY):
+                        def write(stream,value):
+                            if value=='AHL: completion':
+                                self.assertEqual(fixture.skill.read_bytes(),fixture.valid)
+                                if change=='body':fixture.skill.write_bytes(b'foreign edit')
+                                if change=='mode':fixture.skill.chmod(0o600)
+                                if change=='readback':fixture.skill.unlink();fixture.skill.mkdir(mode=0o700)
+                                raise KeyboardInterrupt
+                            return super().write(value)
+                    output=TTY()
+                    with redirect_stdout(output),redirect_stderr(InterruptCompletion()):
+                        code=main(['improve',str(fixture.project),'--repair-contracts'])
+                    if change=='readback':self.assertTrue(fixture.skill.is_dir())
+                    else:self.assertEqual(fixture.skill.read_bytes(),b'foreign edit' if change=='body' else fixture.valid)
+                    self.assertEqual(fixture.skill.stat().st_mode&0o777,0o600 if change=='mode' else 0o700 if change=='readback' else 0o640)
+                    records=list((fixture.root/'state/runs').glob('*/run-*/workflow.json'))
+                    result=json.loads(records[0].read_bytes())
+                    journal=one_call_fixture.Journal(fixture.project,result['journal'])
+                    self.assertEqual(journal.load(result['deployment'])['status'],'committed')
+                    self.assertEqual(result['status'],'applied' if change=='none' else 'requires_intervention')
+                    self.assertEqual(code,0 if change=='none' else 1)
+                    self.assertEqual(result['changed_files'],['.agents/skills/example/SKILL.md'])
+                    self.assertEqual(result['commit_observation'],'committed');self.assertIn('rollback',result)
+                finally:fixture.doCleanups()
+
+    def test_public_precommit_progress_interrupt_keeps_target_unmodified(self):
+        fixture=one_call_fixture.OneCallTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        class InterruptApplication(TTY):
+            def write(stream,value):
+                if value=='AHL: application':raise KeyboardInterrupt
+                return super().write(value)
+        with redirect_stdout(TTY()),redirect_stderr(InterruptApplication()):
+            code=main(['improve',str(fixture.project),'--repair-contracts'])
+        self.assertEqual(fixture.skill.read_bytes(),b'\xef\xbb\xbf'+fixture.valid)
+        self.assertEqual(fixture.skill.stat().st_mode&0o777,0o640);self.assertEqual(code,1)
+        result=json.loads(next((fixture.root/'state/runs').glob('*/run-*/workflow.json')).read_bytes())
+        self.assertEqual((result['status'],result['changed_files']),('interrupted',[]))
+
     def test_unknown_private_error_has_same_cli_and_skill_hint_without_invented_artifacts(self):
         fixture=workflow_fixture.WorkflowTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
         errors=[]

@@ -51,6 +51,10 @@ codes stay compatible; textual error diagnostics use safe categories and hints.
 Presentation does not grant authorization or broaden
 runtime, task-bank or budget policies. Offline init/doctor orientation retains its
 separate defaults and metadata-only readiness scope.
+If completion display is interrupted after a structural repair commits, the
+controller reads back its journal and expected inventory before reporting the
+outcome. A changed or unavailable target requires intervention and retains the
+deployment and rollback identity; it is never reported as an unapplied repair.
 
 For an already prepared controlled Responses environment, persist its settings
 and worker references in the [Responses configuration variant](onboarding.md#configure-controlled-responses-once).
