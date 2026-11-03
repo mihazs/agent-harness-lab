@@ -69,7 +69,7 @@ class SourceSpec(Contract):
 
     def __post_init__(self):
         self.validate(('root_sha256', 'project_sha256', 'scope_sha256'), {
-            'kind': ('local_file', 'local_git', 'api'),
+            'kind': ('local_file', 'local_git', 'api', 'controller'),
             'identity_provenance': ('unverified', 'trusted_git_remote', 'source_declared_id'),
             'auth_mode': ('none', 'configured')})
         label(self.provider); label(self.version)

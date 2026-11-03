@@ -73,7 +73,10 @@ instruction-inventory captures do not establish which configuration an execution
 loaded. Preview/status and the explicit private cache context in analyze/doctor
 already expose these declarations and missing fields. Verified execution-receipt
 production and verified cross-source joins remain separate work in
-#44/#45/#46/#53/#58. No receipt authorizes execution or grading.
+#44/#45/#46/#53/#58. The optional [live controller source](controller-sources.md)
+path observes actual pinned workers and fresh graders; its immediate verification
+expires with the live capability, and its journal still stores declarations.
+No receipt authorizes execution or grading.
 
 Fields and collections use fixed bounds: 16 supported identity names, eight evidence
 references or conflict alternatives per field, five scan dimensions and enumerated

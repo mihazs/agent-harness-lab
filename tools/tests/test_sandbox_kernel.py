@@ -698,6 +698,141 @@ class TrajectoryKernelTests(KernelFixture):
             self.assertTrue(action['backend_invoked']); self.assertTrue(action['containment_validated'])
         self.assertNotIn('SYNTHETIC_CONTROLLER_KEY',json.dumps(result))
 
+    def test_live_controller_sources_join_actual_workers_to_fresh_graders(self):
+        from dataclasses import replace
+        from test_trajectory_evaluation import TrajectoryEvaluationTests
+        from agent_harness_lab.evaluation import responses
+        from agent_harness_lab.sources.controller import SourceSink
+        from agent_harness_lab.sources.schema import digest as source_digest
+        fixture=TrajectoryEvaluationTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        runtime=self.root/'runtime'; frozen=pinned_runtime(runtime)
+        fixture.plan=replace(fixture.plan,runtime_hash=frozen['sha256']); fixture.freeze()
+        args=fixture.f.args
+        args.cgroup_root=self.cgroup_root; args.image_root=runtime
+        args.image_sha256=frozen['sha256']; args.disk_bytes=64*1024*1024
+        args.sandbox_backend=SandboxBackend(cgroup_root=self.cgroup_root,image_root=runtime,
+            image_sha256=frozen['sha256'],disk_bytes=args.disk_bytes)
+        sink=SourceSink(self.root/'source-journal.json',source_digest('synthetic-project'),source_digest('synthetic-scope'))
+        args.source_sink=sink
+        with patch.object(responses,'request',side_effect=fixture.f.transport), \
+                patch.object(fixture.f.runner,'execute',side_effect=AssertionError('native agents must not launch')):
+            self.assertEqual(fixture.f.runner.evaluate(args),1)
+        result=fixture.fixture.results()
+        for trial in result['trials']:
+            source=trial['source_capture']
+            self.assertEqual(source['status'],'observed',source)
+            live=source['live_verification']
+            self.assertEqual(live['statuses']['verified'],1)
+            fields={field['name']:field for field in live['verified_execution']['fields']}
+            self.assertEqual(fields['runtime_version']['value_sha256'],frozen['sha256'])
+            self.assertEqual(fields['runtime_version']['status'],'verified')
+            self.assertEqual(fields['runtime']['status'],'declared')
+            self.assertEqual(fields['runtime']['namespace'],'ahl.binary_path_inventory')
+            self.assertEqual(fields['runtime']['reason'],'no_effective_binding')
+            self.assertEqual(fields['grader_revision']['status'],'verified')
+            self.assertEqual(fields['project']['status'],'declared')
+            for name in ('effective_harness','effective_config','memory_snapshot','served_model','code_revision'):
+                self.assertNotIn(name,fields)
+            self.assertIsNone(live['independent_roots']); self.assertFalse(live['task_outcomes_verified'])
+        metadata=sink.store.capture(sink.source)
+        self.assertTrue(all(field.status=='declared' for identity in metadata.identities for field in identity.fields))
+        bounds={bound.dimension:bound for bound in metadata.coverage.scan_bounds}
+        self.assertEqual((bounds['records'].limit,bounds['records'].observed),(128,2))
+        self.assertEqual(bounds['bytes'].limit,256*1024); self.assertGreater(bounds['bytes'].observed,0)
+        last=next(task for task in fixture.fixture.manifest['tasks'] if task['id']==result['trials'][-1]['task'])
+        self.assertEqual((bounds['files'].limit,bounds['files'].observed),(100,len(last['artifacts'])))
+        self.assertIn('runtime',{field.name for field in metadata.coverage.missing_fields})
+        self.assertNotIn('SYNTHETIC_CONTROLLER_KEY',json.dumps(result))
+
+    def test_live_controller_sources_reject_swaps_mutations_loss_and_replay(self):
+        from copy import copy
+        from agent_harness_lab.evaluation import controller_receipts as owned
+        from agent_harness_lab.sources.controller import ControllerCapture, SourceSink, recheck
+        from agent_harness_lab.sources.execution import ExecutionIdentity, ExecutionMetadata, IdentityField
+        from agent_harness_lab.sources.schema import digest as source_digest
+        runtime=self.root/'runtime'; frozen=pinned_runtime(runtime)
+        backend=SandboxBackend(cgroup_root=self.cgroup_root,image_root=runtime,image_sha256=frozen['sha256'],disk_bytes=64*1024*1024)
+        oracle=self.root/'oracle'; oracle.mkdir()
+        (oracle/'expected.json').write_text('{}')
+        (oracle/'grade.py.txt').write_text("import json,pathlib,sys; ok=(pathlib.Path(sys.argv[1])/'result.txt').read_text()=='done'; "
+            "print(json.dumps(dict(schema_version=1,valid=True,outcome=ok,grader_id='synthetic-source',grader_version='v1'))); sys.exit(0 if ok else 1)")
+        oracle_hash=digest(oracle)
+        argv=['/usr/bin/python3','-I','-c',"from pathlib import Path; Path('result.txt').write_text('done')"]
+        for mode in ('valid','artifact_swap','copy','mutation','nonce','missing_result','deadline','input_changed','foreign_scope'):
+            with self.subTest(mode=mode),owned.session():
+                sink=SourceSink(self.root/(mode+'-journal.json'),source_digest('synthetic-project'),source_digest('synthetic-scope'))
+                capture=sink.begin(['result.txt'],time.monotonic()+15)
+                run=backend.run(argv,self.work,{},'executor',Limits(seconds=8),artifact_allowlist=['result.txt'])
+                self.assert_complete(run)
+                if mode=='artifact_swap': (self.work/'result.txt').write_text('swapped')
+                if mode=='missing_result':
+                    with self.assertRaises(ValueError): backend.run(argv,self.work,{},'executor',Limits(seconds=0),artifact_allowlist=['result.txt'])
+                regrade_artifacts(self.work,['result.txt'],oracle,oracle_hash,backend,limits=Limits(seconds=8))
+                if mode=='mutation': capture.data['grade']['oracle_sha256']='0'*64
+                if mode=='nonce': capture.data['attempt_sha256']='0'*64
+                if mode=='copy': capture=copy(capture)
+                if mode=='foreign_scope': sink=SourceSink(self.root/'foreign-journal.json',source_digest('foreign'),source_digest('synthetic-scope'))
+                if mode=='deadline':
+                    with patch.object(owned.time,'monotonic',return_value=capture.deadline+1): result=sink.finish(capture,True)
+                else: result=sink.finish(capture,mode!='input_changed')
+                self.assertEqual(result['status'],'observed' if mode=='valid' else 'unknown',result)
+                if mode=='valid':
+                    snapshot=ControllerCapture(sink.source,capture).read(sink.source)
+                    live=result['live_verification']
+                    identity=live['verified_execution']; fields=tuple(IdentityField.parse(field) for field in identity['fields'])
+                    declared=snapshot.metadata.identities[0]
+                    forged=ExecutionMetadata((ExecutionIdentity(declared.subject,fields),),snapshot.metadata.coverage)
+                    with self.assertRaises(ValueError): forged.validate(sink.source,snapshot.records)
+                    raw=json.loads(json.dumps(capture.read()))
+                    with self.assertRaises(ValueError): ControllerCapture(sink.source,raw).read(sink.source)
+                    altered=copy(capture); altered.data=dict(capture.data)
+                    with self.assertRaises(ValueError): ControllerCapture(sink.source,altered).read(sink.source)
+                    capture.data['attempt_sha256']='f'*64
+                    with self.assertRaises(ValueError): ControllerCapture(sink.source,capture).read(sink.source)
+                    self.assertTrue(sink.store.path.exists())
+                    self.assertTrue(all(field.status=='declared' for item in sink.store.capture(sink.source).identities for field in item.fields))
+                else: self.assertFalse(sink.store.path.exists())
+            if mode=='valid':
+                with self.assertRaises(ValueError): capture.read()
+
+    def test_live_controller_sources_do_not_verify_replaced_executable_inventory(self):
+        from agent_harness_lab.evaluation import controller_receipts as owned
+        from agent_harness_lab.sources.controller import SourceSink
+        from agent_harness_lab.sources.schema import digest as source_digest
+        runtime=self.root/'runtime'; frozen=pinned_runtime(runtime)
+        backend=SandboxBackend(cgroup_root=self.cgroup_root,image_root=runtime,image_sha256=frozen['sha256'],disk_bytes=64*1024*1024)
+        binary=self.root/'selected-bwrap'; shutil.copy2(backend.binary,binary); backend.binary=str(binary)
+        original=binary.read_bytes(); before=hashlib.sha256(original).hexdigest()
+        swapped=False; observer=owned._kernel_spawned
+        def observe(ticket,process,scratch,group):
+            nonlocal swapped
+            observer(ticket,process,scratch,group)
+            if ticket is not None and not swapped:
+                replacement=self.root/'replacement'; replacement.write_bytes(original+b'SYNTHETIC_INVENTORY_REPLACEMENT')
+                replacement.chmod(0o755); replacement.replace(binary); swapped=True
+        oracle=self.root/'oracle'; oracle.mkdir(); (oracle/'expected.json').write_text('{}')
+        (oracle/'grade.py.txt').write_text("import json; print(json.dumps(dict(schema_version=1,valid=True,outcome=True,grader_id='synthetic-source',grader_version='v1')))")
+        sink=SourceSink(self.root/'journal.json',source_digest('synthetic-project'),source_digest('synthetic-scope'))
+        with owned.session(),patch.object(owned,'_kernel_spawned',side_effect=observe):
+            capture=sink.begin(['result.txt'],time.monotonic()+15)
+            run=backend.run(['/usr/bin/python3','-I','-c',"from pathlib import Path; Path('result.txt').write_text('done')"],
+                self.work,{},'executor',Limits(seconds=8),artifact_allowlist=['result.txt'])
+            self.assert_complete(run)
+            regrade_artifacts(self.work,['result.txt'],oracle,digest(oracle),backend,limits=Limits(seconds=8))
+            result=sink.finish(capture,True)
+            self.assertEqual(result['status'],'observed',result)
+            fields={field['name']:field for field in result['live_verification']['verified_execution']['fields']}
+            if fields['runtime']['status']=='verified':
+                self.assertEqual(fields['runtime']['value_sha256'],before)
+            else:
+                self.assertIn(fields['runtime']['status'],('declared','unknown'))
+                if fields['runtime']['status']=='declared':
+                    self.assertNotEqual(before,fields['runtime']['value_sha256'])
+                    self.assertEqual(fields['runtime']['value_sha256'],hashlib.sha256(binary.read_bytes()).hexdigest())
+                    self.assertEqual(fields['runtime']['namespace'],'ahl.binary_path_inventory')
+                    self.assertEqual(fields['runtime']['reason'],'no_effective_binding')
+            self.assertEqual(fields['runtime_version']['status'],'verified')
+
 
 @unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
 class StorageKernelTests(KernelFixture):

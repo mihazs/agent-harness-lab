@@ -119,6 +119,14 @@ def agent_command(agent, binary, plugin=None, skills=()):
 
 
 def evaluate(args):
+    if not any(getattr(args,name,None) is not None for name in ('source_sink','source_cache','source_project_sha256','source_scope_sha256')):
+        return _evaluate(args)
+    application_modules()
+    from agent_harness_lab.evaluation.controller_receipts import session
+    with session(): return _evaluate(args)
+
+
+def _evaluate(args):
     started = time.monotonic()
     parent_deadline = getattr(args, 'parent_deadline', None)
     if parent_deadline is not None and (type(parent_deadline) not in (int, float) or not math.isfinite(parent_deadline)):
@@ -147,6 +155,18 @@ def evaluate(args):
         raise ValueError('resource boundaries currently require the offline executor')
     if controlled and any(value is None for value in (cgroup_root,image_root,image_sha256,disk_bytes)):
         raise ValueError('Responses execution requires explicit cgroup, pinned image and private disk profiles')
+    source_sink = getattr(args,'source_sink',None)
+    source_options = [getattr(args,name,None) for name in ('source_cache','source_project_sha256','source_scope_sha256')]
+    if source_sink is not None or any(value is not None for value in source_options):
+        application_modules()
+        from agent_harness_lab.sources.controller import SourceSink
+        if any(value is not None for value in source_options):
+            if source_sink is not None or any(value is None for value in source_options):
+                raise ValueError('controller source cache and expected project/scope are required together')
+            source_sink = SourceSink(*source_options)
+        if type(source_sink) is not SourceSink or args.agent not in ('offline','responses') or any(
+                value is None for value in (cgroup_root,image_root,image_sha256,disk_bytes)):
+            raise ValueError('controller sources require actual pinned offline worker and grader profiles')
     if controlled:
         application_modules()
         from agent_harness_lab.evaluation.integrity import contained, read_regular, tree as bounded_tree
@@ -161,6 +181,9 @@ def evaluate(args):
         admission(args, manifest)
     versions = {v: Path(getattr(args, v)).resolve() for v in ('baseline', 'candidate')}
     output = Path(args.output).resolve()
+    if source_sink is not None and any(source_sink.store.path.is_relative_to(root) or root.is_relative_to(source_sink.store.path)
+            for root in (manifest_path.parent,output,*versions.values(),Path(image_root).resolve())):
+        raise ValueError('controller source journal must remain outside all role inputs and run output')
     skills = manifest.get('skills', [])
     tasks = manifest['tasks']
     harness_paths = manifest.get('harness_paths', [])
@@ -427,6 +450,8 @@ def evaluate(args):
                 cohort_qualification='current_membership_only',publication_allowed=False)
     results['profile'] = plan.profile if plan else 'descriptive_smoke'
     results['automatic_promotion'] = False
+    if source_sink is not None:
+        results.update(controller_source_profile='ahl-controller-live-v1',publication_allowed=False)
     if trajectories:
         results.update(trajectory_profile=trajectory_assertions.PROFILE, publication_allowed=False,
             history_authority='unverified', trajectory_policy_digests={key:b['policy_sha256'] for key,b in trajectories.items()})
@@ -497,6 +522,7 @@ def evaluate(args):
             continue
         grade_workspace = workspace
         binding, trajectory_capture = trajectories.get(task['id']), None
+        source_capture = source_sink.begin(task['artifacts'],started+budget) if source_sink is not None else None
         if controlled:
             trial_id = record.get('trial_id') or 'trial-'+str(len(results['trials'])+1)
             if binding is not None: record['controller_trial_id'] = trial_id
@@ -511,6 +537,7 @@ def evaluate(args):
                 record.update(status='budget_exhausted' if isinstance(exc,TimeoutError) else 'execution_error',error=str(exc),
                     inference=client.report(),controller_actions=client.action_report())
                 if binding is not None: record_trajectory(record, binding, client.actions.trajectory)
+                if source_capture is not None: source_capture.cancel()
                 results['trials'].append(record)
                 continue
         elif offline:
@@ -520,6 +547,7 @@ def evaluate(args):
                                   Limits(seconds=min(timeout, remaining)), **extraction)
             except (ValueError, OSError, subprocess.SubprocessError) as exc:
                 record.update(status='execution_error', error=str(exc))
+                if source_capture is not None: source_capture.cancel()
                 results['trials'].append(record)
                 (output/'results.json').write_text(json.dumps(results, indent=2)+'\n')
                 continue
@@ -566,7 +594,9 @@ def evaluate(args):
             from agent_harness_lab.evaluation.permission_audit import qualification
             record['isolation_qualification']=qualification(backend.permission_reports[audit_offset:])
             results['isolation_qualification']=backend.permission_qualification()
-        verify_inputs(record)
+        source_inputs_unchanged = verify_inputs(record)
+        if source_capture is not None:
+            record['source_capture'] = source_sink.finish(source_capture,source_inputs_unchanged)
         results['trials'].append(record)
         (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
     results['elapsed_seconds'] = time.monotonic() - started
@@ -610,6 +640,9 @@ def main():
     parser.add_argument('--image-sha256', help='Preapproved rootfs content pin; required with --image-root')
     parser.add_argument('--permission-audit',choices=('permission-results-v1',),help='Require observed Linux x86_64 permission-result qualification for all offline roles')
     parser.add_argument('--disk-bytes', type=int, help='Aggregate tmpfs data capacity for offline roles or sandboxed graders; requires --cgroup-root')
+    parser.add_argument('--source-cache', type=Path, help='Explicit private journal for live controller observations')
+    parser.add_argument('--source-project-sha256', help='Expected declared project fingerprint for the controller source')
+    parser.add_argument('--source-scope-sha256', help='Expected declared source scope fingerprint; requires --source-cache')
     args = parser.parse_args()
     try:
         return evaluate(args)

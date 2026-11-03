@@ -137,6 +137,8 @@ class SandboxBackend:
                         + ([] if self.cgroup_root is not None else ['no aggregate cgroup controls']))
 
     def run(self, argv, workspace, inputs, role, limits=Limits(), *, artifact_allowlist=None, working_state=None):
+        from .controller_receipts import _kernel_started, _kernel_spawned, _kernel_finished
+        source_ticket = _kernel_started(role,argv)
         limits.validate()
         audit_capture=None
         if self.permission_audit:
@@ -146,11 +148,10 @@ class SandboxBackend:
         start = time.monotonic()
         permission_command=None
         if self.permission_audit:
-            from .permission_audit import hashed
+            from .permission_audit import hashed, canonical_argv
             if not isinstance(argv,(list,tuple)) or not argv or any(not isinstance(a,str) or '\0' in a for a in argv):
                 raise ValueError('permission audit requires an explicit argv')
-            requested=list(argv);effective=list(requested)
-            if effective and effective[0]=='/usr/bin/python3':effective.insert(1,'-B')
+            requested=list(argv);effective=canonical_argv(requested)
             permission_command=dict(requested_argv_sha256=hashed(requested),effective_argv_sha256=hashed(effective),
                 normalization='canonical_python_no_bytecode_v1' if effective!=requested else 'unchanged')
             argv=effective
@@ -194,7 +195,7 @@ class SandboxBackend:
                 audit=None
                 if self.permission_audit:
                     from .permission_audit import Observation
-                    audit=Observation(scratch.command,scratch.audit_execs,group,limits,start+limits.seconds,role)
+                    audit=Observation(scratch.command,scratch.audit_execs,group,limits,start+limits.seconds,role,**(dict(source_ticket=source_ticket) if source_ticket is not None else {}))
                     stack.callback(audit.close)
                 descriptors=tuple(([scratch.filter_fd] if scratch else [])+([audit.writer] if audit else []))
                 process=stack.enter_context(subprocess.Popen(audit.command if audit else scratch.command if scratch else command,
@@ -207,6 +208,7 @@ class SandboxBackend:
                     if audit:
                         audit.start(process);poll.register(audit.reader,selectors.EVENT_READ,2)
                     if scratch: scratch.start(group)
+                    _kernel_spawned(source_ticket,process,scratch,group,*([audit] if audit is not None else []))
                     for index, pipe in enumerate((scratch.receiver if scratch else process.stdout, process.stderr)):
                         os.set_blocking(pipe.fileno(), False)
                         poll.register(pipe, selectors.EVENT_READ, index)
@@ -269,7 +271,7 @@ class SandboxBackend:
         if self.permission_audit:
             if reason and audit_report['qualification']!='violated':audit_report.update(status='unknown',qualification='unknown')
             audit_capture.update(audit_report)
-        return dict(exit_code=process.returncode, status=reason or ('completed' if process.returncode == 0 else 'failed'),
+        result = dict(exit_code=process.returncode, status=reason or ('completed' if process.returncode == 0 else 'failed'),
                     stdout=bytes(buffers[0][:limits.output_bytes]).decode('utf-8', 'replace'),
                     stderr=bytes(buffers[1][:limits.output_bytes]).decode('utf-8', 'replace'),
                     elapsed_seconds=time.monotonic() - start, inputs_unchanged=unchanged,
@@ -283,3 +285,5 @@ class SandboxBackend:
                         permission_audit=audit_report,
                         permission_command=permission_command,
                         aggregate_disk_bound_verified=bool(storage_report and storage_report['verified']), inference_supported=False))
+        _kernel_finished(source_ticket,result,argv,scratch.export_fingerprints if scratch else None)
+        return result

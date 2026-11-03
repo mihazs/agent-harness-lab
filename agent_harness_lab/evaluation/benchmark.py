@@ -27,10 +27,11 @@ def public_export_allowed(records):
                     or any(key in metadata for key in ('controller_run_id','cohort_manifest_sha256','preservation','receipt_sha256',
                         'cohort_binding','controller_qualification','qualification_sha256','controller_grade',
                         'trajectory_profile','trajectory_analysis','policy_sha256','permission_audit','isolation_qualification',
+                        'controller_source_profile','source_capture','live_verification','verified_execution',
                         'classifier_selection_allowed','review_event_sha256','protected_access','protected_access_sha256'))
                     or metadata.get('algorithm') in ('private-preservation-decision-v1','private-controller-history-report-v1',
                         'guarded-preservation-search-v1','corrected-cohort-qualification-v1')
-                    or metadata.get('profile') in ('controller-trajectory-v1','diagnostic-corpus-v1','permission-results-v1','protected-diagnostic-access-v1')
+                    or metadata.get('profile') in ('controller-trajectory-v1','diagnostic-corpus-v1','ahl-controller-live-v1','permission-results-v1','protected-diagnostic-access-v1')
                     or metadata.get('purpose')=='protected-diagnostic-access-v1'
                     or metadata.get('report_kind')=='controller_trajectory'
                     or metadata.get('outcome_mapping')=='artifact_and_required_v1'

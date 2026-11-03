@@ -105,6 +105,7 @@ class PrivateWorkspace:
         self.seeded_bytes = None
         self.filter_fd = self.filter_policy = None
         self.receiver = self.sender = None
+        self.export_fingerprints = None
         self.command = self.layout(backend.command(['/usr/bin/python3', '-I', '-c', BOOTSTRAP], workspace, inputs, role), bootstrap=True)
         inner_argv = ['/usr/bin/python3', '-I', '-c', VERIFY, json.dumps(self.policy), json.dumps(argv)]
         inner = backend.command(inner_argv, workspace, inputs, role)
@@ -217,7 +218,10 @@ class PrivateWorkspace:
     def extract(self):
         self.timeout()
         if self.working_state is not None:
-            return self.working_state.capture(self.fd,self.deadline)
+            observed = self.working_state.capture(self.fd,self.deadline)
+            from .controller_receipts import _artifact_fingerprints
+            self.export_fingerprints = _artifact_fingerprints((name,raw) for name,_,raw in self.working_state.snapshot.files)
+            return observed
         result, total = {}, 0
         for name in self.outputs:
             parent = directory(self.fd, name.split('/')[:-1])
@@ -233,6 +237,8 @@ class PrivateWorkspace:
                     self.timeout()
                 finally: os.close(descriptor)
             finally: os.close(parent)
+        from .controller_receipts import _artifact_fingerprints
+        self.export_fingerprints = _artifact_fingerprints(result.items())
         for name, raw in result.items():
             self.timeout()
             target = contained(self.workspace, name)
