@@ -342,6 +342,9 @@ def _improve(args):
         if capability['status'] != 'available':
             result = dict(status='blocked', reason='inference_sandbox_unavailable' if controlled else 'grader_sandbox_unavailable', output=str(output), changed_files=[],
                 automatic_promotion=False, grader_capability=capability)
+            from .promotion.policy import implementation_prerequisites
+            result['implementation_prerequisites']=implementation_prerequisites()
+            result['implementation_prerequisites'].update(status='unknown',reason='capability_preflight_unavailable')
             write_json(output/'workflow.json', result)
             return result
     prepare = output / 'preparation'
@@ -358,6 +361,8 @@ def _improve(args):
         from .evaluation import construction, responses
         from .evaluation.working_state import WorkingState
         deadline = started+args.timeout
+        from .promotion.prerequisites import _begin
+        args._prerequisite_scope=_begin(baseline,grader_options['image_sha256'],deadline)
         settings,settings_hash = responses.read_settings(inference_path)
         role_views = construction.views(data,assets(),prepare/'role-inputs',deadline)
         construction.proposer_seed(candidate,prepare/'proposer-work-0',deadline)
@@ -532,6 +537,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             if not unchanged(args):
                 raise ValueError("project configuration changed during improvement")
             check_scope(args, proposed)
+        prerequisite_scope=getattr(args,'_prerequisite_scope',None)
+        if prerequisite_scope is not None:prerequisite_scope.bind(manifest_path,baseline,frozen)
         options = argparse.Namespace(manifest=str(manifest_path), baseline=str(baseline),
             candidate=str(frozen), output=str(output / f'evaluation-{attempt}'),
             agent=agent, codex=args.codex, claude=args.claude, parent_deadline=started + args.timeout)
@@ -542,6 +549,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             options.inference_settings = inference_path
             options.inference_client = client
             options.sandbox_backend = grading
+        for name in ('source_sink','source_cache','source_project_sha256','source_scope_sha256'):
+            if getattr(args,name,None) is not None:setattr(options,name,getattr(args,name))
         runner.evaluate(options)
         evaluated = json.loads((Path(options.output) / 'results.json').read_text())
         if hasattr(args, 'project_settings'):
@@ -587,8 +596,6 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             result['plan'] = str(output / 'change-plan.json')
             result['status'] = 'inconclusive'
             result['recommendation'] = 'candidate_requires_independent_certification'
-            result['blocked_prerequisites'] = ['role_isolation', 'audited_task_lineage',
-                                               'repeated_final_evaluation', 'effective_runtime_verification']
             break
         if candidate_pass and controls_pass and evaluated['inputs_unchanged']:
             result['status'] = 'no_change'
@@ -598,13 +605,19 @@ All bundles and controls stay outside task fixtures; no grader command is execut
     if client is not None:
         result['inference'] = client.report()
         result['automatic_promotion'] = False
+    from .promotion.policy import implementation_prerequisites
+    result['implementation_prerequisites']=implementation_prerequisites(getattr(args,'_prerequisite_scope',None))
+    if result.get('recommendation')=='candidate_requires_independent_certification':
+        result['blocked_prerequisites']=[name for name,value in result['implementation_prerequisites']['mandatory_certification'].items()
+            if value['status']!='verified']
+    result['automatic_promotion']=False
     write_json(output / 'workflow.json', result)
     return result
 
 
 def _run_improvement(args):
     """Persist truthful completion even when a run is interrupted or raises."""
-    for name in ('_run_output','_permission_backend'):
+    for name in ('_run_output','_permission_backend','_prerequisite_scope'):
         if hasattr(args,name):delattr(args,name)
     try:
         from .one_call import contracts, preflight, check_configuration
@@ -637,6 +650,11 @@ def _run_improvement(args):
             result['automatic_promotion']=False
         if isinstance(exc, ConnectionError) and getattr(args,'agent',None) != 'responses':
             result['failure_class'] = 'transient_infrastructure'
+        from .promotion.policy import implementation_prerequisites
+        scope=getattr(args,'_prerequisite_scope',None)
+        if scope is not None:scope.cancel()
+        result['implementation_prerequisites']=implementation_prerequisites(getattr(args,'_prerequisite_scope',None))
+        result['automatic_promotion']=False
         output = getattr(args, '_run_output', None)
         if output:
             result['output'] = str(output)
@@ -646,6 +664,9 @@ def _run_improvement(args):
         if not isinstance(exc, Exception):
             raise
         raise
+    finally:
+        scope=getattr(args,'_prerequisite_scope',None)
+        if scope is not None:scope.end()
 
 
 def improve(args):
