@@ -122,6 +122,7 @@ def main(argv=None):
             command.add_argument('--source-project-sha256')
             command.add_argument('--source-scope-sha256')
         if name != 'analyze':
+            command.add_argument('--json',action='store_true',help='Keep machine-readable JSON even in a terminal')
             if name=='improve':command.add_argument('--experiment-request',type=Path,help='Explicit private fixed development/regression bank request; recommendation only')
             command.add_argument('--focus', help='Optional focus hint; discovery does not require one')
             command.add_argument('--agent', choices=('auto', 'codex', 'claude', 'responses'), default='auto')
@@ -143,6 +144,8 @@ def main(argv=None):
             command.add_argument('--watch-budget', type=int, help='Total execution seconds per evidence/configuration (default: timeout)')
             command.add_argument('--once', action='store_true', help='Check once then exit')
     args = parser.parse_args(argv)
+    from .presentation import Presentation
+    args._presentation=Presentation(force_json=args.command=='analyze' or getattr(args,'json',False))
     if skill_invocation:args._invocation_origin='skill'
     from agent_harness_lab.workflow import analyze_project, improve, watch
     try:
@@ -161,13 +164,14 @@ def main(argv=None):
             if args.timeout <= 0:
                 raise ValueError('timeout must be positive')
             result = improve(args)
-        print(json.dumps(result, indent=2))
+        args._presentation.finish(result)
         from agent_harness_lab.monitoring.state import exit_code
         return exit_code(result['status'])
     except NotImplementedError:
         parser.exit(3, 'ahl: required filesystem capabilities unavailable; no unsafe fallback\n')
     except (ValueError, OSError, TypeError, KeyError) as exc:
-        parser.exit(2, f'ahl: {exc}\n')
+        args._presentation.error(exc,getattr(args,'_run_output',None))
+        raise SystemExit(2) from None
 
 
 if __name__ == '__main__':

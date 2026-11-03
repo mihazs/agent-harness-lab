@@ -2,6 +2,23 @@ version: '3'
 vars:
   PYTHON: '{{default "python3" .PYTHON}}'
 tasks:
+  test:execution:presentation:
+    desc: Verify actual workflow presentation and configured Codex/Claude entrypoints
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    cmds:
+      - task: test:workflow:repeated
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          REPEATED_TEST_PATTERN: test_execution_presentation.py
+      - task: test:workflow:repeated
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          REPEATED_TEST_PATTERN: test_execution_runtime_entry.py
   test:skill-invocation:
     desc: Execute installed skill entry routing and managed-child denial contracts
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'

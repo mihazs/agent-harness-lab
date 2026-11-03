@@ -33,6 +33,25 @@ No manual analyze/manifest/evaluate sequence is required. Select `--agent codex`
 or `--agent claude` if both runtimes are available. Authentication remains the
 runtime's responsibility; AHL does not inspect credential contents.
 
+Interactive terminals show concise outcomes, changed-file counts, artifact
+locations and the next supported action. Stage messages on stderr follow actual
+workflow transitions; they do not estimate progress with a timer. Observed budget
+figures name the stage where the existing parent clock was sampled. Request
+attempts, when measured, are distinct from billed usage and paid trial counts;
+unobserved costs remain unknown.
+
+Redirected/noninteractive output retains the existing JSON contract. Use
+`ahl improve . --json` to force JSON in a terminal too. `ahl watch . --once --json`
+and `ahl skills invoke . --json` use the same renderer and execution path. Human
+output omits private instruction/evidence bodies, diagnostic payloads and usage
+lists. Known execution blockers name the appropriate next action; unknown failures
+now redact exception text in both human and JSON modes. They refer to private
+artifacts when a run created them, otherwise to doctor/help. JSON stdout and exit
+codes stay compatible; textual error diagnostics use safe categories and hints.
+Presentation does not grant authorization or broaden
+runtime, task-bank or budget policies. Offline init/doctor orientation retains its
+separate defaults and metadata-only readiness scope.
+
 For an already prepared controlled Responses environment, persist its settings
 and worker references in the [Responses configuration variant](onboarding.md#configure-controlled-responses-once).
 Then plain `ahl improve .` resolves that pipeline without a native agent

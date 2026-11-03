@@ -141,7 +141,8 @@ class SkillInvocationTests(unittest.TestCase):
         with patch.object(workflow,'_improve',side_effect=fail) as controller:
             code,stdout,stderr=self.invoke(['skills','invoke',str(fixture.project),'--agent','codex','--codex',str(fixture.agent),'--timeout','10'])
         self.assertEqual(controller.call_count,1)
-        self.assertEqual((code,stdout),(2,''));self.assertIn('synthetic interrupted validation',stderr)
+        self.assertEqual((code,stdout),(2,''))
+        self.assertNotIn('synthetic interrupted validation',stderr);self.assertIn('private run artifacts',stderr)
         records=list((fixture.root/'state/runs').glob('*/run-*/workflow.json'))
         self.assertEqual(len(records),1);self.assertEqual(json.loads(records[0].read_text())['status'],'invalid_input')
         self.assertEqual((fixture.project/'AGENTS.md').read_text(),'bad')

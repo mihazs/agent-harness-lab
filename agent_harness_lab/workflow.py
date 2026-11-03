@@ -357,6 +357,7 @@ def adopt(project, baseline, candidate, original, proposed):
 
 def _improve(args):
     from agent_harness_lab.cli import assets, evaluator
+    from .presentation import stage
     from .one_call import invocation_context
     if args.timeout <= 0:
         raise ValueError('timeout must be positive')
@@ -392,6 +393,7 @@ def _improve(args):
         blocked=prepare_bank(application_session,output)
         if blocked is not None:
             blocked['output']=str(output);write_json(output/'workflow.json',blocked);return blocked
+    stage(args,'evidence',remaining=remaining)
     data = evidence(args, output)
     grading = None
     permission_audit=getattr(args,'permission_audit',None)
@@ -492,6 +494,7 @@ def _improve(args):
             result.update(status='budget_exhausted', reason='shared_trial_budget_exhausted')
             break
         trials_left -= 2
+        stage(args,'proposal',remaining=remaining,client=client)
         proposal_folder = prepare / f'proposal-{attempt}'
         proposal_folder.mkdir()
         proposal_path = proposal_folder / 'proposal.json'
@@ -604,6 +607,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                 raise ValueError('project harness changed during fixed comparison')
             result.update(compared)
             break
+        stage(args,'evaluation',remaining=remaining,client=client)
         if controlled:
             if access is None:
                 manifest_path,commands = construction.author(client,grading,baseline,role_views['evaluator_author'],
@@ -657,7 +661,6 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if runner.digest(frozen) != frozen_hash or runner.digest(baseline) != baseline_hash:
             raise ValueError('Evaluation construction changed frozen harness inputs')
         (validate_manifest if access is None else access.validate_manifest)(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, grader_backend=grading)
-
         prerequisite_scope=getattr(args,'_prerequisite_scope',None)
         if prerequisite_scope is not None:prerequisite_scope.bind(manifest_path,baseline,frozen)
         manifest = json.loads(manifest_path.read_text())
@@ -683,6 +686,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             options.sandbox_backend = grading
         for name in ('source_sink','source_cache','source_project_sha256','source_scope_sha256'):
             if getattr(args,name,None) is not None:setattr(options,name,getattr(args,name))
+        stage(args,'comparison',remaining=remaining,client=client)
         runner.evaluate(options)
         evaluated = json.loads((Path(options.output) / 'results.json').read_text())
         if hasattr(args, 'project_settings'):
@@ -765,14 +769,16 @@ All bundles and controls stay outside task fixtures; no grader command is execut
     if access is not None:
         result['construction_access']=access.report()
         result['publication_allowed']=False
+    stage(args,'completion',remaining=remaining,client=client)
     write_json(output / 'workflow.json', result)
     return result
 
 
 def _blocked_improvement(args,reason):
+    from .presentation import next_action
     output=output_dir(args)
     result=dict(status='blocked',reason=reason,output=str(output),changed_files=[],
-        remediation='Select a supported runtime/profile and budget; see ahl improve --help')
+        remediation=next_action(reason,'blocked'))
     write_json(output/'workflow.json',result);return result
 
 
@@ -786,6 +792,8 @@ def _run_improvement(args, *, parent_started=None):
         if hasattr(args,name):delattr(args,name)
     if managed: args._construction_started=started
     if configured:args._configured_started=started
+    from .presentation import stage
+    stage(args,'preflight')
     try:
         from .one_call import contracts, preflight, check_configuration,conditional_selection
         check_configuration(args)
@@ -961,7 +969,11 @@ def watch(args):
                     if managed and os.getpid()!=issuer: raise ValueError('watch completion requires its actual issuer process')
                     state = checkpoint_state.finish(state, result, time.time(), time.monotonic() - started, delay, random.random())
                     write_json(checkpoint, state)
-                    print(json.dumps(result), flush=True)
+                    presentation=getattr(args,'_presentation',None)
+                    if presentation is None:
+                        from .presentation import Presentation
+                        presentation=Presentation(force_json=True)
+                    presentation.finish(result,compact=True)
                 status = state['disposition'] if state else 'incomplete'
             if args.once or status == 'interrupted':
                 return exit_code(status)

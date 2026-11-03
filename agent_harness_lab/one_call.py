@@ -136,6 +136,8 @@ def contracts(args):
     if getattr(args, 'experiment_request', None) is not None:
         raise ValueError('contract repair and repeated experiment requests are separate modes')
     started = time.monotonic()
+    from .presentation import stage
+    remaining=lambda:args.timeout-(time.monotonic()-started)
     output = output_dir(args)
     baseline, candidate = output/'baseline', output/'candidate'
     original = snapshot(args.project, baseline, allowed_paths=allowed_paths(args))
@@ -221,10 +223,12 @@ def contracts(args):
                 if time.monotonic()-started >= args.timeout:
                     raise TimeoutError('Contract repair budget exhausted before target mutation')
             permitted()
+            stage(args,'application',remaining=remaining)
             receipt = journal._execute(record['deployment'],pre_write=permitted)
             result.update(status='applied', changed_files=sorted(o['path'] for o in operations),
                           deployment=receipt['deployment'], journal=str(journal.folder),
                           rollback=f'ahl rollback {receipt["deployment"]} --project {shlex.quote(str(args.project))}')
+    stage(args,'completion',remaining=remaining)
     write_json(output/'workflow.json', result)
     return result
 

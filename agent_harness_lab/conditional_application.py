@@ -551,6 +551,8 @@ def execute(session):
     data['reservation_id']=reservation['reservation_id'];data['phase']='final_reserved'
     data['scope'].bind(data['manifest'],data['baseline'],data['candidate'])
     data['phase']='final_running'
+    from .presentation import stage
+    stage(args,'final evaluation')
     result=history.run(data['manifest'],data['baseline'],data['candidate'],cgroup_root=args.cgroup_root,
         image_root=args.image_root,image_sha256=args.image_sha256,disk_bytes=args.disk_bytes,
         budget_seconds=min(300,deadline-time.monotonic()),parent_deadline=deadline,access_reservation=data['reservation_id'],
@@ -588,6 +590,7 @@ def execute(session):
     after_project=Snapshot(before_project.root_mode,before_project.directories,tuple(
         (name,after['mode'],base64.b64decode(after['content'],validate=True)) if name=='AGENTS.md' else (name,mode,raw)
         for name,mode,raw in before_project.files))
+    stage(args,'application')
     journal=Journal(args.project,state_root()/'promotions'/identity(args.project))
     record_value=journal.prepare({'AGENTS.md':before},{'AGENTS.md':after},dict(source=POLICY,plan_sha256=data['plan'].sha256,
         conditional_final_run=final['run_id'],general_certification=False))
