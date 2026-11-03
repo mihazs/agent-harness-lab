@@ -611,6 +611,11 @@ def _evaluate(args):
         grade_workspace = workspace
         binding, trajectory_capture = trajectories.get(task['id']), None
         source_capture = source_sink.begin(task['artifacts'],started+budget) if source_sink is not None else None
+        comparison=getattr(args,'_comparison_custody',None)
+        if comparison is not None:
+            from agent_harness_lab.evaluation.comparison_custody import current
+            if current() is not comparison:raise ValueError('current comparison custody required')
+            comparison.before(scheduled,workspace,root,client)
         if controlled:
             trial_id = record.get('trial_id') or 'trial-'+str(len(results['trials'])+1)
             if binding is not None: record['controller_trial_id'] = trial_id
@@ -686,6 +691,7 @@ def _evaluate(args):
         source_inputs_unchanged = verify_inputs(record)
         if source_capture is not None:
             record['source_capture'] = source_sink.finish(source_capture,source_inputs_unchanged)
+        if comparison is not None:comparison.after(record)
         results['trials'].append(record)
         (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
     results['elapsed_seconds'] = time.monotonic() - started
