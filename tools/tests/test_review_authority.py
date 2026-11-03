@@ -81,7 +81,7 @@ class ReviewAuthorityTests(fixtures.ReviewFixture):
         self.assertEqual(self.events(),before)
         self.assertEqual(self.store.show(self.case_id)['state'],'drafted')
 
-    def test_real_signed_review_admits_only_a_private_development_revision(self):
+    def admit_signed_review(self):
         path,signature=self.signed()
         result=self.store.review(self.case_id,path,signature_path=signature)
         self.assertEqual(result['state'],'reviewed')
@@ -103,9 +103,42 @@ class ReviewAuthorityTests(fixtures.ReviewFixture):
         self.assertTrue(admitted['current_eligible'])
         actual=self.store.root/'revisions'/admitted['revision_sha256']/'bank.json'
         self.assertFalse(validate(actual)['certification_eligible'])
+        return actual
+
+    def test_real_signed_review_admits_only_a_private_development_revision(self):
+        actual=self.admit_signed_review()
         before=self.events();self.policy.unlink()
         self.assertFalse(validate_admission(actual)['current_eligible'])
         self.assertFalse(self.store.show(self.case_id)['bank_admission'])
+        self.assertEqual(before,self.events())
+
+    def test_stale_signed_retry_keeps_parent_verification_deadline(self):
+        path,signature=self.signed()
+        self.store.review(self.case_id,path,signature_path=signature)
+        deadlines=[];verify=review_authority.verify;before=self.events()
+        def track(*args,**kwargs):
+            deadlines.append(kwargs.get('deadline'))
+            return verify(*args,**kwargs)
+        with patch.object(review_authority,'verify',side_effect=track):
+            with self.assertRaisesRegex(ValueError,'stale'):
+                self.store.review(self.case_id,path,signature_path=signature,budget_seconds=5)
+        self.assertTrue(deadlines)
+        self.assertTrue(all(value is not None for value in deadlines))
+        self.assertEqual(len(set(deadlines)),1)
+        self.assertEqual(before,self.events())
+
+    def test_accepted_history_invalid_state_keeps_one_nested_deadline(self):
+        self.admit_signed_review()
+        path=self.review_file();deadlines=[];verify=review_authority.verify;before=self.events()
+        def track(*args,**kwargs):
+            deadlines.append(kwargs.get('deadline'))
+            return verify(*args,**kwargs)
+        with patch.object(review_authority,'verify',side_effect=track):
+            with self.assertRaisesRegex(ValueError,'drafted case'):
+                self.store.review(self.case_id,path,budget_seconds=5)
+        self.assertGreaterEqual(len(deadlines),3)
+        self.assertTrue(all(value is not None for value in deadlines))
+        self.assertEqual(len(set(deadlines)),1)
         self.assertEqual(before,self.events())
 
     def test_unsigned_review_keeps_original_summary_and_event_shape(self):

@@ -108,7 +108,7 @@ class ReviewStore(PrivateJournal):
         if accepted is not None:
             from .bank_revisions import revision_path, validate_admission
             revision = accepted['payload']['revision_sha256']
-            checked = validate_admission(revision_path(self,revision)/'bank.json')
+            checked = validate_admission(revision_path(self,revision)/'bank.json',deadline=deadline)
             result.update(bank_revision_sha256=revision,bank_admission=checked['current_eligible'])
         return result
 
@@ -353,7 +353,7 @@ class ReviewStore(PrivateJournal):
             review=request_value(self,value)
         review_value(review, case_id); reviewer = review['reviewer']
         with self.locked():
-            case, inputs, events = self.opened(case_id); current = self.summary(case_id, inputs, events)
+            case, inputs, events = self.opened(case_id); current = self.summary(case_id, inputs, events,deadline=deadline)
             if review['expected_event_sha256'] != current['event_sha256'] or review['evidence_sha256'] != current['evidence_sha256']:
                 raise ValueError('stale review event/evidence identity')
             decision = review['decision']

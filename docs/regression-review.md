@@ -140,7 +140,8 @@ public-key/signature inputs, a fixed namespace, stripped environment, discarded
 output, and a bounded deadline. Missing OpenSSH returns `unsupported`; invalid
 signatures fail without an unsigned fallback. `review --budget-seconds` accepts
 values above zero through 60 (default 10).
-The same deadline covers verification during the final readback. If readback
+The same deadline covers initial state checks, nested authenticated admission
+history reads, and final readback; stale retries cannot reset it. If readback
 exhausts it after an event was committed, the blocked response leaves that
 recorded history intact; use `show` to inspect it rather than resubmitting.
 
