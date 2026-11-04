@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.11
+
+### Patch Changes
+
+- 4d08f26: Stop further controlled inference after a grader permission audit becomes violated or unknown, preserving separate artifact outcomes and existing schedule records.
+
 ## 0.76.10
 
 ### Patch Changes
