@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.4
+
+### Patch Changes
+
+- 422e6a5: Report privacy-safe collection stages and evidence counts on stderr while preserving JSON receipts on stdout.
+
 ## 0.76.3
 
 ### Patch Changes
