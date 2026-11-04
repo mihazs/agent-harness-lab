@@ -726,9 +726,9 @@ result grants permission to edit a file. Observed loading and ambient influence
 always remain unknown. A changed cwd, profile, HEAD, file content or mode invalidates
 the receipt. Consumers must also retain the enclosing source/project identity.
 
-The profile allows at most 32 cwd components, eight fallback basenames and a declared
-project instruction cap of 0–1 MiB. Files use the existing 1 MiB per-file and shared
-Git capture read/deadline bounds; non-UTF-8 files, links, nested repositories and
+The profile imposes no cwd-depth, fallback-name or instruction-byte ceiling of its
+own; only the optional declared `project_doc_max_bytes` and the enclosing Git
+capture's read/deadline bounds apply. Non-UTF-8 files, links, nested repositories and
 submodule crossings fail the capture. The collector does not guess native partial
 file truncation: when selected non-empty files and separators exceed the declared
 byte cap, resolution is blocked and affected applicability remains unknown. A
@@ -858,7 +858,8 @@ server efficacy or scientific independence.
 
 `sources.github.GitHubAPI` is an optional standard-library reader for one explicitly
 authorized GitHub.com repository. Construct `GitHubSelection(repo_id, issues=(...),
-pulls=(...))` with at most ten distinct ascending issue/PR numbers. Its
+pulls=(...))` with distinct ascending issue/PR numbers; the selection itself sets
+no count limit. Its
 `project_sha256` binds the native repository ID and its `sha256` binds the selection.
 Use `SourceSpec(kind="api", provider="github", version=SOURCE_VERSION, ...)` with
 the endpoint fingerprint as `root_sha256`, those project/scope fingerprints,
@@ -1026,8 +1027,8 @@ failure; they do not establish live GraphQL compatibility or diagnostic utility.
 
 ### Explicit immutable commit captures
 
-`GitHubSelection(..., schema_version=4, commits=(FULL_SHA, ...))` adds a bounded
-selection of up to ten unique, sorted full commit SHAs. Branch names, tags and
+`GitHubSelection(..., schema_version=4, commits=(FULL_SHA, ...))` adds an explicit
+selection of unique, sorted full commit SHAs with no count limit of its own. Branch names, tags and
 abbreviated SHAs are rejected. Commit selection enters the scope fingerprint;
 versions 1–3 retain their original serialization and requests. Select commits
 without issues/PRs, or alongside them. Public reads may remain unauthenticated;
