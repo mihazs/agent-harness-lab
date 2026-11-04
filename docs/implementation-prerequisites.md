@@ -50,8 +50,10 @@ Python contexts; normal fork does not inherit authority. Cleanup uses the origin
 private context token even when exposed scope fields are mutated. Copies, imported
 JSON, fake backend attestations and old/foreign contexts cannot supply authority.
 The scope uses the original parent deadline and rechecks its frozen inputs before
-reporting. It permits at most 128 dispatch admissions and a 256 KiB projected
-receipt body; limit loss stays unknown. The byte limit does not describe the full
+reporting. It permits at most 128 dispatch admissions and a 256 KiB receipt
+body, measured on the cached `canonical-compact-json-v1` bytes the scope compares
+on every read. Every save checks the bound; an oversized receipt is discarded, later
+admissions return nothing and limit loss stays unknown. The byte limit does not describe the full
 Python object graph or raw worker output. Reports remain private, including
 synthetic runs, and cannot be relabeled for public benchmark export.
 
