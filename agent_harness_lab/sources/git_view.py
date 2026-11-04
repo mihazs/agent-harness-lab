@@ -144,12 +144,13 @@ class Folder:
 
 
 class GitView:
-    def __init__(self, deadline, binary='/usr/bin/git'):
+    def __init__(self, deadline, binary='/usr/bin/git', *, limit_output=True):
         self.deadline, self.binary = deadline, Path(binary)
         if not self.binary.is_absolute() or not self.binary.is_file(): raise NotImplementedError('trusted Git binary unavailable')
         self.temporary = tempfile.TemporaryDirectory(prefix='ahl-git-')
         self.root = Path(self.temporary.name)
         self.output_bytes = 0
+        self.limit_output = limit_output
         self.env = dict(PATH='/usr/bin:/bin', LANG='C', GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull,
                         GIT_NO_LAZY_FETCH='1', GIT_OPTIONAL_LOCKS='0', GIT_TERMINAL_PROMPT='0',
                         GIT_NO_REPLACE_OBJECTS='1', GIT_ATTR_NOSYSTEM='1')
@@ -185,11 +186,12 @@ class GitView:
     def run(self, *arguments, data=None):
         if not arguments or arguments[0] not in ('--version', 'config', 'cat-file', 'rev-list', 'diff-tree', 'fsck'):
             raise ValueError('Git operation is not read-only allowlisted')
-        remaining = self.deadline-time.monotonic()
-        if remaining <= 0: raise TimeoutError('Git command budget exhausted')
+        remaining = None if self.deadline is None else self.deadline-time.monotonic()
+        if remaining is not None and remaining <= 0: raise TimeoutError('Git command budget exhausted')
         def limits():
-            resource.setrlimit(resource.RLIMIT_CPU, (max(1, math.ceil(remaining)), max(2, math.ceil(remaining)+1)))
-            resource.setrlimit(resource.RLIMIT_AS, (1024*1024*1024, 1024*1024*1024))
+            if remaining is not None:
+                resource.setrlimit(resource.RLIMIT_CPU, (max(1, math.ceil(remaining)), max(2, math.ceil(remaining)+1)))
+            if self.limit_output: resource.setrlimit(resource.RLIMIT_AS, (1024*1024*1024, 1024*1024*1024))
             resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))
         command = [str(self.binary), '--no-pager', '--no-optional-locks', '--literal-pathspecs',
                    '--git-dir='+str(self.root), *arguments]
@@ -204,20 +206,20 @@ class GitView:
                         os.set_blocking(child.stdin.fileno(), False)
                         events.register(child.stdin, selectors.EVENT_WRITE)
                     while events.get_map():
-                        left = self.deadline-time.monotonic()
-                        if left <= 0: raise TimeoutError('Git command timed out')
-                        for event, ready in events.select(min(left, .1)):
+                        left = None if self.deadline is None else self.deadline-time.monotonic()
+                        if left is not None and left <= 0: raise TimeoutError('Git command timed out')
+                        for event, ready in events.select(.1 if left is None else min(left, .1)):
                             if ready & selectors.EVENT_WRITE:
                                 pending = pending[os.write(event.fd, pending):]
                                 if not pending: events.unregister(child.stdin); child.stdin.close()
                             else:
-                                chunk = os.read(event.fd, min(65536, MAX_OUTPUT-len(result)+1))
+                                chunk = os.read(event.fd, min(65536, MAX_OUTPUT-len(result)+1) if self.limit_output else 65536)
                                 if not chunk: events.unregister(child.stdout)
                                 result.extend(chunk)
                                 self.output_bytes += len(chunk)
-                                if len(result) > MAX_OUTPUT or self.output_bytes > 64*1024*1024:
+                                if self.limit_output and (len(result) > MAX_OUTPUT or self.output_bytes > 64*1024*1024):
                                     raise ValueError('Git output budget exceeded')
-                    try: code = child.wait(timeout=max(.01, self.deadline-time.monotonic()))
+                    try: code = child.wait(timeout=None if self.deadline is None else max(.01, self.deadline-time.monotonic()))
                     except subprocess.TimeoutExpired: raise TimeoutError('Git command timed out') from None
                     if code != 0: raise ValueError('read-only Git operation failed')
                     return bytes(result)
