@@ -970,6 +970,12 @@ tasks:
     desc: Require zero clones in the Git index
     cmds:
       - '{{.PYTHON | shellQuote}} scripts/check_duplicates.py'
+  commits:check:
+    desc: Require Conventional Commits subjects for every commit in RANGE (default origin/main..HEAD)
+    vars:
+      RANGE: '{{default "origin/main..HEAD" .RANGE}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} scripts/check_commit_message.py --range {{.RANGE | shellQuote}}'
   duplication:report:
     desc: Require zero clones in working source
     cmds:
