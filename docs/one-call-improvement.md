@@ -55,6 +55,11 @@ Rollback preserves intervening edits by reporting a conflict. The deployment ID
 and journal location are included in the repair result. Runtime activation stays
 unknown. Plans and receipts contain private paths and must remain local.
 
+If recording the result fails or is interrupted after the journal commits, the
+controller reads back its journal and the exact expected inventory before
+reporting. A changed or unavailable target requires intervention and keeps the
+deployment and rollback identity; it is never reported as an unapplied repair.
+
 Configuration and deadline checks run at the owned journal's mutation checkpoints.
 If a check fails or execution is interrupted, exact owned writes are restored when
 their current snapshots still match the transaction. Foreign edits are preserved;
