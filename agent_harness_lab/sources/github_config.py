@@ -29,7 +29,9 @@ class GitHubConfigured:
         GitHubAPI(value['endpoint'], selection, **value.get('limits',{}))
         return source, value
 
-    def read(self, source):
+    reconciles_absence = True
+
+    def read(self, source, *, prior=None):
         current, value = self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)
         if current != source or not current.enabled: raise ValueError('GitHub configuration changed or is disabled')
         authorization = None
@@ -39,4 +41,4 @@ class GitHubConfigured:
         elif self.authorization_file is not None:
             raise ValueError('authorization file conflicts with the selected source')
         return GitHubAPI(value['endpoint'], GitHubSelection.parse(value['selection']),
-            authorization=authorization, **value.get('limits',{})).read(source)
+            authorization=authorization, **value.get('limits',{})).read(source, prior=prior)
