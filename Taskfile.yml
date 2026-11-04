@@ -901,14 +901,18 @@ tasks:
           REPEATED_TEST_PATTERN: test_effective_agents.py
           KERNEL_TEST_FILTER: InstructionProtocolKernelTests
   test:evaluation:recovery-gap:kernel:
+    desc: Inspect authenticated schedules with the existing isolated synthetic recovery fixture
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    vars:
+      SCOPE_ID:
+        sh: cat /proc/sys/kernel/random/uuid
+    env:
+      AHL_TEST_SYSTEMD_SCOPE: '1'
+      AHL_TEST_CGROUP_ROOT: ''
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - task: test:workflow:repeated:kernel
-        vars:
-          REPEATED_TEST_PATTERN: test_experiment_recovery_gap.py
-          KERNEL_TEST_FILTER: RecoveryHistoryTests
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=300 -- {{.PYTHON | shellQuote}} -m pytest -n 0 -k "experiment_recovery_gap and RecoveryHistoryTests"'
   test:evaluation:recovery-gap:
     desc: Probe durable trial binding and ambiguous-request refusal without provider calls
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -916,7 +920,7 @@ tasks:
       PYTHONPATH: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_experiment_recovery_gap.py" -v'
+      - '{{.PYTHON | shellQuote}} -m pytest -n {{default "auto" .TEST_WORKERS | shellQuote}} --dist worksteal -k experiment_recovery_gap'
   setup:
     desc: Install development dependencies and guarded Git hooks
     cmds:

@@ -212,12 +212,20 @@ class RecoveryHistoryTests(repeated.PublicFixture,kernel.KernelFixture):
         self.assertEqual(len(set(observed)),12)
         self.assertFalse(result['automatic_promotion'])
         store=HistoryStore(self.root/'output/private-history');run=result['controller_run_id']
+        historical=store.historical_plan(run)
+        realized=historical['realized_schedule']
+        self.assertEqual(realized['status'],'observed')
+        self.assertEqual(realized['trials'],schedule(ExperimentSpec.parse(historical['plan'])))
+        self.assertEqual(realized['schedule_sha256'],hashed(realized['trials']))
+        self.assertFalse(realized['publication_allowed'])
+        self.assertFalse(historical['publication_allowed'])
         case=store.checked(run)[0]
         target=case/'realized-schedule.json';original=target.read_bytes()
         try:
             changed=json.loads(original);changed['trials'][0]['trial_id']='forged'
             target.write_text(json.dumps(changed))
             with self.assertRaises(ValueError):store.checked(run)
+            with self.assertRaises(ValueError):store.historical_plan(run)
         finally:target.write_bytes(original)
         self.assertEqual(len(set(observed)),12)
         store.checked(run)
