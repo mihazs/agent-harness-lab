@@ -98,6 +98,85 @@ class AnalysisPipelineTests(unittest.TestCase):
         self.assertIn('current-source', receipt['next_action'])
         self.assertFalse((self.project/'ahl.json').exists())
 
+    def incident_corpus(self):
+        path = self.root/'incidents.json'
+        path.write_text(json.dumps([dict(incident_id='synthetic-incident', root_id='synthetic-root',
+            summary='Synthetic timeout observation', labels=['timeout'], evidence_refs=['synthetic:fixture'],
+            reviewer='synthetic-reviewer', provenance='reviewed_annotation', sampling='signal_enriched',
+            source_kind='synthetic', approved=True)]))
+        return path
+
+    def test_explicit_lexical_method_executes_and_keeps_retrieval_untrusted(self):
+        from agent_harness_lab.diagnostics.retrieval import LexicalIndex
+        original = LexicalIndex.query
+        with patch.object(LexicalIndex, 'query', autospec=True, side_effect=original) as dispatch:
+            code, receipt, err = self.invoke(rows=self.rows(), extra=[
+                '--incident-corpus', str(self.incident_corpus()), '--incident-query', 'timeout'])
+        self.assertEqual(code, 0)
+        dispatch.assert_called_once()
+        method = receipt['analysis']['algorithms'][-1]
+        self.assertEqual(method['id'], 'incident_retrieval')
+        self.assertEqual(method['execution'], 'completed')
+        self.assertEqual(method['outputs']['matches'], 1)
+        self.assertEqual(method['authority'], 'untrusted_evidence_only')
+        self.assertEqual(method['approval'], 'caller_declared_reviewed_approval_unverified')
+        self.assertNotIn('incident_retrieval', [row['id'] for row in receipt['analysis']['not_run']])
+        data = json.loads((self.root/'output/analysis.json').read_text())
+        retrieval = data['incident_retrieval']
+        self.assertEqual(retrieval['calibration'], 'not_a_correctness_oracle')
+        self.assertFalse(retrieval['promotion_authority'])
+        self.assertEqual(retrieval['results'][0]['evidence_refs'], ['synthetic:fixture'])
+        self.assertNotIn('Synthetic timeout observation', err + json.dumps(receipt))
+        self.assertIn('local lexical', (self.root/'output/report.md').read_text())
+        prepared = views(data, assets(), self.root/'retrieval-roles', time.monotonic()+30)
+        for folder in prepared.values():
+            summary = json.loads((folder/'analysis-summary.json').read_text())
+            self.assertEqual(summary['incident_retrieval'], retrieval)
+        provenance = dict(source_kind='synthetic', source_ref='synthetic:test', approved_publication=True, derived_from_private=False)
+        for facet in (retrieval, retrieval['results'][0], method):
+            for wrapper in (None, 'incident_retrieval', 'analysis', 'execution', 'receipt', 'context', 'binding'):
+                marked = dict(facet, publication_allowed=True, provenance=provenance)
+                record = marked if wrapper is None else dict(provenance=provenance, publication_allowed=True, **{wrapper:marked})
+                self.assertFalse(public_export_allowed([record]))
+
+    def test_no_match_or_empty_capture_does_not_skip_explicit_retrieval(self):
+        code, receipt, _ = self.invoke(rows=[], extra=[
+            '--incident-corpus', str(self.incident_corpus()), '--incident-query', 'unmatched'])
+        self.assertEqual(code, 0)
+        method = receipt['analysis']['algorithms'][-1]
+        self.assertTrue(method['selected'])
+        self.assertEqual(method['status'], 'completed')
+        self.assertEqual(method['outputs'], dict(matches=0))
+        self.assertEqual(receipt['analysis']['evidence_state'], 'empty')
+
+    def test_partial_or_unapproved_lexical_inputs_fail_before_collection(self):
+        path = self.incident_corpus()
+        invalid = self.root/'unapproved.json'
+        invalid.write_text(path.read_text().replace('true', 'false'))
+        for index, flags in enumerate((['--incident-corpus', str(path)], ['--incident-query', 'timeout'],
+                      ['--incident-corpus', str(path), '--incident-query', '  '],
+                      ['--incident-corpus', str(invalid), '--incident-query', 'timeout'])):
+            with self.subTest(flags=flags), patch('agent_harness_lab.workflow.collect') as collection:
+                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as rejected:
+                    main(['analyze', str(self.project), '--output', str(self.root/f'rejected-{index}'), *flags])
+                self.assertEqual(rejected.exception.code, 2)
+                collection.assert_not_called()
+
+    def test_lexical_declarations_require_valid_review_fields_and_empty_corpus_completes(self):
+        from agent_harness_lab.diagnostics.retrieval import contextual_search
+        path = self.incident_corpus()
+        valid = json.loads(path.read_text())[0]
+        for changes in (dict(approved='true'), dict(provenance='automatic'), dict(reviewer=''),
+                        dict(evidence_refs=[]), dict(labels='timeout'), dict(source_kind='unknown')):
+            with self.subTest(changes=changes):
+                path.write_text(json.dumps([dict(valid, **changes)]))
+                with self.assertRaises(ValueError):
+                    contextual_search(path, 'timeout')
+        path.write_text('[]')
+        result = contextual_search(path, 'timeout')
+        self.assertEqual(result['input_records'], 0)
+        self.assertEqual(result['results'], [])
+
     def test_private_execution_receipt_rejects_relabelled_export_and_supported_wrappers(self):
         _, result, _ = self.invoke(rows=self.rows())
         provenance = dict(source_kind='synthetic', source_ref='synthetic:test',
@@ -159,15 +238,18 @@ sys.stdin.read()
 context = json.loads(pathlib.Path('context.json').read_text())
 data = json.loads((pathlib.Path.cwd().parent/'analysis.json').read_text())
 assert data['analysis']['process_mining']['raw_edges']
+assert data['incident_retrieval']['results'][0]['authority'] == 'untrusted_evidence_only'
 (pathlib.Path(context['evaluation'])/'proposal.json').write_text('{"status":"no_change"}')
 print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
 ''')
         agent.chmod(0o700)
-        code, receipt, err = self.invoke('improve', self.rows(), ['--agent', 'codex', '--codex', str(agent), '--timeout', '30'])
+        code, receipt, err = self.invoke('improve', self.rows(), ['--agent', 'codex', '--codex', str(agent), '--timeout', '30',
+            '--incident-corpus', str(self.incident_corpus()), '--incident-query', 'timeout'])
         self.assertEqual(code, 0)
         self.assertEqual(receipt['status'], 'no_change')
         self.assertEqual(receipt['changed_files'], [])
         self.assertEqual(receipt['analysis']['algorithms'][0]['outputs']['raw_edges'], 2)
+        self.assertEqual(receipt['analysis']['algorithms'][-1]['outputs']['matches'], 1)
         self.assertIn('candidate_preparation', err)
         self.assertFalse(list((self.root/'output').glob('evaluation-*')))
         self.assertEqual((self.project/'AGENTS.md').read_text(), 'Synthetic project instructions\n')

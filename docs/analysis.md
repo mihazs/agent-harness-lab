@@ -108,11 +108,41 @@ metadata; the tool's publication policy still applies.
 
 | Capability | Current entrypoint / prerequisite | Default analysis? |
 | --- | --- | --- |
-| Lexical incident retrieval | `ahl incident-search`, explicitly approved reviewed corpus | No |
+| Lexical incident retrieval | Explicit `--incident-corpus` and `--incident-query`, or standalone `ahl incident-search` | Only when both inputs are supplied |
 | Classifier comparison | `ahl benchmark`, supplied labels and selected local models | No |
 | Paired baseline/candidate execution | Applicable `ahl improve` workflow or explicit evaluation/experiment | No model execution in read-only analysis |
 | Bounded candidate search | Guarded search APIs with explicit contracts | Not part of read-only analysis |
 | Automatic behavioral application | Independent certification and runtime prerequisites | Not available through the ordinary cooperative workflow |
+
+### Explicit incident retrieval
+
+`ahl analyze . --incident-corpus /private/incidents.json --incident-query "tool timeout"`
+adds the existing local lexical method to the capture portfolio. The same options
+apply to `ahl improve` and its evidence stage. No query is inferred from captures,
+no corpus is discovered, and retrieval makes no model/provider calls. Ordinary
+improvement execution retains its existing agent and evaluation requirements.
+Watch does not accept these options; its existing capture-change checkpoint remains
+unchanged. The receipt's capture evidence state still describes captured history,
+while the separate retrieval method reports completed corpus work even with no captures.
+
+The corpus is a JSON list of Incident records, each containing `incident_id`,
+`root_id`, `summary`, string lists `labels` and nonempty `evidence_refs`, `reviewer`,
+`provenance: "reviewed_annotation"`, `sampling: "random"` or `"signal_enriched"`,
+`source_kind: "synthetic"`, `"public"` or `"private"`, and boolean `approved: true`.
+These validated fields are caller declarations, not authenticated review or
+independence. Supplying a file does not establish approval. Missing, partial or
+invalid input fails explicitly; a valid empty corpus or zero matches completes
+retrieval and grants no correctness authority.
+
+Private `analysis.json` contains ranked summaries and evidence references; the
+execution receipt reports the corpus revision, query digest, record/match counts
+and actual completed method. Controlled improvement preparation receives the same
+untrusted results. Summaries are evidence, never instructions. Retrieval stays
+uncalibrated; root overlap with capture evidence and independence remain unknown,
+and matches never establish a mechanism, a vote or adoption authority. Contextual
+results and their marked facets remain blocked by the supported publication guards,
+including when synthetic or public corpus records were supplied. Generic standalone
+lexical retrieval retains its existing contract.
 
 The audit identified missing default graph integration and unclear method receipts,
 tracked in [#174](https://github.com/mihazs/agent-harness-lab/issues/174) and

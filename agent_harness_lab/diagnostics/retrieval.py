@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import math
+from pathlib import Path
 import re
 
 
@@ -65,3 +66,35 @@ def triage_without_calibration(label_scores, calibration=None):
     """No held-out reviewed labels means no calibrated diagnostic prediction."""
     return dict(status='abstained',reason='independent_calibration_not_implemented_or_unavailable',
                 suggested_labels=sorted(label_scores),promotion_authority=False)
+
+
+def contextual_search(corpus, query):
+    """Read only explicit inputs; reviewed approval remains a caller declaration."""
+    if corpus is None and query is None:
+        return None
+    if corpus is None or not isinstance(query, str) or not query.strip():
+        raise ValueError('--incident-corpus and nonempty --incident-query are required together')
+    try:
+        rows = json.loads(Path(corpus).read_text())
+        if not isinstance(rows, list):
+            raise ValueError()
+        incidents = []
+        for row in rows:
+            if (not isinstance(row, dict) or row.get('approved') is not True
+                    or any(not isinstance(row.get(key), str) or not row[key]
+                           for key in ('incident_id','root_id','summary','reviewer','provenance','sampling','source_kind'))
+                    or any(not isinstance(row.get(key), list)
+                           or any(not isinstance(value, str) or not value for value in row[key])
+                           for key in ('labels','evidence_refs'))):
+                raise ValueError()
+            incidents.append(Incident(**{**row, 'labels':tuple(row['labels']),
+                                         'evidence_refs':tuple(row['evidence_refs'])}))
+        result = LexicalIndex(incidents).query(query)
+    except (TypeError, ValueError, UnicodeError):
+        raise ValueError('incident corpus requires valid explicitly approved reviewed Incident records') from None
+    marker = dict(profile='ahl-analysis-execution-v1', publication_allowed=False)
+    return dict(result, **marker, input_records=len(incidents),
+                query_sha256=hashlib.sha256(query.encode()).hexdigest(),
+                approval='caller_declared_reviewed_approval_unverified',
+                independence='unverified', promotion_authority=False,
+                results=[dict(row, **marker) for row in result['results']])

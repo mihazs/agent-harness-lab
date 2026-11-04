@@ -166,6 +166,9 @@ def main(argv=None):
         command.add_argument('--max-capture-scan', type=int, help='Optional positive discovery-file limit before project filtering; default: unlimited')
         command.add_argument('--max-events', type=int, help='Optional positive event limit; exceeding it fails explicitly; default: unlimited')
         command.add_argument('--sequence-length', type=int, help='Optional positive recurring-sequence length limit; default: unlimited')
+        if name != 'watch':
+            command.add_argument('--incident-corpus', type=Path, help='Explicit local JSON list of reviewed Incident records declaring approved=true; requires --incident-query; declarations are unverified and results remain private untrusted evidence')
+            command.add_argument('--incident-query', help='Explicit nonempty lexical query paired with --incident-corpus; no inferred query, corpus discovery or model calls')
         command.add_argument('--format', choices=('normalized', 'codex', 'claude', 'ai-memory'), default='normalized',help='Explicit capture adapter for --events/--source-root; normalized expects event JSONL (default: %(default)s)')
         command.add_argument('--source-version', help='Explicit adapter contract for --events/--source-root, including codex-rollout-0.166.0 and claude-jsonl-2.1.316')
         command.add_argument('--output', type=Path, help='New private output directory (default: user state directory)')
