@@ -112,8 +112,14 @@ never read. The binary label is `true` for `task_failure` and `false` for
 `successful`. `external_failure` and `requirements_changed` remain unlabeled
 rather than becoming negatives, and `outcome_counts` reports them separately.
 `groups` reports rows, declared roots, repeated-root rows, the most rows for one
-root and roots with conflicting labels for each split. Root-level metrics count a
-repeated root once. Root independence remains `unverified`.
+root and roots with conflicting labels for each split. The `splits` metrics are
+row-weighted (`metric_weighting.splits: row`), as in the adapter profile: labeled
+counts, coverage, precision, recall and Brier count every row. Only
+`accepted_roots` and `root_accuracy_lower_95` group rows by root. `root_weighted`
+reports a Brier score that weights each labeled root once, averaging its own rows
+first. Roots with conflicting labels are excluded and counted in
+`conflicting_label_roots_excluded`, not averaged. Root independence remains
+`unverified`.
 
 Every report states `label_provenance_counts` for `adjudicated`, `single_review`
 and `adapter_smoke`, plus `reviewed_annotations` and `gold_labels: 0`. Corpus

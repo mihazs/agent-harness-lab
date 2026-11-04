@@ -162,6 +162,17 @@ class CorpusBenchmarkTests(unittest.TestCase):
         development = [r for r in rows if r['split'] == 'development']
         self.assertEqual(bench.measure(development, [.99]*len(development), .5)['accepted_roots'], 1)
 
+    def test_root_weighted_brier_counts_each_root_once_and_reports_conflicts(self):
+        rows = [dict(root_case_id=root, label=label) for root, label in (('a', True), ('a', True), ('b', False), ('c', True), ('c', False), ('d', None))]
+        result = bench.root_weighted(rows, [.9, .7, .2, .5, .5, .1])
+        self.assertAlmostEqual(result['brier'], ((.01+.09)/2+.04)/2)
+        self.assertEqual((result['roots'], result['conflicting_label_roots_excluded'], result['unlabeled_roots']), (2, 1, 1))
+        self.assertIsNone(bench.root_weighted([dict(root_case_id='c', label=True), dict(root_case_id='c', label=False)], [.5, .5])['brier'])
+        report = json.loads(self.run_cli(self.write(self.corpus())).stdout)
+        self.assertEqual(report['metric_weighting'], dict(splits='row', root_weighted='declared_root'))
+        self.assertEqual(report['root_weighted']['development']['conflicting_label_roots_excluded'], 1)
+        self.assertEqual(report['root_weighted']['train']['roots'], 2)
+
     def test_tampered_or_legacy_manifests_are_rejected(self):
         manifest = self.corpus(); path = self.write(manifest)
         self.assertEqual(development_export(manifest), manifest)

@@ -145,6 +145,25 @@ def measure(rows, probabilities, threshold):
                 brier=sum((p-r['label'])**2 for r, p in labeled)/len(labeled) if labeled else None)
 
 
+def root_weighted(rows, probabilities):
+    """Brier score with each labeled declared root weighted once; conflicting roots are excluded and counted."""
+    grouped = {}
+    for r, p in zip(rows, probabilities):
+        grouped.setdefault(r['root_case_id'], []).append((r.get('label'), float(p)))
+    scores, conflicting, unlabeled = [], 0, 0
+    for values in grouped.values():
+        labels = {label for label, _ in values if label is not None}
+        if len(labels) > 1:
+            conflicting += 1
+        elif not labels:
+            unlabeled += 1
+        else:
+            errors = [(p-label)**2 for label, p in values if label is not None]
+            scores.append(sum(errors)/len(errors))
+    return dict(brier=sum(scores)/len(scores) if scores else None, roots=len(scores),
+                conflicting_label_roots_excluded=conflicting, unlabeled_roots=unlabeled)
+
+
 def choose_threshold(rows, probabilities, target=.9):
     # Threshold selection sees calibration only; zero coverage is an explicit abstention.
     for step in range(50, 101):
@@ -414,7 +433,9 @@ def main():
                 root_independence=manifest['root_independence'], reviewer_independence='unverified',
                 label_authority='operator_attested', binary_label_mapping=BINARY_OUTCOMES,
                 outcome_counts={split: dict(Counter(r['outcome'] for r in rows if r['split'] == split)) for split in SPLITS},
-                partitions=partition_disclosure(rows),
+                partitions=partition_disclosure(rows), metric_weighting=dict(splits='row', root_weighted='declared_root'),
+                root_weighted={split: root_weighted([r for r in rows if r['split'] == split],
+                                                    [p for r, p in zip(rows, probabilities) if r['split'] == split]) for split in SPLITS},
                 corpus_limitations=manifest['limitations'])
             result['limitations'].append('Calibration, validation and certification partitions are not exported; '
                                          'without calibration roots every prediction abstains.')
