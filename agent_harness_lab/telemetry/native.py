@@ -36,7 +36,7 @@ def timestamp(value):
 
 
 def jsonl(folder, name, max_records, consume):
-    raw = folder.read(name, max(0, MAX_BYTES-folder.bytes))
+    raw = folder.read(name, MAX_BYTES)
     if raw is None: raise ValueError('native capture is unavailable')
     stream = io.BytesIO(raw); count = 0; partial = False
     for position in range(max_records+1):
@@ -70,7 +70,7 @@ def guarded(path, project, decoder, max_records):
     from ..sources.git_view import Folder
     if type(max_records) is not int or not 0 < max_records <= 100000: raise ValueError('invalid native capture record limit')
     path = Path(path).absolute()
-    with Folder(path.parent, time.monotonic()+10) as folder:
+    with Folder(path.parent, time.monotonic()+10, limit_total_bytes=False) as folder:
         rows, summary, sha256 = decoder(folder, path.name, project, max_records)
         records = []
         for record in correlated(rows, folder.check):

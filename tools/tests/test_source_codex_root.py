@@ -31,6 +31,15 @@ class NativeRootTests(unittest.TestCase):
 
     def snapshot(self): return self.f.reader().read(self.f.source)
 
+    def test_native_source_reports_total_bytes_without_declaring_an_aggregate_bound(self):
+        from agent_harness_lab.telemetry.native import MAX_BYTES
+        self.f.fixture.pad_capture(self.primary)
+        self.f.fixture.pad_capture(self.write('archives/rollout-2026-b.jsonl'))
+        reader = self.f.reader(); snapshot = reader.read(self.f.source)
+        self.assertTrue(snapshot.records)
+        self.assertGreater(reader.summary['bytes_read'], MAX_BYTES)
+        self.assertNotIn('bytes', {bound.dimension for bound in snapshot.metadata.coverage.scan_bounds})
+
     def test_root_cli_preview_import_recheck_and_cached_status_use_shared_journal(self):
         f = self.f; code, preview = f.invoke('preview'); self.assertEqual(code, 0)
         self.assertTrue(preview['checkpoint_ready']); self.assertEqual(preview['records'], 6)

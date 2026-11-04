@@ -52,6 +52,10 @@ class ClaudeNativeTests(unittest.TestCase):
 
     def capture(self, **options): return read(self.path, self.project, **options)
 
+    def test_native_capture_does_not_inherit_the_git_total_read_budget(self):
+        with patch('agent_harness_lab.sources.git_view.MAX_BYTES', 10):
+            self.assertTrue(self.capture()[0])
+
     def collect(self, **options): return collect(self.project, events=self.path, source_format='claude', source_version=VERSION, **options)
 
     def test_native_parallel_tools_compaction_usage_and_model_reports_are_content_free(self):

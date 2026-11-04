@@ -42,6 +42,10 @@ class ClaudeSourceTests(unittest.TestCase):
 
     def snapshot(self): return self.reader().read(self.source)
 
+    def test_native_source_file_does_not_inherit_git_total_read_limit(self):
+        with patch('agent_harness_lab.sources.git_view.MAX_BYTES', 10):
+            self.assertTrue(self.snapshot().records)
+
     def test_native_cli_preview_import_status_recheck_and_privacy_use_shared_journal(self):
         code, preview = self.invoke('preview'); self.assertEqual(code, 0)
         self.assertTrue(preview['checkpoint_ready']); self.assertEqual(preview['records'], 12)

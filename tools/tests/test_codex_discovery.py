@@ -152,10 +152,46 @@ class CodexDiscoveryTests(unittest.TestCase):
         self.assertEqual(self.coverage(result)['discovery']['unsafe_entries_skipped'], 3)
         self.assertEqual(result['analysis']['events'], 6)
 
-    def test_shared_byte_and_filesystem_entry_budgets_fail_closed(self):
+    def test_filesystem_entry_budget_still_fails_closed(self):
         self.write('rollout-2026-a.jsonl'); self.write('rollout-2026-b.jsonl')
-        with patch('agent_harness_lab.telemetry.codex_discovery.MAX_BYTES', 16), self.assertRaises(ValueError): self.collect()
         with patch('agent_harness_lab.sources.git_view.MAX_ENTRIES', 1), self.assertRaises(ValueError): self.collect()
+
+    def test_selected_captures_can_exceed_former_combined_read_limit(self):
+        from agent_harness_lab.telemetry.native import MAX_BYTES
+        for index in range(2):
+            self.fixture.pad_capture(self.write(f'rollout-2026-{index}.jsonl'))
+        result = self.collect(); discovery = self.coverage(result)['discovery']
+        self.assertEqual(discovery['accepted_files'], 2)
+        self.assertGreater(discovery['bytes_read'], MAX_BYTES)
+
+    def test_foreign_header_reads_have_no_combined_byte_ceiling(self):
+        from agent_harness_lab.telemetry.native import MAX_BYTES, MAX_LINE_BYTES
+        self.write('rollout-2000-own.jsonl')
+        foreign = deepcopy(self.rows[:1]); foreign[0]['payload']['cwd'] = str(self.root/'foreign')
+        for index in range(MAX_BYTES//MAX_LINE_BYTES+1):
+            path = self.write(f'rollout-2099-{index}.jsonl', foreign)
+            with path.open('ab') as stream: stream.truncate(MAX_LINE_BYTES)
+        discovery = self.coverage(self.collect())['discovery']
+        self.assertEqual(discovery['accepted_files'], 1)
+        self.assertEqual(discovery['foreign_files'], 65)
+        self.assertGreater(discovery['bytes_read'], MAX_BYTES)
+
+    def test_native_reads_opt_out_of_git_total_limit_without_changing_git_default(self):
+        self.write('rollout-2026-a.jsonl')
+        with patch('agent_harness_lab.sources.git_view.MAX_BYTES', 10):
+            with Folder(self.root, time.monotonic()+2) as folder:
+                with self.assertRaisesRegex(ValueError, 'byte budget'): folder.read('captures/rollout-2026-a.jsonl')
+            self.assertTrue(self.fixture.capture()[0])
+            self.assertTrue(self.collect()['analysis']['events'])
+
+    def test_oversized_header_is_not_admitted_for_a_full_read(self):
+        from agent_harness_lab.telemetry.native import MAX_LINE_BYTES
+        rows = deepcopy(self.rows[:1]); rows[0]['payload']['padding'] = 'x'*MAX_LINE_BYTES
+        self.write('rollout-2026-large-header.jsonl', rows)
+        discovery = self.coverage(self.collect())['discovery']
+        self.assertEqual(discovery['accepted_files'], 0)
+        self.assertEqual(discovery['unsupported_headers'], 1)
+        self.assertEqual(discovery['bytes_read'], MAX_LINE_BYTES)
 
     def test_prefix_reads_remain_bounded_and_do_not_relax_existing_full_read_admission(self):
         self.write('rollout-2026-a.jsonl')

@@ -2,7 +2,7 @@
 from datetime import datetime, timezone
 import time
 from ..evaluation.integrity import contained
-from ..telemetry.native import MAX_BYTES, correlated
+from ..telemetry.native import correlated
 from .execution import CoverageManifest, ExecutionIdentity, ExecutionMetadata, IDENTITY_FIELDS, IdentityField, MissingField, RecordRef, ScanBound
 from .schema import EvidenceRecord, digest
 from .snapshot import LocalExport, Snapshot
@@ -28,7 +28,7 @@ class NativeCapture(LocalExport):
         from .git_view import Folder
         path = contained(self.manifest.parent, selected['capture'])
         revisions = {}
-        with Folder(path.parent, time.monotonic()+10) as folder:
+        with Folder(path.parent, time.monotonic()+10, limit_total_bytes=False) as folder:
             rows, summary, sha256 = decoder(folder, path.name, project, selected['max_records'], revisions=revisions)
             events = tuple(correlated(rows, folder.check))
             snapshot = self.snapshot(source, descriptor, selected, project, events, summary, sha256, revisions, folder)
@@ -79,7 +79,7 @@ class NativeCapture(LocalExport):
         missing = tuple(MissingField(name, 'no_effective_binding') for name in IDENTITY_FIELDS
             if not identities or any(not any(f.name == name for f in identity.fields) for identity in identities))
         coverage = CoverageManifest(source.source_key, source.scope_sha256, source.scope_sha256, source.version, self.parser_versions[source.version],
-            (ScanBound('records', limit, scan['input_records']), ScanBound('files', selected.get('max_files', 1), files), ScanBound('bytes', MAX_BYTES, folder.bytes)),
+            (ScanBound('records', limit, scan['input_records']), ScanBound('files', selected.get('max_files', 1), files)),
             missing, gaps=('not_captured', 'no_effective_binding'), reported_completeness='partial',
             limit_reached=scan['input_records'] == limit or bool(scan.get('reached_limits')),
             truncated=summary['partial_tail'] or bool(scan.get('reached_limits')))
@@ -90,7 +90,7 @@ class NativeCapture(LocalExport):
         snapshot = Snapshot(sha256, tuple(records), metadata, graph, checkpoint_ready=ready)
         folder.check()
         self.verify_selection(source, descriptor, selected)
-        self.summary = dict(summary, checkpoint_ready=ready, source_identity='caller_declared')
+        self.summary = dict(summary, bytes_read=folder.bytes, checkpoint_ready=ready, source_identity='caller_declared')
         return snapshot
 
 

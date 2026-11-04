@@ -46,6 +46,12 @@ class CodexRolloutTests(unittest.TestCase):
     def write(self, rows=None):
         self.path.write_text(''.join(json.dumps(r)+'\n' for r in (self.rows if rows is None else rows)))
 
+    def pad_capture(self, path):
+        payload = dict(text='x'*(512*1024))
+        with path.open('a') as stream:
+            for ordinal in range(6, 72):
+                stream.write(json.dumps(self.row('future_native', payload, ordinal))+'\n')
+
     def capture(self):
         return read(self.path, self.project)
 
@@ -101,6 +107,11 @@ class CodexRolloutTests(unittest.TestCase):
         with self.assertRaises(ValueError): read(self.path, self.project, max_records=2)
         self.path.write_text(header+'x'*(1024*1024+1)+'\n')
         with self.assertRaises(ValueError): self.capture()
+
+    def test_individual_native_file_limit_still_rejects_oversized_capture(self):
+        from agent_harness_lab.telemetry.native import MAX_BYTES
+        with self.path.open('ab') as stream: stream.truncate(MAX_BYTES+1)
+        with self.assertRaisesRegex(ValueError, 'bounded single-link regular file'): self.capture()
 
     def test_symlinks_hardlinks_parent_links_and_mutating_files_are_rejected(self):
         with patch('agent_harness_lab.config.supported', return_value=False), self.assertRaises(NotImplementedError): self.capture()

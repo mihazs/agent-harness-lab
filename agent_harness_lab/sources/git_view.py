@@ -19,8 +19,9 @@ MAX_OUTPUT = 4*1024*1024
 
 
 class Folder:
-    def __init__(self, root, deadline):
+    def __init__(self, root, deadline, *, limit_total_bytes=True):
         self.root, self.deadline = Path(root).absolute(), deadline
+        self.limit_total_bytes = limit_total_bytes
         self.fd, self.bytes, self.entries, self.observed = None, 0, 0, {}
         self.unsafe_entries = 0
 
@@ -92,7 +93,8 @@ class Folder:
                 block = os.read(descriptor, min(65536, maximum-len(raw)+(0 if prefix else 1)))
                 if not block: break
                 raw.extend(block); self.bytes += len(block)
-                if len(raw) > maximum or self.bytes > MAX_BYTES: raise ValueError('Git input byte budget exceeded')
+                if len(raw) > maximum or self.limit_total_bytes and self.bytes > MAX_BYTES:
+                    raise ValueError('Git input byte budget exceeded')
             expected = min(info.st_size, maximum) if prefix else info.st_size
             if len(raw) != expected or self.stamp(os.fstat(descriptor)) != self.stamp(info):
                 raise ValueError('Git input changed during reading')

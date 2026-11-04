@@ -4,7 +4,7 @@ from contextlib import closing, contextmanager
 import json
 from pathlib import Path
 import time
-from .codex_rollout import MAX_BYTES, MAX_LINE_BYTES, VERSION, UPSTREAM_COMMIT, Projection, correlated, decode, invalid_constant, text
+from .codex_rollout import MAX_LINE_BYTES, VERSION, UPSTREAM_COMMIT, Projection, correlated, decode, invalid_constant, text
 from ..evaluation.integrity import unique_object
 from ..sources.schema import digest
 
@@ -29,7 +29,7 @@ def capture(root, project, *, session=None, max_files=100, max_scan_files=2000, 
     suppressed_usage = set()
     files, names, limits = [], [], []
     foreign = other_session = unsupported = headers = duplicates = consumed = 0
-    with Folder(root.parent, time.monotonic()+10) as folder:
+    with Folder(root.parent, time.monotonic()+10, limit_total_bytes=False) as folder:
         with closing(folder.walk(root.name, skip_unsafe=True)) as paths:
             for name in paths:
                 path = Path(name)
@@ -39,12 +39,9 @@ def capture(root, project, *, session=None, max_files=100, max_scan_files=2000, 
                 names.append(name)
         # Excluded headers do not become dependencies of the selected-file snapshot.
         for name in sorted(names, key=lambda n: (Path(n).name, n), reverse=True):
-            folder.check(); remaining = MAX_BYTES-folder.bytes
-            if remaining <= 0: raise ValueError('native discovery byte budget exceeded')
-            prefix = folder.read(name, min(MAX_LINE_BYTES, remaining), prefix=True)
+            folder.check()
+            prefix = folder.read(name, MAX_LINE_BYTES, prefix=True)
             headers += 1
-            if prefix is not None and b'\n' not in prefix and len(prefix) == remaining and remaining < MAX_LINE_BYTES:
-                raise ValueError('native discovery byte budget exceeded')
             try:
                 if prefix is None or b'\n' not in prefix: raise ValueError('native header unavailable')
                 header = json.loads(prefix.split(b'\n', 1)[0], object_pairs_hook=unique_object, parse_constant=invalid_constant)
