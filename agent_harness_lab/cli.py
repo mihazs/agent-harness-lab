@@ -142,7 +142,7 @@ def main(argv=None):
                 'Progress: aggregate stages, counts and elapsed time on stderr.\n'
                 'Configuration constrains runtime, scope and budgets; it does not grant authority.\n'
                 'Exit: 0 completed; 1 execution/interruption/budget; 2 invalid input; 3 blocked/inconclusive.\n'
-                +('No model/provider calls; default capture discovery is filtered to the selected project.\n' if name=='analyze' else
+                +('No inference calls; default discovery is project-filtered; --memory-manifest opts into scoped MCP reads.\n' if name=='analyze' else
                   'May invoke the selected agent/model and spend resources; use a trusted, authenticated runtime.\n')
                 +('Watch writes a private checkpoint and continues until stopped unless --once is set.\n' if name=='watch' else '')+
                 'Example: ahl '+name+' . '+('--events ./events.jsonl --format normalized' if name=='analyze' else '--agent codex --timeout 600'+(' --once' if name=='watch' else ''))))
@@ -150,6 +150,9 @@ def main(argv=None):
         selection = command.add_mutually_exclusive_group()
         selection.add_argument('--events', type=Path, help='Existing authorized capture file instead of home discovery; its JSONL schema is selected by --format/--source-version')
         selection.add_argument('--source-root', type=Path, help='Explicit native rollout directory; requires a pinned Codex profile')
+        if name == 'analyze':
+            selection.add_argument('--memory-manifest', type=Path, help='Explicit scoped ai-memory session-observation manifest with pinned server/tool schema; read-only network retrieval, no atomic snapshot guarantee')
+            command.add_argument('--authorization-file', type=Path, help='Existing private authorization header file for --memory-manifest; never printed or discovered automatically')
         command.add_argument('--session', help='Exact native thread ID within --source-root')
         command.add_argument('--max-captures', type=int, help='Optional positive matching-capture limit after project filtering; default: unlimited')
         command.add_argument('--max-capture-scan', type=int, help='Optional positive discovery-file limit before project filtering; default: unlimited')
@@ -193,6 +196,11 @@ def main(argv=None):
             raise ValueError('project must be an existing directory')
         args.project = args.project.resolve()
         if args.command == 'analyze':
+            if args.memory_manifest is not None:
+                if args.authorization_file is None or args.format != 'normalized' or args.source_version is not None or args.session is not None:
+                    raise ValueError('--memory-manifest requires --authorization-file and excludes capture format/version/session overrides')
+            elif args.authorization_file is not None:
+                raise ValueError('--authorization-file requires --memory-manifest')
             result = analyze_project(args)
         elif args.command == 'watch':
             from .one_call import resolve

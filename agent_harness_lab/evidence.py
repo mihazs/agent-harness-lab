@@ -150,7 +150,7 @@ def _evaluation_results(project, max_files, sources, fingerprint, caveats):
     return failures
 
 
-def collect(project, events=None, source_format='normalized', max_files=None, max_events=None, max_scan_files=None, event_sink=None, source_version=None, source_root=None, session=None, sequence_length=None, progress=None):
+def collect(project, events=None, source_format='normalized', max_files=None, max_events=None, max_scan_files=None, event_sink=None, source_version=None, source_root=None, session=None, sequence_length=None, progress=None, source_identity=None):
     """Return local evidence, not a claim of task success or a causal diagnosis."""
     project = Path(project).resolve()
     if not project.is_dir():
@@ -164,6 +164,11 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
     from .telemetry.claude_native import VERSION as CLAUDE_NATIVE_VERSION
     codex_pinned = source_format == 'codex' and source_version == CODEX_NATIVE_VERSION
     pinned = codex_pinned or source_format == 'claude' and source_version == CLAUDE_NATIVE_VERSION
+    if source_identity is not None:
+        from .sources.schema import fingerprint as validate_fingerprint
+        validate_fingerprint(source_identity)
+        if events is None or pinned:
+            raise ValueError('logical source identity requires an explicit unpinned event input')
     if source_root is not None and (not codex_pinned or events is not None) or session is not None and source_root is None:
         raise ValueError('native source-root/session requires the explicit pinned Codex profile and excludes --events')
     if source_version is not None and (events is None and source_root is None or not pinned and source_version != CAPABILITIES.get(source_format, {}).get('version')):
@@ -209,9 +214,10 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
         for capture, (path, fmt) in enumerate(sorted(selected, key=lambda pair: str(pair[0])), 1):
             notify('capture_processing', capture=capture, selected=len(selected), events=total_events)
             source_digest = hashlib.sha256()
-            source_id = hashlib.sha256(str(path).encode()).hexdigest()[:16]
+            source_id = (source_identity or hashlib.sha256(str(path).encode()).hexdigest())[:16]
             source = dict(format=fmt, events=0)
-            if pinned: source['path_sha256'] = hashlib.sha256(str(path).encode()).hexdigest()
+            if source_identity is not None: source['source_sha256'] = source_identity
+            elif pinned: source['path_sha256'] = hashlib.sha256(str(path).encode()).hexdigest()
             else: source['path'] = str(path)
             sources.append(source)
             def scoped_rows():
