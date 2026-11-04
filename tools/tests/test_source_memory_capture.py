@@ -43,7 +43,7 @@ class MemoryCaptureTests(unittest.TestCase):
             self.assertEqual(request['params']['name'],'memory_read_page')
             args=request['params']['arguments']
             self.assertEqual((args['workspace'],args['project']),('synthetic-workspace','synthetic-project'))
-            self.assertEqual(args['max_chars'],64000)
+            self.assertEqual(args['max_chars'],self.f.schema['properties']['max_chars'].get('maximum',64000))
             result=dict(content=[dict(type='text',text=json.dumps(self.pages[args['path']]))])
         if self.after:self.after(request)
         return dict(jsonrpc='2.0',id=request['id'],result=deepcopy(result)),{'Content-Type':'application/json'},100
@@ -133,10 +133,30 @@ class MemoryCaptureTests(unittest.TestCase):
         self.assertEqual(self.store.path.read_bytes(),before)
 
     def test_selection_bounds_and_unavailable_completeness_are_not_absence(self):
-        for paths in ([],['notes/a.md']*2,['../private'],['\ud800'],['p'+str(i) for i in range(9)]):
+        for paths in ([],['notes/a.md']*2,['../private'],['\ud800']):
             with self.assertRaises(ValueError):MCPPageCapture(self.f.client,paths,authorization='Bearer token')
         del self.pages['notes/a.md']['truncated']
         with self.assertRaises(TransportError):self.connector.read(self.f.source)
+
+    def test_selected_pages_requests_and_aggregate_wire_bytes_have_no_implicit_ceiling(self):
+        self.f.schema['properties']['max_chars'] = {'maximum': 100000}
+        self.f.client.schemas = {name:capture.digest(self.f.schema) for name in fixtures.READ_TOOLS}
+        self.pages = {f'notes/{i}.md':dict(path=f'notes/{i}.md',body='x'*80000,
+            page_id='synthetic-'+str(i),truncated=False,total_chars=80000) for i in range(60)}
+        self.connector = MCPPageCapture(self.f.client,list(self.pages),authorization='Bearer SYNTHETIC_SECRET')
+        def exchange(*args,**kwargs):
+            value,headers,_ = self.exchange(*args,**kwargs)
+            return value,headers,len(json.dumps(value).encode())
+        self.f.wire.side_effect = exchange
+        snapshot = self.connector.read(self.f.source)
+        self.assertEqual(len(snapshot.records),60)
+        self.assertEqual(self.connector.summary['wire_requests'],360)
+        bounds = {bound.dimension:bound for bound in snapshot.metadata.coverage.scan_bounds}
+        self.assertIsNone(bounds['bytes'].limit)
+        self.assertGreater(bounds['bytes'].observed,8*1024*1024)
+        self.assertIsNone(bounds['pages'].limit)
+        self.assertEqual(bounds['records'].limit,60)
+        self.assertEqual(snapshot.metadata.coverage.reported_completeness,'partial')
 
     def test_protocol_errors_redact_and_never_commit_raw_provider_claims(self):
         self.f.initialized['serverInfo']['version']='unsupported'

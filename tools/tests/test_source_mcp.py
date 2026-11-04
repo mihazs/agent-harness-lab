@@ -105,7 +105,7 @@ class MCPReaderTests(unittest.TestCase):
         self.assertNotIn('SYNTHETIC_SECRET', str(error.exception))
 
     def test_page_identity_truncation_and_traversal(self):
-        self.reply = {'path': 'notes/test.md', 'body': 'SYNTHETIC_SECRET', 'page_id': 'synthetic-id'}
+        self.reply = {'path': 'notes/test.md', 'body': 'SYNTHETIC_SECRET', 'page_id': 'synthetic-id', 'truncated': False}
         result = self.client.read_page(self.source, 'notes/test.md', authorization='Bearer token')
         self.assertEqual(result['page_id'], 'synthetic-id')
         for payload in ({**self.reply, 'truncated': True}, {**self.reply, 'path': 'notes/foreign.md'}):
@@ -114,6 +114,53 @@ class MCPReaderTests(unittest.TestCase):
         self.wire.reset_mock()
         with self.assertRaises(ValueError): self.client.read_page(self.source, '../private', authorization='Bearer token')
         self.wire.assert_not_called()
+
+    def test_tool_discovery_exhausts_pages_without_application_count_limits(self):
+        def exchange(origin, target, headers, **kwargs):
+            request = json.loads(kwargs['body'])
+            if request['method'] != 'tools/list': return self.exchange(origin, target, headers, **kwargs)
+            self.requests.append(request)
+            index = int(request['params'].get('cursor', '0'))
+            result = (dict(tools=self.tools) if index == 5 else
+                      dict(tools=[dict(name='unselected-'+str(i)) for i in range(201)], nextCursor=str(index+1)))
+            return dict(jsonrpc='2.0', id=request['id'], result=result), self.headers, 100
+        self.wire.side_effect = exchange
+        self.assertEqual(len(self.query()), 1)
+        self.assertEqual(sum(r['method'] == 'tools/list' for r in self.requests), 6)
+        self.client.transport.max_pages = 5
+        with self.assertRaises(TransportError): self.query()
+        self.assertEqual(sum(r['method'] == 'tools/call' for r in self.requests), 1)
+
+    def test_query_has_no_implicit_hit_or_text_ceiling_but_honors_explicit_limit(self):
+        self.reply = dict(hits=[dict(path=f'notes/{i}.md') for i in range(30)])
+        self.assertEqual(len(self.client.query(self.source, 'q'*5000, authorization='Bearer token')), 30)
+        self.assertNotIn('limit', self.requests[-1]['params']['arguments'])
+        self.assertEqual(len(self.client.query(self.source, 'q', authorization='Bearer token', limit=100)), 30)
+        self.assertEqual(self.requests[-1]['params']['arguments']['limit'], 100)
+        with self.assertRaises(TransportError): self.client.query(self.source, 'q', authorization='Bearer token', limit=2)
+
+    def test_explicit_shared_request_limit_stops_before_the_next_rpc(self):
+        self.client.max_requests = 2
+        with self.assertRaises(TransportError): self.query()
+        self.assertEqual([r['method'] for r in self.requests], ['initialize', 'tools/list'])
+
+    def test_upstream_page_maximum_is_requested_without_claiming_truncated_data(self):
+        self.reply = dict(path='notes/test.md', body='synthetic', truncated=False, total_chars=9)
+        self.client.read_page(self.source, 'notes/test.md', authorization='Bearer token')
+        self.assertEqual(self.requests[-1]['params']['arguments']['max_chars'], 64000)
+        for payload in ({**self.reply, 'truncated': True}, {**self.reply, 'total_chars': 100000},
+                        {k:v for k,v in self.reply.items() if k != 'truncated'}):
+            self.reply = payload
+            with self.assertRaises(TransportError): self.client.read_page(self.source, 'notes/test.md', authorization='Bearer token')
+
+    def test_pinned_server_page_maximum_and_explicit_character_bound_are_respected(self):
+        self.schema['properties']['max_chars'] = {'maximum': 100000}
+        self.client.schemas = {name: digest(self.schema) for name in READ_TOOLS}
+        self.reply = dict(path='notes/test.md', body='x'*80000, truncated=False, total_chars=80000)
+        self.assertEqual(len(self.client.read_page(self.source, 'notes/test.md', authorization='Bearer token')['body']), 80000)
+        self.assertEqual(self.requests[-1]['params']['arguments']['max_chars'], 100000)
+        with self.assertRaises(TransportError):
+            self.client.read_page(self.source, 'notes/test.md', authorization='Bearer token', max_chars=1000)
 
     def test_tool_pagination_cycles_never_dispatch_tools(self):
         self.wire.side_effect = lambda *a, **k: (dict(jsonrpc='2.0', id=json.loads(k['body'])['id'],

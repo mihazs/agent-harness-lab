@@ -759,7 +759,7 @@ keys, generated actors, source citations, lifecycle fields and native identifier
 and body text in memory for authorized callers. YAML aliases, custom object tags,
 duplicate/non-text keys and malformed frontmatter are rejected. Native UTC/offset
 timestamps are retained; missing original timestamps stay unknown. Preview exposes
-only bounded counts of authorship, freshness and explicit lifecycle/review claims.
+only counts of authorship, freshness and explicit lifecycle/review claims.
 Human attribution and a reviewed claim are not verified review. Neither memory
 retrieval/injection into an agent nor witnessed tool execution is inferred.
 
@@ -771,8 +771,8 @@ observed through successive imports; Git history, native session correlation and
 handoffs/workstreams remain open in #43. A separate explicit
 [selected MCP page capture](memory-page-capture.md) now supports hash-only journals.
 
-Limits are 500 concepts, 2,000 directory entries, 256 KiB per concept, 16 KiB of
-frontmatter and 4 MiB of concept bytes per operation. Links/special files, nested
+The reader imposes no concept, directory-entry, frontmatter, per-page or aggregate
+byte ceilings. Links/special files, nested
 scope manifests and project mismatches are refused. `.git`, `_pending`, reserved
 index/meta/log files and monthly `log-YYYY-MM.md` names are excluded; a conforming
 ordinary note using a monthly-ledger filename is also excluded in this first slice.
@@ -821,29 +821,36 @@ the endpoint fingerprint, project/workspace name fingerprints, matching server
 version, explicit enablement and configured authentication. Supply authorization
 in memory; the reader inspects no credential stores.
 
-Each bounded operation initializes protocol `2024-11-05`, verifies server name
+Each operation initializes protocol `2024-11-05`, verifies server name
 and version, discovers/pins the scoped tool schemas and calls only a whitelisted
-reader. Discovery is limited to five tool-list pages, with cycle/duplicate/schema
-checks. Server instructions and tool annotations grant no permissions. All tool
+reader. Discovery follows tool-list pagination to exhaustion, with cycle/duplicate/schema
+checks. Caller-selected `max_pages`, `max_requests`, `max_bytes`, `timeout` and
+`seconds` are optional; omitted limits impose no application ceiling. Server
+instructions and tool annotations grant no permissions. All tool
 calls send both workspace and project; global/scopes/cwd overrides and mutators
-are rejected. Query disables answer generation and global search, limits hits to
-20 and excludes supplemental global/profile results from its return value.
-Page reads require matching paths and refuse explicitly truncated bodies.
+are rejected. Query disables answer generation and global search, forwards an
+explicit result limit without an application maximum, and excludes supplemental
+global/profile results. Without a supplied result limit, the server's query
+default applies; a query is not a complete project inventory. Page reads request
+the maximum advertised by the pinned schema, or the documented upstream 64,000
+characters when the schema does not expose that maximum. The pinned read-page
+contract provides no offset pagination. Truncated bodies, missing completeness
+and inconsistent returned character counts remain unavailable for complete capture.
 
-TLS, byte limits, socket timeouts, cooperative deadlines, response cleanup,
+TLS, explicit byte limits, optional socket timeouts and cooperative deadlines, response cleanup,
 redirect refusal and no-retry behavior share the GET transport primitives. RPC
 IDs/errors, tool-level errors and non-JSON results fail closed with redacted public
 errors. Responses are untrusted private data returned in memory, not automatically
 written to a journal or injected into an agent. Server-side access counters may
 change on reads according to ai-memory behavior; no content mutation tool is used.
 
-This bounded mode supports JSON responses from stateless servers. SSE-only and
+This mode supports JSON responses from stateless servers. SSE-only and
 stateful responses are unsupported; an explicitly requested initialization may
 create protocol session state before a stateful header is rejected. Full session
 lifecycle/SSE, remote CLI configuration, native execution facets, correlation
 and live-server verification remain open in #43. The optional
 [MCPPageCapture](memory-page-capture.md) adds selected-page Registry/SourceStore
-captures with shared bounds and readbacks. No server is contacted by package
+captures with caller-selected shared bounds and readbacks. No server is contacted by package
 installation, constructor invocation, help or default source discovery. Native
 tests use synthetic wire responses; they establish client contracts, not live
 server efficacy or scientific independence.

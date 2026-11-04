@@ -111,3 +111,23 @@ class OKFImportTests(unittest.TestCase):
         self.assertEqual(page.authorship, 'human_attributed')
         self.assertEqual(page.freshness(datetime.now(timezone.utc)), 'unknown')
         self.assertEqual(self.connector.read(self.source).records[0].provenance, 'unknown')
+
+    def test_full_large_pages_frontmatter_and_aggregate_are_retained(self):
+        content = '---\ntype: Note\ndescription: '+ 'm'*20000 + '\n---\n' + 'SYNTHETIC_BODY'*25000
+        for i in range(14): (self.bundle/f'large-{i}.md').write_text(content)
+        for name in ('index.md','_meta.md'):
+            path = self.bundle/name
+            path.write_text(path.read_text()+'x'*70000)
+        pages = self.connector.pages(self.source)
+        self.assertEqual(len(pages),15)
+        large = [page for page in pages if page.path.startswith('large-')]
+        self.assertEqual(len(large),14)
+        self.assertTrue(all(page.metadata['description'] == 'm'*20000 for page in large))
+        self.assertTrue(all(page.body == 'SYNTHETIC_BODY'*25000 for page in large))
+        self.assertGreater(sum(len(path.read_bytes()) for path in self.bundle.glob('large-*.md')),4*1024*1024)
+
+    def test_all_pages_beyond_old_directory_and_record_counts_are_read(self):
+        for i in range(2001): (self.bundle/f'page-{i}.md').write_text('---\ntype: Note\n---\nSynthetic\n')
+        snapshot = self.connector.read(self.source)
+        self.assertEqual(len(snapshot.records),2002)
+        self.assertTrue(all(row.independence == 'unknown' for row in snapshot.records))
