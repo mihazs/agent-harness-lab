@@ -181,7 +181,7 @@ def main(argv):
                     for key in config.RESPONSE_OPTIONS:
                         if key=='permission_audit':continue
                         if key not in runtime:runtime[key]=ask('Controlled '+key.replace('_',' '),'')
-                    runtime['disk_bytes']=int(runtime['disk_bytes'])
+                    if isinstance(runtime['disk_bytes'],str) and runtime['disk_bytes'].isdecimal():runtime['disk_bytes']=int(runtime['disk_bytes'])
                 elif 'executable' not in runtime:
                     runtime['executable'] = ask('Trusted absolute executable path', '')
                 settings['runtime'] = runtime

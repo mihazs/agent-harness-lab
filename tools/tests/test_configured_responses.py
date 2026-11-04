@@ -105,6 +105,53 @@ class ConfiguredResponsesTests(unittest.TestCase):
         with patch.object(cgroup,'delegated',return_value=self.cgroup),patch.object(one_call.shutil,'which',side_effect=AssertionError('no native runtime lookup')):
             self.assertIsNone(one_call.preflight(args))
 
+    def test_references_inside_harness_paths_are_rejected_before_snapshots(self):
+        private=self.project/'private';private.mkdir();inside=private/'responses.json'
+        inside.write_bytes(self.settings.read_bytes())
+        for reference,paths in [('private/responses.json',['AGENTS.md','private']),(str(inside),['private/responses.json']),
+                                ('private/responses.json',['private/responses.json'])]:
+            with self.subTest(reference=reference,paths=paths):
+                runtime=dict(self.runtime(),inference_settings=reference)
+                value=config.prepare(dict(profile='cooperative',runtime=runtime,harness_paths=paths))
+                (self.project/'ahl.json').unlink(missing_ok=True);config.create(self.project,value)
+                with self.assertRaisesRegex(ValueError,'outside harness paths'):one_call.resolve(self.args(),set())
+        explicit=self.args(agent='responses',inference_settings=inside)
+        with self.assertRaisesRegex(ValueError,'outside harness paths'):one_call.resolve(explicit,{'--agent','--inference-settings'})
+        runtime=dict(self.runtime(),inference_settings='private/responses.json')
+        value=config.prepare(dict(profile='cooperative',runtime=runtime,harness_paths=['AGENTS.md']))
+        (self.project/'ahl.json').unlink();config.create(self.project,value);args=self.args()
+        one_call.resolve(args,set());self.assertEqual(args.inference_settings,inside)
+
+    def test_watch_fingerprint_ignores_refreshed_credential_contents_but_not_identity(self):
+        self.configured();args=self.args();one_call.resolve(args,set())
+        from agent_harness_lab.evaluation import cgroup
+        with patch.object(cgroup,'delegated',return_value=self.cgroup):
+            first=config.response_references(self.project,vars(args))
+            self.key.write_text('SYNTHETIC_REFRESHED_VALUE');self.key.chmod(0o600)
+            refreshed=config.response_references(self.project,vars(args))
+            self.assertNotEqual(first,refreshed)
+            self.assertEqual(config.stable_references(first),config.stable_references(refreshed))
+            replacement=self.root/'replacement';replacement.write_text('SYNTHETIC_OTHER');replacement.chmod(0o600)
+            os.replace(replacement,self.key)
+            self.assertNotEqual(config.stable_references(first),config.stable_references(config.response_references(self.project,vars(args))))
+
+    def test_interactive_disk_bound_never_truncates_non_integer_input(self):
+        from agent_harness_lab import onboarding
+        import io,sys
+        from contextlib import redirect_stderr,redirect_stdout
+        source=self.root/'init.json'
+        for disk,accepted in [(67108864.5,False),('67108864',True)]:
+            with self.subTest(disk=disk):
+                source.write_text(json.dumps(dict(profile='cooperative',harness_paths=['AGENTS.md'],
+                    runtime=dict(self.runtime(),disk_bytes=disk))))
+                stderr=io.StringIO()
+                with patch.object(sys.stdin,'isatty',return_value=True),patch('builtins.input',side_effect=AssertionError('no prompt')), \
+                        patch.object(onboarding,'doctor',return_value=dict(status='ready')),redirect_stdout(io.StringIO()),redirect_stderr(stderr):
+                    try:code=onboarding.main(['init',str(self.project),'--config-input',str(source),'--json'])
+                    except SystemExit as exit:code=exit.code
+                self.assertEqual(code==0,accepted,stderr.getvalue())
+                self.assertFalse((self.project/'ahl.json').exists())
+
     def test_pinned_project_bank_with_responses_runtime_fails_closed_before_any_lookup(self):
         import hashlib,shutil
         bank=self.project/'task-bank/bank.json';shutil.copytree(config.starter().parent,bank.parent)

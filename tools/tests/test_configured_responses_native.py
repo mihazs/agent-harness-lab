@@ -1,5 +1,5 @@
 """Configured one-call Responses; synthetic transport with actual pinned workers."""
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr,redirect_stdout
 import hashlib
 import io
 import json
@@ -26,7 +26,7 @@ Path('result.json').write_text(json.dumps(dict(complete=good or task['split']=='
 
 @unittest.skipUnless(kernel.ENABLED,'explicit delegated kernel profile required')
 class ConfiguredResponsesKernelTests(kernel.KernelFixture):
-    def test_configure_once_then_plain_improve_reaches_real_protocol_trials(self):
+    def configure(self):
         project=self.root/'project';project.mkdir();(project/'AGENTS.md').write_text('bad')
         key=self.root/'synthetic-key';key.write_text('SYNTHETIC_CONTROLLER_KEY');key.chmod(0o600)
         settings=self.root/'responses.json'
@@ -38,6 +38,28 @@ class ConfiguredResponsesKernelTests(kernel.KernelFixture):
             runtime=dict(name='responses',inference_settings=str(settings),cgroup_root=str(self.cgroup_root),
                 image_root=str(runtime),image_sha256=image,disk_bytes=64*1024*1024,permission_audit='permission-results-v1')))
         config.create(project,configuration)
+        return project,key,image
+
+    def evidence(self):
+        return dict(analysis=dict(events=0,cases=0,field_coverage={},findings=[],recurring_sequences=[],limitations=[],deferred_mechanisms={}),
+            evaluation_failures=[],fingerprint='synthetic-configured-one-call',caveats=[])
+
+    def test_credential_swapped_after_read_stops_before_first_request(self):
+        project,key,_=self.configure();state=self.root/'state';calls=[];read=responses.read_credential
+        def swapped(*args,**options):
+            value=read(*args,**options);key.write_text('SYNTHETIC_SWAPPED_KEY');return value
+        with patch.object(workflow,'state_root',return_value=state),patch.object(workflow,'collect',return_value=self.evidence()), \
+                patch.object(responses,'request',side_effect=lambda *unused:calls.append(True)), \
+                patch.object(responses,'read_credential',side_effect=swapped),redirect_stdout(io.StringIO()), \
+                redirect_stderr(io.StringIO()),self.assertRaises(SystemExit) as stopped:
+            cli.main(['improve',str(project)])
+        result=json.loads(next(state.glob('runs/*/run-*/workflow.json')).read_bytes())
+        self.assertEqual(calls,[]);self.assertEqual(stopped.exception.code,2)
+        self.assertEqual((result['status'],result['error_type']),('invalid_input','ValueError'))
+        self.assertEqual(result['changed_files'],[]);self.assertEqual((project/'AGENTS.md').read_text(),'bad')
+
+    def test_configure_once_then_plain_improve_reaches_real_protocol_trials(self):
+        project,key,image=self.configure()
         configuration_pin=config.load(project/'ahl.json')[1]
         state=self.root/'state';bodies=[];instructions=[];workers=[];initial_probes=[]
         execute=SandboxBackend.run;capability=SandboxBackend.capability
@@ -80,9 +102,7 @@ class ConfiguredResponsesKernelTests(kernel.KernelFixture):
             if prerequisites.current() is None:initial_probes.append(True)
             return capability(backend,*args,**options)
 
-        evidence=dict(analysis=dict(events=0,cases=0,field_coverage={},findings=[],recurring_sequences=[],limitations=[],deferred_mechanisms={}),
-            evaluation_failures=[],fingerprint='synthetic-configured-one-call',caveats=[])
-        with patch.object(workflow,'state_root',return_value=state),patch.object(workflow,'collect',return_value=evidence), \
+        with patch.object(workflow,'state_root',return_value=state),patch.object(workflow,'collect',return_value=self.evidence()), \
                 patch.object(responses,'request',side_effect=transport),patch.object(responses,'read_credential',wraps=responses.read_credential) as read_key, \
                 patch.object(SandboxBackend,'run',observed),patch.object(SandboxBackend,'capability',probe),redirect_stdout(io.StringIO()):
             code=cli.main(['improve',str(project)])

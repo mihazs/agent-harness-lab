@@ -119,6 +119,8 @@ def execution_options(project,settings,requested,explicit):
                 result[name]=reference_path(project,value) if name in RESPONSE_PATHS else value
     if result.get('agent')!='responses' and result.get('inference_settings') is not None:
         raise ValueError('inference settings require the Responses runtime')
+    if result.get('agent')=='responses' and settings:
+        overlapping_harness(project,[result[name] for name in RESPONSE_PATHS if result.get(name) is not None],settings['harness_paths'])
     return result
 
 
@@ -133,6 +135,23 @@ def reference_metadata(path,*,private=False,directory=False):
     attributes=[info.st_dev,info.st_ino,info.st_mode,info.st_uid,info.st_gid]
     if not directory:attributes += [info.st_size,info.st_mtime_ns,info.st_ctime_ns]
     return dict(path=str(path),attributes=attributes)
+
+
+def stable_references(records):
+    """Watch fingerprint view: a refreshed credential keeps its file identity."""
+    credential=records['credential']
+    return dict(records,credential=dict(credential,attributes=credential['attributes'][:5]))
+
+
+def overlapping_harness(project,references,harness_paths):
+    """Reject references that would be copied into model-visible harness snapshots."""
+    root=Path(project).absolute()
+    for value in references:
+        path=Path(value).absolute()
+        for name in harness_paths:
+            harness=root/name
+            if path==harness or path.is_relative_to(harness) or harness.is_relative_to(path):
+                raise ValueError('controlled Responses references must stay outside harness paths')
 
 
 def response_references(project,options):

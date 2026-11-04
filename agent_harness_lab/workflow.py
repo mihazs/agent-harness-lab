@@ -906,7 +906,7 @@ def watch_configuration(args):
         if getattr(args,'_configured_responses',False):
             from .evaluation.instruction_context import pin
             from . import config
-            settings['controlled_references_sha256']=pin(config.response_references(args.project,vars(args)))
+            settings['controlled_references_sha256']=pin(config.stable_references(config.response_references(args.project,vars(args))))
     for key in (() if args.agent == 'responses' else ('codex', 'claude')):
         binary = shutil.which(getattr(args, key))
         if binary:
