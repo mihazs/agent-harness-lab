@@ -133,14 +133,24 @@ class DelegationTests(unittest.TestCase):
             mount = Path(folder); root = mount/'delegated'; root.mkdir()
             (root/'cgroup.subtree_control').write_text('cpu memory pids')
             original = Path.read_text
+            original_stat = Path.stat
             def read(path, *args, **kwargs):
                 if str(path) == '/proc/self/mountinfo':
                     return f'1 0 0:1 / {mount} rw - cgroup2 cgroup rw\n'
                 return original(path, *args, **kwargs)
-            with patch.object(Path, 'read_text', read):
+            def stat(path, *args, **kwargs):
+                value = original_stat(path, *args, **kwargs)
+                if path == root:
+                    fields = list(value); fields[4] = 1000
+                    return os.stat_result(fields)
+                return value
+            with patch.object(Path, 'read_text', read), patch.object(Path, 'stat', stat), \
+                    patch('agent_harness_lab.evaluation.cgroup.os.geteuid', return_value=1000):
                 self.assertEqual(delegated(root), root)
                 with self.assertRaises(ValueError): delegated(mount)
                 with patch('agent_harness_lab.evaluation.cgroup.os.geteuid', return_value=0):
+                    with self.assertRaises(ValueError): delegated(root)
+                with patch('agent_harness_lab.evaluation.cgroup.os.geteuid', return_value=1001):
                     with self.assertRaises(ValueError): delegated(root)
                 (root/'cgroup.subtree_control').write_text('cpu pids')
                 with self.assertRaisesRegex(ValueError, 'already be enabled'): delegated(root)

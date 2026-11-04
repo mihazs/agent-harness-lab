@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.15
+
+### Patch Changes
+
+- fd1ee23: Run shared directly-follows process mining during analyze and improve, expose executed methods and evidence coverage in private receipts, and report aggregate progress on stderr. Add the analysis alias while preserving JSON stdout and behavioral application gates.
+
 ## 0.76.14
 
 ### Patch Changes

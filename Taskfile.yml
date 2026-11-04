@@ -2,6 +2,16 @@ version: '3'
 vars:
   PYTHON: '{{default "python3" .PYTHON}}'
 tasks:
+  test:analysis:pipeline:
+    desc: Verify default mining, execution receipts and aggregate progress
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    vars:
+      TEST_WORKERS: '{{default "auto" .TEST_WORKERS}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tools/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n {{.TEST_WORKERS | shellQuote}} --dist worksteal -k analysis_pipeline'
   test:cli:help:
     desc: Verify recursive agent-facing CLI guidance and side-effect-free help routes
     cmds:

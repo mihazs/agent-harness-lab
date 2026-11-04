@@ -73,11 +73,13 @@ def recurring_sequences(cases, roots, maximum=None):
 
 
 def analyze(rows, max_events=None, *, observation_per_case=None, observation_total=None, observation_max_age=None, sequence_length=None):
+    from agent_harness_lab.diagnostics.process_mining import ProcessMiner
     if any(value is not None and (type(value) is not int or value <= 0) for value in (max_events,sequence_length)):
         raise ValueError('analysis limits must be positive integers')
     counts, cases = Counter(), defaultdict(list)
     seen, roots, findings = set(), {}, []
     observations = ObservationCache(observation_per_case, observation_total, observation_max_age)
+    process = ProcessMiner()
     fields = Counter()
     for number, event in enumerate(rows, 1):
         if max_events is not None and number > max_events:
@@ -97,6 +99,7 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
         if (case, ident) in seen:
             raise ValueError('duplicate event id')
         seen.add((case, ident))
+        process.observe(event)
         counts[activity] += 1
         for key in ('tool_name', 'outcome', 'state_revision', 'lineage_verified'):
             fields[key] += event.get(key) not in (None, 'unknown', 'unverified')
@@ -111,13 +114,15 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
                 explanation='Caller supplied contract evidence; verify against the applicable contract.'))
     repeated = recurring_sequences(cases,roots,sequence_length)
     n = sum(counts.values())
-    return dict(schema_version=1, events=n, cases=len(roots), reported_roots=len(set(roots.values())),
+    return dict(schema_version=1, profile='ahl-private-diagnosis-v1',
+                events=n, cases=len(roots), reported_roots=len(set(roots.values())),
                 field_coverage={k: dict(known=fields[k], total=n) for k in
                                 ('tool_name', 'outcome', 'state_revision', 'lineage_verified')},
                 activities=dict(counts), eligible_observations=observations.coverage['eligible'],
                 observation_coverage=dict(observations.coverage),
                 observation_limits=dict(per_case=observation_per_case, total=observation_total, max_age=observation_max_age),
                 sequence_length_limit=sequence_length,
+                process_mining=dict(process.result(), profile='ahl-analysis-process-graph-v1'),
                 recurring_sequences=repeated, findings=findings,
                 deferred_mechanisms={
                     'tool_waste': 'Needs necessity contract or outcome-preserving intervention.',
@@ -138,6 +143,11 @@ def report(result, *, source_context=None):
     lines += ['', f"Observed findings: {len(result['findings'])}.",
               f"Recurring sequences: {len(result['recurring_sequences'])}.", '',
               'Review recurring sequences against successful controls before proposing a skill or repair.', '']
+    if 'process_mining' in result:
+        mining = result['process_mining']
+        lines += [f"Directly-follows edges: {len(mining['raw_edges'])}; run-collapsed edges: {len(mining['projected_run_collapsed_edges'])}.",
+                  f"Unusable timestamps: {mining['missing_timestamps']} (invalid: {mining['invalid_timestamps']}); timestamp reversals: {mining['timestamp_reversals']}.",
+                  'Graphs describe capture order; reported roots are not verified independent samples.', '']
     for finding in result['findings']:
         lines += ['', f"- {finding['kind']} ({finding['status']}): {finding['explanation']} Evidence: {finding['evidence']}"]
     lines += ['', 'Deferred questions:', '']
