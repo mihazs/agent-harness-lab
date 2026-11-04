@@ -67,14 +67,58 @@ class HookInstallTests(GitRepoCase):
         self.assertEqual(hook.read_text(), 'sentinel')
         self.assertEqual(self.git('config', '--local', '--get', 'core.hooksPath').returncode, 1)
 
+    def test_commit_msg_is_installed_with_pre_commit_and_checks_messages(self):
+        self.install(self.root)
+        hook = self.root/'.git/hooks/commit-msg'
+        self.assertIn('call_lefthook run "commit-msg" "$@"', hook.read_text())
+        script = self.root/'scripts/check_commit_message.py'; script.parent.mkdir()
+        shutil.copy2(ROOT/'scripts/check_commit_message.py', script)
+        message = self.root/'message'
+        for text, accepted in (('feat(hooks): check messages\n', True), ('Update things\n', False)):
+            message.write_text(text)
+            run = subprocess.run([str(hook), str(message)], cwd=self.root, capture_output=True, text=True)
+            self.assertEqual(run.returncode == 0, accepted, run.stdout + run.stderr)
+
+    def test_lefthook_pre_commit_only_checkout_gains_commit_msg(self):
+        subprocess.run([str(MANAGER), 'install', 'pre-commit'], cwd=self.root, check=True, capture_output=True)
+        self.assertFalse((self.root/'.git/hooks/commit-msg').exists())
+        self.install(self.root)
+        self.assertIn('call_lefthook run "commit-msg"', (self.root/'.git/hooks/commit-msg').read_text())
+
+    def test_foreign_commit_msg_hook_is_preserved_before_any_install(self):
+        hook = self.root/'.git/hooks/commit-msg'; hook.write_text('#!/bin/sh\nexit 0\n')
+        with self.assertRaisesRegex(ValueError, 'existing Git commit-msg retained'): self.install(self.root)
+        self.assertEqual(hook.read_text(), '#!/bin/sh\nexit 0\n')
+        self.assertFalse((self.root/'.git/hooks/pre-commit').exists())
+        hook.write_text('call_lefthook run "pre-commit" "$@"')  # Another hook's handler is still foreign.
+        with self.assertRaisesRegex(ValueError, 'retained'): self.install(self.root)
+
+    def test_linked_oversized_and_nonregular_commit_msg_hooks_are_preserved(self):
+        hook = self.root/'.git/hooks/commit-msg'
+        marker = 'call_lefthook run "commit-msg" "$@"'
+        sentinel = self.root/'sentinel'; sentinel.write_text(marker)
+        hook.symlink_to(sentinel)
+        with self.assertRaisesRegex(ValueError, 'linked'): self.install(self.root)
+        hook.unlink(); os.link(sentinel, hook)
+        with self.assertRaisesRegex(ValueError, 'non-regular or linked'): self.install(self.root)
+        hook.unlink(); os.mkfifo(hook)
+        with self.assertRaisesRegex(ValueError, 'non-regular or linked'): self.install(self.root)
+        hook.unlink(); hook.write_text(marker + '\n' + '#' * 65536)
+        with self.assertRaisesRegex(ValueError, 'non-regular or linked'): self.install(self.root)
+        self.assertTrue(hook.read_text().startswith(marker))
+        self.assertEqual(sentinel.read_text(), marker)
+        self.assertFalse((self.root/'.git/hooks/pre-commit').exists())
+
     def test_npm_lifecycle_does_not_replace_a_foreign_hook(self):
         hook = self.root/'.git/hooks/pre-commit'; hook.write_text('synthetic sentinel')
+        message_hook = self.root/'.git/hooks/commit-msg'; message_hook.write_text('message sentinel')
         for name in ('package.json', 'package-lock.json', '.npmrc'):
             shutil.copy2(ROOT/name, self.root/name)
         run = subprocess.run(['npm', 'ci', '--offline', '--no-audit'], cwd=self.root,
                              capture_output=True, text=True, timeout=60)
         self.assertEqual(run.returncode, 0, run.stderr)
         self.assertEqual(hook.read_text(), 'synthetic sentinel')
+        self.assertEqual(message_hook.read_text(), 'message sentinel')
         with self.assertRaisesRegex(ValueError, 'retained'): self.install(self.root)
 
     def test_linked_and_nonregular_hooks_are_preserved(self):
@@ -100,7 +144,7 @@ class DuplicateHookTests(GitRepoCase):
         (self.root/'.gitignore').write_text('node_modules/\n')
         (self.root/'.jscpd.json').write_text('{"path":["src"],"format":["python"],"minLines":5,"minTokens":50,"ignore":["**/tests/**"],"reporters":["silent"]}')
         (self.root/'node_modules/.bin/jscpd').symlink_to(SCANNER)
-        for name in ('scripts/check_duplicates.py',):
+        for name in ('scripts/check_duplicates.py', 'scripts/check_commit_message.py'):
             target = self.root/name; target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(ROOT/name, target)
         self.git('add', '.')
@@ -122,6 +166,19 @@ class DuplicateHookTests(GitRepoCase):
         self.assertEqual(self.git('rev-parse', 'HEAD').stdout, before)
         self.assertEqual(self.git('write-tree').stdout, staged)
         self.assertEqual(target.read_text(), 'answer = 42\n')
+
+    def test_commit_msg_hook_blocks_nonconventional_commits(self):
+        target = self.root/'src/other.py'; target.write_text('answer = 42\n'); self.git('add', str(target))
+        identity = ('-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '-q')
+        before = self.git('rev-parse', 'HEAD').stdout
+        for subject in ('Add other module', 'Merge branch \'topic\'', 'feat: add other module.'):
+            commit = self.git(*identity, '-m', subject)
+            self.assertNotEqual(commit.returncode, 0, subject)
+            self.assertIn('commit message', commit.stdout + commit.stderr)
+            self.assertEqual(self.git('rev-parse', 'HEAD').stdout, before)
+        commit = self.git(*identity, '-m', 'feat(src): add other module', '-m', 'Body text.')
+        self.assertEqual(commit.returncode, 0, commit.stdout + commit.stderr)
+        self.assertEqual(self.git('log', '-1', '--format=%s').stdout.strip(), 'feat(src): add other module')
 
     def test_unstaged_clone_does_not_block_clean_staged_content(self):
         target = self.root/'src/copy.py'; target.write_text('answer = 42\n'); self.git('add', str(target))
