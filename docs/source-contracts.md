@@ -858,7 +858,8 @@ server efficacy or scientific independence.
 
 `sources.github.GitHubAPI` is an optional standard-library reader for one explicitly
 authorized GitHub.com repository. Construct `GitHubSelection(repo_id, issues=(...),
-pulls=(...))` with at most ten distinct ascending issue/PR numbers. Its
+pulls=(...))` with distinct ascending issue/PR numbers; the selection itself sets
+no count limit. Its
 `project_sha256` binds the native repository ID and its `sha256` binds the selection.
 Use `SourceSpec(kind="api", provider="github", version=SOURCE_VERSION, ...)` with
 the endpoint fingerprint as `root_sha256`, those project/scope fingerprints,
@@ -1026,8 +1027,8 @@ failure; they do not establish live GraphQL compatibility or diagnostic utility.
 
 ### Explicit immutable commit captures
 
-`GitHubSelection(..., schema_version=4, commits=(FULL_SHA, ...))` adds a bounded
-selection of up to ten unique, sorted full commit SHAs. Branch names, tags and
+`GitHubSelection(..., schema_version=4, commits=(FULL_SHA, ...))` adds an explicit
+selection of unique, sorted full commit SHAs with no count limit of its own. Branch names, tags and
 abbreviated SHAs are rejected. Commit selection enters the scope fingerprint;
 versions 1–3 retain their original serialization and requests. Select commits
 without issues/PRs, or alongside them. Public reads may remain unauthenticated;
