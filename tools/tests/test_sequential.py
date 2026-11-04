@@ -7,16 +7,18 @@ import itertools
 import hashlib
 import json
 import math
+from collections import Counter
 import os
 import random
 from pathlib import Path
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 import agent_harness_lab
-from agent_harness_lab.evaluation import sequential as core, sequential_state as custody, responses, benchmark
+from agent_harness_lab.evaluation import sequential as core, sequential_state as custody, responses, benchmark, oracle_history
 from agent_harness_lab.evaluation.plan import ExperimentSpec
 from agent_harness_lab.evaluation.statistics import TrialRecord,analyze as fixed_analyze
 from agent_harness_lab.evaluation.precision import preflight
@@ -33,6 +35,14 @@ else:
     import test_sandbox_inference as inference
     import test_preservation_analysis as preservation
     import test_preservation_history as qualified
+
+
+# Synthetic offline arms are real subprocesses, so their quotas are generous enough
+# that host load cannot exhaust them (issue #179). Deadline enforcement itself is
+# covered by explicit tests that exhaust a budget through an injected clock.
+ARM_SECONDS=5
+ROOT_SECONDS=60
+HISTORY_SECONDS=180
 
 
 def spec(n=16,**kwargs):
@@ -242,7 +252,7 @@ class SequentialOnlineTests(unittest.TestCase):
         self.f.manifest['grader_bundles']={t['id']:self.f.manifest['grader_bundles'][t['id']] for t in tasks}
         self.plan=ExperimentSpec('synthetic-fresh-online',tuple((t['id'],t['root'],t['family']) for t in tasks),1,13,6,2,
             .05,.1,.05,(('family',1),),self.f.runner.digest(self.f.root/'baseline'),self.f.runner.digest(self.f.root/'candidate'),
-            identity(self.f.root/'export',tasks,self.f.manifest['grader_bundles']),'a'*64,sequential=core.config(3,3,.25))
+            identity(self.f.root/'export',tasks,self.f.manifest['grader_bundles']),'a'*64,sequential=core.config(3,ROOT_SECONDS,ARM_SECONDS))
         self.install()
         self.store=HistoryStore(self.f.root/'history');self.calls=[]
 
@@ -254,10 +264,31 @@ class SequentialOnlineTests(unittest.TestCase):
             cgroup_v2={'empty_after_cleanup':True},runtime_image=dict(sha256='a'*64,verified_before=True,verified_after=True))
         return run
 
-    def run_history(self,execute=None,budget=30):
+    def run_history(self,execute=None,budget=HISTORY_SECONDS,*,expect='sealed'):
+        started=time.monotonic()
         with patch.object(SandboxBackend,'capability',return_value={'status':'available'}),patch.object(SandboxBackend,'run',side_effect=execute or self.execute):
-            return self.store.run(self.f.args.manifest,self.f.args.baseline,self.f.args.candidate,cgroup_root=self.f.root/'delegation',
+            result=self.store.run(self.f.args.manifest,self.f.args.baseline,self.f.args.candidate,cgroup_root=self.f.root/'delegation',
                 image_root=self.f.root/'image',image_sha256='a'*64,disk_bytes=65536,budget_seconds=budget)
+        if expect is not None and result['state']!=expect:
+            self.fail(f"history run expected {expect}, got {result['state']}: "+json.dumps(self.run_diagnostic(result,budget,time.monotonic()-started),sort_keys=True))
+        return result
+
+    def run_diagnostic(self,result,budget,elapsed):
+        """Report why a run did not seal from the store's own non-private custody fields."""
+        case=self.store.case(result['run_id']);value=dict(state=result['state'],budget_seconds=budget,elapsed_seconds=round(elapsed,3),
+            dispatched_roles=dict(Counter(self.calls)),quotas={k:self.plan.sequential[k] for k in ('root_seconds','arm_seconds')})
+        with self.store.locked():event=self.store.history(case)[-1][0]
+        value['last_event']=dict(kind=event['kind'],state=event['state'],reason=event['payload'].get('reason'))
+        terminal=case/'sequential/terminal.json'
+        if terminal.exists():value['controller_stop']={k:json.loads(terminal.read_text()).get(k) for k in ('status','reason','completed_roots')}
+        results=case/'execution/results.json'
+        if results.exists():
+            raw=json.loads(results.read_text());analysis=raw.get('sequential_analysis') or {}
+            value['trial_statuses']=dict(Counter(t.get('status') for t in raw.get('trials',[])))
+            value['trial_errors']=dict(Counter('subprocess_timeout' if 'timed out' in str(t['error']) else 'other_error'
+                for t in raw.get('trials',[]) if t.get('error')))
+            value['analysis']=dict(status=analysis.get('status'),reason=analysis.get('reason'),completed_roots=analysis.get('completed_roots'))
+        return value
 
     def test_actual_fresh_both_arms_stop_early_and_guarded_receipt_replays_without_calls(self):
         result=self.run_history();self.assertEqual(result['state'],'sealed',result)
@@ -276,7 +307,7 @@ class SequentialOnlineTests(unittest.TestCase):
         self.assertTrue({r['trial_id'] for r in rows}.isdisjoint(r['trial_id'] for r in other))
 
     def test_caller_ceiling_admits_only_frozen_sequential_root_budget(self):
-        self.plan=replace(self.plan,max_trials=4,sequential=core.config(2,3,.25))
+        self.plan=replace(self.plan,max_trials=4,sequential=core.config(2,ROOT_SECONDS,ARM_SECONDS))
         self.f.manifest['max_trials']=4;self.install()
         result=self.run_history();self.assertEqual(result['state'],'sealed',result)
         self.assertEqual(self.calls.count('executor'),4);self.assertEqual(self.calls.count('grader'),4)
@@ -294,15 +325,54 @@ class SequentialOnlineTests(unittest.TestCase):
         self.assertEqual(self.store.analyze(result['run_id'])['status'],'rejected')
         self.assertEqual(self.calls.count('executor'),4)
         self.calls.clear();self.store=HistoryStore(self.f.root/'budget-history')
-        self.plan=replace(self.plan,sequential=core.config(3,100,.25));self.install()
-        result=self.run_history(budget=10);self.assertEqual(result['state'],'sealed',result)
+        # A root quota equal to the whole history budget can never be reserved once any time has passed.
+        self.plan=replace(self.plan,sequential=core.config(3,HISTORY_SECONDS,ARM_SECONDS));self.install()
+        result=self.run_history();self.assertEqual(result['state'],'sealed',result)
         self.assertEqual(self.calls,[]);self.assertEqual(self.store.analyze(result['run_id'])['reason'],'root_budget_not_reserved')
+
+    def skewed_clock(self,module):
+        """Advance only one deadline owner's monotonic clock; enforcement code is unchanged."""
+        skew=[0.0];real=time.monotonic
+        self.enterContext(patch.object(module,'time',SimpleNamespace(monotonic=lambda:real()+skew[0])))
+        return skew
+
+    def test_exhausted_root_quota_is_incomplete_never_sealed(self):
+        skew=self.skewed_clock(custody)
+        def execute(*args,**kwargs):
+            if args[3]=='executor':skew[0]=ROOT_SECONDS
+            return self.execute(*args,**kwargs)
+        result=self.run_history(execute,expect='incomplete')
+        self.assertEqual(self.calls,['executor','grader'])
+        terminal=json.loads((self.store.case(result['run_id'])/'sequential/terminal.json').read_text())
+        self.assertEqual((terminal['status'],terminal['reason']),('incomplete','partial_root_budget'))
+        self.assertEqual(self.store.analyze(result['run_id'])['reason'],'controller_run_not_sealed')
+
+    def test_exhausted_history_budget_after_execution_is_incomplete_never_sealed(self):
+        skew=self.skewed_clock(oracle_history)
+        def execute(*args,**kwargs):
+            skew[0]=HISTORY_SECONDS;return self.execute(*args,**kwargs)
+        result=self.run_history(execute,expect='incomplete')
+        self.assertEqual(self.calls.count('executor'),4)
+        case=self.store.case(result['run_id'])
+        self.assertFalse((case/'evidence.json').exists())
+        self.assertEqual(self.store.analyze(result['run_id'])['reason'],'controller_run_not_sealed')
+
+    def test_unsealed_fixture_run_reports_its_reason_instead_of_a_downstream_failure(self):
+        skew=self.skewed_clock(custody)
+        def execute(*args,**kwargs):
+            if args[3]=='executor':skew[0]=ROOT_SECONDS
+            return self.execute(*args,**kwargs)
+        with self.assertRaises(AssertionError) as failure:self.run_history(execute)
+        message=str(failure.exception)
+        for fragment in ('expected sealed, got incomplete','"reason": "partial_root_budget"',
+                '"dispatched_roles": {"executor": 1, "grader": 1}','"budget_seconds": 180','execution_or_evidence_incomplete'):
+            self.assertIn(fragment,message)
 
     def test_missing_arm_and_interruption_are_incomplete_not_resumed(self):
         def missing(*args,**kwargs):
             if len(self.calls)==2:raise OSError('synthetic second arm unavailable')
             return self.execute(*args,**kwargs)
-        result=self.run_history(missing);self.assertEqual(result['state'],'incomplete')
+        result=self.run_history(missing,expect='incomplete')
         self.assertNotEqual(self.store.analyze(result['run_id'])['status'],'supported')
         self.assertLessEqual(self.calls.count('executor'),1)
 
@@ -316,7 +386,7 @@ class SequentialOnlineTests(unittest.TestCase):
         self.assertEqual(self.store.show(case.name)['state'],'incomplete')
         self.assertTrue((case/'sequential/0000-started.json').exists())
         self.assertFalse((case/'sequential/0000-inspected.json').exists())
-        with self.assertRaises(FileExistsError):custody.Controller(self.plan,case/'sequential',time.monotonic()+30,inputs_sha256='0'*64)
+        with self.assertRaises(FileExistsError):custody.Controller(self.plan,case/'sequential',time.monotonic()+HISTORY_SECONDS,inputs_sha256='0'*64)
         self.assertEqual(self.calls,[])
 
     def test_revocation_blocks_current_decision_without_new_execution(self):
@@ -341,7 +411,7 @@ class SequentialOnlineTests(unittest.TestCase):
         tasks=self.f.manifest['tasks']
         for i,task in enumerate(tasks):task['family']='rare' if i==0 else 'common'
         self.plan=replace(self.plan,tasks=tuple((t['id'],t['root'],t['family']) for t in tasks),
-            family_weights=(('rare',.5),('common',.5)),sequential=core.config(2,3,.25),max_trials=4);self.install()
+            family_weights=(('rare',.5),('common',.5)),sequential=core.config(2,ROOT_SECONDS,ARM_SECONDS),max_trials=4);self.install()
         limits=[];grade_budgets=[]
         from agent_harness_lab.evaluation import bank_tools
         original=bank_tools.regrade_artifacts
@@ -353,9 +423,9 @@ class SequentialOnlineTests(unittest.TestCase):
         self.assertEqual(result['state'],'sealed',result)
         analysis=self.store.analyze(result['run_id']);self.assertEqual(analysis['status'],'inconclusive')
         self.assertEqual(analysis['reason'],'maximum_roots');self.assertEqual(len(limits),8)
-        self.assertEqual({seconds for role,seconds in limits if role=='executor'},{.25})
-        self.assertEqual(grade_budgets,[.25]*4)
-        self.assertTrue(all(0<seconds<=.25 for _,seconds in limits))
+        self.assertEqual({seconds for role,seconds in limits if role=='executor'},{ARM_SECONDS})
+        self.assertEqual(grade_budgets,[ARM_SECONDS]*4)
+        self.assertTrue(all(0<seconds<=ARM_SECONDS for _,seconds in limits))
 
     def test_engine_change_and_expired_direct_parent_cannot_continue(self):
         result=self.run_history();run_id=result['run_id']
@@ -376,8 +446,8 @@ class SequentialOnlineTests(unittest.TestCase):
                 # Complete root is not inspected until this boundary; first inspect then mutate.
                 control._inspect(rows);path.write_text('{}')
             return original(control,scheduled,rows)
-        with patch.object(custody.Controller,'before',before):result=self.run_history()
-        self.assertEqual(result['state'],'incomplete');self.assertLessEqual(self.calls.count('executor'),2)
+        with patch.object(custody.Controller,'before',before):result=self.run_history(expect='incomplete')
+        self.assertLessEqual(self.calls.count('executor'),2)
 
     def test_critical_partial_veto_and_no_from_json_controller(self):
         plan=self.plan
@@ -386,7 +456,7 @@ class SequentialOnlineTests(unittest.TestCase):
             if core.schedule(chosen)[0]['version']=='candidate':plan=chosen;break
         with tempfile.TemporaryDirectory() as folder:
             with patch.object(core.secrets,'randbelow',side_effect=lambda n:n-1):
-                control=custody.Controller(plan,Path(folder)/'ledger',time.monotonic()+30,inputs_sha256='0'*64)
+                control=custody.Controller(plan,Path(folder)/'ledger',time.monotonic()+HISTORY_SECONDS,inputs_sha256='0'*64)
             schedule=control.schedule
             first=next(i for i,r in enumerate(schedule) if r['version']=='candidate')
             data=[]
@@ -399,7 +469,7 @@ class SequentialOnlineTests(unittest.TestCase):
             self.assertEqual(result['status'],'rejected');self.assertEqual(result['reason'],'critical_regression')
             self.assertEqual(first,0);self.assertEqual(result['completed_roots'],0)
             with self.assertRaises(ValueError):control.validate(plan)
-            with self.assertRaises(FileExistsError):custody.Controller(plan,control.path,time.monotonic()+30,inputs_sha256='0'*64)
+            with self.assertRaises(FileExistsError):custody.Controller(plan,control.path,time.monotonic()+HISTORY_SECONDS,inputs_sha256='0'*64)
             with self.assertRaises(AttributeError):custody.Controller.from_json(control.binding)
 
     def test_private_labels_cannot_publish_or_authenticate_a_saved_result(self):
@@ -446,13 +516,13 @@ class SequentialOnlineTests(unittest.TestCase):
         f=self.f
         f.args.cgroup_root=f.root/'delegation';f.args.image_root=f.root/'image';f.args.image_sha256='a'*64;f.args.disk_bytes=65536
         f.args.output=f.root/'execution'
-        controller=custody.Controller(self.plan,f.root/'sequential',time.monotonic()+30,inputs_sha256='0'*64)
+        controller=custody.Controller(self.plan,f.root/'sequential',time.monotonic()+HISTORY_SECONDS,inputs_sha256='0'*64)
         for forged in ({},controller):
             f.args._sequential_controller=forged
             with patch.object(SandboxBackend,'capability',side_effect=AssertionError('no foreign-view probe')),self.assertRaises(ValueError):
                 f.runner.evaluate(f.args)
         with tempfile.TemporaryDirectory() as folder:
-            control=custody.Controller(self.plan,Path(folder)/'ledger',time.monotonic()+30,inputs_sha256='0'*64)
+            control=custody.Controller(self.plan,Path(folder)/'ledger',time.monotonic()+HISTORY_SECONDS,inputs_sha256='0'*64)
             alias=copy(control);control.claim(self.plan,'0'*64)
             with self.assertRaises(ValueError):alias.claim(self.plan,'0'*64)
 
