@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.73.0
+
+### Minor Changes
+
+- d4ef0ae: Add an opt-in fixed repeated-bank path to improve, with fresh private Responses execution custody, sealed history and verified decision receipts. Keep certification and automatic adoption unavailable.
+
 ## 0.72.0
 
 ### Minor Changes
