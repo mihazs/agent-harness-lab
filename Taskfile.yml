@@ -912,7 +912,7 @@ tasks:
       PYTHONPATH: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=300 -- {{.PYTHON | shellQuote}} -m pytest -n 0 -k "experiment_recovery_gap and RecoveryHistoryTests"'
+      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=300 -- {{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tools/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n 0 -k "experiment_recovery_gap and RecoveryHistoryTests"'
   test:evaluation:recovery-gap:
     desc: Probe durable trial binding and ambiguous-request refusal without provider calls
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -920,7 +920,7 @@ tasks:
       PYTHONPATH: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest -n {{default "auto" .TEST_WORKERS | shellQuote}} --dist worksteal -k experiment_recovery_gap'
+      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tools/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n {{default "auto" .TEST_WORKERS | shellQuote}} --dist worksteal -k experiment_recovery_gap'
   setup:
     desc: Install development dependencies and guarded Git hooks
     cmds:

@@ -153,7 +153,7 @@ class RecoveryCheckpointTests(unittest.TestCase):
         public=dict(publication_allowed=True,provenance=dict(source_kind='synthetic',approved_publication=True,
             source_ref='synthetic:recovery',derived_from_private=False))
         for marker in (dict(profile='controller-request-reservation-v1'),
-                dict(profile='controller-realized-schedule-v1'),dict(request_binding={})):
+                dict(profile='controller-realized-schedule-v1'),dict(request_binding={}),dict(realized_schedule=dict(public))):
             for wrapper in (None,'receipt','analysis','context','binding'):
                 record=dict(public,**marker) if wrapper is None else dict(public,**{wrapper:dict(public,**marker)})
                 self.assertFalse(public_export_allowed([record]))
