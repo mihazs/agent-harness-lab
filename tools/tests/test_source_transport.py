@@ -47,6 +47,29 @@ class SourceTransportTests(unittest.TestCase):
         self.assertEqual(self.connection.close.call_count, 2)
         self.assertTrue(self.wire.call_args.kwargs['context'].check_hostname)
 
+    def test_default_collection_exhausts_pages_records_and_bytes_without_a_deadline(self):
+        large='synthetic '*1000000
+        pages=[]
+        for index in range(21):
+            items=list(range(index*500,(index+1)*500))
+            if index==0: items[0]=large
+            pages.append(Response(dict(items=items,next=f'?page={index+2}' if index<20 else None)))
+        self.connection.getresponse.side_effect=pages
+        with patch('agent_harness_lab.sources.transport.time.monotonic',side_effect=AssertionError('no implicit deadline')):
+            captured=self.collect()
+        self.assertEqual(len(captured),10500)
+        self.assertEqual(captured[0],large)
+        self.assertEqual(captured[-1],10499)
+        self.assertEqual(self.connection.request.call_count,21)
+        self.assertIsNone(self.wire.call_args.kwargs['timeout'])
+
+    def test_long_endpoint_and_explicit_limits_above_former_ceilings(self):
+        long_url=self.base+'/'+'synthetic'*1200
+        self.assertEqual(JsonAPI(long_url).base,long_url)
+        self.connection.getresponse.return_value=Response(dict(items=[1],next=None))
+        self.assertEqual(self.collect(max_pages=101,max_bytes=9*1024*1024,timeout=301,seconds=601),(1,))
+        self.assertGreater(self.wire.call_args.kwargs['timeout'],300)
+
     def test_scope_and_auth_fail_before_connection(self):
         for source in (replace(self.source, enabled=False), replace(self.source, root_sha256=digest('wrong')),
                        replace(self.source, project_sha256=digest('foreign'))):

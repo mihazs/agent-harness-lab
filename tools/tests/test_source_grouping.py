@@ -67,7 +67,7 @@ class BankContentGroupingTests(unittest.TestCase):
             result = validate(f.path, verify_contents=False)
         self.assertIsNone(result['content_grouping']); self.assertFalse(result['certification_eligible'])
 
-    def test_binary_data_remains_exact_and_resource_bounds_fail_closed(self):
+    def test_binary_data_remains_exact_and_explicit_resource_bounds_fail_closed(self):
         from unittest.mock import patch
         f = self.fixture
         for index in range(2):
@@ -78,21 +78,21 @@ class BankContentGroupingTests(unittest.TestCase):
         self.assertFalse(checked['certification_eligible'])
         self.assertEqual(checked['content_grouping']['overlaps'], 0)
         self.assertEqual(checked['issues'], [])
-        with patch('agent_harness_lab.evaluation.content_grouping.MAX_BANK_BYTES', 1):
-            with self.assertRaises(ValueError): validate(f.path)
+        from agent_harness_lab.evaluation.content_grouping import fixture_content
+        with self.assertRaises(ValueError):
+            fixture_content(f.root/'fixture0', f.tasks[0]['fixture_digest'], 0)
         with patch('agent_harness_lab.evaluation.content_grouping.digest', return_value='a'*64):
             with self.assertRaisesRegex(ValueError, 'changed'): validate(f.path)
 
-    def test_receipt_output_is_bounded_without_dropping_exposure_counts(self):
+    def test_receipt_output_keeps_every_exposure(self):
         from unittest.mock import patch
         f = self.fixture
         (f.root/'fixture1/value').write_text(' 0\n')
         f.tasks[1]['fixture_digest'] = digest(f.root/'fixture1'); f.write()
-        with patch('agent_harness_lab.evaluation.content_grouping.MAX_RECEIPTS', 0):
-            result = validate(f.path)
+        result = validate(f.path)
         grouping = result['content_grouping']
-        self.assertEqual(grouping['overlaps'], 1); self.assertTrue(grouping['receipts_truncated'])
-        self.assertEqual(grouping['receipts'], []); self.assertFalse(result['certification_eligible'])
+        self.assertEqual(grouping['overlaps'], 1); self.assertFalse(grouping['receipts_truncated'])
+        self.assertEqual(len(grouping['receipts']), grouping['overlaps']); self.assertFalse(result['certification_eligible'])
 
     def test_export_freezes_the_computed_grouping_revision(self):
         from agent_harness_lab.evaluation.bank_tools import export_manifest
@@ -174,12 +174,12 @@ class TextGroupingTests(unittest.TestCase):
         content = text_fingerprint('words'); receipt = compare(left, right, content, content)
         for fields in (dict(lineage_group_sha256='f'*64), dict(reviewer_decision='independent_case'),
                        dict(evidence_class='verified_native_id'), dict(content_relation='different'),
-                       dict(invalidation_history=('f'*64,)*2), dict(invalidation_history=tuple(str(i).zfill(64) for i in range(65)))):
+                       dict(invalidation_history=('f'*64,)*2)):
             with self.assertRaises(ValueError): replace(receipt, **fields)
         value = receipt.to_dict(); value['left_content']['algorithm'] = 'unknown-v2'
         with self.assertRaises(ValueError): GroupingReceipt.parse(value)
         with self.assertRaises(ValueError): compare(left, left, content, content)
-        for invalid in (None, b'bytes', '\ud800', 'x'*(1024*1024+1), 'x '*100001):
+        for invalid in (None, b'bytes', '\ud800'):
             with self.assertRaises(ValueError): text_fingerprint(invalid)
 
     def test_fingerprint_algorithm_changes_require_new_comparisons(self):
@@ -190,3 +190,55 @@ class TextGroupingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'algorithms'):
             compare(RecordRef('a'*64,'b'*64,'c'*64), RecordRef('a'*64,'d'*64,'e'*64),
                 content, replace(content, algorithm=FIXTURE_ALGORITHM))
+
+
+class UnlimitedFingerprintTests(unittest.TestCase):
+    def test_large_text_and_complete_history_preserve_exact_and_normalized_hashes(self):
+        from agent_harness_lab.sources.execution import RecordRef
+        from agent_harness_lab.sources.grouping import GroupingReceipt, compare, text_fingerprint
+        text = 'x ' * 524289
+        content = text_fingerprint(text)
+        self.assertEqual(content.tokens, 524289)
+        history = tuple(str(i).zfill(64) for i in range(65))
+        receipt = compare(RecordRef('a'*64,'b'*64,'c'*64), RecordRef('a'*64,'d'*64,'e'*64),
+            content, content, invalidation_history=history)
+        self.assertEqual(GroupingReceipt.parse(receipt.to_dict()), receipt)
+        self.assertEqual(receipt.content_relation, 'exact')
+
+
+class CompleteExposureTests(unittest.TestCase):
+    def test_fixture_content_has_no_implicit_tree_or_file_byte_ceiling(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from agent_harness_lab.evaluation.content_grouping import fixture_content
+        limits = dict(max_files=None, max_bytes=None, max_entries=None, max_depth=None)
+        with TemporaryDirectory() as folder:
+            root = Path(folder)
+            for index in range(1001): (root/str(index)).write_bytes(b'')
+            raw = b'x'*(11*1024*1024)
+            (root/'large').write_bytes(raw)
+            pin = digest(root, **limits)
+            content, prompt, used = fixture_content(root, pin)
+            self.assertEqual(content.exact_sha256, pin)
+            self.assertEqual(content.tokens, 1)
+            self.assertIsNone(prompt)
+            self.assertEqual(used, len(raw))
+            with self.assertRaises(ValueError): fixture_content(root, pin, 1)
+
+    def test_all_overlap_receipts_survive_past_the_old_receipt_ceiling(self):
+        from pathlib import Path
+        from tempfile import TemporaryDirectory
+        from types import SimpleNamespace
+        from agent_harness_lab.evaluation.content_grouping import inspect_bank
+        with TemporaryDirectory() as folder:
+            root = Path(folder); fixture = root/'fixture'; fixture.mkdir()
+            (fixture/'value').write_text('shared synthetic content')
+            pin = digest(fixture)
+            tasks = [SimpleNamespace(task_id=str(i), fixture='fixture', fixture_digest=pin,
+                partition='development') for i in range(130)]
+            report, issues = inspect_bank(root, tasks, 'a'*64)
+        self.assertEqual(report['overlaps'], 129)
+        self.assertEqual(len(report['receipts']), 129)
+        self.assertEqual(len(issues), 129)
+        self.assertFalse(report['receipts_truncated'])
+        self.assertIsNone(report['independent_roots'])

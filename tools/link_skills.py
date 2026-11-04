@@ -46,12 +46,16 @@ def install(source, destination, backup_root):
 
 
 def main(argv=None, source=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='Creates links for harness-evaluation and harness-self-improvement; replaces existing directories only after backup.\n'
+        'Foreign symlinks and non-directories are refused; already-current links are unchanged.\n'
+        'Prints a text receipt or backup location; does not run agents or install dependencies.\n'
+        'Example: ahl skills --destination /tmp/ahl-skills --backup-root /tmp/ahl-skill-backups')
     target = parser.add_mutually_exclusive_group()
     target.add_argument('--agent', choices=('codex', 'claude'), default='codex',
-                        help='Skill discovery directory (default: codex)')
-    target.add_argument('--destination', type=Path, help='Custom skill directory')
-    parser.add_argument('--backup-root', type=Path, default=Path.home() / '.local/state/harness-improver/backups')
+                        help='Target host: codex uses ~/.agents/skills, claude uses ~/.claude/skills; excludes --destination (default: %(default)s)')
+    target.add_argument('--destination', type=Path, help='Explicit skill-link directory instead of the selected host directory; excludes --agent')
+    parser.add_argument('--backup-root', type=Path, default=Path.home() / '.local/state/harness-improver/backups', help='Directory for private backups of replaced skill directories (default: ~/.local/state/harness-improver/backups)')
     args = parser.parse_args(argv)
     destination = args.destination or Path.home() / ('.claude/skills' if args.agent == 'claude' else '.agents/skills')
     backup = install(source or Path(__file__).resolve().parents[1] / 'skills', destination, args.backup_root)

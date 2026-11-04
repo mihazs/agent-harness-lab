@@ -13,6 +13,20 @@ def record(model='synthetic',source='synthetic',status='not_run'):
 
 
 class BenchmarkContracts(unittest.TestCase):
+    def test_trajectory_reports_keep_all_trials_assertions_and_long_identifiers(self):
+        assertions=[dict(assertion_id='synthetic assertion '*20+str(index),assertion_sha256='a'*64,
+            status='unknown',coverage_complete=False) for index in range(33)]
+        first=dict(task='synthetic task '*30,version='candidate',
+            controller_grade=dict(trajectory=dict(status='unknown',assertions=assertions)))
+        report=summary(dict(trajectory_profile='controller-trajectory-v1',
+            trials=[first]+[dict(task='synthetic task') for _ in range(10000)]))
+        self.assertEqual(len(report['trials']),10001)
+        self.assertEqual(report['trials'][0]['task'],first['task'])
+        self.assertEqual(len(report['trials'][0]['assertions']),33)
+        self.assertEqual(report['trials'][0]['assertions'][-1]['assertion_id'],assertions[-1]['assertion_id'])
+        self.assertEqual(report['analysis']['status'],'unverified')
+        self.assertFalse(report['publication_allowed'])
+
     def test_mismatched_and_unverified_runtime_blocks(self):
         with self.assertRaises(ValueError): validate_pair(runtime(),runtime('other-model'))
         candidate=runtime(); candidate['effective_settings_verified']=False
@@ -57,6 +71,22 @@ class BenchmarkContracts(unittest.TestCase):
             with self.subTest(fields=fields):
                 self.assertFalse(public_export_allowed([item]))
                 with self.assertRaises(ValueError): summary([item],public=True)
+
+    def test_interchange_preserves_existing_private_controller_export_guards(self):
+        claims=[dict.fromkeys([key]) for key in (
+            'protected_access','protected_access_sha256','controller_source_profile',
+            'source_capture','live_verification','verified_execution','import_sha256',
+            'foreign_claims','proposal_id')]
+        claims.extend(dict(profile=profile) for profile in (
+            'protected-diagnostic-access-v1','ahl-controller-live-v1','external-evaluation-data-v1'))
+        claims.extend(dict(format=profile) for profile in (
+            'promptfoo-cases-json-v1','promptfoo-results-jsonl-v1','openai-evals-match-jsonl-v1'))
+        for claim in claims:
+            for wrapper in (None,'receipt','analysis','context','binding'):
+                item=record()
+                item.update(claim if wrapper is None else {wrapper:claim})
+                with self.subTest(claim=claim,wrapper=wrapper):
+                    self.assertFalse(public_export_allowed([item]))
 
     def test_cost_is_unknown_without_measured_usage_or_dated_pricing(self):
         self.assertIsNone(measured_cost({'input_tokens':100}))

@@ -1,16 +1,22 @@
-## Problem and behavior
+## What changes and why?
 
-Describe the observable before/after behavior. Link the relevant issue.
+<!-- One or two sentences: concrete problem → resulting behavior. Include a short
+before/after example when useful. Link an issue with “Closes #…” only for full scope;
+use “Related #…” for partial work. Delete unused guidance. -->
 
-## Verification
+## How was it verified?
 
-List executed commands, environment and actual results. Separate failures, skips
-and untested platforms. For behavioral skill changes include paired evidence,
-held-out results and limitations. State whether review was self-review or independent.
+<!-- Give commands and actual results; include OS/Python/runtime when relevant.
+Distinguish passed, failed, skipped and not run. Do not paste full logs.
+For behavioral harness changes, link public/synthetic paired evidence, held-out
+results and limitations. A smoke test is not behavioral certification.
+State whether the review was self-review or independent. -->
 
-## Scope and privacy
+## Review notes
 
-Explain compatibility/security effects, dependencies and remaining limits. Confirm
-public examples are synthetic or authorized public sources. Do not attach private
-traces, analyzed-project identities, history-derived findings or trial workspaces.
-Inspect the staged diff. Add a Changeset for a releasable change; do not edit versions.
+<!-- Optional: compatibility, migration/rollback, dependencies, security effects,
+remaining limitations, or a file/decision needing particular attention. Delete this
+section when none apply. -->
+
+- [ ] I inspected the diff; it contains no private traces, analyzed-project identities, history-derived findings, credentials or trial workspaces.
+- [ ] I added a Changeset for releasable changes, or explained why none is needed. Versions are not edited manually.

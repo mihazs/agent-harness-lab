@@ -74,11 +74,12 @@ class GitHubCommitTests(GitHubFixture, unittest.TestCase):
         self.assertNotIn('patch', file)
         self.assertNotIn('SYNTHETIC_PRIVATE_PATCH', json.dumps(client.summary))
 
-    def test_selection_requires_bounded_unique_full_immutable_shas(self):
+    def test_selection_requires_unique_full_immutable_shas(self):
         self.assertEqual(GitHubSelection.parse(json.loads(json.dumps(self.selection.to_dict()))), self.selection)
-        for commits in (['b'*40], ('main',), ('abc123',), (None,), (True,), (self.sha, self.sha), ('c'*40, 'b'*40),
-                        tuple(f'{n:040x}' for n in range(11))):
+        for commits in (['b'*40], ('main',), ('abc123',), (None,), (True,), (self.sha, self.sha), ('c'*40, 'b'*40)):
             with self.subTest(commits=commits), self.assertRaises(ValueError): replace(self.selection, commits=commits)
+        commits=tuple(f'{n:040x}' for n in range(11))
+        self.assertEqual(replace(self.selection,commits=commits).commits,commits)
 
     def test_older_versions_keep_original_serialization_and_request_sets(self):
         for version in (1, 2, 3):

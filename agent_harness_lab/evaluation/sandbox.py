@@ -15,6 +15,7 @@ import time
 from .cgroup import Cgroup
 from .image import RuntimeImage
 from .integrity import digest
+from .analysis_inputs import input_digest,check_role
 from .workspace import PrivateWorkspace, policy
 
 ROLES = {'proposer', 'evaluator_author', 'executor', 'grader'}
@@ -60,6 +61,7 @@ class SandboxBackend:
             semantic_intent='unknown',automatic_promotion=False,publication_allowed=False)
 
     def command(self, argv, workspace, inputs, role):
+        check_role(inputs,role)
         if role not in ROLES or not argv or not all(isinstance(a, str) for a in argv):
             raise ValueError('invalid role/command')
         if not self.binary:
@@ -69,7 +71,7 @@ class SandboxBackend:
         workspace = Path(workspace).resolve()
         command = [self.binary, '--unshare-all', '--unshare-user', '--unshare-net', '--die-with-parent',
                    '--new-session', '--cap-drop', 'ALL', '--clearenv', '--setenv', 'PATH', '/usr/bin:/bin',
-                   '--setenv', 'HOME', '/home/worker', '--setenv', 'LANG', 'C.UTF-8']
+                   '--setenv', 'HOME', '/home/worker', '--setenv', 'LANG', 'C.UTF-8', '--setenv', 'PWD', '/work']
         command += ['--setenv', 'AHL_SANDBOX_ROLE', role]
         if self.permission_audit:
             command += ['--setenv','PYTHONDONTWRITEBYTECODE','1']
@@ -87,7 +89,7 @@ class SandboxBackend:
         for name, folder in sorted(inputs.items()):
             if name not in ('harness', 'fixture', 'oracle') or (name == 'oracle' and role != 'grader'):
                 raise ValueError('role cannot access this input')
-            digest(folder)
+            input_digest(inputs,name)
             folder = Path(folder).resolve()
             if workspace.is_relative_to(folder) or folder.is_relative_to(workspace):
                 raise ValueError('writable workspace and readonly inputs must not overlap')
@@ -105,6 +107,7 @@ class SandboxBackend:
             if not supported() or self.image is None or self.disk_bytes is None or self.cgroup_root is None:
                 return dict(status='unsupported',reason='permission_audit_profile_unavailable',automatic_promotion=False)
         import tempfile
+        from .controller_receipts import _capability_probe
         with tempfile.TemporaryDirectory() as folder:
             try:
                 checkpoint=len(self.permission_reports)
@@ -112,9 +115,11 @@ class SandboxBackend:
                     fixture=Path(folder)/'fixture';fixture.mkdir();(fixture/'marker').write_text('synthetic')
                     work=Path(folder)/'work';work.mkdir()
                     code="from pathlib import Path\nPath('/work/allowed').write_text('synthetic')\ntry:Path('/inputs/fixture/marker').write_text('bad')\nexcept OSError as exc:assert exc.errno in (1,13,30)\nelse:raise AssertionError('readonly boundary absent')"
-                    run=self.run(['/usr/bin/python3','-c',code],work,{'fixture':fixture},'grader',Limits(seconds=seconds))
+                    with _capability_probe():
+                        run=self.run(['/usr/bin/python3','-c',code],work,{'fixture':fixture},'grader',Limits(seconds=seconds))
                 else:
-                    run = self.run(['/usr/bin/true'], Path(folder), {}, 'grader', Limits(seconds=seconds))
+                    with _capability_probe():
+                        run = self.run(['/usr/bin/true'], Path(folder), {}, 'grader', Limits(seconds=seconds))
                 del self.permission_reports[checkpoint:]
             except TimeoutError:
                 return dict(status='unsupported', reason='namespace_probe_timeout', automatic_promotion=False)
@@ -137,6 +142,8 @@ class SandboxBackend:
                         + ([] if self.cgroup_root is not None else ['no aggregate cgroup controls']))
 
     def run(self, argv, workspace, inputs, role, limits=Limits(), *, artifact_allowlist=None, working_state=None):
+        from .controller_receipts import _kernel_started, _kernel_spawned, _kernel_finished
+        source_ticket = _kernel_started(role,argv)
         limits.validate()
         audit_capture=None
         if self.permission_audit:
@@ -146,11 +153,10 @@ class SandboxBackend:
         start = time.monotonic()
         permission_command=None
         if self.permission_audit:
-            from .permission_audit import hashed
+            from .permission_audit import hashed, canonical_argv
             if not isinstance(argv,(list,tuple)) or not argv or any(not isinstance(a,str) or '\0' in a for a in argv):
                 raise ValueError('permission audit requires an explicit argv')
-            requested=list(argv);effective=list(requested)
-            if effective and effective[0]=='/usr/bin/python3':effective.insert(1,'-B')
+            requested=list(argv);effective=canonical_argv(requested)
             permission_command=dict(requested_argv_sha256=hashed(requested),effective_argv_sha256=hashed(effective),
                 normalization='canonical_python_no_bytecode_v1' if effective!=requested else 'unchanged')
             argv=effective
@@ -166,7 +172,7 @@ class SandboxBackend:
         command = self.command(argv, workspace, inputs, role)
         if self.disk_bytes is not None and role != 'grader' and artifact_allowlist is None and working_state is None:
             raise ValueError('bounded workers require an explicit artifact allowlist')
-        before = {name: digest(folder) for name, folder in inputs.items()}
+        before = {name: input_digest(inputs,name) for name in inputs}
         if time.monotonic() - start >= limits.seconds:
             raise TimeoutError('sandbox budget exhausted before launch')
         def constrain():
@@ -185,7 +191,7 @@ class SandboxBackend:
         aggregate = replace(limits, memory_bytes=min(limits.memory_bytes, self.disk_bytes)) if self.disk_bytes is not None else limits
         boundary = Cgroup(self.cgroup_root, aggregate, start+limits.seconds) if self.cgroup_root is not None else nullcontext(None)
         storage = PrivateWorkspace(self, workspace, inputs, role, argv, self.disk_bytes,
-            start+limits.seconds, artifact_allowlist if artifact_allowlist is not None else [], working_state) if self.disk_bytes is not None else nullcontext(None)
+            start+limits.seconds, artifact_allowlist if artifact_allowlist is not None else [], working_state,limits=limits) if self.disk_bytes is not None else nullcontext(None)
         storage_report = None
         audit_report=dict(status='not_requested',qualification='unknown',observation_scope='unobserved')
         with storage as scratch:
@@ -194,7 +200,7 @@ class SandboxBackend:
                 audit=None
                 if self.permission_audit:
                     from .permission_audit import Observation
-                    audit=Observation(scratch.command,scratch.audit_execs,group,limits,start+limits.seconds,role)
+                    audit=Observation(scratch.command,scratch.audit_execs,group,limits,start+limits.seconds,role,**(dict(source_ticket=source_ticket) if source_ticket is not None else {}))
                     stack.callback(audit.close)
                 descriptors=tuple(([scratch.filter_fd] if scratch else [])+([audit.writer] if audit else []))
                 process=stack.enter_context(subprocess.Popen(audit.command if audit else scratch.command if scratch else command,
@@ -207,6 +213,7 @@ class SandboxBackend:
                     if audit:
                         audit.start(process);poll.register(audit.reader,selectors.EVENT_READ,2)
                     if scratch: scratch.start(group)
+                    _kernel_spawned(source_ticket,process,scratch,group,*([audit] if audit is not None else []))
                     for index, pipe in enumerate((scratch.receiver if scratch else process.stdout, process.stderr)):
                         os.set_blocking(pipe.fileno(), False)
                         poll.register(pipe, selectors.EVENT_READ, index)
@@ -248,7 +255,7 @@ class SandboxBackend:
                     raise
                 finally:
                     poll.close()
-            unchanged = all(digest(folder) == before[name] for name, folder in inputs.items())
+            unchanged = all(input_digest(inputs,name) == before[name] for name in inputs)
             if image:
                 image.update(verified_before=True, verified_after=False)
                 try:
@@ -269,7 +276,7 @@ class SandboxBackend:
         if self.permission_audit:
             if reason and audit_report['qualification']!='violated':audit_report.update(status='unknown',qualification='unknown')
             audit_capture.update(audit_report)
-        return dict(exit_code=process.returncode, status=reason or ('completed' if process.returncode == 0 else 'failed'),
+        result = dict(exit_code=process.returncode, status=reason or ('completed' if process.returncode == 0 else 'failed'),
                     stdout=bytes(buffers[0][:limits.output_bytes]).decode('utf-8', 'replace'),
                     stderr=bytes(buffers[1][:limits.output_bytes]).decode('utf-8', 'replace'),
                     elapsed_seconds=time.monotonic() - start, inputs_unchanged=unchanged,
@@ -283,3 +290,5 @@ class SandboxBackend:
                         permission_audit=audit_report,
                         permission_command=permission_command,
                         aggregate_disk_bound_verified=bool(storage_report and storage_report['verified']), inference_supported=False))
+        _kernel_finished(source_ticket,result,argv,scratch.export_fingerprints if scratch else None)
+        return result

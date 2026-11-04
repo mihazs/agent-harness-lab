@@ -15,6 +15,7 @@ import stat
 import struct
 import sys
 import time
+from weakref import WeakKeyDictionary, ref
 
 PROFILE = 'permission-results-v1'
 ARCH = 0xc000003e
@@ -25,6 +26,31 @@ MAX_TASKS = 256
 MAX_STOPS = 200000
 MAX_SETUP_GAPS = 128
 DENIALS = (errno.EACCES, errno.EPERM, errno.EROFS)
+_CUSTODY = WeakKeyDictionary()
+_COMPLETIONS = WeakKeyDictionary()
+
+
+def canonical_argv(argv):
+    effective=list(argv)
+    if effective and effective[0]=='/usr/bin/python3':effective.insert(1,'-B')
+    return effective
+
+
+def _fd_identity(descriptor):
+    info=os.fstat(descriptor)
+    return info.st_dev,info.st_ino,info.st_mode
+
+
+class _Completion: pass
+
+
+def _take_completion(completion,ticket,process):
+    state=_COMPLETIONS.pop(completion,None) if type(completion) is _Completion else None
+    return json.loads(state[2]) if state is not None and state[0] is ticket and state[1] is process else None
+
+
+def _consume_completion(completion,ticket,process):
+    return _take_completion(completion,ticket,process) is not None
 
 
 def encoded(value): return json.dumps(value,sort_keys=True,allow_nan=False,separators=(',',':')).encode()
@@ -75,7 +101,7 @@ def validate_frame(frame):
 
 class Observation:
     """A fresh private protocol pipe; no file/result-import route establishes a capture."""
-    def __init__(self,command,execs,group,limits,deadline,role):
+    def __init__(self,command,execs,group,limits,deadline,role,*,source_ticket=None):
         if not supported(): raise ValueError('permission audit requires Linux x86_64')
         self.reader=self.writer=None
         self.nonce=secrets.token_hex(16);self.data=bytearray();self.eof=False
@@ -88,10 +114,23 @@ class Observation:
             self.close();raise ValueError('permission audit launch frame exceeds bound')
         self.reader,self.writer=os.pipe2(os.O_CLOEXEC|os.O_NONBLOCK)
         self.command=[sys.executable,'-I','-S',str(Path(__file__).resolve()),str(self.writer),str(os.getpid())]
+        if source_ticket is not None:
+            _CUSTODY[self]=dict(ticket=ref(source_ticket),raw=self.raw,launch=tuple(self.command),
+                reader=self.reader,writer=self.writer,reader_id=_fd_identity(self.reader),writer_id=_fd_identity(self.writer),
+                process=None,sent=False,written=bytearray(),wire=bytearray(),eof=False,lost=False,closed=False)
 
     def start(self,process):
+        state=_CUSTODY.get(self)
+        if state is not None:
+            import subprocess
+            state['lost']=(state['lost'] or state['process'] is not None or type(process) is not subprocess.Popen
+                or tuple(process.args)!=state['launch'] or self.raw!=state['raw']
+                or encoded(self.frame)!=state['raw'] or self.reader!=state['reader'] or self.writer!=state['writer']
+                or _fd_identity(self.reader)!=state['reader_id'] or _fd_identity(self.writer)!=state['writer_id'])
+            state['process']=process
         os.close(self.writer);self.writer=None
         descriptor=process.stdin.fileno();os.set_blocking(descriptor,False)
+        if state is not None:state['stdin_id']=_fd_identity(descriptor)
         pending=struct.pack('!I',len(self.raw))+self.raw
         with selectors.DefaultSelector() as poll:
             poll.register(descriptor,selectors.EVENT_WRITE)
@@ -99,75 +138,120 @@ class Observation:
                 remaining=self.frame['deadline']-time.monotonic()
                 if remaining<=0: raise TimeoutError('permission audit startup deadline exhausted')
                 if poll.select(min(.05,remaining)):
-                    try:pending=pending[os.write(descriptor,pending):]
+                    try:
+                        count=os.write(descriptor,pending)
+                        if state is not None:state['written'].extend(pending[:count])
+                        pending=pending[count:]
                     except BlockingIOError:pass
+        if state is not None and _fd_identity(descriptor)!=state['stdin_id']:state['lost']=True
         process.stdin.close()
+        if state is not None:
+            state['sent']=state['written']==struct.pack('!I',len(state['raw']))+state['raw']
 
     def receive(self):
         raw=os.read(self.reader,min(65536,MAX_RESULT+1-len(self.data)))
+        state=_CUSTODY.get(self)
+        if state is not None:
+            if self.reader!=state['reader'] or _fd_identity(self.reader)!=state['reader_id'] or state['eof']:
+                state['lost']=True
+            state['wire'].extend(raw)
+            if not raw:state['eof']=True
+            if len(state['wire'])>MAX_RESULT:state['lost']=True
         if not raw:self.eof=True
         self.data.extend(raw)
         if len(self.data)>MAX_RESULT:raise ValueError('permission audit result exceeds bound')
 
     def result(self):
-        try:
-            value=json.loads(self.data)
-            if (not self.eof or not isinstance(value,dict) or value.get('nonce')!=self.nonce
-                    or value.get('profile')!=PROFILE or value.get('role')!=self.frame['role']
-                    or value.get('policy_sha256')!=hashed(policy()) or not isinstance(value.get('events'),list)
-                    or len(value['events'])>MAX_EVENTS or not isinstance(value.get('setup_gaps'),list)
-                    or len(value['setup_gaps'])>MAX_SETUP_GAPS):raise ValueError('invalid permission audit channel')
-            events=value['events']
-            for index,event in enumerate(events):
-                if (set(event)!={'ordinal','task','stage','arch','syscall','errno','category'}
-                        or type(event['ordinal']) is not int or event['ordinal']!=index+1
-                        or type(event['arch']) is not int or type(event['errno']) is not int
-                        or type(event['task']) is not int or not 0<=event['task']<MAX_TASKS
-                        or event['stage'] not in ('setup','role') or event['arch']!=ARCH
-                        or type(event['syscall']) is not int or not 0<=event['syscall']<0x40000000
-                        or event['category'] not in ('permission_result','blocked_creation')
-                        or (event['errno'] not in DENIALS if event['category']=='permission_result' else event['errno']!=errno.ENOSYS)):
-                    raise ValueError('invalid permission audit event')
-            if (set(value)!={'schema_version','profile','nonce','role','policy_sha256','status','reason','role_started','all_reaped','syscall_stops','tasks','events','setup_gaps'}
-                    or type(value['schema_version']) is not int or value['schema_version']!=1
-                    or type(value['role_started']) is not bool or type(value['all_reaped']) is not bool
-                    or type(value['syscall_stops']) is not int or not 0<=value['syscall_stops']<=MAX_STOPS
-                    or type(value['tasks']) is not int or not 1<=value['tasks']<=MAX_TASKS
-                    or value['status'] not in ('complete','unknown')
-                    or value['reason'] not in ('complete','unsupported','trace_limit','trace_failure','deadline','signal')
-                    or any(e['task']>=value['tasks'] for e in events)):
-                raise ValueError('invalid permission audit completion')
-            gaps=value['setup_gaps'];seen=set()
-            for index,gap in enumerate(gaps):
-                if (not isinstance(gap,dict) or set(gap)!={'ordinal','task','phase','last_syscall','terminal_status'}
-                        or type(gap['ordinal']) is not int or gap['ordinal']!=index+1
-                        or type(gap['task']) is not int or not 0<gap['task']<value['tasks'] or gap['task'] in seen
-                        or type(gap['phase']) is not int or gap['phase']!=1
-                        or type(gap['last_syscall']) is not int or gap['last_syscall']!=61
-                        or (gap['terminal_status'] is not None and (type(gap['terminal_status']) is not int
-                            or not -64<=gap['terminal_status']<=255))):raise ValueError('invalid setup gap')
-                seen.add(gap['task'])
-            complete=(value['status']=='complete' and value['reason']=='complete' and value['role_started']
-                and value['all_reaped'] and all(gap['terminal_status'] is not None for gap in gaps))
-            violated=any(e['stage']=='role' and e['category']=='permission_result' for e in events)
-            return dict(schema_version=1,profile=PROFILE,policy_sha256=hashed(policy()),
-                status='complete' if complete else 'unknown',qualification='violated' if violated else 'qualified' if complete else 'unknown',
-                reason=value.get('reason') if value.get('reason') in ('complete','unsupported','trace_limit','trace_failure','deadline','signal') else 'invalid_channel',
-                events=events,setup_gaps=gaps,setup_coverage='incomplete' if gaps else 'unverified',
-                role_coverage='complete' if complete else 'unknown',
-                syscall_stops=value.get('syscall_stops'),tasks=value.get('tasks'),
-                role_started=value.get('role_started') is True,all_tracees_reaped=value.get('all_reaped') is True,
-                observation_scope='declared_role_permission_errno_results_only',semantic_intent='unknown',
-                hidden_access_attempts='unverified',publication_allowed=False,automatic_promotion=False)
-        except (ValueError,TypeError,KeyError,UnicodeError,RecursionError):
-            return dict(schema_version=1,profile=PROFILE,status='unknown',qualification='unknown',reason='invalid_channel',
-                events=[],setup_gaps=[],setup_coverage='unverified',role_coverage='unknown',
-                policy_sha256=hashed(policy()),publication_allowed=False,automatic_promotion=False)
+        return _result(self.data,self.eof,self.nonce,self.frame['role'])
+
+    def _owns(self,ticket,process,command,execs,group,role):
+        state=_CUSTODY.get(self)
+        if state is None:return False
+        frame=json.loads(state['raw'])
+        return (not state['lost'] and state['sent'] and state['ticket']() is ticket and state['process'] is process
+            and frame['command']==command and frame['execs']==[hashed(list(argv)) for argv in execs]
+            and frame['role']==role and frame['cgroup']==str(Path(group.root).absolute()/group.name))
+
+    def _completion(self,ticket,process,command,role):
+        state=_CUSTODY.pop(self,None)
+        if state is None:return None
+        frame=json.loads(state['raw'])
+        report=_result(state['wire'],state['eof'],frame['nonce'],frame['role'])
+        if (state['lost'] or not state['closed'] or self.raw!=state['raw'] or encoded(self.frame)!=state['raw']
+                or tuple(self.command)!=state['launch'] or self.data!=state['wire'] or self.eof!=state['eof']
+                or not state['sent'] or state['ticket']() is not ticket
+                or state['process'] is not process or process.poll() is None
+                or tuple(process.args)!=state['launch'] or frame['command']!=command or frame['role']!=role
+                or time.monotonic()>=frame['deadline'] or report['status']!='complete'):
+            return None
+        completion=_Completion();_COMPLETIONS[completion]=(ticket,process,encoded(report))
+        return completion
 
     def close(self):
+        state=_CUSTODY.get(self)
+        if state is not None and not state['closed']:
+            if self.reader!=state['reader'] or _fd_identity(self.reader)!=state['reader_id']:state['lost']=True
+            state['closed']=True
         for name in ('reader','writer'):
             descriptor=getattr(self,name,None)
             if descriptor is not None:os.close(descriptor);setattr(self,name,None)
+
+
+def _result(data,eof,nonce,role):
+    try:
+        value=json.loads(data)
+        if (not eof or not isinstance(value,dict) or value.get('nonce')!=nonce
+                or value.get('profile')!=PROFILE or value.get('role')!=role
+                or value.get('policy_sha256')!=hashed(policy()) or not isinstance(value.get('events'),list)
+                or len(value['events'])>MAX_EVENTS or not isinstance(value.get('setup_gaps'),list)
+                or len(value['setup_gaps'])>MAX_SETUP_GAPS):raise ValueError('invalid permission audit channel')
+        events=value['events']
+        for index,event in enumerate(events):
+            if (set(event)!={'ordinal','task','stage','arch','syscall','errno','category'}
+                    or type(event['ordinal']) is not int or event['ordinal']!=index+1
+                    or type(event['arch']) is not int or type(event['errno']) is not int
+                    or type(event['task']) is not int or not 0<=event['task']<MAX_TASKS
+                    or event['stage'] not in ('setup','role') or event['arch']!=ARCH
+                    or type(event['syscall']) is not int or not 0<=event['syscall']<0x40000000
+                    or event['category'] not in ('permission_result','blocked_creation')
+                    or (event['errno'] not in DENIALS if event['category']=='permission_result' else event['errno']!=errno.ENOSYS)):
+                raise ValueError('invalid permission audit event')
+        if (set(value)!={'schema_version','profile','nonce','role','policy_sha256','status','reason','role_started','all_reaped','syscall_stops','tasks','events','setup_gaps'}
+                or type(value['schema_version']) is not int or value['schema_version']!=1
+                or type(value['role_started']) is not bool or type(value['all_reaped']) is not bool
+                or type(value['syscall_stops']) is not int or not 0<=value['syscall_stops']<=MAX_STOPS
+                or type(value['tasks']) is not int or not 1<=value['tasks']<=MAX_TASKS
+                or value['status'] not in ('complete','unknown')
+                or value['reason'] not in ('complete','unsupported','trace_limit','trace_failure','deadline','signal')
+                or any(e['task']>=value['tasks'] for e in events)):
+            raise ValueError('invalid permission audit completion')
+        gaps=value['setup_gaps'];seen=set()
+        for index,gap in enumerate(gaps):
+            if (not isinstance(gap,dict) or set(gap)!={'ordinal','task','phase','last_syscall','terminal_status'}
+                    or type(gap['ordinal']) is not int or gap['ordinal']!=index+1
+                    or type(gap['task']) is not int or not 0<gap['task']<value['tasks'] or gap['task'] in seen
+                    or type(gap['phase']) is not int or gap['phase']!=1
+                    or type(gap['last_syscall']) is not int or gap['last_syscall']!=61
+                    or (gap['terminal_status'] is not None and (type(gap['terminal_status']) is not int
+                        or not -64<=gap['terminal_status']<=255))):raise ValueError('invalid setup gap')
+            seen.add(gap['task'])
+        complete=(value['status']=='complete' and value['reason']=='complete' and value['role_started']
+            and value['all_reaped'] and all(gap['terminal_status'] is not None for gap in gaps))
+        violated=any(e['stage']=='role' and e['category']=='permission_result' for e in events)
+        return dict(schema_version=1,profile=PROFILE,policy_sha256=hashed(policy()),
+            status='complete' if complete else 'unknown',qualification='violated' if violated else 'qualified' if complete else 'unknown',
+            reason=value.get('reason') if value.get('reason') in ('complete','unsupported','trace_limit','trace_failure','deadline','signal') else 'invalid_channel',
+            events=events,setup_gaps=gaps,setup_coverage='incomplete' if gaps else 'unverified',
+            role_coverage='complete' if complete else 'unknown',
+            syscall_stops=value.get('syscall_stops'),tasks=value.get('tasks'),
+            role_started=value.get('role_started') is True,all_tracees_reaped=value.get('all_reaped') is True,
+            observation_scope='declared_role_permission_errno_results_only',semantic_intent='unknown',
+            hidden_access_attempts='unverified',publication_allowed=False,automatic_promotion=False)
+    except (ValueError,TypeError,KeyError,UnicodeError,RecursionError):
+        return dict(schema_version=1,profile=PROFILE,status='unknown',qualification='unknown',reason='invalid_channel',
+            events=[],setup_gaps=[],setup_coverage='unverified',role_coverage='unknown',
+            policy_sha256=hashed(policy()),publication_allowed=False,automatic_promotion=False)
+
 
 
 class Entry(ctypes.Structure):

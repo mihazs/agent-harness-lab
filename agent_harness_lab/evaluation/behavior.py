@@ -125,7 +125,7 @@ def _counts():
     return dict(true=0, false=0, unknown=0)
 
 
-def report(spec, trials, policies):
+def report(spec, trials, policies, *, sampling=None):
     """Count sealed trial observations by frozen family/arm, without safety claims."""
     spec.validate()
     planned = {task: (root, family) for task, root, family in spec.tasks}
@@ -133,7 +133,11 @@ def report(spec, trials, policies):
         policy = _binding(binding)
         if task not in planned or policy['task_id'] != task or planned[task] != (policy['root_id'], policy['family']):
             raise ValueError('behavior policy differs from frozen task/root/family')
-    expected = schedule(spec)
+    if spec.sequential is not None:
+        from .sequential import schedule as root_schedule
+        if sampling is None:raise ValueError('stopped behavior report requires owned sampling')
+        expected=root_schedule(spec,sampling)[:len(trials)]
+    else:expected = schedule(spec)
     rows = {}
     for trial in trials:
         if not isinstance(trial, dict) or trial.get('trial_id') in rows:

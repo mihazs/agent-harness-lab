@@ -2,15 +2,171 @@ version: '3'
 vars:
   PYTHON: '{{default "python3" .PYTHON}}'
 tasks:
+  test:cli:help:
+    desc: Verify recursive agent-facing CLI guidance and side-effect-free help routes
+    cmds:
+      - task: test:workflow:repeated
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          REPEATED_TEST_PATTERN: test_cli_help.py
+      - task: test:workflow:repeated
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          REPEATED_TEST_PATTERN: test_cli_agent_help.py
+  test:analysis:inputs:
+    desc: Verify unlimited read-only analysis admission and unchanged bounded worker state
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      PYTHONDONTWRITEBYTECODE: '1'
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p test_analysis_inputs.py -k {{default "" .ANALYSIS_INPUT_TEST_FILTER | shellQuote}} -v'
+  test:storage:journal:
+    desc: Verify opt-in unlimited journal sizes and unchanged bounded defaults
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_private_journal.py" -v'
+  test:analysis:unlimited:
+    desc: Verify unlimited synthetic analysis and explicit positive limit controls
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      PYTHONDONTWRITEBYTECODE: '1'
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_unlimited_analysis.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_evidence.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_diagnose.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_telemetry.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_store.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_context.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_workflow.py" -v'
+  test:workflow:repeated:
+    desc: Run fixed-bank workflow admission and opt-in native tests
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p {{default "test_repeated_workflow.py" .REPEATED_TEST_PATTERN | shellQuote}} -v'
+  test:workflow:repeated-access:
+    desc: Verify explicit same-store canonical and repeated workflow composition
+    cmds:
+      - task: test:workflow:repeated
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          REPEATED_TEST_PATTERN: test_repeated_access_companion.py
+  test:workflow:repeated-access:kernel:
+    desc: Exercise the same-store repeated composition with actual isolated workers
+    cmds:
+      - task: test:workflow:repeated:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          REPEATED_TEST_PATTERN: test_repeated_access_companion.py
+  test:workflow:repeated:kernel:
+    desc: Exercise fresh repeated decisions through public improve with real isolated workers
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    vars:
+      SCOPE_ID:
+        sh: cat /proc/sys/kernel/random/uuid
+    env:
+      AHL_TEST_SYSTEMD_SCOPE: '1'
+      AHL_TEST_CGROUP_ROOT: ''
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=300 -- {{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p {{default "test_repeated_workflow.py" .REPEATED_TEST_PATTERN | shellQuote}} -k {{default "" .KERNEL_TEST_FILTER | shellQuote}} -v'
+  test:evaluation:bank-qualification:wheel:
+    desc: Run focused bank qualification cases from an installed wheel
+    vars:
+      PACKAGE_VERSION:
+        sh: '{{.PYTHON | shellQuote}} -m agent_harness_lab --version'
+      LABEL:
+        sh: '{{.PYTHON | shellQuote}} -c "import sys; print(str(sys.version_info.major)+str(sys.version_info.minor))"'
+      WHEEL_ENV: '{{.ROOT_DIR}}/dist/bank-wheel-{{.LABEL}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m venv {{.WHEEL_ENV | shellQuote}}'
+      - '{{.WHEEL_ENV | shellQuote}}/bin/python -m pip install --no-index --no-deps --force-reinstall {{printf "%s/dist/wheels/agent_harness_lab-%s-py3-none-any.whl" .ROOT_DIR .PACKAGE_VERSION | shellQuote}}'
+      - mkdir -p '{{.ROOT_DIR}}/dist/bank-wheel-cwd'
+      - task: test:evaluation:bank-qualification
+        vars:
+          PYTHON: '{{.WHEEL_ENV}}/bin/python'
+          LAYOUT_DIR: '{{.ROOT_DIR}}/dist/bank-wheel-cwd'
+          EXPECTED_PACKAGE_ROOT: '{{.WHEEL_ENV}}'
+  test:evaluation:bank-qualification:archive:
+    desc: Run focused bank qualification cases from the allowlisted archive
+    vars:
+      PACKAGE_VERSION:
+        sh: '{{.PYTHON | shellQuote}} -m agent_harness_lab --version'
+    cmds:
+      - mkdir -p '{{.ROOT_DIR}}/dist/bank-archive'
+      - 'tar -xzf {{printf "%s/dist/release/agent-harness-lab-%s.tar.gz" .ROOT_DIR .PACKAGE_VERSION | shellQuote}} -C {{printf "%s/dist/bank-archive" .ROOT_DIR | shellQuote}}'
+      - task: test:evaluation:bank-qualification
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.ROOT_DIR}}/dist/bank-archive/agent-harness-lab-{{.PACKAGE_VERSION}}'
+          EXPECTED_PACKAGE_ROOT: '{{.ROOT_DIR}}/dist/bank-archive/agent-harness-lab-{{.PACKAGE_VERSION}}'
+  test:evaluation:bank-qualification:kernel:
+    desc: Execute actual pinned final-bank controls and protected diagnostic admission
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    vars:
+      SCOPE_ID:
+        sh: cat /proc/sys/kernel/random/uuid
+    env:
+      AHL_TEST_SYSTEMD_SCOPE: '1'
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=180 -- {{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_bank_qualification{{default "*" .TEST_SUFFIX}}.py" -k {{default "" .KERNEL_TEST_FILTER | shellQuote}} -v'
+  test:monitoring:
+    desc: Verify native monitoring checkpoints and watch retry semantics
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_monitoring.py" -v'
+  test:evaluation:review-authority:
+    desc: Verify optional offline reviewer key approvals and existing development admission
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_review_authority.py" -v'
+
   docs:check:
     desc: Validate relative links in tracked Markdown without scanning private artifacts
     cmds:
       - '{{.PYTHON | shellQuote}} scripts/check_docs.py'
   test:
-    desc: Run both native README test suites
+    desc: Collect both test suites once and distribute tests across CPU cores
+    vars:
+      TEST_WORKERS: '{{default "auto" .TEST_WORKERS}}'
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
     cmds:
-      - task: test:tools
-      - task: test:evaluator
+      - '{{.PYTHON | shellQuote}} -m pytest -n {{.TEST_WORKERS | shellQuote}} --dist worksteal'
+  setup:test:installed:
+    desc: Install test extras for the already installed release without replacing it
+    vars:
+      PACKAGE_VERSION:
+        sh: '{{.PYTHON | shellQuote}} -m agent_harness_lab --version'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m pip install "agent-harness-lab[test]=={{.PACKAGE_VERSION}}"'
+  setup:test:
+    desc: Install pinned test tools into the selected Python environment
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m pip install -e ".[test]"'
   test:tools:
     desc: Run application and tooling unittest cases
     cmds:
@@ -19,6 +175,23 @@ tasks:
     desc: Run evaluator unittest cases
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s skills/harness-evaluation/scripts -p "test_*.py"'
+  test:workflow:one-call:
+    desc: Verify public configured improvement, deterministic repair and rollback
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_one_call*.py" -v'
+  test:release:update:
+    desc: Verify release installer transactions and installed updater ownership offline
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_release_install.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_updater.py" -v'
   test:diagnostics:corpus:
     desc: Run the private diagnostic annotation and protected-split contracts with synthetic cases
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -59,6 +232,14 @@ tasks:
     desc: Run native controller history, quarantine and guarded-analysis cases
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_oracle_history*.py" -v'
+  test:evaluation:interchange:
+    desc: Verify offline data-only evaluation mappings, proposals and private import boundaries
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_interchange*.py" -v'
   test:evaluation:protected-access:
     desc: Verify unqualified managed diagnostics, durable exposure and one-shot controller dispatch
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -67,6 +248,39 @@ tasks:
       AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_certification_access.py" -v'
+  test:evaluation:derivation:
+    desc: Verify owned development variants, exposure transactions and explicit unmanaged-scope limits
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_derivation.py" -v'
+  test:evaluation:construction-consumer-boundary:
+    desc: Reject mutation at canonical proposal and author consumers
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_construction_consumers.py" -v'
+  test:evaluation:construction-lifetime:
+    desc: Verify canonical retirement, fork custody and one-use output registration
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_construction_access.py" -k retires -k foreign_post_author -k registered_again -v'
+  test:evaluation:construction-capture-boundary:
+    desc: Reject mutation during canonical asset capture before publication
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_construction_access.py" -k asset_capture_never_publishes -v'
+  test:evaluation:construction-access:
+    desc: Verify canonical same-store construction, feedback custody and honest unmanaged boundaries
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_construction_access.py" -v'
+
   test:evaluation:bank-authority:
     desc: Run native controlled-bank authority, fixture-binding and revocation cases
     cmds:
@@ -108,6 +322,17 @@ tasks:
       PYTHONPATH: ''
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_history_report.py" -v'
+  test:analysis:reports:
+    desc: Verify unlimited private reports and retrieval with explicit caller limits
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_experimental*.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_benchmark_contracts.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_history_report.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_trajectory*.py" -v'
   test:optimization:history:
     desc: Verify guarded controller search and legacy callback compatibility
     cmds:
@@ -129,7 +354,11 @@ tasks:
       PYTHONPATH: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_bank_qualification.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_bank_qualification*.py" -v'
+  test:evaluation:bank-inspection:
+    desc: Verify complete public bank inspection and unchanged execution-validation boundaries
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_bank_inspection.py" -v'
   test:evaluation:bank-export:
     desc: Run native bank export path and frozen-manifest cases
     cmds:
@@ -138,6 +367,60 @@ tasks:
     desc: Run source contracts and checkpoint unittest cases
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_*.py"'
+  test:sources:transport:
+    desc: Verify caller-limited or unlimited HTTPS intake with synthetic responses
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_transport.py" -v'
+  test:sources:github:
+    desc: Verify GitHub intake and pagination with synthetic responses only
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_TEST_GITHUB_LIVE: '0'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_github*.py" -v'
+  test:sources:controller:
+    desc: Run live controller source admission and untrusted receipt controls
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tools/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n 4 --dist worksteal -k ControllerSourceTests'
+  test:sources:permission-composition:kernel:
+    desc: Verify native owned permission-wire and source receipt composition
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    vars:
+      SCOPE_ID:
+        sh: cat /proc/sys/kernel/random/uuid
+    env:
+      PYTHONPATH: ''
+      AHL_TEST_SYSTEMD_SCOPE: '1'
+      AHL_TEST_CGROUP_ROOT: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=180 -- {{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_permission_composition.py" -k {{default "" .KERNEL_TEST_FILTER | shellQuote}} -v'
+  test:sandbox:kernel:controller-sources:
+    desc: Verify actual pinned executor, artifact binding, fresh grader and live source consumer
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    vars:
+      SCOPE_ID:
+        sh: cat /proc/sys/kernel/random/uuid
+    env:
+      PYTHONPATH: ''
+      AHL_TEST_SYSTEMD_SCOPE: '1'
+      AHL_TEST_CGROUP_ROOT: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=90 -- {{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tools/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n 0 -k live_controller_sources'
+  test:sources:contracts:
+    desc: Run source identity, execution metadata and complete normalized export contracts
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_contracts.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_execution.py" -v'
   test:sources:normalized-exports:
     desc: Run normalized local export consistency and checkpoint guards using synthetic metadata
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -200,6 +483,16 @@ tasks:
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_codex_rollout.py" -v'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_codex_discovery.py" -v'
+  test:captures:read-budget:
+    desc: Verify aggregate read ceilings are absent while record, file and Git bounds remain
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -c "import os,pathlib,agent_harness_lab; assert pathlib.Path(agent_harness_lab.__file__).resolve().is_relative_to(pathlib.Path(os.environ[''AHL_EXPECTED_PACKAGE_ROOT'']).resolve())"'
+      - for: [test_evidence.py, test_monitoring.py, test_codex_rollout.py, test_codex_discovery.py, test_claude_native.py, 'test_source_codex*.py', test_source_claude.py, test_source_git.py]
+        cmd: '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p {{.ITEM | shellQuote}} -v'
   test:captures:claude:
     desc: Run pinned Claude native scope, privacy, response consistency and resource controls
     cmds:
@@ -278,6 +571,35 @@ tasks:
       AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_controller_emissions.py" -v'
+  test:evaluation:sequential:
+    desc: Run exact conditional finite-bank inference and fresh controller root-block checks
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_sequential.py" -v'
+  test:evaluation:sequential:kernel:
+    desc: Verify fresh sequential paired roots and incomplete worker failures with pinned Linux workers
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    vars:
+      SCOPE_ID:
+        sh: cat /proc/sys/kernel/random/uuid
+    env:
+      PYTHONPATH: ''
+      AHL_TEST_SYSTEMD_SCOPE: '1'
+      AHL_TEST_CGROUP_ROOT: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=360 -- {{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_sequential_kernel.py" -v'
+  test:evaluation:precision:
+    desc: Check frozen-plan analytic precision and synthetic pre-dispatch admission
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_experiment_precision.py" -v'
   test:evaluation:trajectory:
     desc: Run frozen trajectory predicates and synthetic controller-to-report contracts
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -354,6 +676,15 @@ tasks:
       - task: test:sandbox:kernel
         vars:
           KERNEL_TEST_FILTER: controlled_workflow
+  test:sandbox:kernel:construction-access:
+    desc: Run canonical same-store exposure with actual pinned workers, graders and fake transport
+    cmds:
+      - task: test:sandbox:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          KERNEL_TEST_FILTER: canonical_construction_access
   test:sandbox:kernel:trajectory:
     desc: Run the synthetic trajectory vertical slice with real isolated workers and artifact graders
     cmds:
@@ -436,6 +767,44 @@ tasks:
       AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
       - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=90 -- {{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_permission_audit.py" -k {{default "" .KERNEL_TEST_FILTER | shellQuote}} -v'
+  test:promotion:prerequisites:
+    desc: Verify private workflow prerequisite reporting and untrusted backend controls
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_workflow_prerequisites.py" -v'
+  test:runtime:boundary:
+    desc: Verify bounded runtime startup transport and untrusted report rejection
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_runtime_boundary.py" -v'
+  test:runtime:boundary:kernel:
+    desc: Qualify actual four-role runtime facts and reject missing startup capture
+    cmds:
+      - task: test:promotion:prerequisites:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          KERNEL_TEST_FILTER: runtime_boundary
+  test:promotion:prerequisites:kernel:
+    desc: Verify live public workflow implementation-prerequisite custody
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    vars:
+      SCOPE_ID:
+        sh: cat /proc/sys/kernel/random/uuid
+    env:
+      PYTHONPATH: ''
+      AHL_TEST_SYSTEMD_SCOPE: '1'
+      AHL_TEST_CGROUP_ROOT: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=360 -- {{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_workflow_prerequisites.py" -k {{default "" .KERNEL_TEST_FILTER | shellQuote}} -v'
   bank:build:
     desc: Reproduce the bundled public synthetic bank and frozen grader digests
     cmds:
@@ -451,77 +820,18 @@ tasks:
     cmds:
       - '{{.PYTHON | shellQuote}} -m agent_harness_lab.evaluation.image {{.ROOTFS | shellQuote}}'
   test:installed:
-    desc: Run native tests against an installed wheel or extracted archive
+    desc: Run the complete suite against an installed wheel or archive in one parallel collection
     dir: '{{.LAYOUT_DIR}}'
     requires:
       vars: [LAYOUT_DIR, EXPECTED_PACKAGE_ROOT]
+    vars:
+      TEST_WORKERS: '{{default "auto" .TEST_WORKERS}}'
     env:
       PYTHONPATH: ''
+      PYTHONDONTWRITEBYTECODE: '1'
       AHL_EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_installed_layout.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_*.py"'
-      - task: test:sources:normalized-exports
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_codex_rollout.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_codex_discovery.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_claude_native.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_sandbox_*.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_controller_actions.py"'
-      - task: test:evaluation:bank-qualification
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - task: test:sandbox:permission-audit
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - task: test:evaluation:protected-access
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - task: test:evaluation:controller-emissions
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - task: test:evaluation:trajectory
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - task: test:diagnostics:corpus
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_behavior.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_adversarial_bank.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_offline_evaluation.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_regression_*.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_grader_budget.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_oracle_*.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_grader_correction*.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_grader_control_core.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_bank_export.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_bank_corrections.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_benchmark_contracts.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_experimental_cli.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_history_report.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_optimization_history.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_search_history.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_preservation_*.py"'
-      - task: test:evaluation:requalification
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tools/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n {{.TEST_WORKERS | shellQuote}} --dist worksteal'
   test:installed:sources:
     desc: Run native source checks against an installed layout, including optional extras when installed
     dir: '{{.LAYOUT_DIR}}'
@@ -541,8 +851,8 @@ tasks:
       - 'dist/wheel-env/bin/python -m pip install --no-index --no-deps --force-reinstall {{printf "dist/wheels/agent_harness_lab-%s-py3-none-any.whl" .PACKAGE_VERSION | shellQuote}}'
       - mkdir -p dist/wheel-cwd
   test:packaging:layouts:
-    desc: Require both independently prepared installed layouts, concurrently
-    deps:
+    desc: Verify both installed layouts in turn, using parallel pytest within each
+    cmds:
       - task: test:wheel
       - task: test:archive
   test:wheel:
@@ -571,6 +881,42 @@ tasks:
     desc: Require zero clones in working source
     cmds:
       - node_modules/.bin/jscpd --config .jscpd.json --no-colors
+  test:evaluation:instruction-protocol:
+    desc: Verify actual root instruction injection and owned request controls
+    cmds:
+      - task: test:workflow:repeated
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          REPEATED_TEST_PATTERN: test_effective_agents.py
+  test:evaluation:instruction-protocol:kernel:
+    desc: Exercise actual injected request bytes with real workers and artifact grading
+    cmds:
+      - task: test:workflow:repeated:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          REPEATED_TEST_PATTERN: test_effective_agents.py
+          KERNEL_TEST_FILTER: InstructionProtocolKernelTests
+  test:evaluation:recovery-gap:kernel:
+    cmds:
+      - task: test:workflow:repeated:kernel
+        vars:
+          REPEATED_TEST_PATTERN: test_experiment_recovery_gap.py
+          KERNEL_TEST_FILTER: RecoveryHistoryTests
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+  test:evaluation:recovery-gap:
+    desc: Probe durable trial binding and ambiguous-request refusal without provider calls
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_experiment_recovery_gap.py" -v'
   setup:
     desc: Install development dependencies and guarded Git hooks
     cmds:

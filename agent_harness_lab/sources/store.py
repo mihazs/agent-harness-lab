@@ -1,4 +1,4 @@
-"""Bounded private metadata history; records and checkpoints commit together."""
+"""Private metadata history; records and checkpoints commit together."""
 from collections import Counter, defaultdict, deque
 import fcntl
 import json
@@ -57,15 +57,18 @@ def validate_edges(edges, identities):
 
 class SourceStore:
     def __init__(self, path, *, project_sha256, scope_sha256,
-                 max_bytes=64*1024*1024, max_records=100000):
+                 max_bytes=None, max_records=None):
         fingerprint(project_sha256); fingerprint(scope_sha256)
-        if type(max_bytes) is not int or not 1024 <= max_bytes <= 64*1024*1024:
+        if max_bytes is not None and (type(max_bytes) is not int or max_bytes <= 0):
             raise ValueError('invalid metadata byte limit')
-        if type(max_records) is not int or not 1 <= max_records <= 100000:
+        if max_records is not None and (type(max_records) is not int or max_records <= 0):
             raise ValueError('invalid metadata record limit')
         self.path = Path(path).absolute()
         self.project, self.scope = project_sha256, scope_sha256
         self.max_bytes, self.max_records = max_bytes, max_records
+
+    def _over(self, count):
+        return self.max_records is not None and count > self.max_records
 
     def _bind(self, source, writing=False):
         if not isinstance(source, SourceSpec):
@@ -90,9 +93,9 @@ class SourceStore:
             state = {**state, 'schema_version': 3, 'captures': {}}
         if state['schema_version'] == 3 and set(state) == fields|{'snapshots', 'captures'}:
             captures = state['captures']
-            if (not isinstance(captures, dict) or len(captures) > self.max_records
-                    or any(not isinstance(c, dict) or len(c) > self.max_records for c in captures.values())
-                    or sum(len(c) for c in captures.values()) > self.max_records):
+            if (not isinstance(captures, dict) or self._over(len(captures))
+                    or any(not isinstance(c, dict) or self._over(len(c)) for c in captures.values())
+                    or self._over(sum(len(c) for c in captures.values()))):
                 raise ValueError('invalid legacy capture history')
             migrated = {}
             for key, history in captures.items():
@@ -107,7 +110,7 @@ class SourceStore:
         if (state['project_sha256'], state['scope_sha256']) != (self.project, self.scope):
             raise ValueError('metadata cache belongs to another project/scope')
         for name, kind in (('sources', dict), ('records', list), ('cursors', dict), ('supersessions', list), ('snapshots', dict), ('captures', dict)):
-            if not isinstance(state[name], kind) or len(state[name]) > self.max_records:
+            if not isinstance(state[name], kind) or self._over(len(state[name])):
                 raise ValueError('invalid or exhausted metadata cache')
         sources, specifications = {}, {}
         for key, value in state['sources'].items():
@@ -123,10 +126,10 @@ class SourceStore:
             fingerprint(key)
             if key not in known_sources:
                 raise ValueError('checkpoint source is unknown')
-            if not isinstance(cursors, list) or len(cursors) > self.max_records:
+            if not isinstance(cursors, list) or self._over(len(cursors)):
                 raise ValueError('invalid checkpoint history')
             checkpoint_count += len(cursors)
-            if checkpoint_count > self.max_records: raise ValueError('checkpoint history limit reached')
+            if self._over(checkpoint_count): raise ValueError('checkpoint history limit reached')
             for cursor in cursors:
                 fingerprint(cursor)
             checkpoint_parents[key] = dict(zip(cursors, [None, *cursors[:-1]]))
@@ -136,7 +139,7 @@ class SourceStore:
             fingerprint(key)
             if (key not in known_sources or not state['cursors'].get(key) or not isinstance(snapshots, dict)
                     or set(snapshots) != {'active', 'history'} or type(snapshots['active']) is not bool
-                    or not isinstance(snapshots['history'], dict) or len(snapshots['history']) > self.max_records):
+                    or not isinstance(snapshots['history'], dict) or self._over(len(snapshots['history']))):
                 raise ValueError('snapshot checkpoint source is unknown')
             for cursor, snapshot in snapshots['history'].items():
                 fingerprint(cursor); fingerprint(snapshot)
@@ -158,7 +161,7 @@ class SourceStore:
             fingerprint(key)
             if key not in known_sources or not isinstance(captures, dict): raise ValueError('unknown capture source')
             capture_count += len(captures)
-            if capture_count > self.max_records: raise ValueError('capture metadata history limit reached')
+            if self._over(capture_count): raise ValueError('capture metadata history limit reached')
             for cursor, envelope in captures.items():
                 fingerprint(cursor)
                 if (not isinstance(envelope, dict) or set(envelope) != {'source_spec_sha256', 'snapshot_sha256', 'metadata', 'graph'}
@@ -194,8 +197,9 @@ class SourceStore:
         """Validate the exact returned bytes; callers never need to reopen the cache."""
         self._safe_path()
         try:
-            raw = read_regular(self.path, self.max_bytes)
-            value, _ = record_bytes(raw, self.max_bytes)
+            maximum = self.path.stat().st_size if self.max_bytes is None else self.max_bytes
+            raw = read_regular(self.path, maximum)
+            value, _ = record_bytes(raw, maximum)
             return self._validate(value), raw
         except (ValueError, TypeError, KeyError, RecursionError):
             raise ValueError('invalid metadata cache; preserved for inspection') from None
@@ -246,7 +250,7 @@ class SourceStore:
         revisions = Counter(e['record']['source_sha256'] for e in state['records'])
         tombstones = Counter(e['record']['source_sha256'] for e in state['records'] if e['record']['state'] == 'tombstone')
         sources = []
-        for key in sorted(specifications)[:20]:
+        for key in sorted(specifications):
             specs = specifications[key]; versions = sorted({digest(v['version']) for _, v in specs})
             cursor = (state['cursors'].get(key) or [None])[-1]
             active = state['snapshots'].get(key, {}).get('active', False)
@@ -267,7 +271,7 @@ class SourceStore:
                     g = EvidenceGraph.parse(capture['graph']).summary()
                     graph = {name: g[name] for name in ('nodes', 'joins', 'statuses', 'independent_roots')}
             sources.append(dict(source_sha256=key, kind=specs[0][1]['kind'], provider_sha256=digest(specs[0][1]['provider']),
-                specifications=len(specs), adapter_versions_sha256=versions[:8], omitted_adapter_versions=max(0, len(versions)-8),
+                specifications=len(specs), adapter_versions_sha256=versions, omitted_adapter_versions=0,
                 revisions=revisions[key], tombstones=tombstones[key], checkpoints=len(state['cursors'].get(key, [])),
                 checkpoint_sha256=cursor, active_snapshot=active, execution_metadata=execution, declared_coverage=coverage, evidence_graph=graph))
         return dict(schema_version=1, status='available' if present else 'missing', project_sha256=self.project, scope_sha256=self.scope,
@@ -336,7 +340,7 @@ class SourceStore:
             imported = skipped = 0
             try:
                 for count, record in enumerate(records, 1):
-                    if count > self.max_records or not isinstance(record, EvidenceRecord):
+                    if self._over(count) or not isinstance(record, EvidenceRecord):
                         raise ValueError('invalid or excessive source batch')
                     record = EvidenceRecord.parse(record.to_dict())
                     if record.source_sha256 != key:
@@ -363,7 +367,7 @@ class SourceStore:
                         state['captures'].setdefault(key, {})[cursor_after] = envelope
                 edges = {tuple(e) for e in state['supersessions']}
                 for count, edge in enumerate(supersessions, 1):
-                    if count > self.max_records or not isinstance(edge, (list, tuple)) or len(edge) != 3:
+                    if self._over(count) or not isinstance(edge, (list, tuple)) or len(edge) != 3:
                         raise ValueError('invalid or excessive supersession batch')
                     for value in edge:
                         fingerprint(value)
@@ -371,12 +375,11 @@ class SourceStore:
                 state['supersessions'] = [list(e) for e in sorted(edges)]
                 state['cursors'][key] = cursors + ([cursor_after] if cursor_after != cursor_before else [])
                 self._validate(state)
-                if len(json.dumps(state, indent=2, allow_nan=False).encode())+1 > self.max_bytes:
+                if self.max_bytes is not None and len(json.dumps(state, indent=2, allow_nan=False).encode())+1 > self.max_bytes:
                     raise ValueError('metadata cache byte limit reached')
             except Exception:
                 raise ValueError('source batch rejected; committed checkpoint unchanged') from None
             try:
-                # shortcut: committed-file caps exclude crash-orphaned temporary files; use a filesystem quota for total disk bounds.
                 atomic_json(self.path, state)
             except OSError:
                 raise CommitUncertain('metadata commit uncertain; inspect status before retrying') from None

@@ -7,6 +7,8 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
+import shlex
+import stat
 import sys
 import tarfile
 import tempfile
@@ -92,7 +94,32 @@ def owned_link(link, root, relative):
 def install(archive, checksums, root, bin_dir, skill_dirs):
     root, bin_dir = Path(root).resolve(), Path(bin_dir).resolve()
     archive_hash = verify(archive, checksums)
+    try:
+        import fcntl
+    except ImportError:
+        raise ValueError('release installation requires POSIX advisory file locking') from None
+    if not hasattr(os, 'O_NOFOLLOW'):
+        raise ValueError('release installation requires no-follow file support')
     root.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(root / '.install.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid():
+            raise ValueError('installation lock must be an owned regular file')
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ValueError('another installation or update is in progress for this root') from None
+        return _install_locked(archive, archive_hash, root, bin_dir, skill_dirs)
+    finally:
+        os.close(descriptor)
+
+
+def _install_locked(archive, archive_hash, root, bin_dir, skill_dirs):
+    receipt = root / 'installation.json'
+    if receipt.is_symlink() or (receipt.exists() and not receipt.is_file()):
+        raise ValueError('installation receipt must be a regular file')
+    skill_dirs = [str(Path(folder).expanduser().resolve()) for folder in skill_dirs]
     with tempfile.TemporaryDirectory(prefix='.stage-', dir=root) as temporary:
         unpacked = extract(archive, temporary)
         version = json.loads((unpacked / 'package.json').read_text())['version']
@@ -140,6 +167,12 @@ def install(archive, checksums, root, bin_dir, skill_dirs):
                     moved.append((saved, link))
                 link.symlink_to(target, target_is_directory=relative != Path('ahl'))
                 installed.append(link)
+            # Keep update settings in the same rollback boundary as launcher links.
+            state = Path(temporary) / 'installation.json'
+            state.write_text(json.dumps(dict(schema_version=1, version=version,
+                bin_dir=str(bin_dir), skill_dirs=skill_dirs)) + '\n')
+            state.chmod(0o600)
+            state.replace(receipt)
         except BaseException:
             for link in reversed(installed):
                 link.unlink()
@@ -151,14 +184,20 @@ def install(archive, checksums, root, bin_dir, skill_dirs):
         return destination, backup
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--version', default='latest', help='Release version, e.g. 0.2.0 (default: latest)')
-    parser.add_argument('--root', type=Path, default=Path.home() / '.local/share/agent-harness-lab')
-    parser.add_argument('--bin-dir', type=Path, default=Path.home() / '.local/bin')
-    parser.add_argument('--agent', choices=('codex', 'claude', 'both'), default='both')
-    parser.add_argument('--archive', type=Path, help='Install a previously downloaded release archive')
-    parser.add_argument('--checksums', type=Path, help='SHA256SUMS accompanying --archive')
+def main(argv=None, *, skill_dirs=None):
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='Requires Python 3.11+. Downloads release metadata/assets over HTTPS unless --archive and --checksums are supplied.\n'
+        'Checks the archive SHA-256 against SHA256SUMS; obtain both files from a trusted release source.\n'
+        'Writes a versioned installation, ahl launcher, selected global skill links and a private installation receipt.\n'
+        'Replaced links/directories are backed up; prints installation paths and shell PATH guidance.\n'
+        'Exit 0: installed; 2: invalid arguments, download or installation error.\n'
+        'Examples: python install.py --agent codex; python install.py --archive release.tar.gz --checksums SHA256SUMS')
+    parser.add_argument('--version', default='latest', help='Release version to download when --archive is omitted, with optional v prefix (default: %(default)s)')
+    parser.add_argument('--root', type=Path, default=Path.home() / '.local/share/agent-harness-lab', help='Installation root for versioned releases, backups and receipt (default: ~/.local/share/agent-harness-lab)')
+    parser.add_argument('--bin-dir', type=Path, default=Path.home() / '.local/bin', help='Directory for the ahl launcher symlink; add it to PATH (default: ~/.local/bin)')
+    parser.add_argument('--agent', choices=('codex', 'claude', 'both'), default='both', help='Global skill-link targets: ~/.agents/skills for codex, ~/.claude/skills for claude (default: %(default)s)')
+    parser.add_argument('--archive', type=Path, help='Existing local release .tar.gz for offline installation; requires matching --checksums and skips downloads')
+    parser.add_argument('--checksums', type=Path, help='Existing SHA256SUMS containing the exact --archive filename and digest; required together with --archive')
     args = parser.parse_args(argv)
     if sys.version_info < (3, 11):
         parser.error('Python 3.11+ is required')
@@ -171,6 +210,8 @@ def main(argv=None):
         directories.append(Path.home() / '.agents/skills')
     if args.agent in ('claude', 'both'):
         directories.append(Path.home() / '.claude/skills')
+    if skill_dirs is not None:
+        directories = skill_dirs
     try:
         with tempfile.TemporaryDirectory(prefix='ahl-download-') as temporary:
             archive, checksums = args.archive, args.checksums
@@ -191,7 +232,11 @@ def main(argv=None):
         print(f'Installed {destination.name}: {args.bin_dir / "ahl"}')
         if backup:
             print(f'Previous installations backed up at {backup}')
-        print(f'Ensure {args.bin_dir} is on PATH. Run: ahl --help')
+        bin_dir = args.bin_dir.expanduser().resolve()
+        if str(bin_dir) not in os.environ.get('PATH', '').split(os.pathsep):
+            print('For this POSIX shell, run: export PATH=' + shlex.quote(str(bin_dir)) + ':"$PATH"')
+        print(f'Check: {shlex.quote(str(bin_dir / "ahl"))} --help')
+        print('Update later: ahl update (after a release containing this command is installed)')
     except (ValueError, OSError, KeyError, tarfile.TarError) as exc:
         parser.exit(2, f'installation error: {exc}\n')
 

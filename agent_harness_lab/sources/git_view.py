@@ -1,5 +1,6 @@
 """Bounded private Git views: source configuration is data, never execution policy."""
 import hashlib
+from contextlib import contextmanager
 import math
 import os
 from pathlib import Path
@@ -19,8 +20,12 @@ MAX_OUTPUT = 4*1024*1024
 
 
 class Folder:
-    def __init__(self, root, deadline):
+    def __init__(self, root, deadline, *, limit_total_bytes=True, limit_tree=True):
+        if deadline is not None and (type(deadline) not in (int, float) or not math.isfinite(deadline)):
+            raise ValueError('invalid filesystem deadline')
         self.root, self.deadline = Path(root).absolute(), deadline
+        self.limit_total_bytes = limit_total_bytes
+        self.limit_tree = limit_tree
         self.fd, self.bytes, self.entries, self.observed = None, 0, 0, {}
         self.unsafe_entries = 0
 
@@ -37,7 +42,7 @@ class Folder:
         if self.fd is not None: os.close(self.fd)
 
     def check(self):
-        if time.monotonic() >= self.deadline: raise TimeoutError('Git snapshot budget exhausted')
+        if self.deadline is not None and time.monotonic() >= self.deadline: raise TimeoutError('Git snapshot budget exhausted')
 
     def directory(self, name):
         if name != '.': relative(name)
@@ -75,40 +80,53 @@ class Folder:
             return info
         finally: os.close(parent)
 
-    def read(self, name, maximum=65536, *, prefix=False):
+    @contextmanager
+    def open(self, name, maximum=None, *, prefix=False):
         info = self.inspect(name)
-        if info is None: return None
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not prefix and info.st_size > maximum:
+        if info is None:
+            yield None
+            return
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not prefix and maximum is not None and info.st_size > maximum:
             raise ValueError('Git input must be a bounded single-link regular file')
         parts = Path(name).parts; parent = self.directory(str(Path(*parts[:-1])))
         try: descriptor = os.open(parts[-1], os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK, dir_fd=parent)
         finally: os.close(parent)
         try:
             if self.stamp(os.fstat(descriptor)) != self.stamp(info): raise ValueError('Git input changed before reading')
+            yield descriptor, info
+        finally:
+            try:
+                if self.stamp(os.fstat(descriptor)) != self.stamp(info): raise ValueError('Git input changed during reading')
+            finally: os.close(descriptor)
+
+    def read(self, name, maximum=65536, *, prefix=False):
+        with self.open(name, maximum, prefix=prefix) as opened:
+            if opened is None: return None
+            descriptor, info = opened
             raw = bytearray()
             while True:
                 self.check()
-                if prefix and len(raw) >= maximum: break
-                block = os.read(descriptor, min(65536, maximum-len(raw)+(0 if prefix else 1)))
+                if prefix and maximum is not None and len(raw) >= maximum: break
+                block = os.read(descriptor, 65536 if maximum is None else min(65536, maximum-len(raw)+(0 if prefix else 1)))
                 if not block: break
                 raw.extend(block); self.bytes += len(block)
-                if len(raw) > maximum or self.bytes > MAX_BYTES: raise ValueError('Git input byte budget exceeded')
-            expected = min(info.st_size, maximum) if prefix else info.st_size
+                if maximum is not None and len(raw) > maximum or self.limit_total_bytes and self.bytes > MAX_BYTES:
+                    raise ValueError('Git input byte budget exceeded')
+            expected = min(info.st_size, maximum) if prefix and maximum is not None else info.st_size
             if len(raw) != expected or self.stamp(os.fstat(descriptor)) != self.stamp(info):
                 raise ValueError('Git input changed during reading')
             return bytes(raw)
-        finally: os.close(descriptor)
 
     def walk(self, name, depth=0, *, excluded=(), skip_unsafe=False):
         self.check()
-        if depth > 64: raise ValueError('Git directory depth exceeded')
+        if self.limit_tree and depth > 64: raise ValueError('Git directory depth exceeded')
         descriptor = self.directory(name)
         try:
             self.observe(name, os.fstat(descriptor))
             with os.scandir(descriptor) as entries:
                 for entry in entries:
                     self.entries += 1; self.check()
-                    if self.entries > MAX_ENTRIES: raise ValueError('Git entry budget exceeded')
+                    if self.limit_tree and self.entries > MAX_ENTRIES: raise ValueError('Git entry budget exceeded')
                     path = str(Path(name)/entry.name)
                     if path in excluded: continue
                     info = entry.stat(follow_symlinks=False)
@@ -126,12 +144,13 @@ class Folder:
 
 
 class GitView:
-    def __init__(self, deadline, binary='/usr/bin/git'):
+    def __init__(self, deadline, binary='/usr/bin/git', *, limit_output=True):
         self.deadline, self.binary = deadline, Path(binary)
         if not self.binary.is_absolute() or not self.binary.is_file(): raise NotImplementedError('trusted Git binary unavailable')
         self.temporary = tempfile.TemporaryDirectory(prefix='ahl-git-')
         self.root = Path(self.temporary.name)
         self.output_bytes = 0
+        self.limit_output = limit_output
         self.env = dict(PATH='/usr/bin:/bin', LANG='C', GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull,
                         GIT_NO_LAZY_FETCH='1', GIT_OPTIONAL_LOCKS='0', GIT_TERMINAL_PROMPT='0',
                         GIT_NO_REPLACE_OBJECTS='1', GIT_ATTR_NOSYSTEM='1')
@@ -167,11 +186,12 @@ class GitView:
     def run(self, *arguments, data=None):
         if not arguments or arguments[0] not in ('--version', 'config', 'cat-file', 'rev-list', 'diff-tree', 'fsck'):
             raise ValueError('Git operation is not read-only allowlisted')
-        remaining = self.deadline-time.monotonic()
-        if remaining <= 0: raise TimeoutError('Git command budget exhausted')
+        remaining = None if self.deadline is None else self.deadline-time.monotonic()
+        if remaining is not None and remaining <= 0: raise TimeoutError('Git command budget exhausted')
         def limits():
-            resource.setrlimit(resource.RLIMIT_CPU, (max(1, math.ceil(remaining)), max(2, math.ceil(remaining)+1)))
-            resource.setrlimit(resource.RLIMIT_AS, (1024*1024*1024, 1024*1024*1024))
+            if remaining is not None:
+                resource.setrlimit(resource.RLIMIT_CPU, (max(1, math.ceil(remaining)), max(2, math.ceil(remaining)+1)))
+            if self.limit_output: resource.setrlimit(resource.RLIMIT_AS, (1024*1024*1024, 1024*1024*1024))
             resource.setrlimit(resource.RLIMIT_FSIZE, (0, 0))
         command = [str(self.binary), '--no-pager', '--no-optional-locks', '--literal-pathspecs',
                    '--git-dir='+str(self.root), *arguments]
@@ -186,20 +206,20 @@ class GitView:
                         os.set_blocking(child.stdin.fileno(), False)
                         events.register(child.stdin, selectors.EVENT_WRITE)
                     while events.get_map():
-                        left = self.deadline-time.monotonic()
-                        if left <= 0: raise TimeoutError('Git command timed out')
-                        for event, ready in events.select(min(left, .1)):
+                        left = None if self.deadline is None else self.deadline-time.monotonic()
+                        if left is not None and left <= 0: raise TimeoutError('Git command timed out')
+                        for event, ready in events.select(.1 if left is None else min(left, .1)):
                             if ready & selectors.EVENT_WRITE:
                                 pending = pending[os.write(event.fd, pending):]
                                 if not pending: events.unregister(child.stdin); child.stdin.close()
                             else:
-                                chunk = os.read(event.fd, min(65536, MAX_OUTPUT-len(result)+1))
+                                chunk = os.read(event.fd, min(65536, MAX_OUTPUT-len(result)+1) if self.limit_output else 65536)
                                 if not chunk: events.unregister(child.stdout)
                                 result.extend(chunk)
                                 self.output_bytes += len(chunk)
-                                if len(result) > MAX_OUTPUT or self.output_bytes > 64*1024*1024:
+                                if self.limit_output and (len(result) > MAX_OUTPUT or self.output_bytes > 64*1024*1024):
                                     raise ValueError('Git output budget exceeded')
-                    try: code = child.wait(timeout=max(.01, self.deadline-time.monotonic()))
+                    try: code = child.wait(timeout=None if self.deadline is None else max(.01, self.deadline-time.monotonic()))
                     except subprocess.TimeoutExpired: raise TimeoutError('Git command timed out') from None
                     if code != 0: raise ValueError('read-only Git operation failed')
                     return bytes(result)

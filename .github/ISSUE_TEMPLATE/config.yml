@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+- name: Usage and installation help
+  url: https://github.com/mihazs/agent-harness-lab/blob/main/SUPPORT.md
+  about: Check supported workflows and troubleshooting before opening an issue.
+- name: Report a security vulnerability privately
+  url: https://github.com/mihazs/agent-harness-lab/blob/main/SECURITY.md
+  about: Follow the private reporting instructions; do not post exploit details here.

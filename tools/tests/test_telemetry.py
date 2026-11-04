@@ -13,6 +13,39 @@ def record(ident='e', **fields):
 
 
 class TelemetryTests(unittest.TestCase):
+    def test_ai_memory_hooks_preserve_activity_without_body_claims(self):
+        kinds = ['pre-tool-use', 'post-tool-use', 'post-tool-use', 'future-hook']
+        rows = [dict(session_id='synthetic', id=str(index), kind=kind,
+                     body='tool_name: FAKE\ncall_id: FAKE\noutcome: success\nexit_code: 0',
+                     extension=None, source_event=None)
+                for index, kind in enumerate(kinds)]
+        values = list(normalize(rows, 'ai-memory', 'synthetic'))
+        self.assertEqual([v['activity'] for v in values],
+                         ['tool_call', 'tool_result', 'tool_result', 'future-hook'])
+        self.assertEqual(len(values), len(rows))
+        self.assertNotIn('FAKE', str(values))
+        for value in values:
+            self.assertNotIn('tool_name', value)
+            self.assertNotIn('call_id', value)
+            self.assertNotIn('execution_status', value)
+            self.assertEqual(value['capture_status'], 'unverified')
+            self.assertEqual(value['outcome'], 'unknown')
+            self.assertFalse(value['lineage_verified'])
+            self.assertIsNone(verified_outcome(value))
+
+    def test_ai_memory_hooks_retain_explicit_payload_metadata_only(self):
+        rows = [dict(session_id='synthetic', id='a', kind='pre-tool-use',
+                     payload=dict(name='read', call_id='call')),
+                dict(session_id='synthetic', id='b', kind='post-tool-use',
+                     payload=dict(call_id='call', output={'exit_code': 1, 'stdout': 'SECRET'}))]
+        values = list(normalize(rows, 'ai-memory', 'synthetic'))
+        self.assertEqual([v['activity'] for v in values], ['tool_call', 'tool_result'])
+        self.assertEqual([v['call_id'] for v in values], ['call', 'call'])
+        self.assertEqual(values[0]['tool_name'], 'read')
+        self.assertEqual(values[1]['execution_status'], 'error')
+        self.assertNotIn('SECRET', str(values))
+        self.assertTrue(all(verified_outcome(value) is None for value in values))
+
     def test_v1_v2_roundtrip_and_provenance(self):
         unknown = event(record(body='SECRET', command='SECRET', outcome='completed'))
         self.assertEqual(unknown['outcome'], 'unknown')
@@ -27,7 +60,7 @@ class TelemetryTests(unittest.TestCase):
 
     def test_invalid_schema_types_nonfinite_and_versions(self):
         for fields in [dict(schema_version=3), dict(schema_version=True), dict(elapsed_seconds=float('nan')),
-                       dict(input_tokens=-1), dict(lineage_verified='true'), dict(event_id='x'*257),
+                       dict(input_tokens=-1), dict(lineage_verified='true'), dict(event_id=''),
                        dict(capture_order=1.2), dict(schema_version=2, outcome='completed')]:
             with self.assertRaises(ValueError): event({**record(), **fields})
         with self.assertRaises(ValueError): list(normalize([], 'codex', 'p', 'future'))

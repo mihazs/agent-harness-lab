@@ -103,6 +103,7 @@ class HistorySearchContext:
             if len(name.encode('utf-8'))>4096 or len(Path(name).parts)>64: raise ValueError('authorized filename byte/depth bound exceeded')
         self.source,self.source_hash=record(self.manifest,1024*1024)
         self.spec=ExperimentSpec.parse(self.source['experiment']); self.spec.validate()
+        if self.spec.sequential is not None:raise ValueError('guarded search requires a fixed final plan')
         if (self.spec.profile!='descriptive_smoke' or self.spec.partition!='development'
                 or self.spec.cohort_manifest_sha256 is None or 'controller_search' in self.source
                 or self.spec.runtime_hash!=self.resources['image_sha256']):

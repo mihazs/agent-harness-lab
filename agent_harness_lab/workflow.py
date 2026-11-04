@@ -58,27 +58,50 @@ def project_lock(project):
         descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
         raise ValueError(f'Another run or stale lock exists: {path}; verify its PID before removing it') from None
-    token = f'{os.getpid()}:{uuid.uuid4().hex}'
+    owner = os.getpid()
+    token = f'{owner}:{uuid.uuid4().hex}'
     with os.fdopen(descriptor, 'w') as stream:
         stream.write(token)
     try:
         yield
     finally:
-        if path.exists() and path.read_text() == token:
+        if os.getpid() == owner and path.exists() and path.read_text() == token:
             path.unlink()
 
 
 def evidence(args, output, source_context=None):
     from agent_harness_lab.telemetry.ledger import Ledger
-    events = []
-    data = collect(args.project, events=args.events, source_format=args.format, event_sink=events.append,
-        source_version=getattr(args, 'source_version', None), source_root=getattr(args, 'source_root', None),
-        session=getattr(args, 'session', None), max_files=getattr(args, 'max_captures', 100),
-        max_scan_files=getattr(args, 'max_capture_scan', 2000), max_events=getattr(args, 'max_events', 100000))
+    from agent_harness_lab.telemetry.schema import serialize
+    with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as events, contextlib.ExitStack() as captures:
+        selected, source_format, memory_summary = args.events, args.format, None
+        source_identity = {}
+        if getattr(args, 'memory_manifest', None) is not None:
+            from .sources.observations import capture
+            from .sources.schema import digest
+            records, memory_summary = capture(args.memory_manifest, args.authorization_file, progress=getattr(args, '_progress', None))
+            source_identity = dict(source_identity=digest([memory_summary['source_sha256'], memory_summary['session_sha256']]))
+            temporary = captures.enter_context(tempfile.NamedTemporaryFile(mode='w+', encoding='utf-8'))
+            for record in records:
+                temporary.write(serialize(record)+'\n')
+            temporary.flush()
+            selected, source_format = temporary.name, 'normalized'
+        data = collect(args.project, events=selected, source_format=source_format,
+            event_sink=lambda row: events.write(serialize(row)+'\n'),
+            source_version=getattr(args, 'source_version', None), source_root=getattr(args, 'source_root', None),
+            session=getattr(args, 'session', None), max_files=getattr(args, 'max_captures', None),
+            max_scan_files=getattr(args, 'max_capture_scan', None), max_events=getattr(args, 'max_events', None),
+            sequence_length=getattr(args, 'sequence_length', None), progress=getattr(args, '_progress', None), **source_identity)
+        events.seek(0)
+        Ledger(output / 'events.v2.jsonl').ingest(json.loads(line) for line in events)
     if source_context is not None: data['source_context'] = source_context
-    Ledger(output / 'events.v2.jsonl').ingest(events)
+    if memory_summary is not None:
+        data['memory_source'] = memory_summary
     write_json(output / 'analysis.json', data)
     (output / 'report.md').write_text(report(data['analysis'], source_context=source_context))
+    if memory_summary is not None:
+        with (output / 'report.md').open('a') as stream:
+            stream.write('\nSession-observation evidence is insufficient for diagnosis. Snapshot atomicity is unavailable. '
+                +memory_summary['remediation']+'\n')
     return data
 
 
@@ -90,6 +113,7 @@ def analyze_project(args):
     result = dict(status='analyzed', output=str(output),
                   findings=len(data['analysis']['findings']), evaluation_failures=len(data['evaluation_failures']))
     if context is not None: result['source_context'] = context
+    if 'memory_source' in data: result['memory_source'] = data['memory_source']
     write_json(output / 'workflow.json', result)
     return result
 
@@ -106,8 +130,8 @@ def file_state(path):
     return digest, stat.S_IMODE(path.stat().st_mode)
 
 
-def snapshot(project, target):
-    files = [project / name for name in ('AGENTS.md', 'CLAUDE.md') if (project / name).exists()]
+def skill_roots(project):
+    """Discover immediate project-owned skill bundles without following links."""
     for prefix in ('.agents/skills', '.claude/skills', 'skills'):
         folder = project / prefix
         if not folder.is_dir() or any(p.is_symlink() for p in (folder, *folder.parents)
@@ -116,7 +140,17 @@ def snapshot(project, target):
         for skill in folder.iterdir():
             if skill.is_symlink() or not (skill / 'SKILL.md').is_file():
                 continue
+            yield skill
+
+
+def snapshot(project, target, *, allowed_paths=None):
+    if allowed_paths is None:
+        files = [project / name for name in ('AGENTS.md', 'CLAUDE.md') if (project / name).exists()]
+        for skill in skill_roots(project):
             files += [p for p in skill.rglob('*') if p.is_file() and '__pycache__' not in p.parts]
+    else:
+        # Select before opening content, including otherwise unreadable files.
+        files = [project / name for name in allowed_paths if os.path.lexists(project / name)]
     states = {}
     total = 0
     target.mkdir()
@@ -170,12 +204,30 @@ def bounded_fixture(folder, runner):
     return runner.digest(folder)
 
 
-def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_heldout, *, grader_backend=None):
-    manifest = json.loads(path.read_text())
+def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_heldout, *, grader_backend=None, experiment_spec=None, control_custody=None, expected_snapshot=None, expected_deadline=None, bank_sha256=None):
+    def check_owned():
+        if expected_snapshot is not None:
+            from .evaluation.working_state import WorkingState
+            if WorkingState(path.parent,expected_deadline).snapshot!=expected_snapshot:
+                raise ValueError('evaluation input differs from actual author output')
+    def owned_digest(name):
+        from .evaluation.certification_access import snapshot_tree
+        from .evaluation.integrity import tree_digest
+        return tree_digest(snapshot_tree(expected_snapshot,name))
+    check_owned()
+    if expected_snapshot is None:manifest=json.loads(path.read_text())
+    else:manifest=json.loads(next(raw for name,_,raw in expected_snapshot.files if name=='manifest.json'))
     if not isinstance(manifest, dict):
         raise ValueError('Evaluation manifest must be an object')
+    if bank_sha256 is not None and manifest.get('bank_digest') != bank_sha256:
+        raise ValueError('configured bank digest differs from frozen evaluation')
+    # A bank may declare shared fixtures within one held-out partition.
+    prior_heldout = set(used_heldout) if bank_sha256 is not None else used_heldout
     from .evaluation.certification_access import reject_claims
     reject_claims(manifest)
+    experiment=manifest.get('experiment',{})
+    if isinstance(experiment,dict) and experiment.get('sequential') is not None:
+        raise ValueError('legacy improvement workflow does not consume sequential experiments')
     if manifest.get('skills', []) or sorted(manifest.get('harness_paths', [])) != sorted(paths):
         raise ValueError('Evaluation must inject exactly the staged harness_paths, with skills empty')
     tasks = manifest['tasks']
@@ -185,8 +237,17 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
            or not isinstance(t.get('grader'), list) or not t['grader']
            or not all(isinstance(a, str) for a in t['grader']) for t in tasks):
         raise ValueError('Tasks require ids, fixtures and grader argument lists')
-    if not 3 <= len(tasks) <= 5 or {t['split'] for t in tasks} != {'development', 'regression', 'heldout'}:
-        raise ValueError('Provide 3–5 tasks covering development, regression, and heldout')
+    if experiment_spec is None:
+        if (bank_sha256 is None and not 3 <= len(tasks) <= 5) or {t['split'] for t in tasks} != {'development', 'regression', 'heldout'}:
+            raise ValueError('Provide development, regression, and heldout coverage; generated evaluations require 3–5 tasks')
+    else:
+        from .evaluation.plan import ExperimentSpec
+        if type(experiment_spec) is not ExperimentSpec:raise ValueError('validated fixed experiment required')
+        experiment_spec.validate()
+        if (experiment_spec.sequential is not None or experiment_spec.profile!='descriptive_smoke'
+                or any(t['split'] not in ('development','regression') for t in tasks)
+                or {t[0]:t[1:] for t in experiment_spec.tasks}!={t['id']:(t.get('root'),t.get('family')) for t in tasks}):
+            raise ValueError('fixed improvement experiment selection differs')
     bundles = manifest.get('grader_bundles', {})
     grader_contracts = {}
     if grader_backend is not None:
@@ -201,6 +262,8 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
             if not isinstance(declaration, dict) or set(declaration) not in ({'path'}, {'path', 'digest'}):
                 raise ValueError('invalid grader bundle declaration')
             folder = contained(path.parent, declaration['path']); frozen = digest(folder)
+            if expected_snapshot is not None and frozen!=owned_digest(declaration['path']):
+                raise ValueError('grader capture differs from actual author output')
             if 'digest' in declaration and declaration['digest'] != frozen:
                 raise ValueError('declared grader bundle integrity mismatch')
             bundles[task['id']] = dict(path=declaration['path'], digest=frozen)
@@ -224,16 +287,22 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
                     if '{workspace}' not in a and '{trace}' not in a]
         if any(p.is_file() and p.is_relative_to(fixture) for p in programs):
             raise ValueError('Graders must be outside fixtures')
+        if expected_snapshot is not None and digest(fixture)!=owned_digest(task['fixture']):
+            raise ValueError('task fixture differs from actual author output')
         fingerprint = bounded_fixture(fixture, runner)
+        check_owned()
         if task['split'] == 'heldout':
-            if fingerprint in used_heldout:
+            if fingerprint in prior_heldout:
                 raise ValueError('Refinement must use fresh held-out inputs')
             used_heldout.add(fingerprint)
         for check in checks:
             workspace = (path.parent / check['fixture']).resolve()
             if not workspace.is_relative_to(path.parent.resolve()):
                 raise ValueError('Grader controls must stay in the evaluation directory')
+            if expected_snapshot is not None and digest(workspace)!=owned_digest(check['fixture']):
+                raise ValueError('grader control differs from actual author output')
             bounded_fixture(workspace, runner)
+            check_owned()
             if any(p.is_file() and p.is_relative_to(workspace) for p in programs):
                 raise ValueError('Graders must be outside control fixtures')
             available = remaining()
@@ -242,10 +311,14 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
                 bundle, allowed, frozen = grader_contracts[task['id']]
                 if workspace == bundle or bundle.is_relative_to(workspace):
                     raise ValueError('grader bundle must not be inside a control fixture')
+                if control_custody is not None:control_custody.before_control(workspace,allowed,frozen,check['state']=='complete')
                 grade = regrade_artifacts(workspace, allowed, bundle, frozen,
                     grader_backend, limits=Limits(seconds=min(30, available)))
                 if grade['status'] != ('passed' if check['state'] == 'complete' else 'failed'):
                     raise ValueError('Grader self-test rejected: broken/partial must fail and complete must pass')
+                if control_custody is not None:
+                    try:control_custody.after_control(grade)
+                    except ValueError:return None
             else:
                 argv = [a.replace('{workspace}', str(workspace)).replace('{trace}', str(path.parent / 'empty-trace.jsonl')) for a in task['grader']]
                 available = remaining()
@@ -264,8 +337,10 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
                     raise ValueError('Grader self-test rejected: broken/partial must fail and complete must pass')
     if remaining() <= 0:
         raise TimeoutError('Improvement budget exhausted before evaluation')
+    check_owned()
     manifest['no_nested_agents'] = True
-    manifest['max_trials'] = 10
+    if experiment_spec is not None: manifest['max_trials'] = experiment_spec.max_trials
+    elif bank_sha256 is None: manifest['max_trials'] = 10
     manifest['budget_seconds'] = remaining()
     manifest['timeout_seconds'] = min(float(manifest.get('timeout_seconds', 180)), manifest['budget_seconds'])
     write_json(path, manifest)
@@ -306,11 +381,26 @@ def _improve(args):
     if controlled != (inference_path is not None):
         raise ValueError('controlled improvement requires --agent responses and explicit --inference-settings together')
     started = time.monotonic()
+    started=min(started,getattr(args,'_construction_started',started))
     remaining = lambda: args.timeout - (time.monotonic() - started)
     runner = evaluator()
     output = output_dir(args)
+    access_path=None
+    if getattr(args,'evaluation_store',None) is not None:
+        from .evaluation.construction_access import selection
+        access_path=selection(args,output)
     print(f'Private run artifacts: {output}', file=sys.stderr)
+    repeated=None
+    if getattr(args,'experiment_request',None) is not None:
+        from .evaluation.repeated_workflow import Request
+        repeated=Request(args,output,started+args.timeout)
+        if repeated.blocked_reason or not repeated.precision['execution_allowed']:
+            result=dict(status='blocked',reason=repeated.blocked_reason or 'precision_target_infeasible',output=str(output),changed_files=[],
+                precision_preflight=repeated.precision,automatic_promotion=False,publication_allowed=False)
+            write_json(output/'workflow.json',result);return result
     data = evidence(args, output)
+    if getattr(args, '_progress', None) is not None:
+        args._progress('candidate_preparation', findings=len(data['analysis']['findings']))
     grading = None
     permission_audit=getattr(args,'permission_audit',None)
     if permission_audit is not None and not controlled:
@@ -331,29 +421,52 @@ def _improve(args):
         if capability['status'] != 'available':
             result = dict(status='blocked', reason='inference_sandbox_unavailable' if controlled else 'grader_sandbox_unavailable', output=str(output), changed_files=[],
                 automatic_promotion=False, grader_capability=capability)
+            from .promotion.policy import implementation_prerequisites
+            result['implementation_prerequisites']=implementation_prerequisites()
+            result['implementation_prerequisites'].update(status='unknown',reason='capability_preflight_unavailable')
             write_json(output/'workflow.json', result)
             return result
     prepare = output / 'preparation'
     prepare.mkdir()
     baseline, candidate = prepare / 'baseline', prepare / 'candidate'
-    original = snapshot(args.project, baseline)
+    from .one_call import allowed_paths, check_configuration, check_scope, pinned_bank
+    bank = pinned_bank(args)
+    bank_manifest = None
+    if bank is not None:
+        from .evaluation.bank_tools import export_manifest
+        from .evaluation.task_bank import validate as validate_bank
+        bank_manifest = export_manifest(bank, prepare/'evaluation-0', max_trials=2*validate_bank(bank)['tasks'])
+        if bank_manifest['bank_digest'] != args.project_settings['bank']['sha256']:
+            raise ValueError('configured bank changed before preparation')
+    original = snapshot(args.project, baseline, allowed_paths=allowed_paths(args))
+    candidate_states(baseline, original)
     shutil.copytree(baseline, candidate)
+    if repeated is not None:repeated.freeze_baseline(baseline)
     baseline_hash = runner.digest(baseline)
     agent = args.agent
     client = None
+    access = None
     if controlled:
         from .evaluation import construction, responses
-        from .evaluation.working_state import WorkingState
+        from .evaluation.working_state import analysis_snapshot
         deadline = started+args.timeout
+        from .promotion.prerequisites import _begin
+        args._prerequisite_scope=_begin(baseline,grader_options['image_sha256'],deadline)
         settings,settings_hash = responses.read_settings(inference_path)
+        if repeated is not None:repeated.protect([baseline,candidate,assets()/'skills'],settings)
         role_views = construction.views(data,assets(),prepare/'role-inputs',deadline)
-        construction.proposer_seed(candidate,prepare/'proposer-work-0',deadline)
-        credential = responses.read_credential(settings,[args.project,output,grader_options['image_root'],assets()/'skills'])
+        if access_path is None: construction.proposer_seed(candidate,prepare/'proposer-work-0',deadline)
+        credential = responses.read_credential(settings,[args.project,output,grader_options['image_root'],assets()/'skills',*([access_path] if access_path is not None else [])])
         def record(receipt):
+            if settings.get('instruction_protocol') is not None:check_configuration(args)
             if responses.read_settings(inference_path)[1] != settings_hash:
                 raise ValueError('inference settings changed during the controlled run')
             write_json(output/'inference.json',receipt)
-        client = responses.Client(settings,credential,deadline,record=record)
+        client = responses.Client(settings,credential,deadline,record=record,configuration_sha256=getattr(args,'configuration_sha256',None))
+        if access_path is not None:
+            from .evaluation.construction_access import WorkflowAccess
+            access=WorkflowAccess(args,output,baseline,client,grading,deadline)
+            args._construction_access=access
     else:
         if agent == 'auto':
             agent = 'codex' if shutil.which(args.codex) else 'claude'
@@ -368,10 +481,17 @@ def _improve(args):
     result = dict(status='evaluation_failed', output=str(output), changed_files=[], agent=agent)
     protected = {}
     refinement_feedback = []
-    for attempt in range(2):
+    trials_left = getattr(args, "trial_limit", 24)
+    for attempt in range(1 if bank is not None else 2):
+        check_configuration(args)
         if remaining() <= 0:
             result['status'] = 'budget_exhausted'
             break
+        preparation_trials = 1 if bank is not None else 2
+        if trials_left < (preparation_trials + 2*len(bank_manifest['tasks']) if bank is not None else 8):
+            result.update(status='budget_exhausted', reason='shared_trial_budget_exhausted')
+            break
+        trials_left -= preparation_trials
         proposal_folder = prepare / f'proposal-{attempt}'
         proposal_folder.mkdir()
         proposal_path = proposal_folder / 'proposal.json'
@@ -383,10 +503,13 @@ def _improve(args):
                 context = prepare / f'proposer-context-{attempt}'
                 shutil.copytree(role_views['proposer'],context,symlinks=True)
                 write_json(context/'feedback.json',dict(trials=refinement_feedback))
-                WorkingState(context,deadline)
-                construction.proposer_seed(candidate,prepare/f'proposer-work-{attempt}',deadline)
-            proposal,candidate,commands = construction.propose(client,grading,baseline,context,
-                prepare/f'proposer-work-{attempt}',output/f'proposer-{attempt}',deadline,focus=getattr(args,'focus',None))
+                analysis_snapshot(context,deadline)
+                if access is None: construction.proposer_seed(candidate,prepare/f'proposer-work-{attempt}',deadline)
+            if access is None:
+                proposal,candidate,commands = construction.propose(client,grading,baseline,context,
+                    prepare/f'proposer-work-{attempt}',output/f'proposer-{attempt}',deadline,focus=getattr(args,'focus',None),analysis=True)
+            else:
+                proposal,candidate,commands=access.propose(context,candidate,output/f'proposer-{attempt}',focus=getattr(args,'focus',None),analysis=True)
             write_json(proposal_path,proposal)
             write_json(output/f'preparation-{attempt}.json',dict(inference=client.report(),worker_commands=commands))
             protected[output/f'proposer-{attempt}'] = runner.digest(output/f'proposer-{attempt}')
@@ -407,9 +530,9 @@ Identify distinct mechanisms, successful controls and counterexamples before sel
 If none is supported, write {proposal_path} as {{"status":"no_change","reason":"evidence-based explanation"}}.
 Otherwise modify only project instructions AGENTS.md/CLAUDE.md or project-owned skill files in candidate.
 Do not build evaluation tests, launch model trials, or inspect previous held-out inputs.
-The parent freezes the patch; a separate fresh session constructs evaluation without seeing it.
-Shared ceiling is 24 agent trials and {args.timeout} seconds; up to four planning sessions
-and 20 task trials across two attempts.
+The parent freezes the patch; {'the configured task bank supplies the evaluation' if bank is not None else 'a separate fresh session constructs evaluation without seeing it'}.
+Shared ceiling is {getattr(args, 'trial_limit', 24)} preparation/task roles and {args.timeout} seconds;
+{trials_left} paired task or later preparation roles remain after this attempt's {preparation_trials} reserved preparation roles.
 Write {proposal_path} as {{"status":"candidate","mechanisms":[...],"falsifiers":[...]}} when ready.
 The parent will reject incomplete/changed inputs, regressions, unsupported ties, and concurrent edits.
 '''
@@ -433,27 +556,65 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         if not proposal_path.is_file():
             result['status'] = 'invalid_proposal'
             break
-        proposal = json.loads(proposal_path.read_text())
+        if access is None:proposal = json.loads(proposal_path.read_text())
         if not isinstance(proposal, dict):
             raise ValueError('Proposal must be an object')
         if proposal.get('status') == 'no_change':
-            result['status'] = 'no_change'
+            result.update(status='no_change',reason='proposer_no_change')
             break
         if proposal.get('status') != 'candidate':
             raise ValueError('Proposal must declare candidate or no_change')
         proposed = candidate_states(candidate, original)
+        check_scope(args, proposed)
+        check_configuration(args)
         if proposed == original:
-            result['status'] = 'no_change'
+            result.update(status='no_change',reason='candidate_identical_to_baseline')
             break
         paths = [] if controlled else original.keys() | proposed.keys()
         frozen = output / f'candidate-{attempt}'
-        shutil.copytree(candidate, frozen)
+        if access is None:shutil.copytree(candidate, frozen)
+        else:access.freeze_candidate(candidate,frozen)
         if candidate_states(frozen, original) != proposed:
             raise ValueError('Candidate changed while freezing it')
         frozen_hash = runner.digest(frozen)
-        if controlled:
-            manifest_path,commands = construction.author(client,grading,baseline,role_views['evaluator_author'],
-                prepare/f'author-work-{attempt}',evaluation,deadline)
+        if repeated is not None:
+            repeated.protect([baseline,candidate,frozen,*role_views.values()],settings)
+            manifest_path=repeated.bind(baseline,frozen,grader_options['image_sha256'])
+            from .evaluation.plan import ExperimentSpec
+            selected=ExperimentSpec.parse(json.loads(manifest_path.read_text())['experiment'])
+            from .evaluation.comparison_custody import Comparison
+            controls=(Comparison(selected,{},client,deadline,permission_profile=repeated.permission_profile,controls=True)
+                if repeated.permission_profile is not None else None)
+            with controls or contextlib.nullcontext():
+                validated=validate_manifest(manifest_path,baseline,frozen,paths,runner,remaining,used_heldout,
+                    grader_backend=grading,experiment_spec=selected,control_custody=controls)
+            if validated is None:
+                result.update(status='requires_intervention',reason='permission_qualification_not_met')
+                break
+            args._prerequisite_scope.bind(manifest_path,baseline,frozen)
+            if permission_audit is not None and grading.permission_qualification()['qualification']!='qualified':
+                result.update(status='requires_intervention',reason='permission_qualification_not_met')
+                break
+            compared=repeated.execute(manifest_path,baseline,frozen,args,client,grading)
+            if any(file_state(args.project/name)!=value for name,value in original.items()):
+                raise ValueError('project harness changed during fixed comparison')
+            result.update(compared)
+            break
+        if bank is not None:
+            bank_manifest.update(skills=[], harness_paths=sorted(paths))
+            write_json(manifest_path, bank_manifest)
+            from .config import evaluation_settings
+            configured = evaluation_settings(args.project/'ahl.json', manifest_path, bank_manifest,
+                                             dict(baseline=baseline, candidate=frozen), agent, binary)
+            if configured['blocked_reason']:
+                result.update(status='blocked', reason=configured['blocked_reason'])
+                break
+        elif controlled:
+            if access is None:
+                manifest_path,commands = construction.author(client,grading,baseline,role_views['evaluator_author'],
+                    prepare/f'author-work-{attempt}',evaluation,deadline,analysis=True)
+            else:
+                manifest_path,commands=access.author(role_views['evaluator_author'],evaluation,analysis=True)
             write_json(output/f'evaluation-construction-{attempt}.json',dict(inference=client.report(),worker_commands=commands))
         else:
             evaluation.mkdir()
@@ -499,10 +660,27 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 break
         if runner.digest(frozen) != frozen_hash or runner.digest(baseline) != baseline_hash:
             raise ValueError('Evaluation construction changed frozen harness inputs')
-        validate_manifest(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, grader_backend=grading)
+        validation_options = dict(grader_backend=grading)
+        if bank is not None: validation_options['bank_sha256'] = args.project_settings['bank']['sha256']
+        (validate_manifest if access is None else access.validate_manifest)(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, **validation_options)
+
+        prerequisite_scope=getattr(args,'_prerequisite_scope',None)
+        if prerequisite_scope is not None:prerequisite_scope.bind(manifest_path,baseline,frozen)
+        manifest = json.loads(manifest_path.read_text())
+        required_trials = 2 * len(manifest["tasks"])
+        if required_trials > trials_left:
+            result.update(status="budget_exhausted", reason="shared_trial_budget_exhausted")
+            break
+        trials_left -= required_trials
+        if hasattr(args, "project_settings"):
+            from .one_call import unchanged
+            if not unchanged(args):
+                raise ValueError("project configuration changed during improvement")
+            check_scope(args, proposed)
         options = argparse.Namespace(manifest=str(manifest_path), baseline=str(baseline),
             candidate=str(frozen), output=str(output / f'evaluation-{attempt}'),
             agent=agent, codex=args.codex, claude=args.claude, parent_deadline=started + args.timeout)
+        if bank is not None: options.config = args.project/'ahl.json'
         if grading is not None:
             options.sandbox_graders = True
             for name, value in grader_options.items(): setattr(options, name, value)
@@ -510,8 +688,14 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             options.inference_settings = inference_path
             options.inference_client = client
             options.sandbox_backend = grading
+        for name in ('source_sink','source_cache','source_project_sha256','source_scope_sha256'):
+            if getattr(args,name,None) is not None:setattr(options,name,getattr(args,name))
         runner.evaluate(options)
         evaluated = json.loads((Path(options.output) / 'results.json').read_text())
+        if hasattr(args, 'project_settings'):
+            from .one_call import unchanged
+            if not unchanged(args):
+                raise ValueError('project configuration changed during evaluation')
         protected[evaluation] = runner.digest(evaluation)
         protected[frozen] = runner.digest(frozen)
         if permission_audit is not None:
@@ -520,7 +704,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 result.update(status='requires_intervention',reason='permission_qualification_not_met')
                 break
         trials = evaluated['trials']
-        if controlled and evaluated.get('status') in ('blocked','budget_exhausted'):
+        if (controlled or bank is not None) and evaluated.get('status') in ('blocked','budget_exhausted'):
             result.update(status=evaluated['status'],reason=evaluated.get('reason'))
             break
         from agent_harness_lab.promotion.policy import legacy_coverage
@@ -532,6 +716,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             trials=[t for t in trials if t['split'] != 'heldout']))
         refinement_feedback = [{key:trial.get(key) for key in ('task','version','split','status')}
             for trial in trials if trial.get('split') in ('development','regression')]
+        if access is not None: access.feedback(refinement_feedback)
         candidate_pass = all(t['status'] == 'passed' for t in trials if t['version'] == 'candidate')
         controls_pass = all(t['status'] == 'passed' for t in trials
                             if t['version'] == 'baseline' and t['split'] == 'regression')
@@ -540,37 +725,87 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if evaluated['inputs_unchanged'] and candidate_pass and controls_pass and improvement:
             if any(file_state(args.project / name) != value for name, value in original.items()):
                 raise ValueError('Project harness changed during evaluation; recommendation is stale')
+            write_json(output / 'change-plan.json', dict(schema_version=1, kind='behavioral_candidate',
+                profile='one-call-improvement-v1', publication_allowed=False,
+                baseline_sha256=baseline_hash, candidate_sha256=frozen_hash,
+                operations=[dict(path=name, before=original.get(name), after=proposed.get(name),
+                                 profile='one-call-improvement-v1', publication_allowed=False)
+                            for name in sorted(original.keys() | proposed.keys())
+                            if original.get(name) != proposed.get(name)],
+                evaluation=str(options.output), application_eligible=False))
+            result['plan'] = str(output / 'change-plan.json')
             result['status'] = 'inconclusive'
             result['recommendation'] = 'candidate_requires_independent_certification'
-            result['blocked_prerequisites'] = ['role_isolation', 'audited_task_lineage',
-                                               'repeated_final_evaluation', 'effective_runtime_verification']
             break
         if candidate_pass and controls_pass and evaluated['inputs_unchanged']:
-            result['status'] = 'no_change'
+            result.update(status='no_change',reason='evaluation_no_improvement')
             break
     if permission_audit is not None:
         result['isolation_qualification']=grading.permission_qualification()
     if client is not None:
         result['inference'] = client.report()
         result['automatic_promotion'] = False
+    from .promotion.policy import implementation_prerequisites
+    result['implementation_prerequisites']=implementation_prerequisites(getattr(args,'_prerequisite_scope',None))
+    if result.get('recommendation')=='candidate_requires_independent_certification':
+        result['blocked_prerequisites']=[name for name,value in result['implementation_prerequisites']['mandatory_certification'].items()
+            if value['status']!='verified']
+        if controlled and permission_audit is not None and result['implementation_prerequisites']['restricted_process_protocol']['status']!='qualified':
+            result.pop('recommendation',None)
+            result.update(status='blocked',reason='restricted_process_protocol_unqualified')
+    result['automatic_promotion']=False
+    if access is not None:
+        result['construction_access']=access.report()
+        result['publication_allowed']=False
     write_json(output / 'workflow.json', result)
     return result
 
 
-def _run_improvement(args):
+def _run_improvement(args, *, parent_started=None):
     """Persist truthful completion even when a run is interrupted or raises."""
-    for name in ('_run_output','_permission_backend'):
+    issuer=os.getpid(); managed=getattr(args,'evaluation_store',None) is not None
+    from .one_call import pinned_bank
+    started=time.monotonic() if managed or pinned_bank(args) is not None else None
+    if managed and parent_started is not None: started=min(started,parent_started)
+    for name in ('_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256'):
         if hasattr(args,name):delattr(args,name)
+    if started is not None: args._construction_started=started
     try:
+        from .one_call import contracts, preflight, check_configuration
+        check_configuration(args)
+        if managed:
+            from .evaluation.construction_access import selection
+            selection(args)
+            if time.monotonic()>=started+args.timeout: raise TimeoutError('construction preflight exhausted improvement budget')
+
+        if getattr(args, 'repair_contracts', False):
+            return contracts(args)
+        if hasattr(args, 'project_settings'):
+            reason = preflight(args)
+            if reason:
+                output = output_dir(args)
+                result = dict(status='blocked', reason=reason, output=str(output), changed_files=[],
+                              remediation='Select a supported runtime/profile and budget; see ahl improve --help')
+                write_json(output/'workflow.json', result)
+                return result
+        if started is not None and time.monotonic()>=started+args.timeout:
+            raise TimeoutError('construction preflight exhausted improvement budget')
         return _improve(args)
     except BaseException as exc:
+        if managed and os.getpid()!=issuer: raise
         from .evaluation.responses import InferenceError
+        from .promotion.journal import GuardedTransactionError
         inference_error = isinstance(exc,InferenceError)
         # output_dir registers only this invocation's output on its Namespace.
         status = ('interrupted' if isinstance(exc, KeyboardInterrupt) else
                   'budget_exhausted' if isinstance(exc, TimeoutError) or inference_error and str(exc).endswith('_exhausted') else
                   'invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error')
         result = dict(status=status, changed_files=[], failure_class='requires_intervention', error_type=type(exc).__name__)
+        if isinstance(exc,GuardedTransactionError): result.update(exc.receipt)
+        if hasattr(args,'_construction_access'):
+            try: result['construction_access']=args._construction_access.failure_report()
+            except (ValueError,OSError,KeyError,TypeError): result['construction_access_observation']='unknown'
+
         if inference_error: result['reason'] = str(exc)
         permission_backend=getattr(args,'_permission_backend',None)
         if permission_backend is not None:
@@ -578,6 +813,11 @@ def _run_improvement(args):
             result['automatic_promotion']=False
         if isinstance(exc, ConnectionError) and getattr(args,'agent',None) != 'responses':
             result['failure_class'] = 'transient_infrastructure'
+        from .promotion.policy import implementation_prerequisites
+        scope=getattr(args,'_prerequisite_scope',None)
+        if scope is not None:scope.cancel()
+        result['implementation_prerequisites']=implementation_prerequisites(getattr(args,'_prerequisite_scope',None))
+        result['automatic_promotion']=False
         output = getattr(args, '_run_output', None)
         if output:
             result['output'] = str(output)
@@ -587,6 +827,14 @@ def _run_improvement(args):
         if not isinstance(exc, Exception):
             raise
         raise
+    finally:
+        try:
+            scope=getattr(args,'_prerequisite_scope',None)
+            if scope is not None:scope.end()
+        finally:
+            access=getattr(args,'_construction_access',None)
+            if access is not None and os.getpid()==issuer:
+                access.retire()
 
 
 def improve(args):
@@ -597,10 +845,16 @@ def improve(args):
 def watch_configuration(args):
     settings = {k: getattr(args, k, None) for k in ('agent', 'codex', 'claude', 'timeout', 'format',
                 'focus', 'max_attempts', 'retry_delay', 'watch_budget', 'sandbox_graders',
-                'image_sha256', 'disk_bytes', 'permission_audit')}
+                'image_sha256', 'disk_bytes', 'permission_audit', 'configuration_sha256', 'trial_limit')}
     for key in ('cgroup_root', 'image_root'):
         value = getattr(args, key, None)
         settings[key] = str(value.resolve()) if value is not None else None
+    if getattr(args,'evaluation_store',None) is not None:
+        from .evaluation.construction_access import selection,store_identity
+        from .one_call import check_configuration
+        check_configuration(args)
+        selected=selection(args)
+        settings['evaluation_store']={'path':str(selected),'profile':'canonical-construction-access-v1','store_identity':store_identity(selected)}
     inference_path = getattr(args,'inference_settings',None)
     if (args.agent == 'responses') != (inference_path is not None):
         raise ValueError('watch requires responses and explicit inference settings together')
@@ -616,6 +870,8 @@ def watch_configuration(args):
 
 
 def watch(args):
+    issuer=os.getpid(); managed=getattr(args,'evaluation_store',None) is not None
+    first_started=time.monotonic() if managed else None
     attempts = getattr(args, 'max_attempts', 3)
     delay = getattr(args, 'retry_delay', 60)
     budget = getattr(args, 'watch_budget', None)
@@ -631,6 +887,9 @@ def watch(args):
         while True:
             # The same lock covers scheduling, execution and final checkpoint write.
             with project_lock(args.project):
+                iteration_started=(first_started if first_started is not None else time.monotonic()) if managed else None
+                first_started=None
+                if managed: configuration=watch_configuration(args)
                 state = checkpoint_state.load(checkpoint)
                 fingerprint = collect(args.project, events=args.events, source_format=args.format)['fingerprint']
                 now = time.time()
@@ -646,12 +905,14 @@ def watch(args):
                     state.update(disposition='in_progress', last_attempt=now,
                                  attempt_count=state['attempt_count'] + 1, run_id=uuid.uuid4().hex)
                     write_json(checkpoint, state)
-                    started = time.monotonic()
+                    started = iteration_started if managed else time.monotonic()
                     try:
-                        result = _run_improvement(options)
+                        result = _run_improvement(options,parent_started=started) if managed else _run_improvement(options)
                     except (ValueError, OSError, TypeError, KeyError) as exc:
+                        if managed and os.getpid()!=issuer: raise
                         result = dict(status='invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error',
                                       failure_class='transient_infrastructure' if isinstance(exc, ConnectionError) else 'requires_intervention')
+                    if managed and os.getpid()!=issuer: raise ValueError('watch completion requires its actual issuer process')
                     state = checkpoint_state.finish(state, result, time.time(), time.monotonic() - started, delay, random.random())
                     write_json(checkpoint, state)
                     print(json.dumps(result), flush=True)

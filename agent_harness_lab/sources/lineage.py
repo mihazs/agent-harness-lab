@@ -13,18 +13,15 @@ from .schema import Contract, EvidenceRecord, digest, fingerprint, label
 from .store import SourceStore
 
 RELATIONS = ('same_observation', 'derived_from', 'independent_case')
-MAX_CASES = 128
-MAX_SNAPSHOTS = 8
-MAX_SNAPSHOT_BYTES = 128*1024*1024
 
 
 def text(value):
-    if not isinstance(value, str) or not value.strip() or len(value) > 4096 or any(ord(c) < 32 for c in value):
-        raise ValueError('review text must be bounded and single-line')
+    if not isinstance(value, str) or not value.strip() or any(ord(c) < 32 for c in value):
+        raise ValueError('review text must be nonempty and single-line')
 
 
 def refs(value):
-    frozen(value, RecordRef, 8)
+    frozen(value, RecordRef)
     if len({r.key for r in value}) != len(value): raise ValueError('duplicate lineage evidence')
 
 
@@ -47,7 +44,7 @@ class LineageClaim(Contract):
     def parse(cls, value):
         value = unpack(cls, value)
         for name in ('left', 'right'): value[name] = RecordRef.parse(value[name])
-        value['evidence'] = objects(value['evidence'], RecordRef, 8)
+        value['evidence'] = objects(value['evidence'], RecordRef)
         return cls(**value)
 
 
@@ -76,7 +73,7 @@ class LineageReview(Contract):
 
     @classmethod
     def parse(cls, value):
-        value = unpack(cls, value); value['evidence'] = objects(value['evidence'], RecordRef, 8)
+        value = unpack(cls, value); value['evidence'] = objects(value['evidence'], RecordRef)
         return cls(**value)
 
 
@@ -111,7 +108,8 @@ class LineageStore(PrivateJournal):
     def __init__(self, root, *, project_sha256, scope_sha256):
         fingerprint(project_sha256); fingerprint(scope_sha256)
         self.project, self.scope = project_sha256, scope_sha256
-        super().__init__(root, 'lineage-v1:'+digest((self.project, self.scope)), transition)
+        super().__init__(root, 'lineage-v1:'+digest((self.project, self.scope)), transition,
+            max_events=None, max_metadata=None, max_entries=None)
 
     def cache(self, path):
         path = Path(path).absolute()
@@ -126,25 +124,20 @@ class LineageStore(PrivateJournal):
         return digest(dict(project_sha256=self.project, scope_sha256=self.scope, cache_sha256=cache_sha256, claim=value))
 
     def cases(self):
-        return self.case_ids(MAX_CASES)
+        return self.case_ids(None)
 
     def snapshot(self, raw, identity):
         folder = contained(self.root, 'snapshots'); folder.mkdir(mode=0o700, exist_ok=True)
-        path = contained(folder, identity+'.json'); entries = []; total = 0
+        path = contained(folder, identity+'.json')
         with os.scandir(folder) as values:
             for entry in values:
-                if len(entries) >= MAX_SNAPSHOTS: raise ValueError('lineage snapshot count exceeded')
                 if not entry.name.endswith('.json'): raise ValueError('unknown lineage snapshot entry')
                 fingerprint(entry.name[:-5]); info = entry.stat(follow_symlinks=False)
                 if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1: raise ValueError('unsafe lineage snapshot')
-                entries.append(entry.name); total += info.st_size
-        if total > MAX_SNAPSHOT_BYTES: raise ValueError('lineage snapshot byte bound exceeded')
         if path.exists():
-            if hashlib.sha256(read_regular(path, 64*1024*1024)).hexdigest() != identity:
+            if hashlib.sha256(read_regular(path, None)).hexdigest() != identity:
                 raise ValueError('immutable lineage snapshot changed')
         else:
-            if len(entries) >= MAX_SNAPSHOTS or total+len(raw) > MAX_SNAPSHOT_BYTES:
-                raise ValueError('lineage snapshot capacity exhausted')
             write_bytes(path, raw)
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
         try: os.fsync(descriptor)
@@ -153,14 +146,12 @@ class LineageStore(PrivateJournal):
         return 'snapshots/'+identity+'.json'
 
     def propose(self, cache_path, claim_path):
-        raw_claim = read_regular(claim_path, 64*1024)
-        value, claim_hash = record_bytes(raw_claim, 64*1024); claim = LineageClaim.parse(value)
+        raw_claim = read_regular(claim_path, None)
+        value, claim_hash = record_bytes(raw_claim, None); claim = LineageClaim.parse(value)
         origin, state, raw, cache_hash = self.cache(cache_path); members(state, claim)
         case_id = self.case_identity(claim, cache_hash)
         with self.locked(create=True):
-            for index, _ in enumerate(self.root.iterdir()):
-                if index >= 16: raise ValueError('lineage store entry bound exceeded')
-            if len(self.cases()) >= MAX_CASES: raise ValueError('lineage store capacity exhausted')
+            self.cases()
             if self.case(case_id).exists(): raise ValueError('lineage claim already recorded')
             snapshot = self.snapshot(raw, cache_hash)
             inputs = dict(schema_version=1, project_sha256=self.project, scope_sha256=self.scope,
@@ -175,19 +166,19 @@ class LineageStore(PrivateJournal):
             return self.summary(case_id, inputs, events)
 
     def opened(self, case_id):
-        case = self.case(case_id); events = self.history(case); inputs, identity = record(case/'inputs.json')
+        case = self.case(case_id); events = self.history(case); inputs, identity = record(case/'inputs.json', None)
         if set(inputs) != set('schema_version project_sha256 scope_sha256 cache_origin cache_sha256 snapshot claim_sha256'.split()):
             raise ValueError('invalid lineage input manifest')
         if (type(inputs['schema_version']) is not int or inputs['schema_version'] != 1
                 or (inputs['project_sha256'], inputs['scope_sha256']) != (self.project, self.scope)
                 or events[0][0]['payload'].get('inputs_sha256') != identity):
             raise ValueError('lineage case scope/manifest changed')
-        value, claim_hash = record(case/'claim.json', 64*1024); claim = LineageClaim.parse(value)
+        value, claim_hash = record(case/'claim.json', None); claim = LineageClaim.parse(value)
         if claim_hash != inputs['claim_sha256'] or self.case_identity(claim, inputs['cache_sha256']) != case_id:
             raise ValueError('lineage claim changed')
         fingerprint(inputs['cache_sha256'])
         if inputs['snapshot'] != 'snapshots/'+inputs['cache_sha256']+'.json': raise ValueError('invalid lineage snapshot locator')
-        if hashlib.sha256(read_regular(contained(self.root, inputs['snapshot']), 64*1024*1024)).hexdigest() != inputs['cache_sha256']:
+        if hashlib.sha256(read_regular(contained(self.root, inputs['snapshot']), None)).hexdigest() != inputs['cache_sha256']:
             raise ValueError('lineage snapshot changed')
         for event, _ in events[1:]:
             if set(event['payload']) != {'review'}: raise ValueError('invalid persisted lineage decision')
@@ -211,7 +202,7 @@ class LineageStore(PrivateJournal):
             return self.summary(case_id, inputs, events)
 
     def review(self, case_id, cache_path, review_path):
-        value, _ = record(review_path, 64*1024); review = LineageReview.parse(value)
+        value, _ = record(review_path, None); review = LineageReview.parse(value)
         if review.case_id != case_id: raise ValueError('lineage review case mismatch')
         with self.locked():
             case, inputs, claim, events = self.opened(case_id)
@@ -284,16 +275,29 @@ class LineageStore(PrivateJournal):
 
 def main(argv=None):
     import argparse
-    parser = argparse.ArgumentParser(prog='ahl sources lineage', description=__doc__)
-    parser.add_argument('--store', type=Path, required=True)
-    parser.add_argument('--project-sha256', required=True); parser.add_argument('--scope-sha256', required=True)
-    commands = parser.add_subparsers(dest='action', required=True)
+    parser = argparse.ArgumentParser(prog='ahl sources lineage', description=__doc__,
+        epilog='Claims and reviews bind exact source-cache revisions and operator identities; they never authorize execution or prove independent roots. '
+        'All commands print private JSON metadata. Exit 0: completed; 2: rejected input/binding; '
+        '3: busy store, or query with stale cases/conflicts. '
+        'Example: ahl sources lineage --store /private/lineage --project-sha256 PROJECT_HASH --scope-sha256 SCOPE_HASH '
+        'propose --cache /private/sources.json --claim claim.json. Then inspect the returned case/event/cache hashes before preparing a review.')
+    parser.add_argument('--store', type=Path, required=True,help='Private lineage journal directory, separate from the source cache')
+    parser.add_argument('--project-sha256', required=True,help='Expected 64-hex project identity of the selected source cache')
+    parser.add_argument('--scope-sha256', required=True,help='Expected 64-hex selection/scope identity of the selected source cache')
+    commands = parser.add_subparsers(dest='action', required=True,help='Choose one explicit claim, review or read-only query operation')
     for name in ('propose', 'review', 'show', 'query'):
-        action = commands.add_parser(name)
-        if name in ('review', 'show'): action.add_argument('--case', required=True)
-        if name != 'show': action.add_argument('--cache', type=Path, required=True)
-        if name == 'propose': action.add_argument('--claim', type=Path, required=True)
-        if name == 'review': action.add_argument('--record', type=Path, required=True)
+        purpose={'propose':'Record an unsigned claim and freeze its exact source-cache snapshot',
+            'review':'Append an operator-attested decision bound to the case, event and cache hashes',
+            'show':'Read a recorded case summary without checking current cache applicability',
+            'query':'Read reviewed links applicable to the selected cache and report stale cases/conflicts'}
+        action = commands.add_parser(name,help=purpose[name],description=purpose[name],
+            epilog='Output is private JSON metadata, not native execution proof. Use the parent --help for scope identities and exit states.')
+        if name in ('review', 'show'): action.add_argument('--case', required=True,help='Exact case ID returned by propose; not a file path')
+        if name != 'show': action.add_argument('--cache', type=Path, required=True,help='Explicit private SourceStore journal file with matching project/scope identities')
+        if name == 'propose': action.add_argument('--claim', type=Path, required=True,
+            help='LineageClaim schema-1 JSON: left/right RecordRefs, relation, author and nonempty evidence references')
+        if name == 'review': action.add_argument('--record', type=Path, required=True,
+            help='LineageReview schema-1 JSON binding case/event/cache hashes, decision, reviewer, provenance, basis, evidence and reason')
     args = parser.parse_args(argv)
     try:
         store = LineageStore(args.store, project_sha256=args.project_sha256, scope_sha256=args.scope_sha256)

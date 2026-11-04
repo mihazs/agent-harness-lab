@@ -18,16 +18,21 @@ class ExperimentalCliTests(unittest.TestCase):
         data=json.loads(run.stdout)
         self.assertFalse(data['training_started']); self.assertEqual(data['real_task_effectiveness'],'not_run')
 
-    def test_local_retrieval_cli_and_invalid_bound(self):
+    def test_local_retrieval_cli_and_explicit_limit(self):
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)/'incidents.json'
             incident=Incident('i','r','synthetic timeout',('tool',),('event',),'review','reviewed_annotation','random','synthetic',True)
-            path.write_text(json.dumps([asdict(incident)]))
+            records=[asdict(incident)|dict(incident_id=str(index),summary='timeout '+('x'*1024*1024)) for index in range(6)]
+            path.write_text(json.dumps(records))
             with patch('builtins.print') as output:
                 self.assertEqual(main(['incident-search','--input',str(path),'--query','timeout']),0)
-                data=json.loads(output.call_args.args[0]); self.assertEqual(len(data['results']),1)
+                data=json.loads(output.call_args.args[0]); self.assertEqual(len(data['results']),6)
+                self.assertEqual(main(['incident-search','--input',str(path),'--query','timeout','--top-k','100']),0)
+                self.assertEqual(len(json.loads(output.call_args.args[0])['results']),6)
+                self.assertEqual(main(['incident-search','--input',str(path),'--query','timeout','--top-k','2']),0)
+                self.assertEqual(len(json.loads(output.call_args.args[0])['results']),2)
             with self.assertRaises(SystemExit) as exit:
-                main(['incident-search','--input',str(path),'--query','timeout','--top-k','100'])
+                main(['incident-search','--input',str(path),'--query','timeout','--top-k','0'])
             self.assertEqual(exit.exception.code,2)
 
     def test_benchmark_report_end_to_end_and_private_export_refusal(self):
@@ -37,7 +42,7 @@ class ExperimentalCliTests(unittest.TestCase):
             return dict(baseline_runtime=runtime,candidate_runtime=runtime,status='not_run',execution_kind='fake_agent',
                 provenance=dict(source_kind=source,approved_publication=True,source_ref='synthetic fixture',derived_from_private=False))
         with tempfile.TemporaryDirectory() as folder:
-            root=Path(folder); source=root/'input.json'; source.write_text(json.dumps([record()]))
+            root=Path(folder); source=root/'input.json'; source.write_text(' '*(10*1024*1024+1)+json.dumps([record()]))
             with patch('builtins.print'):
                 self.assertEqual(main(['benchmark-report','--input',str(source),'--output',str(root/'report'),'--public']),0)
             self.assertTrue((root/'report/report.html').is_file())

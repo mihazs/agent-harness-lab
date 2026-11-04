@@ -5,6 +5,17 @@
 These workflows may use your authenticated runtime and incur inference costs.
 Try the offline diagnosis first. Experimental limitations below apply throughout.
 
+For a cooperative `ahl.json` configuration with an explicitly pinned project task
+bank, `ahl improve` freezes the bank before preparing a candidate and evaluates
+all its tasks without an evaluation-author session. The bank must provide
+development, regression and held-out coverage; the configured trial budget must
+cover one preparation plus two trials per task. A fixed bank is used for one
+candidate only, without automatic refinement. Conflicting runtime overrides,
+changed bank contents, and combinations with managed/repeated experiment modes
+are rejected. Managed banks require their controlled workflow. Results remain
+recommendations; this path establishes neither certification nor isolation of
+the cooperative runtime.
+
 ## Automatic improvement
 
 In your project, run:
@@ -146,7 +157,7 @@ Inputs still require redaction; these tools are not general-purpose sanitizers.
 | `ahl diagnose --events FILE --output DIR` | Diagnose an explicit event file |
 | `ahl mine FILE` | Mine event transitions and recurring root-case support |
 | `ahl evaluate --manifest FILE --baseline DIR --candidate DIR --output DIR` | Execute a prepared baseline/candidate experiment |
-| `ahl benchmark FILE --method baseline` | Compare incident-classifier predictions |
+| `ahl benchmark FILE --method baseline` | Compare incident-classifier predictions; optional [frozen triage policy](diagnostic-triage.md) |
 | `ahl skills --agent claude` | Link installed skills into a selected runtime's skill directory |
 
 Run `ahl COMMAND --help` for the complete options. Low-level evaluation supports
@@ -160,6 +171,47 @@ is optional. In Claude Code their commands are `/harness-self-improvement` and
 adoption; the skills must not launch recursive improvement controllers.
 
 ## Evidence and limits
+
+### Analyze an explicit ai-memory session
+
+`ahl analyze . --memory-manifest ./memory-session.json --authorization-file ./memory-authorization`
+reads one explicitly selected session over stateless HTTPS MCP. It does not call
+an inference model or enumerate other sessions/scopes. The authorization file
+contains the complete authorization header value and is never discovered automatically.
+
+Use this manifest shape with your verified server version and schema fingerprint:
+
+```json
+{
+  "schema_version": 1,
+  "endpoint": "https://memory.example.invalid/mcp",
+  "workspace": "synthetic-workspace",
+  "project": "synthetic-project",
+  "session_id": "00000000-0000-4000-8000-000000000001",
+  "server_version": "2.4.0",
+  "tool_schema_sha256": "REPLACE_WITH_VERIFIED_SCHEMA_SHA256"
+}
+```
+
+The session must be its canonical UUID. Pin the `inputSchema` returned by the
+trusted server's `tools/list` for `memory_read_session_observations`: the fingerprint
+is SHA-256 of UTF-8 JSON with sorted keys, compact separators and no nonfinite values.
+No credentials belong in the manifest. An optional `limits` object accepts positive
+`timeout`, `seconds`, `max_bytes`, `max_pages` and `max_requests`; without explicit
+limits the client reads every observation page. `max_pages` also constrains MCP
+tool discovery; `max_requests` includes initialization, discovery and readback.
+
+The reader normalizes lifecycle activity and checks every page again before
+acceptance. Changed pages, duplicates, unsupported pins and missing authorization
+fail explicitly without retries. Readback does **not** prove an atomic server
+snapshot. `memory_source` in the JSON receipt and private analysis reports these
+coverage limitations and rows elided from other scopes. Bodies are excluded from
+normalization; names, call linkage and outcomes absent from structured source
+metadata remain unknown. These observations cannot certify a no-defect outcome
+or grant permission to apply a candidate. Use an explicitly supported native
+capture when structured diagnostic metadata is needed.
+CLI progress reports aggregate page/observation counts on stderr during retrieval
+and readback; stdout remains the JSON receipt and library calls are silent by default.
 
 **Experimental.** Automated preparation and descriptive evaluation are implemented;
 automatic behavioral adoption is blocked pending certification prerequisites; broad gains
@@ -182,8 +234,9 @@ completion remain intact. No model is promoted on an easy synthetic smoke test.
 
 Analyzed-project identities, memory contents, raw traces, and history-derived
 findings must stay out of commits, releases and public issues. Use reproducible
-synthetic examples for public reports. Automatic collection reads scoped local
-captures, not the ai-memory server. The configured agent may inspect the selected
+synthetic examples for public reports. Default collection reads scoped local
+captures; `--memory-manifest` explicitly opts into scoped ai-memory network reads.
+The configured agent may inspect the selected
 project's source/instructions and metadata as part of its task; it uses your existing
 inference configuration. The release builder includes tracked application files
 and skills only, excluding local artifacts and memory routing files.

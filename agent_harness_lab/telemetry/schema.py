@@ -29,7 +29,7 @@ def event(value):
         if key not in result:
             raise ValueError('invalid normalized case identity' if key == 'case_id' else 'missing event identity/activity')
     for key, val in result.items():
-        if key in TEXT and (not isinstance(val, str) or not 0 < len(val) <= 256):
+        if key in TEXT and (not isinstance(val, str) or not val):
             raise ValueError('invalid normalized case identity' if key == 'case_id' else 'invalid metadata field: ' + key)
         if key in BOOL and type(val) is not bool:
             raise ValueError('invalid boolean: ' + key)

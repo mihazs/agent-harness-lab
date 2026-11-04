@@ -8,9 +8,6 @@ permissions:
 jobs:
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python: ['3.11', '3.12', '3.13']
     steps:
       - uses: actions/checkout@v7
       - uses: arduino/setup-task@v3
@@ -18,5 +15,6 @@ jobs:
           version: '3.54.0'
       - uses: actions/setup-python@v7
         with:
-          python-version: ${{ matrix.python }}
+          python-version: '3.14'
+      - run: task setup:test
       - run: task test

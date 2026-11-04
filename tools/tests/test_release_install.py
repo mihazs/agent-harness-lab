@@ -2,11 +2,14 @@ import hashlib
 import importlib.util
 import io
 import json
+import multiprocessing
+import os
 from pathlib import Path
 import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -81,12 +84,128 @@ class ReleaseTests(unittest.TestCase):
         _, backup = installer.install(archive, checksums, self.install_root, self.bin, self.dirs)
         self.assertEqual((backup/'0/SKILL.md').read_text(), 'original')
 
+    def test_update_uses_bundled_installer_and_preserves_selected_paths(self):
+        from agent_harness_lab.updater import main
+        archive, checksums, _ = self.release()
+        current, _ = installer.install(archive, checksums, self.install_root, self.bin, self.dirs[:1])
+        archive, checksums, _ = self.release('0.2.0')
+        def response(request, timeout):
+            url = request.full_url
+            if url.endswith('/releases/latest'):
+                return io.BytesIO(b'{"tag_name":"v0.2.0"}')
+            if url.endswith('/' + archive.name): return io.BytesIO(archive.read_bytes())
+            if url.endswith('/SHA256SUMS'): return io.BytesIO(checksums.read_bytes())
+            raise AssertionError(url)
+        with patch('agent_harness_lab.cli.assets', return_value=current), patch('urllib.request.urlopen', side_effect=response):
+            self.assertEqual(main([]), 0)
+        self.assertEqual((self.bin/'ahl').resolve(), self.install_root/'releases/0.2.0/ahl')
+        self.assertFalse(self.dirs[1].exists())
+        self.assertEqual(json.loads((self.install_root/'installation.json').read_text())['version'], '0.2.0')
+
+    def test_receipt_failure_rolls_back_upgrade(self):
+        archive, checksums, _ = self.release()
+        current, _ = installer.install(archive, checksums, self.install_root, self.bin, self.dirs)
+        receipt = self.install_root/'installation.json'
+        old = receipt.read_bytes()
+        archive, checksums, _ = self.release('0.2.0')
+        with patch.object(Path, 'replace', side_effect=OSError('synthetic receipt failure')):
+            with self.assertRaises(OSError):
+                installer.install(archive, checksums, self.install_root, self.bin, self.dirs)
+        self.assertEqual(receipt.read_bytes(), old)
+        self.assertEqual((self.bin/'ahl').resolve(), current/'ahl')
+        self.assertFalse((self.install_root/'releases/0.2.0').exists())
+
+    def test_concurrent_update_cannot_publish_a_receipt_for_another_launcher(self):
+        archive, checksums, _ = self.release()
+        installer.install(archive, checksums, self.install_root, self.bin, self.dirs)
+        first_archive, first_checksums, _ = self.release('0.2.0')
+        second_archive, second_checksums, _ = self.release('0.3.0')
+        ready, release = threading.Event(), threading.Event()
+        errors = []
+        original = Path.replace
+        def replace(path, target):
+            if threading.current_thread().name == 'synthetic-first-update':
+                ready.set()
+                if not release.wait(5): raise TimeoutError('synthetic update synchronization')
+            return original(path, target)
+        def first():
+            try: installer.install(first_archive, first_checksums, self.install_root, self.bin, self.dirs)
+            except BaseException as exc: errors.append(exc)
+        worker = threading.Thread(target=first, name='synthetic-first-update')
+        second_error = None
+        with patch.object(Path, 'replace', replace):
+            worker.start()
+            try:
+                self.assertTrue(ready.wait(5))
+                try: installer.install(second_archive, second_checksums, self.install_root, self.bin, self.dirs)
+                except ValueError as exc: second_error = exc
+            finally:
+                release.set(); worker.join(5)
+        self.assertFalse(worker.is_alive()); self.assertEqual(errors, [])
+        state = json.loads((self.install_root/'installation.json').read_text())
+        self.assertEqual((self.bin/'ahl').resolve().parent.name, state['version'])
+        self.assertEqual(state['version'], '0.2.0')
+        self.assertIsInstance(second_error, ValueError)
+        self.assertIn('in progress', str(second_error))
+
     def test_checksum_failure_has_no_install_side_effects(self):
         archive, checksums, _ = self.release()
         archive.write_bytes(archive.read_bytes()+b'changed')
         with self.assertRaisesRegex(ValueError, 'checksum'):
             installer.install(archive, checksums, self.install_root, self.bin, self.dirs)
         self.assertFalse(self.install_root.exists())
+
+    def test_linked_installation_lock_is_refused_without_changing_links(self):
+        archive, checksums, _ = self.release()
+        self.install_root.mkdir()
+        outside = self.root/'unrelated-lock'; outside.write_text('synthetic-original')
+        lock = self.install_root/'.install.lock'
+        for hard in (False, True):
+            with self.subTest(hard=hard):
+                if hard: lock.hardlink_to(outside)
+                else: lock.symlink_to(outside)
+                try:
+                    with self.assertRaises((ValueError, OSError)):
+                        installer.install(archive, checksums, self.install_root, self.bin, self.dirs)
+                    self.assertFalse(self.bin.exists())
+                    self.assertFalse((self.install_root/'installation.json').exists())
+                    self.assertEqual(outside.read_text(), 'synthetic-original')
+                finally: lock.unlink()
+
+    def test_foreign_owner_lock_is_refused(self):
+        archive, checksums, _ = self.release()
+        original = os.fstat
+        def foreign(descriptor):
+            values = list(original(descriptor)); values[4] = os.geteuid()+1
+            return os.stat_result(values)
+        with patch.object(os, 'fstat', foreign), self.assertRaisesRegex(ValueError, 'owned regular'):
+            installer.install(archive, checksums, self.install_root, self.bin, self.dirs)
+        self.assertFalse(self.bin.exists())
+
+    def test_killed_installer_releases_same_lock_inode_for_explicit_recovery(self):
+        if 'fork' not in multiprocessing.get_all_start_methods(): self.skipTest('POSIX fork required')
+        archive, checksums, _ = self.release()
+        installer.install(archive, checksums, self.install_root, self.bin, self.dirs)
+        archive, checksums, _ = self.release('0.2.0')
+        context = multiprocessing.get_context('fork'); ready = context.Event(); release = context.Event()
+        def paused():
+            def wait_for_parent(*args):
+                ready.set(); release.wait(15)
+            with patch.object(Path, 'replace', wait_for_parent):
+                installer.install(archive, checksums, self.install_root, self.bin, self.dirs)
+        worker = context.Process(target=paused); worker.start()
+        try:
+            self.assertTrue(ready.wait(5))
+            lock = self.install_root/'.install.lock'; inode = lock.stat().st_ino
+            with self.assertRaisesRegex(ValueError, 'in progress'):
+                installer.install(archive, checksums, self.install_root, self.bin, self.dirs)
+            worker.kill(); worker.join(5); self.assertFalse(worker.is_alive())
+            installer.install(archive, checksums, self.install_root, self.bin, self.dirs)
+            self.assertEqual(lock.stat().st_ino, inode)
+            self.assertEqual((self.bin/'ahl').resolve().parent.name, '0.2.0')
+            self.assertEqual(json.loads((self.install_root/'installation.json').read_text())['version'], '0.2.0')
+        finally:
+            if worker.is_alive(): worker.terminate(); worker.join(5)
 
     def test_foreign_link_rejected_before_any_link_mutation(self):
         self.dirs[1].mkdir(parents=True)

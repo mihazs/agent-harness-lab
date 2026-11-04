@@ -51,8 +51,9 @@ class GitSourceTests(unittest.TestCase):
         self.declare()
 
     def git(self, *arguments, cwd=None):
+        # Fixture writes must not leave detached maintenance changing the read-only snapshot.
         return subprocess.check_output(['/usr/bin/git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false',
-            '-c', 'commit.gpgsign=false', *arguments], cwd=cwd or self.repo, env=self.env, stderr=subprocess.DEVNULL)
+            '-c', 'commit.gpgsign=false', '-c', 'maintenance.auto=false', *arguments], cwd=cwd or self.repo, env=self.env, stderr=subprocess.DEVNULL)
 
     def commit(self):
         self.git('add', '--all'); self.git('commit', '-m', 'SYNTHETIC_PRIVATE_MESSAGE')
@@ -371,15 +372,42 @@ class GitSourceTests(unittest.TestCase):
             self.assertEqual(self.invoke('import', '--cache', str(cache))[0], 2)
         self.assertEqual(cache.read_bytes(), before)
 
-    def test_read_and_output_limits_fail_without_committing_partial_imports(self):
-        with patch('agent_harness_lab.sources.git_view.MAX_BYTES', 10):
-            self.assertEqual(self.invoke('preview')[0], 2)
-        with patch('agent_harness_lab.sources.git_view.MAX_OUTPUT', 10):
-            self.assertEqual(self.invoke('preview')[0], 2)
+    def test_capture_ignores_implicit_read_and_output_caps_but_preserves_direct_guards(self):
+        with patch('agent_harness_lab.sources.git_view.MAX_BYTES', 10), patch('agent_harness_lab.sources.git_view.MAX_OUTPUT', 10):
+            self.assertEqual(self.invoke('preview')[0], 0)
         with Folder(self.root, 0) as folder:
             with self.assertRaises(TimeoutError): folder.read('source.json')
         with GitView(time.monotonic()+2) as view:
             with self.assertRaises(ValueError): view.run('fetch')
+            with patch('agent_harness_lab.sources.git_view.MAX_OUTPUT', 1):
+                with self.assertRaises(ValueError): view.run('--version')
+
+    def test_explicit_unlimited_git_view_preserves_output_past_former_command_cap(self):
+        configuration = self.root/'large-config'
+        value = 'x'*(5*1024*1024)
+        configuration.write_text('[synthetic]\nvalue='+value+'\n')
+        with GitView(None, limit_output=False) as view:
+            raw = view.run('config', '--file', str(configuration), '--null', '--list')
+        self.assertEqual(raw, b'synthetic.value\n'+value.encode()+b'\0')
+
+    def test_unlimited_capture_accepts_large_harness_and_preserves_all_selected_files(self):
+        for index in range(105): (self.repo/f'selected-{index}.md').write_text('synthetic')
+        (self.repo/'AGENTS.md').write_text('synthetic'*150000)
+        self.commit()
+        self.selection['harness_paths'] += [f'selected-{index}.md' for index in range(105)]
+        self.selection.pop('max_commits'); self.declare()
+        collector, snapshot = self.read()
+        self.assertEqual(len(collector.harness.files), 106)
+        self.assertEqual(len(collector.summary['commits']), 2)
+        self.assertNotIn('history_limit_reached', collector.summary['warnings'])
+
+    def test_more_than_one_hundred_explicit_commits_and_one_thousand_refs_are_accepted(self):
+        self.selection['max_commits'] = 101
+        refs = self.repo/'.git/refs/heads'
+        oid = self.git('rev-parse', 'HEAD').decode().strip()
+        for index in range(1001): (refs/f'synthetic-{index}').write_text(oid+'\n')
+        self.declare(); collector, _ = self.read()
+        self.assertEqual(len(collector.summary['refs']), 1002)
 
     def use_evidence_profile(self):
         self.source_version = 'v2'; self.declare()
@@ -507,12 +535,9 @@ class GitSourceTests(unittest.TestCase):
         self.assertIsNone(store.graph(legacy, old_cursor)); self.assertIsNone(store.capture(legacy, old_cursor))
         self.assertIsNotNone(store.graph(self.source)); self.assertEqual(store.status(self.source)['checkpoints'], 2)
 
-    def test_v2_large_native_parent_sets_reject_before_allocating_graph_rows_or_receipts(self):
+    def test_v2_large_native_parent_sets_preserve_all_graph_nodes_and_receipts(self):
         self.use_evidence_profile()
         tree = self.git('rev-parse', 'HEAD^{tree}').strip()
-        def admit(source, rows, summary, record, *limits):
-            def reject_allocation(*args): raise AssertionError('oversized graph must reject before allocation')
-            return capture_evidence(source, rows, summary, reject_allocation, *limits)
         for parents in (10000, 20001):
             raw = (b'tree '+tree+b'\n'+b''.join(f'parent {n:040x}\n'.encode() for n in range(1, parents+1))
                 + b'author Synthetic <synthetic@example.invalid> 1767225600 +0000\n'
@@ -522,9 +547,10 @@ class GitSourceTests(unittest.TestCase):
             directory = self.repo/'.git/objects'/sha[:2]; directory.mkdir(exist_ok=True)
             (directory/sha[2:]).write_bytes(zlib.compress(native))
             (self.repo/'.git/refs/heads/main').write_text(sha+'\n'); (self.repo/'.git/shallow').write_text(sha+'\n')
-            with self.subTest(parents=parents), patch('agent_harness_lab.sources.git.capture_evidence', side_effect=admit) as admission:
-                self.assertEqual(self.invoke('preview')[0], 2)
-                admission.assert_called_once()
+            with self.subTest(parents=parents):
+                collector, snapshot = self.read()
+                self.assertGreaterEqual(len(snapshot.graph.joins), parents)
+                self.assertGreaterEqual(len(snapshot.graph.nodes), parents)
 
     def recheck_store(self):
         self.use_evidence_profile()

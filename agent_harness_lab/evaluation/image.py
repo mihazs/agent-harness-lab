@@ -141,8 +141,8 @@ class RuntimeImage:
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('root', type=Path)
+    parser = argparse.ArgumentParser(description='Inspect an existing extracted runtime rootfs and print its bounded content identity as JSON. Does not execute image code, extract archives, build an image or grant runtime trust.',epilog='Example: python -m agent_harness_lab.evaluation.image /private/rootfs. Use the resulting sha256 as --image-sha256 with the exact same rootfs. Exit 2 means unsafe, unavailable or out-of-bounds image content.')
+    parser.add_argument('root', type=Path,help='Existing extracted Linux rootfs directory to inspect; links, file metadata and content are checked by the image contract')
     args = parser.parse_args()
     try:
         print(json.dumps(scan(args.root), sort_keys=True))

@@ -9,8 +9,8 @@ from .integrity import contained, digest, read_regular
 PARTITIONS = {'construction', 'development', 'calibration', 'certification', 'transfer'}
 
 
-def identifier(value):
-    if not isinstance(value, str) or not 0 < len(value) <= 128:
+def identifier(value, maximum=128):
+    if not isinstance(value, str) or not value or maximum is not None and len(value) > maximum:
         raise ValueError('invalid task/group identifier')
     return value
 
@@ -38,14 +38,15 @@ class TaskSpec:
     artifacts: tuple
 
     @classmethod
-    def parse(cls, value):
+    def parse(cls, value, *, analysis_only=False):
+        if type(analysis_only) is not bool: raise ValueError('explicit task parsing mode required')
         if not isinstance(value, dict) or set(value) != set(cls.__dataclass_fields__):
             raise ValueError('task fields must match the versioned schema')
         if any(not isinstance(value[k], list) or not all(isinstance(v, str) and v for v in value[k]) for k in ('safety', 'artifacts')):
             raise ValueError('safety/artifact lists required')
         obj = cls(**{**value, 'safety': tuple(value['safety']), 'artifacts': tuple(value['artifacts'])})
         for key in ('task_id', 'root_id', 'family', 'project_group', 'time_group', 'grader_version', 'reviewer'):
-            identifier(getattr(obj, key))
+            identifier(getattr(obj, key), None if analysis_only else 128)
         if obj.partition not in PARTITIONS or obj.source_kind not in ('synthetic', 'public', 'private'):
             raise ValueError('unsupported task partition/source')
         if obj.permission not in ('approved', 'unverified') or obj.review_status not in ('accepted', 'quarantined', 'unreviewed'):
@@ -55,18 +56,19 @@ class TaskSpec:
         return obj
 
 
-def _validate(path, *, verify_contents=True):
-    if type(verify_contents) is not bool:
+def _validate(path, *, verify_contents=True, analysis_only=False):
+    if type(verify_contents) is not bool or type(analysis_only) is not bool:
         raise ValueError('content verification mode must be explicit')
     path = Path(path)
-    raw = read_regular(path, 1024 * 1024)
+    raw = read_regular(path, None if analysis_only else 1024 * 1024)
     value = json.loads(raw.decode('utf-8'))
-    if not isinstance(value, dict) or value.get('schema_version') != 1 or not isinstance(value.get('tasks'), list) or not 0 < len(value['tasks']) <= 1000:
+    if not isinstance(value, dict) or value.get('schema_version') != 1 or not isinstance(value.get('tasks'), list) or not value['tasks'] or not analysis_only and len(value['tasks']) > 1000:
         raise ValueError('invalid/empty task bank')
     dimensions = value.get('separate_by', ['root_id'])
     if not dimensions or any(k not in ('root_id', 'family', 'project_group', 'time_group') for k in dimensions) or 'root_id' not in dimensions:
         raise ValueError('invalid independence policy')
-    tasks = [TaskSpec.parse(t) for t in value['tasks']]
+    tasks = [TaskSpec.parse(t, analysis_only=analysis_only) for t in value['tasks']]
+    limits = dict(max_files=None, max_bytes=None, max_entries=None, max_depth=None) if analysis_only else {}
     if len({t.task_id for t in tasks}) != len(tasks):
         raise ValueError('duplicate task ID')
     groups, fixtures, issues = {}, {}, []
@@ -75,7 +77,7 @@ def _validate(path, *, verify_contents=True):
         grader = contained(path.parent, task.grader_bundle)
         if fixture == grader or fixture.is_relative_to(grader) or grader.is_relative_to(fixture):
             raise ValueError('grader and fixture overlap')
-        if verify_contents and (digest(fixture) != task.fixture_digest or digest(grader) != task.grader_digest):
+        if verify_contents and (digest(fixture, **limits) != task.fixture_digest or digest(grader, **limits) != task.grader_digest):
             raise ValueError('task/grader integrity changed; comparisons must be invalidated')
         for name in task.artifacts:
             from .integrity import relative
@@ -95,7 +97,7 @@ def _validate(path, *, verify_contents=True):
         from .content_grouping import inspect_bank
         content_grouping, overlaps = inspect_bank(path.parent, tasks, bank_sha256)
         issues.extend(overlaps)
-    return dict(schema_version=1, bank_sha256=bank_sha256, contents_verified=verify_contents,
+    result = dict(schema_version=1, bank_sha256=bank_sha256, contents_verified=verify_contents,
                 content_grouping=content_grouping, _controller_profile=value.get('controller_profile'),
                 tasks=len(tasks), roots=len({t.root_id for t in tasks}),
                 partitions={p: sum(t.partition == p for t in tasks) for p in sorted(PARTITIONS)},
@@ -106,6 +108,26 @@ def _validate(path, *, verify_contents=True):
                 certification_reason='controller_qualification_unavailable', issues=issues,
                 privacy='private' if any(t.source_kind == 'private' for t in tasks) else 'public_source_only',
                 public_tasks_are_secret=False)
+    if analysis_only:
+        result['task_index'] = [{key: getattr(task, key) for key in
+            ('task_id', 'root_id', 'family', 'partition', 'review_status')} for task in tasks]
+    return result
+
+
+def inspect(path):
+    """Inspect complete declared contents without admission or execution authority."""
+    result = _validate(path, analysis_only=True)
+    profile = result.pop('_controller_profile', None)
+    if profile is not None:
+        from .bank_revisions import PROFILE as REVISION
+        from .bank_corrections import PROFILE as CORRECTION
+        from .bank_qualification import PROFILE as FINAL
+        if profile not in (REVISION, CORRECTION, FINAL): raise ValueError('unsupported controller bank profile')
+        result['controller_profile'] = dict(value=profile, status='declared_unverified')
+        result['privacy'] = 'private'
+    result.update(analysis_only=True, admission_authority=False, execution_authorized=False,
+        certification_status='unverified', certification_reason='analysis_only_inspection')
+    return result
 
 
 def validate(path, *, verify_contents=True):
@@ -114,12 +136,17 @@ def validate(path, *, verify_contents=True):
     if profile is not None:
         from .bank_revisions import PROFILE, validate_admission
         from .bank_corrections import PROFILE as CORRECTION_PROFILE
-        if profile not in (PROFILE,CORRECTION_PROFILE): raise ValueError('unsupported controller bank profile')
+        from .bank_qualification import PROFILE as FINAL_PROFILE
+        if profile not in (PROFILE,CORRECTION_PROFILE,FINAL_PROFILE): raise ValueError('unsupported controller bank profile')
         result['admission'] = validate_admission(path)
         if profile==CORRECTION_PROFILE: result['certification_eligible']=False
         if result['admission']['bank_manifest_sha256'] != result['bank_sha256']:
             raise ValueError('bank changed during admission validation')
         result['certification_eligible'] = False
+        if profile==FINAL_PROFILE:
+            result['bank_qualification']=result['admission']
+            result['certification_status']='qualified_under_conditional_bank_protocol'
+            result['certification_reason']='final_runtime_and_comparison_qualification_still_required'
         result['privacy'] = 'private'
         if not result['admission']['current_eligible']:
             result['issues'].append(dict(status='admission_quarantined_or_retired'))
@@ -161,9 +188,9 @@ class CertificationLedger:
         atomic_json(self.path, state)
         return state['bank']
 
-    def reserve_managed(self, binding):
+    def reserve_managed(self, binding,*,deadline=None):
         from .certification_access import reserve
-        return reserve(self.path, binding)
+        return reserve(self.path, binding,deadline=deadline)
 
     def consume_managed(self, reservation_id, binding, run_id):
         from .certification_access import consumed
@@ -173,9 +200,9 @@ class CertificationLedger:
         from .certification_access import historical
         historical(self.path, receipt)
 
-    def admit_managed(self, assets, run_id, *, reservation_id=None, binding=None):
+    def admit_managed(self, assets, run_id, *, reservation_id=None, binding=None,deadline=None):
         from .certification_access import admit
-        return admit(self.path, assets, run_id, ident=reservation_id, binding=binding)
+        return admit(self.path, assets, run_id, ident=reservation_id, binding=binding,deadline=deadline)
 
     def managed_status(self, reservation_id):
         from .certification_access import status

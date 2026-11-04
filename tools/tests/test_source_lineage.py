@@ -239,11 +239,30 @@ class LineageReviewTests(unittest.TestCase):
         self.assertEqual(self.review(proposed,decision='retired')['state'],'retired')
         with self.assertRaises(ValueError): self.review(proposed,decision='quarantined')
 
-    def test_review_capacity_and_snapshot_bounds_precede_any_case_commit(self):
-        with patch('agent_harness_lab.sources.lineage.MAX_SNAPSHOT_BYTES',0):
-            with self.assertRaises(ValueError): self.propose()
-        self.assertEqual(self.store.cases(),[])
-        self.assertEqual(self.fixture.store.path.read_bytes(),self.fixture.store.read_snapshot()[1])
+    def test_snapshot_inventory_preserves_all_frozen_cache_revisions(self):
+        folder = self.store.root/'snapshots'
+        with self.store.locked(create=True):
+            for index in range(9):
+                raw = str(index).encode()
+                import hashlib
+                identity = hashlib.sha256(raw).hexdigest()
+                self.store.snapshot(raw, identity)
+            self.assertEqual(len(list(folder.iterdir())), 9)
+            for path in folder.iterdir():
+                self.assertEqual(self.store.snapshot(path.read_bytes(), path.stem), 'snapshots/'+path.name)
+
+    def test_lineage_case_inventory_and_evidence_have_no_fixed_analysis_ceiling(self):
+        from dataclasses import replace
+        from agent_harness_lab.sources.execution import RecordRef
+        from agent_harness_lab.sources.lineage import LineageClaim
+        from agent_harness_lab.sources.schema import digest
+        refs = tuple(RecordRef('a'*64, digest(i), 'c'*64) for i in range(9))
+        claim = LineageClaim(refs[0], refs[1], 'same_observation', 'synthetic', refs)
+        self.assertEqual(LineageClaim.parse(claim.to_dict()), claim)
+        with self.assertRaises(ValueError): replace(claim, evidence=refs+(refs[0],))
+        with self.store.locked(create=True):
+            for index in range(129): self.store.case(digest(index)).mkdir(parents=True)
+            self.assertEqual(len(self.store.cases()), 129)
 
     def test_persisted_operator_record_must_bind_the_event_it_follows(self):
         proposed = self.propose(); self.review(proposed)

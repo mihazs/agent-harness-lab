@@ -11,23 +11,23 @@ FIELDS = {'schema_version', 'runtime', 'version', 'task_cwd', 'fallback_filename
 
 
 def validate(profile):
-    if not isinstance(profile, dict) or set(profile) != FIELDS or type(profile['schema_version']) is not int or profile['schema_version'] != 1:
+    if not isinstance(profile, dict) or set(profile) not in (FIELDS, FIELDS-{'project_doc_max_bytes'}) or type(profile['schema_version']) is not int or profile['schema_version'] != 1:
         raise ValueError('invalid instruction profile')
     label(profile['runtime']); label(profile['version'])
     cwd = profile['task_cwd']
     if cwd != '.': relative(cwd)
-    if len(cwd) > 4096 or len(Path(cwd).parts) > 32 or '.git' in Path(cwd).parts:
+    if '.git' in Path(cwd).parts:
         raise ValueError('unsafe instruction task directory')
     names = profile['fallback_filenames']
-    if (not isinstance(names, list) or len(names) > 8 or not all(isinstance(n, str) for n in names)
+    if (not isinstance(names, list) or not all(isinstance(n, str) for n in names)
             or len(set(names)) != len(names)):
         raise ValueError('invalid instruction fallback filenames')
     for name in names:
         relative(name)
-        if len(name) > 255 or len(Path(name).parts) != 1 or name in ('.git', 'AGENTS.md', 'AGENTS.override.md'):
+        if len(Path(name).parts) != 1 or name in ('.git', 'AGENTS.md', 'AGENTS.override.md'):
             raise ValueError('unsafe or duplicate instruction fallback')
-    limit = profile['project_doc_max_bytes']
-    if type(limit) is not int or not 0 <= limit <= 1024*1024: raise ValueError('invalid project instruction byte limit')
+    limit = profile.get('project_doc_max_bytes')
+    if limit is not None and (type(limit) is not int or limit < 0): raise ValueError('invalid project instruction byte limit')
 
 
 @dataclass(frozen=True)
@@ -86,7 +86,6 @@ class InstructionInventory:
         if self.git_harness_sha256 is not None: fingerprint(self.git_harness_sha256)
         if (type(self.nodes) is not tuple or not all(isinstance(n, InstructionNode) for n in self.nodes)
                 or type(self.edges) is not tuple or not all(isinstance(e, InstructionEdge) for e in self.edges)
-                or len(self.nodes) > 500 or len(self.edges) > 500
                 or self.resolution_status not in ('declared', 'unsupported', 'blocked')
                 or self.runtime_configuration_origin != 'caller_declared' or self.ambient_state != 'unknown'
                 or self.observed_loading != 'unknown' or type(self.schema_version) is not int or self.schema_version != 1):
@@ -102,10 +101,10 @@ class InstructionInventory:
 def capture(profile, folder, checkout, selected=(), *, git_harness_sha256=None):
     validate(profile)
     relative(checkout)
-    if not isinstance(selected, (list, tuple)) or len(selected) > 100: raise ValueError('invalid selected instruction files')
+    if not isinstance(selected, (list, tuple)): raise ValueError('invalid selected instruction files')
     for path in selected:
         relative(path)
-        if '.git' in Path(path).parts or len(path) > 4096: raise ValueError('unsafe selected instruction path')
+        if '.git' in Path(path).parts: raise ValueError('unsafe selected instruction path')
     identity = dict(runtime=profile['runtime'], version=profile['version'], profile_sha256=digest(profile),
                     task_cwd_sha256=digest(profile['task_cwd']), git_harness_sha256=git_harness_sha256)
     if (profile['runtime'], profile['version']) != ('codex', '0.166.0'):
@@ -116,8 +115,9 @@ def capture(profile, folder, checkout, selected=(), *, git_harness_sha256=None):
     names = ['AGENTS.override.md', 'AGENTS.md', *profile['fallback_filenames']]
     nodes, edges, inspected = [], [], set()
     previous, total, blocked = None, 0, False
+    limit = profile.get('project_doc_max_bytes')
     def node(path, applicability, reason):
-        data = folder.read(str(Path(checkout)/path), 1024*1024)
+        data = folder.read(str(Path(checkout)/path), None)
         info = folder.inspect(str(Path(checkout)/path))
         value = InstructionNode(digest(path), digest(str(Path(path).parent)),
             hashlib.sha256(data).hexdigest() if data is not None else None,
@@ -141,7 +141,7 @@ def capture(profile, folder, checkout, selected=(), *, git_harness_sha256=None):
                     active = value.path_sha256
                     # shortcut: uncertain native truncation blocks resolution; add a native receipt before modeling partial files.
                     total += len(raw)+(2 if previous else 0)
-                    if blocked or total > profile['project_doc_max_bytes']:
+                    if blocked or limit is not None and total > limit:
                         blocked, reason = True, 'byte_limit_requires_native_resolution'
                     else:
                         applicability, reason = 'declared_applicable', 'directory_precedence'

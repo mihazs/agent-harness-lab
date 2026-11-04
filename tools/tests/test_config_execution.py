@@ -6,7 +6,7 @@ from unittest.mock import patch
 from agent_harness_lab import config
 from agent_harness_lab.evaluation.integrity import digest
 from agent_harness_lab.evaluation.sandbox import SandboxBackend
-from tools.tests.test_offline_evaluation import OfflineFixture
+from test_offline_evaluation import OfflineFixture
 
 
 class ConfiguredEvaluationTests(OfflineFixture):

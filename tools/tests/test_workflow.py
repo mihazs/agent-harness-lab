@@ -23,7 +23,7 @@ if p('context.json').exists():
   if mode=='no_change':
    (evaluation/'proposal.json').write_text(json.dumps({'status':'no_change','reason':'No supported defect'}))
   else:
-   (candidate/'AGENTS.md').write_text('worse' if mode=='refine' and c['attempt']==0 else 'good\n')
+   if mode!='identical': (candidate/'AGENTS.md').write_text('worse' if mode=='refine' and c['attempt']==0 else 'good\n')
    if mode=='escape': (candidate/'settings.json').write_text('forbidden')
    if mode=='concurrent': (project/'AGENTS.md').write_text('concurrent')
    (evaluation/'proposal.json').write_text(json.dumps({'status':'candidate','mechanisms':['synthetic'],'falsifiers':['artifact check']}))
@@ -90,7 +90,12 @@ class WorkflowTests(unittest.TestCase):
 
     def test_tie_keeps_original(self):
         (self.project/'AGENTS.md').write_text('good')
-        self.assertEqual(improve(self.args())['status'],'no_change')
+        result=improve(self.args())
+        self.assertEqual(result['status'],'no_change')
+        self.assertEqual(result['reason'],'evaluation_no_improvement')
+        evaluation=json.loads((Path(result['output'])/'evaluation-0/results.json').read_text())
+        self.assertTrue(evaluation['inputs_unchanged'])
+        self.assertTrue(all(trial['status']=='passed' for trial in evaluation['trials']))
         self.assertEqual((self.project/'AGENTS.md').read_text(),'good')
 
     def test_refines_once_using_new_heldout_inputs(self):
@@ -126,7 +131,18 @@ class WorkflowTests(unittest.TestCase):
         (self.project/'mode').write_text('no_change')
         result=improve(self.args())
         self.assertEqual(result['status'],'no_change')
+        self.assertEqual(result['reason'],'proposer_no_change')
+        self.assertNotIn('No supported defect',json.dumps(result))
         self.assertFalse((Path(result['output'])/'evaluation-0').exists())
+
+    def test_identical_candidate_has_distinct_reason_without_evaluation(self):
+        (self.project/'mode').write_text('identical')
+        result=improve(self.args())
+        self.assertEqual(result['status'],'no_change')
+        self.assertEqual(result['reason'],'candidate_identical_to_baseline')
+        self.assertEqual((self.project/'AGENTS.md').read_text(),'bad')
+        self.assertFalse((Path(result['output'])/'evaluation-0').exists())
+        self.assertEqual(json.loads((Path(result['output'])/'workflow.json').read_text())['reason'],result['reason'])
 
     def test_snapshot_does_not_follow_symlinked_discovery_ancestors(self):
         outside=self.root/'outside'

@@ -28,8 +28,8 @@ class Snapshot:
         if self.graph is not None:
             if not isinstance(self.graph, EvidenceGraph): raise ValueError('snapshot requires a typed evidence graph')
             EvidenceGraph.parse(self.graph.to_dict())
-        if type(self.records) is not tuple or len(self.records) > 10000:
-            raise ValueError('invalid snapshot record bound')
+        if type(self.records) is not tuple:
+            raise ValueError('snapshot requires immutable records')
         seen = {}
         for record in self.records:
             if not isinstance(record, EvidenceRecord):
@@ -77,7 +77,8 @@ class LocalExport:
         current, value = self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)
         if current != source or not current.enabled or expected is not None and value != expected:
             raise ValueError('normalized export declaration changed or is disabled')
-        return value, read_regular(contained(self.manifest.parent, value['data']), 8*1024*1024)
+        payload = contained(self.manifest.parent, value['data'])
+        return value, read_regular(payload, None)
 
     def read(self, source):
         if (source.kind, source.provider, source.version) not in (
@@ -94,7 +95,7 @@ class LocalExport:
             metadata = ExecutionMetadata.parse(rows['execution_metadata']) if version == 2 or rows['execution_metadata'] is not None else None
             if version == 3 and rows['evidence_graph'] is not None: graph = EvidenceGraph.parse(rows['evidence_graph'])
             rows = rows['records']
-        if not isinstance(rows, list) or len(rows) > 10000:
+        if not isinstance(rows, list):
             raise ValueError('invalid normalized export')
         records = tuple(EvidenceRecord.parse(r) for r in rows)
         if metadata is not None: metadata.validate(source, records)

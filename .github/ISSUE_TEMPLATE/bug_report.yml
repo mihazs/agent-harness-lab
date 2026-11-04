@@ -1,0 +1,47 @@
+name: Bug report
+description: Describe a reproducible defect with the minimum useful context.
+body:
+- type: markdown
+  attributes:
+    value: Use synthetic inputs or public fixtures only. Do not include private traces, analyzed-project
+      identities, credentials, or findings derived from private histories. Report security vulnerabilities
+      privately via [SECURITY.md](https://github.com/mihazs/agent-harness-lab/blob/main/SECURITY.md).
+- type: textarea
+  id: behavior
+  attributes:
+    label: Expected and actual behavior
+    description: What did you try to do, what happened, and what should happen?
+  validations:
+    required: true
+- type: textarea
+  id: reproduction
+  attributes:
+    label: Reproduction
+    description: Give the exact command or skill invocation and a minimal synthetic input or public fixture.
+      If you cannot reproduce it, say so.
+  validations:
+    required: true
+- type: input
+  id: environment
+  attributes:
+    label: Environment
+    description: AHL version/commit, Python and OS; agent/runtime version only if involved. Use unknown
+      when unavailable.
+    placeholder: AHL …; Python …; OS …; runtime …
+  validations:
+    required: true
+- type: textarea
+  id: output
+  attributes:
+    label: Relevant output (optional)
+    description: Exit code and minimal synthetic/public output only; no private logs.
+    render: text
+  validations:
+    required: false
+- type: textarea
+  id: context
+  attributes:
+    label: Related issues or workaround (optional)
+    description: Links, steps already tried, frequency and workarounds. No implementation proposal required.
+  validations:
+    required: false

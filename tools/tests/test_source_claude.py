@@ -42,6 +42,16 @@ class ClaudeSourceTests(unittest.TestCase):
 
     def snapshot(self): return self.reader().read(self.source)
 
+    def test_native_source_file_does_not_inherit_git_total_read_limit(self):
+        with patch('agent_harness_lab.sources.git_view.MAX_BYTES', 10):
+            self.assertTrue(self.snapshot().records)
+
+    def test_unlimited_source_keeps_more_than_the_former_normalized_record_ceiling(self):
+        self.rows = [self.rows[1]]
+        self.rows[0]['message']['content'] = [dict(type='text', text='synthetic')]*10001
+        self.write(); self.selected.pop('max_records'); self.declare()
+        self.assertEqual(len(self.snapshot().records), 10001)
+
     def test_native_cli_preview_import_status_recheck_and_privacy_use_shared_journal(self):
         code, preview = self.invoke('preview'); self.assertEqual(code, 0)
         self.assertTrue(preview['checkpoint_ready']); self.assertEqual(preview['records'], 12)
@@ -176,8 +186,8 @@ class ClaudeSourceTests(unittest.TestCase):
         clock = [0]
         def delayed(*args, **kwargs):
             result = EvidenceRecord(*args, **kwargs); clock[0] = 11; return result
-        with patch('agent_harness_lab.sources.native.time.monotonic', side_effect=lambda: clock[0]), \
-             patch('agent_harness_lab.sources.native.EvidenceRecord', delayed), self.assertRaises(TimeoutError): self.snapshot()
+        with patch('agent_harness_lab.sources.git_view.time.monotonic', side_effect=lambda: clock[0]), \
+             patch('agent_harness_lab.sources.native.EvidenceRecord', delayed): self.assertTrue(self.snapshot().records)
         def mutate(*args, **kwargs):
             result = relationships(*args, **kwargs); self.descriptor.write_text('{}'); return result
         with patch('agent_harness_lab.sources.native.relationships', mutate): self.assertEqual(self.invoke('import')[0], 2)

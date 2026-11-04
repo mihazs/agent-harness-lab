@@ -1,5 +1,5 @@
 """Public synthetic managed diagnostics; cooperative attestations are not containment proof."""
-from contextlib import redirect_stdout
+from contextlib import contextmanager, redirect_stdout
 from copy import deepcopy
 from dataclasses import replace
 import io
@@ -192,8 +192,10 @@ class CertificationAccessTests(unittest.TestCase):
             for child in children: child.start()
             for child in children: child.join(25); self.assertFalse(child.is_alive())
             rows=[q.get(timeout=5) for _ in children]
-            self.assertEqual(sum(r['calls'] for r in rows),8)
-            self.assertEqual(sum(r['state']=='sealed' for r in rows),1)
+            self.assertEqual(sum(r['calls'] for r in rows),8,rows)
+            winners=[row for row in rows if row['state']=='sealed']
+            self.assertEqual(len(winners),1,rows)
+            self.assertEqual(winners[0]['calls'],8,rows)
             for child in children: self.assertEqual(child.exitcode,0)
         finally:
             for child in children:
@@ -214,6 +216,47 @@ class CertificationAccessTests(unittest.TestCase):
         finally:
             release.set()
             if child.is_alive(): child.terminate(); child.join(5)
+            q.close()
+
+    def test_competing_initial_writer_cannot_strand_consumed_managed_grant(self):
+        import multiprocessing
+        from agent_harness_lab.evaluation.oracle_history import HistoryStore
+        if 'fork' not in multiprocessing.get_all_start_methods(): self.skipTest('fork unavailable')
+        ctx=multiprocessing.get_context('fork'); q=ctx.Queue()
+        ready,held,release=ctx.Event(),ctx.Event(),ctx.Event(); ident=self.reserve()
+        original_lock=HistoryStore.locked; original_execute=self.f.execute; visits=[0]
+        @contextmanager
+        def locked(store,*args,**kwargs):
+            name=multiprocessing.current_process().name; first=visits[0]==0; visits[0]+=1
+            with original_lock(store,*args,**kwargs) as value:
+                if name=='synthetic-history-contender' and first:
+                    held.set()
+                    if not release.wait(15): raise TimeoutError('synthetic writer release expired')
+                yield value
+            if name=='synthetic-history-winner' and first:
+                ready.set()
+                if not held.wait(15): raise TimeoutError('synthetic contender did not enter')
+        def execute(*args,**kwargs):
+            release.set()
+            return original_execute(*args,**kwargs)
+        self.f.execute=execute
+        children=[ctx.Process(name=name,target=_controller_child,args=(self.f,ident,q))
+            for name in ('synthetic-history-winner','synthetic-history-contender')]
+        try:
+            with patch.object(HistoryStore,'locked',locked):
+                children[0].start(); self.assertTrue(ready.wait(15))
+                children[1].start(); self.assertTrue(held.wait(15))
+                rows=[q.get(timeout=25)]; release.set()
+                for child in children: child.join(25); self.assertFalse(child.is_alive())
+                rows.append(q.get(timeout=5))
+            self.assertEqual(sum(row['calls'] for row in rows),8,rows)
+            winners=[row for row in rows if row['state']=='sealed']
+            self.assertEqual(len(winners),1,rows); self.assertEqual(winners[0]['calls'],8,rows)
+            for child in children: self.assertEqual(child.exitcode,0)
+        finally:
+            release.set()
+            for child in children:
+                if child.pid is not None and child.is_alive(): child.terminate(); child.join(5)
             q.close()
 
 
@@ -309,12 +352,12 @@ class CertificationAccessTests(unittest.TestCase):
 def _controller_child(f, ident, queue, ready=None, release=None):
     from agent_harness_lab.evaluation import certification_access as access
     original=access.atomic_json
-    def gate(path,state):
+    def gate(path,state,**kwargs):
         if ready is not None:
             ready.set()
             if not release.wait(15): raise ValueError('synthetic lock barrier expired')
-        return original(path,state)
-    calls=0
+        return original(path,state,**kwargs)
+    calls=0; workers=None
     try:
         with patch.object(access,'atomic_json',side_effect=gate), \
                 patch.object(SandboxBackend,'capability',return_value={'status':'available'}), \
@@ -324,4 +367,6 @@ def _controller_child(f, ident, queue, ready=None, release=None):
                 access_reservation=ident)
             calls=workers.call_count
         queue.put(dict(state=result['state'],calls=calls))
-    except (ValueError,OSError): queue.put(dict(state='blocked',calls=calls))
+    except (ValueError,OSError) as exc:
+        calls=workers.call_count if workers is not None else calls
+        queue.put(dict(state='blocked',calls=calls,error_type=type(exc).__name__,reason=str(exc)[:240]))

@@ -8,8 +8,6 @@ from .schema import Contract, digest, fingerprint
 
 ALGORITHM = 'nfc-word-punctuation-v1'
 FIXTURE_ALGORITHM = 'fixture-path-json-nfc-v1'
-MAX_BYTES = 1024*1024
-MAX_TOKENS = 100000
 
 
 @dataclass(frozen=True)
@@ -22,18 +20,16 @@ class TextFingerprint(Contract):
 
     def __post_init__(self):
         self.validate(('exact_sha256', 'normalized_sha256'), {'algorithm':(ALGORITHM, FIXTURE_ALGORITHM)})
-        if type(self.tokens) is not int or not 0 <= self.tokens <= MAX_TOKENS:
-            raise ValueError('invalid bounded text token count')
+        if type(self.tokens) is not int or self.tokens < 0:
+            raise ValueError('invalid text token count')
 
 
 def text_fingerprint(value):
     if not isinstance(value, str): raise ValueError('content fingerprint requires explicit text')
     try: raw = value.encode('utf-8')
     except UnicodeError: raise ValueError('content fingerprint requires valid UTF-8 text') from None
-    if len(raw) > MAX_BYTES: raise ValueError('content fingerprint byte bound exceeded')
     tokens = []
     for token in re.finditer(r'\w+|[^\w\s]', unicodedata.normalize('NFC', value)):
-        if len(tokens) >= MAX_TOKENS: raise ValueError('content fingerprint token bound exceeded')
         tokens.append(token.group())
     return TextFingerprint(hashlib.sha256(raw).hexdigest(), digest(tokens), len(tokens))
 
@@ -69,7 +65,7 @@ class GroupingReceipt(Contract):
                 or self.evidence_class != ('heuristic_candidate' if linked else 'unlinked') or self.lineage_group_sha256 is not None):
             raise ValueError('content similarity cannot assert a causal lineage group')
         for values in (self.unresolved_collisions, self.invalidation_history):
-            frozen(values, str, 64)
+            frozen(values, str)
             for value in values: fingerprint(value)
             if len(set(values)) != len(values): raise ValueError('duplicate grouping history/collision')
 

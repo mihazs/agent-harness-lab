@@ -24,6 +24,18 @@ def connection(nodes, *, total=None, after=None):
 
 
 class GitHubThreadTests(GitHubFixture, unittest.TestCase):
+    def test_graphql_exhausts_large_connections_and_long_opaque_cursors(self):
+        calls=[]; prefix='SYNTHETIC_CURSOR_'+('x'*1100)
+        def fetch(cursor):
+            page=len(calls)
+            self.assertEqual(cursor,None if page==0 else prefix+str(page))
+            calls.append(cursor)
+            nodes=[dict(id='SYNTHETIC_NODE_'+str(index)) for index in range(page*100,min((page+1)*100,10001))]
+            return connection(nodes,total=10001,after=prefix+str(page+1) if page<100 else None)
+        result=GitHubAPI._connection(fetch)
+        self.assertEqual(len(result),10001)
+        self.assertEqual(len(calls),101)
+
     def setUp(self):
         super().setUp()
         self.selection = GitHubSelection(42, (7,), (8,), schema_version=3, details=('threads',))

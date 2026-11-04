@@ -11,6 +11,7 @@ import tempfile
 import time
 from .integrity import contained, digest, read_regular, relative, tree
 from .seccomp import ordinary_filesystems, sealed_filter
+from . import runtime_boundary
 
 MAGIC = b'ahl-tmpfs-v1'
 READY = b'ahl-storage-verified-v1'
@@ -45,10 +46,12 @@ for path,key in (('/work','work'),('/tmp','tmp'),('/dev/shm','shm')):
  assert not info.f_flag & os.ST_RDONLY
 for path in ('/','/dev','/inputs'):
  assert os.statvfs(path).f_flag & os.ST_RDONLY
+if len(sys.argv)>3:
+ exec(BOUNDARY_READBACK)
 os.write(1,b'ahl-storage-verified-v1')
 command=json.loads(sys.argv[2])
 os.execvp(command[0],command)
-'''
+'''.replace('BOUNDARY_READBACK',repr(runtime_boundary.VERIFY))
 
 
 def policy(total):
@@ -94,19 +97,30 @@ def names(values):
 
 
 class PrivateWorkspace:
-    def __init__(self, backend, workspace, inputs, role, argv, total, deadline, outputs, working_state=None):
+    def __init__(self, backend, workspace, inputs, role, argv, total, deadline, outputs, working_state=None, *, limits=None):
         runtime = [backend.image.root] if backend.image else [Path(p) for p in ('/usr', '/bin', '/lib', '/lib64') if Path(p).exists()]
         ordinary_filesystems([workspace, *inputs.values(), *runtime])
         self.backend, self.workspace = backend, Path(workspace)
         self.deadline, self.outputs = deadline, names(outputs)
         self.working_state = working_state
+        self.comparison_seed_sha256=self.comparison_captured_sha256=None
+        self.comparison_roots={};self.comparison_inputs=None
+        from .comparison_custody import current,bundle_binding
+        comparison=current()
+        if comparison is not None and comparison.active is not None and role=='executor':
+            self.comparison_roots=dict(inputs)
+            self.comparison_inputs={name:bundle_binding(path,deadline) for name,path in inputs.items()}
         if role == 'grader' and self.outputs: raise ValueError('graders cannot export storage artifacts')
         self.policy, self.fd, self.verified = policy(total), None, False
         self.seeded_bytes = None
         self.filter_fd = self.filter_policy = None
         self.receiver = self.sender = None
+        self.export_fingerprints = None
+        self.boundary_contract=runtime_boundary.contract(backend,inputs,role,limits,deadline,self.policy)
+        self.boundary_observation=self.boundary_work_identity=None
         self.command = self.layout(backend.command(['/usr/bin/python3', '-I', '-c', BOOTSTRAP], workspace, inputs, role), bootstrap=True)
         inner_argv = ['/usr/bin/python3', '-I', '-c', VERIFY, json.dumps(self.policy), json.dumps(argv)]
+        if self.boundary_contract is not None:inner_argv.append(json.dumps(self.boundary_contract))
         inner = backend.command(inner_argv, workspace, inputs, role)
         inner[0] = '/usr/bin/bwrap'
         for index, value in enumerate(inner):
@@ -176,12 +190,14 @@ class PrivateWorkspace:
                     or os.listdir(descriptors[0])):
                 raise ValueError('invalid private storage directory')
             self.fd = descriptors.pop()
+            self.boundary_work_identity=[info.st_dev,info.st_ino]
             self.seed()
             usage = os.fstatvfs(self.fd)
             self.seeded_bytes = (usage.f_blocks-usage.f_bfree)*usage.f_frsize
             # Controller-seeded pages are charged outside the worker's cgroup.
             group.limit_memory(min(int(group.controls['memory.max']), self.policy['total']-self.seeded_bytes))
             self.timeout(); self.receiver.sendall(struct.pack('!I', len(self.frame))+self.frame)
+            if self.boundary_contract is not None:self.boundary_observation=runtime_boundary.receive(self)
             ready = b''
             while len(ready) < len(READY):
                 self.timeout()
@@ -196,6 +212,13 @@ class PrivateWorkspace:
     def seed(self):
         if self.working_state is not None:
             self.working_state.seed(self.fd,self.deadline)
+            from .comparison_custody import current,snapshot_pin
+            comparison=current()
+            if comparison is not None and comparison.active is not None:
+                from .working_state import Snapshot
+                observed=Snapshot.capture(self.fd,self.deadline)
+                if observed!=self.working_state.snapshot:raise ValueError('physical comparison seed changed')
+                self.comparison_seed_sha256=snapshot_pin(observed)
             return
         frozen = tree(self.workspace)
         before = digest(self.workspace)
@@ -217,7 +240,13 @@ class PrivateWorkspace:
     def extract(self):
         self.timeout()
         if self.working_state is not None:
-            return self.working_state.capture(self.fd,self.deadline)
+            observed = self.working_state.capture(self.fd,self.deadline)
+            if self.comparison_seed_sha256 is not None:
+                from .comparison_custody import snapshot_pin
+                self.comparison_captured_sha256=snapshot_pin(self.working_state.snapshot)
+            from .controller_receipts import _artifact_fingerprints
+            self.export_fingerprints = _artifact_fingerprints((name,raw) for name,_,raw in self.working_state.snapshot.files)
+            return observed
         result, total = {}, 0
         for name in self.outputs:
             parent = directory(self.fd, name.split('/')[:-1])
@@ -233,6 +262,8 @@ class PrivateWorkspace:
                     self.timeout()
                 finally: os.close(descriptor)
             finally: os.close(parent)
+        from .controller_receipts import _artifact_fingerprints
+        self.export_fingerprints = _artifact_fingerprints(result.items())
         for name, raw in result.items():
             self.timeout()
             target = contained(self.workspace, name)

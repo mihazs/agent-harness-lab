@@ -186,17 +186,25 @@ class HistoryStore(PrivateJournal):
         inputs, inputs_hash = record(case/'inputs.json')
         version = inputs.get('schema_version')
         fields(inputs,'schema_version run_id source_manifest_sha256 plan_sha256 oracle_sha256 dependencies versions image_sha256'
-            + (' bank_authority bank_tasks' if type(version) is int and version in (2,3,4) else '')
-            + (' behavior_policies' if type(version) is int and version in (3,4) else '')
-            + (' cohort_binding_sha256' if type(version) is int and version==4 else '')
-            + (' protected_access_sha256' if 'protected_access_sha256' in inputs else ''))
-        if (type(version) is not int or version not in (1,2,3,4) or inputs['run_id'] != run_id
+            + (' bank_authority bank_tasks' if type(version) is int and version in (2,3,4,5,6) else '')
+            + (' behavior_policies' if type(version) is int and version in (3,4,5,6) else '')
+            + (' cohort_binding_sha256' if type(version) is int and version in (4,5,6) else '')
+            + (' sequential_binding_sha256 sequential_fixtures' if type(version) is int and version==5 else '')
+            + (' responses_binding' if type(version) is int and version==6 else '')
+            + (' protected_access_sha256' if 'protected_access_sha256' in inputs else '')
+            + (' derivation_binding_sha256' if 'derivation_binding_sha256' in inputs else ''))
+        if (type(version) is not int or version not in (1,2,3,4,5,6) or inputs['run_id'] != run_id
                 or events[0][0]['kind'] != 'run_started' or events[0][0]['payload'] != dict(inputs_sha256=inputs_hash)):
             raise ValueError('controller run input binding changed')
         source, manifest_hash = record(case/'manifest.json',1024*1024)
         spec = ExperimentSpec.parse(source['experiment']); spec.validate()
         if manifest_hash != inputs['source_manifest_sha256'] or spec.digest != inputs['plan_sha256'] or spec.grader_hash != inputs['oracle_sha256']:
             raise ValueError('stored experiment declaration changed')
+        if 'derivation_binding_sha256' in inputs:
+            from .certification_access import validate_derivations
+            derivation,derivation_pin=record(case/'derivation.json',1024*1024)
+            if derivation_pin!=inputs['derivation_binding_sha256']: raise ValueError('historical derivation binding changed')
+            validate_derivations(self.access_ledger().path,derivation)
         if 'protected_access_sha256' in inputs:
             receipt, receipt_hash = record(case/'protected-access.json',1024*1024)
             if receipt_hash != inputs['protected_access_sha256'] or receipt.get('run_id') != run_id:
@@ -221,7 +229,7 @@ class HistoryStore(PrivateJournal):
             if current_bank: bank_authority(source,expected=inputs['bank_tasks'])
         elif source.get('bank_authority') is not None:
             raise ValueError('bound bank history cannot use the unbound input schema')
-        elif version in (3,4) and inputs['bank_tasks'] is not None:
+        elif version in (3,4,5,6) and inputs['bank_tasks'] is not None:
             raise ValueError('unbound behavior history cannot invent bank task authority')
         if not isinstance(inputs['dependencies'],dict) or not inputs['dependencies']:
             raise ValueError('controller run has no oracle dependencies')
@@ -231,11 +239,11 @@ class HistoryStore(PrivateJournal):
             sha256(event_hash)
             if self.oracle_events(bundle)[0][1] != event_hash: raise ValueError('oracle dependency registration changed')
             if digest(contained(case,'oracles/'+bundle)) != bundle: raise ValueError('frozen historical oracle changed')
-        if version in (3,4):
+        if version in (3,4,5,6):
             policies = behavior_policies({bundle:contained(case,'oracles/'+bundle) for bundle in inputs['dependencies']},source,spec)
             if (not policies and version==3) or policies!=inputs['behavior_policies']:
                 raise ValueError('frozen behavior policy binding changed')
-        if version==4:
+        if version==4 or version in (5,6) and spec.cohort_manifest_sha256 is not None:
             binding,binding_hash=record(case/'cohort-binding.json',1024*1024)
             if (binding_hash!=inputs['cohort_binding_sha256']
                     or binding.get('manifest_path')!=str(case/'cohort-manifest.json')):
@@ -243,6 +251,51 @@ class HistoryStore(PrivateJournal):
             cohort_history.validate(binding,source,spec,inputs['bank_tasks'],current=current_bank)
         elif spec.cohort_manifest_sha256 is not None:
             raise ValueError('preservation plans require explicit controller qualification binding')
+        if version==5:
+            from . import sequential
+            sequential.validate_selection(source)
+            binding,pin=record(case/'sequential/binding.json',1024*1024)
+            if spec.sequential is None or pin!=inputs['sequential_binding_sha256']:
+                raise ValueError('sequential controller input binding changed')
+            sequential.validate_binding(spec,binding,current_engine=False)
+            fixtures=inputs['sequential_fixtures']
+            if not isinstance(fixtures,dict) or set(fixtures)!={t[0] for t in spec.tasks}:raise ValueError('sequential fixture view changed')
+            for value in fixtures.values():sha256(value)
+            if binding['inputs_sha256']!=sequential.input_pin(inputs['source_manifest_sha256'],spec,fixtures):raise ValueError('sequential input scope changed')
+            if spec.cohort_manifest_sha256 is None and inputs['cohort_binding_sha256'] is not None:
+                raise ValueError('unexpected sequential cohort binding')
+        elif spec.sequential is not None:
+            raise ValueError('sequential execution requires its own history schema')
+        if version==6:
+            from .comparison_custody import PROFILE
+            binding=inputs['responses_binding']
+            fields(binding,'profile settings_sha256 request_sha256 fixtures seed_states permission_profile bundles'
+                +(' schedule_sha256' if 'schedule_sha256' in binding else '')
+                +(' instruction_protocol' if 'instruction_protocol' in binding else ''))
+            if 'instruction_protocol' in binding:
+                from .instruction_context import PROFILE as INSTRUCTION_PROFILE
+                if binding['instruction_protocol']!=INSTRUCTION_PROFILE:raise ValueError('unsupported stored instruction protocol')
+            if 'schedule_sha256' in binding:
+                from .comparison_custody import hashed
+                from .plan import schedule
+                realized,_=record(case/'realized-schedule.json',8*1024*1024)
+                fields(realized,'profile trials')
+                if (realized['profile']!='controller-realized-schedule-v1' or realized['trials']!=schedule(spec)
+                        or hashed(realized['trials'])!=binding['schedule_sha256']):
+                    raise ValueError('stored realized trial schedule changed')
+            if binding['profile']!=PROFILE or spec.sequential is not None or binding['permission_profile'] not in (None,'permission-results-v1'):raise ValueError('invalid fresh Responses history profile')
+            if binding['bundles']!=source.get('workflow_bundles') or set(binding['bundles'])!={'baseline','candidate'}:
+                raise ValueError('stored bundle pins differ from original workflow binding')
+            for value in binding['bundles'].values():
+                fields(value,'file_tree_sha256 bundle_sha256')
+                for pin in value.values():sha256(pin)
+            for name in ('settings_sha256','request_sha256'):sha256(binding[name])
+            if (binding['request_sha256']!=source.get('workflow_request_sha256')
+                    or record(case/'workflow-request.json',64*1024)[1]!=binding['request_sha256']):
+                raise ValueError('sealed workflow request bytes changed')
+            if set(binding['fixtures'])!={t[0] for t in spec.tasks}:raise ValueError('comparison fixture set changed')
+            if set(binding['seed_states'])!=set(binding['fixtures']):raise ValueError('comparison seed set changed')
+            for value in (*binding['fixtures'].values(),*binding['seed_states'].values()):sha256(value)
         return case,events,inputs,spec
 
     def checked(self, run_id):
@@ -254,12 +307,33 @@ class HistoryStore(PrivateJournal):
 
     def _sealed(self,case,events,inputs,spec):
         evidence, evidence_hash = record(case/'evidence.json')
-        fields(evidence,'results_sha256 execution_tree_sha256')
+        fields(evidence,'results_sha256 execution_tree_sha256'+(' responses_custody_sha256' if inputs['schema_version']==6 else '')+(' sequential_tree_sha256' if inputs['schema_version']==5 else ''))
         if events[-1][0]['payload'] != dict(evidence_sha256=evidence_hash): raise ValueError('controller evidence seal changed')
         result,result_hash = record(case/'execution/results.json',8*1024*1024)
         if result_hash != evidence['results_sha256'] or tree_hash(case/'execution') != evidence['execution_tree_sha256']:
             raise ValueError('sealed controller execution changed')
-        self.trials(inputs,spec,result)
+        if inputs['schema_version']==6:
+            if 'isolation_qualification' in result and result['isolation_qualification'].get('qualification')!='qualified':
+                raise ValueError('requested comparison permission qualification is incomplete')
+            from .comparison_custody import validate
+            custody,pin=record(case/'responses-custody.json',8*1024*1024)
+            if (pin!=evidence['responses_custody_sha256'] or custody.get('fixtures')!=inputs['responses_binding']['fixtures']
+                    or custody.get('seed_states')!=inputs['responses_binding']['seed_states']
+                    or custody.get('permission_profile')!=inputs['responses_binding']['permission_profile']
+                    or custody.get('bundles')!=inputs['responses_binding']['bundles']
+                    or custody.get('instruction_protocol')!=inputs['responses_binding'].get('instruction_protocol')):
+                raise ValueError('sealed Responses custody changed')
+            validate(custody,spec,result)
+        if inputs['schema_version']==5:
+            from .sequential_state import replay
+            if tree_hash(case/'sequential')!=evidence['sequential_tree_sha256']:raise ValueError('sequential ledger seal changed')
+            binding=record(case/'sequential/binding.json',1024*1024)[0]
+            if result.get('fixtures')!=inputs['sequential_fixtures']:raise ValueError('executed sequential fixtures changed')
+            cohort_raw=read_regular(case/'cohort-manifest.json',1024*1024) if spec.cohort_manifest_sha256 else None
+            checked=replay(spec,case/'sequential',result['trials'],
+                lambda rows:self.trials(inputs,spec,dict(result,trials=rows),sampling=binding,subset=True),cohort_json=cohort_raw)
+            if checked!=result.get('sequential_analysis'):raise ValueError('sequential result differs from owned inspections')
+        else:self.trials(inputs,spec,result)
         return result
 
     def historical_plan(self,run_id):
@@ -268,6 +342,7 @@ class HistoryStore(PrivateJournal):
 
     def _historical_plan(self,run_id,*,event_sha256=None):
         case,events,inputs,spec = self._opened(run_id,current_bank=False)
+        if spec.sequential is not None:raise ValueError('stopped sequential runs are not full-schedule correction replay inputs')
         if event_sha256 is not None:
             sha256(event_sha256)
             index = next((i for i,(_,value) in enumerate(events) if value==event_sha256),None)
@@ -293,11 +368,11 @@ class HistoryStore(PrivateJournal):
             current_applicability='not_evaluated',independence='unverified',publication_allowed=False)
 
     @staticmethod
-    def trials(inputs,spec,result):
+    def trials(inputs,spec,result,*,sampling=None,subset=False):
         from agent_harness_lab.cli import evaluator
         grade_status = evaluator().grading_status
         if not isinstance(result.get('runtime'),dict): raise ValueError('missing observed runtime')
-        if spec.cohort_manifest_sha256 is not None and (inputs['schema_version']!=4
+        if spec.cohort_manifest_sha256 is not None and (inputs['schema_version'] not in (4,5,6)
                 or result.get('cohort_manifest_sha256')!=spec.cohort_manifest_sha256
                 or result.get('cohort_qualification')!='current_membership_only'
                 or result.get('publication_allowed') is not False):
@@ -307,10 +382,22 @@ class HistoryStore(PrivateJournal):
             raise ValueError('executed fixtures differ from authoritative materialized bank inputs')
         if (result.get('inputs_unchanged') is not True or result.get('manifest_sha256') != inputs['source_manifest_sha256']
                 or result.get('plan_digest') != spec.digest or result.get('grader_hash') != spec.grader_hash
-                or result.get('versions') != inputs['versions'] or result.get('runtime',{}).get('agent') != 'offline'
-                or result.get('runtime',{}).get('model_inference') is not False):
+                or result.get('versions') != inputs['versions']
+                or result['runtime'].get('agent') != ('responses' if inputs['schema_version']==6 else 'offline')
+                or result['runtime'].get('model_inference') is not (inputs['schema_version']==6)
+                or inputs['schema_version']==6 and result['runtime'].get('inference_settings_sha256')!=inputs['responses_binding']['settings_sha256']):
             raise ValueError('controller comparison provenance is incomplete')
-        expected = {t['trial_id']:t for t in schedule(spec)}
+        if not isinstance(result.get('trials'),list) or any(not isinstance(t,dict) for t in result['trials']):raise ValueError('trial objects required')
+        if spec.sequential is not None:
+            from .sequential import schedule as root_schedule
+            if sampling is None:raise ValueError('owned sequential sampling required')
+            ordered=root_schedule(spec,sampling)
+            declared={t['trial_id']:t for t in ordered}
+            rows=result.get('trials',[])
+            if subset:
+                expected={t.get('trial_id'):declared[t['trial_id']] for t in rows if t.get('trial_id') in declared}
+            else:expected={t['trial_id']:t for t in ordered[:len(rows)]}
+        else:expected = {t['trial_id']:t for t in schedule(spec)}
         trials = result.get('trials')
         if (not isinstance(trials,list) or len(trials) != len(expected)
                 or any(not isinstance(t,dict) for t in trials)
@@ -327,14 +414,21 @@ class HistoryStore(PrivateJournal):
             graded = grade.get('execution')
             if not isinstance(graded,dict): raise ValueError('missing actual grader execution')
             typed = dict(graded,timeout=graded.get('status')=='timeout')
-            if (type(outcome) is not bool or trial.get('status') != ('passed' if outcome else 'failed')
-                    or grade.get('status') != trial['status'] or execution.get('status') != 'completed'
+            artifact_status='passed' if outcome else 'failed'
+            composed=trial.get('controller_grade') if inputs['schema_version']==6 else None
+            compared_outcome=outcome
+            if composed is not None:
+                if not isinstance(composed,dict) or composed.get('valid') is not True or type(composed.get('outcome')) is not bool:
+                    raise ValueError('unknown comparison trajectory')
+                compared_outcome=composed['outcome']
+            if (type(outcome) is not bool or trial.get('status') != ('passed' if compared_outcome else 'failed')
+                    or grade.get('status') != artifact_status or execution.get('status') != 'completed'
                     or type(execution.get('exit_code')) is not int or execution['exit_code'] != 0
                     or execution.get('inputs_unchanged') is not True
-                    or not containment(execution,inputs['image_sha256'],'executor')
+                    or (inputs['schema_version']!=6 and not containment(execution,inputs['image_sha256'],'executor'))
                     or graded.get('status') != ('completed' if outcome else 'failed')
                     or graded.get('inputs_unchanged') is not True
-                    or grade_status(typed,typed=True) != trial['status']
+                    or grade_status(typed,typed=True) != artifact_status
                     or grade.get('grader_identity') != {k:typed.get(k) for k in ('grader_id','grader_version')}
                     or not containment(graded,inputs['image_sha256'])):
                 raise ValueError('comparison needs actual isolated executions and typed grades')
@@ -343,15 +437,16 @@ class HistoryStore(PrivateJournal):
                 raise ValueError('observed grader version differs from authoritative bank task')
             policy = inputs.get('behavior_policies',{}).get(trial['task'])
             observed = behavior.observation(policy,graded) if policy is not None else None
-            if spec.cohort_manifest_sha256 is not None and observed is not None and not observed['complete']:
+            if (spec.cohort_manifest_sha256 is not None or spec.sequential is not None) and observed is not None and not observed['complete']:
                 outcome=None
+            if composed is not None:outcome=compared_outcome
             records.append(TrialRecord(trial['trial_id'],outcome,'graded','executable_grader',
                 spec.baseline_hash,spec.candidate_hash,spec.grader_hash,spec.runtime_hash,
-                critical_regression=bool(trial['version']=='candidate' and observed and observed['critical'])))
+                critical_regression=bool(trial['version']=='candidate' and (observed and observed['critical'] or composed and composed.get('critical_violation') is True))))
         return records
 
     def summary(self, run_id, checked):
-        _,events,inputs,_,_,validity = checked
+        _,events,inputs,spec,observed,validity = checked
         result = dict(schema_version=1,run_id=run_id,state=events[-1][0]['state'],event_sha256=events[-1][1],
             oracle_validity=validity,dependencies=sorted(inputs['dependencies']),
             controller_observed=events[-1][0]['state']=='sealed',oracle_review='unverified',
@@ -360,7 +455,11 @@ class HistoryStore(PrivateJournal):
             from .certification_access import view
             result['protected_access']=view(record(checked[0]/'protected-access.json',1024*1024)[0])
         if inputs.get('bank_tasks') is not None: result['bank_authority']='current_eligible'
-        if inputs['schema_version']==4:
+        if spec.sequential is not None:
+            result.update(sequential_profile='conditional-finite-bank-sequential-v1',execution_coverage='sequential_prefix_only',
+                completed_roots=observed['sequential_analysis']['completed_roots'] if observed else None,
+                assumptions_status='declared_unverified')
+        if spec.cohort_manifest_sha256 is not None:
             result['cohort_manifest_sha256']=checked[3].cohort_manifest_sha256
             result['cohort_qualification']='current_membership_only'
             result['cohort_frozen_at']=events[0][0]['recorded_at']
@@ -381,14 +480,16 @@ class HistoryStore(PrivateJournal):
             if membership_hash!=inputs['cohort_binding_sha256']:
                 raise ValueError('preservation analysis binding changed after validation')
             membership['manifest_json']=read_regular(case/'cohort-manifest.json',1024*1024)
-        effects = behavior.report(spec,result['trials'],inputs['behavior_policies']) if result is not None and inputs.get('behavior_policies') else None
+        effects = behavior.report(spec,result['trials'],inputs['behavior_policies'],
+            sampling=record(case/'sequential/binding.json',1024*1024)[0] if spec.sequential is not None else None) if result is not None and inputs.get('behavior_policies') else None
         if validity != 'current':
             value = dict(status='blocked' if validity=='invalidated' else 'incomplete',reason='oracle_quarantined' if validity=='invalidated' else 'controller_run_not_sealed')
+        elif spec.sequential is not None:value=dict(result['sequential_analysis'])
         else: value = analyze(spec,self.trials(inputs,spec,result),cohort_binding=membership)
         retained=dict(preservation=value['preservation']) if 'preservation' in value else {}
         if validity=='current' and effects is not None:
             if effects['critical_candidate_effect']:
-                value = dict(status='rejected',reason='critical_regression',**retained)
+                value = dict(value,status='rejected',reason='critical_regression') if spec.sequential is not None else dict(status='rejected',reason='critical_regression',**retained)
             elif effects['required_observation_unknown']:
                 value = dict(status='blocked',reason='behavior_observation_incomplete',**retained)
         result = dict(value,oracle_validity=validity,controller_run_id=run_id,oracle_review='unverified',
@@ -398,7 +499,7 @@ class HistoryStore(PrivateJournal):
             result['protected_access']=view(record(case/'protected-access.json',1024*1024)[0])
         if inputs.get('bank_tasks') is not None: result['bank_authority']='current_eligible'
         if effects is not None: result['behavior']=effects
-        if inputs['schema_version']==4:
+        if spec.cohort_manifest_sha256 is not None:
             result['cohort_manifest_sha256']=spec.cohort_manifest_sha256
             result['cohort_qualification']='current_membership_only'
         return result
@@ -417,6 +518,14 @@ class HistoryStore(PrivateJournal):
         from .task_bank import CertificationLedger
         return CertificationLedger(self.root/'protected-access.json')
 
+    def derive_variants(self,output,inference_settings,**options):
+        from .derivations import derive
+        return derive(self,output,inference_settings,**options)
+
+    def derivation_status(self,ident):
+        from .derivations import status
+        return status(self,ident)
+
     def reserve_access(self, manifest, baseline, candidate, *, budget_seconds=60,parent_deadline=None):
         from .certification_access import capture
         if type(budget_seconds) not in (int,float) or not math.isfinite(budget_seconds) or not 0<budget_seconds<=300:
@@ -431,15 +540,16 @@ class HistoryStore(PrivateJournal):
         if any(self.root.is_relative_to(p if p.is_dir() else p.parent)
                 or (p if p.is_dir() else p.parent).is_relative_to(self.root) for p in paths):
             raise ValueError('access ledger must remain outside controller input views')
-        binding = capture(manifest,baseline,candidate,check)
+        binding = capture(manifest,baseline,candidate,check,access_ledger=self.access_ledger().path,deadline=deadline)
         declared,_ = record(manifest,1024*1024)
         if ExperimentSpec.parse(declared['experiment']).cohort_manifest_sha256 is not None:
             raise ValueError('managed diagnostics do not qualify preservation cohorts')
         with self.locked(create=True): pass
         check()
-        return self.access_ledger().reserve_managed(binding)
+        return self.access_ledger().reserve_managed(binding,deadline=deadline)
 
-    def run(self, manifest, baseline, candidate, *, cgroup_root, image_root, image_sha256, disk_bytes, budget_seconds=60,parent_deadline=None,on_started=None,access_reservation=None):
+    def run(self, manifest, baseline, candidate, *, cgroup_root, image_root, image_sha256, disk_bytes, budget_seconds=60,parent_deadline=None,on_started=None,access_reservation=None,
+            inference_client=None,inference_settings=None,sandbox_backend=None,source_sink=None,workflow_request=None,permission_profile=None):
         from agent_harness_lab.cli import evaluator
         from .bank_tools import frozen_grader
         from .bank_revisions import sync_tree
@@ -464,10 +574,47 @@ class HistoryStore(PrivateJournal):
         raw = read_regular(manifest,1024*1024); source,manifest_hash = record(manifest,1024*1024)
         if hashlib.sha256(raw).hexdigest() != manifest_hash: raise ValueError('manifest changed during history preflight')
         spec = ExperimentSpec.parse(source['experiment']); spec.validate()
+        controlled=inference_client is not None
+        if controlled:
+            from .comparison_custody import Comparison,PROFILE,fixture_seed,bundle_binding
+            from .responses import read_settings
+            from agent_harness_lab.promotion.prerequisites import current
+            scope=current()
+            if scope is None or not scope._valid() or spec.sequential is not None or spec.cohort_manifest_sha256 is not None:
+                raise ValueError('fresh fixed Responses history requires the live workflow issuer')
+            if sandbox_backend is None or permission_profile not in (None,'permission-results-v1') or sandbox_backend.permission_audit!=permission_profile:
+                raise ValueError('shared backend differs from expected permission profile')
+            settings,settings_hash=read_settings(inference_settings)
+            if inference_client.settings!=settings or sandbox_backend is None:
+                raise ValueError('exact shared inference client and backend required')
+            request_hash=source.get('workflow_request_sha256');sha256(request_hash)
+            request_raw=read_regular(workflow_request,64*1024)
+            if hashlib.sha256(request_raw).hexdigest()!=request_hash:raise ValueError('frozen workflow request changed')
+            bundles=source.get('workflow_bundles')
+            if not isinstance(bundles,dict) or set(bundles)!={'baseline','candidate'}:
+                raise ValueError('original frozen mode-aware bundle pins required')
+            for name,path in (('baseline',baseline),('candidate',candidate)):
+                if bundle_binding(path,deadline)!=bundles[name]:raise ValueError('frozen workflow bundle changed before history admission')
+            fixtures={t['id']:digest(contained(manifest.parent,t['fixture'])) for t in source['tasks']}
+            seeds={t['id']:fixture_seed(contained(manifest.parent,t['fixture']),deadline) for t in source['tasks']}
+            response_binding=dict(profile=PROFILE,settings_sha256=settings_hash,request_sha256=request_hash,fixtures=fixtures,seed_states=seeds,permission_profile=permission_profile,bundles=bundles)
+            if settings.get('instruction_protocol') is not None:response_binding['instruction_protocol']=settings['instruction_protocol']
+            from .trajectory_assertions import capture_policy
+            trajectories={}
+            for task in source['tasks']:
+                declaration=source['grader_bundles'][task['id']]
+                binding=capture_policy(contained(manifest.parent,declaration['path']),declaration['digest'],
+                    dict(task_id=task['id'],root_id=task['root'],family=task['family']))
+                if binding is not None:trajectories[task['id']]=binding
+        elif any(value is not None for value in (inference_settings,sandbox_backend,source_sink,workflow_request,permission_profile)):
+            raise ValueError('partial Responses history context')
         if spec.profile == 'certification':
             raise ValueError('genuine certification qualification issuer is unavailable; public development remains unqualified')
         if 'protected_access' in source and access_reservation is None:
             raise ValueError('managed access declaration requires its controller reservation')
+        if spec.sequential is not None:
+            from .sequential import validate_selection
+            validate_selection(source)
         bound_tasks = bank_authority(source,export_root=manifest.parent)
         if bound_tasks is not None:
             owner = Path(source['bank_authority']['bank_path']).parents[2]
@@ -490,22 +637,26 @@ class HistoryStore(PrivateJournal):
         membership=cohort_history.capture(manifest.parent,source,spec,bound_tasks)
         if time.monotonic()>=deadline: raise TimeoutError('history qualification preflight budget exhausted')
         run_id = hashlib.sha256(('run:'+secrets.token_hex(32)).encode()).hexdigest()
+        if controlled:
+            custody=Comparison(spec,fixtures,inference_client,deadline,trajectories,seeds,permission_profile=permission_profile,
+                bundles=bundles,journal_binding=dict(run_id=run_id,source_manifest_sha256=manifest_hash))
         from .certification_access import capture as capture_access, exposure
         binding = None
         def check_access_budget():
             if time.monotonic() >= deadline: raise TimeoutError('access observation budget exhausted')
         if access_reservation is not None:
-            binding = capture_access(manifest,baseline,candidate,check_access_budget)
+            binding = capture_access(manifest,baseline,candidate,check_access_budget,access_ledger=self.access_ledger().path,deadline=deadline)
             if spec.cohort_manifest_sha256 is not None:
                 raise ValueError('managed diagnostics do not qualify preservation cohorts')
             assets = binding['assets']
         else:
             assets,_ = exposure(manifest.parent,selected,source['grader_bundles'],check_access_budget)
         if time.monotonic() >= deadline: raise TimeoutError('managed access preflight budget exhausted')
-        with self.locked(create=True): pass
-        access_handle,access_receipt = self.access_ledger().admit_managed(assets,run_id,
-            reservation_id=access_reservation,binding=binding)
         with self.locked(create=True):
+            access_handle,access_receipt = self.access_ledger().admit_managed(assets,run_id,
+                reservation_id=access_reservation,binding=binding,deadline=deadline)
+            from .certification_access import known_derivations
+            derived=known_derivations(self.access_ledger().path,assets)
             dependencies = {}
             for bundle in sorted(folders):
                 if not self.case(oracle_case(bundle)).exists():
@@ -529,6 +680,30 @@ class HistoryStore(PrivateJournal):
             if access_receipt is not None:
                 write_bytes(case/'protected-access.json',encoded(access_receipt))
                 inputs['protected_access_sha256'] = record(case/'protected-access.json',1024*1024)[1]
+            if derived is not None:
+                write_bytes(case/'derivation.json',encoded(derived))
+                inputs['derivation_binding_sha256']=record(case/'derivation.json',1024*1024)[1]
+            sequential_controller=None
+            if spec.sequential is not None:
+                from .sequential_state import Controller
+                cohort_raw=read_regular(case/'cohort-manifest.json',1024*1024) if membership is not None else None
+                from .sequential import input_pin
+                sequential_fixtures={t['id']:runner.digest(contained(manifest.parent,t['fixture'])) for t in selected}
+                sequential_controller=Controller(spec,case/'sequential',deadline,inputs_sha256=input_pin(manifest_hash,spec,sequential_fixtures),cohort_json=cohort_raw)
+                inputs.update(schema_version=5,bank_authority=source.get('bank_authority'),bank_tasks=bound_tasks,
+                    behavior_policies=policies,cohort_binding_sha256=inputs.get('cohort_binding_sha256'),
+                    sequential_binding_sha256=record(case/'sequential/binding.json',1024*1024)[1],sequential_fixtures=sequential_fixtures)
+            if controlled:
+                from .comparison_custody import hashed
+                from .plan import schedule
+                realized=schedule(spec)
+                raw_schedule=encoded(dict(profile='controller-realized-schedule-v1',trials=realized))
+                if len(raw_schedule)>8*1024*1024:raise ValueError('realized trial schedule exceeds metadata bound')
+                write_bytes(case/'realized-schedule.json',raw_schedule)
+                response_binding['schedule_sha256']=hashed(realized)
+                write_bytes(case/'workflow-request.json',request_raw)
+                inputs.update(schema_version=6,bank_authority=source.get('bank_authority'),bank_tasks=bound_tasks,
+                    behavior_policies=policies,cohort_binding_sha256=None,responses_binding=response_binding)
             if len(encoded(inputs))>256*1024: raise ValueError('history input metadata limit exceeded')
             write_bytes(case/'manifest.json',raw); write_bytes(case/'inputs.json',encoded(inputs)); sync_tree(case)
             events = []; self.append(case,events,'run_started','running',dict(inputs_sha256=record(case/'inputs.json')[1]))
@@ -537,6 +712,19 @@ class HistoryStore(PrivateJournal):
             agent='offline',codex='must-not-launch',claude='must-not-launch',cgroup_root=Path(cgroup_root),
             image_root=image_root,image_sha256=image_sha256,disk_bytes=disk_bytes,parent_deadline=deadline)
         if access_handle is not None: args._protected_access = access_handle
+        if sequential_controller is not None:
+            args._sequential_controller=sequential_controller
+            def validate_rows(rows):
+                envelope=dict(trials=rows,manifest_sha256=manifest_hash,plan_digest=spec.digest,grader_hash=spec.grader_hash,
+                    inputs_unchanged=True,versions=versions,runtime=dict(agent='offline',model_inference=False),
+                    fixtures={name:value['execution_fixture_sha256'] for name,value in (bound_tasks or {}).items()},
+                    cohort_manifest_sha256=spec.cohort_manifest_sha256,cohort_qualification='current_membership_only',publication_allowed=False)
+                return self.trials(inputs,spec,envelope,sampling=sequential_controller.binding,subset=True)
+            def live_guard():
+                if bound_tasks is not None:bank_authority(source,export_root=manifest.parent,expected=bound_tasks)
+                if membership is not None:cohort_history.validate(membership,source,spec,bound_tasks)
+                if record(manifest,1024*1024)[1]!=manifest_hash:raise ValueError('sequential source manifest changed')
+            sequential_controller.checker=validate_rows;sequential_controller.guard=live_guard
         try:
             if on_started is not None:
                 try: on_started(run_id)
@@ -544,9 +732,26 @@ class HistoryStore(PrivateJournal):
             if time.monotonic()>=deadline: raise TimeoutError('history deadline exhausted before dispatch')
             if bound_tasks is not None: bank_authority(source,export_root=manifest.parent,expected=bound_tasks)
             if membership is not None: cohort_history.validate(membership,source,spec,bound_tasks)
-            runner.evaluate(args)
-            result,result_hash = record(case/'execution/results.json',8*1024*1024)
-            self.trials(inputs,spec,result)
+            if controlled:
+                args.agent='responses';args.inference_client=inference_client;args.inference_settings=inference_settings
+                args.sandbox_backend=sandbox_backend;args._comparison_custody=custody
+                args.permission_audit=permission_profile
+                if source_sink is not None:args.source_sink=source_sink
+                with custody:
+                    runner.evaluate(args)
+                    result,result_hash=record(case/'execution/results.json',8*1024*1024)
+                    if read_settings(inference_settings)[1]!=settings_hash or inference_client.settings!=settings:
+                        raise ValueError('comparison inference settings changed')
+                    proof=custody.finish(result)
+                write_bytes(case/'responses-custody.json',encoded(proof))
+            else:
+                runner.evaluate(args)
+                result,result_hash = record(case/'execution/results.json',8*1024*1024)
+            if sequential_controller is not None:
+                from .sequential_state import replay
+                checked=replay(spec,case/'sequential',result['trials'],validate_rows,cohort_json=cohort_raw)
+                if checked!=result.get('sequential_analysis'):raise ValueError('online sequential inspection differs')
+            else:self.trials(inputs,spec,result)
             if bound_tasks is not None: bank_authority(source,export_root=manifest.parent,expected=bound_tasks)
             if membership is not None: cohort_history.validate(membership,source,spec,bound_tasks)
             if (record(manifest,1024*1024)[1] != manifest_hash
@@ -554,6 +759,8 @@ class HistoryStore(PrivateJournal):
                     or time.monotonic() >= deadline):
                 raise ValueError('history inputs changed or sealing budget exhausted')
             evidence = dict(results_sha256=result_hash,execution_tree_sha256=tree_hash(case/'execution'))
+            if controlled:evidence['responses_custody_sha256']=record(case/'responses-custody.json',8*1024*1024)[1]
+            if sequential_controller is not None:evidence['sequential_tree_sha256']=tree_hash(case/'sequential')
             sync_tree(case/'execution'); write_bytes(case/'evidence.json',encoded(evidence)); sync_directory(case)
             if time.monotonic() >= deadline: raise TimeoutError('history sealing budget exhausted')
             with self.locked():
@@ -573,27 +780,46 @@ class HistoryStore(PrivateJournal):
 def main(argv=None):
     import argparse
     from .cli import pinned_arguments
-    parser = argparse.ArgumentParser(prog='ahl experiment-history',description=__doc__)
-    parser.add_argument('--store',type=Path,required=True,help='Explicit private controller history')
-    actions = parser.add_subparsers(dest='action',required=True)
-    run = actions.add_parser('run',help='Execute a fresh full pinned offline comparison; never import results')
-    reserve = actions.add_parser('reserve-access',help='Reserve an unqualified one-shot protected diagnostic comparison')
+    parser = argparse.ArgumentParser(prog='ahl experiment-history',description='Execute and inspect private controller-owned comparisons with exact manifest, snapshot, oracle and history bindings. Historical records never authorize a fresh run; quarantine revokes dependent comparisons.',epilog='Example: ahl experiment-history --store /private/history show --run RUN_SHA256. Put --store before the action. JSON stdout; exits: 0 completed/current, 1 incomplete execution, 2 invalid private input, 3 busy/invalidated/descriptive-only. Run/derive actions create private history; derive uses explicitly configured inference.')
+    parser.add_argument('--store',type=Path,required=True,help='Explicit owner-only private HistoryStore directory containing comparisons, snapshots, reservations and oracle state')
+    actions = parser.add_subparsers(dest='action',required=True,help='Select a controller-history operation; use ACTION --help for its exact IDs, inputs and execution profile')
+    run = actions.add_parser('run',help='Execute a fresh full pinned offline comparison; never import results',description='Freeze and execute the complete declared comparison in pinned offline workers, then record actual controller/oracle evidence. An optional reservation is consumed once; supplied result JSON cannot replace execution.',epilog='Prints JSON: exit 0 sealed/current, 1 incomplete execution, 2 invalid input, 3 invalidated/busy. The selected store retains private worker results and snapshots; successful execution does not grant promotion.')
+    reserve = actions.add_parser('reserve-access',help='Reserve an unqualified one-shot protected diagnostic comparison',description='Bind the exact manifest and baseline/candidate inputs to a private one-use protected diagnostic reservation. This writes retirement state but does not execute a comparison or establish certification.',epilog='Prints JSON with the reservation ID. Exit 0 reserved, 2 invalid input, 3 busy. The exact reservation may be supplied once to run --access-reservation.')
     for command in (run,reserve):
         for name in ('manifest','baseline','candidate'):
-            command.add_argument('--'+name,type=Path,required=True)
-    reserve.add_argument('--budget-seconds',type=float,default=60)
-    status = actions.add_parser('access-status',help='Inspect private reservation retirement without inferring worker access')
-    status.add_argument('--reservation-id',required=True)
+            command.add_argument('--'+name,type=Path,required=True,help={
+                'manifest':'Existing evaluation manifest JSON with tasks, frozen fixtures/grader bundles and declared experiment',
+                'baseline':'Existing immutable baseline harness snapshot directory; exact bytes and modes are bound',
+                'candidate':'Existing immutable candidate harness snapshot directory matched to --baseline'}[name])
+    reserve.add_argument('--budget-seconds',type=float,default=60,help='Reservation preparation deadline in seconds (default: %(default)s); does not run workers')
+    status = actions.add_parser('access-status',help='Inspect private reservation retirement without inferring worker access',description='Read the recorded state of an exact private access reservation. A reservation/status report does not prove worker access or authorize reuse. Prints JSON; exit 0 observed, 2 invalid input, 3 busy.')
+    status.add_argument('--reservation-id',required=True,help='Exact reservation SHA-256 returned by reserve-access in this history store')
+    derive = actions.add_parser('derive-variants',help='Explicit owned development variants; no independence or certification',description='Generate owned development variants from one completed source run or derivation using explicitly configured controlled inference. Writes a new private output and custody history; never promotes descendants to independent certification.',epilog='Prints private JSON metadata; exit 0 completed, 2 invalid input, 3 busy. Select exactly one source; the pinned worker profile and explicit inference settings are required. Inspect derivation-status before any further authorized work.')
+    sources=derive.add_mutually_exclusive_group(required=True)
+    sources.add_argument('--source-run',help='Exact completed source-run ID in this store; mutually exclusive with --source-derivation')
+    sources.add_argument('--source-derivation',help='Exact completed owned derivation ID in this store; mutually exclusive with --source-run')
+    derive.add_argument('--task',action='append',dest='task_ids',help='Select a source task ID; repeat for multiple tasks (default: all eligible source tasks)')
+    derive.add_argument('--output',type=Path,required=True,help='New private directory for owned development variants; must not already exist')
+    derive.add_argument('--inference-settings',type=Path,required=True,help='Existing controlled Responses settings JSON with explicit credential-file reference and request/tool caps; inference occurs only for this requested derivation')
+    pinned_arguments(derive)
+    derive_status=actions.add_parser('derivation-status',help='Read actual private owned construction custody',description='Read recorded owned derivation custody and completion from this controller store; does not resume generation or mint a new request. Prints JSON; exit 0 observed, 2 invalid input, 3 busy.')
+    derive_status.add_argument('--derivation-id',required=True,help='Exact owned derivation SHA-256 returned by derive-variants')
     run.add_argument('--access-reservation',help='Actual controller-owned protected diagnostic reservation ID')
     pinned_arguments(run)
     for name in ('show','analyze','historical-plan','decision','verify-decision'):
-        command = actions.add_parser(name)
-        command.add_argument('--run',dest='run_id',required=True)
-        if name=='verify-decision': command.add_argument('--receipt-sha256',required=True)
-    oracle = actions.add_parser('oracle',help='Read an observed bundle registration and current CAS identity')
-    oracle.add_argument('--bundle',required=True)
-    quarantine = actions.add_parser('quarantine',help='Revoke a known bundle across all dependent comparisons')
-    quarantine.add_argument('--record',type=Path,required=True)
+        descriptions={
+            'show':'Read recorded run state, frozen inputs and current oracle validity without executing workers',
+            'analyze':'Recompute analysis from a sealed controller run; descriptive output never grants promotion',
+            'historical-plan':'Read the frozen plan as historical evidence; never substitute it for fresh runtime bindings',
+            'decision':'Produce a private decision receipt from current controller evidence; automatic promotion remains gated',
+            'verify-decision':'Verify the exact saved decision receipt against current controller inputs and oracle state'}
+        command = actions.add_parser(name,help=descriptions[name],description=descriptions[name],epilog='Prints private JSON metadata. analyze and decision deliberately exit 3 because reports do not grant promotion; other completed reads/verifications exit 0. Exit 2 rejects input; 3 also covers a busy controller.')
+        command.add_argument('--run',dest='run_id',required=True,help='Exact controller run SHA-256 already recorded in this --store')
+        if name=='verify-decision': command.add_argument('--receipt-sha256',required=True,help='Exact saved decision-receipt SHA-256 to verify; a caller-supplied label cannot issue authority')
+    oracle = actions.add_parser('oracle',help='Read an observed bundle registration and current CAS identity',description='Inspect the current content-addressed registration and validity of a grader bundle already observed by this controller; never approves an arbitrary oracle. Prints JSON; exit 0 observed, 2 invalid input, 3 busy.')
+    oracle.add_argument('--bundle',required=True,help='Exact grader-bundle SHA-256 recorded by a controller run in this store')
+    quarantine = actions.add_parser('quarantine',help='Revoke a known bundle across all dependent comparisons',description='Append a monotone quarantine event for a known grader bundle and invalidate dependent controller comparisons. Evidence history is retained; this command does not repair or rerun results. Prints JSON; exit 0 recorded, 2 invalid input, 3 busy.')
+    quarantine.add_argument('--record',type=Path,required=True,help='Existing schema-1 quarantine JSON binding bundle_sha256, expected_event_sha256, operator provenance, evidence_refs and reason; permanently invalidates dependents')
     args = parser.parse_args(argv)
     try:
         store = HistoryStore(args.store)
@@ -602,6 +828,12 @@ def main(argv=None):
                 image_root=args.image_root,image_sha256=args.image_sha256,disk_bytes=args.disk_bytes,budget_seconds=args.budget_seconds,
                 access_reservation=args.access_reservation)
             code = 0 if result['state']=='sealed' and result['oracle_validity']=='current' else 3 if result['oracle_validity']=='invalidated' else 1
+        elif args.action == 'derive-variants':
+            result=store.derive_variants(args.output,args.inference_settings,source_run=args.source_run,
+                source_derivation=args.source_derivation,task_ids=args.task_ids,cgroup_root=args.cgroup_root,
+                image_root=args.image_root,image_sha256=args.image_sha256,disk_bytes=args.disk_bytes,budget_seconds=args.budget_seconds)
+            code=0
+        elif args.action == 'derivation-status': result,code=store.derivation_status(args.derivation_id),0
         elif args.action == 'access-status':
             with store.locked(): result=store.access_ledger().managed_status(args.reservation_id)
             code=0

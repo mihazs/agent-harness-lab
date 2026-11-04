@@ -26,12 +26,19 @@ def public_export_allowed(records):
             if isinstance(metadata,dict) and (metadata.get('publication_allowed',True) is not True
                     or any(key in metadata for key in ('controller_run_id','cohort_manifest_sha256','preservation','receipt_sha256',
                         'cohort_binding','controller_qualification','qualification_sha256','controller_grade',
-                        'trajectory_profile','trajectory_analysis','policy_sha256','permission_audit','isolation_qualification',
-                        'classifier_selection_allowed','review_event_sha256','protected_access','protected_access_sha256'))
+                        'sequential_profile','sequential_analysis','sampling_sha256','trajectory_profile','trajectory_analysis','precision_preflight','policy_sha256','permission_audit','isolation_qualification',
+                        'controller_source_profile','source_capture','live_verification','verified_execution','controller_harness_input','implementation_prerequisites','restricted_process_protocol','controlled_instruction_protocol',
+                        'classifier_selection_allowed','review_event_sha256','protected_access','protected_access_sha256','import_sha256','foreign_claims','proposal_id',
+                        'controller_derivation','derivation_id','derivation_binding_sha256','review_authentication','authentication','bank_qualification','construction_access','construction_id'))
                     or metadata.get('algorithm') in ('private-preservation-decision-v1','private-controller-history-report-v1',
                         'guarded-preservation-search-v1','corrected-cohort-qualification-v1')
-                    or metadata.get('profile') in ('controller-trajectory-v1','diagnostic-corpus-v1','permission-results-v1','protected-diagnostic-access-v1')
+                    or metadata.get('profile') in ('ahl-controlled-agents-v1','conditional-finite-bank-sequential-v1','ahl-linux-restricted-process-v1','ahl-implementation-prerequisites-v1','controller-trajectory-v1','diagnostic-corpus-v1','ahl-controller-live-v1','permission-results-v1','protected-diagnostic-access-v1','external-evaluation-data-v1','one-call-improvement-v1','controlled-development-derivation-v1','fixed-root-precision-v1','authenticated-artifact-review-v1','review-authority-policy-v1','conditional-final-bank-v1','owned-final-bank-controls-v1','canonical-construction-access-v1')
+
+                    or metadata.get('format') in ('promptfoo-cases-json-v1','promptfoo-results-jsonl-v1','openai-evals-match-jsonl-v1')
                     or metadata.get('purpose')=='protected-diagnostic-access-v1'
+                    or metadata.get('profile') in ('ahl-improve-fixed-bank-v1','ahl-fresh-responses-comparison-v1',
+                        'controller-request-reservation-v1','controller-realized-schedule-v1')
+                    or any(key in metadata for key in ('request_sha256','workflow_request_sha256','responses_binding','responses_custody_sha256','request_binding'))
                     or metadata.get('report_kind')=='controller_trajectory'
                     or metadata.get('outcome_mapping')=='artifact_and_required_v1'
                     or metadata.get('evidence_source')=='controller_verified_development_only'):
@@ -86,8 +93,8 @@ def trajectory_summary(results):
     if results.get('trajectory_profile') != PROFILE:
         raise ValueError('unsupported controller trajectory report')
     trials = results.get('trials')
-    if not isinstance(trials,list) or not 0 < len(trials) <= 10000:
-        raise ValueError('bounded trajectory trials required')
+    if not isinstance(trials,list) or not trials:
+        raise ValueError('nonempty trajectory trials required')
     rows = []
     for trial in trials:
         if not isinstance(trial,dict): raise ValueError('trajectory trial object required')
@@ -96,20 +103,20 @@ def trajectory_summary(results):
         receipt = grade.get('trajectory',{})
         if not isinstance(receipt,dict): raise ValueError('trajectory receipt object required')
         assertions = receipt.get('assertions',[])
-        if not isinstance(assertions,list) or len(assertions)>32:
-            raise ValueError('bounded assertion report required')
+        if not isinstance(assertions,list):
+            raise ValueError('assertion report list required')
         row = {key:trial.get(key) for key in ('trial_id','task','root','family','version','status')}
         for value in row.values():
-            if value is not None and (not isinstance(value,str) or len(value.encode('utf-8'))>256):
-                raise ValueError('bounded trajectory report identity/status required')
+            if value is not None and not isinstance(value,str):
+                raise ValueError('trajectory report identity/status text required')
         if not row['task']: raise ValueError('trajectory task identity required')
         reported_assertions = []
         for assertion in assertions:
             if not isinstance(assertion,dict): raise ValueError('trajectory assertion object required')
             item = {key:assertion.get(key) for key in ('assertion_id','assertion_sha256','status')}
-            if (any(not isinstance(v,str) or not 0<len(v.encode('utf-8'))<=128 for v in item.values())
+            if (any(not isinstance(v,str) or not v for v in item.values())
                     or item['status'] not in ('satisfied','violated','unknown')):
-                raise ValueError('bounded trajectory assertion identity/status required')
+                raise ValueError('trajectory assertion identity/status required')
             item['coverage_complete'] = assertion.get('coverage_complete') is True
             reported_assertions.append(item)
         row.update(artifact_outcome=grade.get('artifact_outcome') if type(grade.get('artifact_outcome')) is bool else None,

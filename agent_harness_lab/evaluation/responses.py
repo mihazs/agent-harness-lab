@@ -9,7 +9,12 @@ import secrets
 import subprocess
 import sys
 import time
+from weakref import WeakKeyDictionary
 from .integrity import read_regular, unique_object
+
+_CLIENT_PIDS = WeakKeyDictionary()
+_ROLE_SCOPES = WeakKeyDictionary()
+_REQUEST_CONTEXTS = WeakKeyDictionary()
 
 # Trusted controller child: its parent can terminate DNS/TLS/header reads at deadline.
 HTTP_CLIENT = r'''import base64,http.client,json,sys
@@ -46,7 +51,10 @@ def read_settings(path):
     value = json.loads(raw,object_pairs_hook=unique_object,parse_constant=invalid_number)
     caps = dict(max_requests=1000,max_tool_calls=10000,max_output_tokens=1000000,
                 max_request_bytes=4*1024*1024,max_response_bytes=4*1024*1024)
-    if (not isinstance(value,dict) or set(value) != {'schema_version','model','credential_file',*caps}
+    from .instruction_context import PROFILE
+    required={'schema_version','model','credential_file',*caps}
+    if (not isinstance(value,dict) or set(value) != required | ({'instruction_protocol'} if 'instruction_protocol' in value else set())
+            or 'instruction_protocol' in value and value['instruction_protocol']!=PROFILE
             or type(value['schema_version']) is not int or value['schema_version'] != 1):
         raise ValueError('unsupported inference settings schema')
     if any(type(value[key]) is not int or not 0 < value[key] <= maximum for key,maximum in caps.items()):
@@ -204,7 +212,8 @@ def run_arguments(item):
 
 
 class Client:
-    def __init__(self, settings, credential, deadline, *, transport=None, record=None):
+    def __init__(self, settings, credential, deadline, *, transport=None, record=None, configuration_sha256=None):
+        _CLIENT_PIDS[self] = (os.getpid(),configuration_sha256,deepcopy(settings),deadline,deepcopy(TOOL)) if settings.get('instruction_protocol') is not None else os.getpid()
         self.settings,self.credential,self.deadline = dict(settings),credential,deadline
         self.transport = request if transport is None else transport
         self.requests = self.tool_calls = 0
@@ -257,7 +266,7 @@ class Client:
                 decision='pending_validation',reserved=False,backend_invoked=False,worker_outcome='unobserved',**argument_fields))
 
     def report(self):
-        return dict(runtime='controller-responses-executor-v1',request_attempts=self.requests,tool_call_reservations=self.tool_calls,
+        value = dict(runtime='controller-responses-executor-v1',request_attempts=self.requests,tool_call_reservations=self.tool_calls,
             requested_model=self.settings['model'],effective_model_verified=False,provider_reported_usage=list(self.usage),
             request_bytes=self.request_bytes,response_bytes_observed=self.response_bytes,
             reserved_output_tokens=self.requests*self.settings['max_output_tokens'],
@@ -265,6 +274,8 @@ class Client:
             output_token_cap_scope='per_request; whole-run reservation ceiling is max_requests * max_output_tokens',
             request_pending=self.pending,further_requests_blocked=self.poisoned,
             automatic_promotion=False)
+        if self in _REQUEST_CONTEXTS: value['request_binding'] = deepcopy(_REQUEST_CONTEXTS[self][4])
+        return value
 
     def action_report(self,scope=None):
         return self.actions.report(scope)
@@ -277,6 +288,11 @@ class Client:
         self.checkpoint()
 
     def respond(self, history, deadline):
+        if _client_pid(self) != os.getpid():
+            raise ValueError('inference client requires its issuing process')
+        from .comparison_custody import current
+        comparison=current()
+        if comparison is not None and comparison.active is not None:comparison.before_request(self)
         request_action = self.actions.add('model_request',self.requests+1,reserved=False,transport_invoked=False,response_observed=False,
             tool_item_visibility='unavailable',emission_visibility='unavailable')
         self.response_actions = []; self.response_reserved = False; self.response_reason = 'protocol_validation_failed'
@@ -285,6 +301,13 @@ class Client:
         disposition = 'denied_or_unresolved'
         try:
             value = self._respond(history,deadline,request_action)
+            reservation=_REQUEST_CONTEXTS.get(self)
+            if reservation is not None and 'instruction_binding' in reservation[4]:
+                _REQUEST_CONTEXTS[self]=(*reservation[:3],True,reservation[4])
+                from agent_harness_lab.promotion.prerequisites import current as current_scope
+                owner=current_scope()
+                if owner is not None:owner._request(self,reservation[2],True)
+            if comparison is not None and comparison.active is not None:comparison.request(self)
             self.actions.update(request_action,disposition='validated')
             disposition = 'validated'
             return value
@@ -312,11 +335,52 @@ class Client:
             tools=[TOOL],max_output_tokens=self.settings['max_output_tokens'],input=history),allow_nan=False).encode('utf-8')
         if len(body)>self.settings['max_request_bytes']:
             self.response_reason='request_bytes_exhausted'; raise InferenceError('inference_request_bytes_exhausted')
+        role_scope=_ROLE_SCOPES.get(self)
+        instruction=planned=None
+        if _instruction_selected(self):
+            if role_scope is None or len(role_scope)!=5:raise ValueError('owned instruction role required')
+            from .instruction_context import binding
+            instruction=binding(role_scope[4],self,history,body)
+            planned=dict(profile='controller-request-reservation-v1',scope_id=role_scope[1],role=role_scope[2],
+                trial_id=self.actions.current['trial_id'],request_ordinal=self.requests+1,
+                publication_allowed=False,completion_authority=False,instruction_binding=instruction)
+            from .comparison_custody import current
+            comparison=current()
+            if comparison is not None:planned['comparison']=comparison.reservation(self,role_scope[3])
+            from agent_harness_lab.promotion.prerequisites import current as current_scope
+            owner=current_scope()
+            if owner is not None:owner._request_capacity(planned,self)
+            if time.monotonic()>=deadline:raise TimeoutError('instruction capture exhausted request deadline')
         self.requests += 1
         self.request_bytes += len(body)
         self.poisoned = True
         self.pending = True
         self.actions.update(request_action,reserved=True,request_ordinal=self.requests)
+        scope = _ROLE_SCOPES.get(self)
+        if scope is not None:
+            pid,scope_id,role,trial_id = scope[:4]
+            if (pid != os.getpid() or self.actions.scope != scope_id
+                    or self.actions.current['role'] != role
+                    or self.actions.current['trial_id'] != self.actions.text(trial_id,256)['text']):
+                raise ValueError('actual inference role scope changed')
+            binding = dict(profile='controller-request-reservation-v1',scope_id=scope_id,role=role,
+                trial_id=self.actions.current['trial_id'],request_ordinal=self.requests,
+                publication_allowed=False,completion_authority=False)
+            from .comparison_custody import current
+            comparison = current()
+            if comparison is not None: binding['comparison'] = comparison.reservation(self,trial_id)
+            if planned is not None:
+                if binding!={key:value for key,value in planned.items() if key!='instruction_binding'}:raise ValueError('reserved instruction scope changed')
+                binding=planned
+            token=object()
+            _REQUEST_CONTEXTS[self]=(os.getpid(),scope,token,False,binding)
+            if instruction is not None:
+                from agent_harness_lab.promotion.prerequisites import current as current_scope
+                owner=current_scope()
+                if owner is not None:owner._request(self,token,False)
+        else:
+            _REQUEST_CONTEXTS.pop(self,None)
+        if instruction is not None:self.actions.update(request_action,instruction_binding=instruction)
         self.checkpoint()
         self.actions.update(request_action,transport_invoked=True)
         self.response_transport_invoked = True
@@ -391,15 +455,49 @@ class Client:
         return output,calls
 
 
+def _client_pid(client):
+    value=_CLIENT_PIDS.get(client)
+    return value[0] if isinstance(value,tuple) else value
+
+
+def _instruction_selected(client):
+    owner=_CLIENT_PIDS.get(client)
+    selected=isinstance(owner,tuple)
+    if (selected and (client.settings!=owner[2] or client.deadline!=owner[3] or TOOL!=owner[4])
+            or not selected and client.settings.get('instruction_protocol') is not None):
+        raise ValueError('selected instruction configuration changed')
+    return selected
+
+
+def _read_request(client,token=None,*,complete=False):
+    state=_REQUEST_CONTEXTS.get(client)
+    if (state is None or _client_pid(client)!=os.getpid() or state[0]!=os.getpid()
+            or state[1] is None or state[1] is not _ROLE_SCOPES.get(client) or token is not None and token is not state[2]
+            or state[3] is not complete or 'instruction_binding' not in state[4]):
+        raise ValueError('current owned instruction request required')
+    if not _instruction_selected(client):raise ValueError('owned instruction protocol required')
+    return deepcopy(state[4])
+
+
 def run_role(client, backend, workspace, inputs, role, instructions, prompt, deadline,*,trial_id=None,trajectory=None):
+    if _client_pid(client) != os.getpid() or client in _ROLE_SCOPES:
+        raise ValueError('fresh issuing-process role scope required')
     try:
         if role not in ('proposer','evaluator_author','executor'): raise ValueError('unsupported inference role')
         client.actions.begin(role,trial_id,trajectory=trajectory)
+        scope=(os.getpid(),client.actions.scope,role,trial_id)
+        if _instruction_selected(client):
+            from .instruction_context import prepare
+            scope=(*scope,prepare(client,backend,inputs,role,instructions,prompt,min(deadline,client.deadline)))
+        _ROLE_SCOPES[client] = scope
         return _run_role(client,backend,workspace,inputs,role,instructions,prompt,deadline)
     except BaseException:
         client.abort()
         raise
     finally:
+        _ROLE_SCOPES.pop(client,None)
+        state=_REQUEST_CONTEXTS.get(client)
+        if state is not None:_REQUEST_CONTEXTS[client]=(state[0],None,*state[2:])
         if client.actions.trajectory is not None: client.actions.trajectory.close()
 
 
@@ -411,6 +509,8 @@ def _run_role(client, backend, workspace, inputs, role, instructions, prompt, de
     state = WorkingState(workspace,deadline)
     history = [dict(role='developer',content=instructions),
         dict(role='user',content=prompt)]
+    role_scope=_ROLE_SCOPES.get(client)
+    if role_scope is not None and len(role_scope)==5:history=deepcopy(role_scope[4]['prefix'])
     commands = []
     while True:
         output,calls = client.respond(history,deadline)

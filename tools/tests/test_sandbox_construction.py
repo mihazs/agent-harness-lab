@@ -73,11 +73,21 @@ class PreparationContractTests(unittest.TestCase):
         return path,manifest
 
     def test_controller_constructs_exact_grader_commands_after_author_publication(self):
-        path,manifest = self.authored(); state = WorkingState(path.parent,self.deadline)
-        destination = self.root/'published'
-        with patch.object(construction,'run_role',return_value=(state,[])) as run:
+        path,manifest = self.authored();path.chmod(0o640);path.parent.chmod(0o750)
+        state = WorkingState(path.parent,self.deadline);original=state.snapshot;published=[]
+        destination = self.root/'published';publish=WorkingState.publish
+        def normalized_once(item,target,deadline):
+            document=json.loads(next(raw for name,_,raw in item.snapshot.files if name=='manifest.json'))
+            self.assertTrue(all('grader' in task for task in document['tasks']))
+            self.assertEqual(item.snapshot.root_mode,original.root_mode)
+            self.assertEqual(item.snapshot.directories,original.directories)
+            self.assertEqual([(name,mode) for name,mode,_ in item.snapshot.files],[(name,mode) for name,mode,_ in original.files])
+            published.append(target);return publish(item,target,deadline)
+        with patch.object(construction,'run_role',return_value=(state,[])) as run,patch.object(WorkingState,'publish',normalized_once):
             authored,_ = construction.author(Mock(),Mock(),self.baseline,self.root/'context',self.root/'seed',destination,self.deadline)
         actual = json.loads(authored.read_text())
+        self.assertEqual(published,[destination]);self.assertEqual(authored.stat().st_mode&0o777,0o640)
+        self.assertEqual(destination.stat().st_mode&0o777,0o750)
         self.assertEqual(actual['harness_paths'],[]); self.assertEqual(actual['skills'],[])
         for task in actual['tasks']:
             self.assertEqual(task['grader'],['/usr/bin/python3',str(destination/'oracle/grade.py.txt'),'{workspace}',str(destination/'oracle/expected.json')])

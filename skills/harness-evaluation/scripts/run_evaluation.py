@@ -119,6 +119,14 @@ def agent_command(agent, binary, plugin=None, skills=()):
 
 
 def evaluate(args):
+    if not any(getattr(args,name,None) is not None for name in ('source_sink','source_cache','source_project_sha256','source_scope_sha256')):
+        return _evaluate(args)
+    application_modules()
+    from agent_harness_lab.evaluation.controller_receipts import session
+    with session(): return _evaluate(args)
+
+
+def _evaluate(args):
     started = time.monotonic()
     parent_deadline = getattr(args, 'parent_deadline', None)
     if parent_deadline is not None and (type(parent_deadline) not in (int, float) or not math.isfinite(parent_deadline)):
@@ -147,6 +155,18 @@ def evaluate(args):
         raise ValueError('resource boundaries currently require the offline executor')
     if controlled and any(value is None for value in (cgroup_root,image_root,image_sha256,disk_bytes)):
         raise ValueError('Responses execution requires explicit cgroup, pinned image and private disk profiles')
+    source_sink = getattr(args,'source_sink',None)
+    source_options = [getattr(args,name,None) for name in ('source_cache','source_project_sha256','source_scope_sha256')]
+    if source_sink is not None or any(value is not None for value in source_options):
+        application_modules()
+        from agent_harness_lab.sources.controller import SourceSink
+        if any(value is not None for value in source_options):
+            if source_sink is not None or any(value is None for value in source_options):
+                raise ValueError('controller source cache and expected project/scope are required together')
+            source_sink = SourceSink(*source_options)
+        if type(source_sink) is not SourceSink or args.agent not in ('offline','responses') or any(
+                value is None for value in (cgroup_root,image_root,image_sha256,disk_bytes)):
+            raise ValueError('controller sources require actual pinned offline worker and grader profiles')
     if controlled:
         application_modules()
         from agent_harness_lab.evaluation.integrity import contained, read_regular, tree as bounded_tree
@@ -161,6 +181,9 @@ def evaluate(args):
         admission(args, manifest)
     versions = {v: Path(getattr(args, v)).resolve() for v in ('baseline', 'candidate')}
     output = Path(args.output).resolve()
+    if source_sink is not None and any(source_sink.store.path.is_relative_to(root) or root.is_relative_to(source_sink.store.path)
+            for root in (manifest_path.parent,output,*versions.values(),Path(image_root).resolve())):
+        raise ValueError('controller source journal must remain outside all role inputs and run output')
     skills = manifest.get('skills', [])
     tasks = manifest['tasks']
     harness_paths = manifest.get('harness_paths', [])
@@ -187,7 +210,18 @@ def evaluate(args):
         budget = min(budget, configured['configuration']['limits']['seconds'])
         trial_limit = min(trial_limit, configured['configuration']['limits']['trials'])
         binary = configured['binary']
-    if not math.isfinite(timeout) or not math.isfinite(budget) or timeout <= 0 or budget <= 0 or len(tasks) * 2 > trial_limit:
+    initial_trial_ceiling = len(tasks) * 2
+    if isinstance(manifest.get('experiment'), dict) and manifest['experiment'].get('sequential') is not None:
+        application_modules()
+        from agent_harness_lab.evaluation.plan import ExperimentSpec
+        from agent_harness_lab.evaluation.sequential import planned_trials, validate_selection
+        selected_plan = ExperimentSpec.parse(manifest['experiment'])
+        selected_plan.validate()
+        validate_selection(manifest)
+        if {t[0]: t[1:] for t in selected_plan.tasks} != {t['id']: (t['root'], t['family']) for t in tasks}:
+            raise ValueError('experiment task lineage differs from manifest')
+        initial_trial_ceiling = planned_trials(selected_plan)
+    if not math.isfinite(timeout) or not math.isfinite(budget) or timeout <= 0 or budget <= 0 or initial_trial_ceiling > trial_limit:
         raise ValueError('invalid timeout/budget or trial limit exceeded')
     if parent_deadline is not None:
         budget = min(budget, max(0, parent_deadline - started))
@@ -308,6 +342,9 @@ def evaluate(args):
             except TimeoutError:
                 pass  # Budget reporting below blocks before credentials or inference.
     plan = None
+    precision_report = None
+    precision_cohorts = None
+    sequential_controller = None
     if 'experiment' in manifest:
         application_modules()
         from agent_harness_lab.evaluation.plan import ExperimentSpec, schedule
@@ -326,9 +363,31 @@ def evaluate(args):
             from agent_harness_lab.evaluation import cohort_history
             from agent_harness_lab.evaluation.oracle_history import bank_authority
             bank_tasks=bank_authority(manifest,export_root=manifest_path.parent)
-            cohort_history.capture(manifest_path.parent,manifest,plan,bank_tasks)
+            captured_cohorts=cohort_history.capture(manifest_path.parent,manifest,plan,bank_tasks)
+            from agent_harness_lab.evaluation.integrity import read_regular
+            from agent_harness_lab.evaluation.cohorts import MAX_BYTES
+            precision_cohorts=read_regular(captured_cohorts['manifest_path'],MAX_BYTES)
+        if plan.sequential is not None:
+            from agent_harness_lab.evaluation.sequential import validate_selection
+            validate_selection(manifest)
+        if plan.sequential is not None and not (offline or controlled):
+            raise ValueError('sequential execution requires the controlled offline or Responses path')
+        if plan.sequential is not None and budget>0:
+            if cgroup_root is None or image_root is None or disk_bytes is None or plan.runtime_hash!=image_sha256:
+                raise ValueError('sequential execution requires the full pinned resource profile and plan runtime')
+        supplied_sequential=getattr(args,'_sequential_controller',None)
+        if plan.sequential is not None and supplied_sequential is not None and budget>0:
+            from agent_harness_lab.evaluation.sequential_state import Controller
+            from agent_harness_lab.evaluation.sequential import input_pin
+            if type(supplied_sequential) is not Controller or supplied_sequential.path!=output.parent/'sequential' or output.name!='execution':
+                raise ValueError('sequential controller does not own this execution directory')
+            supplied_sequential.claim(plan,input_pin(manifest_hash,plan,frozen_fixtures))
         ordered = schedule(plan)
-        if len(ordered) > trial_limit:
+        selected_trial_ceiling=len(ordered)
+        if plan.sequential is not None:
+            from agent_harness_lab.evaluation.sequential import planned_trials
+            selected_trial_ceiling=planned_trials(plan)
+        if selected_trial_ceiling > trial_limit:
             raise ValueError('repeated plan exceeds caller trial ceiling')
     else:
         ordered = [dict(version=version, task=task['id'], repetition=0) for version in versions for task in tasks]
@@ -346,7 +405,13 @@ def evaluate(args):
                 if plan is not None and (task.get('root'), task.get('family')) != next(t[1:] for t in plan.tasks if t[0] == task['id']):
                     raise ValueError('trajectory lineage differs from frozen experiment')
                 trajectories[task['id']] = binding
+    if plan is not None and plan.sequential is None and budget > 0:
+        from agent_harness_lab.evaluation.precision import preflight as precision_preflight
+        precision_report=precision_preflight(plan,cohort_manifest_json=precision_cohorts,
+            trial_limit=trial_limit,budget_seconds=budget)
     blocked = configured and configured['blocked_reason']
+    if precision_report is not None and not precision_report['execution_allowed'] and not blocked:
+        blocked='precision_target_infeasible'
     if configured and not evaluation_unchanged(Path(args.config), configured):
         blocked = 'configuration_changed_before_execution'
     available = budget - (time.monotonic() - started)
@@ -378,6 +443,10 @@ def evaluate(args):
                    isolation=('cooperative trusted fixtures; ' + ('workspace-write; ' if agent == 'codex' else 'inherited Claude permissions/sandbox; ') + 'inherited configuration/auth/hooks; no security or network isolation claim'))
     results['grader_bundle_digests'] = frozen_bundles
     if permission_audit is not None:results['isolation_qualification']=backend.permission_qualification()
+    if precision_report is not None:
+        results['precision_preflight']=precision_report
+        (output/'precision-preflight.json').write_text(json.dumps(precision_report,indent=2,allow_nan=False)+'\n')
+        (output/'precision-preflight.json').chmod(0o600)
     if sandbox_graders:
         results['runtime']['grader_capability'] = capability
         results['isolation'] = dict(executor='cooperative native CLI; no role isolation claim',
@@ -402,6 +471,40 @@ def evaluate(args):
             results.update(status='blocked', reason='offline_sandbox_unavailable', elapsed_seconds=time.monotonic()-started)
             (output/'results.json').write_text(json.dumps(results, indent=2)+'\n')
             return 3
+    if plan is not None and plan.sequential is not None:
+        from agent_harness_lab.evaluation.sequential_state import Controller
+        from agent_harness_lab.evaluation.sequential import input_pin
+        sequential_inputs=input_pin(manifest_hash,plan,frozen_fixtures)
+        sequential_controller=getattr(args,'_sequential_controller',None)
+        if sequential_controller is None:
+            from agent_harness_lab.evaluation.oracle_history import behavior_policies
+            from agent_harness_lab.evaluation.sequential_state import records as sequential_records
+            policies=behavior_policies({pin:Path(folder) for folder,pin in frozen_bundles.items()},manifest,plan)
+            sequential_controller=Controller(plan,output/'sequential',started+budget,inputs_sha256=sequential_inputs,cohort_json=precision_cohorts,
+                checker=lambda rows:sequential_records(plan,rows,policies))
+            sequential_controller.claim(plan,sequential_inputs)
+        if type(sequential_controller) is not Controller:raise ValueError('owned sequential controller required')
+        sequential_controller.validate(plan,inputs_sha256=sequential_inputs)
+        original_guard=sequential_controller.guard
+        def sequential_guard():
+            if original_guard is not None:original_guard()
+            if not inputs_unchanged():raise ValueError('sequential frozen inputs changed')
+        sequential_controller.guard=sequential_guard
+        ordered=sequential_controller.schedule
+        results.update(sequential_profile='conditional-finite-bank-sequential-v1',publication_allowed=False)
+        results.update(experiment=manifest['experiment'],plan_digest=plan.digest,grader_hash=oracle_hash,
+            profile=plan.profile,automatic_promotion=False)
+        if plan.cohort_manifest_sha256 is not None:
+            results.update(cohort_manifest_sha256=plan.cohort_manifest_sha256,cohort_qualification='current_membership_only')
+        try:ready=sequential_controller.before(ordered[0],[])
+        except (ValueError,OSError,TimeoutError):
+            sequential_controller.stop('incomplete','root_evidence_or_authority_incomplete',[]);ready=False
+        if not ready:
+            results['sequential_analysis']=sequential_controller.finish([])
+            results['inputs_unchanged']=inputs_unchanged()
+            (output/'results.json').write_text(json.dumps(results,indent=2)+'\n')
+            return 3 if results['sequential_analysis']['status']=='inconclusive' else 1
+
     client = None
     if controlled:
         forbidden = [output,image_root,*versions.values(),*map(Path,frozen_bundles),
@@ -427,6 +530,8 @@ def evaluate(args):
                 cohort_qualification='current_membership_only',publication_allowed=False)
     results['profile'] = plan.profile if plan else 'descriptive_smoke'
     results['automatic_promotion'] = False
+    if source_sink is not None:
+        results.update(controller_source_profile='ahl-controller-live-v1',publication_allowed=False)
     if trajectories:
         results.update(trajectory_profile=trajectory_assertions.PROFILE, publication_allowed=False,
             history_authority='unverified', trajectory_policy_digests={key:b['policy_sha256'] for key,b in trajectories.items()})
@@ -438,9 +543,16 @@ def evaluate(args):
         record['controller_grade'] = grade
         return grade
     for scheduled in ordered:
+        if sequential_controller is not None:
+            try:
+                if not sequential_controller.before(scheduled,results['trials']):break
+            except (ValueError,OSError,TimeoutError):
+                sequential_controller.stop('incomplete','root_evidence_or_authority_incomplete',results['trials']);break
+            timeout=plan.sequential['arm_seconds']
         version, task = scheduled['version'], next(t for t in tasks if t['id'] == scheduled['task'])
         root = versions[version]
-        remaining = budget - (time.monotonic() - started)
+        remaining = (sequential_controller.root_deadline-time.monotonic() if sequential_controller is not None
+                     else budget - (time.monotonic() - started))
         record = dict(scheduled, split=task['split'])
         audit_offset=len(backend.permission_reports) if permission_audit is not None else 0
         record.setdefault('root',task.get('root'))
@@ -452,7 +564,7 @@ def evaluate(args):
         if not verify_inputs(record):
             results['trials'].append(record)
             continue
-        if remaining <= 0:
+        if remaining < (timeout if sequential_controller is not None else 0) or remaining <= 0:
             record['status'] = 'budget_exhausted'
             results['trials'].append(record)
             continue
@@ -490,13 +602,20 @@ def evaluate(args):
             prompt += 'Do not launch child agents or nested model trials; the parent owns the evaluation budget.\n'
         prompt += 'Operate only in this fixture workspace. Do not modify external files.\n' + task['prompt']
         record['injected_skill_hashes'] = {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in loaded}
-        remaining = budget - (time.monotonic() - started)
-        if remaining <= 0:
+        remaining = (sequential_controller.root_deadline-time.monotonic() if sequential_controller is not None
+                     else budget - (time.monotonic() - started))
+        if remaining < (timeout if sequential_controller is not None else 0) or remaining <= 0:
             record['status'] = 'budget_exhausted'
             results['trials'].append(record)
             continue
         grade_workspace = workspace
         binding, trajectory_capture = trajectories.get(task['id']), None
+        source_capture = source_sink.begin(task['artifacts'],started+budget) if source_sink is not None else None
+        comparison=getattr(args,'_comparison_custody',None)
+        if comparison is not None:
+            from agent_harness_lab.evaluation.comparison_custody import current
+            if current() is not comparison:raise ValueError('current comparison custody required')
+            comparison.before(scheduled,workspace,root,client)
         if controlled:
             trial_id = record.get('trial_id') or 'trial-'+str(len(results['trials'])+1)
             if binding is not None: record['controller_trial_id'] = trial_id
@@ -511,6 +630,7 @@ def evaluate(args):
                 record.update(status='budget_exhausted' if isinstance(exc,TimeoutError) else 'execution_error',error=str(exc),
                     inference=client.report(),controller_actions=client.action_report())
                 if binding is not None: record_trajectory(record, binding, client.actions.trajectory)
+                if source_capture is not None: source_capture.cancel()
                 results['trials'].append(record)
                 continue
         elif offline:
@@ -520,6 +640,7 @@ def evaluate(args):
                                   Limits(seconds=min(timeout, remaining)), **extraction)
             except (ValueError, OSError, subprocess.SubprocessError) as exc:
                 record.update(status='execution_error', error=str(exc))
+                if source_capture is not None: source_capture.cancel()
                 results['trials'].append(record)
                 (output/'results.json').write_text(json.dumps(results, indent=2)+'\n')
                 continue
@@ -539,8 +660,9 @@ def evaluate(args):
             record['status'], record['usage'] = trace_result(check, agent)
         record['skill_namespace'] = 'harness-trial' if agent == 'claude' else None
         if record['status'] == 'completed' and verify_inputs(record):
-            remaining = budget - (time.monotonic() - started)
-            if remaining <= 0:
+            remaining = (sequential_controller.root_deadline-time.monotonic() if sequential_controller is not None
+                     else budget - (time.monotonic() - started))
+            if remaining < (timeout if sequential_controller is not None else 0) or remaining <= 0:
                 record['status'] = 'budget_exhausted'
             else:
                 if offline or sandbox_graders or controlled:
@@ -566,13 +688,22 @@ def evaluate(args):
             from agent_harness_lab.evaluation.permission_audit import qualification
             record['isolation_qualification']=qualification(backend.permission_reports[audit_offset:])
             results['isolation_qualification']=backend.permission_qualification()
-        verify_inputs(record)
+            if controlled and results['isolation_qualification']['qualification']!='qualified':
+                client.abort()
+        source_inputs_unchanged = verify_inputs(record)
+        if source_capture is not None:
+            record['source_capture'] = source_sink.finish(source_capture,source_inputs_unchanged)
+        if comparison is not None:comparison.after(record)
         results['trials'].append(record)
         (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
     results['elapsed_seconds'] = time.monotonic() - started
     if client is not None: results['runtime']['inference'] = client.report()
     results['inputs_unchanged'] = inputs_unchanged()
-    if trajectories and plan is not None:
+    if sequential_controller is not None:
+        results['sequential_analysis']=sequential_controller.finish(results['trials'])
+        if not results['inputs_unchanged']:
+            results['sequential_analysis'].update(status='blocked',reason='frozen_inputs_changed')
+    if trajectories and plan is not None and sequential_controller is None:
         from agent_harness_lab.evaluation.statistics import TrialRecord, analyze
         records = []
         for trial in results['trials']:
@@ -590,26 +721,44 @@ def evaluate(args):
             history_authority='unverified', automatic_promotion=False, publication_allowed=False)
     if permission_audit is not None:
         results['isolation_qualification']=backend.permission_qualification()
+        if sequential_controller is not None and results['isolation_qualification']['qualification']!='qualified' and results['sequential_analysis']['status']!='rejected':
+            results['sequential_analysis'].update(status='blocked',reason='isolation_qualification_unverified')
     (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
+    if sequential_controller is not None:
+        status=results['sequential_analysis']['status']
+        return {'supported':0,'rejected':0,'inconclusive':3,'blocked':3}.get(status,1)
     return 0 if (permission_audit is None or results['isolation_qualification']['qualification']=='qualified') and results['inputs_unchanged'] and all(t['status'] == 'passed' for t in results['trials']) else 1
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='Requires a JSON task manifest and separate existing baseline/candidate harness directories.\n'
+        'Creates a NEW private directory with trial workspaces, artifact grades and results.json; checks input digests afterward.\n'
+        'Codex/Claude inherit their configured authentication and permissions; offline/Responses require supported Linux isolation.\n'
+        'Read results.json for machine output; passing trials never authorize promotion. Exit 0: passing trials or supported/rejected sequential decision;\n'
+        '1: failed/incomplete execution; 2: setup/input error; 3: blocked/inconclusive sequential analysis.\n'
+        'Example: ahl evaluate --manifest tasks.json --baseline baseline --candidate candidate --output /tmp/ahl-evaluation')
     for name in ('manifest', 'baseline', 'candidate', 'output'):
-        parser.add_argument('--' + name, required=True)
-    parser.add_argument('--config', help='Explicit project configuration; restricts bank, harness scope, runtime and resource caps')
+        parser.add_argument('--' + name, required=True, help={
+            'manifest':'Existing JSON task manifest with tasks and fixture/grader references resolved relative to its directory',
+            'baseline':'Existing baseline harness directory; its exact file-tree digest is recorded and checked after execution',
+            'candidate':'Existing candidate harness directory to compare against baseline under the same task manifest',
+            'output':'New private results directory; must not already exist, trial workspaces and results.json are written here'}[name])
+    parser.add_argument('--config', help='Existing ahl.json restricting bank, harness scope, cooperative runtime and caps; not supported with Responses execution')
     parser.add_argument('--agent', choices=('codex', 'claude', 'offline', 'responses'), default='codex',
-                        help='offline executes explicit fixture commands without model inference and requires bubblewrap')
-    parser.add_argument('--codex', default='codex', help='Codex executable path')
-    parser.add_argument('--claude', default='claude', help='Claude Code executable path')
-    parser.add_argument('--sandbox-graders', action='store_true', help='Require fresh offline frozen artifact graders for cooperative CLI trials')
-    parser.add_argument('--inference-settings', type=Path, help='Explicit private settings/key-file and caps for the controller Responses executor')
-    parser.add_argument('--cgroup-root', type=Path, help='Explicit predelegated cgroup v2 subtree for offline execution or sandboxed grader resources')
-    parser.add_argument('--image-root', type=Path, help='Explicit private extracted runtime rootfs for offline execution or sandboxed grading')
-    parser.add_argument('--image-sha256', help='Preapproved rootfs content pin; required with --image-root')
-    parser.add_argument('--permission-audit',choices=('permission-results-v1',),help='Require observed Linux x86_64 permission-result qualification for all offline roles')
-    parser.add_argument('--disk-bytes', type=int, help='Aggregate tmpfs data capacity for offline roles or sandboxed graders; requires --cgroup-root')
+                        help='Executor: cooperative codex/claude, Linux offline fixture commands without inference, or controlled responses (default: %(default)s)')
+    parser.add_argument('--codex', default='codex', help='Codex executable name/path for --agent codex (default: %(default)s)')
+    parser.add_argument('--claude', default='claude', help='Claude Code executable name/path for --agent claude (default: %(default)s)')
+    parser.add_argument('--sandbox-graders', action='store_true', help='Require fresh offline frozen artifact graders for cooperative codex/claude trials; does not isolate the agent CLI')
+    parser.add_argument('--inference-settings', type=Path, help='Existing private Responses settings JSON referencing a credential file and shared request/tool caps; required only with --agent responses')
+    parser.add_argument('--cgroup-root', type=Path, help='Existing delegated cgroup v2 subtree for isolated roles/graders; required with --agent responses')
+    parser.add_argument('--image-root', type=Path, help='Existing extracted read-only runtime rootfs for isolated roles/graders; supply --image-sha256 with it')
+    parser.add_argument('--image-sha256', help='Expected SHA-256 content pin for --image-root; root and pin must be supplied together')
+    parser.add_argument('--permission-audit',choices=('permission-results-v1',),help='Require observed Linux x86_64 permission-result qualification for offline/Responses roles; unavailable for cooperative CLIs')
+    parser.add_argument('--disk-bytes', type=int, help='Tmpfs data capacity in bytes for isolated roles/graders; requires --cgroup-root and is mandatory for Responses')
+    parser.add_argument('--source-cache', type=Path, help='Private live-controller source journal outside all run inputs/output; requires both expected source hashes and pinned offline/Responses execution')
+    parser.add_argument('--source-project-sha256', help='Expected declared project SHA-256 fingerprint; supply with --source-cache and --source-scope-sha256')
+    parser.add_argument('--source-scope-sha256', help='Expected declared source-scope SHA-256 fingerprint; supply with --source-cache and --source-project-sha256')
     args = parser.parse_args()
     try:
         return evaluate(args)

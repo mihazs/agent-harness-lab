@@ -19,6 +19,8 @@ def link_key(join): return join.relation, join.left.key, join.right.key if join.
 
 
 def recheck(source, connector, proposed):
+    from .controller import ControllerCapture, recheck as recheck_controller
+    if type(connector) is ControllerCapture: return recheck_controller(source,connector,proposed)
     if type(connector) is ClaudeCapture: return recheck_claude(source, connector, proposed)
     if type(connector) is CodexCapture: return recheck_codex(source, connector, proposed)
     if type(connector) is GitExport: return recheck_git(source, connector, proposed)

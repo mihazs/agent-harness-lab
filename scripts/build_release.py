@@ -19,7 +19,7 @@ def build(root, output):
     version = json.loads((root / 'package.json').read_text())['version']
     if not re.fullmatch(r'\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?', version):
         raise ValueError('invalid version')
-    files = [root / name for name in ('ahl', 'LICENSE', 'README.md', 'package.json')]
+    files = [root / name for name in ('ahl', 'LICENSE', 'README.md', 'package.json', 'install.py')]
     files += sorted((root / 'agent_harness_lab').rglob('*.py'))
     files += sorted((root / 'tools').glob('*.py'))
     fixture_root = root / 'agent_harness_lab/evaluation/fixtures'
@@ -53,8 +53,12 @@ def build(root, output):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output', type=Path, default=Path('dist'))
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='Requires this script in a Git checkout with tracked release inputs and a valid package.json version.\n'
+        'Writes agent-harness-lab-VERSION.tar.gz, install.py and SHA256SUMS; existing named outputs may be replaced.\n'
+        'Prints the three artifact paths; does not upload, publish or run a version bump.\n'
+        'Example: python scripts/build_release.py --output dist/release')
+    parser.add_argument('--output', type=Path, default=Path('dist'), help='Artifact directory, created if needed, relative to the current directory (default: %(default)s)')
     args = parser.parse_args()
     for path in build(Path(__file__).resolve().parents[1], args.output):
         print(path)

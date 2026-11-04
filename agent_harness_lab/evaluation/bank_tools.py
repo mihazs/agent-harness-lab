@@ -150,6 +150,7 @@ def regrade_artifacts(workspace, allowlist, bundle, expected_digest, backend, *,
     import tempfile
     from dataclasses import replace
     from .sandbox import Limits
+    from .controller_receipts import _enabled, _artifact_grade
     started = time.monotonic()
     limits = limits or Limits(seconds=5)
     limits.validate()
@@ -167,6 +168,7 @@ def regrade_artifacts(workspace, allowlist, bundle, expected_digest, backend, *,
             target = contained(fixture, name)
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(data)
+        fixture_sha256 = digest(fixture) if _enabled() else None
         remaining = limits.seconds - (time.monotonic() - started)
         if remaining <= 0:
             raise TimeoutError('regrading budget exhausted before launch')
@@ -191,6 +193,7 @@ def regrade_artifacts(workspace, allowlist, bundle, expected_digest, backend, *,
                 outcome = envelope['outcome']
         except (ValueError, TypeError, KeyError):
             pass
+    _artifact_grade(run,extracted,expected_digest,fixture_sha256,outcome)
     return dict(status='grader_error' if outcome is None else ('passed' if outcome else 'failed'),
                 outcome=outcome, grader_identity={k: envelope[k] for k in ('grader_id', 'grader_version')} if outcome is not None else None,
                 execution=run, automatic_promotion=False)

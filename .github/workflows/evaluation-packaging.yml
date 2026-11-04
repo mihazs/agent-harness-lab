@@ -20,16 +20,15 @@ jobs:
           version: '3.54.0'
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version: '3.14'
       - uses: actions/setup-node@v7
         with:
           node-version: 'latest'
           cache: npm
       - run: task setup
+      - run: task setup:test
       - name: Require zero source clones
         run: task duplication:report
-      - name: Verify staged pre-commit enforcement
-        run: task test:hooks
       - name: Build tools only; no inference dependencies or credentials
         run: task setup:build
       - run: task build
@@ -39,5 +38,6 @@ jobs:
         run: |
           task install:wheel
           task setup:okf PYTHON=dist/wheel-env/bin/python
+          task setup:test:installed PYTHON=dist/wheel-env/bin/python
       - name: Check wheel and versioned archive layouts without a model account
         run: task test:packaging:layouts

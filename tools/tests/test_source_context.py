@@ -153,21 +153,21 @@ class SourceContextTests(unittest.TestCase):
         self.assertEqual(result['capture_completeness'], 'unknown'); self.assertEqual(result['target_project_binding'], 'unverified')
         self.assertFalse(result['task_outcomes_verified'])
 
-    def test_source_and_version_summary_limits_are_explicit(self):
+    def test_source_and_version_summaries_are_complete_by_default(self):
         for number in range(21):
             source = replace(self.source, root_sha256=digest(('other', number)))
             self.store.ingest(source, ())
         result = self.context()
-        self.assertEqual(result['source_count'], 22); self.assertEqual(len(result['sources']), 20)
-        self.assertEqual(result['omitted_sources'], 2); self.assertTrue(result['truncated'])
+        self.assertEqual(result['source_count'], 22); self.assertEqual(len(result['sources']), 22)
+        self.assertEqual(result['omitted_sources'], 0); self.assertFalse(result['truncated'])
         output = io.StringIO()
         with redirect_stdout(output): main(['doctor', str(self.project), '--profile', 'offline', *self.selection()])
-        self.assertIn('sources: 22; omitted: 2; truncated: True', output.getvalue())
+        self.assertIn('sources: 22; omitted: 0; truncated: False', output.getvalue())
         versions = SourceStore(self.root/'versions.json', project_sha256=self.source.project_sha256, scope_sha256=self.source.scope_sha256)
         for number in range(10): versions.ingest(replace(self.source, version='v'+str(number)), ())
         result = versions.inventory()
-        self.assertEqual(len(result['sources'][0]['adapter_versions_sha256']), 8)
-        self.assertEqual(result['sources'][0]['omitted_adapter_versions'], 2); self.assertTrue(result['truncated'])
+        self.assertEqual(len(result['sources'][0]['adapter_versions_sha256']), 10)
+        self.assertEqual(result['sources'][0]['omitted_adapter_versions'], 0); self.assertFalse(result['truncated'])
 
     def test_no_selection_stays_opt_in_and_unsupported_platform_has_no_unsafe_read(self):
         with patch('agent_harness_lab.config.supported', return_value=False):

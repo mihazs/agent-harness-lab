@@ -91,6 +91,75 @@ verification and task/root independence stay unverified. Private host access to
 the controller store is the authority boundary. Workers do not receive that
 store as an input; the kernel canary separately attempts and fails to read it.
 
+## Optional authenticated key approval
+
+The optional Linux/Unix OpenSSH profile authenticates approval by a key explicitly
+trusted by the host operator. The unsigned version 1 record and its output remain
+unchanged. Neither path establishes that two identities are different people,
+that a review judgment is true, or that scientific roots are independent.
+
+Install a mode 0600, owner-owned regular policy file from a host location outside
+the controller, target project, candidate checkout, and all role views. The
+controller enforces disjointness from its store and declared fixture, oracle,
+control, task-start, and snapshot input roots, including subsequently proposed
+cases. A complete target-project root is not declared by this API; choosing a
+host-only location outside other project files remains the operator's obligation.
+The explicit `trust-reviewers` action installs the current exact policy hash;
+a review request cannot install its own policy or choose an unregistered key.
+
+```json
+{
+  "schema_version": 1,
+  "profile": "review-authority-policy-v1",
+  "purpose": "development_artifact_review",
+  "reviewers": {"reviewer-a": "ssh-ed25519 BASE64_PUBLIC_KEY"}
+}
+```
+
+Only raw Ed25519 public keys and exact bounded principal names are supported.
+Private keys and signing belong to the reviewer, outside the controller. There
+is no key discovery, agent access, certificate service, or network operation.
+
+```sh
+ahl regression-review --store /path/to/private-store trust-reviewers --policy /host/policy.json
+ahl regression-review --store /path/to/private-store prepare-review --case CASE_SHA256 --record REVIEW_JSON
+ssh-keygen -Y sign -f /reviewer/private-key -n ahl.artifact-review.v1 /path/to/private-store/review-requests/REQUEST_SHA256.json
+ahl regression-review --store /path/to/private-store review --case CASE_SHA256 --record /path/to/private-store/review-requests/REQUEST_SHA256.json --signature /path/to/private-store/review-requests/REQUEST_SHA256.json.sig
+```
+
+`prepare-review` returns the private request hash. The canonical request binds
+the complete version 1 review, exact controller-store location, current policy
+hash, and purpose. The review already binds the case, current predecessor event,
+sealed controller evidence, and reviewer judgment. Preparation rechecks that
+evidence; positive review rechecks it before and after signature verification.
+The parent bank is bound later by the existing admission request, rather than
+requiring a future bank at review time.
+
+Verification invokes only `/usr/bin/ssh-keygen -Y verify`, with private frozen
+public-key/signature inputs, a fixed namespace, stripped environment, discarded
+output, and a bounded deadline. Missing OpenSSH returns `unsupported`; invalid
+signatures fail without an unsigned fallback. `review --budget-seconds` accepts
+values above zero through 60 (default 10).
+The same deadline covers initial state checks, nested authenticated admission
+history reads, and final readback; stale retries cannot reset it. If readback
+exhausts it after an event was committed, the blocked response leaves that
+recorded history intact; use `show` to inspect it rather than resubmitting.
+
+Authenticated events retain their exact signed request, signature, public-key
+policy snapshot, and proof in the private journal. A current policy change,
+removal, or explicit replacement revokes future authenticated consumption and
+current development-bank eligibility. Historical signatures are checked against
+their frozen policy; revocation does not rewrite old events or verdicts. Restore
+or replace policy only through the explicit installation action. Historical
+verification still requires the optional verifier and intact private artifacts.
+
+The added `review_authentication` status means `authenticated_key_approval`, not
+scientific certification. Review judgment, source independence, and historical
+truth remain unverified. Development admission retains its existing explicit
+operator action and cannot make a bank certification-eligible. Authenticated
+requests, policy snapshots, signatures, and summaries remain private and are
+blocked by the public benchmark export guard.
+
 ## Evidence, interruption and privacy
 
 The seal binds the controller-created replay receipt, five-control receipt,
@@ -133,3 +202,8 @@ Run `task test:evaluation:review` for native lifecycle/falsifier tests. The exis
 `task test:sandbox:kernel:regressions` also exercises the actual pinned-image
 workflow with resource controls and a synthetic operator attestation; that fixture
 does not establish authenticated human independence.
+
+Separate final-bank intake uses [conditional bank review](conditional-bank-review.md).
+Its purpose-specific key policy and native control audits can qualify a bank for
+protected diagnostic access; existing exposed development regressions remain
+ineligible for conversion into final-bank inputs.

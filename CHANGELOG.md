@@ -1,5 +1,179 @@
 # Changelog
 
+## 0.76.12
+
+### Patch Changes
+
+- cd63e89: Expose the selected executor's controller-observed harness input digest in private live source rechecks, preserving unknown effective loading and replay boundaries.
+
+## 0.76.11
+
+### Patch Changes
+
+- 4d08f26: Stop further controlled inference after a grader permission audit becomes violated or unknown, preserving separate artifact outcomes and existing schedule records.
+
+## 0.76.10
+
+### Patch Changes
+
+- 81fcaa1: Reject incomplete sentence-embedding input coverage before encoding through a checked unprompted Transformer and Pooling pipeline. Preserve saved encoder and real model context limits without silently scoring truncated text or inventing chunk aggregation.
+
+## 0.76.9
+
+### Patch Changes
+
+- 5119c78: Retain all extracted TF-IDF training features and reject unsupported or exceeded NLI model contexts instead of silently truncating evidence or hypotheses. Long inputs still require a local model with sufficient supported capacity.
+
+## 0.76.8
+
+### Patch Changes
+
+- 336047b: Read every classifier benchmark example and complete evidence text by default, with an optional explicit user-set example limit. Preserve malformed-input and split validation.
+
+## 0.76.7
+
+### Patch Changes
+
+- 8404487: Evaluate explicit frozen incident-triage policies on held-out declared roots with class-wise errors, abstentions and policy-specific decisions. Preserve unverified independence and label authority; descriptive classifier accuracy does not grant certification.
+
+## 0.76.6
+
+### Patch Changes
+
+- f85eed6: Use explicitly pinned project task banks for a single cooperative improvement comparison, respecting the shared preparation/trial budget and preserving recommendation-only results.
+
+## 0.76.5
+
+### Patch Changes
+
+- e904932: Analyze an explicitly scoped, pinned ai-memory session through paginated read-only MCP, with faithful lifecycle activity and explicit diagnostic coverage and snapshot limitations.
+
+## 0.76.4
+
+### Patch Changes
+
+- 422e6a5: Report privacy-safe collection stages and evidence counts on stderr while preserving JSON receipts on stdout.
+
+## 0.76.3
+
+### Patch Changes
+
+- 6e69595: Recognize ai-memory pre/post tool hooks as call/result activity while preserving unknown tool identities and outcomes when structured metadata is absent.
+
+## 0.76.2
+
+### Patch Changes
+
+- 04e2601: Use one Python 3.14 CI version and collect both test suites with parallel pytest workers, including installed-layout checks. Keep pytest tooling in optional test dependencies.
+
+## 0.76.1
+
+### Patch Changes
+
+- Remove implicit analysis size, read, retention and reporting ceilings; preserve explicit caller limits, scope checks, private metadata handling and truthful upstream incompleteness. Admit complete read-only preparation inputs while retaining controlled execution and adoption safeguards.
+- Explain command inputs, outputs, defaults and side effects throughout CLI help, and distinguish proposer-declined, unchanged-candidate and unsupported-evaluation no-change outcomes.
+
+## 0.76.0
+
+### Minor Changes
+
+- 3b5cef1: Add an opt-in root AGENTS instruction protocol that injects frozen content into actual controlled Responses requests and binds owned request facts to worker and comparison custody. Keep model identity, semantic adherence, certification and adoption authority unverified.
+
+## 0.75.0
+
+### Minor Changes
+
+- 668b273: Persist realized comparison schedules and bind reserved inference checkpoints to the actual issuing process, role, trial and cumulative budget before transport. Preserve spent reservations on interruption, reject copied or inherited clients, and keep cold resume and provider reconciliation unsupported.
+
+## 0.74.0
+
+### Minor Changes
+
+- 65c2d18: Connect controlled improve and watch to an explicitly selected private evaluation store. Automatically record owned proposer, author and feedback handoffs, refuse managed freshness for actual constructed scientific assets, and preserve unknown initial parentage, shared control boundaries and unmanaged defaults. Stage completion supplies no certification or adoption authority.
+- 65c2d18: Bind explicitly selected construction stores to the existing repeated improvement controller. Reject stores inside private comparison inputs before metadata writes, retain immutable request and shared trial limits, and preserve unqualified single-root outcomes.
+
+### Patch Changes
+
+- 65c2d18: Bind owned author output once inside the actual role before returning it. Reject re-registration and later artifact rewrites before registration or external publication, retaining unresolved exposure without a refund.
+
+## 0.73.0
+
+### Minor Changes
+
+- d4ef0ae: Add an opt-in fixed repeated-bank path to improve, with fresh private Responses execution custody, sealed history and verified decision receipts. Keep certification and automatic adoption unavailable.
+
+## 0.72.0
+
+### Minor Changes
+
+- a77398f: Execute conditional finite-bank sequential diagnostics through fresh paired root blocks, with exact conservative inference and controller-owned inspection history. Preserve fixed-final defaults and keep scientific assumptions, adoption and future-model performance unverified.
+
+## 0.71.0
+
+### Minor Changes
+
+- 8d838d6: Qualify a bounded Linux restricted-process startup protocol from authenticated worker readbacks and owned native completions. Reject audited workflow recommendations with missing facts while keeping full certification and model identity unverified.
+
+## 0.70.0
+
+### Minor Changes
+
+- 4658ab1: Report bounded implementation prerequisites from the public controlled workflow's actual owned worker and fresh-grader receipts. Keep certification authority unverified, permission violations visible and automatic promotion disabled.
+
+## 0.69.0
+
+### Minor Changes
+
+- bf1ff81: Add purpose-specific signed final-bank review with actual native control audits and conditional qualification consumed by protected diagnostic access. Preserve explicit external-exposure unknowns and the remaining certification and adoption gates.
+
+## 0.68.0
+
+### Minor Changes
+
+- e289aae: Add optional offline OpenSSH key approvals to private regression review under an explicitly installed host public-key policy. Bind approvals to frozen case evidence and current policy, preserve unsigned review compatibility and historical verdicts on revocation, and retain development-only admission without scientific certification.
+
+## 0.67.0
+
+### Minor Changes
+
+- 14eb7d8: Report exact frozen-plan root-level precision before repeated execution, with an optional pinned half-width target that blocks infeasible dispatch without changing legacy plan identities or fixed-final inference.
+
+## 0.66.0
+
+### Minor Changes
+
+- d6efb7a: Add an explicit owned development-variant lane using existing controlled authoring and the access ledger. Bind actual input/output bytes, preserve conservative may-derived exposure through transitive variants, and block managed freshness while construction is pending or unresolved. Raw unconfigured authoring remains outside this lane; no independence or certification authority is introduced.
+
+### Patch Changes
+
+- f1b048c: Bind owned author output once inside the actual role before returning it. Reject re-registration and later artifact rewrites before registration or external publication, retaining unresolved exposure without a refund.
+
+## 0.65.0
+
+### Minor Changes
+
+- 1d686ac: Resolve project runtime, harness scope and budgets before improvement or monitoring, and emit private operation-level change plans. Add explicitly requested minimal skill-header BOM repairs with verified journaled application and public rollback. Recheck configuration and deadlines at mutation checkpoints, safely recover interrupted writes, preserve foreign edits, and prevent inherited child cleanup from releasing the parent's project lock. Behavioral promotion and native activation remain unverified.
+
+## 0.64.0
+
+### Minor Changes
+
+- 8b18ffd: Add explicit data-only Promptfoo and open-source OpenAI Evals subset imports with private frozen snapshots, semantic conversion reports and unqualified regression proposals. Preserve foreign scores and references as reported claims; require separate reproduction and audited oracle evidence before existing development-bank admission.
+
+## 0.63.0
+
+### Minor Changes
+
+- Add `ahl update` for release installations, retain installation locations and selected skill directories, and serialize installation transactions to keep launchers and receipts consistent. Bundle the checksum-verifying installer and document one-line installation.
+- 2bef4b9: Capture explicitly selected controller sources from actual pinned offline workers and fresh artifact graders. Exact live capabilities support bounded runtime and grader-attempt projections; private journals preserve declared metadata and candidate relationships without replaying verification from serialized claims.
+
+### Patch Changes
+
+- Make installation and project usage prominent in the README and document newcomer guidance from public sources.
+- Use focused bug and feature issue forms and a shorter pull request template with explicit verification and privacy guidance.
+- Keep managed access retirement and case publication under one store-writer lock so a competing writer cannot strand the winning reservation before dispatch.
+- b5a0c1b: Bind optional live source receipts to the existing permission monitor's privately owned launch and wire completion. Preserve declared journal replay, exact grader command and independent permission qualification. Retire source-session authority on normal and exceptional exit, including saved Python-context reuse, and bind live authority to its issuing process.
+
 ## 0.62.0
 
 ### Minor Changes

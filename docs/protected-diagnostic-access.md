@@ -82,7 +82,9 @@ renaming a task, selecting a subset, changing candidate/plan or changing modes
 cannot reset known retirement. File modes still participate in the frozen input
 binding. Sharing a captured prompt, fixture or oracle conservatively couples managed access; it is
 not a claim of scientific lineage. Byte changes or distinct IDs never prove new
-semantic independence. Paraphrase/derivation authority remains separate work.
+semantic independence. An explicit [owned development-variant lane](owned-development-variants.md)
+can retain conservative may-derived exposure; raw/unmanaged and semantic ancestry
+remain outside that lane.
 
 Consumption retires the assets before a worker may see the prepared data. A failed
 capability check, interruption, callback failure or later invalid input does not

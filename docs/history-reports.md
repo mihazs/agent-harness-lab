@@ -3,7 +3,7 @@
 Create a report from actual current decision receipts rather than imported success
 labels. Keep the input, controller store and generated report private.
 
-The input JSON is a list of one to eight unique receipt references:
+The input JSON is a nonempty list of unique receipt references:
 
 ```json
 [

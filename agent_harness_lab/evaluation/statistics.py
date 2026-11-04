@@ -22,14 +22,21 @@ class TrialRecord:
     critical_regression: bool = False
 
 
+def radius(weights, alpha):
+    return math.sqrt(2 * math.log(2 / alpha) * sum(w * w for w in weights))
+
+
 def bound(values, weights, alpha):
     mean = sum(v * w for v, w in zip(values, weights))
-    radius = math.sqrt(2 * math.log(2 / alpha) * sum(w * w for w in weights))
-    return dict(mean=mean, low=max(-1, mean - radius), high=min(1, mean + radius),
+    half_width = radius(weights, alpha)
+    return dict(mean=mean, low=max(-1, mean - half_width), high=min(1, mean + half_width),
                 independent_roots=len(values), method='weighted_root_Hoeffding', alpha=alpha)
 
 
 def analyze(spec, records, *, cohort_binding=None):
+    if spec.sequential is not None:
+        spec.validate()
+        return dict(status='blocked',reason='owned_sequential_inspection_required',automatic_promotion=False)
     if spec.cohort_manifest_sha256 is not None:
         from .preservation_analysis import analyze as preservation
         return preservation(spec, records, cohort_binding)

@@ -330,20 +330,32 @@ class CorrectionStore(PrivateJournal):
 def main(argv=None):
     import argparse
     from .cli import pinned_arguments
-    parser = argparse.ArgumentParser(prog='ahl grader-correction',description=__doc__)
-    parser.add_argument('--store',type=Path,required=True,help='Explicit private correction review store')
-    actions = parser.add_subparsers(dest='action',required=True)
-    propose = actions.add_parser('propose',help='Freeze an authorized grader-defect declaration and its controls')
-    propose.add_argument('--spec',type=Path,required=True); propose.add_argument('--author',required=True)
+    parser = argparse.ArgumentParser(prog='ahl grader-correction',description='Freeze a declared grader defect, audit replacement controls, record review and explicitly create an immutable corrected bank revision. Corrections never rewrite the original bank or silently repair past outcomes.',epilog='Example: ahl grader-correction --store /private/corrections show --case CASE_SHA256. Put --store before the action. JSON stdout; exits: 0 completed, 1 failed audit/rerun, 2 invalid input, 3 busy/blocked. Audit/rerun require an existing pinned offline runtime.')
+    parser.add_argument('--store',type=Path,required=True,help='Explicit owner-only private CorrectionStore directory for frozen specs/assets, audits, reviews and correction revisions')
+    actions = parser.add_subparsers(dest='action',required=True,help='Select a private correction operation; use ACTION --help for its records and pinned runtime requirements')
+    propose = actions.add_parser('propose',help='Freeze an authorized grader-defect declaration and its controls',description='Copy a declared grader-defect specification and exact replacement/control assets into a private case. Does not execute controls, rewrite a parent bank or correct historical outcomes. Prints JSON with the case ID; exit 0 completed, 2 invalid input, 3 busy.')
+    propose.add_argument('--spec',type=Path,required=True,help='Existing schema-1 correction JSON: exact parent task, replacement grader bundle/version, controls, image_sha256, evidence_refs and reason')
+    propose.add_argument('--author',required=True,help='Stable author identifier for this declared correction; recorded separately from review provenance')
     for name in ('show','audit','review','apply','rerun'):
-        command = actions.add_parser(name); command.add_argument('--case',required=True)
-        if name in ('review','apply','rerun'): command.add_argument('--record',type=Path,required=True)
+        descriptions={
+            'show':'Read private correction state, declared differences and recorded audit/review metadata',
+            'audit':'Run frozen defect/replacement controls in the pinned offline image and record observed evidence',
+            'review':'Append an explicit operator review decision for the exact current correction evidence',
+            'apply':'Create an immutable corrected-bank revision and quarantine affected history; never rewrite the parent bank',
+            'rerun':'Run a fresh pinned baseline/candidate comparison for an explicitly reviewed correction request'}
+        command = actions.add_parser(name,help=descriptions[name],description=descriptions[name],epilog='Prints private JSON metadata; exit 0 completed, 1 failed audit/rerun, 2 rejected input, 3 busy/blocked. Use ahl grader-correction --help for the proposal, review and application sequence.'); command.add_argument('--case',required=True,help='Exact correction case SHA-256 returned by propose in this --store')
+        if name in ('review','apply','rerun'): command.add_argument('--record',type=Path,required=True,help={
+            'review':'Existing review JSON binding the exact current case/evidence and explicit operator decision',
+            'apply':'Existing correction-application request JSON binding the reviewed case, parent bank and quarantine decision',
+            'rerun':'Existing explicit correction-rerun request JSON binding the corrected revision and fresh comparison'}[name])
         if name=='apply':
-            command.add_argument('--parent',type=Path,required=True); command.add_argument('--history-store',type=Path,required=True)
+            command.add_argument('--parent',type=Path,required=True,help='Existing exact parent bank.json selected in the correction request')
+            command.add_argument('--history-store',type=Path,required=True,help='Explicit private HistoryStore whose affected grader-bundle comparisons will be quarantined')
         if name in ('audit','rerun'):
             pinned_arguments(command)
         if name=='rerun':
-            command.add_argument('--baseline',type=Path,required=True); command.add_argument('--candidate',type=Path,required=True)
+            command.add_argument('--baseline',type=Path,required=True,help='Existing immutable baseline harness snapshot directory for the fresh rerun')
+            command.add_argument('--candidate',type=Path,required=True,help='Existing immutable candidate harness snapshot directory for the fresh rerun')
     args = parser.parse_args(argv)
     try:
         store = CorrectionStore(args.store)

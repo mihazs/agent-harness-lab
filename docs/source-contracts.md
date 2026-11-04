@@ -28,7 +28,7 @@ to an instruction or grading authority.
 Behavioral records may later reference normalized v2 events; memory assertions
 must never be converted into fabricated tool events.
 
-`ImportReceipt` contains bounded counts, hashed cursor references, status and limit
+`ImportReceipt` contains nonnegative integer counts, hashed cursor references, status and limit
 coverage. Failed/incomplete imports cannot advance their committed cursor; errors
 or a reached limit cannot report completion. A complete import batch does not
 establish complete historical capture. The receipt validates data; it does not
@@ -54,7 +54,7 @@ adding fields to strict v1 `SourceSpec`, `EvidenceRecord` or `ImportReceipt` obj
 | `IdentityField` | Field name, namespace, optional fingerprint, status, provenance, evidence references, observation/effective times and missing/conflict reason |
 | `ExecutionIdentity` | A subject record revision and at most one receipt per supported identity field |
 | `CoverageManifest` | Expected/observed scope, adapter/parser versions, scan bounds, missing fields, gap reasons, truncation/limit flags and reported completeness |
-| `ExecutionMetadata` | Up to 1,000 subject identities and an optional coverage manifest |
+| `ExecutionMetadata` | Subject identities and an optional coverage manifest, without a fixed count ceiling |
 
 Identity fields cover project/worktree, original task/root, session/parent, attempt,
 requested model alias, served model, runtime/version, effective harness/config,
@@ -73,11 +73,17 @@ instruction-inventory captures do not establish which configuration an execution
 loaded. Preview/status and the explicit private cache context in analyze/doctor
 already expose these declarations and missing fields. Verified execution-receipt
 production and verified cross-source joins remain separate work in
-#44/#45/#46/#53/#58. No receipt authorizes execution or grading.
+#44/#45/#46/#53/#58. The optional [live controller source](controller-sources.md)
+path observes actual pinned workers and fresh graders; its immediate verification
+expires with the live capability, and its journal still stores declarations.
+No receipt authorizes execution or grading.
 
-Fields and collections use fixed bounds: 16 supported identity names, eight evidence
-references or conflict alternatives per field, five scan dimensions and enumerated
-missing/gap reasons. Timestamps require timezones, validity intervals must be ordered,
+Identity names, scan dimensions and missing/gap reasons remain enumerated and
+unique. Subject identities, evidence references and conflict alternatives have no
+fixed count ceiling. A scan bound uses `null` for an unlimited scan, or a
+nonnegative integer for an explicitly selected limit; observed counts must remain
+nonnegative and cannot exceed a finite limit. Timestamps require timezones,
+validity intervals must be ordered,
 and unknown keys or mutable collections are rejected. Coverage's
 `reported_completeness` is a source assertion; import completion and the public
 summary's `capture_completeness: unknown` remain separate from that assertion.
@@ -94,7 +100,8 @@ before collecting source data; a stored provenance label is not that verificatio
 Normalized local v1–v3 exports require matching readbacks of their selected
 payload and declaration before returning a checkpoint-ready snapshot. The reader
 rechecks project/scope, enablement and the original data-file selection before
-each bounded payload read. An observed edit, removal, oversized file or symlink
+each payload read. Payload bytes and record counts have no fixed ceiling. An
+observed edit, removal or symlink
 blocks the operation and leaves an existing committed checkpoint unchanged. A
 changed selector is rejected before reading its replacement, even if its bytes
 would match. Declaration formatting and payload mtime alone do not change the
@@ -166,9 +173,9 @@ be acyclic. These are attributed claims, not causal or independence verification
 No latest-source revision is inferred from arrival order or unknown timestamps.
 
 The POSIX backend creates directories at mode 0700 and journal/lock files at 0600,
-rejecting linked or nonregular files. Defaults bound the committed journal to
-64 MiB and each metadata collection, including total checkpoint history, to
-100,000 entries. There is no automatic eviction of audit history. Committed-file
+rejecting linked or nonregular files. The committed journal and its metadata
+collections have no default size ceiling. Callers can provide positive byte/record
+limits, including for total checkpoint history. There is no automatic eviction of audit history. Committed-file
 limits do not impose a directory-wide disk quota on crash-orphaned temporary files.
 `CommitUncertain` means filesystem commit/durability is uncertain: inspect status
 before retrying. A completed import batch leaves capture completeness unknown and
@@ -192,8 +199,8 @@ provided expected identities. The declaration is read before record data. It is
 local trusted configuration, not proof of remote authentication or Git ownership.
 No identity is inferred from directory names or timestamps.
 
-The data file is a JSON list of complete EvidenceRecord objects, limited to 8 MiB
-and 10,000 records. Only normalized metadata is supported; plaintext body fields,
+The data file is a JSON list of complete EvidenceRecord objects, without an
+implicit byte or record-count limit. Only normalized metadata is supported; plaintext body fields,
 foreign source identities and conflicting revisions are rejected. Preview freezes
 one file read and reports its SHA-256 and count without writing a cache. Import
 uses the same snapshot contract and the journal's checkpoint comparison; failure
@@ -231,13 +238,12 @@ an export assertion to verified execution evidence.
 `local_file/ahl-metadata/v3` adds a payload with exactly `schema_version: 3`,
 `records`, `execution_metadata` and `evidence_graph`. The record/declaration schemas
 stay at version 1. Execution metadata and the graph may independently be null;
-otherwise use their strict `to_dict()` representations. The 8 MiB payload bound
-still applies. Old v1/v2 payloads retain their existing shapes and behavior.
+otherwise use their strict `to_dict()` representations. Payload bytes and collection counts have no implicit size ceiling. Old v1/v2 payloads retain their existing shapes and behavior.
 
 `sources.graph.EvidenceGraph` contains the source, project and scope fingerprints,
-adapter version, up to 10,000 exact `RecordRef` nodes and 20,000 `JoinReceipt`
-claims. A join names its relation, namespace, resolver version, both endpoints
-(with an explicit null for an unavailable target), bounded evidence references,
+adapter version, exact `RecordRef` nodes and `JoinReceipt` claims, without
+fixed collection-size ceilings. A join names its relation, namespace, resolver version, both endpoints
+(with an explicit null for an unavailable target), evidence references,
 status, basis, reason and nullable validity interval. All non-null endpoints and
 evidence must be graph members with existing revisions in the authorized source.
 Foreign sources/projects, dangling revisions, duplicate entries, unknown relation
@@ -280,12 +286,11 @@ filesystem capabilities, malformed caches, foreign scope and linked files reject
 the requested context. A missing/disappearing journal is explicitly `missing`,
 with unknown capture completeness; it is not a successful empty corpus.
 
-The bounded inventory reports source fingerprints/kinds, fingerprinted provider
+The complete inventory reports source fingerprints/kinds, fingerprinted provider
 and adapter/parser versions, cached revision/checkpoint counts, declared execution
 identity fields, coverage gaps/bounds/limits and graph status counts. Provider,
-version and namespace labels from untrusted metadata are not echoed. At most 20
-sources and eight adapter-version fingerprints per source are shown; omissions
-and truncation are explicit. Fingerprints remain private metadata, not an
+version and namespace labels from untrusted metadata are not echoed. Every source
+and adapter-version fingerprint is shown. Fingerprints remain private metadata, not an
 anonymization guarantee. A declared complete scan remains a source assertion.
 
 The report's target-project binding is `unverified`: selecting a scoped source
@@ -383,10 +388,11 @@ unsupported versions, traversal, links, resource expiry and changed declarations
 likewise cannot advance the committed cursor. Selection and source input are
 revalidated after conversion and Snapshot validation.
 
-Limits are the shared 64 MiB file read, 1 MiB line and ten-second lifecycle budget,
-at most 10,000 selected input records/normalized source records and 1,000 execution
-subjects. Coverage `records` counts observed input lines; derived source coverage
-records are separately bounded. Coverage remains partial even at native stop.
+Native source reads stream JSONL records without implicit file, line, record,
+subject-count or time ceilings. The optional `max_records` selection is enforced
+when supplied; omission or `null` means unlimited. Coverage `records` counts
+observed input lines; a `null` scan limit declares no caller-selected bound.
+Coverage remains partial even at native stop.
 The parser mapping is `codex-native-journal-v1`; this is not execution certification.
 `task test:sources:codex` runs native scope, privacy, history, relationship recheck,
 admission and failure controls; installed wheel/archive source tests include them. Incremental
@@ -433,11 +439,13 @@ counts each response once; journal admission additionally checks raw fingerprint
 
 The entire root scan, correlation, record conversion, identity/graph validation,
 selection revalidation and final selected-file/directory verification share one
-bounded lifecycle. Limits remain 64 MiB cumulatively across header/full reads,
-1 MiB per line, ten seconds, 10,000 filesystem entries and depth 64. The descriptor
-caps accepted files at 100, candidate files at 2,000 and total input/normalized
-source records at 10,000; execution subjects remain capped at 1,000. The root
-mapping version is `codex-native-root-journal-v1`.
+stable-input lifecycle. There are no implicit byte, line, filesystem-entry,
+directory-depth, time or collection-count ceilings. Optional descriptor fields
+`max_files`, `max_scan_files` and `max_records` preserve caller-selected limits;
+omission or `null` means unlimited. Coverage declares the selected record/file
+limits and actual counts; `native_summary.bytes_read` reports cumulative reads
+without declaring an aggregate byte bound. The root mapping version is
+`codex-native-root-journal-v1`.
 
 Preview exposes `checkpoint_ready: false` for any selected partial tail, reached
 file/scan cutoff, unsupported header, skipped unsafe entry or empty accepted scan.
@@ -578,12 +586,12 @@ execution's version. Full instruction/import/override graphs, hook lifecycle
 inventory, independently evidenced execution bindings and hosting-provider
 reconciliation remain open in #46/#58/#77–#80.
 
-The first profile caps source reads at 512 MiB, filesystem entries at 10,000,
-directory depth at 64, refs at 1,000 and selected paths at 100. Selection JSON is
-bounded to 64 KiB and each current harness file to 1 MiB. Git output is limited to
-4 MiB per command and 64 MiB per capture, with one ten-second admission deadline
-and child CPU/address-space limits. Source filesystem operations are checked
-between bounded reads but cannot be preempted at an exact deadline. Links,
+Git analysis does not impose default source-byte, entry, directory-depth, ref,
+selected-path, selection-file or command-output size ceilings. Callers can select
+explicit limits. Read-only Git invocation, path-safety and source-readback checks
+remain in place; explicitly bounded callers retain their child resource guards.
+Source filesystem operations are checked between reads but cannot be preempted
+at an exact optional deadline. Links,
 nonregular files, alternate object stores, bare repositories, reftable repositories
 and selected submodule/nested-repository contents are blocked without fallback.
 All observed source metadata are rechecked before returning; failed reads leave
@@ -671,7 +679,7 @@ study remain open in #58.
 
 ### Declared Codex project instruction inventory
 
-An optional `instruction_profile` in the Git selection enables bounded instruction
+An optional `instruction_profile` in the Git selection enables instruction
 discovery within the selected checkout. For the first documented capability contract:
 
 ```json
@@ -684,6 +692,14 @@ discovery within the selected checkout. For the first documented capability cont
   "project_doc_max_bytes": 32768
 }
 ```
+
+`project_doc_max_bytes` is an optional caller-selected bound. Omit it or use `null`
+to inventory instructions without an imposed content limit; a nonnegative integer
+retains that exact bound without an additional application ceiling. Instruction
+files are always read and hashed in full, including when the declared bound blocks
+applicability. The instruction connector does not cap fallback names, selected
+files, inventory nodes or hierarchy edges. Enclosing Git-source resource limits
+remain separate from this inventory contract.
 
 The runtime/version, task location and configuration are caller declarations. The
 reader does not execute Codex, inspect its global configuration or establish that
@@ -703,7 +719,7 @@ rules, managed/global influence and hooks are outside this first profile.
 
 `GitExport.instructions` is a frozen `InstructionInventory`. Its fingerprint binds
 the profile, task cwd, all inspected file hashes/modes, missing-file states and the
-captured `HarnessSnapshot` fingerprint. Preview exposes only hashes and bounded
+captured `HarnessSnapshot` fingerprint. Preview exposes only hashes and
 metadata; import adds a fingerprinted development-artifact inventory record through
 the existing journal. No raw file text/path, applicability decision or discovery
 result grants permission to edit a file. Observed loading and ambient influence
@@ -743,7 +759,7 @@ keys, generated actors, source citations, lifecycle fields and native identifier
 and body text in memory for authorized callers. YAML aliases, custom object tags,
 duplicate/non-text keys and malformed frontmatter are rejected. Native UTC/offset
 timestamps are retained; missing original timestamps stay unknown. Preview exposes
-only bounded counts of authorship, freshness and explicit lifecycle/review claims.
+only counts of authorship, freshness and explicit lifecycle/review claims.
 Human attribution and a reviewed claim are not verified review. Neither memory
 retrieval/injection into an agent nor witnessed tool execution is inferred.
 
@@ -755,8 +771,8 @@ observed through successive imports; Git history, native session correlation and
 handoffs/workstreams remain open in #43. A separate explicit
 [selected MCP page capture](memory-page-capture.md) now supports hash-only journals.
 
-Limits are 500 concepts, 2,000 directory entries, 256 KiB per concept, 16 KiB of
-frontmatter and 4 MiB of concept bytes per operation. Links/special files, nested
+The reader imposes no concept, directory-entry, frontmatter, per-page or aggregate
+byte ceilings. Links/special files, nested
 scope manifests and project mismatches are refused. `.git`, `_pending`, reserved
 index/meta/log files and monthly `log-YYYY-MM.md` names are excluded; a conforming
 ordinary note using a monthly-ledger filename is also excluded in this first slice.
@@ -805,29 +821,36 @@ the endpoint fingerprint, project/workspace name fingerprints, matching server
 version, explicit enablement and configured authentication. Supply authorization
 in memory; the reader inspects no credential stores.
 
-Each bounded operation initializes protocol `2024-11-05`, verifies server name
+Each operation initializes protocol `2024-11-05`, verifies server name
 and version, discovers/pins the scoped tool schemas and calls only a whitelisted
-reader. Discovery is limited to five tool-list pages, with cycle/duplicate/schema
-checks. Server instructions and tool annotations grant no permissions. All tool
+reader. Discovery follows tool-list pagination to exhaustion, with cycle/duplicate/schema
+checks. Caller-selected `max_pages`, `max_requests`, `max_bytes`, `timeout` and
+`seconds` are optional; omitted limits impose no application ceiling. Server
+instructions and tool annotations grant no permissions. All tool
 calls send both workspace and project; global/scopes/cwd overrides and mutators
-are rejected. Query disables answer generation and global search, limits hits to
-20 and excludes supplemental global/profile results from its return value.
-Page reads require matching paths and refuse explicitly truncated bodies.
+are rejected. Query disables answer generation and global search, forwards an
+explicit result limit without an application maximum, and excludes supplemental
+global/profile results. Without a supplied result limit, the server's query
+default applies; a query is not a complete project inventory. Page reads request
+the maximum advertised by the pinned schema, or the documented upstream 64,000
+characters when the schema does not expose that maximum. The pinned read-page
+contract provides no offset pagination. Truncated bodies, missing completeness
+and inconsistent returned character counts remain unavailable for complete capture.
 
-TLS, byte limits, socket timeouts, cooperative deadlines, response cleanup,
+TLS, explicit byte limits, optional socket timeouts and cooperative deadlines, response cleanup,
 redirect refusal and no-retry behavior share the GET transport primitives. RPC
 IDs/errors, tool-level errors and non-JSON results fail closed with redacted public
 errors. Responses are untrusted private data returned in memory, not automatically
 written to a journal or injected into an agent. Server-side access counters may
 change on reads according to ai-memory behavior; no content mutation tool is used.
 
-This bounded mode supports JSON responses from stateless servers. SSE-only and
+This mode supports JSON responses from stateless servers. SSE-only and
 stateful responses are unsupported; an explicitly requested initialization may
 create protocol session state before a stateful header is rejected. Full session
 lifecycle/SSE, remote CLI configuration, native execution facets, correlation
 and live-server verification remain open in #43. The optional
 [MCPPageCapture](memory-page-capture.md) adds selected-page Registry/SourceStore
-captures with shared bounds and readbacks. No server is contacted by package
+captures with caller-selected shared bounds and readbacks. No server is contacted by package
 installation, constructor invocation, help or default source discovery. Native
 tests use synthetic wire responses; they establish client contracts, not live
 server efficacy or scientific independence.

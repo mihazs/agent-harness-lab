@@ -9,9 +9,6 @@ from pathlib import Path
 from tools.diagnose import analyze, normalize
 from agent_harness_lab.telemetry.schema import FIELDS, event as telemetry_event
 
-MAX_RECORD_BYTES = 1024 * 1024
-MAX_READ_BYTES = 64 * 1024 * 1024
-MAX_READ_CHUNKS = 500000
 EVENT_FIELDS = FIELDS
 FAILURES = {'failed', 'execution_error', 'invalid_trace', 'incomplete', 'grader_error', 'budget_exhausted'}
 
@@ -30,39 +27,15 @@ def _regular(path, root):
         return False
 
 
-def _consume(raw, budget):
-    if budget is not None and raw:
-        budget['bytes'] += len(raw)
-        budget['chunks'] += 1
-        if budget['bytes'] > MAX_READ_BYTES or budget['chunks'] > MAX_READ_CHUNKS:
-            raise ValueError('evidence read budget exceeded; select fewer or smaller captures')
-    return raw
-
-
-def _read_limit(budget):
-    return min(MAX_RECORD_BYTES + 1, MAX_READ_BYTES - budget['bytes'] + 1) if budget else MAX_RECORD_BYTES + 1
-
-
-def _rows(path, caveats, digest=None, max_records=None, budget=None):
+def _rows(path, caveats, digest=None):
     try:
         with path.open('rb') as stream:
-            number = 0
             while True:
-                if max_records is not None and number >= max_records:
-                    break
-                raw = _consume(stream.readline(_read_limit(budget)), budget)
+                raw = stream.readline()
                 if not raw:
                     break
-                number += 1
                 if digest is not None:
                     digest.update(raw)
-                if len(raw) > MAX_RECORD_BYTES:
-                    _warn(caveats, 'Oversized capture records were skipped; evidence is incomplete.')
-                    while raw and not raw.endswith(b'\n'):
-                        raw = _consume(stream.readline(_read_limit(budget)), budget)
-                        if digest is not None:
-                            digest.update(raw)
-                    continue
                 if not raw.strip():
                     continue
                 try:
@@ -93,14 +66,12 @@ def _matches(value, project):
         return False
 
 
-def _owned(path, project, caveats, budget):
-    # Only inspect a bounded prefix for scope; never normalize foreign project text.
-    for index, row in enumerate(_rows(path, caveats, max_records=100, budget=budget)):
+def _owned(path, project, caveats):
+    # Establish scope before normalizing any project text.
+    for row in _rows(path, caveats):
         cwd = _cwd(row)
         if cwd is not None:
             return _matches(cwd, project)
-        if index >= 99:
-            break
     return False
 
 
@@ -118,17 +89,15 @@ def _capture_candidates(root):
                     continue
 
 
-def _evaluation_results(project, max_files, sources, fingerprint, caveats, budget):
+def _evaluation_results(project, max_files, sources, fingerprint, caveats):
     root = project / 'artifacts'
-    paths = []
-    for pattern in ('results.json', '*/results.json', '*/*/results.json'):
-        paths.extend(path for path in root.glob(pattern) if _regular(path, root))
+    paths = [path for path in root.rglob('results.json') if _regular(path, root)]
     try:
         paths.sort(key=lambda path: (path.stat().st_mtime_ns, str(path)), reverse=True)
     except OSError:
         _warn(caveats, 'An evaluation file changed during collection; rerun for a stable snapshot.')
         return []
-    if len(paths) > max_files:
+    if max_files is not None and len(paths) > max_files:
         _warn(caveats, 'Evaluation discovery reached its file limit; this is a bounded view.')
     failures = []
     for path in sorted(paths[:max_files], key=str):
@@ -136,16 +105,12 @@ def _evaluation_results(project, max_files, sources, fingerprint, caveats, budge
             continue
         try:
             with path.open('rb') as stream:
-                raw = _consume(stream.read(_read_limit(budget)), budget)
-            if len(raw) > MAX_RECORD_BYTES:
-                raise ValueError()
+                raw = stream.read()
             result = json.loads(raw)
             if not isinstance(result, dict) or not isinstance(result.get('trials'), list):
                 raise ValueError()
-        except (OSError, ValueError, UnicodeError) as exc:
-            if str(exc).startswith('evidence read budget exceeded'):
-                raise
-            _warn(caveats, 'Unreadable, oversized or malformed evaluation reports were skipped.')
+        except (OSError, ValueError, UnicodeError):
+            _warn(caveats, 'Unreadable or malformed evaluation reports were skipped.')
             continue
         trial_metadata = []
         for trial in result['trials']:
@@ -173,9 +138,9 @@ def _evaluation_results(project, max_files, sources, fingerprint, caveats, budge
                      and grade.get('valid') is True and isinstance(grade.get('grader_id'), str)
                      and isinstance(grade.get('grader_version'), str)
                      and type(grade.get('outcome')) is bool and grade['outcome'] == (trial['status'] == 'passed'))
-            failures.append(dict(source=str(path), task=str(trial.get('task', 'unknown'))[:256],
-                                 version=str(trial.get('version', 'unknown'))[:256],
-                                 root_id=trial.get('root') if isinstance(trial.get('root'),str) and len(trial['root'])<=256 else None,
+            failures.append(dict(source=str(path), task=str(trial.get('task', 'unknown')),
+                                 version=str(trial.get('version', 'unknown')),
+                                 root_id=trial.get('root') if isinstance(trial.get('root'),str) else None,
                                  lineage_verified=False, status=trial['status'], evidence_level='observed_evaluation_status',
                                  outcome=('success' if trial['status'] == 'passed' else 'failure') if valid else 'unknown',
                                  outcome_provenance='executable_grader' if valid else 'unknown',
@@ -185,12 +150,12 @@ def _evaluation_results(project, max_files, sources, fingerprint, caveats, budge
     return failures
 
 
-def collect(project, events=None, source_format='normalized', max_files=100, max_events=100000, max_scan_files=2000, event_sink=None, source_version=None, source_root=None, session=None):
+def collect(project, events=None, source_format='normalized', max_files=None, max_events=None, max_scan_files=None, event_sink=None, source_version=None, source_root=None, session=None, sequence_length=None, progress=None, source_identity=None):
     """Return local evidence, not a claim of task success or a causal diagnosis."""
     project = Path(project).resolve()
     if not project.is_dir():
         raise ValueError('project must be an existing directory')
-    if max_files <= 0 or max_events <= 0 or max_scan_files <= 0:
+    if any(value is not None and (type(value) is not int or value <= 0) for value in (max_files,max_events,max_scan_files)):
         raise ValueError('collection limits must be positive')
     if source_format not in ('normalized', 'codex', 'claude', 'ai-memory'):
         raise ValueError('unsupported evidence format')
@@ -199,13 +164,19 @@ def collect(project, events=None, source_format='normalized', max_files=100, max
     from .telemetry.claude_native import VERSION as CLAUDE_NATIVE_VERSION
     codex_pinned = source_format == 'codex' and source_version == CODEX_NATIVE_VERSION
     pinned = codex_pinned or source_format == 'claude' and source_version == CLAUDE_NATIVE_VERSION
+    if source_identity is not None:
+        from .sources.schema import fingerprint as validate_fingerprint
+        validate_fingerprint(source_identity)
+        if events is None or pinned:
+            raise ValueError('logical source identity requires an explicit unpinned event input')
     if source_root is not None and (not codex_pinned or events is not None) or session is not None and source_root is None:
         raise ValueError('native source-root/session requires the explicit pinned Codex profile and excludes --events')
     if source_version is not None and (events is None and source_root is None or not pinned and source_version != CAPABILITIES.get(source_format, {}).get('version')):
         raise ValueError('source version requires an explicit supported capture')
     caveats, sources, errors = [], [], []
+    notify = progress or (lambda stage, **counts: None)
+    notify('discovery', scanned=0, selected=0)
     fingerprint = hashlib.sha256()
-    budget = {'bytes': 0, 'chunks': 0}
     selected = []
     if events is not None or source_root is not None:
         chosen = events if events is not None else source_root
@@ -219,28 +190,39 @@ def collect(project, events=None, source_format='normalized', max_files=100, max
                  (Path(os.environ.get('CLAUDE_CONFIG_DIR', str(Path.home() / '.claude'))) / 'projects', 'claude')]
         candidates = ((mtime, name, path, fmt) for root, fmt in roots
                       for mtime, name, path in _capture_candidates(root))
-        scanned = list(itertools.islice(candidates, max_scan_files + 1))
-        latest = heapq.nlargest(max_scan_files, scanned[:max_scan_files])
-        if len(scanned) > max_scan_files:
-            _warn(caveats, 'Capture discovery reached its separate scan-file limit; older project history may be absent.')
+        def discovered():
+            for scanned, candidate in enumerate(candidates, 1):
+                notify('discovery', scanned=scanned, selected=len(selected))
+                yield candidate
+        if max_scan_files is None:
+            latest = discovered() if max_files is None else sorted(discovered(), reverse=True)
+        else:
+            scanned = list(itertools.islice(discovered(), max_scan_files + 1))
+            latest = heapq.nlargest(max_scan_files, scanned[:max_scan_files])
+            if len(scanned) > max_scan_files:
+                _warn(caveats, 'Capture discovery reached its separate scan-file limit; older project history may be absent.')
         for _, _, path, fmt in latest:
-            if _owned(path, project, caveats, budget):
-                if len(selected) >= max_files:
+            if _owned(path, project, caveats):
+                if max_files is not None and len(selected) >= max_files:
                     _warn(caveats, 'Matching captures reached the accepted-file limit; project history is incomplete.')
                     break
                 selected.append((path, fmt))
+    notify('capture_selection', selected=len(selected), incomplete=int(bool(caveats)))
 
     def normalized_events():
-        for path, fmt in sorted(selected, key=lambda pair: str(pair[0])):
+        total_events = 0
+        for capture, (path, fmt) in enumerate(sorted(selected, key=lambda pair: str(pair[0])), 1):
+            notify('capture_processing', capture=capture, selected=len(selected), events=total_events)
             source_digest = hashlib.sha256()
-            source_id = hashlib.sha256(str(path).encode()).hexdigest()[:16]
+            source_id = (source_identity or hashlib.sha256(str(path).encode()).hexdigest())[:16]
             source = dict(format=fmt, events=0)
-            if pinned: source['path_sha256'] = hashlib.sha256(str(path).encode()).hexdigest()
+            if source_identity is not None: source['source_sha256'] = source_identity
+            elif pinned: source['path_sha256'] = hashlib.sha256(str(path).encode()).hexdigest()
             else: source['path'] = str(path)
             sources.append(source)
             def scoped_rows():
                 active = events is not None
-                for accepted, row in enumerate(_rows(path, caveats, source_digest, budget=budget), 1):
+                for accepted, row in enumerate(_rows(path, caveats, source_digest), 1):
                     cwd = _cwd(row)
                     if cwd is not None and events is None:
                         active = _matches(cwd, project)
@@ -253,11 +235,11 @@ def collect(project, events=None, source_format='normalized', max_files=100, max
                 else:
                     from .telemetry.codex_rollout import read
                 try:
-                    if source_root is None: records, coverage, native_digest = read(path, project, max_records=min(max_events, 100000))
+                    if source_root is None: records, coverage, native_digest = read(path, project, max_records=max_events)
                     else:
                         from .telemetry.codex_discovery import scan
                         records, coverage, native_digest = scan(path, project, session=session, max_files=max_files,
-                            max_scan_files=max_scan_files, max_records=min(max_events, 100000))
+                            max_scan_files=max_scan_files, max_records=max_events)
                 except OSError: raise ValueError('native capture is unavailable or unsafe') from None
                 source.update(native_coverage=coverage)
                 if coverage['partial_tail']: _warn(caveats, 'Native capture has an uncommitted final line; only the complete prefix was projected.')
@@ -280,6 +262,9 @@ def collect(project, events=None, source_format='normalized', max_files=100, max
                 tool_error = event.get('execution_status') == 'error'
                 fingerprint.update(json.dumps(dict(event=event, tool_error=tool_error), sort_keys=True).encode() + b'\n')
                 source['events'] += 1
+                total_events += 1
+                if total_events % 1000 == 0:
+                    notify('capture_processing', capture=capture, selected=len(selected), events=total_events)
                 if tool_error:
                     errors.append(dict(kind='tool_error', status='observed_pattern',
                         evidence=[dict(case_id=event['case_id'], event_id=event['event_id'])],
@@ -288,14 +273,19 @@ def collect(project, events=None, source_format='normalized', max_files=100, max
                     event_sink(event)
                 yield event
             source['sha256'] = native_digest if pinned else source_digest.hexdigest()
+        notify('analysis', events=total_events)
 
-    analysis = analyze(normalized_events(), max_events=max_events)
+    analysis = analyze(normalized_events(), max_events=max_events, sequence_length=sequence_length)
     analysis['findings'].extend(errors)
-    outcomes = [] if events is not None or source_root is not None else _evaluation_results(project, max_files, sources, fingerprint, caveats, budget)
+    notify('evaluation_reports', events=analysis['events'])
+    outcomes = [] if events is not None or source_root is not None else _evaluation_results(project, max_files, sources, fingerprint, caveats)
     if not selected:
         _warn(caveats, 'No matching local capture was found; absence of evidence is not success.')
     failures = [record for record in outcomes if record['status'] in FAILURES]
     successes = [record for record in outcomes if record['status'] == 'passed']
+    stage = 'evidence_empty' if not analysis['events'] and not outcomes else 'evidence_incomplete' if caveats else 'collection_complete'
+    notify(stage, events=analysis['events'], eligible=analysis['eligible_observations'],
+           findings=len(analysis['findings']), evaluation_outcomes=len(outcomes), incomplete=int(bool(caveats)))
     return dict(analysis=analysis, evaluation_failures=failures, evaluation_successes=successes,
                 evaluation_outcomes=outcomes, discovery_limits=dict(scan_files=max_scan_files, accepted_files=max_files), sources=sources,
                 fingerprint=fingerprint.hexdigest(), caveats=caveats)

@@ -67,8 +67,13 @@ def lifecycle_status(content, current):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--apply', action='store_true', help='write changes (default: preview)')
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='Requires authenticated gh access to the repository\'s configured GitHub Project and network access.\n'
+        'Reads the complete current project and prints proposed field changes; preview still makes read-only API requests.\n'
+        'Only --apply writes label mirrors, lifecycle Status and Review & CI fields; it never changes issue labels.\n'
+        'Exit 0: preview/apply completed; validation or API failures exit nonzero.\n'
+        'Examples: python scripts/sync_project.py; python scripts/sync_project.py --apply')
+    parser.add_argument('--apply', action='store_true', help='Write every validated proposed Project field change through GitHub; omit for a read-only preview')
     args = parser.parse_args()
     project = graphql('''query {user(login:"mihazs"){projectV2(number:3){id
       repositories(first:100){nodes{nameWithOwner} pageInfo{hasNextPage}}

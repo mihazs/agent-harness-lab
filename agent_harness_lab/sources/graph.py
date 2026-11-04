@@ -36,7 +36,7 @@ class JoinReceipt(Contract):
         label(self.namespace); label(self.resolver_version)
         if not isinstance(self.left, RecordRef) or self.right is not None and not isinstance(self.right, RecordRef):
             raise ValueError('join endpoints require exact source revisions')
-        frozen(self.evidence, RecordRef, 8)
+        frozen(self.evidence, RecordRef)
         if len({r.key for r in self.evidence}) != len(self.evidence): raise ValueError('duplicate join evidence')
         if (self.status in ('verified', 'reviewed') and (self.right is None or not self.evidence)
                 or self.status == 'verified' and (self.basis != 'native_fields' or self.reason != 'native_proof')
@@ -55,7 +55,7 @@ class JoinReceipt(Contract):
         value = unpack(cls, value)
         value['left'] = RecordRef.parse(value['left'])
         value['right'] = RecordRef.parse(value['right']) if value['right'] is not None else None
-        value['evidence'] = objects(value['evidence'], RecordRef, 8)
+        value['evidence'] = objects(value['evidence'], RecordRef)
         return cls(**value)
 
     @property
@@ -75,7 +75,7 @@ class EvidenceGraph(Contract):
     def __post_init__(self):
         Contract.validate(self, ('source_sha256', 'project_sha256', 'scope_sha256'), {})
         label(self.adapter_version)
-        frozen(self.nodes, RecordRef, 10000); frozen(self.joins, JoinReceipt, 20000)
+        frozen(self.nodes, RecordRef); frozen(self.joins, JoinReceipt)
         if len({r.key for r in self.nodes}) != len(self.nodes) or len({j.sha256 for j in self.joins}) != len(self.joins):
             raise ValueError('duplicate graph node or relationship receipt')
         object.__setattr__(self, 'nodes', tuple(sorted(self.nodes, key=lambda r: digest(r.to_dict()))))
@@ -84,8 +84,8 @@ class EvidenceGraph(Contract):
     @classmethod
     def parse(cls, value):
         value = unpack(cls, value)
-        value['nodes'] = objects(value['nodes'], RecordRef, 10000)
-        value['joins'] = objects(value['joins'], JoinReceipt, 20000)
+        value['nodes'] = objects(value['nodes'], RecordRef)
+        value['joins'] = objects(value['joins'], JoinReceipt)
         return cls(**value)
 
     @property

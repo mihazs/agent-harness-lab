@@ -3,18 +3,15 @@ import html
 import json
 import re
 
-from agent_harness_lab.private_journal import encoded
 from .regressions import fields,sha256
-
-MAX_REPORT_BYTES=32*1024*1024
 
 
 def summary(store,receipt_refs,*,public=False):
     if public: raise ValueError('controller history reports are private, including synthetic-labelled aggregates')
-    if not isinstance(receipt_refs,list) or not 0<len(receipt_refs)<=8:
-        raise ValueError('one to eight explicit controller receipt references required')
+    if not isinstance(receipt_refs,list) or not receipt_refs:
+        raise ValueError('nonempty explicit controller receipt references required')
     from .oracle_history import HistoryStore
-    history=HistoryStore(store); seen=set(); comparisons=[]; total=0
+    history=HistoryStore(store); seen=set(); comparisons=[]
     for ref in receipt_refs:
         fields(ref,'run_id receipt_sha256')
         for value in ref.values(): sha256(value)
@@ -23,8 +20,6 @@ def summary(store,receipt_refs,*,public=False):
         seen.add(key)
         verified=history.verify_decision(*key)
         entry=dict(receipt_sha256=key[1],receipt=verified['receipt'],analysis=verified['analysis'])
-        total+=len(encoded(entry))
-        if total>MAX_REPORT_BYTES: raise ValueError('private controller report byte bound exceeded')
         comparisons.append(entry)
     result=dict(schema_version=1,report_kind='controller_history',algorithm='private-controller-history-report-v1',
         history_store=str(history.root),comparisons=comparisons,publication='private',
@@ -32,7 +27,6 @@ def summary(store,receipt_refs,*,public=False):
         independence='unverified',native_identity='unverified',pooled_treatment_effect=None,
         limitations=['current recomputation is analysis evidence, not certification or adoption',
                      'root independence and native reviewer identity remain unverified'])
-    if len(encoded(result))>MAX_REPORT_BYTES: raise ValueError('private controller report byte bound exceeded')
     for ref,entry in zip(receipt_refs,comparisons):
         current=history.verify_decision(ref['run_id'],ref['receipt_sha256'])
         if current['receipt']!=entry['receipt'] or current['analysis']!=entry['analysis']:

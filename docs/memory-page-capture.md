@@ -2,7 +2,8 @@
 
 The optional Python API `sources.memory_capture.MCPPageCapture` connects the
 existing `AiMemoryMCP` read-only client to Registry and SourceStore. It retrieves
-an explicit selection of at most eight page paths from one configured project.
+an explicit selection of page paths from one configured project without an
+application-imposed count limit.
 It does not search for projects, inspect an active-project pointer, discover
 credentials, run ai-memory, query SQLite, install hooks, or write memory content.
 Constructor, registry probe and journal status make no network request.
@@ -40,13 +41,16 @@ only invokes `memory_read_page`; no server instructions or tool annotations gran
 permission. The supplied authorization remains in memory and errors are redacted.
 Server-side access counters may still change when pages are read.
 
-One cooperative deadline and response-byte budget cover initialization, tool
-discovery, all selected reads and readbacks, and normalization. Limits are eight
-paths, 64,000 Unicode characters per returned page body, five discovery pages per
-read, at most 128 RPC requests, and at most 8 MiB of response bytes. The default
-deadline is 60 seconds; the existing client accepts smaller explicit limits.
-Each stateless page read initializes and pins discovery again under that shared
-budget. The coverage `pages` bound counts all wire RPC replies, including discovery;
+Optional caller-selected deadlines, response-byte budgets, tool-discovery page
+limits and RPC request limits cover initialization, all selected reads and
+readbacks, and normalization. None is imposed by default. There is no application
+page-body ceiling. Reads request the maximum advertised by the pinned schema,
+falling back to the documented upstream 64,000-character maximum. The pinned
+upstream page API has no offset argument: a longer truncated page is unavailable
+for complete capture, rather than silently imported as a full page. An explicit
+per-read `max_chars` bound is also honored by `AiMemoryMCP.read_page`.
+Each stateless page read initializes and pins discovery again under the same
+optional budgets. The coverage `pages` bound counts all wire RPC replies, including discovery;
 selected records and page/readback counts are reported separately.
 DNS and in-process work are not hard-preempted. Readbacks detect observed
 changes; the server supplies no transactionally atomic multi-page snapshot.

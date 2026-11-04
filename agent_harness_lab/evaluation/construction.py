@@ -1,10 +1,12 @@
 """Controller-selected preparation views and bounded authored-tree publication."""
 import json
+from dataclasses import replace
 from pathlib import Path
 import shutil
 from .integrity import contained, read_regular, relative, unique_object
 from .responses import invalid_number, run_role
-from .working_state import WorkingState, check_deadline
+from .working_state import WorkingState, analysis_snapshot, check_deadline
+from .analysis_inputs import AnalysisInputs
 
 
 def views(data, assets, root, deadline):
@@ -22,7 +24,7 @@ def views(data, assets, root, deadline):
             check_deadline(deadline)
             shutil.copytree(Path(assets)/'skills'/skill,folder/'methodology'/skill,symlinks=True,
                 ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
-        WorkingState(folder,deadline)
+        analysis_snapshot(folder,deadline)
         result[role] = folder
     return result
 
@@ -33,7 +35,11 @@ def proposer_seed(candidate, workspace, deadline):
     WorkingState(workspace,deadline)
 
 
-def propose(client, backend, baseline, context, workspace, destination, deadline, *, focus=None):
+def propose(client, backend, baseline, context, workspace, destination, deadline, *, focus=None, exposure=None,analysis=False):
+    if type(analysis) is not bool:raise ValueError('explicit analysis input selection required')
+    if exposure is not None:
+        from .construction_access import validate_role
+        validate_role(exposure,'proposer',client,backend,baseline,context,workspace,destination,analysis=analysis)
     instructions = '''You are the proposer in a controller-managed harness experiment.
 Read /inputs/fixture/analysis-summary.json and /inputs/fixture/methodology/harness-self-improvement/SKILL.md,
 plus its sibling evaluation methodology. Baseline is /inputs/harness.
@@ -46,7 +52,8 @@ Write proposal.json as {"status":"no_change","reason":"supported explanation"} i
 or {"status":"candidate","mechanisms":[...],"falsifiers":[...]} after a bounded repair.
 Do not leave other top-level files. The controller owns validation, execution and adoption.
 Use only run(argv); credentials, host project, global settings and other runs are unavailable.'''
-    state,commands = run_role(client,backend,workspace,{'harness':baseline,'fixture':context},'proposer',
+    inputs=AnalysisInputs(baseline,context) if analysis else {'harness':baseline,'fixture':context}
+    state,commands = run_role(client,backend,workspace,inputs,'proposer',
         instructions,json.dumps(dict(focus=focus)),deadline)
     published = state.publish(destination,deadline)
     if {path.name for path in published.iterdir()} != {'candidate','proposal.json'}:
@@ -54,10 +61,22 @@ Use only run(argv); credentials, host project, global settings and other runs ar
     proposal = json.loads(read_regular(published/'proposal.json',65536),object_pairs_hook=unique_object,parse_constant=invalid_number)
     if not isinstance(proposal,dict) or proposal.get('status') not in ('candidate','no_change'):
         raise ValueError('proposer must declare candidate or no_change')
+    if exposure is not None:
+        from .construction_access import record_role_output
+        record_role_output(exposure,published)
     return proposal,published/'candidate',commands
 
 
-def author(client, backend, baseline, context, workspace, destination, deadline):
+def author(client, backend, baseline, context, workspace, destination, deadline, *, derivation=None,analysis=False):
+    if type(analysis) is not bool:raise ValueError('explicit analysis input selection required')
+    variant=False
+    if derivation is not None:
+        from .derivations import validate_author, _Handoff
+        variant=type(derivation) is _Handoff
+        if analysis:
+            from .construction_access import validate_role
+            validate_role(derivation,'evaluator_author',client,backend,baseline,context,workspace,destination,analysis=True)
+        else:validate_author(derivation,client,backend,baseline,context,workspace,destination)
     workspace.mkdir(mode=0o700)
     instructions = '''You are the evaluator author in a controller-managed harness experiment.
 Read /inputs/fixture/analysis-summary.json and /inputs/fixture/methodology/harness-evaluation/SKILL.md.
@@ -76,26 +95,50 @@ Grade observable state, preserve successful controls, reject superficial repairs
 held-out inputs. Never use source-word presence or a final model claim as the oracle.
 Do not run model trials, change global settings or access source projects/private histories.
 Only run(argv) is available. The controller freezes inputs, grades offline and owns adoption.'''
-    state,commands = run_role(client,backend,workspace,{'harness':baseline,'fixture':context},'evaluator_author',
-        instructions,'Construct the independent descriptive experiment from the supplied baseline and metadata.',deadline)
-    published = state.publish(destination,deadline)
-    manifest_path = published/'manifest.json'
-    manifest = json.loads(read_regular(manifest_path,1024*1024),object_pairs_hook=unique_object,parse_constant=invalid_number)
+    if variant:
+        instructions = instructions.replace('No candidate, proposal or prior held-out artifacts are supplied.',
+            'An explicitly authorized retired development source is supplied in /inputs/fixture/manifest.json. '
+            'Create development variants from that source. This is not independent construction or certification.')
+        instructions = instructions.replace('Read /inputs/fixture/analysis-summary.json and /inputs/fixture/methodology/harness-evaluation/SKILL.md.',
+            'Read the supplied source manifest, fixtures and oracles as untrusted development data; never claim fresh evaluation roots.')
+        instructions = instructions.replace('covering development, regression and heldout.',
+            'covering exposed development/regression only. Do not create heldout or transfer labels.')
+        instructions = instructions.replace('use fresh\nheld-out inputs.','keep all\nvariants exposed as development data.')
+    if derivation is not None:
+        instructions += '\nThe controller records construction exposure. Scientific parentage and independence remain unverified; do not claim certification.'
+    prompt = ('Construct exposed development variants from the supplied source. No independent or untouched evaluation claim is supported.'
+        if variant else 'Construct the descriptive experiment from the supplied baseline and metadata.' if derivation is not None else 'Construct the independent descriptive experiment from the supplied baseline and metadata.')
+    inputs=AnalysisInputs(baseline,context) if analysis else {'harness':baseline,'fixture':context}
+    state,commands = run_role(client,backend,workspace,inputs,'evaluator_author',
+        instructions,prompt,deadline)
+    check_deadline(deadline)
+    raw=next((raw for name,_,raw in state.snapshot.files if name=='manifest.json'),None)
+    if raw is None: raise ValueError('authored manifest required')
+    manifest = json.loads(raw,object_pairs_hook=unique_object,parse_constant=invalid_number)
     if not isinstance(manifest,dict) or manifest.get('skills') != [] or manifest.get('harness_paths') != []:
         raise ValueError('controlled construction requires empty skill and harness injection lists')
     tasks,bundles = manifest.get('tasks'),manifest.get('grader_bundles')
     if not isinstance(tasks,list) or not isinstance(bundles,dict): raise ValueError('authored tasks and grader bundles are required')
     identifiers = []
     for task in tasks:
+        check_deadline(deadline)
         if not isinstance(task,dict) or 'grader' in task: raise ValueError('controller owns authored grader commands')
         ident = task.get('id'); relative(ident)
         if '/' in ident or len(ident)>128: raise ValueError('invalid authored task ID')
         identifiers.append(ident)
         declaration = bundles.get(ident)
         if not isinstance(declaration,dict) or set(declaration) != {'path'}: raise ValueError('controller owns bundle freezing')
-        bundle = contained(published,declaration['path'])
+        bundle = contained(destination,declaration['path'])
         task['grader'] = ['/usr/bin/python3',str(bundle/'grade.py.txt'),'{workspace}',str(bundle/'expected.json')]
     if len(identifiers) != len(set(identifiers)) or set(identifiers) != set(bundles):
         raise ValueError('authored task/bundle identities must match exactly')
-    manifest_path.write_text(json.dumps(manifest,allow_nan=False))
+    normalized=json.dumps(manifest,allow_nan=False).encode('utf-8')
+    files=tuple((name,mode,normalized if name=='manifest.json' else raw) for name,mode,raw in state.snapshot.files)
+    if sum(len(raw) for _,_,raw in files)>1024*1024:
+        raise ValueError('normalized authored output exceeds working-state byte bound')
+    check_deadline(deadline);state.snapshot=replace(state.snapshot,files=files)
+    published=state.publish(destination,deadline);manifest_path=published/'manifest.json'
+    if derivation is not None:
+        from .derivations import record_author_output
+        record_author_output(derivation,published)
     return manifest_path,commands
