@@ -680,7 +680,7 @@ study remain open in #58.
 
 ### Declared Codex project instruction inventory
 
-An optional `instruction_profile` in the Git selection enables bounded instruction
+An optional `instruction_profile` in the Git selection enables instruction
 discovery within the selected checkout. For the first documented capability contract:
 
 ```json
@@ -693,6 +693,14 @@ discovery within the selected checkout. For the first documented capability cont
   "project_doc_max_bytes": 32768
 }
 ```
+
+`project_doc_max_bytes` is an optional caller-selected bound. Omit it or use `null`
+to inventory instructions without an imposed content limit; a nonnegative integer
+retains that exact bound without an additional application ceiling. Instruction
+files are always read and hashed in full, including when the declared bound blocks
+applicability. The instruction connector does not cap fallback names, selected
+files, inventory nodes or hierarchy edges. Enclosing Git-source resource limits
+remain separate from this inventory contract.
 
 The runtime/version, task location and configuration are caller declarations. The
 reader does not execute Codex, inspect its global configuration or establish that
@@ -712,7 +720,7 @@ rules, managed/global influence and hooks are outside this first profile.
 
 `GitExport.instructions` is a frozen `InstructionInventory`. Its fingerprint binds
 the profile, task cwd, all inspected file hashes/modes, missing-file states and the
-captured `HarnessSnapshot` fingerprint. Preview exposes only hashes and bounded
+captured `HarnessSnapshot` fingerprint. Preview exposes only hashes and
 metadata; import adds a fingerprinted development-artifact inventory record through
 the existing journal. No raw file text/path, applicability decision or discovery
 result grants permission to edit a file. Observed loading and ambient influence
