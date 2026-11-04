@@ -32,12 +32,18 @@ def digest(root):
     return h.hexdigest()
 
 
-def execute(argv, cwd, timeout, stdin=None):
+def managed_environment(parent_id):
+    environment=dict(os.environ)
+    environment['AHL_MANAGED_PREPARATION']=str(parent_id)
+    return environment
+
+
+def execute(argv, cwd, timeout, stdin=None,*,env=None):
     start = time.monotonic()
     try:
         process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   text=True, start_new_session=True)
+                                   text=True, start_new_session=True,**({} if env is None else dict(env=env)))
         try:
             out, err = process.communicate(stdin, timeout=timeout)
             return dict(exit_code=process.returncode, stdout=out, stderr=err,
@@ -738,6 +744,8 @@ def main():
         'Read results.json for machine output; passing trials never authorize promotion. Exit 0: passing trials or supported/rejected sequential decision;\n'
         '1: failed/incomplete execution; 2: setup/input error; 3: blocked/inconclusive sequential analysis.\n'
         'Example: ahl evaluate --manifest tasks.json --baseline baseline --candidate candidate --output /tmp/ahl-evaluation')
+    if 'AHL_MANAGED_PREPARATION' in os.environ:
+        parser.exit(3,'evaluation: managed preparation cannot start nested trials\n')
     for name in ('manifest', 'baseline', 'candidate', 'output'):
         parser.add_argument('--' + name, required=True, help={
             'manifest':'Existing JSON task manifest with tasks and fixture/grader references resolved relative to its directory',

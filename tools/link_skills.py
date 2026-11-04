@@ -50,6 +50,8 @@ def main(argv=None, source=None):
         epilog='Creates links for harness-evaluation and harness-self-improvement; replaces existing directories only after backup.\n'
         'Foreign symlinks and non-directories are refused; already-current links are unchanged.\n'
         'Prints a text receipt or backup location; does not run agents or install dependencies.\n'
+        'Run this project\'s harness-self-improvement once with: ahl skills invoke [PROJECT]; PROJECT defaults to the\n'
+        'current directory and installation alone does not start a run.\n'
         'Example: ahl skills --destination /tmp/ahl-skills --backup-root /tmp/ahl-skill-backups')
     target = parser.add_mutually_exclusive_group()
     target.add_argument('--agent', choices=('codex', 'claude'), default='codex',

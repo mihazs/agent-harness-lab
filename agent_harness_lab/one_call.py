@@ -14,6 +14,20 @@ import time
 from . import config
 
 
+def invocation_context(args,output,deadline,*,remaining_seconds=None,remaining_trials=None):
+    """Descriptive parent context; these fields never issue execution authority."""
+    settings=getattr(args,'project_settings',None) or {}
+    application=settings.get('application',{})
+    return dict(schema_version=1,profile='ahl-skill-invocation-context-v1',scope='project',
+        origin=getattr(args,'_invocation_origin','cli'),parent_run_id=Path(output).name,
+        project=str(args.project),runtime=args.agent,configuration_sha256=getattr(args,'configuration_sha256',None),
+        policy=application.get('policy'),review_store=application.get('review_store'),authorization_id=application.get('authorization_id'),
+        bank_case_id=application.get('bank_case_id'),deadline=deadline,trial_limit=getattr(args,'trial_limit',24),
+        remaining_seconds=max(0,deadline-time.monotonic()) if remaining_seconds is None else max(0,remaining_seconds),
+        remaining_trials=getattr(args,'trial_limit',24) if remaining_trials is None else remaining_trials,
+        execution_authority=False,publication_allowed=False)
+
+
 def resolve(args, explicit):
     """Resolve execution intent without treating project data as authorization."""
     path = args.project / 'ahl.json'
