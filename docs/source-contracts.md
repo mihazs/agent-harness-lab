@@ -389,10 +389,11 @@ unsupported versions, traversal, links, resource expiry and changed declarations
 likewise cannot advance the committed cursor. Selection and source input are
 revalidated after conversion and Snapshot validation.
 
-Limits are 64 MiB per capture file, 1 MiB per line and a ten-second lifecycle budget,
-at most 10,000 selected input records/normalized source records and 1,000 execution
-subjects. Coverage `records` counts observed input lines; derived source coverage
-records are separately bounded. Coverage remains partial even at native stop.
+Native source reads stream JSONL records without implicit file, line, record,
+subject-count or time ceilings. The optional `max_records` selection is enforced
+when supplied; omission or `null` means unlimited. Coverage `records` counts
+observed input lines; a `null` scan limit declares no caller-selected bound.
+Coverage remains partial even at native stop.
 The parser mapping is `codex-native-journal-v1`; this is not execution certification.
 `task test:sources:codex` runs native scope, privacy, history, relationship recheck,
 admission and failure controls; installed wheel/archive source tests include them. Incremental
@@ -439,13 +440,12 @@ counts each response once; journal admission additionally checks raw fingerprint
 
 The entire root scan, correlation, record conversion, identity/graph validation,
 selection revalidation and final selected-file/directory verification share one
-bounded lifecycle. Limits remain 64 MiB per selected file, 1 MiB per header/line,
-ten seconds, 10,000 filesystem entries and depth 64. There is no cumulative byte
-ceiling across header and selected-file reads. The descriptor
-caps accepted files at 100, candidate files at 2,000 and total input/normalized
-source records at 10,000; execution subjects remain capped at 1,000. Coverage
-declares record/file bounds; `native_summary.bytes_read` reports actual cumulative
-reads without declaring an aggregate byte bound. The root mapping version is
+stable-input lifecycle. There are no implicit byte, line, filesystem-entry,
+directory-depth, time or collection-count ceilings. Optional descriptor fields
+`max_files`, `max_scan_files` and `max_records` preserve caller-selected limits;
+omission or `null` means unlimited. Coverage declares the selected record/file
+limits and actual counts; `native_summary.bytes_read` reports cumulative reads
+without declaring an aggregate byte bound. The root mapping version is
 `codex-native-root-journal-v1`.
 
 Preview exposes `checkpoint_ready: false` for any selected partial tail, reached

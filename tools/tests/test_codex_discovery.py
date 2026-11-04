@@ -56,11 +56,12 @@ class CodexDiscoveryTests(unittest.TestCase):
             rows = deepcopy(self.rows); rows[0]['payload']['cwd'] = str(self.root/'foreign')
             path = self.write(f'rollout-2099-foreign-{index}.jsonl', rows[:1])
             with path.open('ab') as stream: stream.truncate(128*1024*1024)
-        original = Folder.read; full = []
-        def observe(folder, name, maximum=65536, **options):
-            if not options.get('prefix'): full.append(Path(name).name)
-            return original(folder, name, maximum, **options)
-        with patch.object(Folder, 'read', observe): result = self.collect(max_files=1)
+        from agent_harness_lab.telemetry.codex_discovery import decode
+        full = []
+        def observe(folder, name, *args, **options):
+            full.append(Path(name).name)
+            return decode(folder, name, *args, **options)
+        with patch('agent_harness_lab.telemetry.codex_discovery.decode', observe): result = self.collect(max_files=1)
         self.assertEqual(full, [own.name]); self.assertEqual(result['analysis']['events'], 6)
         discovery = self.coverage(result)['discovery']
         self.assertEqual(discovery['foreign_files'], 3); self.assertEqual(discovery['reached_limits'], [])
@@ -154,10 +155,33 @@ class CodexDiscoveryTests(unittest.TestCase):
 
     def test_filesystem_entry_budget_still_fails_closed(self):
         self.write('rollout-2026-a.jsonl'); self.write('rollout-2026-b.jsonl')
-        with patch('agent_harness_lab.sources.git_view.MAX_ENTRIES', 1), self.assertRaises(ValueError): self.collect()
+        with patch('agent_harness_lab.sources.git_view.MAX_ENTRIES', 1):
+            self.assertTrue(self.collect()['analysis']['events'])
+            with Folder(self.root, None) as folder, self.assertRaises(ValueError): list(folder.walk('captures'))
+
+    def test_discovery_has_no_default_file_scan_or_depth_ceiling(self):
+        from agent_harness_lab.telemetry.codex_discovery import scan
+        for index in range(2001): self.write(f'rollout-{index}.jsonl')
+        records, summary, _ = scan(self.captures, self.project)
+        self.assertTrue(records)
+        self.assertEqual(summary['discovery']['accepted_files'], 2001)
+        self.assertEqual(summary['discovery']['reached_limits'], [])
+        self.assertIsNone(summary['discovery']['max_files'])
+        limited = scan(self.captures, self.project, max_files=101)[1]['discovery']
+        self.assertEqual(limited['accepted_files'], 101)
+        self.assertEqual(limited['reached_limits'], ['accepted_files'])
+        self.write('nested/'*70+'rollout-deep.jsonl')
+        self.assertEqual(scan(self.captures, self.project)[1]['discovery']['accepted_files'], 2002)
+
+    def test_explicit_file_line_and_record_limits_are_not_ignored(self):
+        from agent_harness_lab.telemetry.codex_discovery import scan
+        path = self.write('rollout-2026-a.jsonl')
+        for options in (dict(max_bytes=path.stat().st_size-1), dict(max_line_bytes=1), dict(max_records=5)):
+            with self.subTest(options=options), self.assertRaises(ValueError): scan(self.captures, self.project, **options)
+        self.assertTrue(scan(self.captures, self.project, max_records=100001)[0])
 
     def test_selected_captures_can_exceed_former_combined_read_limit(self):
-        from agent_harness_lab.telemetry.native import MAX_BYTES
+        MAX_BYTES = 64*1024*1024
         for index in range(2):
             self.fixture.pad_capture(self.write(f'rollout-2026-{index}.jsonl'))
         result = self.collect(); discovery = self.coverage(result)['discovery']
@@ -165,12 +189,12 @@ class CodexDiscoveryTests(unittest.TestCase):
         self.assertGreater(discovery['bytes_read'], MAX_BYTES)
 
     def test_foreign_header_reads_have_no_combined_byte_ceiling(self):
-        from agent_harness_lab.telemetry.native import MAX_BYTES, MAX_LINE_BYTES
+        MAX_BYTES, MAX_LINE_BYTES = 64*1024*1024, 1024*1024
         self.write('rollout-2000-own.jsonl')
         foreign = deepcopy(self.rows[:1]); foreign[0]['payload']['cwd'] = str(self.root/'foreign')
+        foreign[0]['payload']['padding'] = 'x'*MAX_LINE_BYTES
         for index in range(MAX_BYTES//MAX_LINE_BYTES+1):
-            path = self.write(f'rollout-2099-{index}.jsonl', foreign)
-            with path.open('ab') as stream: stream.truncate(MAX_LINE_BYTES)
+            self.write(f'rollout-2099-{index}.jsonl', foreign)
         discovery = self.coverage(self.collect())['discovery']
         self.assertEqual(discovery['accepted_files'], 1)
         self.assertEqual(discovery['foreign_files'], 65)
@@ -184,14 +208,14 @@ class CodexDiscoveryTests(unittest.TestCase):
             self.assertTrue(self.fixture.capture()[0])
             self.assertTrue(self.collect()['analysis']['events'])
 
-    def test_oversized_header_is_not_admitted_for_a_full_read(self):
-        from agent_harness_lab.telemetry.native import MAX_LINE_BYTES
+    def test_large_header_is_admitted_without_an_implicit_line_limit(self):
+        MAX_LINE_BYTES = 1024*1024
         rows = deepcopy(self.rows[:1]); rows[0]['payload']['padding'] = 'x'*MAX_LINE_BYTES
         self.write('rollout-2026-large-header.jsonl', rows)
         discovery = self.coverage(self.collect())['discovery']
-        self.assertEqual(discovery['accepted_files'], 0)
-        self.assertEqual(discovery['unsupported_headers'], 1)
-        self.assertEqual(discovery['bytes_read'], MAX_LINE_BYTES)
+        self.assertEqual(discovery['accepted_files'], 1)
+        self.assertEqual(discovery['unsupported_headers'], 0)
+        self.assertGreater(discovery['bytes_read'], MAX_LINE_BYTES)
 
     def test_prefix_reads_remain_bounded_and_do_not_relax_existing_full_read_admission(self):
         self.write('rollout-2026-a.jsonl')
@@ -200,26 +224,27 @@ class CodexDiscoveryTests(unittest.TestCase):
             with self.assertRaises(ValueError): folder.read('captures/rollout-2026-a.jsonl', 16)
 
     def test_source_mutation_after_accepted_header_aborts_without_partial_events(self):
-        selected = self.write('rollout-2026-a.jsonl'); original = Folder.read
-        def mutate(folder, name, maximum=65536, **options):
-            raw = original(folder, name, maximum, **options)
-            if options.get('prefix'):
+        from agent_harness_lab.telemetry.codex_discovery import lines
+        selected = self.write('rollout-2026-a.jsonl')
+        def mutate(*args, **options):
+            try: yield from lines(*args, **options)
+            finally:
                 with selected.open('ab') as stream: stream.write(b' ')
-            return raw
         events = []
-        with patch.object(Folder, 'read', mutate), self.assertRaises(ValueError): self.collect(event_sink=events.append)
+        with patch('agent_harness_lab.telemetry.codex_discovery.lines', mutate), self.assertRaises(ValueError): self.collect(event_sink=events.append)
         self.assertEqual(events, [])
 
     def test_foreign_append_is_not_a_selected_snapshot_dependency(self):
         self.write('rollout-2000-own.jsonl')
         foreign = deepcopy(self.rows[:1]); foreign[0]['payload']['cwd'] = str(self.root/'foreign')
-        path = self.write('rollout-2099-foreign.jsonl', foreign); original = Folder.read
-        def append(folder, name, maximum=65536, **options):
-            raw = original(folder, name, maximum, **options)
-            if Path(name).name == path.name:
-                with path.open('ab') as stream: stream.write(b' ')
-            return raw
-        with patch.object(Folder, 'read', append): result = self.collect()
+        from agent_harness_lab.telemetry.codex_discovery import lines
+        path = self.write('rollout-2099-foreign.jsonl', foreign)
+        def append(folder, name, **options):
+            try: yield from lines(folder, name, **options)
+            finally:
+                if Path(name).name == path.name:
+                    with path.open('ab') as stream: stream.write(b' ')
+        with patch('agent_harness_lab.telemetry.codex_discovery.lines', append): result = self.collect()
         self.assertEqual(result['analysis']['events'], 6)
 
     def test_selection_flags_cannot_fall_back_to_default_discovery(self):
@@ -254,13 +279,13 @@ class CodexDiscoveryTests(unittest.TestCase):
 
     def test_shared_deadline_still_applies_during_final_correlation(self):
         self.write('rollout-2026-a.jsonl')
-        from agent_harness_lab.telemetry.codex_discovery import correlated
+        from agent_harness_lab.telemetry.codex_discovery import correlated, scan
         clock = [0]
         def delayed(records, *args):
             clock[0] = 11
             return correlated(records, *args)
-        events = []
-        with patch('agent_harness_lab.telemetry.codex_discovery.time.monotonic', side_effect=lambda: clock[0]), \
-             patch('agent_harness_lab.telemetry.codex_discovery.correlated', delayed), self.assertRaises(ValueError):
-            self.collect(event_sink=events.append)
-        self.assertEqual(events, [])
+        with patch('agent_harness_lab.sources.git_view.time.monotonic', side_effect=lambda: clock[0]), \
+             patch('agent_harness_lab.telemetry.codex_discovery.correlated', delayed):
+            self.assertTrue(scan(self.captures, self.project)[0])
+            clock[0] = 0
+            with self.assertRaises(TimeoutError): scan(self.captures, self.project, deadline=10)

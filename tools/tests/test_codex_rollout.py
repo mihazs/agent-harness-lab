@@ -1,5 +1,5 @@
 """Synthetic fixtures for the publicly pinned Codex 0.166.0 wire schema."""
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from copy import deepcopy
 import io
 import json
@@ -108,10 +108,63 @@ class CodexRolloutTests(unittest.TestCase):
         self.path.write_text(header+'x'*(1024*1024+1)+'\n')
         with self.assertRaises(ValueError): self.capture()
 
-    def test_individual_native_file_limit_still_rejects_oversized_capture(self):
-        from agent_harness_lab.telemetry.native import MAX_BYTES
-        with self.path.open('ab') as stream: stream.truncate(MAX_BYTES+1)
-        with self.assertRaisesRegex(ValueError, 'bounded single-link regular file'): self.capture()
+    def test_large_capture_streams_without_an_implicit_file_limit(self):
+        from agent_harness_lab.sources.git_view import Folder
+        payload = dict(text='x'*(512*1024))
+        with self.path.open('a') as stream:
+            for ordinal in range(6, 138): stream.write(json.dumps(self.row('future_native', payload, ordinal))+'\n')
+        self.assertGreater(self.path.stat().st_size, 64*1024*1024)
+        with patch.object(Folder, 'read', side_effect=AssertionError('native captures must stream')):
+            records, _, sha256 = self.capture()
+        import hashlib
+        with self.path.open('rb') as stream: self.assertEqual(sha256, hashlib.file_digest(stream, 'sha256').hexdigest())
+        self.assertTrue(records)
+        with self.assertRaises(ValueError): read(self.path, self.project, max_bytes=64*1024*1024)
+
+    def test_large_header_and_metadata_are_accepted_unless_a_line_limit_is_selected(self):
+        self.rows[0]['payload'].update(id='thread-'+'x'*5000, padding='x'*(1024*1024))
+        self.write(); self.assertTrue(self.capture()[0])
+        with self.assertRaises(ValueError): read(self.path, self.project, max_line_bytes=1024*1024)
+
+    def test_jsonl_has_no_implicit_record_ceiling_and_preserves_explicit_limits(self):
+        from agent_harness_lab.sources.git_view import Folder
+        from agent_harness_lab.telemetry.native import jsonl
+        self.path.write_bytes(b'{}\n'*100001)
+        seen = [0]
+        def consume(row, position): seen[0] += 1
+        with Folder(self.root, None, limit_total_bytes=False) as folder:
+            self.assertEqual(jsonl(folder, self.path.name, None, consume)[2], 100001)
+            with self.assertRaises(ValueError): jsonl(folder, self.path.name, 100000, consume)
+        self.assertGreater(seen[0], 100000)
+
+    def test_interrupted_stream_closes_the_guarded_file(self):
+        from agent_harness_lab.sources.git_view import Folder
+        from agent_harness_lab.telemetry.native import jsonl
+        descriptors = []
+        def interrupted(row, position): raise RuntimeError('synthetic interrupted consumer')
+        with Folder(self.root, None) as folder:
+            original = folder.open
+            @contextmanager
+            def observed(*args, **options):
+                with original(*args, **options) as opened:
+                    descriptors.append(opened[0]); yield opened
+            with patch.object(folder, 'open', observed), self.assertRaisesRegex(RuntimeError, 'interrupted consumer'):
+                jsonl(folder, self.path.name, None, interrupted)
+            for descriptor in descriptors:
+                with self.assertRaises(OSError): os.fstat(descriptor)
+        self.assertEqual(len(descriptors), 1)
+
+    def test_more_than_former_pending_limit_keeps_all_links_and_duplicate_results(self):
+        self.rows = self.rows[:1]
+        for kind in ('function_call', 'function_call_output'):
+            for index in range(4097):
+                self.rows.append(self.row('response_item', dict(type=kind, name='exec_command', call_id=str(index)), len(self.rows)))
+        self.rows.append(self.row('response_item', dict(type='function_call_output', call_id='0'), len(self.rows)))
+        self.write(); records = self.capture()[0]
+        results = [row for row in records if row['activity'] == 'tool_result']
+        self.assertEqual(sum(row['capture_status'] == 'linked' for row in results), 4097)
+        self.assertEqual(results[-1]['capture_status'], 'duplicate_result')
+        self.assertFalse(any(row['capture_status'] in ('pending_limit', 'unmatched_call') for row in records))
 
     def test_symlinks_hardlinks_parent_links_and_mutating_files_are_rejected(self):
         with patch('agent_harness_lab.config.supported', return_value=False), self.assertRaises(NotImplementedError): self.capture()

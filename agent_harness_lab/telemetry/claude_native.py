@@ -57,10 +57,10 @@ class Projection:
         if ident in self.raw_revisions and self.raw_revisions[ident] != raw_revision:
             raise ValueError('conflicting native Claude record revisions')
         previous = self.seen.get(ident)
-        quota = previous[1] if previous is not None else self.limit-len(self.rows)
+        quota = previous[1] if previous is not None else None if self.limit is None else self.limit-len(self.rows)
         def emit(activity, index=0, **metadata):
             self.check()
-            if len(observations) >= quota: raise ValueError('native Claude normalized event budget exceeded')
+            if quota is not None and len(observations) >= quota: raise ValueError('native Claude normalized event budget exceeded')
             observations.append(event(dict(base, event_id=self.scoped(self.session, writer, ident, index), activity=activity, **metadata)))
         if row.get('isCompactSummary') or kind == 'system' and row.get('subtype') == 'compact_boundary':
             emit('compaction')
@@ -84,7 +84,7 @@ class Projection:
                     if response is None or any(value is None for value in usage[:2]): self.unattributed += 1
             content = message.get('content')
             if isinstance(content, str): content = [dict(type='text')]
-            if not isinstance(content, list) or len(content) > 4096: raise ValueError('invalid native Claude content blocks')
+            if not isinstance(content, list): raise ValueError('invalid native Claude content blocks')
             for index, block in enumerate(content):
                 if not isinstance(block, dict): raise ValueError('invalid native Claude content block')
                 block_type = block.get('type')
@@ -131,7 +131,7 @@ class Projection:
             for facet, values in (('usage', receipt['usage']), ('stop', receipt['stops'])):
                 check()
                 if not values: continue
-                if len(self.rows) >= self.limit: raise ValueError('native Claude response event budget exceeded')
+                if self.limit is not None and len(self.rows) >= self.limit: raise ValueError('native Claude response event budget exceeded')
                 conflicting = len(receipt['models']) > 1
                 supporting = None
                 if facet == 'usage':
@@ -155,11 +155,11 @@ class Projection:
         return tuple(sorted(self.rows, key=lambda r: r['capture_order'])), conflicts
 
 
-def decode(folder, name, project, max_records, *, revisions=None):
+def decode(folder, name, project, max_records, *, revisions=None, **limits):
     projection = Projection(project, max_records, folder.check, revisions)
-    sha256, partial, count = jsonl(folder, name, max_records, projection.add)
+    sha256, partial, count = jsonl(folder, name, max_records, projection.add, **limits)
     rows, conflicts = projection.finish(folder.check)
-    if len(rows) > max_records: raise ValueError('native Claude normalized event budget exceeded')
+    if max_records is not None and len(rows) > max_records: raise ValueError('native Claude normalized event budget exceeded')
     summary = dict(adapter_version=VERSION, upstream_commit=UPSTREAM_COMMIT, capture_completeness='partial', partial_tail=partial,
         inherited_records_skipped=0, duplicates_skipped=projection.duplicates, unsupported_records=projection.unsupported,
         input_records=count, session_sha256=projection.scoped('session', projection.session), conflicting_response_facets=conflicts, unattributed_usage_records=projection.unattributed,
@@ -168,5 +168,5 @@ def decode(folder, name, project, max_records, *, revisions=None):
     return rows, summary, sha256
 
 
-def read(path, project, max_records=100000):
-    return guarded(path, project, decode, max_records)
+def read(path, project, max_records=None, **limits):
+    return guarded(path, project, decode, max_records, **limits)
