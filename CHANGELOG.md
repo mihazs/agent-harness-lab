@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.77.0
+
+### Minor Changes
+
+- 6d77ddd: Bind structural and behavioral change proposals to one immutable private review contract, with exact file inventories and a shared identity carried into guarded structural application receipts.
+
 ## 0.76.19
 
 ### Patch Changes

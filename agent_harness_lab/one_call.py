@@ -153,17 +153,26 @@ def contracts(args):
             contract='minimal-agent-skill-header-without-bom-v1',
             before_sha256=hashlib.sha256(raw).hexdigest(), after_sha256=hashlib.sha256(repaired).hexdigest()))
     proposed = candidate_states(candidate, original)
+    from .harness_change_plan import produce,attach
+    common_plan=produce(args,original,proposed,analysis=dict(kind='deterministic_contract_inventory'),evidence=operations,
+        diagnosis=dict(contract='minimal-agent-skill-header-without-bom-v1'),
+        falsifiers=['outside_strict_header_contract','candidate_not_exact_bom_removal'],
+        controls=['independent_frozen_structural_candidate_check'],
+        deferred=['behavioral optimization','skill lifecycle and routing','instructions','hooks'])
     plan = dict(schema_version=1, kind='deterministic_contract', operations=operations,
                 profile='one-call-improvement-v1', publication_allowed=False,
                 configuration_sha256=getattr(args, 'configuration_sha256', None),
                 behavioral_certification=False, runtime_activation='unknown',
                 deferred=['behavioral optimization', 'skill lifecycle and routing', 'instructions', 'hooks'])
+    attach(plan,common_plan)
     write_json(output/'change-plan.json', plan)
     result = dict(status='no_change', output=str(output), changed_files=[], plan=str(output/'change-plan.json'),
                   profile=plan['profile'], publication_allowed=False,
-                  behavioral_certification=False, deferred=plan['deferred'])
+                  behavioral_certification=False, deferred=plan['deferred'],plan_sha256=common_plan.sha256)
     if operations:
-        if settings and settings['recommendation_only']:
+        if common_plan.unresolved_operations:
+            result.update(status='blocked',reason='unresolved_operation_requires_hook_contract')
+        elif settings and settings['recommendation_only']:
             result.update(status='inconclusive', reason='configuration_requires_recommendation_only')
         elif time.monotonic()-started >= args.timeout:
             result.update(status='budget_exhausted')
@@ -178,12 +187,30 @@ def contracts(args):
                 name = operation['path']
                 if structural_candidate((baseline/name).read_bytes(), (baseline/name).parent.name) != (candidate/name).read_bytes():
                     raise ValueError('contract repair did not match the frozen independent check')
+            from .workflow import harness_files
+            journal=None
+            def target_states():
+                states={str(path.relative_to(args.project)):file_state(path)
+                        for path in harness_files(args.project,allowed_paths(args))}
+                pending=getattr(journal,'_pending_snapshot',None)
+                if pending is not None:
+                    name=str(pending[0].relative_to(args.project))
+                    if file_state(pending[0])!=(pending[1],pending[2]):raise ValueError('journal staging snapshot changed')
+                    states.pop(name,None)
+                return states
+            common_plan.validate_inventories(target_states(),proposed)
             journal = Journal(args.project, state_root()/'promotions'/identity(args.project))
             record = journal.prepare({o['path']: file_record(baseline/o['path']) for o in operations},
                 {o['path']: file_record(candidate/o['path']) for o in operations},
-                dict(source='deterministic_contract_v1', behavioral_certification=False))
+                dict(source='deterministic_contract_v1', behavioral_certification=False,plan_sha256=common_plan.sha256))
             def permitted():
                 check_configuration(args)
+                common_plan.validate_inventories(candidate_states(baseline,original),candidate_states(candidate,original))
+                observed=target_states()
+                if observed.keys()!=original.keys() or any(state!=original[name] and
+                        (name not in {o['path'] for o in operations} or state!=proposed[name])
+                        for name,state in observed.items()):
+                    raise ValueError('target inventory changed during planned application')
                 if time.monotonic()-started >= args.timeout:
                     raise TimeoutError('Contract repair budget exhausted before target mutation')
             permitted()
