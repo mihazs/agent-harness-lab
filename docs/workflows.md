@@ -157,7 +157,7 @@ Inputs still require redaction; these tools are not general-purpose sanitizers.
 | `ahl diagnose --events FILE --output DIR` | Diagnose an explicit event file |
 | `ahl mine FILE` | Mine event transitions and recurring root-case support |
 | `ahl evaluate --manifest FILE --baseline DIR --candidate DIR --output DIR` | Execute a prepared baseline/candidate experiment |
-| `ahl benchmark FILE --method baseline` | Compare incident-classifier predictions |
+| `ahl benchmark FILE --method baseline` | Compare incident-classifier predictions; optional [frozen triage policy](diagnostic-triage.md) |
 | `ahl skills --agent claude` | Link installed skills into a selected runtime's skill directory |
 
 Run `ahl COMMAND --help` for the complete options. Low-level evaluation supports
