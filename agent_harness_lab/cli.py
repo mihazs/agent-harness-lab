@@ -7,6 +7,21 @@ import os
 from pathlib import Path
 import runpy
 import sys
+import time
+
+
+def _progress_reporter():
+    started = time.perf_counter()
+    last_stage, last_time = None, started
+    def emit(stage, **counts):
+        nonlocal last_stage, last_time
+        now = time.perf_counter()
+        if stage == last_stage and now - last_time < 1:
+            return
+        details = ' '.join(f'{key}={value}' for key, value in counts.items())
+        print(f'ahl: {stage} {details} elapsed={now-started:.1f}s', file=sys.stderr, flush=True)
+        last_stage, last_time = stage, now
+    return emit
 
 
 def assets():
@@ -124,6 +139,7 @@ def main(argv=None):
             'watch': 'Recheck evidence and recommend improvements only when project evidence changes (recommendation-only)'}
         command = sub.add_parser(name, help=helps[name], description=helps[name],formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=('Output: private artifacts and a JSON receipt on stdout. No input bodies are public.\n'
+                'Progress: aggregate stages, counts and elapsed time on stderr.\n'
                 'Configuration constrains runtime, scope and budgets; it does not grant authority.\n'
                 'Exit: 0 completed; 1 execution/interruption/budget; 2 invalid input; 3 blocked/inconclusive.\n'
                 +('No model/provider calls; default capture discovery is filtered to the selected project.\n' if name=='analyze' else
@@ -170,6 +186,7 @@ def main(argv=None):
             command.add_argument('--watch-budget', type=int, help='Total execution seconds per evidence/configuration (default: timeout)')
             command.add_argument('--once', action='store_true', help='Check once then exit with its disposition; default is continued watching with unchanged-work suppression')
     args = parser.parse_args(argv)
+    args._progress = _progress_reporter()
     from agent_harness_lab.workflow import analyze_project, improve, watch
     try:
         if not args.project.is_dir():
@@ -187,11 +204,15 @@ def main(argv=None):
             if args.timeout <= 0:
                 raise ValueError('timeout must be positive')
             result = improve(args)
+        args._progress(result['status'])
         print(json.dumps(result, indent=2))
         from agent_harness_lab.monitoring.state import exit_code
         return exit_code(result['status'])
     except NotImplementedError:
         parser.exit(3, 'ahl: required filesystem capabilities unavailable; no unsafe fallback\n')
+    except KeyboardInterrupt:
+        args._progress('interrupted')
+        parser.exit(1, 'ahl: interrupted\n')
     except (ValueError, OSError, TypeError, KeyError) as exc:
         parser.exit(2, f'ahl: {exc}\n')
 
