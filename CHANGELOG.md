@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.8
+
+### Patch Changes
+
+- 336047b: Read every classifier benchmark example and complete evidence text by default, with an optional explicit user-set example limit. Preserve malformed-input and split validation.
+
 ## 0.76.7
 
 ### Patch Changes

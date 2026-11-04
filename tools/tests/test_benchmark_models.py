@@ -1,6 +1,8 @@
 import importlib.util
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -68,3 +70,44 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(len(rows), len({r['root_case_id'] for r in rows}))
         for split in bench.SPLITS:
             self.assertEqual({r['label'] for r in rows if r['split'] == split}, {False, True})
+
+
+class BenchmarkInputSizeTests(unittest.TestCase):
+    def test_default_reader_accepts_more_than_previous_row_and_text_caps(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)/'examples.jsonl'
+            long = dict(row('long', True), text='x' * 16385)
+            path.write_text(json.dumps(long)+'\n'+(json.dumps(row('same', None))+'\n')*50000)
+            result = bench.read_examples(path)
+            self.assertEqual(len(result), 50001)
+            self.assertEqual(result[0]['text'], long['text'])
+
+    def test_explicit_row_limit_remains_optional_and_validated(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)/'examples.jsonl'
+            path.write_text(json.dumps(row('one', None))+'\n'+json.dumps(row('two', True)))
+            self.assertEqual(len(bench.read_examples(path, limit=2)), 2)
+            for limit in (1, 0, -1, True, 1.5):
+                with self.subTest(limit=limit), self.assertRaises(ValueError):
+                    bench.read_examples(path, limit=limit)
+
+    def test_unbounded_text_still_requires_a_nonempty_string(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)/'examples.jsonl'
+            for text in ('', None, [], 5):
+                path.write_text(json.dumps(dict(row('one', True), text=text)))
+                with self.subTest(text=text), self.assertRaises(ValueError):
+                    bench.read_examples(path)
+
+    def test_public_cli_supports_only_user_requested_row_limit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary)/'examples.jsonl'
+            path.write_text(json.dumps(dict(row('one', True, 'train'), text='x'*16385))+'\n'+
+                            json.dumps(row('two', False, 'heldout')))
+            command = [sys.executable, '-m', 'tools.benchmark_models', str(path), '--method', 'baseline']
+            accepted = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            self.assertIn('TF-IDF uses at most 20,000 vocabulary features.', json.loads(accepted.stdout)['limitations'])
+            rejected = subprocess.run([*command, '--max-examples', '1'], capture_output=True, text=True)
+            self.assertEqual(rejected.returncode, 2)
+            self.assertIn('example limit exceeded', rejected.stderr)

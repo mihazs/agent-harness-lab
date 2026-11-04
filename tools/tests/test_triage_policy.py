@@ -70,10 +70,11 @@ class TriagePolicyTests(unittest.TestCase):
             root = Path(temporary)
             source, configuration = root/'examples.jsonl', root/'policy.json'
             source.write_text('\n'.join(json.dumps(r) for r in
-                [dict(row('train', False), split='train'), row('p', True), row('n', False)]))
+                [dict(row('train', False), split='train', text='x'*16385), row('p', True), row('n', False)]))
             configuration.write_text(json.dumps(policy()))
-            process = subprocess.run([sys.executable, '-m', 'tools.benchmark_models', str(source),
-                '--method', 'baseline', '--triage-policy', str(configuration)], capture_output=True, text=True)
+            command = [sys.executable, '-m', 'tools.benchmark_models', str(source),
+                       '--method', 'baseline', '--triage-policy', str(configuration)]
+            process = subprocess.run(command, capture_output=True, text=True)
             self.assertEqual(process.returncode, 0, process.stderr)
             result = json.loads(process.stdout)
             self.assertEqual(result['triage']['metrics']['labeled_roots'], 2)
@@ -82,3 +83,6 @@ class TriagePolicyTests(unittest.TestCase):
             self.assertTrue(all(p['abstain'] for p in result['predictions']))
             self.assertEqual(result['triage']['decision_threshold_source'], 'frozen_policy')
             self.assertTrue(all(p['value'] is False for p in result['triage']['decisions']))
+            limited = subprocess.run([*command, '--max-examples', '2'], capture_output=True, text=True)
+            self.assertEqual(limited.returncode, 2)
+            self.assertIn('example limit exceeded', limited.stderr)

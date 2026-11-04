@@ -36,3 +36,15 @@ experiments, not implemented default dependencies. No hosted Jev evaluation was 
 
 Keep raw traces, model weights, environments and trial workspaces outside version
 control. The ignored `artifacts/` directory is available for local-only work.
+
+## Benchmark input size controls
+
+`ahl benchmark FILE --method baseline` reads every input example and retains its
+complete evidence text. `--max-examples N` optionally rejects input exceeding a
+positive row limit chosen by the caller. Root identity, label type, nonempty
+text and cross-split validation still apply.
+
+Reader acceptance does not establish full model-context coverage. The optional
+NLI adapter explicitly enables tokenizer truncation, and the TF-IDF adapter uses
+a 20,000-feature vocabulary. Those model behaviors remain recorded limitations;
+the size controls here govern input admission only.
