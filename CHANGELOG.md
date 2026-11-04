@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.3
+
+### Patch Changes
+
+- 6e69595: Recognize ai-memory pre/post tool hooks as call/result activity while preserving unknown tool identities and outcomes when structured metadata is absent.
+
 ## 0.76.2
 
 ### Patch Changes
