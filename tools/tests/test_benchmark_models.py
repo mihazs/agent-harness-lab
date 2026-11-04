@@ -107,7 +107,8 @@ class BenchmarkInputSizeTests(unittest.TestCase):
             command = [sys.executable, '-m', 'tools.benchmark_models', str(path), '--method', 'baseline']
             accepted = subprocess.run(command, capture_output=True, text=True)
             self.assertEqual(accepted.returncode, 0, accepted.stderr)
-            self.assertIn('TF-IDF uses at most 20,000 vocabulary features.', json.loads(accepted.stdout)['limitations'])
+            self.assertIn('TF-IDF retains all extracted training-vocabulary features; unseen terms remain out of vocabulary.',
+                          json.loads(accepted.stdout)['limitations'])
             rejected = subprocess.run([*command, '--max-examples', '1'], capture_output=True, text=True)
             self.assertEqual(rejected.returncode, 2)
             self.assertIn('example limit exceeded', rejected.stderr)
