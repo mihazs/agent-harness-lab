@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.71.0
+
+### Minor Changes
+
+- 8d838d6: Qualify a bounded Linux restricted-process startup protocol from authenticated worker readbacks and owned native completions. Reject audited workflow recommendations with missing facts while keeping full certification and model identity unverified.
+
 ## 0.70.0
 
 ### Minor Changes
