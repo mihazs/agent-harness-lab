@@ -14,7 +14,7 @@ from . import certification_access as ledger
 from .decision_receipts import engine
 from .integrity import contained, copy_frozen, digest, read_regular, tree
 from .regressions import fields, sha256
-from .working_state import WorkingState, check_deadline
+from .working_state import WorkingState, analysis_snapshot, check_deadline
 
 PROFILE='controlled-development-derivation-v1'
 _OWNED=WeakKeyDictionary()
@@ -173,8 +173,11 @@ def _check_role_custody(owned):
     if owned['pid']!=os.getpid(): raise ValueError('owned construction cannot continue in a different process')
     check_deadline(owned['deadline'])
     value=owned['value']; folder=owned['folder']; inputs=owned['inputs']
+    analysis=owned.get('analysis',False)
+    if analysis!=(inputs.get('analysis_fixture_admission')=='unlimited_readonly_v1'):
+        raise ValueError('actual construction analysis admission changed')
     if (record(folder/'handoff.json',ledger.MAX_BYTES)[1]!=_hash(value)
-            or _tree_pin(owned['context'],owned['deadline'])!=value['context_tree_sha256']
+            or (_snapshot_pin(analysis_snapshot(owned['context'],owned['deadline'])) if analysis else _tree_pin(owned['context'],owned['deadline']))!=value['context_tree_sha256']
             or _tree_pin(owned['baseline'],owned['deadline'])!=value['baseline_tree_sha256']
             or _hash(engine())!=value['engine_sha256'] or value['engine_sha256']!=inputs['engine_sha256']
             or record(folder/'inputs.json',ledger.MAX_BYTES)[1]!=_hash(inputs)

@@ -27,7 +27,7 @@ class TelemetryTests(unittest.TestCase):
 
     def test_invalid_schema_types_nonfinite_and_versions(self):
         for fields in [dict(schema_version=3), dict(schema_version=True), dict(elapsed_seconds=float('nan')),
-                       dict(input_tokens=-1), dict(lineage_verified='true'), dict(event_id='x'*257),
+                       dict(input_tokens=-1), dict(lineage_verified='true'), dict(event_id=''),
                        dict(capture_order=1.2), dict(schema_version=2, outcome='completed')]:
             with self.assertRaises(ValueError): event({**record(), **fields})
         with self.assertRaises(ValueError): list(normalize([], 'codex', 'p', 'future'))

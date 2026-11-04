@@ -273,3 +273,18 @@ class GitHubGraphTests(GitHubFixture, unittest.TestCase):
             self.assertEqual(GitHubSelection.parse(selection.to_dict()), selection)
             source = replace(self.source, version=selection.source_version, scope_sha256=selection.sha256)
             self.assertIsNone(GitHubAPI(self.base, selection).read(source).graph)
+
+
+class UnlimitedGraphTests(GraphFixture, unittest.TestCase):
+    def test_complete_large_graph_retains_nodes_joins_and_evidence(self):
+        records = tuple(replace(self.records[0], native_id_sha256=digest(i)) for i in range(10001))
+        refs = tuple(RecordRef(r.source_sha256, r.native_id_sha256, r.revision_sha256) for r in records)
+        joins = tuple(replace(self.join, left=refs[0], right=refs[1], evidence=refs[:9],
+            resolver_version='synthetic.'+str(i)) for i in range(20001))
+        graph = EvidenceGraph(self.source.source_key, self.source.project_sha256, self.source.scope_sha256,
+            self.source.version, refs, joins)
+        restored = EvidenceGraph.parse(graph.to_dict())
+        restored.validate(self.source, records)
+        self.assertEqual(restored, graph)
+        self.assertEqual((len(restored.nodes), len(restored.joins)), (10001, 20001))
+        with self.assertRaises(ValueError): replace(graph, nodes=refs+(refs[0],))

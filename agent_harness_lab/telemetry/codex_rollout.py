@@ -1,7 +1,7 @@
 """Content-free projection of the pinned Codex 0.166.0 rollout wire format."""
 from pathlib import Path
 from .schema import event
-from .native import MAX_BYTES, MAX_LINE_BYTES, text, number, timestamp, invalid_constant, jsonl, correlated, guarded
+from .native import text, number, timestamp, invalid_constant, jsonl, correlated, guarded
 from ..sources.schema import digest
 
 VERSION = 'codex-rollout-0.166.0'
@@ -127,7 +127,7 @@ class Projection:
         if not suppressed: self.rows.append(observed)
 
 
-def decode(folder, name, project, max_records, *, revisions=None, claims=None):
+def decode(folder, name, project, max_records, *, revisions=None, claims=None, **limits):
     projection = Projection(project)
     def consume(row, position):
         before = len(projection.claims)
@@ -136,7 +136,7 @@ def decode(folder, name, project, max_records, *, revisions=None, claims=None):
             projected = projection.claims[-1]; key = (projected['case_id'], projected['event_id'])
             if revisions is not None: revisions[key] = digest(row)
             if claims is not None: claims[key] = projected
-    sha256, partial, count = jsonl(folder, name, max_records, consume)
+    sha256, partial, count = jsonl(folder, name, max_records, consume, **limits)
     if projection.meta is None: raise ValueError('native capture has no complete session metadata')
     summary = dict(adapter_version=VERSION, upstream_commit=UPSTREAM_COMMIT, capture_completeness='partial', partial_tail=partial,
         inherited_records_skipped=projection.skipped, duplicates_skipped=projection.duplicates, unsupported_records=projection.unsupported,
@@ -145,5 +145,5 @@ def decode(folder, name, project, max_records, *, revisions=None, claims=None):
     return tuple(projection.rows), summary, sha256
 
 
-def read(path, project, max_records=100000):
-    return guarded(path, project, decode, max_records)
+def read(path, project, max_records=None, **limits):
+    return guarded(path, project, decode, max_records, **limits)

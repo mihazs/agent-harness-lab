@@ -1,4 +1,4 @@
-"""Explicit GET-only HTTPS pages, bounded in memory, with no automatic retries."""
+"""Explicit GET-only HTTPS pages with caller-selected limits and no retries."""
 import http.client
 import json
 import math
@@ -14,8 +14,12 @@ class TransportError(ValueError):
 
 
 def _json_exchange(origin, target, headers, *, timeout, deadline, max_bytes, body=None):
+    if deadline is not None:
+        remaining = deadline-time.monotonic()
+        if remaining <= 0: raise TransportError('collection deadline reached')
+        timeout = remaining if timeout is None else min(timeout, remaining)
     connection = http.client.HTTPSConnection(*origin,
-        timeout=min(timeout, deadline-time.monotonic()), context=ssl.create_default_context())
+        timeout=timeout, context=ssl.create_default_context())
     response = None
     try:
         connection.request('GET' if body is None else 'POST', target, body=body, headers=headers)
@@ -23,19 +27,19 @@ def _json_exchange(origin, target, headers, *, timeout, deadline, max_bytes, bod
         if response.status != 200 or response.getheader('Content-Encoding', 'identity') != 'identity':
             raise TransportError('unsupported HTTP status or encoding')
         length = response.getheader('Content-Length')
-        if length is not None and (not length.isdecimal() or int(length) > max_bytes):
+        if length is not None and (not length.isdecimal() or max_bytes is not None and int(length) > max_bytes):
             raise TransportError('response byte limit exceeded')
         chunks, size = [], 0
         while True:
-            if time.monotonic() >= deadline:
+            if deadline is not None and time.monotonic() >= deadline:
                 raise TransportError('collection deadline reached')
-            chunk = response.read1(min(65536, max_bytes-size+1))
-            if time.monotonic() >= deadline:
+            chunk = response.read1(65536 if max_bytes is None else min(65536, max_bytes-size+1))
+            if deadline is not None and time.monotonic() >= deadline:
                 raise TransportError('collection deadline reached')
             if not chunk:
                 break
             size += len(chunk)
-            if size > max_bytes:
+            if max_bytes is not None and size > max_bytes:
                 raise TransportError('response byte limit exceeded')
             chunks.append(chunk)
         if length is not None and size != int(length):
@@ -48,7 +52,7 @@ def _json_exchange(origin, target, headers, *, timeout, deadline, max_bytes, bod
 
 
 def endpoint(url):
-    if not isinstance(url, str) or not url or len(url) > 8192 or any(ord(c) <= 32 or ord(c) >= 127 for c in url):
+    if not isinstance(url, str) or not url or any(ord(c) <= 32 or ord(c) >= 127 for c in url):
         raise TransportError('invalid HTTPS endpoint')
     try:
         parsed = urlsplit(url)
@@ -65,15 +69,15 @@ def endpoint(url):
 
 
 class JsonAPI:
-    def __init__(self, base_url, *, max_pages=20, max_bytes=8*1024*1024, timeout=10, seconds=60):
+    def __init__(self, base_url, *, max_pages=None, max_bytes=None, timeout=None, seconds=None):
         parsed, path = endpoint(base_url)
         if parsed.query:
             raise TransportError('base endpoint must omit query parameters')
-        for value, ceiling in ((max_pages, 100), (max_bytes, 8*1024*1024)):
-            if type(value) is not int or not 1 <= value <= ceiling:
+        for value in (max_pages, max_bytes):
+            if value is not None and (type(value) is not int or value < 1):
                 raise TransportError('invalid transport bound')
         for value in (timeout, seconds):
-            if type(value) not in (int, float) or not math.isfinite(value) or not 0 < value <= 300:
+            if value is not None and (type(value) not in (int, float) or not math.isfinite(value) or value <= 0):
                 raise TransportError('invalid transport timeout')
         self.base, self.path = base_url, path.rstrip('/')
         self.origin = (parsed.hostname, parsed.port or 443)
@@ -108,25 +112,26 @@ class JsonAPI:
             raise TransportError('HTTPS collection failed; no automatic retry or checkpoint commit') from None
 
     def _collect(self, authorization, decode):
-        deadline = time.monotonic()+self.seconds
+        deadline = time.monotonic()+self.seconds if self.seconds is not None else None
         url, seen, output, used = self.base, set(), [], 0
-        for _ in range(self.max_pages):
+        pages = 0
+        while self.max_pages is None or pages < self.max_pages:
+            pages += 1
             target, query = self._target(url)
             canonical = (target, query)
-            if canonical in seen or time.monotonic() >= deadline:
+            if canonical in seen or deadline is not None and time.monotonic() >= deadline:
                 raise TransportError('pagination cycle or deadline reached')
             seen.add(canonical)
             headers = {'Accept': 'application/json', 'Accept-Encoding': 'identity'}
             if authorization is not None:
                 headers['Authorization'] = authorization
             value, response_headers, size = _json_exchange(self.origin, target+('?' + query if query else ''),
-                headers, timeout=self.timeout, deadline=deadline, max_bytes=self.max_bytes-used)
+                headers, timeout=self.timeout, deadline=deadline,
+                max_bytes=self.max_bytes-used if self.max_bytes is not None else None)
             used += size
             page = decode(value, response_headers)
             if not isinstance(page, dict) or set(page) != {'items', 'next'} or not isinstance(page['items'], list):
                 raise TransportError('unsupported page envelope')
-            if len(output)+len(page['items']) > 10000:
-                raise TransportError('record limit exceeded')
             output.extend(page['items'])
             if page['next'] is None:
                 return tuple(output)

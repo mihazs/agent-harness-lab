@@ -1,7 +1,6 @@
 """Versioned local Git relationships; captured files do not prove runtime loading."""
 from itertools import chain
 from .execution import CoverageManifest, ExecutionMetadata, IDENTITY_FIELDS, MissingField, RecordRef, ScanBound
-from .git_view import MAX_BYTES
 from .graph import EvidenceGraph, JoinReceipt
 from .schema import digest
 from .snapshot import Snapshot
@@ -12,15 +11,11 @@ def capture(source, rows, summary, record, max_commits, bytes_read):
     references = [r for r in rows if r.record_type == 'git_ref']
     files = [r for r in rows if r.record_type == 'harness_file']
     inventories = [r for r in rows if r.record_type == 'instruction_inventory']
-    edges = sum(len(c['parents_sha256']) for c in summary['commits'])+len(references)+len(files)+len(inventories)+1
-    capacity = 10000-len(rows)-1
-    if edges > 20000 or capacity < 0: raise ValueError('Git relationship admission budget exceeded')
     targets = {}
     for target, kind in chain(((p, 'commit') for c in summary['commits'] for p in c['parents_sha256']),
             ((r['target_sha256'], r['object_type']) for r in summary['refs'])):
         if target not in commits:
             targets[target] = kind
-            if len(targets) > capacity: raise ValueError('Git reference-node admission budget exceeded')
     for target, kind in sorted(targets.items()):
         value = dict(object_sha256=target, object_type=kind, capture='reference_only')
         reference = record('git_object_reference', target, digest(value), digest(value))
@@ -45,8 +40,7 @@ def capture(source, rows, summary, record, max_commits, bytes_read):
     limited = 'history_limit_reached' in summary['warnings']
     shallow = 'shallow_history' in summary['warnings']
     coverage = CoverageManifest(source.source_key, source.scope_sha256, source.scope_sha256, source.version,
-        'git-frozen-view-v2', (ScanBound('records', 10000, len(rows)), ScanBound('commits', max_commits, len(summary['commits'])),
-        ScanBound('bytes', MAX_BYTES, bytes_read)), tuple(MissingField(n, 'no_effective_binding') for n in IDENTITY_FIELDS),
+        'git-frozen-view-v2', (() if max_commits is None else (ScanBound('commits', max_commits, len(summary['commits'])),)), tuple(MissingField(n, 'no_effective_binding') for n in IDENTITY_FIELDS),
         gaps=('no_effective_binding', 'not_captured'), reported_completeness='partial', limit_reached=limited, truncated=limited or shallow)
     graph.validate(source, rows)
     return Snapshot(digest(summary), tuple(rows), ExecutionMetadata((), coverage), graph)

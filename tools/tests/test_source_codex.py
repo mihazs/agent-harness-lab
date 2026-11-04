@@ -178,17 +178,30 @@ class NativeSourceTests(unittest.TestCase):
     def test_limits_and_traversal_are_rejected_without_source_or_cache_mutation(self):
         original = dict(self.selected)
         with patch('agent_harness_lab.sources.codex.decode', side_effect=AssertionError('no capture reads')):
-            for change in (dict(capture='../outside.jsonl'), dict(max_records=True), dict(max_records=10001)):
+            for change in (dict(capture='../outside.jsonl'), dict(max_records=True), dict(max_records=-1)):
                 self.selected = {**original, **change}; self.declare(); self.assertEqual(self.invoke('preview')[0], 2)
         self.assertFalse(self.cache.exists())
 
-    def test_native_conversion_and_validation_remain_under_the_shared_deadline(self):
+    def test_native_conversion_has_no_implicit_ten_second_deadline(self):
         from agent_harness_lab.sources.native import EvidenceRecord
         clock = [0]
         def delayed(*args, **kwargs):
             result = EvidenceRecord(*args, **kwargs); clock[0] = 11
             return result
-        with patch('agent_harness_lab.sources.native.time.monotonic', side_effect=lambda: clock[0]), \
-             patch('agent_harness_lab.sources.native.EvidenceRecord', delayed), self.assertRaises(TimeoutError):
-            self.reader().read(self.source)
+        with patch('agent_harness_lab.sources.git_view.time.monotonic', side_effect=lambda: clock[0]), \
+             patch('agent_harness_lab.sources.native.EvidenceRecord', delayed):
+            self.assertTrue(self.reader().read(self.source).records)
         self.assertFalse(self.cache.exists())
+
+    def test_source_record_limit_is_optional_and_explicit_large_limits_are_not_clamped(self):
+        self.selected.pop('max_records'); self.declare()
+        snapshot = self.reader().read(self.source)
+        self.assertIsNone(next(bound.limit for bound in snapshot.metadata.coverage.scan_bounds if bound.dimension == 'records'))
+        self.selected['max_records'] = 100001; self.declare()
+        self.assertTrue(self.reader().read(self.source).records)
+
+    def test_unlimited_source_keeps_more_than_the_former_identity_ceiling(self):
+        self.rows = self.rows[:1]+[self.fixture.row('turn_context', dict(cwd=str(self.project), model='synthetic'), ordinal)
+            for ordinal in range(1, 1002)]
+        self.write(); self.selected.pop('max_records'); self.declare()
+        self.assertEqual(len(self.reader().read(self.source).metadata.identities), 1002)

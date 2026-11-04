@@ -2,6 +2,7 @@
 from dataclasses import FrozenInstanceError, replace
 from contextlib import redirect_stderr, redirect_stdout
 import io
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -96,6 +97,21 @@ class ExecutionContractTests(unittest.TestCase):
             with self.subTest(changes=changes), self.assertRaises(ValueError): replace(self.field, **changes)
         with self.assertRaises(ValueError): ExecutionMetadata.parse({**self.metadata.to_dict(), 'text': 'SYNTHETIC_SECRET'})
         with self.assertRaises(ValueError): replace(self.execution, fields=(self.field, self.field))
+
+    def test_large_execution_evidence_and_unlimited_scan_counts_round_trip(self):
+        records = tuple(replace(self.record, native_id_sha256=digest(i)) for i in range(1001))
+        refs = tuple(RecordRef(r.source_sha256, r.native_id_sha256, r.revision_sha256) for r in records)
+        field = replace(self.field, evidence=refs[:9], status='conflicted', value_sha256=None,
+            conflicts=tuple(digest(('alternative', i)) for i in range(9)))
+        metadata = ExecutionMetadata(tuple(ExecutionIdentity(ref, (field,)) for ref in refs))
+        restored = ExecutionMetadata.parse(metadata.to_dict())
+        restored.validate(self.source, records)
+        self.assertEqual(restored, metadata)
+        for limit in (None, 2**41):
+            bound = ScanBound('records', limit, 2**41)
+            self.assertEqual(ScanBound.parse(bound.to_dict()), bound)
+        for observed in (-1, True, 1.5):
+            with self.assertRaises(ValueError): ScanBound('records', None, observed)
 
 
 class ExecutionIntegrationTests(unittest.TestCase):
@@ -261,3 +277,18 @@ class ExecutionIntegrationTests(unittest.TestCase):
             with self.assertRaises(CommitUncertain): self.ingest()
         self.assertEqual(self.store.status(self.source)['revisions'], 1)
         self.assertEqual(self.store.capture(self.source), self.metadata)
+
+
+class UnlimitedExportTests(unittest.TestCase):
+    setUp = ExecutionIntegrationTests.setUp
+    write_export = ExecutionIntegrationTests.write_export
+
+    def test_complete_large_export_keeps_all_records_past_old_byte_and_count_caps(self):
+        records = tuple(replace(self.record, native_id_sha256=digest(i), record_type='record.'+'x'*400)
+            for i in range(10001))
+        self.data.write_text(json.dumps(dict(schema_version=2, records=[r.to_dict() for r in records],
+            execution_metadata=ExecutionMetadata(()).to_dict())))
+        self.assertGreater(self.data.stat().st_size, 8*1024*1024)
+        snapshot = LocalExport(self.manifest).read(self.source)
+        self.assertEqual(snapshot.records, records)
+        self.assertEqual(snapshot.sha256, hashlib.sha256(self.data.read_bytes()).hexdigest())

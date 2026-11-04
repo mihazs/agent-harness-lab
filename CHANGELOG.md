@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.76.1
+
+### Patch Changes
+
+- Remove implicit analysis size, read, retention and reporting ceilings; preserve explicit caller limits, scope checks, private metadata handling and truthful upstream incompleteness. Admit complete read-only preparation inputs while retaining controlled execution and adoption safeguards.
+- Explain command inputs, outputs, defaults and side effects throughout CLI help, and distinguish proposer-declined, unchanged-candidate and unsupported-evaluation no-change outcomes.
+
 ## 0.76.0
 
 ### Minor Changes

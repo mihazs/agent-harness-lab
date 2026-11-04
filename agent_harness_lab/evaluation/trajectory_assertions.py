@@ -8,7 +8,6 @@ from .integrity import digest, read_regular
 
 PROFILE = 'controller-trajectory-v1'
 MAX_BYTES = 65536
-MAX_RESULT = 1024 * 1024
 STAGES = ('request', 'denied', 'dispatch', 'result')
 ORDINAL = dict(request='observed_ordinal', denied='decision_ordinal', dispatch='dispatch_ordinal', result='outcome_ordinal')
 _TOKEN = object()
@@ -293,7 +292,7 @@ def _evaluate_rule(rule, data, name):
         state, ids, complete = _leaf(rule, data)
         status = 'unknown' if state is None else 'satisfied' if state else 'violated'
     return dict(assertion_id=name, assertion_sha256=_hash(encoded(rule)), status=status, valid=True,
-        matched_controller_ids=ids[:32], matched_ids_omitted=max(0, len(ids)-32), coverage_complete=complete,
+        matched_controller_ids=ids, matched_ids_omitted=0, coverage_complete=complete,
         reason='predicate_evidence_incomplete' if status == 'unknown' else 'controller_predicate_decided', children=children)
 
 
@@ -335,7 +334,6 @@ def evaluate(binding, owned_capture):
             required_observation_unknown=any(a['status'] == 'unknown' for a in required), assertions=assertions,
             capture_sha256=_hash(encoded(data)), closed=data['closed'], observation_scope='declared_local_controller_stages_only',
             publication_allowed=False, automatic_promotion=False, native_identity='unverified', history_authority='unverified')
-        if len(encoded(receipt)) > MAX_RESULT: raise ValueError('trajectory receipt bound exceeded')
         receipt._capture = owned_capture
         return receipt
     except (ValueError, TypeError, KeyError, AttributeError, RecursionError, UnicodeError, OSError):

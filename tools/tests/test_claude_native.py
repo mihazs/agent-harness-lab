@@ -52,6 +52,10 @@ class ClaudeNativeTests(unittest.TestCase):
 
     def capture(self, **options): return read(self.path, self.project, **options)
 
+    def test_native_capture_does_not_inherit_the_git_total_read_budget(self):
+        with patch('agent_harness_lab.sources.git_view.MAX_BYTES', 10):
+            self.assertTrue(self.capture()[0])
+
     def collect(self, **options): return collect(self.project, events=self.path, source_format='claude', source_version=VERSION, **options)
 
     def test_native_parallel_tools_compaction_usage_and_model_reports_are_content_free(self):
@@ -125,7 +129,7 @@ class ClaudeNativeTests(unittest.TestCase):
             self.assertEqual(emitted, [])
         self.rows = self.rows[1:3]; self.write()
         with self.assertRaises(ValueError): self.capture(max_records=2)
-        for value in (True, 0, 100001):
+        for value in (True, 0, -1):
             with self.assertRaises(ValueError): self.capture(max_records=value)
 
     def test_links_and_unavailable_filesystem_capabilities_are_rejected(self):
@@ -146,8 +150,19 @@ class ClaudeNativeTests(unittest.TestCase):
         self.write(); clock = [0]
         def delayed(records, check):
             clock[0] = 11; yield from correlated(records, check)
-        with patch('agent_harness_lab.telemetry.native.time.monotonic', side_effect=lambda: clock[0]), \
-             patch('agent_harness_lab.telemetry.native.correlated', delayed), self.assertRaises(TimeoutError): self.capture()
+        with patch('agent_harness_lab.sources.git_view.time.monotonic', side_effect=lambda: clock[0]), \
+             patch('agent_harness_lab.telemetry.native.correlated', delayed):
+            self.assertTrue(self.capture()[0])
+            clock[0] = 0
+            with self.assertRaises(TimeoutError): self.capture(deadline=10)
+
+    def test_large_content_block_list_has_no_implicit_expansion_ceiling(self):
+        self.rows = [self.rows[1]]
+        self.rows[0]['message']['content'] = [dict(type='text', text='synthetic')]*4097
+        self.write()
+        self.assertEqual(len(self.capture()[0]), 4097)
+        with self.assertRaises(ValueError): self.capture(max_records=4096)
+        self.assertEqual(len(self.capture(max_records=100001)[0]), 4097)
 
     def test_archive_move_and_private_body_edits_preserve_metadata_fingerprint(self):
         before = self.collect()['fingerprint']; self.rows[2]['message']['content'][0]['input']['command'] = 'SYNTHETIC_CHANGED_BODY'

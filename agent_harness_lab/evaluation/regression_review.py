@@ -389,24 +389,34 @@ def main(argv=None):
     import argparse
     from .review_authority import VerifierUnavailable
     from .cli import pinned_arguments
-    parser = argparse.ArgumentParser(prog='ahl regression-review', description=__doc__)
+    parser = argparse.ArgumentParser(prog='ahl regression-review', description='Maintain private regression cases through explicit proposal, isolated replay, review and immutable bank admission. Saved declarations and unsigned attestations never grant authenticated review authority.',epilog='Example: ahl regression-review --store /private/review show --case CASE_SHA256. Put --store before the action. Commands print JSON; exits: 0 completed, 1 unsuccessful reproduction, 2 invalid input, 3 busy/blocked/unsupported. Signing remains external.')
     parser.add_argument('--store', type=Path, required=True, help='Explicit private owner-only controller store')
-    actions = parser.add_subparsers(dest='action', required=True)
-    propose = actions.add_parser('propose', help='Record exact authorized P/D/R declarations without executing them')
-    propose.add_argument('--proposal', type=Path, required=True)
-    propose.add_argument('--draft', type=Path, required=True)
-    propose.add_argument('--replay', type=Path, required=True)
-    propose.add_argument('--author', required=True)
-    trust=actions.add_parser('trust-reviewers',help='Install an explicit external host reviewer public-key policy')
-    trust.add_argument('--policy',type=Path,required=True)
+    actions = parser.add_subparsers(dest='action', required=True,help='Select a private case operation; use ACTION --help for its required records and side effects')
+    propose = actions.add_parser('propose', help='Record exact authorized P/D/R declarations without executing them',description='Freeze the authorized proposal, draft task/controls and matched replay specification into a private case. This records a claim without running workers, authenticating review or admitting a bank task. Prints JSON with the case ID; exit 0 completed, 2 invalid input, 3 busy.')
+    propose.add_argument('--proposal', type=Path, required=True,help='Existing regression proposal JSON with authorized source evidence and privacy declaration')
+    propose.add_argument('--draft', type=Path, required=True,help='Existing frozen draft TaskSpec/control descriptor JSON; referenced fixtures and grader bundles remain local')
+    propose.add_argument('--replay', type=Path, required=True,help='Existing matched recorded/minimized replay-spec JSON for the declared draft')
+    propose.add_argument('--author', required=True,help='Stable case author identifier; cannot serve as the independent reviewing identity')
+    trust=actions.add_parser('trust-reviewers',help='Install an explicit external host reviewer public-key policy',description='Install a host-controlled reviewer public-key policy for this private store. Changes its active trust root; does not read private signing keys or approve cases. Prints JSON; exit 0 completed, 2 rejected input, 3 busy or unsupported verifier.')
+    trust.add_argument('--policy',type=Path,required=True,help='Existing host-controlled reviewer public-key policy JSON; installation changes the active trust policy')
     for name in ('show', 'reproduce', 'draft', 'prepare-review', 'review', 'accept'):
-        command = actions.add_parser(name)
-        command.add_argument('--case', required=True)
-        if name in ('prepare-review','review','accept'): command.add_argument('--record', type=Path, required=True)
+        descriptions={
+            'show':'Read case metadata and recorded controller state without executing replay or granting authority',
+            'reproduce':'Run the declared recorded/minimized replay with pinned offline workers and append its observed evidence',
+            'draft':'Freeze a reproduced case into a draft revision; does not accept it into a bank',
+            'prepare-review':'Create an unsigned review request from an explicit review record for external signing',
+            'review':'Record an explicit review decision; --signature authenticates the exact request against the installed policy',
+            'accept':'Admit a reviewed case by creating an immutable bank revision from an exact parent bank'}
+        command = actions.add_parser(name,help=descriptions[name],description=descriptions[name],epilog='Prints private JSON metadata. Exit 0 completed; 2 rejected input; 3 busy/blocked/unsupported; unsuccessful reproduction exits 1. Use ahl regression-review --help for the lifecycle and store selection.')
+        command.add_argument('--case', required=True,help='Exact SHA-256 case ID returned by propose in this --store')
+        if name in ('prepare-review','review','accept'): command.add_argument('--record', type=Path, required=True,help={
+            'prepare-review':'Existing review-decision JSON containing exact case/event/evidence references; emits an unsigned request',
+            'review':'Existing review-decision JSON, or authenticated request JSON when --signature is supplied',
+            'accept':'Existing admission-record JSON binding the exact case, reviewed evidence and parent bank'}[name])
         if name=='review':
-            command.add_argument('--signature',type=Path)
-            command.add_argument('--budget-seconds',type=float,default=10)
-        if name == 'accept': command.add_argument('--parent-bank', type=Path, required=True)
+            command.add_argument('--signature',type=Path,help='Existing detached OpenSSH signature for the exact --record request; never reads a signing key')
+            command.add_argument('--budget-seconds',type=float,default=10,help='Signature/currentness verification deadline in seconds, positive and at most 60 (default: %(default)s)')
+        if name == 'accept': command.add_argument('--parent-bank', type=Path, required=True,help='Existing parent bank.json whose digest is bound by the explicit admission record')
         if name == 'reproduce':
             pinned_arguments(command)
     args = parser.parse_args(argv)

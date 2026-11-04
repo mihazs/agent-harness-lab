@@ -20,6 +20,21 @@ The selector cannot enable native agents or the separate deterministic contract-
 mode. Existing recommendation-only policy, configuration scope, trial ceilings,
 request/tool quotas, permission gates and resource limits remain in force.
 
+Readonly controller-generated analysis views have no fixed aggregate file,
+directory, byte or metadata admission ceiling. Both preparation roles retain the
+complete metadata summary; the canonical path copies and pins the same full view
+before consumption and rechecks it afterward. A controller-only immutable input
+mapping selects this admission policy for the readonly fixture mount. A JSON label
+or worker output cannot select it, change mount permissions or supply authority.
+
+Writable worker state keeps its existing 100-file/directory, 1 MiB content and
+64 KiB metadata bounds; authored output normalization retains its separate bound.
+Harness inputs and other consumers retain their existing defaults. Deadlines,
+request/tool/output quotas, memory, processes and scratch-volume limits still
+govern execution. Large analysis admission does not promise unlimited physical
+resources or unbounded model context. Snapshots retain admitted bytes in controller
+memory, without truncation or invented completeness.
+
 ## Store and role boundaries
 
 Select the store explicitly. It must be canonical, private and outside the project,

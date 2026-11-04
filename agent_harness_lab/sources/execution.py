@@ -16,15 +16,15 @@ def unpack(cls, value):
     return dict(value)
 
 
-def objects(value, cls, maximum):
-    if not isinstance(value, (list, tuple)) or len(value) > maximum:
+def objects(value, cls, maximum=None):
+    if not isinstance(value, (list, tuple)) or maximum is not None and len(value) > maximum:
         raise ValueError('invalid source metadata collection')
     return tuple(cls.parse(v) for v in value)
 
 
-def frozen(value, cls, maximum):
-    if type(value) is not tuple or len(value) > maximum or not all(isinstance(v, cls) for v in value):
-        raise ValueError('source metadata requires bounded immutable collections')
+def frozen(value, cls, maximum=None):
+    if type(value) is not tuple or maximum is not None and len(value) > maximum or not all(isinstance(v, cls) for v in value):
+        raise ValueError('source metadata requires immutable typed collections')
 
 
 @dataclass(frozen=True)
@@ -60,7 +60,7 @@ class IdentityField(Contract):
         self.validate((), {'name': IDENTITY_FIELDS, 'status': ('unknown', 'declared', 'verified', 'conflicted'),
             'provenance': ('unknown', 'source_declared', 'native_field', 'controller_observation', 'reviewed_annotation'),
             'reason': REASONS})
-        label(self.namespace); frozen(self.evidence, RecordRef, 8); frozen(self.conflicts, str, 8)
+        label(self.namespace); frozen(self.evidence, RecordRef); frozen(self.conflicts, str)
         if self.value_sha256 is not None: fingerprint(self.value_sha256)
         for value in self.conflicts: fingerprint(value)
         if ((self.status in ('unknown', 'conflicted')) != (self.value_sha256 is None)
@@ -80,7 +80,7 @@ class IdentityField(Contract):
     @classmethod
     def parse(cls, value):
         value = unpack(cls, value)
-        value['evidence'] = objects(value['evidence'], RecordRef, 8)
+        value['evidence'] = objects(value['evidence'], RecordRef)
         if not isinstance(value['conflicts'], (list, tuple)): raise ValueError('invalid identity alternatives')
         value['conflicts'] = tuple(value['conflicts'])
         return cls(**value)
@@ -95,14 +95,14 @@ class ExecutionIdentity(Contract):
     def __post_init__(self):
         self.validate((), {})
         if not isinstance(self.subject, RecordRef): raise ValueError('execution subject must reference a native revision')
-        frozen(self.fields, IdentityField, len(IDENTITY_FIELDS))
+        frozen(self.fields, IdentityField)
         if len({field.name for field in self.fields}) != len(self.fields): raise ValueError('duplicate execution identity field')
 
     @classmethod
     def parse(cls, value):
         value = unpack(cls, value)
         value['subject'] = RecordRef.parse(value['subject'])
-        value['fields'] = objects(value['fields'], IdentityField, len(IDENTITY_FIELDS))
+        value['fields'] = objects(value['fields'], IdentityField)
         return cls(**value)
 
 
@@ -118,13 +118,14 @@ class MissingField(Contract):
 @dataclass(frozen=True)
 class ScanBound(Contract):
     dimension: str
-    limit: int
+    limit: int | None
     observed: int
     schema_version: int = 1
 
     def __post_init__(self):
         self.validate((), {'dimension': ('records', 'files', 'bytes', 'pages', 'commits')})
-        if type(self.limit) is not int or type(self.observed) is not int or not 0 <= self.observed <= self.limit <= 2**40:
+        if (type(self.observed) is not int or self.observed < 0
+                or self.limit is not None and (type(self.limit) is not int or self.limit < self.observed)):
             raise ValueError('invalid declared scan bounds')
 
 
@@ -147,7 +148,7 @@ class CoverageManifest(Contract):
         self.validate(('source_sha256', 'expected_scope_sha256'), {'reported_completeness': ('unknown', 'partial', 'complete')})
         if self.observed_scope_sha256 is not None: fingerprint(self.observed_scope_sha256)
         label(self.adapter_version); label(self.parser_version)
-        frozen(self.scan_bounds, ScanBound, 5); frozen(self.missing_fields, MissingField, len(IDENTITY_FIELDS)); frozen(self.gaps, str, len(REASONS))
+        frozen(self.scan_bounds, ScanBound); frozen(self.missing_fields, MissingField); frozen(self.gaps, str)
         if (len({b.dimension for b in self.scan_bounds}) != len(self.scan_bounds)
                 or len({f.name for f in self.missing_fields}) != len(self.missing_fields)
                 or len(set(self.gaps)) != len(self.gaps) or any(g not in REASONS for g in self.gaps)
@@ -160,8 +161,8 @@ class CoverageManifest(Contract):
     @classmethod
     def parse(cls, value):
         value = unpack(cls, value)
-        value['scan_bounds'] = objects(value['scan_bounds'], ScanBound, 5)
-        value['missing_fields'] = objects(value['missing_fields'], MissingField, len(IDENTITY_FIELDS))
+        value['scan_bounds'] = objects(value['scan_bounds'], ScanBound)
+        value['missing_fields'] = objects(value['missing_fields'], MissingField)
         if not isinstance(value['gaps'], (list, tuple)): raise ValueError('invalid coverage gaps')
         value['gaps'] = tuple(value['gaps'])
         return cls(**value)
@@ -175,7 +176,7 @@ class ExecutionMetadata(Contract):
 
     def __post_init__(self):
         Contract.validate(self, (), {})
-        frozen(self.identities, ExecutionIdentity, 1000)
+        frozen(self.identities, ExecutionIdentity)
         if (self.coverage is not None and not isinstance(self.coverage, CoverageManifest)
                 or len({identity.subject.key for identity in self.identities}) != len(self.identities)):
             raise ValueError('invalid or duplicate execution metadata')
@@ -183,7 +184,7 @@ class ExecutionMetadata(Contract):
     @classmethod
     def parse(cls, value):
         value = unpack(cls, value)
-        value['identities'] = objects(value['identities'], ExecutionIdentity, 1000)
+        value['identities'] = objects(value['identities'], ExecutionIdentity)
         value['coverage'] = CoverageManifest.parse(value['coverage']) if value['coverage'] is not None else None
         return cls(**value)
 

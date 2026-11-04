@@ -13,6 +13,20 @@ def record(model='synthetic',source='synthetic',status='not_run'):
 
 
 class BenchmarkContracts(unittest.TestCase):
+    def test_trajectory_reports_keep_all_trials_assertions_and_long_identifiers(self):
+        assertions=[dict(assertion_id='synthetic assertion '*20+str(index),assertion_sha256='a'*64,
+            status='unknown',coverage_complete=False) for index in range(33)]
+        first=dict(task='synthetic task '*30,version='candidate',
+            controller_grade=dict(trajectory=dict(status='unknown',assertions=assertions)))
+        report=summary(dict(trajectory_profile='controller-trajectory-v1',
+            trials=[first]+[dict(task='synthetic task') for _ in range(10000)]))
+        self.assertEqual(len(report['trials']),10001)
+        self.assertEqual(report['trials'][0]['task'],first['task'])
+        self.assertEqual(len(report['trials'][0]['assertions']),33)
+        self.assertEqual(report['trials'][0]['assertions'][-1]['assertion_id'],assertions[-1]['assertion_id'])
+        self.assertEqual(report['analysis']['status'],'unverified')
+        self.assertFalse(report['publication_allowed'])
+
     def test_mismatched_and_unverified_runtime_blocks(self):
         with self.assertRaises(ValueError): validate_pair(runtime(),runtime('other-model'))
         candidate=runtime(); candidate['effective_settings_verified']=False

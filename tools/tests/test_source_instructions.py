@@ -26,7 +26,7 @@ class InstructionInventoryTests(unittest.TestCase):
         return path
 
     def read(self, selected=()):
-        with Folder(self.root, time.monotonic()+2) as folder:
+        with Folder(self.root, time.monotonic()+30, limit_total_bytes=False, limit_tree=False) as folder:
             value = capture(self.profile, folder, 'project', selected)
             folder.verify()
         self.assertNotIn(str(self.root), json.dumps(asdict(value)))
@@ -91,6 +91,43 @@ class InstructionInventoryTests(unittest.TestCase):
         self.assertEqual(node.reason, 'byte_limit_requires_native_resolution')
         self.assertEqual(node.content_sha256, hashlib.sha256(b'SYNTHETIC_TOO_LARGE').hexdigest())
 
+    def test_large_instruction_is_fully_hashed_without_an_implicit_byte_limit(self):
+        self.profile['task_cwd'] = '.'
+        content = 'SYNTHETIC_LARGE\n' + 'x'*(1024*1024+1)
+        self.write('AGENTS.md', content)
+        for present, limit in ((False, None), (True, None), (True, 2*1024*1024)):
+            with self.subTest(present=present, limit=limit):
+                if present: self.profile['project_doc_max_bytes'] = limit
+                else: self.profile.pop('project_doc_max_bytes', None)
+                receipt = self.read(); node = self.nodes(receipt)[digest('AGENTS.md')]
+                self.assertEqual(receipt.resolution_status, 'declared')
+                self.assertEqual(node.applicability, 'declared_applicable')
+                self.assertEqual(node.content_sha256, hashlib.sha256(content.encode()).hexdigest())
+                self.assertEqual(node.observed_loading, 'unknown')
+
+    def test_all_fallback_edges_and_selected_files_are_retained(self):
+        self.profile.update(task_cwd='.', fallback_filenames=[f'TEAM-{i}.md' for i in range(501)])
+        self.write('AGENTS.md', 'SYNTHETIC_ACTIVE')
+        for name in self.profile['fallback_filenames']: self.write(name, 'SYNTHETIC_SHADOWED')
+        selected = [f'other/selected-{i}.md' for i in range(101)]
+        for name in selected: self.write(name, 'SYNTHETIC_OUTSIDE')
+        receipt = self.read(selected); nodes = self.nodes(receipt)
+        self.assertEqual(len(receipt.nodes), 604)
+        self.assertEqual({edge.target_sha256 for edge in receipt.edges if edge.kind == 'shadows'},
+                         {digest(name) for name in self.profile['fallback_filenames']})
+        self.assertTrue(all(nodes[digest(name)].applicability == 'out_of_scope' for name in selected))
+
+    def test_deep_task_directory_keeps_the_complete_parent_chain(self):
+        self.profile['task_cwd'] = '/'.join(['nested']*40)
+        (self.root/'project'/self.profile['task_cwd']).mkdir(parents=True)
+        self.write('AGENTS.md', 'SYNTHETIC_ROOT')
+        leaf = self.profile['task_cwd']+'/AGENTS.md'
+        self.write(leaf, 'SYNTHETIC_LEAF')
+        receipt = self.read(); nodes = self.nodes(receipt)
+        self.assertEqual(nodes[digest(leaf)].applicability, 'declared_applicable')
+        self.assertIn(('parent', digest('AGENTS.md'), digest(leaf)),
+                      {(edge.kind, edge.source_sha256, edge.target_sha256) for edge in receipt.edges})
+
     def test_symlinks_invalid_text_and_unsafe_fallbacks_fail_closed(self):
         target = self.write('outside.txt', 'SYNTHETIC_OUTSIDE')
         (self.root/'project/AGENTS.md').symlink_to(target)
@@ -106,7 +143,7 @@ class InstructionInventoryTests(unittest.TestCase):
 
     def test_profile_validation_rejects_unknown_fields_types_and_escaped_cwd(self):
         invalid = [('task_cwd', '../outside'), ('task_cwd', 'src//task'),
-                   ('project_doc_max_bytes', True), ('project_doc_max_bytes', 1048577),
+                   ('project_doc_max_bytes', True), ('project_doc_max_bytes', -1),
                    ('fallback_filenames', 'TEAM.md'), ('schema_version', True), ('arbitrary', 'value')]
         original = dict(self.profile)
         for key, value in invalid:

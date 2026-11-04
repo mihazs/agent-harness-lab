@@ -62,6 +62,23 @@ class TrajectoryAssertionTests(unittest.TestCase):
                     grader_identity=dict(grader_id='synthetic-artifact',grader_version='v1'),
                     execution=dict(status=status, exit_code=run.returncode, stdout=run.stdout, inputs_unchanged=True))
 
+    def test_all_matched_request_ids_survive_a_receipt_larger_than_one_megabyte(self):
+        binding=self.bind([required('request') for _ in range(32)])
+        ledger=responses.ActionLedger(None)
+        ledger.begin('executor','synthetic-large-report',trajectory=binding)
+        for index in range(1000):
+            ledger.add('tool_request',1,tool_name=ledger.text('run',128),decision='accepted')
+        ledger.trajectory.close()
+        receipt=core.evaluate(binding,ledger.trajectory)
+        self.assertTrue(receipt['valid'],receipt)
+        self.assertEqual(receipt['status'],'satisfied')
+        self.assertGreater(len(encoded(receipt)),1024*1024)
+        for assertion in receipt['assertions']:
+            self.assertEqual(len(assertion['matched_controller_ids']),1000)
+            self.assertEqual(assertion['matched_ids_omitted'],0)
+        self.assertFalse(receipt['publication_allowed'])
+        self.assertFalse(receipt['automatic_promotion'])
+
     def test_actual_controller_capture_frozen_assertion_and_independent_typed_grade(self):
         binding = self.bind([required(arguments=dict(mode='exact', argv=['/usr/bin/true']))])
         client, capture = self.role(binding)

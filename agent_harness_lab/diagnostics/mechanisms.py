@@ -29,7 +29,7 @@ class MechanismRecord:
     history: list = field(default_factory=list)
 
     def validate(self):
-        if not all(isinstance(v, str) and 0 < len(v) <= 512 for v in
+        if not all(isinstance(v, str) and v for v in
                    (self.mechanism_id, self.symptom, self.evidence_version, self.component_version)):
             raise ValueError('invalid mechanism identity/provenance')
         if self.component not in COMPONENTS or self.disposition not in DISPOSITIONS or self.severity not in ('critical','high','normal'):

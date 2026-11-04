@@ -7,6 +7,7 @@ from pathlib import Path
 from .comparison_custody import bundle_binding, snapshot_pin
 from .integrity import digest
 from .working_state import WorkingState,check_deadline
+from .analysis_inputs import AnalysisInputs,input_digest,check_role
 
 PROFILE='ahl-controlled-agents-v1'
 MARKER='\n\nAHL controller-loaded root instructions:\n'
@@ -17,6 +18,7 @@ def pin(value):
 
 
 def prepare(client,backend,inputs,role,instructions,prompt,deadline):
+    check_role(inputs,role)
     check_deadline(deadline)
     harness=Path(inputs['harness'])
     snapshot=WorkingState(harness,deadline).snapshot
@@ -35,13 +37,13 @@ def prepare(client,backend,inputs,role,instructions,prompt,deadline):
     data=dict(profile=PROFILE,role=role,initial_context_sha256=pin(prefix),
         settings_sha256=pin(client.settings),harness_snapshot_sha256=snapshot_pin(snapshot),
         harness_bundle=bundle_binding(harness,deadline),
-        input_digests={name:digest(path) for name,path in sorted(inputs.items())},
+        input_digests={name:input_digest(inputs,name) for name in sorted(inputs)},
         image_sha256=backend.image.sha256,instruction_file=metadata,
         requested_model=client.settings['model'],served_model='unverified',native_identity='unverified')
     from .responses import _CLIENT_PIDS
     owner=_CLIENT_PIDS[client]
     if isinstance(owner,tuple) and owner[1] is not None:data['project_configuration_sha256']=owner[1]
-    return dict(prefix=prefix,data=data,inputs=dict(inputs),backend=backend,deadline=deadline,snapshot=snapshot)
+    return dict(prefix=prefix,data=data,inputs=inputs if type(inputs) is AnalysisInputs else dict(inputs),backend=backend,deadline=deadline,snapshot=snapshot)
 
 
 def binding(context,client,history,body):
@@ -49,7 +51,7 @@ def binding(context,client,history,body):
     data=context['data'];harness=Path(context['inputs']['harness'])
     if (pin(client.settings)!=data['settings_sha256'] or history[:2]!=context['prefix']
             or context['backend'].image.sha256!=data['image_sha256']
-            or {name:digest(path) for name,path in sorted(context['inputs'].items())}!=data['input_digests']
+            or {name:input_digest(context['inputs'],name) for name in sorted(context['inputs'])}!=data['input_digests']
             or bundle_binding(harness,context['deadline'])!=data['harness_bundle']
             or WorkingState(harness,context['deadline']).snapshot!=context['snapshot']):
         raise ValueError('controlled instruction context or configuration changed')

@@ -1,8 +1,7 @@
 """Shared native snapshot admission, revision history and declared execution receipts."""
 from datetime import datetime, timezone
-import time
 from ..evaluation.integrity import contained
-from ..telemetry.native import MAX_BYTES, correlated
+from ..telemetry.native import correlated, optional_limit
 from .execution import CoverageManifest, ExecutionIdentity, ExecutionMetadata, IDENTITY_FIELDS, IdentityField, MissingField, RecordRef, ScanBound
 from .schema import EvidenceRecord, digest
 from .snapshot import LocalExport, Snapshot
@@ -12,14 +11,14 @@ from .graph import EvidenceGraph, JoinReceipt
 class NativeCapture(LocalExport):
     def select(self, source, fields):
         descriptor, selected = self.selection(source)
-        if (not isinstance(selected, dict) or set(selected) != fields
+        optional = {'max_records', 'max_files', 'max_scan_files'}
+        if (not isinstance(selected, dict) or not fields-optional <= set(selected) <= fields
                 or type(selected['schema_version']) is not int or selected['schema_version'] != 1):
             raise ValueError('invalid native capture selection')
         if digest(selected) != source.scope_sha256: raise ValueError('native selection scope mismatch')
         project = contained(self.manifest.parent, selected['project'])
         if not project.is_dir(): raise ValueError('native project must be an existing declared directory')
-        limit = selected['max_records']
-        if type(limit) is not int or not 1 <= limit <= 10000: raise ValueError('invalid native source record limit')
+        limit = optional_limit(selected.get('max_records'))
         return descriptor, selected, project, limit
 
     def file(self, source, descriptor, selected, project, decoder):
@@ -28,8 +27,8 @@ class NativeCapture(LocalExport):
         from .git_view import Folder
         path = contained(self.manifest.parent, selected['capture'])
         revisions = {}
-        with Folder(path.parent, time.monotonic()+10) as folder:
-            rows, summary, sha256 = decoder(folder, path.name, project, selected['max_records'], revisions=revisions)
+        with Folder(path.parent, None, limit_total_bytes=False, limit_tree=False) as folder:
+            rows, summary, sha256 = decoder(folder, path.name, project, selected.get('max_records'), revisions=revisions)
             events = tuple(correlated(rows, folder.check))
             snapshot = self.snapshot(source, descriptor, selected, project, events, summary, sha256, revisions, folder)
             folder.verify()
@@ -41,8 +40,8 @@ class NativeCapture(LocalExport):
             status='candidate' if right is not None else 'unlinked', reason='not_validated' if right is not None else 'missing_identity')
 
     def snapshot(self, source, descriptor, selected, project, events, summary, sha256, revisions, folder):
-        limit = selected['max_records']
-        if len(events) > 10000: raise ValueError('native source event limit exceeded')
+        limit = selected.get('max_records')
+        if limit is not None and len(events) > limit: raise ValueError('native source event limit exceeded')
         scan = summary.get('discovery', summary)
         files = scan.get('accepted_files', 1)
         ready = bool(files) and not (summary['partial_tail'] or scan.get('reached_limits')
@@ -66,7 +65,6 @@ class NativeCapture(LocalExport):
             identity = self.identity(event, summary) if native else None
             if identity is None or identity[0] in subjects: continue
             subjects.add(identity[0])
-            if len(identities) >= 1000: raise ValueError('native execution-metadata subject limit exceeded')
             ref = RecordRef(source.source_key, record.native_id_sha256, record.revision_sha256)
             fields = []
             def claim(name, value, namespace, provenance='native_field'):
@@ -79,7 +77,7 @@ class NativeCapture(LocalExport):
         missing = tuple(MissingField(name, 'no_effective_binding') for name in IDENTITY_FIELDS
             if not identities or any(not any(f.name == name for f in identity.fields) for identity in identities))
         coverage = CoverageManifest(source.source_key, source.scope_sha256, source.scope_sha256, source.version, self.parser_versions[source.version],
-            (ScanBound('records', limit, scan['input_records']), ScanBound('files', selected.get('max_files', 1), files), ScanBound('bytes', MAX_BYTES, folder.bytes)),
+            (ScanBound('records', limit, scan['input_records']), ScanBound('files', selected.get('max_files') if 'source_root' in selected else 1, files)),
             missing, gaps=('not_captured', 'no_effective_binding'), reported_completeness='partial',
             limit_reached=scan['input_records'] == limit or bool(scan.get('reached_limits')),
             truncated=summary['partial_tail'] or bool(scan.get('reached_limits')))
@@ -90,7 +88,7 @@ class NativeCapture(LocalExport):
         snapshot = Snapshot(sha256, tuple(records), metadata, graph, checkpoint_ready=ready)
         folder.check()
         self.verify_selection(source, descriptor, selected)
-        self.summary = dict(summary, checkpoint_ready=ready, source_identity='caller_declared')
+        self.summary = dict(summary, bytes_read=folder.bytes, checkpoint_ready=ready, source_identity='caller_declared')
         return snapshot
 
 

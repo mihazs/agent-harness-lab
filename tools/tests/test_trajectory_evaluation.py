@@ -149,7 +149,7 @@ class TrajectoryEvaluationTests(unittest.TestCase):
             main(['benchmark-report','--input',str(source),'--output',str(self.f.root/'public'),'--public'])
         self.assertFalse((self.f.root/'public').exists())
 
-    def test_report_rejects_unbounded_structures_and_escapes_imported_labels(self):
+    def test_report_rejects_malformed_structures_and_escapes_imported_labels(self):
         value=dict(trajectory_profile=core.PROFILE,trials=[dict(task='<script>',version='candidate',
             controller_grade=dict(trajectory=dict(status='unknown',assertions=[])))])
         markdown,document=benchmark.render(benchmark.summary(value))
@@ -157,7 +157,7 @@ class TrajectoryEvaluationTests(unittest.TestCase):
         self.assertIn('&lt;script&gt;',document)
         for invalid in ([],[None],[dict(task='x',controller_grade=[])],
                 [dict(task='x',controller_grade=dict(trajectory=dict(assertions=[{'assertion_id':{'argv':'private'}}])))],
-                [dict(task='x'*257)]):
+                [dict(task={'invalid':'identity'})]):
             with self.subTest(invalid=invalid),self.assertRaises(ValueError):
                 benchmark.summary(dict(trajectory_profile=core.PROFILE,trials=invalid))
 

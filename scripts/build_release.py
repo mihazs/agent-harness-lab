@@ -53,8 +53,12 @@ def build(root, output):
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output', type=Path, default=Path('dist'))
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='Requires this script in a Git checkout with tracked release inputs and a valid package.json version.\n'
+        'Writes agent-harness-lab-VERSION.tar.gz, install.py and SHA256SUMS; existing named outputs may be replaced.\n'
+        'Prints the three artifact paths; does not upload, publish or run a version bump.\n'
+        'Example: python scripts/build_release.py --output dist/release')
+    parser.add_argument('--output', type=Path, default=Path('dist'), help='Artifact directory, created if needed, relative to the current directory (default: %(default)s)')
     args = parser.parse_args()
     for path in build(Path(__file__).resolve().parents[1], args.output):
         print(path)

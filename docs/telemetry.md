@@ -5,11 +5,11 @@ It contains bounded metadata, not message bodies, arguments, commands, tool
 results, thinking, or credentials. The ledger is content-idempotent, append-only,
 locked during ingestion, mode 0600, and refuses conflicting IDs or incomplete
 writes. The core `Ledger` API accepts byte/record retention limits; reaching them
-requires explicit rotation/deletion, never silent loss. Default limits are 64 MiB
-and 100,000 records. Run directories use mode 0700. These are local private data;
+requires explicit rotation/deletion, never silent loss. There is no default byte
+or record ceiling; callers may supply positive retention limits. Run directories use mode 0700. These are local private data;
 hashes and opaque IDs do not authorize public export.
 
-`telemetry.schema.event` upgrades v1 records to v2, validates bounded typed fields,
+`telemetry.schema.event` upgrades v1 records to v2, validates nonempty typed fields,
 rejects unsupported schema versions and nonfinite/negative measurements, and drops
 undeclared content fields. Supplied task/root/family, runtime/config/harness hashes,
 state revisions, skill signals, timing and token measurements remain observations.
@@ -39,11 +39,21 @@ require a new declared adapter version. The source-format check fails explicitly
 for unsupported versions. Missing tool results produce coverage events; tool errors
 remain observations rather than task-failure labels.
 
-Discovery has separate limits of 2000 scanned capture files and 100 accepted
-project captures. Within the bounded scan, files are considered newest first and
-filtered by exact project before the accepted allowance is consumed. Exhausting
-either limit is reported. This is still a bounded view, not complete history.
-The existing 64 MiB input-read and event limits remain enforced.
+Discovery, capture records, evaluation reports and event analysis have no default
+size ceiling. Optional positive `--max-capture-scan`, `--max-captures` and
+`--max-events` values bound only the selected run. Files are considered newest
+first and filtered by exact project before an explicit accepted-file allowance
+is consumed. Malformed records retain explicit caveats; valid large records and
+reports are read in full and their input hashes cover all consumed bytes.
+
+Observation matching retains all eligible history by default. Explicit API cache
+and pending-call correlation limits remain available. Recurring-sequence analysis indexes all contiguous
+lengths and retains every supporting reference; `--sequence-length` optionally
+limits lengths. Repetition still requires three reported roots and does not
+establish independence. The index avoids constructing patterns that do not recur
+across three roots. The number of recurring patterns can be quadratic; spelling
+out every pattern's members can require cubic output in the worst case.
+Available memory, storage and time remain practical constraints, not hidden caps.
 
 No real-model effectiveness experiment was run for this schema. Tests establish
 metadata/control-flow behavior only. No model weights, downloads, external ledger
@@ -114,10 +124,12 @@ and emit coverage, while separate incomplete snapshots cannot fabricate one
 complete measurement. Missing IDs/counts stay unattributed. This is neither a cost
 estimate nor proof of final billed usage.
 
-Pinned Codex and Claude files share guarded JSONL I/O: 64 MiB cumulative reads,
-1 MiB lines, at most 100,000 input/normalized records and a ten-second lifecycle.
-Claude permits at most 4,096 blocks per native row and checks event/facet expansion
-before allocation. A repeated UUID gets only its original bounded per-row temporary
+Pinned Codex and Claude files share guarded streaming JSONL I/O. There are no
+implicit file-byte, line-byte, record, block-count or time ceilings. Native reader
+APIs enforce caller-selected `max_bytes`, `max_line_bytes`, `max_records` and an
+absolute monotonic `deadline`; omitted limits are `None`. Explicit record limits
+also check event/facet expansion before allocation. A repeated UUID gets only its
+original per-row temporary
 validation allowance; it does not consume unique output capacity again. Derived
 pending-call coverage is also subject to the final normalized limit. An uncommitted
 last line, even valid JSON, is omitted with partial coverage. Malformed complete
@@ -183,9 +195,9 @@ physical ownership: inherited legacy captures without an explicit physical
 boundary/base reject. Parent-history resolution, broader cwd/worktree reconciliation,
 compressed capture and source-journal execution receipts remain open in #44/#58.
 
-Safe POSIX reads reject links/special files, detect concurrent source changes and
-cap one file at 64 MiB, each line at 1 MiB, records at 100,000 (or the lower requested
-event limit), under a ten-second read/parse deadline. A final line without its
+Safe POSIX reads reject links/special files and detect concurrent source changes.
+Reads stream individual JSONL records without an implicit file or line ceiling;
+only caller-selected byte, record or deadline limits apply. A final line without its
 newline is omitted even when its JSON parses; the complete prefix and partial-tail
 warning remain visible. Malformed complete records, duplicate keys, ordinal/usage
 conflicts and unavailable safe filesystem APIs fail explicitly. Capture remains
@@ -209,12 +221,11 @@ selection requires the pinned Codex profile and never falls back to home discove
 Only uncompressed `rollout-*.jsonl` files qualify. Prompt indexes such as
 `history.jsonl` and compressed captures are not treated as transcripts.
 
-Discovery enumerates at most 10,000 filesystem entries and 64 levels, admits at
-most 2,000 candidate files and 100 matching captures, and shares a ten-second
-deadline checked during read, parse, correlation and final verification, a 64 MiB
-cumulative read allowance and a 100,000 input-record/event
-ceiling. Lower requested limits apply. The byte allowance includes bounded header
-prefix reads as well as full selected reads. Foreign-project and other-session
+Native discovery has no implicit filesystem-entry, directory-depth, file-count,
+record-count, byte or time ceiling. Caller-selected scan/accepted-file and record
+limits remain enforced and reported; `None` means unlimited. Optional deadlines
+are checked during read, parse, correlation and final verification. Foreign-project
+and other-session
 headers are filtered before full reads and before consuming the accepted-file
 allowance. Unsupported/incomplete headers and skipped unsafe entries are counted;
 symlinks, hardlinks and special files are never followed/opened as captures.
@@ -249,3 +260,8 @@ Native source journaling can also use the explicit root profile described in
 this discovery path with stricter raw revision consistency and checkpoint admission;
 ordinary telemetry keeps metadata-only body handling and response-usage counts.
 Suppressed duplicate usage still participates in cross-file ordinal consistency.
+
+Unlimited selection does not remove host constraints. Each JSONL record must fit
+the host JSON decoder and memory, and normalized events and correlation state are
+retained in memory. File I/O streams records instead of loading a whole capture;
+filesystem access, scope, stable-read and provenance checks still apply.

@@ -61,15 +61,15 @@ class ConstructionConsumerTests(unittest.TestCase):
     def test_oracle_capture_aba_during_validation_cannot_be_freshly_pinned(self):
         from agent_harness_lab.evaluation import integrity
         digest=integrity.digest;changed=[]
-        def mutate(path):
+        def mutate(path,**limits):
             path=Path(path)
             if path.name=='oracle' and path.parent.name=='evaluation-0' and not changed:
                 expected=path/'expected.json';before=expected.read_bytes()
                 expected.write_text('{"scenario":99}')
                 changed.append(True)
-                try:return digest(path)
+                try:return digest(path,**limits)
                 finally:expected.write_bytes(before)
-            return digest(path)
+            return digest(path,**limits)
         with patch.object(integrity,'digest',side_effect=mutate),self.assertRaisesRegex(ValueError,'grader capture differs from actual author output'):
             self.f.run_controlled()
         self.assertEqual(changed,[True])

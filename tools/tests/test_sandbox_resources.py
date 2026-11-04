@@ -52,7 +52,7 @@ class ProcessBoundaryTests(unittest.TestCase):
             try:
                 if info.read_text().split(') ')[1].split()[0] == 'Z':
                     return
-            except FileNotFoundError:
+            except (FileNotFoundError, ProcessLookupError):
                 return
             if time.monotonic() >= deadline:
                 self.fail('worker remained live after process-group cleanup')

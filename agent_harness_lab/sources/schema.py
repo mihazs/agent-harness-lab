@@ -18,12 +18,12 @@ def fingerprint(value):
 
 
 def label(value):
-    if not isinstance(value, str) or re.fullmatch('[a-zA-Z0-9][a-zA-Z0-9_.:-]{0,63}', value) is None:
-        raise ValueError('expected a bounded metadata label')
+    if not isinstance(value, str) or re.fullmatch('[a-zA-Z0-9][a-zA-Z0-9_.:-]*', value) is None:
+        raise ValueError('expected a metadata label')
 
 
 def timestamp(value):
-    if not isinstance(value, str) or len(value) > 40:
+    if not isinstance(value, str):
         raise ValueError('expected an explicit timestamp')
     try:
         parsed = datetime.fromisoformat(value)
@@ -131,7 +131,7 @@ class ImportReceipt(Contract):
         self.validate(('source_sha256',), {'status': ('complete', 'incomplete', 'failed'),
             'capture_completeness': ('unknown', 'partial', 'complete')})
         for name in ('imported', 'skipped', 'errors'):
-            if type(getattr(self, name)) is not int or not 0 <= getattr(self, name) <= 100000:
+            if type(getattr(self, name)) is not int or getattr(self, name) < 0:
                 raise ValueError('invalid import count')
         for cursor in (self.cursor_before_sha256, self.cursor_after_sha256):
             if cursor is not None:

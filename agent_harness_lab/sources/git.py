@@ -6,9 +6,8 @@ import os
 from pathlib import Path
 import re
 import stat
-import time
 from agent_harness_lab.evaluation.integrity import relative
-from .git_view import Folder, GitView, MAX_BYTES
+from .git_view import Folder, GitView
 from .instructions import capture as capture_instructions, validate as validate_instruction_profile
 from .schema import EvidenceRecord, digest, fingerprint
 from .snapshot import LocalExport, Snapshot
@@ -18,7 +17,7 @@ OID = re.compile(rb'(?:[0-9a-f]{40}|[0-9a-f]{64})')
 
 
 def reference(name):
-    if (not name.startswith('refs/') or len(name) > 4096 or name.endswith(('/', '.'))
+    if (not name.startswith('refs/') or name.endswith(('/', '.'))
             or any(c in name for c in ('..', '@{', '//', '\\', ' ', '~', '^', ':', '?', '*', '['))
             or any(ord(c) < 32 or ord(c) == 127 for c in name)
             or any(p.startswith('.') or p.endswith('.lock') for p in name.split('/'))):
@@ -56,7 +55,7 @@ class HarnessSnapshot:
 
     def __post_init__(self):
         fingerprint(self.head_sha256)
-        if (type(self.files) is not tuple or len(self.files) > 100 or not all(isinstance(f, HarnessFile) for f in self.files)
+        if (type(self.files) is not tuple or not all(isinstance(f, HarnessFile) for f in self.files)
                 or len({f.path_sha256 for f in self.files}) != len(self.files)
                 or self.effective_settings != 'unknown' or self.observed_loading != 'unknown'
                 or self.configuration_source != 'declared_project_files'
@@ -72,49 +71,50 @@ class GitExport(LocalExport):
         if (source.kind, source.provider) != ('local_git', 'git') or source.version not in ('v1', 'v2'):
             raise ValueError('unsupported Git source version')
         descriptor, selection = self.selection(source)
-        fields = {'schema_version', 'checkout', 'git_dir', 'common_dir', 'harness_paths', 'max_commits'}
-        if (not isinstance(selection, dict) or set(selection) not in (fields, fields|{'instruction_profile'})
+        fields = {'schema_version', 'checkout', 'git_dir', 'common_dir', 'harness_paths'}
+        if (not isinstance(selection, dict) or set(selection)-{'max_commits','instruction_profile'} != fields
                 or type(selection['schema_version']) is not int or selection['schema_version'] != 1):
             raise ValueError('invalid Git selection descriptor')
         if digest(selection) != source.scope_sha256: raise ValueError('Git selection scope mismatch')
         for key in ('checkout', 'git_dir', 'common_dir'): relative(selection[key])
         paths = selection['harness_paths']
-        if not isinstance(paths, list) or len(paths) > 100 or not all(isinstance(p, str) for p in paths) or len(set(paths)) != len(paths):
+        if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths) or len(set(paths)) != len(paths):
             raise ValueError('invalid Git harness allowlist')
         for path in paths:
             relative(path)
-            if len(path) > 4096 or len(Path(path).parts) > 64 or '.git' in Path(path).parts:
+            if '.git' in Path(path).parts:
                 raise ValueError('unsafe Git harness path')
-        count = selection['max_commits']
-        if type(count) is not int or not 1 <= count <= 100: raise ValueError('invalid Git history bound')
+        count = selection.get('max_commits')
+        if count is not None and (type(count) is not int or count <= 0): raise ValueError('invalid Git history bound')
         profile = selection.get('instruction_profile')
         if 'instruction_profile' in selection: validate_instruction_profile(profile)
-        deadline = time.monotonic()+10
+        deadline = None
         self.warnings, self.trees, self.algorithm = set(), {}, 'sha1'
-        with Folder(self.manifest.parent, deadline) as folder, GitView(deadline) as view:
+        with Folder(self.manifest.parent, deadline, limit_total_bytes=False, limit_tree=False) as folder, GitView(deadline, limit_output=False) as view:
             self.folder, self.view = folder, view
             checkout, git_dir, common = (selection[k] for k in ('checkout', 'git_dir', 'common_dir'))
             self.layout(checkout, git_dir, common)
-            config = folder.read(common+'/config')
+            config = folder.read(common+'/config', None)
             if config is None: raise ValueError('missing Git format declaration')
-            worktree_config = folder.read(git_dir+'/config.worktree')
+            worktree_config = folder.read(git_dir+'/config.worktree', None)
             (view.root/'source-config').write_bytes(config)
             self.configuration()
             refs = self.references(common, git_dir)
-            head_raw = folder.read(git_dir+'/HEAD', 4096)
+            head_raw = folder.read(git_dir+'/HEAD', None)
             head, branch = self.resolve(head_raw, refs)
             self.oid(head)
             view.configure(self.algorithm)
             (view.root/'HEAD').write_bytes(head+b'\n')
             self.objects(common)
-            shallow = folder.read(common+'/shallow')
+            shallow = folder.read(common+'/shallow', None)
             boundaries = set(shallow.splitlines()) if shallow else set()
             for oid in boundaries: self.oid(oid)
             if shallow:
                 (view.root/'shallow').write_bytes(shallow); self.warnings.add('shallow_history')
             view.run('fsck', '--full', '--strict', '--no-reflogs', '--no-dangling', '--no-progress', head.decode())
-            commits = view.run('rev-list', '--topo-order', '--max-count='+str(count+1), head.decode()).splitlines()
-            if len(commits) > count: self.warnings.add('history_limit_reached')
+            history_limit = [] if count is None else ['--max-count='+str(count+1)]
+            commits = view.run('rev-list', '--topo-order', *history_limit, head.decode()).splitlines()
+            if count is not None and len(commits) > count: self.warnings.add('history_limit_reached')
             rows, graph = [], []
             now = datetime.now(timezone.utc).isoformat()
             def record(kind, native, revision, content, original_at=None):
@@ -152,7 +152,7 @@ class GitExport(LocalExport):
             for path in sorted(paths):
                 committed, mode = self.harness_file(head, checkout, path)
                 name = str(Path(checkout)/path)
-                data = folder.read(name, 1024*1024)
+                data = folder.read(name, None)
                 info = folder.inspect(name)
                 files.append(HarnessFile(digest(path), hashlib.sha256(data).hexdigest() if data is not None else None,
                     stat.S_IMODE(info.st_mode) if info else None,
@@ -204,13 +204,13 @@ class GitExport(LocalExport):
             if git_dir != checkout+'/.git' or common != git_dir: raise ValueError('Git directory selection mismatch')
             if folder.read(git_dir+'/commondir') is not None: raise NotImplementedError('unexpected common Git directory redirection')
         elif stat.S_ISREG(marker.st_mode):
-            raw = folder.read(checkout+'/.git', 4096)
+            raw = folder.read(checkout+'/.git', None)
             if not raw.startswith(b'gitdir: '): raise ValueError('invalid Git worktree marker')
             expected = Path(os.path.abspath(self.manifest.parent/git_dir))
             if target(checkout, raw[8:]) != expected: raise ValueError('Git worktree directory mismatch')
-            if target(git_dir, folder.read(git_dir+'/gitdir', 4096)) != Path(os.path.abspath(self.manifest.parent/checkout/'.git')):
+            if target(git_dir, folder.read(git_dir+'/gitdir', None)) != Path(os.path.abspath(self.manifest.parent/checkout/'.git')):
                 raise ValueError('Git worktree backlink mismatch')
-            if target(git_dir, folder.read(git_dir+'/commondir', 4096)) != Path(os.path.abspath(self.manifest.parent/common)):
+            if target(git_dir, folder.read(git_dir+'/commondir', None)) != Path(os.path.abspath(self.manifest.parent/common)):
                 raise ValueError('Git common directory mismatch')
         else: raise ValueError('unsafe Git checkout marker')
 
@@ -236,7 +236,7 @@ class GitExport(LocalExport):
     def references(self, common, git_dir):
         result = {}
         private = ('refs/bisect/', 'refs/worktree/', 'refs/rewritten/')
-        packed = self.folder.read(common+'/packed-refs', 1024*1024)
+        packed = self.folder.read(common+'/packed-refs', None)
         for line in (packed or b'').splitlines():
             if line.startswith((b'#', b'^')): continue
             oid, separator, raw = line.partition(b' ')
@@ -250,27 +250,25 @@ class GitExport(LocalExport):
             excluded = tuple(common+'/'+prefix.rstrip('/') for prefix in private) if git_dir != common else ()
             for name in self.folder.walk(common+'/refs', excluded=excluded):
                 ref = str(Path(name).relative_to(common)); reference(ref)
-                result[ref] = self.folder.read(name, 4096).strip()
+                result[ref] = self.folder.read(name, None).strip()
         if git_dir != common:
             for prefix in private:
                 folder = git_dir+'/'+prefix.rstrip('/')
                 if self.folder.inspect(folder) is not None:
                     for name in self.folder.walk(folder):
                         ref = str(Path(name).relative_to(git_dir)); reference(ref)
-                        result[ref] = self.folder.read(name, 4096).strip()
-        if len(result) > 1000: raise ValueError('Git ref budget exceeded')
+                        result[ref] = self.folder.read(name, None).strip()
         return result
 
     def resolve(self, value, refs):
         branch, visited = None, set()
-        for _ in range(32):
+        while True:
             value = (value or b'').strip()
             if not value.startswith(b'ref: '): return value, branch
             name = reference(os.fsdecode(value[5:]))
             branch = branch or name
             if name in visited: raise ValueError('cyclic symbolic Git ref')
             visited.add(name); value = refs.get(name)
-        raise ValueError('Git ref depth exceeded')
 
     def objects(self, common):
         for name in ('alternates', 'http-alternates'):
@@ -280,7 +278,7 @@ class GitExport(LocalExport):
             if not (re.fullmatch(r'[0-9a-f]{2}/[0-9a-f]{38}(?:[0-9a-f]{24})?', suffix)
                     or re.fullmatch(r'pack/pack-[0-9a-f]{40}(?:[0-9a-f]{24})?\.(?:pack|idx|rev)', suffix)):
                 continue
-            raw = self.folder.read(name, MAX_BYTES)
+            raw = self.folder.read(name, None)
             output = self.view.root/'objects'/suffix; output.parent.mkdir(parents=True, exist_ok=True)
             output.write_bytes(raw)
 

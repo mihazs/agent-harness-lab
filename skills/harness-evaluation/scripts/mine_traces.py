@@ -79,9 +79,15 @@ def mine(lines, exclude=()):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__, epilog='Required per line: case_id, event_id, activity. Optional: root_case_id, actor, timestamp (timezone-aware ISO). Input must already be redacted; extra fields are ignored. Memory scales with unique event ids, cases and edges, not raw bodies.')
-    parser.add_argument('input', help='normalized JSONL file, or - for stdin')
-    parser.add_argument('--exclude', action='append', default=[], help='activity omitted only from the projected graph')
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='Required per JSONL row: case_id, event_id, activity; IDs must be unique within each case.\n'
+        'Optional: root_case_id, actor, timezone-aware ISO timestamp. Redact input before use.\n'
+        'Prints JSON counts and raw/projected edges; no files or instructions are changed.\n'
+        'Reported roots need external lineage verification; counts do not establish success or causation.\n'
+        'Memory scales with unique IDs, cases and edges. Exit 0: report; 2: invalid input.\n'
+        'Examples: ahl mine events.jsonl --exclude observe; ahl mine - < events.jsonl')
+    parser.add_argument('input', help='Redacted normalized JSONL file, or - to read JSONL from stdin')
+    parser.add_argument('--exclude', action='append', default=[], help='Activity to omit from projected edges only; repeat for multiple activities, raw counts/edges remain intact (default: none)')
     args = parser.parse_args()
     try:
         if args.input == '-':

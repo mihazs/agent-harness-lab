@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Bounded, offline trace diagnosis. Findings are evidence, never mutation authority."""
+"""Offline trace diagnosis. Findings are evidence, never mutation authority."""
 import argparse
-from collections import Counter, defaultdict, deque
+from collections import Counter, defaultdict
 import hashlib
+import itertools
 import json
 from pathlib import Path
 try:
@@ -18,24 +19,77 @@ def normalize(rows, source_format='normalized', project=None, source_version=Non
     yield from adapter(rows, source_format, project, source_version)
 
 
-def analyze(rows, max_events=100000, *, observation_per_case=128, observation_total=4096, observation_max_age=1000):
-    counts, sequences = Counter(), defaultdict(set)
-    windows = defaultdict(lambda: deque(maxlen=4))
+def recurring_sequences(cases, roots, maximum=None):
+    """Index substrings first; enumerate only patterns supported by three roots."""
+    if len(set(roots.values())) < 3:
+        return []
+    states = [dict(length=0, link=-1, transitions={}, position=-1, roots=set(), ends=[])]
+    tokens = []; last = 0
+    for case, entries in cases.items():
+        for activity, position, ref in itertools.chain(entries, (((case, None), None, None),)):
+            tokens.append(activity); index = len(tokens)-1
+            current = len(states)
+            states.append(dict(length=states[last]['length']+1, link=0, transitions={}, position=index,
+                roots={roots[case]} if ref is not None else set(), ends=[(position,ref)] if ref is not None else []))
+            parent = last
+            while parent >= 0 and activity not in states[parent]['transitions']:
+                states[parent]['transitions'][activity] = current
+                parent = states[parent]['link']
+            if parent >= 0:
+                target = states[parent]['transitions'][activity]
+                if states[parent]['length']+1 == states[target]['length']:
+                    states[current]['link'] = target
+                else:
+                    clone = len(states)
+                    states.append(dict(length=states[parent]['length']+1, link=states[target]['link'],
+                        transitions=dict(states[target]['transitions']), position=states[target]['position'], roots=set(), ends=[]))
+                    while parent >= 0 and states[parent]['transitions'].get(activity) == target:
+                        states[parent]['transitions'][activity] = clone
+                        parent = states[parent]['link']
+                    states[target]['link'] = states[current]['link'] = clone
+            last = current
+    children = defaultdict(list)
+    for index in sorted(range(1,len(states)), key=lambda i: states[i]['length'], reverse=True):
+        parent = states[index]['link']
+        states[parent]['roots'].update(states[index]['roots'])
+        children[parent].append(index)
+    result = []
+    for index, state in enumerate(states[1:],1):
+        if len(state['roots']) < 3:
+            continue
+        shortest = max(2, states[state['link']]['length']+1)
+        longest = state['length'] if maximum is None else min(maximum,state['length'])
+        if shortest > longest:
+            continue
+        ends = []; pending = [index]
+        while pending:
+            child = pending.pop()
+            ends.extend(states[child]['ends']); pending.extend(children[child])
+        evidence = [ref for _,ref in sorted(ends,key=lambda item:item[0])]
+        for length in range(shortest,longest+1):
+            activities = tokens[state['position']-length+1:state['position']+1]
+            result.append(dict(activities=activities,reported_roots=len(state['roots']),evidence=evidence))
+    return sorted(result,key=lambda row:(-row['reported_roots'],row['activities']))
+
+
+def analyze(rows, max_events=None, *, observation_per_case=None, observation_total=None, observation_max_age=None, sequence_length=None):
+    if any(value is not None and (type(value) is not int or value <= 0) for value in (max_events,sequence_length)):
+        raise ValueError('analysis limits must be positive integers')
+    counts, cases = Counter(), defaultdict(list)
     seen, roots, findings = set(), {}, []
     observations = ObservationCache(observation_per_case, observation_total, observation_max_age)
     fields = Counter()
-    evidence = defaultdict(list)
     for number, event in enumerate(rows, 1):
-        if number > max_events:
+        if max_events is not None and number > max_events:
             raise ValueError('event limit exceeded; select a bounded corpus explicitly')
         if not isinstance(event, dict):
             raise ValueError(f'invalid event at position {number}')
         for key in ('case_id', 'event_id', 'activity'):
-            if not isinstance(event.get(key), str) or not 0 < len(event[key]) <= 256:
+            if not isinstance(event.get(key), str) or not event[key]:
                 raise ValueError(f'invalid {key} at event {number}')
         case, ident, activity = (event[k] for k in ('case_id', 'event_id', 'activity'))
         root = event.get('root_case_id', case)
-        if not isinstance(root, str) or not root or len(root) > 256:
+        if not isinstance(root, str) or not root:
             raise ValueError('invalid root_case_id')
         if case in roots and roots[case] != root:
             raise ValueError('inconsistent lineage')
@@ -47,12 +101,7 @@ def analyze(rows, max_events=100000, *, observation_per_case=128, observation_to
         for key in ('tool_name', 'outcome', 'state_revision', 'lineage_verified'):
             fields[key] += event.get(key) not in (None, 'unknown', 'unverified')
         ref = {'case_id': case, 'event_id': ident}
-        windows[case].append(activity)
-        for size in range(2, len(windows[case]) + 1):
-            pattern = tuple(windows[case])[-size:]
-            sequences[pattern].add(root)
-            if len(evidence[pattern]) < 3:
-                evidence[pattern].append(ref)
+        cases[case].append((activity,number,ref))
         finding = observations.observe(event, number)
         if finding:
             findings.append(finding)
@@ -60,8 +109,7 @@ def analyze(rows, max_events=100000, *, observation_per_case=128, observation_to
             findings.append(dict(kind='contract_violation', status='observed_pattern',
                 evidence=[ref], contract_ref=event['contract_ref'],
                 explanation='Caller supplied contract evidence; verify against the applicable contract.'))
-    repeated = [dict(activities=list(p), reported_roots=len(s), evidence=evidence[p])
-                for p, s in sorted(sequences.items(), key=lambda x: (-len(x[1]), x[0])) if len(s) >= 3]
+    repeated = recurring_sequences(cases,roots,sequence_length)
     n = sum(counts.values())
     return dict(schema_version=1, events=n, cases=len(roots), reported_roots=len(set(roots.values())),
                 field_coverage={k: dict(known=fields[k], total=n) for k in
@@ -69,6 +117,7 @@ def analyze(rows, max_events=100000, *, observation_per_case=128, observation_to
                 activities=dict(counts), eligible_observations=observations.coverage['eligible'],
                 observation_coverage=dict(observations.coverage),
                 observation_limits=dict(per_case=observation_per_case, total=observation_total, max_age=observation_max_age),
+                sequence_length_limit=sequence_length,
                 recurring_sequences=repeated, findings=findings,
                 deferred_mechanisms={
                     'tool_waste': 'Needs necessity contract or outcome-preserving intervention.',
@@ -108,21 +157,26 @@ def report(result, *, source_context=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--events', type=Path, required=True)
-    parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--format', choices=('normalized', 'codex', 'claude', 'ai-memory'), default='normalized')
-    parser.add_argument('--project', help='Verified workspace/project identity for native exports')
-    parser.add_argument('--max-events', type=int, default=100000)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='Input: redacted JSONL; normalized rows require case_id, event_id and activity.\n'
+        'Writes findings.json and report.md in a NEW private directory; no inference or target edits.\n'
+        'Exit 0: report written (findings are observations, not success); 2: invalid input/setup.\n'
+        'Example: ahl diagnose --events events.jsonl --output /tmp/ahl-diagnosis')
+    parser.add_argument('--events', type=Path, required=True, help='Existing redacted JSONL capture to analyze; no automatic discovery or stdin')
+    parser.add_argument('--output', type=Path, required=True, help='New private report directory; existing directories are refused without overwriting')
+    parser.add_argument('--format', choices=('normalized', 'codex', 'claude', 'ai-memory'), default='normalized', help='Input adapter; non-normalized exports also require --project (default: %(default)s)')
+    parser.add_argument('--project', help='Verified workspace/project identity attached to non-normalized exports; required unless --format normalized')
+    parser.add_argument('--max-events', type=int, help='Optional positive normalized-event limit; exceeding it fails explicitly; default: unlimited')
+    parser.add_argument('--sequence-length', type=int, help='Optional positive recurring-sequence length limit; default: unlimited')
     args = parser.parse_args()
     if args.format != 'normalized' and not args.project:
         parser.error('native exports require an explicit verified --project')
-    if args.max_events <= 0:
-        parser.error('--max-events must be positive')
+    if any(value is not None and value <= 0 for value in (args.max_events,args.sequence_length)):
+        parser.error('analysis limits must be positive')
     try:
         with args.events.open() as stream:
             rows = (json.loads(line) for line in stream if line.strip())
-            result = analyze(normalize(rows, args.format, args.project), args.max_events)
+            result = analyze(normalize(rows, args.format, args.project), args.max_events, sequence_length=args.sequence_length)
         with args.events.open('rb') as stream:
             result['input_sha256'] = hashlib.file_digest(stream, 'sha256').hexdigest()
         args.output.mkdir(parents=True, exist_ok=False, mode=0o700)

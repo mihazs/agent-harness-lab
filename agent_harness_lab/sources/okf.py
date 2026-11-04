@@ -27,8 +27,6 @@ def concept(raw):
     if end is None:
         raise ValueError('unterminated OKF frontmatter')
     header = ''.join(lines[1:end])
-    if len(header.encode()) > 16384:
-        raise ValueError('OKF metadata limit exceeded')
     try:
         if any(isinstance(t, (yaml.tokens.AnchorToken, yaml.tokens.AliasToken)) for t in yaml.scan(header)):
             raise ValueError('YAML aliases are unsupported')
@@ -89,20 +87,19 @@ class OKFExport(LocalExport):
         if current != source or not source.enabled:
             raise ValueError('source declaration changed or is disabled')
         root = contained(self.manifest.parent, value['data'])
-        meta, _ = concept(read_regular(contained(root, '_meta.md'), 65536))
+        meta, _ = concept(read_regular(contained(root, '_meta.md'), None))
         if not isinstance(meta.get('project'), str) or digest(meta['project']) != source.project_sha256:
             raise ValueError('ai-memory project identity mismatch')
-        index, _ = concept(read_regular(contained(root, 'index.md'), 65536))
+        index, _ = concept(read_regular(contained(root, 'index.md'), None))
         if index.get('okf_version') != '0.2':
             raise ValueError('unsupported OKF version')
-        selected, total, scanned = [], 0, 0
+        selected = []
         for directory, folders, files in os.walk(root, followlinks=False):
             if Path(directory) != root and '_meta.md' in files:
                 raise ValueError('nested scope manifests are unsupported')
             folders[:] = sorted(f for f in folders if f not in ('.git', '_pending'))
-            scanned += len(folders)+len(files)
-            if scanned > 2000 or any((Path(directory)/f).is_symlink() for f in folders):
-                raise ValueError('unsafe or excessive OKF directory tree')
+            if any((Path(directory)/f).is_symlink() for f in folders):
+                raise ValueError('unsafe OKF directory tree')
             for name in sorted(files):
                 if not name.endswith('.md') or name in ('index.md', '_meta.md', 'log.md') or re.fullmatch(r'log-\d{4}-\d{2}\.md', name):
                     continue
@@ -110,10 +107,7 @@ class OKFExport(LocalExport):
                 relative = str(path.relative_to(root))
                 if name.startswith('.'):
                     raise ValueError('hidden concepts are unsupported')
-                raw = read_regular(contained(root, relative), 256*1024)
-                total += len(raw)
-                if total > 4*1024*1024 or len(selected) >= 500:
-                    raise ValueError('OKF bundle limits exceeded')
+                raw = read_regular(contained(root, relative), None)
                 metadata, body = concept(raw)
                 if not isinstance(metadata.get('type'), str) or not metadata['type'].strip():
                     raise ValueError('OKF concept type is required')

@@ -13,11 +13,16 @@ from . import certification_access as ledger
 from .derivations import _check_role_custody, _hash, _tree_pin, _snapshot_pin, _rebased_output
 from .decision_receipts import engine
 from .integrity import contained, copy_frozen, digest
-from .working_state import WorkingState, check_deadline
+from .working_state import WorkingState, analysis_snapshot, check_deadline
+from .analysis_inputs import UNLIMITED
 
 PROFILE=ledger.CONSTRUCTION_PROFILE
 _SCOPES=WeakKeyDictionary()
 _STAGES=WeakKeyDictionary()
+
+
+def _input_pin(path,deadline,analysis=False):
+    return _snapshot_pin(analysis_snapshot(path,deadline)) if analysis else _tree_pin(path,deadline)
 
 
 class _Stage:
@@ -117,12 +122,12 @@ def _check(owned, *, pending=True):
     _scope(owned['scope']())
     _check_role_custody(owned)
     for name,key in (('baseline','baseline_tree_sha256'),('context','context_tree_sha256')):
-        if _tree_pin(owned['folder']/name,owned['deadline'])!=owned['value'][key]:
+        if _input_pin(owned['folder']/name,owned['deadline'],owned.get('analysis',False) and name=='context')!=owned['value'][key]:
             raise ValueError('frozen canonical input snapshot changed')
     if owned['role']=='proposer' and _tree_pin(owned['folder']/'candidate',owned['deadline'])!=owned['value']['candidate_tree_sha256']:
         raise ValueError('frozen proposal input snapshot changed')
     for path,pin in owned['originals'].items():
-        if _tree_pin(path,owned['deadline'])!=pin: raise ValueError('original canonical input changed')
+        if _input_pin(path,owned['deadline'],owned.get('analysis',False) and path==owned['original_context'])!=pin: raise ValueError('original canonical input changed')
     entry=ledger.construction_record(owned['store'].access_ledger().path,owned['ident'])
     if (entry['input_binding_sha256']!=_hash(owned['inputs']) or entry['role']!=owned['role']
             or entry['parent_assets']!=owned['inputs']['parent_assets']
@@ -138,10 +143,11 @@ def _check(owned, *, pending=True):
     return entry
 
 
-def validate_role(handle,role,client,backend,baseline,context,workspace,destination):
+def validate_role(handle,role,client,backend,baseline,context,workspace,destination,*,analysis=False):
     if type(handle) is not _Stage or handle not in _STAGES:
         raise ValueError('actual one-use canonical role handoff required')
     owned=_STAGES[handle]
+    if owned.get('analysis',False)!=analysis:raise ValueError('canonical analysis input selection changed')
     if (owned['used'] or owned['role']!=role or owned['client'] is not client or owned['backend'] is not backend
             or Path(baseline)!=owned['baseline'] or Path(context)!=owned['context']
             or Path(workspace)!=owned['active']/'work' or Path(destination)!=owned['active']/'published'):
@@ -180,14 +186,15 @@ class WorkflowAccess:
         if settings!=client.settings: raise ValueError('workflow client differs from actual frozen settings')
         _scope(self)
 
-    def _run(self,role,context,destination,*,candidate=None,focus=None):
+    def _run(self,role,context,destination,*,candidate=None,focus=None,analysis=False):
+        if type(analysis) is not bool:raise ValueError('explicit analysis input selection required')
         from . import construction
         data=_scope(self); deadline=data['deadline']; store=data['store']
         context=ledger._path(context); destination=ledger._path(destination)
         paths=[data['baseline'],context,*([ledger._path(candidate)] if candidate is not None else [])]
         _disjoint(store.root,[*paths,destination])
         if destination.exists(): raise ValueError('new canonical publication destination required')
-        originals={path:_tree_pin(path,deadline) for path in paths}
+        originals={path:_input_pin(path,deadline,analysis and path==context) for path in paths}
         parent=None; parents=[]
         if role=='proposer' and data['feedback'] is not None:
             author,rows=data['feedback']; _check(author,pending=False)
@@ -203,6 +210,7 @@ class WorkflowAccess:
             resources=data['resources'],backend_selection_sha256=data['backend_pin'],store_identity_sha256=data['store_identity'],configuration_sha256=data['configuration_sha256'],originals={str(k):v for k,v in originals.items()},
             parent_construction_id=parent,parent_assets=parents,scientific_parentage='unknown' if parent is None else 'controller_available_feedback',
             settings_sha256=data['settings_pin'],settings_snapshot_sha256=_hash(settings_snapshot),engine_sha256=data['engine_pin'])
+        if analysis:inputs['analysis_fixture_admission']='unlimited_readonly_v1'
         _scope(self)
         ident=ledger.begin_construction(store.access_ledger().path,role,_hash(inputs),parent=parent,parents=parents)
         data['attempts'].append((ident,role,_hash(inputs)))
@@ -216,10 +224,11 @@ class WorkflowAccess:
             for name,value in (('inputs',inputs),('engine',data['implementation']),('settings',settings_snapshot)):
                 write_bytes(folder/(name+'.json'),encoded(value))
             for original,target in ((data['baseline'],'baseline'),(context,'context')):
-                copy_frozen(original,folder/target,digest(original))
-                if _tree_pin(folder/target,deadline)!=originals[original]: raise ValueError('canonical input changed while copying')
-                copy_frozen(folder/target,active/target,digest(folder/target))
-                if _tree_pin(active/target,deadline)!=originals[original]: raise ValueError('active canonical input changed while copying')
+                limits=UNLIMITED if analysis and target=='context' else {}
+                copy_frozen(original,folder/target,digest(original,**limits),**limits)
+                if _input_pin(folder/target,deadline,analysis and target=='context')!=originals[original]: raise ValueError('canonical input changed while copying')
+                copy_frozen(folder/target,active/target,digest(folder/target,**limits),**limits)
+                if _input_pin(active/target,deadline,analysis and target=='context')!=originals[original]: raise ValueError('active canonical input changed while copying')
             seed_pin=None
             if role=='proposer':
                 copy_frozen(candidate,folder/'candidate',digest(candidate))
@@ -227,19 +236,19 @@ class WorkflowAccess:
                 construction.proposer_seed(folder/'candidate',active/'work',deadline)
                 seed_pin=_tree_pin(active/'work',deadline)
             value=dict(schema_version=1,profile=PROFILE,construction_id=ident,
-                context_tree_sha256=_tree_pin(active/'context',deadline),baseline_tree_sha256=_tree_pin(active/'baseline',deadline),engine_sha256=data['engine_pin'])
+                context_tree_sha256=_input_pin(active/'context',deadline,analysis),baseline_tree_sha256=_tree_pin(active/'baseline',deadline),engine_sha256=data['engine_pin'])
             if role=='proposer':
                 value.update(candidate_tree_sha256=originals[ledger._path(candidate)],seed_tree_sha256=seed_pin)
             write_bytes(folder/'handoff.json',encoded(value))
             owned=dict(scope=ref(self),store=store,ident=ident,folder=folder,active=active,role=role,pid=issuer,used=False,
-                baseline=active/'baseline',context=active/'context',deadline=deadline,value=value,inputs=inputs,
+                baseline=active/'baseline',context=active/'context',original_context=context,analysis=analysis,deadline=deadline,value=value,inputs=inputs,
                 client=data['client'],backend=data['backend'],settings=data['settings'],settings_path=data['settings_path'],originals=originals,seed_pin=seed_pin)
             handle=_Stage(); _STAGES[handle]=owned
             args=(data['client'],data['backend'],owned['baseline'],owned['context'],active/'work',active/'published',deadline)
             if role=='proposer':
-                _,_,commands=construction.propose(*args,focus=focus,exposure=handle)
+                _,_,commands=construction.propose(*args,focus=focus,exposure=handle,**({'analysis':True} if analysis else {}))
             else:
-                _,commands=construction.author(*args,derivation=handle)
+                _,commands=construction.author(*args,derivation=handle,**({'analysis':True} if analysis else {}))
             if not owned['used']: raise ValueError('canonical role did not consume its actual handoff')
             _check(owned)
             if owned.get('produced_pin')!=_tree_pin(active/'published',deadline):
@@ -297,11 +306,11 @@ class WorkflowAccess:
         finally:
             if handle is not None: _STAGES.pop(handle,None)
 
-    def propose(self,context,candidate,destination,*,focus=None):
-        return self._run('proposer',context,destination,candidate=candidate,focus=focus)
+    def propose(self,context,candidate,destination,*,focus=None,analysis=False):
+        return self._run('proposer',context,destination,candidate=candidate,focus=focus,analysis=analysis)
 
-    def author(self,context,destination):
-        return self._run('evaluator_author',context,destination)
+    def author(self,context,destination,*,analysis=False):
+        return self._run('evaluator_author',context,destination,analysis=analysis)
 
     def freeze_candidate(self,candidate,destination):
         data=_scope(self)

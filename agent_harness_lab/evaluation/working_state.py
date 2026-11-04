@@ -41,7 +41,7 @@ class Snapshot:
     files: tuple
 
     @classmethod
-    def capture(cls, root, deadline):
+    def capture(cls, root, deadline, *, max_files=100,max_directories=100,max_bytes=1024*1024,max_metadata=65536,max_depth=64):
         folders, files = [], []; total = metadata = 0
         def mode(info):
             if info.st_mode & (stat.S_ISUID|stat.S_ISGID|stat.S_ISVTX):
@@ -56,17 +56,17 @@ class Snapshot:
                     check_deadline(deadline)
                     name = prefix + entry.name; relative(name)
                     size = len(name.encode('utf-8')); metadata += size + 16
-                    if size > 4096 or len(name.split('/')) > 64 or metadata > 65536:
+                    if size > 4096 or max_depth is not None and len(name.split('/')) > max_depth or max_metadata is not None and metadata > max_metadata:
                         raise ValueError('working state path/metadata bound exceeded')
                     info = entry.stat(follow_symlinks=False); permission = mode(info)
                     if stat.S_ISDIR(info.st_mode):
-                        if len(folders) >= 100: raise ValueError('working state directory bound exceeded')
+                        if max_directories is not None and len(folders) >= max_directories: raise ValueError('working state directory bound exceeded')
                         folders.append((name,permission))
                         child = os.open(entry.name,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW,dir_fd=descriptor)
                         try: visit(child,name+'/')
                         finally: os.close(child)
                     elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
-                        if len(files) >= 100 or info.st_size > 1024*1024-total:
+                        if max_files is not None and len(files) >= max_files or max_bytes is not None and info.st_size > max_bytes-total:
                             raise ValueError('working state file/byte bound exceeded')
                         child = os.open(entry.name,os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK,dir_fd=descriptor)
                         try:
@@ -103,6 +103,17 @@ class Snapshot:
             try: os.fchmod(descriptor,mode)
             finally: os.close(descriptor)
         os.fchmod(root,self.root_mode); check_deadline(deadline)
+
+
+def analysis_snapshot(workspace,deadline):
+    """Read-only controller input capture; worker output defaults stay separate."""
+    check_deadline(deadline);workspace=Path(workspace)
+    if any(path.is_symlink() for path in (workspace,*workspace.absolute().parents)) or not workspace.is_dir():
+        raise ValueError('analysis input must be a regular directory without symlink ancestors')
+    descriptor=os.open(workspace,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+    try:
+        return Snapshot.capture(descriptor,deadline,max_files=None,max_directories=None,max_bytes=None,max_metadata=None,max_depth=None)
+    finally:os.close(descriptor)
 
 
 class WorkingState:

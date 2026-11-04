@@ -5,7 +5,8 @@ from pathlib import Path
 import shutil
 from .integrity import contained, read_regular, relative, unique_object
 from .responses import invalid_number, run_role
-from .working_state import WorkingState, check_deadline
+from .working_state import WorkingState, analysis_snapshot, check_deadline
+from .analysis_inputs import AnalysisInputs
 
 
 def views(data, assets, root, deadline):
@@ -23,7 +24,7 @@ def views(data, assets, root, deadline):
             check_deadline(deadline)
             shutil.copytree(Path(assets)/'skills'/skill,folder/'methodology'/skill,symlinks=True,
                 ignore=shutil.ignore_patterns('__pycache__','*.pyc'))
-        WorkingState(folder,deadline)
+        analysis_snapshot(folder,deadline)
         result[role] = folder
     return result
 
@@ -34,10 +35,11 @@ def proposer_seed(candidate, workspace, deadline):
     WorkingState(workspace,deadline)
 
 
-def propose(client, backend, baseline, context, workspace, destination, deadline, *, focus=None, exposure=None):
+def propose(client, backend, baseline, context, workspace, destination, deadline, *, focus=None, exposure=None,analysis=False):
+    if type(analysis) is not bool:raise ValueError('explicit analysis input selection required')
     if exposure is not None:
         from .construction_access import validate_role
-        validate_role(exposure,'proposer',client,backend,baseline,context,workspace,destination)
+        validate_role(exposure,'proposer',client,backend,baseline,context,workspace,destination,analysis=analysis)
     instructions = '''You are the proposer in a controller-managed harness experiment.
 Read /inputs/fixture/analysis-summary.json and /inputs/fixture/methodology/harness-self-improvement/SKILL.md,
 plus its sibling evaluation methodology. Baseline is /inputs/harness.
@@ -50,7 +52,8 @@ Write proposal.json as {"status":"no_change","reason":"supported explanation"} i
 or {"status":"candidate","mechanisms":[...],"falsifiers":[...]} after a bounded repair.
 Do not leave other top-level files. The controller owns validation, execution and adoption.
 Use only run(argv); credentials, host project, global settings and other runs are unavailable.'''
-    state,commands = run_role(client,backend,workspace,{'harness':baseline,'fixture':context},'proposer',
+    inputs=AnalysisInputs(baseline,context) if analysis else {'harness':baseline,'fixture':context}
+    state,commands = run_role(client,backend,workspace,inputs,'proposer',
         instructions,json.dumps(dict(focus=focus)),deadline)
     published = state.publish(destination,deadline)
     if {path.name for path in published.iterdir()} != {'candidate','proposal.json'}:
@@ -64,12 +67,16 @@ Use only run(argv); credentials, host project, global settings and other runs ar
     return proposal,published/'candidate',commands
 
 
-def author(client, backend, baseline, context, workspace, destination, deadline, *, derivation=None):
+def author(client, backend, baseline, context, workspace, destination, deadline, *, derivation=None,analysis=False):
+    if type(analysis) is not bool:raise ValueError('explicit analysis input selection required')
     variant=False
     if derivation is not None:
         from .derivations import validate_author, _Handoff
         variant=type(derivation) is _Handoff
-        validate_author(derivation,client,backend,baseline,context,workspace,destination)
+        if analysis:
+            from .construction_access import validate_role
+            validate_role(derivation,'evaluator_author',client,backend,baseline,context,workspace,destination,analysis=True)
+        else:validate_author(derivation,client,backend,baseline,context,workspace,destination)
     workspace.mkdir(mode=0o700)
     instructions = '''You are the evaluator author in a controller-managed harness experiment.
 Read /inputs/fixture/analysis-summary.json and /inputs/fixture/methodology/harness-evaluation/SKILL.md.
@@ -101,7 +108,8 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
         instructions += '\nThe controller records construction exposure. Scientific parentage and independence remain unverified; do not claim certification.'
     prompt = ('Construct exposed development variants from the supplied source. No independent or untouched evaluation claim is supported.'
         if variant else 'Construct the descriptive experiment from the supplied baseline and metadata.' if derivation is not None else 'Construct the independent descriptive experiment from the supplied baseline and metadata.')
-    state,commands = run_role(client,backend,workspace,{'harness':baseline,'fixture':context},'evaluator_author',
+    inputs=AnalysisInputs(baseline,context) if analysis else {'harness':baseline,'fixture':context}
+    state,commands = run_role(client,backend,workspace,inputs,'evaluator_author',
         instructions,prompt,deadline)
     check_deadline(deadline)
     raw=next((raw for name,_,raw in state.snapshot.files if name=='manifest.json'),None)

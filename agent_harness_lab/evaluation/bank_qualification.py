@@ -335,18 +335,28 @@ def main(argv=None):
     import json
     from .regression_review import ReviewStore
     from .cli import pinned_arguments
-    parser=argparse.ArgumentParser(prog='ahl bank-review',description=__doc__)
-    parser.add_argument('--store',type=Path,required=True)
-    actions=parser.add_subparsers(dest='action',required=True)
-    trust=actions.add_parser('trust-reviewers');trust.add_argument('--policy',type=Path,required=True)
-    propose=actions.add_parser('intake');propose.add_argument('--bank',type=Path,required=True);propose.add_argument('--declaration',type=Path,required=True)
+    parser=argparse.ArgumentParser(prog='ahl bank-review',description='Freeze a protected final bank, audit actual offline controls, and authenticate conditional lineage judgments in a private review store. Qualification is protocol-scoped, never global secrecy or automatic adoption.',epilog='Example: ahl bank-review --store /private/review show --case CASE_SHA256. Put --store before the action. Prints JSON; exits: 0 completed, 2 invalid input, 3 blocked/busy/unsupported. Review signing is external; no model calls are made.')
+    parser.add_argument('--store',type=Path,required=True,help='Explicit owner-only private ReviewStore directory for bank cases, evidence, requests and trust policy')
+    actions=parser.add_subparsers(dest='action',required=True,help='Select a final-bank lifecycle operation; use ACTION --help for its exact inputs')
+    trust=actions.add_parser('trust-reviewers',help='Install a host-controlled external reviewer public-key policy',description='Install a reviewer public-key policy for conditional final-bank review; this changes the active trust root, not a bank qualification. Prints JSON; exit 0 completed, 2 rejected input, 3 blocked/unsupported.')
+    trust.add_argument('--policy',type=Path,required=True,help='Existing final-bank review-authority policy JSON with authorized reviewer identities/public keys; not a private signing key')
+    propose=actions.add_parser('intake',help='Freeze a declared separate final bank and its authorized lineage judgments',description='Copy exact bank fixtures/grader bundles and a final-bank declaration into a new private case; does not run controls or grant qualification. Prints JSON including the case ID; exit 0 completed, 2 rejected input, 3 blocked/busy.')
+    propose.add_argument('--bank',type=Path,required=True,help='Existing bank.json with separate certification-partition tasks and exact fixture/grader digests')
+    propose.add_argument('--declaration',type=Path,required=True,help='Existing schema-1 final-bank declaration JSON: author, history_store, protocol, per-task judgments and explicit exposure unknowns')
     for name in ('audit','prepare-review','qualify','show','retire'):
-        command=actions.add_parser(name);command.add_argument('--case',required=True)
+        descriptions={
+            'audit':'Run frozen native offline control checks against the selected pinned image and append actual audit evidence',
+            'prepare-review':'Write an unsigned exact bank-review request for the installed reviewer policy; signing stays external',
+            'qualify':'Verify the signed request, current audit and configured-history exposure before recording conditional qualification',
+            'show':'Read current bank case state and qualification metadata without running workers or signing',
+            'retire':'Append irreversible retirement of this bank case; does not delete its private history'}
+        command=actions.add_parser(name,help=descriptions[name],description=descriptions[name],epilog='Prints private JSON metadata; exit 0 completed, 2 rejected input, 3 blocked/busy/unsupported. Run ahl bank-review --help for the required audit and external-signing sequence.');command.add_argument('--case',required=True,help='Exact SHA-256 bank case ID returned by intake in this --store')
         if name=='audit':pinned_arguments(command)
-        if name=='prepare-review':command.add_argument('--reviewer',required=True)
+        if name=='prepare-review':command.add_argument('--reviewer',required=True,help='Reviewer identity present in the installed public-key policy; must differ from the bank author')
         if name=='qualify':
-            command.add_argument('--request',type=Path,required=True);command.add_argument('--signature',type=Path,required=True)
-            command.add_argument('--budget-seconds',type=float,default=30)
+            command.add_argument('--request',type=Path,required=True,help='Existing exact unsigned request JSON produced by prepare-review and signed externally')
+            command.add_argument('--signature',type=Path,required=True,help='Detached OpenSSH signature over --request for the installed final-bank review signing purpose')
+            command.add_argument('--budget-seconds',type=float,default=30,help='Whole qualification/currentness deadline in seconds, positive and at most 300 (default: %(default)s)')
     args=parser.parse_args(argv);store=ReviewStore(args.store)
     try:
         if args.action=='trust-reviewers':result=install_policy(store,args.policy)

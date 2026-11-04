@@ -177,9 +177,10 @@ def rollback_main(argv):
     import argparse
     from .workflow import state_root, identity
     from .promotion.journal import Journal
-    parser = argparse.ArgumentParser(prog='ahl rollback', description='Restore an owned deployment if no intervening edits conflict')
-    parser.add_argument('deployment')
-    parser.add_argument('--project', type=Path, default=Path.cwd())
+    parser = argparse.ArgumentParser(prog='ahl rollback', description='Restore an owned deployment if no intervening edits conflict',
+        epilog='Use the deployment ID from a successful repair receipt: ahl rollback DEPLOYMENT --project /project. Reads the private project Journal, verifies current owned bytes/modes and restores the saved state; foreign edits are preserved as conflicts. Prints a JSON receipt. Exit 0 on rollback; invalid ownership/input or conflicts exit 2. No model calls.')
+    parser.add_argument('deployment',help='Exact 32-hex deployment ID returned by the owned application Journal; not a run ID or arbitrary file path')
+    parser.add_argument('--project', type=Path, default=Path.cwd(),help='Existing project directory belonging to that deployment (default: current directory); selects its private Journal')
     args = parser.parse_args(argv)
     try:
         project = args.project.resolve(strict=True)

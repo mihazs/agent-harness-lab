@@ -103,22 +103,26 @@ def doctor(project, profile=None, *, probe_runtime=False, proposed=None, source_
 
 
 def main(argv):
-    parser = argparse.ArgumentParser(prog='ahl')
-    commands = parser.add_subparsers(dest='command', required=True)
-    check = commands.add_parser('doctor', help='Inspect readiness without inference or project changes')
-    check.add_argument('project', nargs='?', type=Path, default=Path.cwd())
-    check.add_argument('--profile', choices=('offline', 'cooperative', 'isolated'))
+    parser = argparse.ArgumentParser(prog='ahl',description='Inspect local readiness or explicitly initialize project configuration; neither command grants execution authority.')
+    commands = parser.add_subparsers(dest='command', required=True,help='Select read-only doctor diagnostics or configuration-only init')
+    check = commands.add_parser('doctor', help='Inspect readiness without inference or project changes',
+        description='Inspect project configuration, bank and runtime metadata. Authentication and unobserved isolation remain unknown.',
+        epilog='Example: ahl doctor . --json. No input is requested. Exit 0 ready, 2 invalid configuration, 3 blocked; --probe-runtime explicitly allows an offline namespace probe.')
+    check.add_argument('project', nargs='?', type=Path, default=Path.cwd(),help='Existing project directory to inspect without modification (default: current directory)')
+    check.add_argument('--profile', choices=('offline', 'cooperative', 'isolated'),help='Readiness requirements to inspect (default: configured profile, otherwise offline); does not change ahl.json')
     check.add_argument('--probe-runtime', action='store_true', help='Allow a bounded offline namespace probe; agent authentication stays unverified')
-    check.add_argument('--json', action='store_true')
+    check.add_argument('--json', action='store_true',help='Emit the structured readiness report as JSON on stdout instead of human-readable checks')
     check.add_argument('--source-cache', type=Path, help='Explicit private source journal; no source or credential access')
-    check.add_argument('--source-project-sha256')
-    check.add_argument('--source-scope-sha256')
-    init = commands.add_parser('init', help='Preview project configuration; --write explicitly creates ahl.json')
-    init.add_argument('project', nargs='?', type=Path, default=Path.cwd())
-    init.add_argument('--non-interactive', action='store_true')
-    init.add_argument('--config-input', type=Path)
-    init.add_argument('--write', action='store_true')
-    init.add_argument('--json', action='store_true')
+    check.add_argument('--source-project-sha256',help='Exact project identity SHA-256 to select metadata from --source-cache')
+    check.add_argument('--source-scope-sha256',help='Exact authorized scope SHA-256 paired with --source-project-sha256 for the private source journal')
+    init = commands.add_parser('init', help='Preview project configuration; --write explicitly creates ahl.json',
+        description='Validate and preview a schema-1 ahl.json configuration with conservative offline defaults; never overwrite an existing configuration or authorize execution.',
+        epilog='Examples: ahl init . --non-interactive --json; ahl init . --non-interactive --config-input settings.json --write. No file is created without --write. Exit 0 preview/created, 1 cancelled, 2 invalid input, 3 filesystem blocked.')
+    init.add_argument('project', nargs='?', type=Path, default=Path.cwd(),help='Existing project directory for the preview or exclusive ahl.json creation (default: current directory)')
+    init.add_argument('--non-interactive', action='store_true',help='Skip prompts and use --config-input plus conservative defaults; required when stdin is not a terminal')
+    init.add_argument('--config-input', type=Path,help='Local JSON object containing configuration overrides; schema/path/runtime constraints are validated before preview or creation')
+    init.add_argument('--write', action='store_true',help='Explicitly create ahl.json exclusively after validation; default is preview and existing files are preserved')
+    init.add_argument('--json', action='store_true',help='Emit the preview/creation receipt and configuration as JSON on stdout')
     args = parser.parse_args(argv)
     try:
         if args.command == 'doctor':

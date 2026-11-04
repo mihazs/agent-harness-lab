@@ -31,6 +31,21 @@ class NativeRootTests(unittest.TestCase):
 
     def snapshot(self): return self.f.reader().read(self.f.source)
 
+    def test_omitted_root_limits_remain_unlimited_in_coverage(self):
+        for name in ('max_records', 'max_files', 'max_scan_files'): self.f.selected.pop(name)
+        self.select()
+        coverage = self.snapshot().metadata.coverage
+        self.assertTrue(all(bound.limit is None for bound in coverage.scan_bounds))
+
+    def test_native_source_reports_total_bytes_without_declaring_an_aggregate_bound(self):
+        MAX_BYTES = 64*1024*1024
+        self.f.fixture.pad_capture(self.primary)
+        self.f.fixture.pad_capture(self.write('archives/rollout-2026-b.jsonl'))
+        reader = self.f.reader(); snapshot = reader.read(self.f.source)
+        self.assertTrue(snapshot.records)
+        self.assertGreater(reader.summary['bytes_read'], MAX_BYTES)
+        self.assertNotIn('bytes', {bound.dimension for bound in snapshot.metadata.coverage.scan_bounds})
+
     def test_root_cli_preview_import_recheck_and_cached_status_use_shared_journal(self):
         f = self.f; code, preview = f.invoke('preview'); self.assertEqual(code, 0)
         self.assertTrue(preview['checkpoint_ready']); self.assertEqual(preview['records'], 6)
@@ -152,8 +167,8 @@ class NativeRootTests(unittest.TestCase):
     def test_invalid_selection_or_scope_is_rejected_before_scanning(self):
         f = self.f; original = dict(f.selected)
         with patch('agent_harness_lab.telemetry.codex_discovery.capture', side_effect=AssertionError('no capture read')):
-            for change in (dict(source_root='../outside'), dict(max_records=10001), dict(max_files=True),
-                    dict(max_scan_files=2001), dict(session=12)):
+            for change in (dict(source_root='../outside'), dict(max_records=-1), dict(max_files=True),
+                    dict(max_scan_files=-1), dict(session=12)):
                 f.selected = {**original, **change}; self.select(); self.assertEqual(f.invoke('preview')[0], 2)
             f.selected = original; self.select()
             self.assertEqual(f.invoke('preview', '--project-sha256', digest('foreign'))[0], 2)
@@ -177,9 +192,9 @@ class NativeRootTests(unittest.TestCase):
         f = self.f; clock = [0]
         def delayed(*args, **kwargs):
             record = EvidenceRecord(*args, **kwargs); clock[0] = 11; return record
-        with patch('agent_harness_lab.telemetry.codex_discovery.time.monotonic', side_effect=lambda: clock[0]), \
-             patch('agent_harness_lab.sources.native.EvidenceRecord', delayed), self.assertRaises(TimeoutError):
-            self.snapshot()
+        with patch('agent_harness_lab.sources.git_view.time.monotonic', side_effect=lambda: clock[0]), \
+             patch('agent_harness_lab.sources.native.EvidenceRecord', delayed):
+            self.assertTrue(self.snapshot().records)
         from agent_harness_lab.sources.native import relationships
         def mutate(*args, **kwargs):
             result = relationships(*args, **kwargs); f.descriptor.write_text('{}'); return result

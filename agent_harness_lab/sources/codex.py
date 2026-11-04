@@ -1,6 +1,7 @@
 """Pinned Codex native capture selection and field mapping."""
 from ..evaluation.integrity import contained
 from ..telemetry.codex_rollout import decode, text
+from ..telemetry.native import optional_limit
 from .native import NativeCapture
 from .schema import digest
 
@@ -23,12 +24,10 @@ class CodexCapture(NativeCapture):
         if source.version == ROOT_VERSION:
             from ..telemetry.codex_discovery import capture
             root = contained(self.manifest.parent, selected['source_root'])
-            for name, maximum in (('max_files', 100), ('max_scan_files', 2000)):
-                if type(selected[name]) is not int or not 1 <= selected[name] <= maximum:
-                    raise ValueError('invalid native root limit')
+            for name in ('max_files', 'max_scan_files'): optional_limit(selected.get(name))
             if selected['session'] is not None: text(selected['session'])
-            with capture(root, project, session=selected['session'], max_files=selected['max_files'],
-                    max_scan_files=selected['max_scan_files'], max_records=limit, revisions=revisions) as (events, summary, sha256, folder):
+            with capture(root, project, session=selected['session'], max_files=selected.get('max_files'),
+                    max_scan_files=selected.get('max_scan_files'), max_records=limit, revisions=revisions) as (events, summary, sha256, folder):
                 return self.snapshot(source, descriptor, selected, project, events, summary, sha256, revisions, folder)
         return self.file(source, descriptor, selected, project, decode)
 
