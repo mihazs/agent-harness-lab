@@ -60,6 +60,25 @@ tasks:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_store.py" -v'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_context.py" -v'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_workflow.py" -v'
+  test:configuration:responses:
+    desc: Verify configured Responses selection and metadata-only readiness
+    cmds:
+      - task: test:workflow:repeated
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          REPEATED_TEST_PATTERN: test_configured_responses.py
+  test:configuration:responses:kernel:
+    desc: Run plain configured improvement with real pinned workers and synthetic wire
+    cmds:
+      - task: test:workflow:repeated:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          REPEATED_TEST_PATTERN: test_configured_responses_native.py
+          KERNEL_TEST_FILTER: ConfiguredResponsesKernelTests
   test:workflow:repeated:
     desc: Run fixed-bank workflow admission and opt-in native tests
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
