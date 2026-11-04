@@ -277,6 +277,9 @@ class Client:
         self.checkpoint()
 
     def respond(self, history, deadline):
+        from .comparison_custody import current
+        comparison=current()
+        if comparison is not None and comparison.active is not None:comparison.before_request(self)
         request_action = self.actions.add('model_request',self.requests+1,reserved=False,transport_invoked=False,response_observed=False,
             tool_item_visibility='unavailable',emission_visibility='unavailable')
         self.response_actions = []; self.response_reserved = False; self.response_reason = 'protocol_validation_failed'
@@ -285,6 +288,7 @@ class Client:
         disposition = 'denied_or_unresolved'
         try:
             value = self._respond(history,deadline,request_action)
+            if comparison is not None and comparison.active is not None:comparison.request(self)
             self.actions.update(request_action,disposition='validated')
             disposition = 'validated'
             return value

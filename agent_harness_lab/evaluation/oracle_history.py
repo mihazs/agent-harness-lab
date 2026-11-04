@@ -186,13 +186,14 @@ class HistoryStore(PrivateJournal):
         inputs, inputs_hash = record(case/'inputs.json')
         version = inputs.get('schema_version')
         fields(inputs,'schema_version run_id source_manifest_sha256 plan_sha256 oracle_sha256 dependencies versions image_sha256'
-            + (' bank_authority bank_tasks' if type(version) is int and version in (2,3,4,5) else '')
-            + (' behavior_policies' if type(version) is int and version in (3,4,5) else '')
-            + (' cohort_binding_sha256' if type(version) is int and version in (4,5) else '')
+            + (' bank_authority bank_tasks' if type(version) is int and version in (2,3,4,5,6) else '')
+            + (' behavior_policies' if type(version) is int and version in (3,4,5,6) else '')
+            + (' cohort_binding_sha256' if type(version) is int and version in (4,5,6) else '')
             + (' sequential_binding_sha256 sequential_fixtures' if type(version) is int and version==5 else '')
+            + (' responses_binding' if type(version) is int and version==6 else '')
             + (' protected_access_sha256' if 'protected_access_sha256' in inputs else '')
             + (' derivation_binding_sha256' if 'derivation_binding_sha256' in inputs else ''))
-        if (type(version) is not int or version not in (1,2,3,4,5) or inputs['run_id'] != run_id
+        if (type(version) is not int or version not in (1,2,3,4,5,6) or inputs['run_id'] != run_id
                 or events[0][0]['kind'] != 'run_started' or events[0][0]['payload'] != dict(inputs_sha256=inputs_hash)):
             raise ValueError('controller run input binding changed')
         source, manifest_hash = record(case/'manifest.json',1024*1024)
@@ -228,7 +229,7 @@ class HistoryStore(PrivateJournal):
             if current_bank: bank_authority(source,expected=inputs['bank_tasks'])
         elif source.get('bank_authority') is not None:
             raise ValueError('bound bank history cannot use the unbound input schema')
-        elif version in (3,4,5) and inputs['bank_tasks'] is not None:
+        elif version in (3,4,5,6) and inputs['bank_tasks'] is not None:
             raise ValueError('unbound behavior history cannot invent bank task authority')
         if not isinstance(inputs['dependencies'],dict) or not inputs['dependencies']:
             raise ValueError('controller run has no oracle dependencies')
@@ -238,11 +239,11 @@ class HistoryStore(PrivateJournal):
             sha256(event_hash)
             if self.oracle_events(bundle)[0][1] != event_hash: raise ValueError('oracle dependency registration changed')
             if digest(contained(case,'oracles/'+bundle)) != bundle: raise ValueError('frozen historical oracle changed')
-        if version in (3,4,5):
+        if version in (3,4,5,6):
             policies = behavior_policies({bundle:contained(case,'oracles/'+bundle) for bundle in inputs['dependencies']},source,spec)
             if (not policies and version==3) or policies!=inputs['behavior_policies']:
                 raise ValueError('frozen behavior policy binding changed')
-        if version==4 or version==5 and spec.cohort_manifest_sha256 is not None:
+        if version==4 or version in (5,6) and spec.cohort_manifest_sha256 is not None:
             binding,binding_hash=record(case/'cohort-binding.json',1024*1024)
             if (binding_hash!=inputs['cohort_binding_sha256']
                     or binding.get('manifest_path')!=str(case/'cohort-manifest.json')):
@@ -265,6 +266,23 @@ class HistoryStore(PrivateJournal):
                 raise ValueError('unexpected sequential cohort binding')
         elif spec.sequential is not None:
             raise ValueError('sequential execution requires its own history schema')
+        if version==6:
+            from .comparison_custody import PROFILE
+            binding=inputs['responses_binding']
+            fields(binding,'profile settings_sha256 request_sha256 fixtures seed_states permission_profile bundles')
+            if binding['profile']!=PROFILE or spec.sequential is not None or binding['permission_profile'] not in (None,'permission-results-v1'):raise ValueError('invalid fresh Responses history profile')
+            if binding['bundles']!=source.get('workflow_bundles') or set(binding['bundles'])!={'baseline','candidate'}:
+                raise ValueError('stored bundle pins differ from original workflow binding')
+            for value in binding['bundles'].values():
+                fields(value,'file_tree_sha256 bundle_sha256')
+                for pin in value.values():sha256(pin)
+            for name in ('settings_sha256','request_sha256'):sha256(binding[name])
+            if (binding['request_sha256']!=source.get('workflow_request_sha256')
+                    or record(case/'workflow-request.json',64*1024)[1]!=binding['request_sha256']):
+                raise ValueError('sealed workflow request bytes changed')
+            if set(binding['fixtures'])!={t[0] for t in spec.tasks}:raise ValueError('comparison fixture set changed')
+            if set(binding['seed_states'])!=set(binding['fixtures']):raise ValueError('comparison seed set changed')
+            for value in (*binding['fixtures'].values(),*binding['seed_states'].values()):sha256(value)
         return case,events,inputs,spec
 
     def checked(self, run_id):
@@ -276,11 +294,22 @@ class HistoryStore(PrivateJournal):
 
     def _sealed(self,case,events,inputs,spec):
         evidence, evidence_hash = record(case/'evidence.json')
-        fields(evidence,'results_sha256 execution_tree_sha256'+(' sequential_tree_sha256' if inputs['schema_version']==5 else ''))
+        fields(evidence,'results_sha256 execution_tree_sha256'+(' responses_custody_sha256' if inputs['schema_version']==6 else '')+(' sequential_tree_sha256' if inputs['schema_version']==5 else ''))
         if events[-1][0]['payload'] != dict(evidence_sha256=evidence_hash): raise ValueError('controller evidence seal changed')
         result,result_hash = record(case/'execution/results.json',8*1024*1024)
         if result_hash != evidence['results_sha256'] or tree_hash(case/'execution') != evidence['execution_tree_sha256']:
             raise ValueError('sealed controller execution changed')
+        if inputs['schema_version']==6:
+            if 'isolation_qualification' in result and result['isolation_qualification'].get('qualification')!='qualified':
+                raise ValueError('requested comparison permission qualification is incomplete')
+            from .comparison_custody import validate
+            custody,pin=record(case/'responses-custody.json',8*1024*1024)
+            if (pin!=evidence['responses_custody_sha256'] or custody.get('fixtures')!=inputs['responses_binding']['fixtures']
+                    or custody.get('seed_states')!=inputs['responses_binding']['seed_states']
+                    or custody.get('permission_profile')!=inputs['responses_binding']['permission_profile']
+                    or custody.get('bundles')!=inputs['responses_binding']['bundles']):
+                raise ValueError('sealed Responses custody changed')
+            validate(custody,spec,result)
         if inputs['schema_version']==5:
             from .sequential_state import replay
             if tree_hash(case/'sequential')!=evidence['sequential_tree_sha256']:raise ValueError('sequential ledger seal changed')
@@ -329,7 +358,7 @@ class HistoryStore(PrivateJournal):
         from agent_harness_lab.cli import evaluator
         grade_status = evaluator().grading_status
         if not isinstance(result.get('runtime'),dict): raise ValueError('missing observed runtime')
-        if spec.cohort_manifest_sha256 is not None and (inputs['schema_version'] not in (4,5)
+        if spec.cohort_manifest_sha256 is not None and (inputs['schema_version'] not in (4,5,6)
                 or result.get('cohort_manifest_sha256')!=spec.cohort_manifest_sha256
                 or result.get('cohort_qualification')!='current_membership_only'
                 or result.get('publication_allowed') is not False):
@@ -339,8 +368,10 @@ class HistoryStore(PrivateJournal):
             raise ValueError('executed fixtures differ from authoritative materialized bank inputs')
         if (result.get('inputs_unchanged') is not True or result.get('manifest_sha256') != inputs['source_manifest_sha256']
                 or result.get('plan_digest') != spec.digest or result.get('grader_hash') != spec.grader_hash
-                or result.get('versions') != inputs['versions'] or result.get('runtime',{}).get('agent') != 'offline'
-                or result.get('runtime',{}).get('model_inference') is not False):
+                or result.get('versions') != inputs['versions']
+                or result['runtime'].get('agent') != ('responses' if inputs['schema_version']==6 else 'offline')
+                or result['runtime'].get('model_inference') is not (inputs['schema_version']==6)
+                or inputs['schema_version']==6 and result['runtime'].get('inference_settings_sha256')!=inputs['responses_binding']['settings_sha256']):
             raise ValueError('controller comparison provenance is incomplete')
         if not isinstance(result.get('trials'),list) or any(not isinstance(t,dict) for t in result['trials']):raise ValueError('trial objects required')
         if spec.sequential is not None:
@@ -369,14 +400,21 @@ class HistoryStore(PrivateJournal):
             graded = grade.get('execution')
             if not isinstance(graded,dict): raise ValueError('missing actual grader execution')
             typed = dict(graded,timeout=graded.get('status')=='timeout')
-            if (type(outcome) is not bool or trial.get('status') != ('passed' if outcome else 'failed')
-                    or grade.get('status') != trial['status'] or execution.get('status') != 'completed'
+            artifact_status='passed' if outcome else 'failed'
+            composed=trial.get('controller_grade') if inputs['schema_version']==6 else None
+            compared_outcome=outcome
+            if composed is not None:
+                if not isinstance(composed,dict) or composed.get('valid') is not True or type(composed.get('outcome')) is not bool:
+                    raise ValueError('unknown comparison trajectory')
+                compared_outcome=composed['outcome']
+            if (type(outcome) is not bool or trial.get('status') != ('passed' if compared_outcome else 'failed')
+                    or grade.get('status') != artifact_status or execution.get('status') != 'completed'
                     or type(execution.get('exit_code')) is not int or execution['exit_code'] != 0
                     or execution.get('inputs_unchanged') is not True
-                    or not containment(execution,inputs['image_sha256'],'executor')
+                    or (inputs['schema_version']!=6 and not containment(execution,inputs['image_sha256'],'executor'))
                     or graded.get('status') != ('completed' if outcome else 'failed')
                     or graded.get('inputs_unchanged') is not True
-                    or grade_status(typed,typed=True) != trial['status']
+                    or grade_status(typed,typed=True) != artifact_status
                     or grade.get('grader_identity') != {k:typed.get(k) for k in ('grader_id','grader_version')}
                     or not containment(graded,inputs['image_sha256'])):
                 raise ValueError('comparison needs actual isolated executions and typed grades')
@@ -387,9 +425,10 @@ class HistoryStore(PrivateJournal):
             observed = behavior.observation(policy,graded) if policy is not None else None
             if (spec.cohort_manifest_sha256 is not None or spec.sequential is not None) and observed is not None and not observed['complete']:
                 outcome=None
+            if composed is not None:outcome=compared_outcome
             records.append(TrialRecord(trial['trial_id'],outcome,'graded','executable_grader',
                 spec.baseline_hash,spec.candidate_hash,spec.grader_hash,spec.runtime_hash,
-                critical_regression=bool(trial['version']=='candidate' and observed and observed['critical'])))
+                critical_regression=bool(trial['version']=='candidate' and (observed and observed['critical'] or composed and composed.get('critical_violation') is True))))
         return records
 
     def summary(self, run_id, checked):
@@ -495,7 +534,8 @@ class HistoryStore(PrivateJournal):
         check()
         return self.access_ledger().reserve_managed(binding,deadline=deadline)
 
-    def run(self, manifest, baseline, candidate, *, cgroup_root, image_root, image_sha256, disk_bytes, budget_seconds=60,parent_deadline=None,on_started=None,access_reservation=None):
+    def run(self, manifest, baseline, candidate, *, cgroup_root, image_root, image_sha256, disk_bytes, budget_seconds=60,parent_deadline=None,on_started=None,access_reservation=None,
+            inference_client=None,inference_settings=None,sandbox_backend=None,source_sink=None,workflow_request=None,permission_profile=None):
         from agent_harness_lab.cli import evaluator
         from .bank_tools import frozen_grader
         from .bank_revisions import sync_tree
@@ -520,6 +560,40 @@ class HistoryStore(PrivateJournal):
         raw = read_regular(manifest,1024*1024); source,manifest_hash = record(manifest,1024*1024)
         if hashlib.sha256(raw).hexdigest() != manifest_hash: raise ValueError('manifest changed during history preflight')
         spec = ExperimentSpec.parse(source['experiment']); spec.validate()
+        controlled=inference_client is not None
+        if controlled:
+            from .comparison_custody import Comparison,PROFILE,fixture_seed,bundle_binding
+            from .responses import read_settings
+            from agent_harness_lab.promotion.prerequisites import current
+            scope=current()
+            if scope is None or not scope._valid() or spec.sequential is not None or spec.cohort_manifest_sha256 is not None:
+                raise ValueError('fresh fixed Responses history requires the live workflow issuer')
+            if sandbox_backend is None or permission_profile not in (None,'permission-results-v1') or sandbox_backend.permission_audit!=permission_profile:
+                raise ValueError('shared backend differs from expected permission profile')
+            settings,settings_hash=read_settings(inference_settings)
+            if inference_client.settings!=settings or sandbox_backend is None:
+                raise ValueError('exact shared inference client and backend required')
+            request_hash=source.get('workflow_request_sha256');sha256(request_hash)
+            request_raw=read_regular(workflow_request,64*1024)
+            if hashlib.sha256(request_raw).hexdigest()!=request_hash:raise ValueError('frozen workflow request changed')
+            bundles=source.get('workflow_bundles')
+            if not isinstance(bundles,dict) or set(bundles)!={'baseline','candidate'}:
+                raise ValueError('original frozen mode-aware bundle pins required')
+            for name,path in (('baseline',baseline),('candidate',candidate)):
+                if bundle_binding(path,deadline)!=bundles[name]:raise ValueError('frozen workflow bundle changed before history admission')
+            fixtures={t['id']:digest(contained(manifest.parent,t['fixture'])) for t in source['tasks']}
+            seeds={t['id']:fixture_seed(contained(manifest.parent,t['fixture']),deadline) for t in source['tasks']}
+            response_binding=dict(profile=PROFILE,settings_sha256=settings_hash,request_sha256=request_hash,fixtures=fixtures,seed_states=seeds,permission_profile=permission_profile,bundles=bundles)
+            from .trajectory_assertions import capture_policy
+            trajectories={}
+            for task in source['tasks']:
+                declaration=source['grader_bundles'][task['id']]
+                binding=capture_policy(contained(manifest.parent,declaration['path']),declaration['digest'],
+                    dict(task_id=task['id'],root_id=task['root'],family=task['family']))
+                if binding is not None:trajectories[task['id']]=binding
+            custody=Comparison(spec,fixtures,inference_client,deadline,trajectories,seeds,permission_profile=permission_profile,bundles=bundles)
+        elif any(value is not None for value in (inference_settings,sandbox_backend,source_sink,workflow_request,permission_profile)):
+            raise ValueError('partial Responses history context')
         if spec.profile == 'certification':
             raise ValueError('genuine certification qualification issuer is unavailable; public development remains unqualified')
         if 'protected_access' in source and access_reservation is None:
@@ -602,6 +676,10 @@ class HistoryStore(PrivateJournal):
                 inputs.update(schema_version=5,bank_authority=source.get('bank_authority'),bank_tasks=bound_tasks,
                     behavior_policies=policies,cohort_binding_sha256=inputs.get('cohort_binding_sha256'),
                     sequential_binding_sha256=record(case/'sequential/binding.json',1024*1024)[1],sequential_fixtures=sequential_fixtures)
+            if controlled:
+                write_bytes(case/'workflow-request.json',request_raw)
+                inputs.update(schema_version=6,bank_authority=source.get('bank_authority'),bank_tasks=bound_tasks,
+                    behavior_policies=policies,cohort_binding_sha256=None,responses_binding=response_binding)
             if len(encoded(inputs))>256*1024: raise ValueError('history input metadata limit exceeded')
             write_bytes(case/'manifest.json',raw); write_bytes(case/'inputs.json',encoded(inputs)); sync_tree(case)
             events = []; self.append(case,events,'run_started','running',dict(inputs_sha256=record(case/'inputs.json')[1]))
@@ -630,8 +708,21 @@ class HistoryStore(PrivateJournal):
             if time.monotonic()>=deadline: raise TimeoutError('history deadline exhausted before dispatch')
             if bound_tasks is not None: bank_authority(source,export_root=manifest.parent,expected=bound_tasks)
             if membership is not None: cohort_history.validate(membership,source,spec,bound_tasks)
-            runner.evaluate(args)
-            result,result_hash = record(case/'execution/results.json',8*1024*1024)
+            if controlled:
+                args.agent='responses';args.inference_client=inference_client;args.inference_settings=inference_settings
+                args.sandbox_backend=sandbox_backend;args._comparison_custody=custody
+                args.permission_audit=permission_profile
+                if source_sink is not None:args.source_sink=source_sink
+                with custody:
+                    runner.evaluate(args)
+                    result,result_hash=record(case/'execution/results.json',8*1024*1024)
+                    if read_settings(inference_settings)[1]!=settings_hash or inference_client.settings!=settings:
+                        raise ValueError('comparison inference settings changed')
+                    proof=custody.finish(result)
+                write_bytes(case/'responses-custody.json',encoded(proof))
+            else:
+                runner.evaluate(args)
+                result,result_hash = record(case/'execution/results.json',8*1024*1024)
             if sequential_controller is not None:
                 from .sequential_state import replay
                 checked=replay(spec,case/'sequential',result['trials'],validate_rows,cohort_json=cohort_raw)
@@ -644,6 +735,7 @@ class HistoryStore(PrivateJournal):
                     or time.monotonic() >= deadline):
                 raise ValueError('history inputs changed or sealing budget exhausted')
             evidence = dict(results_sha256=result_hash,execution_tree_sha256=tree_hash(case/'execution'))
+            if controlled:evidence['responses_custody_sha256']=record(case/'responses-custody.json',8*1024*1024)[1]
             if sequential_controller is not None:evidence['sequential_tree_sha256']=tree_hash(case/'sequential')
             sync_tree(case/'execution'); write_bytes(case/'evidence.json',encoded(evidence)); sync_directory(case)
             if time.monotonic() >= deadline: raise TimeoutError('history sealing budget exhausted')

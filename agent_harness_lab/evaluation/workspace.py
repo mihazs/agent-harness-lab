@@ -103,6 +103,13 @@ class PrivateWorkspace:
         self.backend, self.workspace = backend, Path(workspace)
         self.deadline, self.outputs = deadline, names(outputs)
         self.working_state = working_state
+        self.comparison_seed_sha256=self.comparison_captured_sha256=None
+        self.comparison_roots={};self.comparison_inputs=None
+        from .comparison_custody import current,bundle_binding
+        comparison=current()
+        if comparison is not None and comparison.active is not None and role=='executor':
+            self.comparison_roots=dict(inputs)
+            self.comparison_inputs={name:bundle_binding(path,deadline) for name,path in inputs.items()}
         if role == 'grader' and self.outputs: raise ValueError('graders cannot export storage artifacts')
         self.policy, self.fd, self.verified = policy(total), None, False
         self.seeded_bytes = None
@@ -205,6 +212,13 @@ class PrivateWorkspace:
     def seed(self):
         if self.working_state is not None:
             self.working_state.seed(self.fd,self.deadline)
+            from .comparison_custody import current,snapshot_pin
+            comparison=current()
+            if comparison is not None and comparison.active is not None:
+                from .working_state import Snapshot
+                observed=Snapshot.capture(self.fd,self.deadline)
+                if observed!=self.working_state.snapshot:raise ValueError('physical comparison seed changed')
+                self.comparison_seed_sha256=snapshot_pin(observed)
             return
         frozen = tree(self.workspace)
         before = digest(self.workspace)
@@ -227,6 +241,9 @@ class PrivateWorkspace:
         self.timeout()
         if self.working_state is not None:
             observed = self.working_state.capture(self.fd,self.deadline)
+            if self.comparison_seed_sha256 is not None:
+                from .comparison_custody import snapshot_pin
+                self.comparison_captured_sha256=snapshot_pin(self.working_state.snapshot)
             from .controller_receipts import _artifact_fingerprints
             self.export_fingerprints = _artifact_fingerprints((name,raw) for name,_,raw in self.working_state.snapshot.files)
             return observed
