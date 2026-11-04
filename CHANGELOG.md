@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.0
+
+### Minor Changes
+
+- 3b5cef1: Add an opt-in root AGENTS instruction protocol that injects frozen content into actual controlled Responses requests and binds owned request facts to worker and comparison custody. Keep model identity, semantic adherence, certification and adoption authority unverified.
+
 ## 0.75.0
 
 ### Minor Changes
