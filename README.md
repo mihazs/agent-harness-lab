@@ -148,6 +148,11 @@ Questions and reproducible bugs belong in [Issues](https://github.com/mihazs/age
 See [support](SUPPORT.md), [private security reporting](SECURITY.md)
 and the [code of conduct](CODE_OF_CONDUCT.md). No response-time commitment is made.
 
+Commit subjects, pull request titles and merge commits follow
+[Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/); `task setup`
+installs a `commit-msg` check and CI checks pull requests. See the
+[commit convention](CONTRIBUTING.md#conventional-commits).
+
 Versions use Changesets; do not change version numbers manually. For a releasable
 change, run `task setup` and `task changeset`; see [release conventions](CONTRIBUTING.md#versions-and-changelogs).
 

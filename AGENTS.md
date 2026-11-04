@@ -19,6 +19,7 @@ skills. Do not alter graders or held-out inputs in response to candidate results
 
 Before planning a fix, check open pull requests for the problem and touched files.
 Never open draft pull requests; keep unfinished work on a branch until it is ready.
+Every commit, pull request title and merge commit follows Conventional Commits.
 Preserve the standard-library default; ML runtimes belong in optional extras.
 Keep observed patterns, supported diagnoses and validated improvements distinct.
 Unknown capture or lineage must not become a success, failure or independence label.
