@@ -560,9 +560,10 @@ tasks:
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_codex*.py" -v'
   test:sources:claude:
-    desc: Run native Claude source revisions, identity claims, graph and checkpoint cases
+    desc: Run native Claude source revisions, identity claims, graph, project-root and checkpoint cases
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_claude.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_claude_root.py" -v'
   test:sources:native:compat:
     desc: Compare Codex file/root preview hashes with an explicitly frozen baseline
     requires:
@@ -588,7 +589,7 @@ tasks:
       AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
       - '{{.PYTHON | shellQuote}} -c "import os,pathlib,agent_harness_lab; assert pathlib.Path(agent_harness_lab.__file__).resolve().is_relative_to(pathlib.Path(os.environ[''AHL_EXPECTED_PACKAGE_ROOT'']).resolve())"'
-      - for: [test_evidence.py, test_monitoring.py, test_codex_rollout.py, test_codex_discovery.py, test_claude_native.py, 'test_source_codex*.py', test_source_claude.py, test_source_git.py]
+      - for: [test_evidence.py, test_monitoring.py, test_codex_rollout.py, test_codex_discovery.py, test_claude_native.py, 'test_source_codex*.py', test_source_claude.py, test_source_claude_root.py, test_source_git.py]
         cmd: '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p {{.ITEM | shellQuote}} -v'
   test:captures:claude:
     desc: Run pinned Claude native scope, privacy, response consistency and resource controls

@@ -77,7 +77,7 @@ class NativeCapture(LocalExport):
         missing = tuple(MissingField(name, 'no_effective_binding') for name in IDENTITY_FIELDS
             if not identities or any(not any(f.name == name for f in identity.fields) for identity in identities))
         coverage = CoverageManifest(source.source_key, source.scope_sha256, source.scope_sha256, source.version, self.parser_versions[source.version],
-            (ScanBound('records', limit, scan['input_records']), ScanBound('files', selected.get('max_files') if 'source_root' in selected else 1, files)),
+            (ScanBound('records', limit, scan['input_records']), ScanBound('files', selected.get('max_files') if {'source_root', 'source_roots'} & set(selected) else 1, files)),
             missing, gaps=('not_captured', 'no_effective_binding'), reported_completeness='partial',
             limit_reached=scan['input_records'] == limit or bool(scan.get('reached_limits')),
             truncated=summary['partial_tail'] or bool(scan.get('reached_limits')))

@@ -83,9 +83,11 @@ reject. A sidechain also requires `agentId`; optional `teamName` participates in
 writer scoping. Metadata without a supported envelope contributes visible coverage
 gaps, not fabricated events. Incompatible provided versions or project labels
 reject. No directory name, timestamp, prompt text or filename establishes identity.
-The existing `claude-jsonl-v1` synthetic adapter remains supported. Root/session
-selection is currently the separate pinned Codex facility; Claude never falls back
-to a home scan when this explicit version is selected.
+The existing `claude-jsonl-v1` synthetic adapter remains supported. `ahl analyze`
+root/session selection is currently the separate pinned Codex facility; bounded
+Claude project-root selection exists only as the `2.1.316-v2` source-journal
+profile in [source contracts](source-contracts.md#explicit-bounded-claude-project-root-journal).
+Claude never falls back to a home scan when this explicit version is selected.
 
 Replay approved observations in physical file order, including branches, parallel
 tool results and pre-compaction history; do not reconstruct a preferred resume leaf.
