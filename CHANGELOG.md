@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.6
+
+### Patch Changes
+
+- f85eed6: Use explicitly pinned project task banks for a single cooperative improvement comparison, respecting the shared preparation/trial budget and preserving recommendation-only results.
+
 ## 0.76.5
 
 ### Patch Changes
