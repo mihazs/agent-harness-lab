@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.79.0
+
+### Minor Changes
+
+- ec8245f: Route installed harness self-improvement skill invocations through the existing project controller and preserve its configuration, authorization, budget and completion contract. Deny accidental nested controller or trial entry from managed preparation children.
+
 ## 0.78.0
 
 ### Minor Changes
