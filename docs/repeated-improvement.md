@@ -92,6 +92,15 @@ they cannot restore a live completion handle, authorize retries or count local r
 as fresh execution. Legacy histories without this additional schedule record remain
 readable. Cold resume and provider-side reconciliation remain unsupported.
 
+`experiment-history show` reports `planned_trials` from the authenticated frozen
+fixed plan. `sealed_result_trials` counts result rows only after the existing seal,
+exact schedule and evidence checks pass (`execution_coverage: sealed_fixed_schedule`).
+For running or incomplete histories, coverage is `unknown` and the sealed count is
+null, even if partial result files exist. This count describes recorded trial rows,
+not provider calls, successful tasks or independent roots. Oracle quarantine still
+invalidates a sealed comparison; coverage does not grant decision authority.
+Sequential histories retain their separate prefix coverage report.
+
 Fresh controller calls and worker execution do not authenticate the served model or
 prove uncached provider computation. Native agent identity, effective provider
 configuration, scientific independence, oracle review and untouched certification

@@ -459,6 +459,9 @@ class HistoryStore(PrivateJournal):
             result.update(sequential_profile='conditional-finite-bank-sequential-v1',execution_coverage='sequential_prefix_only',
                 completed_roots=observed['sequential_analysis']['completed_roots'] if observed else None,
                 assumptions_status='declared_unverified')
+        else:
+            result.update(execution_coverage='sealed_fixed_schedule' if observed is not None else 'unknown',
+                planned_trials=len(schedule(spec)),sealed_result_trials=len(observed['trials']) if observed is not None else None)
         if spec.cohort_manifest_sha256 is not None:
             result['cohort_manifest_sha256']=checked[3].cohort_manifest_sha256
             result['cohort_qualification']='current_membership_only'
