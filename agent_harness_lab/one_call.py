@@ -40,11 +40,22 @@ def preflight(args):
         reviewed = validate(config.bank_path(args.project, settings))
         if reviewed['bank_sha256'] != settings['bank']['sha256']:
             return 'configured_bank_digest_mismatch'
-        # Legacy generated tasks cannot masquerade as the user's pinned task bank.
-        if settings['bank']['path'] != 'starter':
-            return 'configured_project_bank_integration_pending'
         if settings['profile'] != 'cooperative':
             return 'configured_profile_does_not_allow_cooperative_improvement'
+        if pinned_bank(args) is not None:
+            if args.agent == 'auto': args.agent = settings['runtime']['name']
+            if args.agent != settings['runtime']['name'] or getattr(args, args.agent, None) != settings['runtime']['executable']:
+                return 'configured_runtime_differs_from_requested_runtime'
+            if any(getattr(args, name, None) is not None for name in ('experiment_request', 'evaluation_store')):
+                return 'configured_bank_cannot_combine_with_managed_experiment'
+            if reviewed.get('admission') is not None:
+                return 'configured_managed_bank_requires_controlled_workflow'
+            partitions = reviewed['partitions']
+            if not ((partitions['development'] or partitions['construction']) and partitions['calibration']
+                    and (partitions['certification'] or partitions['transfer'])):
+                return 'configured_bank_requires_development_regression_and_heldout'
+            if args.trial_limit < 1 + 2 * reviewed['tasks']:
+                return 'configured_bank_shared_trial_budget_exhausted'
     if args.agent == 'auto':
         found = [name for name in ('codex', 'claude') if shutil.which(getattr(args, name))]
         if len(found) != 1:
@@ -52,15 +63,26 @@ def preflight(args):
         args.agent = found[0]
     if args.agent != 'responses' and not shutil.which(getattr(args, args.agent)):
         return 'agent_runtime_unavailable'
-    if getattr(args, 'trial_limit', 24) < 8:
+    if pinned_bank(args) is None and getattr(args, 'trial_limit', 24) < 8:
         return 'trial_budget_requires_two_preparation_and_six_paired_trials'
     return None
+
+
+def pinned_bank(args):
+    settings = getattr(args, 'project_settings', None)
+    return config.bank_path(args.project, settings) if settings and settings['bank']['path'] != 'starter' else None
 
 
 def unchanged(args):
     path = args.project / 'ahl.json'
     expected = getattr(args, 'configuration_sha256', None)
-    return (config.load(path)[1] == expected if expected else not os.path.lexists(path))
+    if not (config.load(path)[1] == expected if expected else not os.path.lexists(path)):
+        return False
+    bank = pinned_bank(args)
+    if bank is not None:
+        from .evaluation.task_bank import validate
+        return validate(bank)['bank_sha256'] == args.project_settings['bank']['sha256']
+    return True
 
 
 def check_configuration(args):
