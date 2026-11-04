@@ -18,6 +18,7 @@ from .regressions import fields, sha256
 from .decision_receipts import private as _private
 
 PROFILE = 'protected-diagnostic-access-v1'
+CONSTRUCTION_PROFILE = 'canonical-construction-access-v1'
 MAX_BYTES = 1024*1024
 _OWNED = WeakKeyDictionary()
 
@@ -71,17 +72,20 @@ def exposure(root, tasks, bundles, check=lambda: None):
     return _exposure(tasks,bundles,lambda name:tree(contained(root,name)),check)
 
 
+def snapshot_tree(snapshot,name):
+    relative(name)
+    if name not in dict(snapshot.directories): raise ValueError('frozen exposure directory missing')
+    prefix=name+'/'
+    return {path[len(prefix):]:dict(sha256=hashlib.sha256(raw).hexdigest(),mode=mode)
+            for path,mode,raw in snapshot.files if path.startswith(prefix)}
+
+
 def snapshot_exposure(snapshot,tasks,bundles,check=lambda:None):
-    def read_tree(name):
-        relative(name)
-        if name not in dict(snapshot.directories): raise ValueError('frozen exposure directory missing')
-        prefix=name+'/'
-        return {path[len(prefix):]:dict(sha256=hashlib.sha256(raw).hexdigest(),mode=mode)
-                for path,mode,raw in snapshot.files if path.startswith(prefix)}
-    return _exposure(tasks,bundles,read_tree,check)
+    return _exposure(tasks,bundles,lambda name:snapshot_tree(snapshot,name),check)
 
 
 def capture(manifest, baseline, candidate, check=lambda: None,*,access_ledger=None,deadline=None):
+
     """Read actual frozen content, never a supplied qualification receipt."""
     from agent_harness_lab.cli import evaluator
     from .decision_receipts import engine
@@ -130,8 +134,9 @@ def capture(manifest, baseline, candidate, check=lambda: None,*,access_ledger=No
 def _state(path):
     if not path.exists(): return dict(schema_version=2, profile=PROFILE, reservations={}, observed_assets={})
     _private(path); state, _ = record(path, MAX_BYTES)
-    fields(state, 'schema_version profile reservations observed_assets'+(' derivations' if state.get('schema_version')==3 else ''))
-    if type(state['schema_version']) is not int or state['schema_version'] not in (2,3) or state['profile'] != PROFILE:
+    fields(state, 'schema_version profile reservations observed_assets'+(' derivations' if state.get('schema_version') in (3,4) else '')+(' constructions' if state.get('schema_version')==4 else ''))
+    if type(state['schema_version']) is not int or state['schema_version'] not in (2,3,4) or state['profile'] != PROFILE:
+
         raise ValueError('legacy access state cannot authorize managed diagnostics')
     if not isinstance(state['reservations'], dict): raise ValueError('invalid access reservation index')
     if not isinstance(state['observed_assets'], dict): raise ValueError('invalid observed access index')
@@ -146,7 +151,8 @@ def _state(path):
         assets = set(entry['binding']['assets'])
         if used & assets: raise ValueError('managed assets were reserved more than once')
         used.update(assets)
-    if state['schema_version']==3:
+    if state['schema_version'] in (3,4):
+
         derivations=state['derivations']
         if not isinstance(derivations,dict): raise ValueError('invalid derivation index')
         for ident,entry in derivations.items():
@@ -174,7 +180,40 @@ def _state(path):
             while current is not None:
                 if current in seen or len(seen)>64: raise ValueError('cyclic or excessive derivation ancestry')
                 seen.add(current); current=derivations[current]['source_derivation_id']
+    if state['schema_version']==4:
+        constructions=state['constructions']
+        if not isinstance(constructions,dict): raise ValueError('invalid canonical construction index')
+        for ident,entry in constructions.items():
+            sha256(ident)
+            if ident in state['derivations']: raise ValueError('ambiguous construction identity')
+            fields(entry,'profile state role parent_construction_id parent_assets input_binding_sha256 children output_binding_sha256')
+            sha256(entry['input_binding_sha256'])
+            if entry['profile']!=CONSTRUCTION_PROFILE or entry['role'] not in ('proposer','evaluator_author') or entry['state'] not in ('pending','complete','unresolved'):
+                raise ValueError('invalid canonical construction state/role')
+            for key in ('parent_assets','children'): _assets(entry[key])
+            parent=entry['parent_construction_id']
+            if parent is None:
+                if entry['parent_assets']: raise ValueError('unknown initial parentage cannot claim scientific parents')
+            else:
+                sha256(parent); actual=constructions.get(parent)
+                if (entry['role']!='proposer' or parent==ident or actual is None or actual['role']!='evaluator_author'
+                        or actual['state']!='complete' or not entry['parent_assets']
+                        or not set(entry['parent_assets'])<=set(actual['children'])):
+                    raise ValueError('canonical feedback requires an actual completed author source')
+            if entry['state']=='complete':
+                sha256(entry['output_binding_sha256'])
+                if (entry['role']=='evaluator_author') != bool(entry['children']):
+                    raise ValueError('only authored scientific output supplies child assets')
+            elif entry['children'] or entry['output_binding_sha256'] is not None:
+                raise ValueError('incomplete construction cannot claim output')
+
     return state
+
+
+def _assets(values):
+    if not isinstance(values,list) or len(values)>3000 or values!=sorted(set(values)):
+        raise ValueError('bounded unique construction assets required')
+    for value in values: sha256(value)
 
 
 @contextmanager
@@ -201,10 +240,11 @@ def _save(path, state, *, deadline=None):
     terminal=deepcopy(state)
     for entry in terminal['reservations'].values():
         if entry['state']=='reserved': entry.update(state='retired',run_id='0'*64)
-    for entry in terminal.get('derivations',{}).values():
+    for entry in [*terminal.get('derivations',{}).values(),*terminal.get('constructions',{}).values()]:
         if entry['state'] in ('pending','unresolved'):
             # Capacity planning only: never persist invented children/evidence.
-            entry.update(state='complete',children=['0'*64]*3000,output_binding_sha256='0'*64)
+            entry.update(state='complete',children=[] if entry.get('role')=='proposer' else ['0'*64]*3000,output_binding_sha256='0'*64)
+
     if len(encoded(terminal)) > MAX_BYTES:
         raise ValueError('exposure ledger capacity exhausted; observations cannot be evicted')
     check_deadline(deadline)
@@ -220,6 +260,7 @@ def reserve(path, binding,*,deadline=None):
             if str(path)!=binding['access_ledger']:raise ValueError('qualified bank access controller changed')
             from .bank_qualification import access_guard
             access_guard(binding,state,deadline=deadline)
+
         if (set(binding['assets']) & set(state['observed_assets'])
                 or any(set(binding['assets']) & set(e['binding']['assets']) for e in state['reservations'].values())):
             raise ValueError('diagnostic assets are reserved or retired; use exposed development data instead')
@@ -250,6 +291,7 @@ def admit(path, assets, run_id, *, ident=None, binding=None,deadline=None):
                 if str(path)!=binding['access_ledger']:raise ValueError('qualified bank access controller changed')
                 from .bank_qualification import access_guard
                 access_guard(binding,state,reservation_id=ident,deadline=deadline)
+
             entry = state['reservations'].get(ident)
             if entry is None or entry['binding'] != binding or entry['state'] != 'reserved':
                 raise ValueError('managed reservation mismatched, consumed or retired')
@@ -263,7 +305,8 @@ def admit(path, assets, run_id, *, ident=None, binding=None,deadline=None):
 
 
 def _managed_available(state,assets):
-    for entry in state.get('derivations',{}).values():
+    for entry in [*state.get('derivations',{}).values(),*state.get('constructions',{}).values()]:
+
         if entry['state']!='complete':
             raise ValueError('managed access blocked by pending or unresolved owned derivation')
         if set(assets)&set(entry['children']):
@@ -281,7 +324,8 @@ def begin_derivation(path,root_run_id,input_binding_sha256,parents,source_deriva
             if set(parents)&set(entry['binding']['assets']) and entry['state']!='retired':
                 raise ValueError('reserved scientific inputs cannot be exposed for construction')
             if entry['state']=='retired': known.update(entry['binding']['assets'])
-        for entry in state.get('derivations',{}).values():
+        for entry in [*state.get('derivations',{}).values(),*state.get('constructions',{}).values()]:
+
             if entry['state']!='complete': raise ValueError('owned derivation requires unresolved work to be reconciled')
             known.update(entry['children'])
         if not set(parents)<=known: raise ValueError('derivation input exposure is not controller known')
@@ -289,7 +333,8 @@ def begin_derivation(path,root_run_id,input_binding_sha256,parents,source_deriva
             entry=state.get('derivations',{}).get(source_derivation_id)
             if entry is None or entry['state']!='complete' or entry['root_run_id']!=root_run_id or not set(parents)<=set(entry['children']):
                 raise ValueError('derived source does not match actual completed custody')
-        state.update(schema_version=3)
+        state.update(schema_version=max(3,state['schema_version']))
+
         state.setdefault('derivations',{})
         ident=secrets.token_hex(32)
         state['derivations'][ident]=dict(state='pending',root_run_id=root_run_id,source_derivation_id=source_derivation_id,
@@ -307,25 +352,64 @@ def derivation_record(path,ident):
 
 
 def finish_derivation(path,ident,input_binding_sha256,children=None,output_binding_sha256=None):
-    sha256(ident); sha256(input_binding_sha256)
+    return _finish(path,'derivations',ident,input_binding_sha256,children,output_binding_sha256)
+
+
+def _finish(path,index,ident,input_pin,children,output_pin):
+    sha256(ident); sha256(input_pin)
     if children is not None:
-        if not isinstance(children,list) or not children or len(children)>3000 or children!=sorted(set(children)):
-            raise ValueError('bounded actual child assets required')
-        for child in children: sha256(child)
-        sha256(output_binding_sha256)
+        _assets(children); sha256(output_pin)
     with _locked(path) as (path,state):
-        entry=state.get('derivations',{}).get(ident)
-        if entry is None or entry['state']!='pending' or entry['input_binding_sha256']!=input_binding_sha256:
-            raise ValueError('derivation transaction is not the actual pending invocation')
+        entry=state.get(index,{}).get(ident)
+        if entry is None or entry['state']!='pending' or entry['input_binding_sha256']!=input_pin:
+            raise ValueError('construction transaction is not the actual pending invocation')
+        if children is not None and (index=='derivations' or entry['role']=='evaluator_author') and not children:
+            raise ValueError('actual scientific output assets required')
+        if children and index=='constructions' and entry['role']=='proposer':
+            raise ValueError('proposal cannot claim authored scientific output')
         entry.update(state='unresolved' if children is None else 'complete',children=[] if children is None else children,
-            output_binding_sha256=output_binding_sha256)
+            output_binding_sha256=output_pin)
         _save(path,state)
+
+
+def begin_construction(path,role,input_pin,*,parent=None,parents=None):
+    sha256(input_pin); parents=[] if parents is None else parents; _assets(parents)
+    if role not in ('proposer','evaluator_author'): raise ValueError('unsupported canonical construction role')
+    with _locked(path) as (path,state):
+        for entry in [*state.get('derivations',{}).values(),*state.get('constructions',{}).values()]:
+            if entry['state']!='complete': raise ValueError('canonical construction requires unresolved work to be reconciled')
+        if parent is None:
+            if parents: raise ValueError('initial scientific parentage is unknown')
+        else:
+            sha256(parent); source=state.get('constructions',{}).get(parent)
+            if (role!='proposer' or source is None or source['role']!='evaluator_author' or source['state']!='complete'
+                    or not parents or not set(parents)<=set(source['children'])):
+                raise ValueError('feedback requires completed owned author assets')
+        state.update(schema_version=4); state.setdefault('derivations',{}); state.setdefault('constructions',{})
+        ident=secrets.token_hex(32)
+        if ident in state['derivations'] or ident in state['constructions']: raise ValueError('construction identity collision')
+        state['constructions'][ident]=dict(profile=CONSTRUCTION_PROFILE,state='pending',role=role,parent_construction_id=parent,parent_assets=parents,
+            input_binding_sha256=input_pin,children=[],output_binding_sha256=None)
+        _save(path,state); return ident
+
+
+def construction_record(path,ident):
+    sha256(ident)
+    with _locked(path) as (_,state):
+        value=state.get('constructions',{}).get(ident)
+        if value is None: raise ValueError('unknown canonical construction')
+        return deepcopy(value)
+
+
+def finish_construction(path,ident,input_pin,children=None,output_pin=None):
+    return _finish(path,'constructions',ident,input_pin,children,output_pin)
 
 
 def known_derivations(path,assets):
     with _locked(path) as (_,state):
         links={ident:dict(record_sha256=hashed(entry),assets=sorted(set(assets)&set(entry['children'])))
-            for ident,entry in state.get('derivations',{}).items()
+            for ident,entry in [*state.get('derivations',{}).items(),*state.get('constructions',{}).items()]
+
             if entry['state']=='complete' and set(assets)&set(entry['children'])}
     return dict(schema_version=1,profile='controlled-development-derivation-v1',links=links) if links else None
 
@@ -337,7 +421,8 @@ def validate_derivations(path,value):
     with _locked(path) as (_,state):
         for ident,link in value['links'].items():
             sha256(ident); fields(link,'record_sha256 assets'); sha256(link['record_sha256'])
-            entry=state.get('derivations',{}).get(ident)
+            entry=state.get('derivations',{}).get(ident) or state.get('constructions',{}).get(ident)
+
             if (entry is None or entry['state']!='complete' or hashed(entry)!=link['record_sha256']
                     or not isinstance(link['assets'],list) or not link['assets'] or link['assets']!=sorted(set(link['assets']))
                     or not set(link['assets'])<=set(entry['children'])):

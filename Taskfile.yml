@@ -9,7 +9,25 @@ tasks:
       PYTHONPATH: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_repeated_workflow.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p {{default "test_repeated_workflow.py" .REPEATED_TEST_PATTERN | shellQuote}} -v'
+  test:workflow:repeated-access:
+    desc: Verify explicit same-store canonical and repeated workflow composition
+    cmds:
+      - task: test:workflow:repeated
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          REPEATED_TEST_PATTERN: test_repeated_access_companion.py
+  test:workflow:repeated-access:kernel:
+    desc: Exercise the same-store repeated composition with actual isolated workers
+    cmds:
+      - task: test:workflow:repeated:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          REPEATED_TEST_PATTERN: test_repeated_access_companion.py
   test:workflow:repeated:kernel:
     desc: Exercise fresh repeated decisions through public improve with real isolated workers
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -22,7 +40,7 @@ tasks:
       PYTHONPATH: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=300 -- {{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_repeated_workflow.py" -k {{default "" .KERNEL_TEST_FILTER | shellQuote}} -v'
+      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=300 -- {{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p {{default "test_repeated_workflow.py" .REPEATED_TEST_PATTERN | shellQuote}} -k {{default "" .KERNEL_TEST_FILTER | shellQuote}} -v'
   test:evaluation:bank-qualification:wheel:
     desc: Run focused bank qualification cases from an installed wheel
     vars:
@@ -77,6 +95,7 @@ tasks:
       AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_review_authority.py" -v'
+
   docs:check:
     desc: Validate relative links in tracked Markdown without scanning private artifacts
     cmds:
@@ -175,6 +194,31 @@ tasks:
       AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_derivation.py" -v'
+  test:evaluation:construction-consumer-boundary:
+    desc: Reject mutation at canonical proposal and author consumers
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_construction_consumers.py" -v'
+  test:evaluation:construction-lifetime:
+    desc: Verify canonical retirement, fork custody and one-use output registration
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_construction_access.py" -k retires -k foreign_post_author -k registered_again -v'
+  test:evaluation:construction-capture-boundary:
+    desc: Reject mutation during canonical asset capture before publication
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_construction_access.py" -k asset_capture_never_publishes -v'
+  test:evaluation:construction-access:
+    desc: Verify canonical same-store construction, feedback custody and honest unmanaged boundaries
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_construction_access.py" -v'
+
   test:evaluation:bank-authority:
     desc: Run native controlled-bank authority, fixture-binding and revocation cases
     cmds:
@@ -521,6 +565,15 @@ tasks:
       - task: test:sandbox:kernel
         vars:
           KERNEL_TEST_FILTER: controlled_workflow
+  test:sandbox:kernel:construction-access:
+    desc: Run canonical same-store exposure with actual pinned workers, graders and fake transport
+    cmds:
+      - task: test:sandbox:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          KERNEL_TEST_FILTER: canonical_construction_access
   test:sandbox:kernel:trajectory:
     desc: Run the synthetic trajectory vertical slice with real isolated workers and artifact graders
     cmds:
@@ -670,6 +723,7 @@ tasks:
           PYTHON: '{{.PYTHON}}'
           LAYOUT_DIR: '{{.LAYOUT_DIR}}'
           EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+
       - task: test:workflow:one-call
         vars:
           PYTHON: '{{.PYTHON}}'
@@ -716,6 +770,22 @@ tasks:
           PYTHON: '{{.PYTHON}}'
           LAYOUT_DIR: '{{.LAYOUT_DIR}}'
           EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+      - task: test:evaluation:construction-access
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+      - task: test:evaluation:construction-consumer-boundary
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+      - task: test:workflow:repeated-access
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+
       - task: test:evaluation:controller-emissions
         vars:
           PYTHON: '{{.PYTHON}}'

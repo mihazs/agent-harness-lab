@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.74.0
+
+### Minor Changes
+
+- 65c2d18: Connect controlled improve and watch to an explicitly selected private evaluation store. Automatically record owned proposer, author and feedback handoffs, refuse managed freshness for actual constructed scientific assets, and preserve unknown initial parentage, shared control boundaries and unmanaged defaults. Stage completion supplies no certification or adoption authority.
+- 65c2d18: Bind explicitly selected construction stores to the existing repeated improvement controller. Reject stores inside private comparison inputs before metadata writes, retain immutable request and shared trial limits, and preserve unqualified single-root outcomes.
+
+### Patch Changes
+
+- 65c2d18: Bind owned author output once inside the actual role before returning it. Reject re-registration and later artifact rewrites before registration or external publication, retaining unresolved exposure without a refund.
+
 ## 0.73.0
 
 ### Minor Changes
