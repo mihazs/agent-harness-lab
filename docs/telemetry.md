@@ -43,7 +43,10 @@ Discovery has separate limits of 2000 scanned capture files and 100 accepted
 project captures. Within the bounded scan, files are considered newest first and
 filtered by exact project before the accepted allowance is consumed. Exhausting
 either limit is reported. This is still a bounded view, not complete history.
-The existing 64 MiB input-read and event limits remain enforced.
+The collector has no aggregate byte or read-chunk ceiling. It streams capture
+records in chunks of at most 1 MiB plus one boundary byte, skips oversized or
+malformed records with explicit caveats, and retains configurable event/file
+limits. Evaluation reports remain individually limited to 1 MiB.
 
 No real-model effectiveness experiment was run for this schema. Tests establish
 metadata/control-flow behavior only. No model weights, downloads, external ledger
@@ -114,7 +117,7 @@ and emit coverage, while separate incomplete snapshots cannot fabricate one
 complete measurement. Missing IDs/counts stay unattributed. This is neither a cost
 estimate nor proof of final billed usage.
 
-Pinned Codex and Claude files share guarded JSONL I/O: 64 MiB cumulative reads,
+Pinned Codex and Claude files share guarded JSONL I/O: 64 MiB per individual file,
 1 MiB lines, at most 100,000 input/normalized records and a ten-second lifecycle.
 Claude permits at most 4,096 blocks per native row and checks event/facet expansion
 before allocation. A repeated UUID gets only its original bounded per-row temporary
@@ -212,9 +215,9 @@ Only uncompressed `rollout-*.jsonl` files qualify. Prompt indexes such as
 Discovery enumerates at most 10,000 filesystem entries and 64 levels, admits at
 most 2,000 candidate files and 100 matching captures, and shares a ten-second
 deadline checked during read, parse, correlation and final verification, a 64 MiB
-cumulative read allowance and a 100,000 input-record/event
-ceiling. Lower requested limits apply. The byte allowance includes bounded header
-prefix reads as well as full selected reads. Foreign-project and other-session
+individual-file bound and a 100,000 input-record/event ceiling. There is no
+cumulative read-byte ceiling across files or header reads. Lower requested limits
+apply. Foreign-project and other-session
 headers are filtered before full reads and before consuming the accepted-file
 allowance. Unsupported/incomplete headers and skipped unsafe entries are counted;
 symlinks, hardlinks and special files are never followed/opened as captures.

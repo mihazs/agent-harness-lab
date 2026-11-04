@@ -10,8 +10,6 @@ from tools.diagnose import analyze, normalize
 from agent_harness_lab.telemetry.schema import FIELDS, event as telemetry_event
 
 MAX_RECORD_BYTES = 1024 * 1024
-MAX_READ_BYTES = 64 * 1024 * 1024
-MAX_READ_CHUNKS = 500000
 EVENT_FIELDS = FIELDS
 FAILURES = {'failed', 'execution_error', 'invalid_trace', 'incomplete', 'grader_error', 'budget_exhausted'}
 
@@ -30,27 +28,14 @@ def _regular(path, root):
         return False
 
 
-def _consume(raw, budget):
-    if budget is not None and raw:
-        budget['bytes'] += len(raw)
-        budget['chunks'] += 1
-        if budget['bytes'] > MAX_READ_BYTES or budget['chunks'] > MAX_READ_CHUNKS:
-            raise ValueError('evidence read budget exceeded; select fewer or smaller captures')
-    return raw
-
-
-def _read_limit(budget):
-    return min(MAX_RECORD_BYTES + 1, MAX_READ_BYTES - budget['bytes'] + 1) if budget else MAX_RECORD_BYTES + 1
-
-
-def _rows(path, caveats, digest=None, max_records=None, budget=None):
+def _rows(path, caveats, digest=None, max_records=None):
     try:
         with path.open('rb') as stream:
             number = 0
             while True:
                 if max_records is not None and number >= max_records:
                     break
-                raw = _consume(stream.readline(_read_limit(budget)), budget)
+                raw = stream.readline(MAX_RECORD_BYTES + 1)
                 if not raw:
                     break
                 number += 1
@@ -59,7 +44,7 @@ def _rows(path, caveats, digest=None, max_records=None, budget=None):
                 if len(raw) > MAX_RECORD_BYTES:
                     _warn(caveats, 'Oversized capture records were skipped; evidence is incomplete.')
                     while raw and not raw.endswith(b'\n'):
-                        raw = _consume(stream.readline(_read_limit(budget)), budget)
+                        raw = stream.readline(MAX_RECORD_BYTES + 1)
                         if digest is not None:
                             digest.update(raw)
                     continue
@@ -93,9 +78,9 @@ def _matches(value, project):
         return False
 
 
-def _owned(path, project, caveats, budget):
+def _owned(path, project, caveats):
     # Only inspect a bounded prefix for scope; never normalize foreign project text.
-    for index, row in enumerate(_rows(path, caveats, max_records=100, budget=budget)):
+    for index, row in enumerate(_rows(path, caveats, max_records=100)):
         cwd = _cwd(row)
         if cwd is not None:
             return _matches(cwd, project)
@@ -118,7 +103,7 @@ def _capture_candidates(root):
                     continue
 
 
-def _evaluation_results(project, max_files, sources, fingerprint, caveats, budget):
+def _evaluation_results(project, max_files, sources, fingerprint, caveats):
     root = project / 'artifacts'
     paths = []
     for pattern in ('results.json', '*/results.json', '*/*/results.json'):
@@ -136,15 +121,13 @@ def _evaluation_results(project, max_files, sources, fingerprint, caveats, budge
             continue
         try:
             with path.open('rb') as stream:
-                raw = _consume(stream.read(_read_limit(budget)), budget)
+                raw = stream.read(MAX_RECORD_BYTES + 1)
             if len(raw) > MAX_RECORD_BYTES:
                 raise ValueError()
             result = json.loads(raw)
             if not isinstance(result, dict) or not isinstance(result.get('trials'), list):
                 raise ValueError()
-        except (OSError, ValueError, UnicodeError) as exc:
-            if str(exc).startswith('evidence read budget exceeded'):
-                raise
+        except (OSError, ValueError, UnicodeError):
             _warn(caveats, 'Unreadable, oversized or malformed evaluation reports were skipped.')
             continue
         trial_metadata = []
@@ -205,7 +188,6 @@ def collect(project, events=None, source_format='normalized', max_files=100, max
         raise ValueError('source version requires an explicit supported capture')
     caveats, sources, errors = [], [], []
     fingerprint = hashlib.sha256()
-    budget = {'bytes': 0, 'chunks': 0}
     selected = []
     if events is not None or source_root is not None:
         chosen = events if events is not None else source_root
@@ -224,7 +206,7 @@ def collect(project, events=None, source_format='normalized', max_files=100, max
         if len(scanned) > max_scan_files:
             _warn(caveats, 'Capture discovery reached its separate scan-file limit; older project history may be absent.')
         for _, _, path, fmt in latest:
-            if _owned(path, project, caveats, budget):
+            if _owned(path, project, caveats):
                 if len(selected) >= max_files:
                     _warn(caveats, 'Matching captures reached the accepted-file limit; project history is incomplete.')
                     break
@@ -240,7 +222,7 @@ def collect(project, events=None, source_format='normalized', max_files=100, max
             sources.append(source)
             def scoped_rows():
                 active = events is not None
-                for accepted, row in enumerate(_rows(path, caveats, source_digest, budget=budget), 1):
+                for accepted, row in enumerate(_rows(path, caveats, source_digest), 1):
                     cwd = _cwd(row)
                     if cwd is not None and events is None:
                         active = _matches(cwd, project)
@@ -291,7 +273,7 @@ def collect(project, events=None, source_format='normalized', max_files=100, max
 
     analysis = analyze(normalized_events(), max_events=max_events)
     analysis['findings'].extend(errors)
-    outcomes = [] if events is not None or source_root is not None else _evaluation_results(project, max_files, sources, fingerprint, caveats, budget)
+    outcomes = [] if events is not None or source_root is not None else _evaluation_results(project, max_files, sources, fingerprint, caveats)
     if not selected:
         _warn(caveats, 'No matching local capture was found; absence of evidence is not success.')
     failures = [record for record in outcomes if record['status'] in FAILURES]

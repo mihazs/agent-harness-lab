@@ -1,3 +1,5 @@
+import hashlib
+import itertools
 import json
 import os
 from pathlib import Path
@@ -167,19 +169,33 @@ class EvidenceTests(unittest.TestCase):
         path.write_text(json.dumps(result))
         self.assertNotEqual(first,collect(self.project)['fingerprint'])
 
-    def test_raw_read_budget_bounds_malformed_and_oversized_tails(self):
-        path=self.write(self.codex/'sessions/own.jsonl',self.codex_rows())
-        with path.open('a') as stream:
-            stream.write('not-json\n'*1000)
-        with patch('agent_harness_lab.evidence.MAX_READ_CHUNKS',20):
-            with self.assertRaisesRegex(ValueError,'read budget'):
-                collect(self.project)
-        self.write(path,self.codex_rows())
-        with path.open('a') as stream:
-            stream.write('x'*(MAX_RECORD_BYTES+1)+'\n')
-        with patch('agent_harness_lab.evidence.MAX_READ_BYTES',1024):
-            with self.assertRaisesRegex(ValueError,'read budget'):
-                collect(self.project)
+    def test_streaming_past_former_byte_ceiling_skips_oversized_records_and_unterminated_tail(self):
+        path=self.home/'large.jsonl';digest=hashlib.sha256()
+        first=json.dumps(dict(case_id='synthetic',event_id='1',activity='inspect')).encode()+b'\n'
+        second=json.dumps(dict(case_id='synthetic',event_id='2',activity='check')).encode()+b'\n'
+        block=b'x'*MAX_RECORD_BYTES
+        with path.open('wb') as stream:
+            for raw in itertools.chain((first,),itertools.repeat(block,65),(b'\n',second,block,b'y')):
+                stream.write(raw);digest.update(raw)
+        self.assertGreater(path.stat().st_size,64*1024*1024)
+        result=collect(self.project,events=path,max_events=2)
+        self.assertEqual(result['analysis']['events'],2)
+        self.assertEqual(result['sources'][0]['sha256'],digest.hexdigest())
+        self.assertEqual(sum('Oversized' in caveat for caveat in result['caveats']),1)
+        self.assertNotIn('Malformed',' '.join(result['caveats']))
+
+    def test_streaming_past_former_chunk_ceiling_retains_valid_events_after_malformed_rows(self):
+        path=self.home/'many-rows.jsonl';digest=hashlib.sha256()
+        block=b'not-json\n'*8192
+        valid=json.dumps(dict(case_id='synthetic',event_id='1',activity='inspect')).encode()+b'\n'
+        self.assertGreater(62*8192,500000)
+        with path.open('wb') as stream:
+            for raw in itertools.chain(itertools.repeat(block,62),(valid,)):
+                stream.write(raw);digest.update(raw)
+        result=collect(self.project,events=path,max_events=1)
+        self.assertEqual(result['analysis']['events'],1)
+        self.assertEqual(result['sources'][0]['sha256'],digest.hexdigest())
+        self.assertEqual(sum('Malformed' in caveat for caveat in result['caveats']),1)
 
     def test_hashing_does_not_repair_invalid_normalized_case_ids(self):
         for case in (None, 17, '', 'x'*257):
