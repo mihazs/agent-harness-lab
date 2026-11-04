@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.12
+
+### Patch Changes
+
+- cd63e89: Expose the selected executor's controller-observed harness input digest in private live source rechecks, preserving unknown effective loading and replay boundaries.
+
 ## 0.76.11
 
 ### Patch Changes

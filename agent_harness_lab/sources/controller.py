@@ -6,7 +6,7 @@ from agent_harness_lab.evaluation import controller_receipts as owned
 from .execution import CoverageManifest, ExecutionIdentity, ExecutionMetadata, IDENTITY_FIELDS, IdentityField, MissingField, RecordRef, ScanBound
 from .graph import EvidenceGraph, JoinReceipt
 from .registry import Capability, Registry
-from .schema import EvidenceRecord, SourceSpec, digest
+from .schema import EvidenceRecord, SourceSpec, digest, fingerprint
 from .snapshot import Snapshot
 from .store import SourceStore
 
@@ -62,8 +62,16 @@ def recheck(source, connector, proposed):
     identity,=snapshot.metadata.identities
     observed=replace(identity,fields=tuple(replace(field,status='verified') if field.name in ('session','attempt','runtime_version','grader_revision')
         else field for field in identity.fields))
+    data=connector.capture.read()
+    executor=data['kernels'][data['grade']['executor_ordinal']]
+    harness=executor['input_digests'].get('harness')
+    if harness is not None:fingerprint(harness)
     result.update(profile=owned.PROFILE,verification_scope='closed_live_controller_attempt_only',publication_allowed=False,
         verified_execution=dict(**observed.to_dict(),profile=owned.PROFILE,publication_allowed=False),
+        controller_harness_input=dict(schema_version=1,profile=owned.PROFILE,namespace='ahl.controller_checked_input_tree',
+            status='observed' if harness is not None else 'unknown',sha256=harness,
+            observation_scope='controller_input_checks_before_and_after_executor',
+            effective_loading='unverified',publication_allowed=False),
         native_identity='unverified',task_outcomes_verified=False)
     return result
 

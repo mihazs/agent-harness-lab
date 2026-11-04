@@ -389,7 +389,7 @@ tasks:
       PYTHONPATH: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_controller.py" -v'
+      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tools/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n 4 --dist worksteal -k ControllerSourceTests'
   test:sources:permission-composition:kernel:
     desc: Verify native owned permission-wire and source receipt composition
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -405,13 +405,17 @@ tasks:
       - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=180 -- {{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_permission_composition.py" -k {{default "" .KERNEL_TEST_FILTER | shellQuote}} -v'
   test:sandbox:kernel:controller-sources:
     desc: Verify actual pinned executor, artifact binding, fresh grader and live source consumer
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    vars:
+      SCOPE_ID:
+        sh: cat /proc/sys/kernel/random/uuid
+    env:
+      PYTHONPATH: ''
+      AHL_TEST_SYSTEMD_SCOPE: '1'
+      AHL_TEST_CGROUP_ROOT: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - task: test:sandbox:kernel
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{default .ROOT_DIR .LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
-          KERNEL_TEST_FILTER: live_controller_sources
+      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=90 -- {{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tools/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n 0 -k live_controller_sources'
   test:sources:contracts:
     desc: Run source identity, execution metadata and complete normalized export contracts
     cmds:
