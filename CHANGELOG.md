@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.76.16
+
+### Patch Changes
+
+- 3b7c194: Select supported analysis interpretations from structural evidence prerequisites and report complementary methods with shared-input dependence and unqualified raw outputs.
+
+## 0.76.15
+
+### Patch Changes
+
+- fd1ee23: Run shared directly-follows process mining during analyze and improve, expose executed methods and evidence coverage in private receipts, and report aggregate progress on stderr. Add the analysis alias while preserving JSON stdout and behavioral application gates.
+
+## 0.76.14
+
+### Patch Changes
+
+- Expose authenticated fixed experiment schedules for private inspection without changing evaluation authority.
+
+## 0.76.13
+
+### Patch Changes
+
+- Report authenticated fixed experiment history coverage without treating unsealed progress as evidence.
+
 ## 0.76.12
 
 ### Patch Changes

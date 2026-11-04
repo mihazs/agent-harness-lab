@@ -2,6 +2,16 @@ version: '3'
 vars:
   PYTHON: '{{default "python3" .PYTHON}}'
 tasks:
+  test:analysis:pipeline:
+    desc: Verify default mining, method selection, execution receipts and aggregate progress
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    vars:
+      TEST_WORKERS: '{{default "auto" .TEST_WORKERS}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tools/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n {{.TEST_WORKERS | shellQuote}} --dist worksteal -k analysis_pipeline'
   test:cli:help:
     desc: Verify recursive agent-facing CLI guidance and side-effect-free help routes
     cmds:
@@ -231,7 +241,7 @@ tasks:
   test:evaluation:history:
     desc: Run native controller history, quarantine and guarded-analysis cases
     cmds:
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_oracle_history*.py" -v'
+      - '{{.PYTHON | shellQuote}} -m pytest -n {{default "auto" .TEST_WORKERS | shellQuote}} --dist worksteal -k oracle_history'
   test:evaluation:interchange:
     desc: Verify offline data-only evaluation mappings, proposals and private import boundaries
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -901,14 +911,18 @@ tasks:
           REPEATED_TEST_PATTERN: test_effective_agents.py
           KERNEL_TEST_FILTER: InstructionProtocolKernelTests
   test:evaluation:recovery-gap:kernel:
+    desc: Inspect authenticated schedules with the existing isolated synthetic recovery fixture
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    vars:
+      SCOPE_ID:
+        sh: cat /proc/sys/kernel/random/uuid
+    env:
+      AHL_TEST_SYSTEMD_SCOPE: '1'
+      AHL_TEST_CGROUP_ROOT: ''
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - task: test:workflow:repeated:kernel
-        vars:
-          REPEATED_TEST_PATTERN: test_experiment_recovery_gap.py
-          KERNEL_TEST_FILTER: RecoveryHistoryTests
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+      - 'systemd-run --user --scope --collect --quiet --expand-environment=no --unit=ahl-sandbox-test-{{.SCOPE_ID}} --property="Delegate=cpu memory pids" --property=TasksMax=64 --property=MemoryMax=512M --property=RuntimeMaxSec=300 -- {{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tools/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n 0 -k "experiment_recovery_gap and RecoveryHistoryTests"'
   test:evaluation:recovery-gap:
     desc: Probe durable trial binding and ambiguous-request refusal without provider calls
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -916,7 +930,7 @@ tasks:
       PYTHONPATH: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_experiment_recovery_gap.py" -v'
+      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tools/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n {{default "auto" .TEST_WORKERS | shellQuote}} --dist worksteal -k experiment_recovery_gap'
   setup:
     desc: Install development dependencies and guarded Git hooks
     cmds:

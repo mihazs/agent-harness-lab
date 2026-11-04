@@ -22,7 +22,7 @@ def validate_pair(baseline,candidate,strict=True):
 def public_export_allowed(records):
     if not records or isinstance(records,dict): return False
     for record in records:
-        for metadata in (record,record.get('receipt'),record.get('analysis'),record.get('context'),record.get('binding')):
+        for metadata in (record,record.get('receipt'),record.get('analysis'),record.get('context'),record.get('binding'),record.get('execution'),record.get('process_mining')):
             if isinstance(metadata,dict) and (metadata.get('publication_allowed',True) is not True
                     or any(key in metadata for key in ('controller_run_id','cohort_manifest_sha256','preservation','receipt_sha256',
                         'cohort_binding','controller_qualification','qualification_sha256','controller_grade',
@@ -36,9 +36,10 @@ def public_export_allowed(records):
 
                     or metadata.get('format') in ('promptfoo-cases-json-v1','promptfoo-results-jsonl-v1','openai-evals-match-jsonl-v1')
                     or metadata.get('purpose')=='protected-diagnostic-access-v1'
-                    or metadata.get('profile') in ('ahl-improve-fixed-bank-v1','ahl-fresh-responses-comparison-v1',
+                    or metadata.get('profile') in ('ahl-private-diagnosis-v1','ahl-analysis-process-graph-v1',
+                        'ahl-analysis-execution-v1','ahl-improve-fixed-bank-v1','ahl-fresh-responses-comparison-v1',
                         'controller-request-reservation-v1','controller-realized-schedule-v1')
-                    or any(key in metadata for key in ('request_sha256','workflow_request_sha256','responses_binding','responses_custody_sha256','request_binding'))
+                    or any(key in metadata for key in ('request_sha256','workflow_request_sha256','responses_binding','responses_custody_sha256','request_binding','realized_schedule'))
                     or metadata.get('report_kind')=='controller_trajectory'
                     or metadata.get('outcome_mapping')=='artifact_and_required_v1'
                     or metadata.get('evidence_source')=='controller_verified_development_only'):

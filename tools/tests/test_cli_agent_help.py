@@ -71,7 +71,10 @@ class CLIHelpTests(unittest.TestCase):
                         self.assertNotEqual(action.help,argparse.SUPPRESS)
                         self.assertGreaterEqual(len(action.help.strip()),15,msg=str(action.option_strings or action.dest))
                         if isinstance(action,argparse._SubParsersAction):
-                            self.assertEqual({row.dest for row in action._choices_actions},set(action.choices))
+                            # Argparse groups aliases into their canonical command's help row.
+                            documented={id(action.choices[row.dest]) for row in action._choices_actions}
+                            self.assertEqual(documented,{id(child) for child in action.choices.values()})
+                            for name in action.choices:self.assertIn(name,parser.format_help())
                             for row in action._choices_actions:self.assertGreaterEqual(len(row.help.strip()),15)
                     self.assertIn('usage:',parser.format_help())
         self.assertGreater(commands,50);self.assertGreater(actions,250)

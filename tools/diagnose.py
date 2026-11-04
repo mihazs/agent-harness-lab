@@ -72,13 +72,16 @@ def recurring_sequences(cases, roots, maximum=None):
     return sorted(result,key=lambda row:(-row['reported_roots'],row['activities']))
 
 
-def analyze(rows, max_events=None, *, observation_per_case=None, observation_total=None, observation_max_age=None, sequence_length=None):
+def analyze(rows, max_events=None, *, observation_per_case=None, observation_total=None, observation_max_age=None, sequence_length=None, select_methods=False):
+    from agent_harness_lab.diagnostics.process_mining import ProcessMiner
     if any(value is not None and (type(value) is not int or value <= 0) for value in (max_events,sequence_length)):
         raise ValueError('analysis limits must be positive integers')
     counts, cases = Counter(), defaultdict(list)
     seen, roots, findings = set(), {}, []
     observations = ObservationCache(observation_per_case, observation_total, observation_max_age)
+    process = ProcessMiner()
     fields = Counter()
+    ordering, observation_cases, observation_candidates, observation_events = {}, set(), set(), []
     for number, event in enumerate(rows, 1):
         if max_events is not None and number > max_events:
             raise ValueError('event limit exceeded; select a bounded corpus explicitly')
@@ -97,27 +100,84 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
         if (case, ident) in seen:
             raise ValueError('duplicate event id')
         seen.add((case, ident))
+        process.observe(event)
+        order = ordering.setdefault(case, dict(events=0, capture=True, timestamp=True, last_order=-1, last_time=None))
+        ordinal = event.get('capture_order')
+        order['capture'] &= type(ordinal) is int and ordinal >= 0 and ordinal > order['last_order']
+        if type(ordinal) is int:
+            order['last_order'] = ordinal
+        try:
+            stamp = process.instant(event.get('timestamp'))
+        except (ValueError, TypeError, AttributeError, OverflowError):
+            stamp = None
+        order['timestamp'] &= stamp is not None and (order['last_time'] is None or stamp > order['last_time'])
+        order['last_time'] = stamp
+        order['events'] += 1
+        fields['structured_events'] += event.get('execution_status') in ('error', 'returned') or (
+            event.get('contract_violation') is True and bool(event.get('contract_ref')))
+        if activity == 'tool_result':
+            observation_cases.add(case)
+            if all(isinstance(event.get(key), str) and event[key] for key in
+                   ('tool_name', 'input_fingerprint', 'result_fingerprint', 'state_revision')):
+                observation_candidates.add(case)
         counts[activity] += 1
         for key in ('tool_name', 'outcome', 'state_revision', 'lineage_verified'):
             fields[key] += event.get(key) not in (None, 'unknown', 'unverified')
         ref = {'case_id': case, 'event_id': ident}
         cases[case].append((activity,number,ref))
-        finding = observations.observe(event, number)
-        if finding:
-            findings.append(finding)
+        if select_methods:
+            keys = ('case_id', 'event_id', 'activity', 'state_revision', 'mutation', 'tool_effect',
+                    'call_id', 'tool_name', 'input_fingerprint', 'result_fingerprint')
+            observation_events.append((number, {key: event[key] for key in keys if key in event}))
+        else:
+            finding = observations.observe(event, number)
+            if finding:
+                findings.append(finding)
         if event.get('contract_violation') is True and event.get('contract_ref'):
             findings.append(dict(kind='contract_violation', status='observed_pattern',
                 evidence=[ref], contract_ref=event['contract_ref'],
                 explanation='Caller supplied contract evidence; verify against the applicable contract.'))
-    repeated = recurring_sequences(cases,roots,sequence_length)
     n = sum(counts.values())
-    return dict(schema_version=1, events=n, cases=len(roots), reported_roots=len(set(roots.values())),
+    ordered = {case for case, state in ordering.items() if state['capture'] or state['timestamp']}
+    sequence_cases = {case for case, state in ordering.items() if state['events'] > 1}
+    sequence_inputs = {case: cases[case] for case in cases if case in sequence_cases & ordered}
+    sequence_roots = len({roots[case] for case in sequence_inputs})
+    selected_observations = observation_candidates & ordered
+    if select_methods:
+        repeated = recurring_sequences(sequence_inputs, roots, sequence_length) if sequence_roots >= 3 else []
+        for position, event in observation_events:
+            if event['case_id'] in selected_observations:
+                finding = observations.observe(event, position)
+                if finding:
+                    findings.append(finding)
+    else:
+        repeated = recurring_sequences(cases, roots, sequence_length)
+    return dict(schema_version=1, profile='ahl-private-diagnosis-v1',
+                events=n, cases=len(roots), reported_roots=len(set(roots.values())),
+                method_inputs=dict(profile='ahl-analysis-execution-v1', structured_events=fields['structured_events'],
+                    sequence_roots=sequence_roots, sequence_cases=len(sequence_cases),
+                    sequence_events=sum(len(entries) for entries in sequence_inputs.values()),
+                    selected_sequence_cases=len(sequence_inputs), observation_cases=len(observation_cases),
+                    selected_observation_cases=len(selected_observations),
+                    observation_events=sum(ordering[case]['events'] for case in selected_observations),
+                    missing_observation_signature_cases=len(observation_cases - observation_candidates),
+                    unordered_sequence_cases=len(sequence_cases - ordered),
+                    unordered_observation_cases=len(observation_cases - ordered),
+                    capture_order_cases=sum(state['capture'] for state in ordering.values()),
+                    timestamp_order_cases=sum(state['timestamp'] for state in ordering.values())),
+                method_execution=dict(profile='ahl-analysis-execution-v1',
+                    policy='structural_prerequisites_v1' if select_methods else 'legacy_raw_analysis',
+                    directly_follows='completed' if n else 'not_run',
+                    recurring_sequences='completed' if not select_methods or sequence_roots >= 3 else 'not_run',
+                    duplicate_observations='completed' if not select_methods or selected_observations else 'not_run',
+                    structured_checks='completed' if fields['structured_events'] else 'not_run'),
                 field_coverage={k: dict(known=fields[k], total=n) for k in
                                 ('tool_name', 'outcome', 'state_revision', 'lineage_verified')},
                 activities=dict(counts), eligible_observations=observations.coverage['eligible'],
                 observation_coverage=dict(observations.coverage),
                 observation_limits=dict(per_case=observation_per_case, total=observation_total, max_age=observation_max_age),
                 sequence_length_limit=sequence_length,
+                process_mining=dict(process.result(), profile='ahl-analysis-process-graph-v1'),
                 recurring_sequences=repeated, findings=findings,
                 deferred_mechanisms={
                     'tool_waste': 'Needs necessity contract or outcome-preserving intervention.',
@@ -138,6 +198,11 @@ def report(result, *, source_context=None):
     lines += ['', f"Observed findings: {len(result['findings'])}.",
               f"Recurring sequences: {len(result['recurring_sequences'])}.", '',
               'Review recurring sequences against successful controls before proposing a skill or repair.', '']
+    if 'process_mining' in result:
+        mining = result['process_mining']
+        lines += [f"Directly-follows edges: {len(mining['raw_edges'])}; run-collapsed edges: {len(mining['projected_run_collapsed_edges'])}.",
+                  f"Unusable timestamps: {mining['missing_timestamps']} (invalid: {mining['invalid_timestamps']}); timestamp reversals: {mining['timestamp_reversals']}.",
+                  'Graphs describe capture order; reported roots are not verified independent samples.', '']
     for finding in result['findings']:
         lines += ['', f"- {finding['kind']} ({finding['status']}): {finding['explanation']} Evidence: {finding['evidence']}"]
     lines += ['', 'Deferred questions:', '']

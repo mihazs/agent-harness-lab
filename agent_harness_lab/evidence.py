@@ -27,27 +27,35 @@ def _regular(path, root):
         return False
 
 
-def _rows(path, caveats, digest=None):
+def _rows(path, caveats, digest=None, tick=None):
     try:
-        with path.open('rb') as stream:
-            while True:
-                raw = stream.readline()
-                if not raw:
-                    break
-                if digest is not None:
-                    digest.update(raw)
-                if not raw.strip():
-                    continue
-                try:
-                    row = json.loads(raw)
-                    if not isinstance(row, dict):
-                        raise ValueError()
-                except (ValueError, UnicodeError):
-                    _warn(caveats, 'Malformed capture records were skipped; evidence is incomplete.')
-                    continue
-                yield row
+        stream = path.open('rb')
     except OSError:
         _warn(caveats, 'Unreadable capture files were skipped; evidence is incomplete.')
+        return
+    with stream:
+        while True:
+            try:
+                raw = stream.readline()
+            except OSError:
+                _warn(caveats, 'Unreadable capture files were skipped; evidence is incomplete.')
+                return
+            if not raw:
+                break
+            if tick is not None:
+                tick()
+            if digest is not None:
+                digest.update(raw)
+            if not raw.strip():
+                continue
+            try:
+                row = json.loads(raw)
+                if not isinstance(row, dict):
+                    raise ValueError()
+            except (ValueError, UnicodeError):
+                _warn(caveats, 'Malformed capture records were skipped; evidence is incomplete.')
+                continue
+            yield row
 
 
 def _cwd(row):
@@ -66,9 +74,9 @@ def _matches(value, project):
         return False
 
 
-def _owned(path, project, caveats):
+def _owned(path, project, caveats, tick=None):
     # Establish scope before normalizing any project text.
-    for row in _rows(path, caveats):
+    for row in _rows(path, caveats, tick=tick):
         cwd = _cwd(row)
         if cwd is not None:
             return _matches(cwd, project)
@@ -175,7 +183,7 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
         raise ValueError('source version requires an explicit supported capture')
     caveats, sources, errors = [], [], []
     notify = progress or (lambda stage, **counts: None)
-    notify('discovery', scanned=0, selected=0)
+    notify('discovery', files=0, scanned=0, selected=0)
     fingerprint = hashlib.sha256()
     selected = []
     if events is not None or source_root is not None:
@@ -190,19 +198,22 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                  (Path(os.environ.get('CLAUDE_CONFIG_DIR', str(Path.home() / '.claude'))) / 'projects', 'claude')]
         candidates = ((mtime, name, path, fmt) for root, fmt in roots
                       for mtime, name, path in _capture_candidates(root))
+        scan_count = 0
         def discovered():
-            for scanned, candidate in enumerate(candidates, 1):
-                notify('discovery', scanned=scanned, selected=len(selected))
+            nonlocal scan_count
+            for scan_count, candidate in enumerate(candidates, 1):
+                notify('discovery', files=scan_count, scanned=scan_count, selected=len(selected))
                 yield candidate
         if max_scan_files is None:
             latest = discovered() if max_files is None else sorted(discovered(), reverse=True)
         else:
-            scanned = list(itertools.islice(discovered(), max_scan_files + 1))
-            latest = heapq.nlargest(max_scan_files, scanned[:max_scan_files])
-            if len(scanned) > max_scan_files:
+            scanned_candidates = list(itertools.islice(discovered(), max_scan_files + 1))
+            latest = heapq.nlargest(max_scan_files, scanned_candidates[:max_scan_files])
+            if len(scanned_candidates) > max_scan_files:
                 _warn(caveats, 'Capture discovery reached its separate scan-file limit; older project history may be absent.')
         for _, _, path, fmt in latest:
-            if _owned(path, project, caveats):
+            if _owned(path, project, caveats,
+                      tick=lambda: notify('discovery', files=scan_count, scanned=scan_count, captures=len(selected))):
                 if max_files is not None and len(selected) >= max_files:
                     _warn(caveats, 'Matching captures reached the accepted-file limit; project history is incomplete.')
                     break
@@ -211,8 +222,10 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
 
     def normalized_events():
         total_events = 0
-        for capture, (path, fmt) in enumerate(sorted(selected, key=lambda pair: str(pair[0])), 1):
-            notify('capture_processing', capture=capture, selected=len(selected), events=total_events)
+        notify('collection', captures=0, events=0)
+        for index, (path, fmt) in enumerate(sorted(selected, key=lambda pair: str(pair[0])), 1):
+            notify('capture_processing', capture=index, selected=len(selected), events=total_events)
+            notify('collection', captures=index - 1, events=total_events)
             source_digest = hashlib.sha256()
             source_id = (source_identity or hashlib.sha256(str(path).encode()).hexdigest())[:16]
             source = dict(format=fmt, events=0)
@@ -222,7 +235,8 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
             sources.append(source)
             def scoped_rows():
                 active = events is not None
-                for accepted, row in enumerate(_rows(path, caveats, source_digest), 1):
+                for accepted, row in enumerate(_rows(path, caveats, source_digest,
+                        tick=lambda: notify('collection', captures=index - 1, events=total_events)), 1):
                     cwd = _cwd(row)
                     if cwd is not None and events is None:
                         active = _matches(cwd, project)
@@ -263,8 +277,9 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                 fingerprint.update(json.dumps(dict(event=event, tool_error=tool_error), sort_keys=True).encode() + b'\n')
                 source['events'] += 1
                 total_events += 1
+                notify('collection', captures=index - 1, events=total_events)
                 if total_events % 1000 == 0:
-                    notify('capture_processing', capture=capture, selected=len(selected), events=total_events)
+                    notify('capture_processing', capture=index, selected=len(selected), events=total_events)
                 if tool_error:
                     errors.append(dict(kind='tool_error', status='observed_pattern',
                         evidence=[dict(case_id=event['case_id'], event_id=event['event_id'])],
@@ -273,9 +288,9 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                     event_sink(event)
                 yield event
             source['sha256'] = native_digest if pinned else source_digest.hexdigest()
-        notify('analysis', events=total_events)
+        notify('analysis', events=total_events, captures=len(selected))
 
-    analysis = analyze(normalized_events(), max_events=max_events, sequence_length=sequence_length)
+    analysis = analyze(normalized_events(), max_events=max_events, sequence_length=sequence_length, select_methods=True)
     analysis['findings'].extend(errors)
     notify('evaluation_reports', events=analysis['events'])
     outcomes = [] if events is not None or source_root is not None else _evaluation_results(project, max_files, sources, fingerprint, caveats)
@@ -285,7 +300,8 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
     successes = [record for record in outcomes if record['status'] == 'passed']
     stage = 'evidence_empty' if not analysis['events'] and not outcomes else 'evidence_incomplete' if caveats else 'collection_complete'
     notify(stage, events=analysis['events'], eligible=analysis['eligible_observations'],
-           findings=len(analysis['findings']), evaluation_outcomes=len(outcomes), incomplete=int(bool(caveats)))
+           findings=len(analysis['findings']), evaluation_outcomes=len(outcomes), incomplete=int(bool(caveats)),
+           edges=len(analysis['process_mining']['raw_edges']))
     return dict(analysis=analysis, evaluation_failures=failures, evaluation_successes=successes,
                 evaluation_outcomes=outcomes, discovery_limits=dict(scan_files=max_scan_files, accepted_files=max_files), sources=sources,
                 fingerprint=fingerprint.hexdigest(), caveats=caveats)

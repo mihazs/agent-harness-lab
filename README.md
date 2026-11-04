@@ -45,6 +45,12 @@ Start with local evidence discovery; this does not call a model:
 ahl analyze .
 ```
 
+`ahl analysis .` is an alias. This one call runs directly-follows process mining,
+recurring-sequence detection and state-aware duplicate-observation checks. The JSON
+receipt and private report list executed algorithms, evidence gaps and the next
+action. Aggregate progress goes to stderr; stdout stays JSON.
+See [what analysis runs](docs/analysis.md) for algorithm details and limits.
+
 With a supported, authenticated Codex or Claude Code runtime and a trusted project,
 request candidate preparation and evaluation:
 
@@ -57,6 +63,8 @@ current CLI behavioral candidates remain recommendations. Use `ahl improve --hel
 for runtime selection and budgets, and [workflows](docs/workflows.md) for details.
 See [CLI help for agents and automation](docs/cli-help.md) for safe discovery,
 input/output conventions and nested command help.
+You can call `ahl improve .` directly: it collects and analyzes evidence itself.
+Running `analyze` first is optional.
 
 Already working inside an agent session? Invoke the installed
 `harness-self-improvement` skill and ask it to improve this project's harness.
