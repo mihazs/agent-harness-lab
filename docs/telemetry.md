@@ -5,8 +5,8 @@ It contains bounded metadata, not message bodies, arguments, commands, tool
 results, thinking, or credentials. The ledger is content-idempotent, append-only,
 locked during ingestion, mode 0600, and refuses conflicting IDs or incomplete
 writes. The core `Ledger` API accepts byte/record retention limits; reaching them
-requires explicit rotation/deletion, never silent loss. Default limits are 64 MiB
-and 100,000 records. Run directories use mode 0700. These are local private data;
+requires explicit rotation/deletion, never silent loss. There is no default byte
+or record ceiling; callers may supply positive retention limits. Run directories use mode 0700. These are local private data;
 hashes and opaque IDs do not authorize public export.
 
 `telemetry.schema.event` upgrades v1 records to v2, validates bounded typed fields,
@@ -39,14 +39,21 @@ require a new declared adapter version. The source-format check fails explicitly
 for unsupported versions. Missing tool results produce coverage events; tool errors
 remain observations rather than task-failure labels.
 
-Discovery has separate limits of 2000 scanned capture files and 100 accepted
-project captures. Within the bounded scan, files are considered newest first and
-filtered by exact project before the accepted allowance is consumed. Exhausting
-either limit is reported. This is still a bounded view, not complete history.
-The collector has no aggregate byte or read-chunk ceiling. It streams capture
-records in chunks of at most 1 MiB plus one boundary byte, skips oversized or
-malformed records with explicit caveats, and retains configurable event/file
-limits. Evaluation reports remain individually limited to 1 MiB.
+Discovery, capture records, evaluation reports and event analysis have no default
+size ceiling. Optional positive `--max-capture-scan`, `--max-captures` and
+`--max-events` values bound only the selected run. Files are considered newest
+first and filtered by exact project before an explicit accepted-file allowance
+is consumed. Malformed records retain explicit caveats; valid large records and
+reports are read in full and their input hashes cover all consumed bytes.
+
+Observation matching retains all eligible history by default. Explicit API cache
+limits remain available. Recurring-sequence analysis indexes all contiguous
+lengths and retains every supporting reference; `--sequence-length` optionally
+limits lengths. Repetition still requires three reported roots and does not
+establish independence. The index avoids constructing patterns that do not recur
+across three roots. The number of recurring patterns can be quadratic; spelling
+out every pattern's members can require cubic output in the worst case.
+Available memory, storage and time remain practical constraints, not hidden caps.
 
 No real-model effectiveness experiment was run for this schema. Tests establish
 metadata/control-flow behavior only. No model weights, downloads, external ledger

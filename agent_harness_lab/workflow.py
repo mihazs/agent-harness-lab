@@ -71,13 +71,17 @@ def project_lock(project):
 
 def evidence(args, output, source_context=None):
     from agent_harness_lab.telemetry.ledger import Ledger
-    events = []
-    data = collect(args.project, events=args.events, source_format=args.format, event_sink=events.append,
-        source_version=getattr(args, 'source_version', None), source_root=getattr(args, 'source_root', None),
-        session=getattr(args, 'session', None), max_files=getattr(args, 'max_captures', 100),
-        max_scan_files=getattr(args, 'max_capture_scan', 2000), max_events=getattr(args, 'max_events', 100000))
+    from agent_harness_lab.telemetry.schema import serialize
+    with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as events:
+        data = collect(args.project, events=args.events, source_format=args.format,
+            event_sink=lambda row: events.write(serialize(row)+'\n'),
+            source_version=getattr(args, 'source_version', None), source_root=getattr(args, 'source_root', None),
+            session=getattr(args, 'session', None), max_files=getattr(args, 'max_captures', None),
+            max_scan_files=getattr(args, 'max_capture_scan', None), max_events=getattr(args, 'max_events', None),
+            sequence_length=getattr(args, 'sequence_length', None))
+        events.seek(0)
+        Ledger(output / 'events.v2.jsonl').ingest(json.loads(line) for line in events)
     if source_context is not None: data['source_context'] = source_context
-    Ledger(output / 'events.v2.jsonl').ingest(events)
     write_json(output / 'analysis.json', data)
     (output / 'report.md').write_text(report(data['analysis'], source_context=source_context))
     return data

@@ -7,10 +7,25 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from agent_harness_lab.evidence import collect, MAX_RECORD_BYTES
+from agent_harness_lab.evidence import collect
+
+FORMER_RECORD_BYTES = 1024 * 1024
 
 
 class EvidenceTests(unittest.TestCase):
+    def test_default_discovery_has_no_scan_accepted_file_or_scope_prefix_ceiling(self):
+        for number in range(2001):
+            self.write(self.codex/f'sessions/foreign-{number}.jsonl',self.codex_rows(self.home/'foreign'))
+        for number in range(101):
+            rows=[dict(type='metadata')]*101+self.codex_rows()
+            self.write(self.codex/f'sessions/owned-{number}.jsonl',rows)
+        result=collect(self.project)
+        self.assertEqual(len(result['sources']),101)
+        self.assertIsNone(result['discovery_limits']['scan_files'])
+        self.assertIsNone(result['discovery_limits']['accepted_files'])
+        limited=collect(self.project,max_files=2)
+        self.assertEqual(len(limited['sources']),2)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -86,14 +101,14 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(result['analysis']['findings'],[])
         self.assertNotIn('PRIVATE',str(result))
 
-    def test_malformed_and_oversized_records_are_explicit(self):
+    def test_malformed_records_are_explicit_without_a_size_ceiling(self):
         p=self.write(self.codex/'sessions/own.jsonl', self.codex_rows())
         with p.open('a') as f:
             f.write('not json\n')
-            f.write('x'*(MAX_RECORD_BYTES+1)+'\n')
+            f.write('x'*(FORMER_RECORD_BYTES+1)+'\n')
         result=collect(self.project)
         self.assertTrue(any('Malformed' in c for c in result['caveats']))
-        self.assertTrue(any('Oversized' in c for c in result['caveats']))
+        self.assertFalse(any('Oversized' in c for c in result['caveats']))
         with self.assertRaises(ValueError): collect(self.project,max_events=1)
 
     def test_symlinks_and_changed_cwd_are_excluded(self):
@@ -169,11 +184,11 @@ class EvidenceTests(unittest.TestCase):
         path.write_text(json.dumps(result))
         self.assertNotEqual(first,collect(self.project)['fingerprint'])
 
-    def test_streaming_past_former_byte_ceiling_skips_oversized_records_and_unterminated_tail(self):
+    def test_streaming_past_former_byte_ceiling_skips_malformed_records_and_hashes_tail(self):
         path=self.home/'large.jsonl';digest=hashlib.sha256()
         first=json.dumps(dict(case_id='synthetic',event_id='1',activity='inspect')).encode()+b'\n'
         second=json.dumps(dict(case_id='synthetic',event_id='2',activity='check')).encode()+b'\n'
-        block=b'x'*MAX_RECORD_BYTES
+        block=b'x'*FORMER_RECORD_BYTES
         with path.open('wb') as stream:
             for raw in itertools.chain((first,),itertools.repeat(block,65),(b'\n',second,block,b'y')):
                 stream.write(raw);digest.update(raw)
@@ -181,8 +196,8 @@ class EvidenceTests(unittest.TestCase):
         result=collect(self.project,events=path,max_events=2)
         self.assertEqual(result['analysis']['events'],2)
         self.assertEqual(result['sources'][0]['sha256'],digest.hexdigest())
-        self.assertEqual(sum('Oversized' in caveat for caveat in result['caveats']),1)
-        self.assertNotIn('Malformed',' '.join(result['caveats']))
+        self.assertEqual(sum('Malformed' in caveat for caveat in result['caveats']),1)
+        self.assertNotIn('Oversized',' '.join(result['caveats']))
 
     def test_streaming_past_former_chunk_ceiling_retains_valid_events_after_malformed_rows(self):
         path=self.home/'many-rows.jsonl';digest=hashlib.sha256()

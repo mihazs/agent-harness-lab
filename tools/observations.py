@@ -1,10 +1,10 @@
-"""Bounded observation matching; repetition is not a judgment of necessity."""
+"""State-aware observation matching; repetition is not a judgment of necessity."""
 from collections import Counter, OrderedDict
 
 
 class ObservationCache:
-    def __init__(self, per_case=128, total=4096, max_age=1000):
-        if min(per_case, total, max_age) <= 0:
+    def __init__(self, per_case=None, total=None, max_age=None):
+        if any(value is not None and (type(value) is not int or value <= 0) for value in (per_case,total,max_age)):
             raise ValueError('observation limits must be positive')
         self.per_case, self.total, self.max_age = per_case, total, max_age
         self.cases, self.entries = OrderedDict(), OrderedDict()
@@ -21,14 +21,14 @@ class ObservationCache:
     def observe(self, event, position):
         case = event['case_id']
         if case not in self.cases:
-            if len(self.cases) >= self.total:
+            if self.total is not None and len(self.cases) >= self.total:
                 old, _ = next(iter(self.cases.items()))
                 self.clear(old, 'case_eviction')
                 self.cases.pop(old)
             self.cases[case] = dict(revision=None, keys=OrderedDict(), pending={})
         state = self.cases[case]
         self.cases.move_to_end(case)
-        while self.entries and position - next(iter(self.entries.values()))['position'] > self.max_age:
+        while self.max_age is not None and self.entries and position - next(iter(self.entries.values()))['position'] > self.max_age:
             self._evict('age_eviction')
         revision = event.get('state_revision')
         if revision is not None and revision != state['revision']:
@@ -44,7 +44,7 @@ class ObservationCache:
             if call:
                 if call in state['pending']:
                     self.clear(case, 'duplicate_call')
-                if len(state['pending']) >= self.per_case:
+                if self.per_case is not None and len(state['pending']) >= self.per_case:
                     state['pending'].clear()
                     self.clear(case, 'pending_limit')
                 state['pending'][call] = readonly
@@ -80,11 +80,11 @@ class ObservationCache:
                 explanation='Same observation at the same recorded state; necessity is unverified.')
         self.entries[key] = dict(result=result, ref=ref, position=position)
         state['keys'][key] = None
-        while len(state['keys']) > self.per_case:
+        while self.per_case is not None and len(state['keys']) > self.per_case:
             old, _ = state['keys'].popitem(last=False)
             self.entries.pop(old, None)
             self.coverage['per_case_eviction'] += 1
-        while len(self.entries) > self.total:
+        while self.total is not None and len(self.entries) > self.total:
             self._evict('total_eviction')
         return finding
 

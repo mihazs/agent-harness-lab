@@ -26,6 +26,21 @@ tasks:
       AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_private_journal.py" -v'
+  test:analysis:unlimited:
+    desc: Verify unlimited synthetic analysis and explicit positive limit controls
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      PYTHONDONTWRITEBYTECODE: '1'
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_unlimited_analysis.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_evidence.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_diagnose.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_telemetry.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_store.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_context.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_workflow.py" -v'
   test:workflow:repeated:
     desc: Run fixed-bank workflow admission and opt-in native tests
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'

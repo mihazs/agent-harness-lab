@@ -173,9 +173,9 @@ be acyclic. These are attributed claims, not causal or independence verification
 No latest-source revision is inferred from arrival order or unknown timestamps.
 
 The POSIX backend creates directories at mode 0700 and journal/lock files at 0600,
-rejecting linked or nonregular files. Defaults bound the committed journal to
-64 MiB and each metadata collection, including total checkpoint history, to
-100,000 entries. There is no automatic eviction of audit history. Committed-file
+rejecting linked or nonregular files. The committed journal and its metadata
+collections have no default size ceiling. Callers can provide positive byte/record
+limits, including for total checkpoint history. There is no automatic eviction of audit history. Committed-file
 limits do not impose a directory-wide disk quota on crash-orphaned temporary files.
 `CommitUncertain` means filesystem commit/durability is uncertain: inspect status
 before retrying. A completed import batch leaves capture completeness unknown and
@@ -286,12 +286,11 @@ filesystem capabilities, malformed caches, foreign scope and linked files reject
 the requested context. A missing/disappearing journal is explicitly `missing`,
 with unknown capture completeness; it is not a successful empty corpus.
 
-The bounded inventory reports source fingerprints/kinds, fingerprinted provider
+The complete inventory reports source fingerprints/kinds, fingerprinted provider
 and adapter/parser versions, cached revision/checkpoint counts, declared execution
 identity fields, coverage gaps/bounds/limits and graph status counts. Provider,
-version and namespace labels from untrusted metadata are not echoed. At most 20
-sources and eight adapter-version fingerprints per source are shown; omissions
-and truncation are explicit. Fingerprints remain private metadata, not an
+version and namespace labels from untrusted metadata are not echoed. Every source
+and adapter-version fingerprint is shown. Fingerprints remain private metadata, not an
 anonymization guarantee. A declared complete scan remains a source assertion.
 
 The report's target-project binding is `unverified`: selecting a scoped source
