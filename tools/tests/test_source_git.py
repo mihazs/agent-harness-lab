@@ -508,6 +508,16 @@ class GitSourceTests(unittest.TestCase):
         finally: tracemalloc.stop()
         self.assertLess(peak, bound)
 
+    def test_object_file_vanishing_after_enumeration_fails_closed_with_labelled_error(self):
+        loose = next(path for path in (self.repo/'.git/objects').rglob('*') if path.is_file() and len(path.parent.name) == 2)
+        original = Folder.walk
+        def vanishing(folder, name, *args, **kwargs):
+            for entry in original(folder, name, *args, **kwargs):
+                if str(entry).endswith(loose.parent.name+'/'+loose.name): loose.unlink(missing_ok=True)
+                yield entry
+        with patch.object(Folder, 'walk', vanishing), self.assertRaisesRegex(ValueError, 'Git input changed during reading'):
+            self.read()
+
     def test_streamed_reads_keep_byte_output_and_binary_thresholds(self):
         target = self.root/'payload'; target.write_bytes(b'x'*(3*git_view.CHUNK+5)); size = target.stat().st_size
         with Folder(self.root, None) as folder:
