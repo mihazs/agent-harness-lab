@@ -23,6 +23,22 @@ def _estimate(log_term, coefficient, threshold):
 
 
 def solve(spec, families, cohorts, alpha, trial_ceiling):
+    """Descriptive inverse plan; numerically unrepresentable plans are infeasible, never errors."""
+    try:
+        return _solve(spec, families, cohorts, alpha, trial_ceiling)
+    except (OverflowError, ZeroDivisionError, ValueError):
+        return dict(schema_version=1, profile=PROFILE, plan_sha256=spec.digest, status='infeasible',
+            reasons=['numeric_range_unrepresentable'], analysis_method='weighted_root_Hoeffding',
+            per_endpoint_alpha=alpha, precision_half_width=spec.precision_half_width,
+            independent_unit='declared_root', families=[], cohorts=[],
+            declared_roots=sum(len(v) for v in families.values()), required_roots=None,
+            solved_primary_half_width=None, minimum_planned_trials=None, trial_ceiling=trial_ceiling,
+            task_cap=MAX_TASKS, authority='descriptive_only', root_independence='unverified',
+            oracle_authority='not_established', power='not_estimated', automatic_budget_change=False,
+            bank_mutation=False, plan_mutation=False, automatic_adoption=False, publication_allowed=False)
+
+
+def _solve(spec, families, cohorts, alpha, trial_ceiling):
     target, log_term = spec.precision_half_width, math.log(2 / alpha)
     weights = dict(spec.family_weights)
     family_of = {root: family for _, root, family in spec.tasks}

@@ -100,6 +100,15 @@ class PrecisionSolverTests(unittest.TestCase):
         value = spec({'a': 10, 'b': 5}, {'a': .6, 'b': .4}, target=.3)
         self.assertEqual(solved(value), solved(value))
 
+    def test_numerically_extreme_valid_plans_stay_infeasible_not_errors(self):
+        for options in (dict(target=1e-160), dict(target=1e-200), dict(target=.1, alpha=5e-324)):
+            with self.subTest(**options):
+                report = preflight(spec({'a': 4, 'b': 4}, **options))
+                self.assertEqual(report['status'], 'infeasible')
+                plan = report['sample_size_plan']
+                self.assertEqual((plan['status'], plan['required_roots']), ('infeasible', None))
+                self.assertFalse(plan['publication_allowed']);self.assertEqual(plan['authority'], 'descriptive_only')
+
     def test_caps_and_budgets_report_explicit_infeasibility(self):
         plan = solved(spec({'a': 10}, target=.05))
         self.assertEqual((plan['status'], plan['reasons'], plan['required_roots']),
