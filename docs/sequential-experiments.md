@@ -95,3 +95,6 @@ using a frozen predictable tuning table; see
 [Howard et al.2021](https://doi.org/10.1214/20-AOS1991) for time-uniform inference.
 No live provider/pilot or cost-saving measurement is implied. Full issue9 remains
 open for remaining orchestration, validation and certification dependencies.
+
+Use `task test:evaluation:sequential:kernel` for fresh paired roots, early stopping,
+worker-failure retention and receipt replay with pinned Linux workers and no model.
