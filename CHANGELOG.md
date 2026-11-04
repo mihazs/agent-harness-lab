@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.10
+
+### Patch Changes
+
+- 81fcaa1: Reject incomplete sentence-embedding input coverage before encoding through a checked unprompted Transformer and Pooling pipeline. Preserve saved encoder and real model context limits without silently scoring truncated text or inventing chunk aggregation.
+
 ## 0.76.9
 
 ### Patch Changes
