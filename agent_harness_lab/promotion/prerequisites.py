@@ -139,6 +139,8 @@ class _Scope:
         self.latest=run,event,fact
         if event['role']=='executor' and event['stage']=='role':self.executor=(event['ordinal'],exports)
         self._save()
+        from agent_harness_lab.evaluation.construction_seals import observe_native
+        observe_native(self,ticket,fact,run)
 
     def _grade(self,run,extracted,oracle_sha256,fixture_sha256,outcome):
         from agent_harness_lab.evaluation.controller_receipts import _read_fact,_matches_grade,_artifact_fingerprints
@@ -211,6 +213,8 @@ class _Scope:
     def cancel(self):self.lost=True
 
     def end(self):
+        from agent_harness_lab.evaluation.construction_seals import end_scope
+        end_scope(self)
         owner=_STATES.pop(self,None)
         if owner is not None and owner[0]==os.getpid() and _ACTIVE.get() is self:_ACTIVE.reset(owner[1])
         self.closed=True;self.latest=self.executor=None;self.instruction_client=None

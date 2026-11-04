@@ -126,7 +126,7 @@ class PrivateJournal:
         if not events: raise ValueError('case journal is empty')
         return events
 
-    def append(self, case, events, kind, state, payload):
+    def append(self, case, events, kind, state, payload, *, before_publish=None):
         previous = events[-1] if events else None
         if not self._transition(previous[0]['state'] if previous else None, kind, state, previous[0]['kind'] if previous else None):
             raise ValueError('invalid case lifecycle transition')
@@ -136,5 +136,6 @@ class PrivateJournal:
         if self.max_metadata is not None and len(encoded(value)) > self.max_metadata: raise ValueError('complete case event exceeds metadata bound')
         path = case/'events'/f'{len(events):04d}.json'
         if path.exists(): raise ValueError('immutable case event already exists')
-        atomic_json(path, value)
+        if before_publish is None:atomic_json(path, value)
+        else:atomic_json(path, value, before_replace=before_publish)
         events.append((value, hashlib.sha256(read_regular(path,self.max_metadata)).hexdigest()))

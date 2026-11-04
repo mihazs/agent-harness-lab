@@ -75,6 +75,10 @@ def evidence(args, output, source_context=None, *, progress=None):
     from .diagnostics.retrieval import contextual_search
     from agent_harness_lab.telemetry.ledger import Ledger
     from agent_harness_lab.telemetry.schema import serialize
+    closed = getattr(args, '_closed_input_domain', None)
+    if closed is not None:
+        from .evaluation.closed_inputs import before_collection
+        before_collection(closed, args, source_context=source_context)
     incident_retrieval = contextual_search(getattr(args, 'incident_corpus', None), getattr(args, 'incident_query', None))
     if progress is None:
         progress = getattr(args, '_progress', None) or _progress_reporter()
@@ -105,6 +109,9 @@ def evidence(args, output, source_context=None, *, progress=None):
     if memory_summary is not None:
         data['memory_source'] = memory_summary
     data['execution'] = summarize(data)
+    if closed is not None:
+        from .evaluation.closed_inputs import collected
+        collected(closed, data)
     write_json(output / 'analysis.json', data)
     report_text = report(data['analysis'], source_context=source_context) + execution_report(data['execution'])
     if memory_summary is not None:
@@ -528,7 +535,10 @@ def _improve(args):
             if attempt:
                 context = prepare / f'proposer-context-{attempt}'
                 shutil.copytree(role_views['proposer'],context,symlinks=True)
-                write_json(context/'feedback.json',dict(trials=refinement_feedback))
+                if getattr(args,'_closed_input_domain',None) is not None:
+                    from .evaluation.closed_inputs import write_feedback
+                    write_feedback(args._closed_input_domain,context/'feedback.json',refinement_feedback)
+                else:write_json(context/'feedback.json',dict(trials=refinement_feedback))
                 analysis_snapshot(context,deadline)
                 if access is None: construction.proposer_seed(candidate,prepare/f'proposer-work-{attempt}',deadline)
             if access is None:
@@ -745,6 +755,9 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             trials=[t for t in trials if t['split'] != 'heldout']))
         refinement_feedback = [{key:trial.get(key) for key in ('task','version','split','status')}
             for trial in trials if trial.get('split') in ('development','regression')]
+        if getattr(args,'_closed_input_domain',None) is not None:
+            from .evaluation.closed_inputs import record_feedback
+            record_feedback(args._closed_input_domain,refinement_feedback,evaluated)
         if access is not None: access.feedback(refinement_feedback)
         candidate_pass = all(t['status'] == 'passed' for t in trials if t['version'] == 'candidate')
         controls_pass = all(t['status'] == 'passed' for t in trials

@@ -532,7 +532,7 @@ class HistoryStore(PrivateJournal):
         from .derivations import status
         return status(self,ident)
 
-    def reserve_access(self, manifest, baseline, candidate, *, budget_seconds=60,parent_deadline=None):
+    def reserve_access(self, manifest, baseline, candidate, *, budget_seconds=60,parent_deadline=None,requalification=None):
         from .certification_access import capture
         if type(budget_seconds) not in (int,float) or not math.isfinite(budget_seconds) or not 0<budget_seconds<=300:
             raise ValueError('access reservation budget must be positive and at most 300 seconds')
@@ -552,6 +552,9 @@ class HistoryStore(PrivateJournal):
             raise ValueError('managed diagnostics do not qualify preservation cohorts')
         with self.locked(create=True): pass
         check()
+        if requalification is not None:
+            from .bank_requalification import reserve
+            return reserve(requalification,binding,deadline=deadline)
         return self.access_ledger().reserve_managed(binding,deadline=deadline)
 
     def run(self, manifest, baseline, candidate, *, cgroup_root, image_root, image_sha256, disk_bytes, budget_seconds=60,parent_deadline=None,on_started=None,access_reservation=None,

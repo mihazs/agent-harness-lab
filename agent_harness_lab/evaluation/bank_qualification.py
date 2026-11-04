@@ -318,6 +318,8 @@ def summary(store,case_id,*,deadline=None):
 def access_guard(binding,state,*,reservation_id=None,deadline=None):
     qualification=binding.get('bank_qualification')
     if qualification is None:return
+    from .bank_requalification import access_guard as renewal_guard
+    if renewal_guard(binding,state,reservation_id=reservation_id,deadline=deadline):return
     path=Path(qualification['bank_path']);actual=revision_metadata(path,deadline=deadline)
     if not actual['current_eligible'] or actual!=qualification['metadata']:
         raise ValueError('protected bank qualification is stale or revoked')
@@ -340,6 +342,16 @@ def main(argv=None):
     actions=parser.add_subparsers(dest='action',required=True,help='Select a final-bank lifecycle operation; use ACTION --help for its exact inputs')
     trust=actions.add_parser('trust-reviewers',help='Install a host-controlled external reviewer public-key policy',description='Install a reviewer public-key policy for conditional final-bank review; this changes the active trust root, not a bank qualification. Prints JSON; exit 0 completed, 2 rejected input, 3 blocked/unsupported.')
     trust.add_argument('--policy',type=Path,required=True,help='Existing final-bank review-authority policy JSON with authorized reviewer identities/public keys; not a private signing key')
+    delegated=actions.add_parser('trust-delegation-reviewers',help='Install a separate host-controlled closed-input delegation reviewer public-key policy',description='Install the reviewer public-key policy for signed closed-input bank requalification delegation; this changes that trust root only, not any bank qualification. Prints JSON; exit 0 completed, 2 rejected input, 3 blocked/unsupported.')
+    delegated.add_argument('--policy',type=Path,required=True,help='Existing requalification review-authority policy JSON with authorized reviewer identities/public keys; not a private signing key')
+    actions.add_parser('allocate-delegation',help='Allocate a stable private delegation request locator before project configuration is frozen',description='Create one owner-only delegation locator in this --store and print its request and signature paths; writes no request and grants nothing. Prints JSON; exit 0 completed, 2 rejected input, 3 blocked/busy.')
+    delegated=actions.add_parser('prepare-delegation',help='Write an unsigned closed-input requalification request; signing stays external',description='Bind an actually qualified bank, its exposure epoch, history identity, runtime/settings and an exact closed input domain into an unsigned request for an external reviewer. Grants nothing until a live controller verifies the signature. Prints JSON; exit 0 completed, 2 rejected input, 3 blocked/busy/unsupported.')
+    delegated.add_argument('--case',required=True,help='Exact SHA-256 ID of an actually qualified bank case in this --store')
+    delegated.add_argument('--reviewer',required=True,help='Reviewer identity present in the installed delegation policy; must differ from the bank author')
+    delegated.add_argument('--domain',type=Path,required=True,help='Existing schema-2 closed input domain JSON with exact project, baseline, engine, methodology, history and source pins')
+    delegated.add_argument('--runtime',type=Path,required=True,help='Existing runtime JSON with exact image_sha256, backend_selection_sha256 and settings_sha256')
+    delegated.add_argument('--request',type=Path,help='Optional request.json path returned by allocate-delegation; defaults to a content-addressed request in this --store')
+    delegated.add_argument('--budget-seconds',type=float,default=30,help='Whole preparation deadline in seconds, positive and at most 300 (default: %(default)s)')
     propose=actions.add_parser('intake',help='Freeze a declared separate final bank and its authorized lineage judgments',description='Copy exact bank fixtures/grader bundles and a final-bank declaration into a new private case; does not run controls or grant qualification. Prints JSON including the case ID; exit 0 completed, 2 rejected input, 3 blocked/busy.')
     propose.add_argument('--bank',type=Path,required=True,help='Existing bank.json with separate certification-partition tasks and exact fixture/grader digests')
     propose.add_argument('--declaration',type=Path,required=True,help='Existing schema-1 final-bank declaration JSON: author, history_store, protocol, per-task judgments and explicit exposure unknowns')
@@ -360,6 +372,12 @@ def main(argv=None):
     args=parser.parse_args(argv);store=ReviewStore(args.store)
     try:
         if args.action=='trust-reviewers':result=install_policy(store,args.policy)
+        elif args.action in ('trust-delegation-reviewers','allocate-delegation','prepare-delegation'):
+            from . import bank_requalification as renewal
+            if args.action=='trust-delegation-reviewers':result=renewal.install_policy(store,args.policy)
+            elif args.action=='allocate-delegation':result=renewal.allocate_delegation(store)
+            else:result=renewal.prepare(store,args.case,args.reviewer,record(args.domain,authority.MAX_BYTES)[0],
+                record(args.runtime,authority.MAX_BYTES)[0],deadline=deadline_for(args.budget_seconds),request_path=args.request)
         elif args.action=='intake':result=intake(store,args.bank,args.declaration)
         elif args.action=='audit':
             from .sandbox import SandboxBackend
