@@ -180,8 +180,12 @@ class ClaudeInstructionInventoryTests(unittest.TestCase):
         self.write('hub.md', ' '.join(f'@f{i}.md' for i in range(count)))
         for i in range(count): self.write(f'f{i}.md', '')
         self.write('back.md', ' '.join(['@hub.md']*count+['@CLAUDE.md']))
-        started = time.perf_counter(); receipt = self.read(); elapsed = time.perf_counter()-started
-        self.assertLess(elapsed, 5.0)
+        from agent_harness_lab.sources import claude_instructions as module
+        with patch.object(module, 'cyclic', wraps=module.cyclic) as classify: receipt = self.read()
+        # Work is bounded by distinct edges, not repeated tokens: one pass over deduplicated pairs.
+        self.assertEqual(classify.call_count, 1)
+        pairs = classify.call_args.args[0]
+        self.assertEqual(len(pairs), len(set(pairs))); self.assertEqual(len(pairs), count+4)
         edges = self.edges(receipt)
         self.assertIn(('import_cycle', digest('back.md'), digest('CLAUDE.md')), edges)
         self.assertIn(('import_cycle', digest('CLAUDE.md'), digest('back.md')), edges)
