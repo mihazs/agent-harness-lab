@@ -68,6 +68,14 @@ unittest cases to these existing native suites. Put reusable commands in
 `Taskfile.yml`; do not create standalone smoke-test scripts under artifacts or
 other helper folders.
 
+`task setup:test` installs pinned pytest/xdist into the selected virtual environment.
+`task test` collects both suites once and schedules tests across physical CPU cores.
+Set `TEST_WORKERS` to a positive count, or `0` to debug without workers.
+The `worksteal` scheduler balances independent tests without a file-by-file runner.
+See [pytest integration guidance](https://docs.pytest.org/en/stable/explanation/goodpractices.html)
+and [xdist scheduling](https://pytest-xdist.readthedocs.io/en/latest/distribution.html).
+CI uses Python 3.14; this is the validation version, not a change to the package's
+Python 3.11 minimum.
 `task test` runs both suites. `task test:sources` focuses source contracts and the
 checkpoint journal; `task test:hooks` runs the real Lefthook integration cases.
 CI uses the same tasks. `task build` builds wheel/archive artifacts with existing
@@ -107,8 +115,8 @@ links implemented/pending contracts and input schemas.
 Run both suites, plus the relevant CLI smoke check:
 
 ```sh
-python3 -m unittest discover -s skills/harness-evaluation/scripts -p 'test_*.py'
-python3 -m unittest discover -s tools/tests -p 'test_*.py'
+task setup:test PYTHON=.venv/bin/python
+task test PYTHON=.venv/bin/python
 python3 -m agent_harness_lab --help
 git diff --check
 ```

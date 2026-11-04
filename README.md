@@ -151,12 +151,17 @@ and the [code of conduct](CODE_OF_CONDUCT.md). No response-time commitment is ma
 Versions use Changesets; do not change version numbers manually. For a releasable
 change, run `task setup` and `task changeset`; see [release conventions](CONTRIBUTING.md#versions-and-changelogs).
 
-Use `task test` to run both native suites below. Reusable commands belong in
-`Taskfile.yml`; source, wheel and archive checks share discoverable unittest cases.
+Use `task setup:test` in a virtual environment, then `task test` to collect both
+native suites once and distribute tests across CPU cores. Reusable commands belong
+in `Taskfile.yml`; existing unittest cases are collected directly by pytest.
 
 ```sh
-python3 -m unittest discover -s skills/harness-evaluation/scripts -p 'test_*.py'
-python3 -m unittest discover -s tools/tests -p 'test_*.py'
+python3 -m venv .venv
+task setup:test PYTHON=.venv/bin/python
+task test PYTHON=.venv/bin/python
 ```
+
+Set `TEST_WORKERS=4` to select a worker count, or `TEST_WORKERS=0` for debugging.
+CI tests Python 3.14; package installation still requires Python 3.11 or newer.
 
 Licensed under [MIT](LICENSE).
