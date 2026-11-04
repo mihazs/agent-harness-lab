@@ -87,6 +87,30 @@ print(json.dumps(dict(type='turn.completed',usage=dict(output_tokens=1))))
         self.assertEqual(code, 3)
         self.assertEqual(result['reason'], 'configured_bank_shared_trial_budget_exhausted')
 
+    def test_shared_heldout_fixture_is_allowed_within_bank_but_not_prior_attempt(self):
+        from agent_harness_lab.workflow import validate_manifest
+        declared = json.loads(self.bank.read_text())
+        heldout = next(t for t in declared['tasks'] if t['partition']=='certification')
+        declared['tasks'].append(dict(heldout, task_id='heldout-alternative'))
+        self.bank.write_text(json.dumps(declared))
+        self.value['bank']['sha256'] = hashlib.sha256(self.bank.read_bytes()).hexdigest()
+        self.value['limits']['trials'] = 17
+        self.write_config()
+        _, result = self.invoke()
+        self.assertEqual(result['status'], 'inconclusive')
+        output = Path(result['output'])
+        evaluated = json.loads((output/'evaluation-0/results.json').read_text())
+        self.assertEqual(len(evaluated['trials']), 16)
+        manifest_path = output/'preparation/evaluation-0/manifest.json'
+        manifest = json.loads(manifest_path.read_text())
+        runner = evaluator()
+        exposures = {runner.digest(manifest_path.parent/t['fixture']) for t in manifest['tasks'] if t['split']=='heldout'}
+        self.assertEqual(len(exposures), 1)
+        with self.assertRaisesRegex(ValueError, 'fresh held-out'):
+            validate_manifest(manifest_path, output/'preparation/baseline', output/'candidate-0',
+                              ['AGENTS.md'], runner, lambda:30, exposures,
+                              bank_sha256=self.value['bank']['sha256'])
+
     def test_no_change_does_not_execute_trials(self):
         (self.project/'mode').write_text('no_change')
         _, result = self.invoke()
