@@ -111,6 +111,21 @@ class RepeatedWorkflowAdmissionTests(PublicFixture,unittest.TestCase):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name);self.cgroup_root=self.root/'no-cgroup';self.configure()
 
+    def test_malformed_manifest_containers_are_input_errors_before_dispatch(self):
+        original=json.loads(self.manifest.read_text())
+        malformed=[None,[],dict(original,tasks=[None,{}]),dict(original,tasks=['task',{}]),
+            dict(original,grader_bundles=None),dict(original,grader_bundles=[])]
+        for index,value in enumerate(malformed):
+            with self.subTest(index=index):
+                self.manifest.write_bytes(encoded(value))
+                self.request_value.update(manifest_sha256=record(self.manifest)[1],bank_sha256=digest(self.bank))
+                self.request.write_bytes(encoded(self.request_value))
+                with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=AssertionError('no probe')):
+                    with self.assertRaises(SystemExit) as error:
+                        self.invoke(self.root/'image','a'*64,self.root/('invalid-'+str(index)))
+                self.assertEqual(error.exception.code,2)
+                self.assertEqual(self.calls,[]);self.assertEqual(self.key_reads,0)
+
     def test_unmet_precision_blocks_before_probe_key_and_model(self):
         self.request_value['precision_half_width']=.01;self.request.write_bytes(encoded(self.request_value))
         with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=AssertionError('no probe')),patch.object(responses,'read_credential',side_effect=AssertionError('no key')):

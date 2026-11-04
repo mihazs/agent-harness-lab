@@ -59,15 +59,17 @@ class Request:
         self.root=output/'fixed-bank';copy_frozen(self.source.parent,self.root,value['bank_sha256'])
         self.manifest=self.root/self.source.name
         source,pin=record(self.manifest,1024*1024)
+        if not isinstance(source,dict):raise ValueError('fixed bank manifest must be an object')
         if pin!=value['manifest_sha256']:raise ValueError('fixed bank manifest identity differs')
         if source.get('skills') or source.get('harness_paths') or 'experiment' in source or 'protected_access' in source:
             raise ValueError('fixed-bank request needs exposed artifact tasks and a newly controller-bound plan')
         tasks=source.get('tasks')
-        if not isinstance(tasks,list) or not 2<=len(tasks)<=1000:
+        if not isinstance(tasks,list) or not 2<=len(tasks)<=1000 or any(not isinstance(t,dict) for t in tasks):
             raise ValueError('bounded repeated task bank required')
         if any(t.get('split') not in ('development','regression') for t in tasks):
             raise ValueError('improvement bank must expose development/regression tasks only')
         from .bank_tools import frozen_grader
+        if not isinstance(source.get('grader_bundles'),dict):raise ValueError('fixed bank grader bundles must be an object')
         for task in tasks:
             declaration=source.get('grader_bundles',{}).get(task['id'])
             folder=contained(self.root,declaration['path'])
