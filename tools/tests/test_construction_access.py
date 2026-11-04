@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import time
+import tempfile
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
@@ -26,6 +27,60 @@ if __package__:
 else:
     import test_sandbox_construction as fixtures
     import test_oracle_history as history_fixtures
+
+
+class HistoryIdentityTests(unittest.TestCase):
+    def test_closed_resources_revalidate_while_history_is_locked(self):
+        from agent_harness_lab.evaluation import closed_inputs
+        with tempfile.TemporaryDirectory() as folder:
+            history=HistoryStore(Path(folder)/'history')
+            identity=access.store_identity(history.root)
+            value=dict(history=history,deadline=time.monotonic()+10,scope=None,
+                declaration=dict(engine_sha256=closed_inputs.pin({}),methodology_sha256='synthetic-methodology',
+                    history_identity_sha256=identity,sources=[]))
+            with patch.object(closed_inputs,'engine',return_value={}), \
+                    patch.object(closed_inputs,'tree_pin',return_value='synthetic-methodology'), history.locked():
+                closed_inputs._resources(value)
+                history.root.rename(Path(folder)/'retired')
+                access.store_identity(history.root)
+                with self.assertRaisesRegex(ValueError,'closed-input source, project, engine or history changed'):
+                    closed_inputs._resources(value)
+
+    def test_missing_store_is_not_initialized_by_read(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)/'missing'
+            with self.assertRaises(FileNotFoundError):access.current_store_identity(root)
+            self.assertFalse(root.exists())
+
+    def test_store_replacement_changes_identity(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root=Path(folder)/'history';before=access.store_identity(root)
+            root.rename(Path(folder)/'previous')
+            self.assertNotEqual(access.store_identity(root),before)
+            self.assertNotEqual(access.current_store_identity(root),before)
+
+    def test_invalid_private_metadata_rejects_under_existing_lock(self):
+        for name in ('.store.json','.lock','root'):
+            with self.subTest(name=name),tempfile.TemporaryDirectory() as folder:
+                history=HistoryStore(Path(folder)/'history');access.store_identity(history.root)
+                target=history.root if name=='root' else history.root/name
+                with history.locked():
+                    target.chmod(0o755 if name=='root' else 0o644)
+                    with self.assertRaises(ValueError):access.current_store_identity(history.root)
+
+    def test_marker_and_link_changes_reject(self):
+        for change in ('format','boolean_version','symlink','hardlink'):
+            with self.subTest(change=change),tempfile.TemporaryDirectory() as folder:
+                history=HistoryStore(Path(folder)/'history');access.store_identity(history.root)
+                marker=history.root/'.store.json';lock=history.root/'.lock'
+                with history.locked():
+                    if change in ('format','boolean_version'):
+                        marker.write_text(json.dumps(dict(schema_version=True if change=='boolean_version' else 1,
+                            format='wrong' if change=='format' else history.format)))
+                    elif change=='symlink':
+                        lock.unlink();lock.symlink_to(marker)
+                    else:os.link(lock,Path(folder)/'other-lock')
+                    with self.assertRaises(ValueError):access.current_store_identity(history.root)
 
 
 class ConstructionAccessTests(unittest.TestCase):
@@ -100,9 +155,10 @@ class ConstructionAccessTests(unittest.TestCase):
         with self.controller(),redirect_stdout(io.StringIO()) as stdout:
             code=main(['improve',str(f.project),'--agent','responses','--inference-settings',str(f.args.inference_settings),
                 '--evaluation-store',str(self.store),'--cgroup-root',str(f.args.cgroup_root),'--image-root',str(f.args.image_root),
-                '--image-sha256',f.args.image_sha256,'--disk-bytes',str(f.args.disk_bytes),'--timeout','30'])
+                '--image-sha256',f.args.image_sha256,'--disk-bytes',str(f.args.disk_bytes),'--timeout','30','--focus','Synthetic focus.'])
         result=json.loads(stdout.getvalue())
         self.assertEqual(code,3,result); self.assertEqual(result['status'],'inconclusive',result)
+        self.assertEqual(json.loads(f.histories[0]['input'][1]['content'])['focus'],'Synthetic focus.')
         self.assertEqual(f.roles.count('evaluator_author'),1); self.assertEqual(f.roles.count('proposer'),1)
         observed=result['construction_access']; self.assertEqual(observed['profile'],access.PROFILE)
         self.assertEqual([s['role'] for s in observed['stages']],['proposer','evaluator_author'])

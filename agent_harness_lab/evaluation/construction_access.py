@@ -75,6 +75,20 @@ def store_identity(path):
         return _hash([str(store.root),info.st_dev,info.st_ino])
 
 
+def current_store_identity(path):
+    """Read an initialized store's identity without acquiring its writer lock."""
+    from .oracle_history import HistoryStore
+    from .decision_receipts import private
+    store=HistoryStore(ledger._path(path))
+    private(store.root,directory=True)
+    for name in ('.store.json','.lock'):private(store.root/name)
+    marker,_=record(store.root/'.store.json',4096)
+    if marker!={'schema_version':1,'format':store.format} or type(marker.get('schema_version')) is not int:
+        raise ValueError('unsupported controller case store')
+    info=store.root.stat()
+    return _hash([str(store.root),info.st_dev,info.st_ino])
+
+
 def _resources(args):
     result={key:str(value) if isinstance(value,Path) else value for key in
         ('timeout','trial_limit','cgroup_root','image_root','image_sha256','disk_bytes','permission_audit')
@@ -185,6 +199,13 @@ class WorkflowAccess:
             engine_pin=_hash(implementation),implementation=implementation,stages=[],attempts=[],feedback=None,last_author=None)
         if settings!=client.settings: raise ValueError('workflow client differs from actual frozen settings')
         _scope(self)
+        closed=getattr(args,'_closed_input_domain',None)
+        if closed is not None:
+            from .closed_inputs import attach,owned
+            domain=owned(closed)
+            if domain['history'].root!=store.root:raise ValueError('closed domain and canonical history differ')
+            attach(closed,self)
+            _SCOPES[self]['closed_domain']=closed
 
     def _run(self,role,context,destination,*,candidate=None,focus=None,analysis=False):
         if type(analysis) is not bool:raise ValueError('explicit analysis input selection required')
@@ -211,6 +232,11 @@ class WorkflowAccess:
             parent_construction_id=parent,parent_assets=parents,scientific_parentage='unknown' if parent is None else 'controller_available_feedback',
             settings_sha256=data['settings_pin'],settings_snapshot_sha256=_hash(settings_snapshot),engine_sha256=data['engine_pin'])
         if analysis:inputs['analysis_fixture_admission']='unlimited_readonly_v1'
+        closed=data.get('closed_domain')
+        if closed is not None:
+            from .closed_inputs import stage_input
+            inputs['closed_input']=stage_input(closed,self,role,context,parent=parent,
+                feedback=data['feedback'][1] if parent is not None else None)
         _scope(self)
         ident=ledger.begin_construction(store.access_ledger().path,role,_hash(inputs),parent=parent,parents=parents)
         data['attempts'].append((ident,role,_hash(inputs)))
@@ -245,6 +271,12 @@ class WorkflowAccess:
                 client=data['client'],backend=data['backend'],settings=data['settings'],settings_path=data['settings_path'],originals=originals,seed_pin=seed_pin)
             handle=_Stage(); _STAGES[handle]=owned
             args=(data['client'],data['backend'],owned['baseline'],owned['context'],active/'work',active/'published',deadline)
+            capture=None
+            if closed is not None:
+                from .closed_inputs import owned as closed_owned
+                from .construction_seals import begin
+                capture=begin(closed_owned(closed)['scope'],data['client'],data['backend'],role,
+                    owned['baseline'],owned['context'],deadline)
             if role=='proposer':
                 _,_,commands=construction.propose(*args,focus=focus,exposure=handle,**({'analysis':True} if analysis else {}))
             else:
@@ -254,6 +286,11 @@ class WorkflowAccess:
             if owned.get('produced_pin')!=_tree_pin(active/'published',deadline):
                 raise ValueError('actual role output changed after completion')
             produced=owned['produced_state']; original=produced.snapshot; expected=original
+            seal=None
+            if capture is not None:
+                from .construction_seals import finish,read
+                seal=finish(capture,original,destination=active/'published')
+                sealed=read(seal,closed_owned(closed)['scope'])
             children=[]
             if role=='evaluator_author':
                 path=active/'published/manifest.json'; source,manifest_pin=record(path,ledger.MAX_BYTES)
@@ -281,6 +318,7 @@ class WorkflowAccess:
             produced.snapshot=expected
             output=dict(schema_version=1,profile=PROFILE,construction_id=ident,input_binding_sha256=_hash(inputs),
                 handoff_sha256=_hash(value),tree_sha256=_snapshot_pin(expected),assets=children)
+            if seal is not None:output['closed_input']=dict(proof=sealed,producer_tree_sha256=_snapshot_pin(original))
             write_bytes(folder/'output.json',encoded(output)); sync_directory(folder)
             _check(owned)
             if (_tree_pin(folder/'published',deadline)!=output['tree_sha256']
@@ -289,6 +327,9 @@ class WorkflowAccess:
             ledger.finish_construction(store.access_ledger().path,ident,_hash(inputs),children,_hash(output)); completed=True
             owned['output']=output; owned['destination']=destination; owned['consumer_snapshot']=expected
             data['stages'].append(owned)
+            if seal is not None:
+                from .closed_inputs import add_stage
+                add_stage(closed,self,ident,seal,output)
             if role=='evaluator_author': data['last_author']=owned
             produced.publish(destination,deadline); owned['published']=True
             _check(owned,pending=False)
@@ -307,6 +348,9 @@ class WorkflowAccess:
             if handle is not None: _STAGES.pop(handle,None)
 
     def propose(self,context,candidate,destination,*,focus=None,analysis=False):
+        if (focus is not None and type(self) is WorkflowAccess and self in _SCOPES
+                and _SCOPES[self].get('closed_domain') is not None):
+            raise ValueError('focus is unsupported by the closed input profile')
         return self._run('proposer',context,destination,candidate=candidate,focus=focus,analysis=analysis)
 
     def author(self,context,destination,*,analysis=False):
@@ -324,6 +368,9 @@ class WorkflowAccess:
         state=owned['produced_state']; selected=copy(state); selected.snapshot=expected
         selected.publish(destination,data['deadline'])
         if WorkingState(destination,data['deadline']).snapshot!=expected:raise ValueError('frozen candidate differs from producer')
+        if data.get('closed_domain') is not None:
+            from .closed_inputs import frozen_candidate
+            frozen_candidate(data['closed_domain'],self,destination,expected,owned['ident'])
         return expected
 
     def validate_manifest(self,path,*args,**kwargs):

@@ -73,8 +73,10 @@ ahl bank-review --store /private/review show --case CASE
 
 The signature binds the exact bank, task/control inventory through the sealed audit
 hash, declaration, image, engine, current exposure epoch, reviewer, policy and
-configured history identity. Unrelated exposure changes can require preparing and
-signing a new request; they do not repeat the completed audit. Changed bank or audit
+configured history identity. An exposure change makes the version 1 qualification
+stale, including unrelated development. Its signed epoch is never rewritten.
+The separate delegated protocol below can issue a new conditional qualification
+without repeating unchanged completed controls. Changed bank or audit
 inputs require new intake. Policy change/removal, retirement, engine changes and
 changed evidence invalidate current consumption without rewriting prior events.
 Use `bank-review retire --case CASE` to retire a qualification explicitly.
@@ -100,3 +102,76 @@ require the applicable role/runtime, oracle isolation, current comparison and gu
 application evidence. This command does not turn synthetic smoke coverage into those
 prerequisites. All requests, controls, signatures, journals and results stay private;
 public benchmark export rejects their qualification metadata.
+
+## Closed input delegation before development
+
+The additive protocol `trusted-closed-input-descendants-and-native-controls-v2`
+lets an explicitly trusted reviewer approve a closed input domain before new owned
+development occurs. It preserves the original bank revision and strict version 1
+epoch guard. Signing later output hashes is not this delegation.
+
+Install a separate owner-only public-key policy whose purpose is
+`conditional_final_bank_requalification`. Allocate stable private locators before
+freezing project configuration; request content hashes must not create a cycle
+through the signed configuration snapshot:
+
+```sh
+ahl bank-review --store /private/review trust-delegation-reviewers --policy /host/delegation-reviewers.json
+ahl bank-review --store /private/review allocate-delegation
+ahl bank-review --store /private/review prepare-delegation --case CASE --reviewer PRINCIPAL --domain DOMAIN.json --runtime RUNTIME.json --request ALLOCATED_REQUEST.json
+```
+
+The unsigned request binds the actual qualified bank and completed control audit,
+both review policies, initial exposure epoch, history identity, runtime/settings,
+and the exact domain. The external reviewer signs it using SSH namespace
+`ahl.final-bank-requalification.v1`. These are conditional source/relationship
+judgments under the named policy, not mechanically established independence.
+
+The domain profile is `conditional-bank-closed-input-domain-v2`, schema version 2.
+It includes the complete declared project input snapshot, a full baseline snapshot,
+engine and owned methodology pins, history identity, and one to thirty-two exact sources. Each source declares
+`kind`, canonical absolute `selection`, `snapshot_sha256`, `format`, `version` and
+`session`. An explicit reviewed empty events file is valid. Missing selection,
+autodiscovery, wildcard roots, unknown source versions and unbound imported inputs
+reject before collection or a model request. Full snapshots include modes and
+directories. `project_inputs` explicitly names profile
+`ahl-controlled-agents-project-inputs-v1`, the exact canonical project `root`, and
+ordered paths `["AGENTS.md", "ahl.json"]`. It binds root mode, instruction membership
+and both files' full bytes/modes. The existing configured harness selection must
+be exactly `AGENTS.md`. Unread checkout files, including Git objects, are not
+classified as observed inputs and do not consume this snapshot's bounds. Other
+harness selections need a separately complete supported profile. Baseline, source
+and methodology snapshots retain their existing bounds; unsafe or oversized actual
+inputs are unsupported, not partially accepted.
+This profile rejects every non-`None` focus input before collection and at the direct
+proposal boundary. Legacy workflows retain their existing focus behavior.
+It also rejects controller source context, session-observation memory manifests and
+incident corpora or queries before collection, because none is a signed domain source.
+
+The controller verifies the signed request before collection, records the actual
+evidence-to-role-view projection, and binds that projection to the live workflow.
+Actual Responses requests, tool policy, input bundles, initial state, native worker
+completion, exported state and deterministic publication normalization join each
+owned construction output. Later outputs may have new bytes and task identifiers;
+they must descend entirely from those observed inputs. Refinement feedback also
+requires actual owned executor/grader pairs. Its context preserves the stored full
+original view, including root and directory modes; the sole permitted addition is
+the exact canonical feedback file and mode produced by the existing controller
+writer from that native feedback. Unknown parents, source aliases,
+pending work, related assets or an unexplained exposure change block renewal.
+Provider identity and pretraining history remain unknown.
+
+The Python producer `bank_requalification.begin` returns a live `ClosedDomain`;
+`ReviewStore.requalify_bank` requires that domain and the actual selected frozen
+candidate/plan, and returns a new process-bound one-use capability.
+`HistoryStore.reserve_access(requalification=...)` consumes it through the existing
+protected lifecycle. These live objects cannot be restored from their JSON
+descriptions or historical proofs. Leaving the workflow scope invalidates them.
+
+Renewal appends a new immutable event under the review-then-access lock order.
+Reservation records consumed intent durably before writing the access ledger.
+Failure after that intent never refunds the bank or permits replacement issuance;
+reconciliation remains unsupported. Current policy, source/evidence and inherited
+deadline guards run at publication, including after temporary-file flush and before
+atomic replacement. The result remains a qualified-bank protected diagnostic;
+this producer does not grant certification or application authority.

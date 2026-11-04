@@ -235,7 +235,7 @@ def check_deadline(deadline):
     if time.monotonic()>=deadline:raise TimeoutError('access publication deadline exhausted')
 
 
-def _save(path, state, *, deadline=None):
+def _save(path, state, *, deadline=None,before_publish=None):
     # Reserve terminal-record space so unrelated observations cannot strand a grant.
     terminal=deepcopy(state)
     for entry in terminal['reservations'].values():
@@ -248,7 +248,11 @@ def _save(path, state, *, deadline=None):
     if len(encoded(terminal)) > MAX_BYTES:
         raise ValueError('exposure ledger capacity exhausted; observations cannot be evicted')
     check_deadline(deadline)
-    atomic_json(path,state,before_replace=None if deadline is None else lambda:check_deadline(deadline))
+    def current():
+        check_deadline(deadline)
+        if before_publish is not None:before_publish()
+        check_deadline(deadline)
+    atomic_json(path,state,before_replace=(None if deadline is None else lambda:check_deadline(deadline)) if before_publish is None else current)
     sync_directory(path.parent)
 
 
@@ -287,6 +291,12 @@ def admit(path, assets, run_id, *, ident=None, binding=None,deadline=None):
             for asset in assets: state['observed_assets'].setdefault(asset, run_id)
         else:
             _managed_available(state,assets)
+            entry=state['reservations'].get(ident)
+            if entry is not None and entry['binding'].get('bank_qualification',{}).get('renewal') is not None:
+                stored=deepcopy(entry['binding'])
+                stored['bank_qualification'].pop('renewal')
+                if stored!=binding:raise ValueError('renewed reservation differs from actual final comparison')
+                binding=deepcopy(entry['binding'])
             if 'bank_qualification' in binding:
                 if str(path)!=binding['access_ledger']:raise ValueError('qualified bank access controller changed')
                 from .bank_qualification import access_guard
@@ -296,7 +306,10 @@ def admit(path, assets, run_id, *, ident=None, binding=None,deadline=None):
             if entry is None or entry['binding'] != binding or entry['state'] != 'reserved':
                 raise ValueError('managed reservation mismatched, consumed or retired')
             entry.update(state='retired', run_id=run_id)
-        _save(path,state,deadline=deadline)
+        if ident is not None and binding.get('bank_qualification',{}).get('renewal') is not None:
+            from .bank_qualification import access_guard
+            _save(path,state,deadline=deadline,before_publish=lambda:access_guard(binding,state,reservation_id=ident,deadline=deadline))
+        else:_save(path,state,deadline=deadline)
     if ident is None: return None, None
     receipt = dict(schema_version=1, profile=PROFILE, reservation_id=ident, binding=deepcopy(binding),
                    run_id=run_id, state='retired', qualification='unverified')
@@ -484,7 +497,13 @@ def admission(args, manifest):
         if time.monotonic() >= getattr(args,'parent_deadline',float('inf')):
             raise TimeoutError('managed invocation deadline exhausted')
     actual = capture(args.manifest, args.baseline, args.candidate, check,access_ledger=path,deadline=getattr(args,'parent_deadline',None))
-    if actual != receipt['binding']: raise ValueError('managed inputs changed before execution')
+    expected_binding=receipt['binding']
+    if expected_binding.get('bank_qualification',{}).get('renewal') is not None:
+        expected_binding=deepcopy(expected_binding);expected_binding['bank_qualification'].pop('renewal')
+        from .bank_qualification import access_guard
+        with _locked(path) as (_,state):
+            access_guard(receipt['binding'],state,reservation_id=receipt['reservation_id'],deadline=getattr(args,'parent_deadline',None))
+    if actual != expected_binding: raise ValueError('managed inputs changed before execution')
 
 
 def view(receipt):
