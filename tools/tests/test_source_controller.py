@@ -75,7 +75,7 @@ class ControllerSourceTests(unittest.TestCase):
         record={**fixtures.record(),'profile':owned.PROFILE,'publication_allowed':True}
         self.assertFalse(public_export_allowed([record]))
         self.assertFalse(public_export_allowed([{**fixtures.record(),'receipt':record}]))
-        for key in ('controller_source_profile','source_capture','live_verification','verified_execution'):
+        for key in ('controller_source_profile','source_capture','live_verification','verified_execution','controller_harness_input'):
             with self.subTest(key=key):
                 self.assertFalse(public_export_allowed([{**fixtures.record(),key:{'publication_allowed':True}}]))
 

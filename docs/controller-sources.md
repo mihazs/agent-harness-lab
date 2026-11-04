@@ -100,6 +100,15 @@ Mounting a harness does not establish that its instructions were consumed. Exist
 artifact grading decides outcomes separately; source records confer no new grade,
 adoption, permission or statistical independence authority.
 
+The immediate live recheck also exposes `controller_harness_input`: the selected
+executor's controller-observed `harness` input-tree digest, checked before and after
+execution. Its `status` is `observed` when that input was captured, or `unknown`
+with `sha256: null` when absent. The digest comes only from the same sealed owned
+attempt as the executor/grader link. It describes the controller's input checks,
+not an atomic snapshot, worker instruction consumption or effective configuration;
+`effective_loading` remains `unverified`. No raw paths or input contents are added.
+This private projection does not add a verified identity field or a journal schema.
+
 Every journal entry retains **declared fields and candidate joins**. Verified
 projections exist only in the immediate live recheck report and expire with its
 controller session/deadline. Future journal-only reads remain descriptive; hashes

@@ -12,10 +12,9 @@ import unittest
 from unittest.mock import patch
 
 import agent_harness_lab
-from agent_harness_lab.cli import main, assets
+from agent_harness_lab.cli import main, assets, _progress_reporter
 from agent_harness_lab.evidence import collect
 from agent_harness_lab.evaluation.construction import views
-from agent_harness_lab.progress import Progress
 from tools.diagnose import analyze
 
 
@@ -72,7 +71,7 @@ class AnalysisPipelineTests(unittest.TestCase):
         self.assertEqual(data['execution'], receipt['analysis'])
         self.assertNotIn('independent_roots', data['analysis']['process_mining'])
         self.assertIn('Directly-follows edges: 2', (self.root/'output/report.md').read_text())
-        for stage in ('discovery', 'collection', 'analysis', 'complete'):
+        for stage in ('discovery', 'capture_processing', 'analysis', 'collection_complete'):
             self.assertIn('ahl: '+stage, err)
         for canary in ('PRIVATE_CASE', 'PRIVATE_BODY', 'synthetic.jsonl'):
             self.assertNotIn(canary, err + json.dumps(receipt))
@@ -149,7 +148,7 @@ print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
     def test_progress_precedes_end_of_discovery_and_interruption_never_says_complete(self):
         stream = io.StringIO()
         ticks = iter(range(100))
-        progress = Progress(stream, clock=lambda: next(ticks))
+        progress = _progress_reporter(stream, clock=lambda: next(ticks))
         def discovery(root):
             self.assertIn('discovery', stream.getvalue())
             raise KeyboardInterrupt()
@@ -167,8 +166,8 @@ print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
         calls = []
         actual = collect(self.project, events=capture, progress=lambda stage, **counts: calls.append((stage, counts)))
         self.assertEqual(initial, actual)
-        self.assertEqual(calls[-1][0], 'complete')
-        self.assertTrue(any(stage == 'collection' and counts['events'] < 9 for stage, counts in calls))
+        self.assertEqual(calls[-1][0], 'collection_complete')
+        self.assertTrue(any(stage == 'capture_processing' and counts['events'] < 9 for stage, counts in calls))
 
     def test_bounded_multifile_discovery_reports_incomplete_and_progress_before_last_file(self):
         captures = self.root/'codex/sessions'
@@ -181,9 +180,9 @@ print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
             observed.append((stage, counts))
         data = collect(self.project, max_scan_files=1, progress=progress)
         self.assertTrue(any('scan-file limit' in caveat for caveat in data['caveats']))
-        self.assertTrue(any(stage == 'discovery' and counts.get('files') == 1 for stage, counts in observed))
-        self.assertTrue(any(stage == 'discovery' and counts.get('files') == 2 for stage, counts in observed))
-        self.assertEqual(observed[-1][0], 'complete')
+        self.assertTrue(any(stage == 'discovery' and counts.get('scanned') == 1 for stage, counts in observed))
+        self.assertTrue(any(stage == 'discovery' and counts.get('scanned') == 2 for stage, counts in observed))
+        self.assertEqual(observed[-1][0], 'evidence_incomplete')
 
     def test_all_malformed_records_are_incomplete_rather_than_clean_empty_history(self):
         capture = self.capture([]); capture.write_text('malformed\n')

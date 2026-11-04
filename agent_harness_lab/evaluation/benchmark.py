@@ -27,7 +27,7 @@ def public_export_allowed(records):
                     or any(key in metadata for key in ('controller_run_id','cohort_manifest_sha256','preservation','receipt_sha256',
                         'cohort_binding','controller_qualification','qualification_sha256','controller_grade',
                         'sequential_profile','sequential_analysis','sampling_sha256','trajectory_profile','trajectory_analysis','precision_preflight','policy_sha256','permission_audit','isolation_qualification',
-                        'controller_source_profile','source_capture','live_verification','verified_execution','implementation_prerequisites','restricted_process_protocol','controlled_instruction_protocol',
+                        'controller_source_profile','source_capture','live_verification','verified_execution','controller_harness_input','implementation_prerequisites','restricted_process_protocol','controlled_instruction_protocol',
                         'classifier_selection_allowed','review_event_sha256','protected_access','protected_access_sha256','import_sha256','foreign_claims','proposal_id',
                         'controller_derivation','derivation_id','derivation_binding_sha256','review_authentication','authentication','bank_qualification','construction_access','construction_id'))
                     or metadata.get('algorithm') in ('private-preservation-decision-v1','private-controller-history-report-v1',

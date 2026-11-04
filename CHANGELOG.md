@@ -1,5 +1,71 @@
 # Changelog
 
+## 0.76.13
+
+### Patch Changes
+
+- Report authenticated fixed experiment history coverage without treating unsealed progress as evidence.
+
+## 0.76.12
+
+### Patch Changes
+
+- cd63e89: Expose the selected executor's controller-observed harness input digest in private live source rechecks, preserving unknown effective loading and replay boundaries.
+
+## 0.76.11
+
+### Patch Changes
+
+- 4d08f26: Stop further controlled inference after a grader permission audit becomes violated or unknown, preserving separate artifact outcomes and existing schedule records.
+
+## 0.76.10
+
+### Patch Changes
+
+- 81fcaa1: Reject incomplete sentence-embedding input coverage before encoding through a checked unprompted Transformer and Pooling pipeline. Preserve saved encoder and real model context limits without silently scoring truncated text or inventing chunk aggregation.
+
+## 0.76.9
+
+### Patch Changes
+
+- 5119c78: Retain all extracted TF-IDF training features and reject unsupported or exceeded NLI model contexts instead of silently truncating evidence or hypotheses. Long inputs still require a local model with sufficient supported capacity.
+
+## 0.76.8
+
+### Patch Changes
+
+- 336047b: Read every classifier benchmark example and complete evidence text by default, with an optional explicit user-set example limit. Preserve malformed-input and split validation.
+
+## 0.76.7
+
+### Patch Changes
+
+- 8404487: Evaluate explicit frozen incident-triage policies on held-out declared roots with class-wise errors, abstentions and policy-specific decisions. Preserve unverified independence and label authority; descriptive classifier accuracy does not grant certification.
+
+## 0.76.6
+
+### Patch Changes
+
+- f85eed6: Use explicitly pinned project task banks for a single cooperative improvement comparison, respecting the shared preparation/trial budget and preserving recommendation-only results.
+
+## 0.76.5
+
+### Patch Changes
+
+- e904932: Analyze an explicitly scoped, pinned ai-memory session through paginated read-only MCP, with faithful lifecycle activity and explicit diagnostic coverage and snapshot limitations.
+
+## 0.76.4
+
+### Patch Changes
+
+- 422e6a5: Report privacy-safe collection stages and evidence counts on stderr while preserving JSON receipts on stdout.
+
+## 0.76.3
+
+### Patch Changes
+
+- 6e69595: Recognize ai-memory pre/post tool hooks as call/result activity while preserving unknown tool identities and outcomes when structured metadata is absent.
+
 ## 0.76.2
 
 ### Patch Changes

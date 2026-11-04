@@ -69,26 +69,41 @@ def project_lock(project):
             path.unlink()
 
 
-def evidence(args, output, source_context=None, *, progress=None):
+def evidence(args, output, source_context=None):
     from .analysis_receipt import summarize, report as execution_report
-    from .progress import Progress
     from agent_harness_lab.telemetry.ledger import Ledger
     from agent_harness_lab.telemetry.schema import serialize
-    if progress is None:
-        progress = Progress()
-    with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as events:
-        data = collect(args.project, events=args.events, source_format=args.format,
+    with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as events, contextlib.ExitStack() as captures:
+        selected, source_format, memory_summary = args.events, args.format, None
+        source_identity = {}
+        if getattr(args, 'memory_manifest', None) is not None:
+            from .sources.observations import capture
+            from .sources.schema import digest
+            records, memory_summary = capture(args.memory_manifest, args.authorization_file, progress=getattr(args, '_progress', None))
+            source_identity = dict(source_identity=digest([memory_summary['source_sha256'], memory_summary['session_sha256']]))
+            temporary = captures.enter_context(tempfile.NamedTemporaryFile(mode='w+', encoding='utf-8'))
+            for record in records:
+                temporary.write(serialize(record)+'\n')
+            temporary.flush()
+            selected, source_format = temporary.name, 'normalized'
+        data = collect(args.project, events=selected, source_format=source_format,
             event_sink=lambda row: events.write(serialize(row)+'\n'),
             source_version=getattr(args, 'source_version', None), source_root=getattr(args, 'source_root', None),
             session=getattr(args, 'session', None), max_files=getattr(args, 'max_captures', None),
             max_scan_files=getattr(args, 'max_capture_scan', None), max_events=getattr(args, 'max_events', None),
-            sequence_length=getattr(args, 'sequence_length', None), progress=progress)
+            sequence_length=getattr(args, 'sequence_length', None), progress=getattr(args, '_progress', None), **source_identity)
         events.seek(0)
         Ledger(output / 'events.v2.jsonl').ingest(json.loads(line) for line in events)
     if source_context is not None: data['source_context'] = source_context
+    if memory_summary is not None:
+        data['memory_source'] = memory_summary
     data['execution'] = summarize(data)
     write_json(output / 'analysis.json', data)
     (output / 'report.md').write_text(report(data['analysis'], source_context=source_context) + execution_report(data['execution']))
+    if memory_summary is not None:
+        with (output / 'report.md').open('a') as stream:
+            stream.write('\nSession-observation evidence is insufficient for diagnosis. Snapshot atomicity is unavailable. '
+                +memory_summary['remediation']+'\n')
     return data
 
 
@@ -101,6 +116,7 @@ def analyze_project(args):
                   findings=len(data['analysis']['findings']), evaluation_failures=len(data['evaluation_failures']),
                   analysis=data['execution'], next_action=data['execution']['next_action'])
     if context is not None: result['source_context'] = context
+    if 'memory_source' in data: result['memory_source'] = data['memory_source']
     write_json(output / 'workflow.json', result)
     return result
 
@@ -191,7 +207,7 @@ def bounded_fixture(folder, runner):
     return runner.digest(folder)
 
 
-def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_heldout, *, grader_backend=None, experiment_spec=None, control_custody=None, expected_snapshot=None, expected_deadline=None):
+def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_heldout, *, grader_backend=None, experiment_spec=None, control_custody=None, expected_snapshot=None, expected_deadline=None, bank_sha256=None):
     def check_owned():
         if expected_snapshot is not None:
             from .evaluation.working_state import WorkingState
@@ -206,6 +222,10 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
     else:manifest=json.loads(next(raw for name,_,raw in expected_snapshot.files if name=='manifest.json'))
     if not isinstance(manifest, dict):
         raise ValueError('Evaluation manifest must be an object')
+    if bank_sha256 is not None and manifest.get('bank_digest') != bank_sha256:
+        raise ValueError('configured bank digest differs from frozen evaluation')
+    # A bank may declare shared fixtures within one held-out partition.
+    prior_heldout = set(used_heldout) if bank_sha256 is not None else used_heldout
     from .evaluation.certification_access import reject_claims
     reject_claims(manifest)
     experiment=manifest.get('experiment',{})
@@ -221,8 +241,8 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
            or not all(isinstance(a, str) for a in t['grader']) for t in tasks):
         raise ValueError('Tasks require ids, fixtures and grader argument lists')
     if experiment_spec is None:
-        if not 3 <= len(tasks) <= 5 or {t['split'] for t in tasks} != {'development', 'regression', 'heldout'}:
-            raise ValueError('Provide 3–5 tasks covering development, regression, and heldout')
+        if (bank_sha256 is None and not 3 <= len(tasks) <= 5) or {t['split'] for t in tasks} != {'development', 'regression', 'heldout'}:
+            raise ValueError('Provide development, regression, and heldout coverage; generated evaluations require 3–5 tasks')
     else:
         from .evaluation.plan import ExperimentSpec
         if type(experiment_spec) is not ExperimentSpec:raise ValueError('validated fixed experiment required')
@@ -275,7 +295,7 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
         fingerprint = bounded_fixture(fixture, runner)
         check_owned()
         if task['split'] == 'heldout':
-            if fingerprint in used_heldout:
+            if fingerprint in prior_heldout:
                 raise ValueError('Refinement must use fresh held-out inputs')
             used_heldout.add(fingerprint)
         for check in checks:
@@ -322,7 +342,8 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
         raise TimeoutError('Improvement budget exhausted before evaluation')
     check_owned()
     manifest['no_nested_agents'] = True
-    manifest['max_trials'] = 10 if experiment_spec is None else experiment_spec.max_trials
+    if experiment_spec is not None: manifest['max_trials'] = experiment_spec.max_trials
+    elif bank_sha256 is None: manifest['max_trials'] = 10
     manifest['budget_seconds'] = remaining()
     manifest['timeout_seconds'] = min(float(manifest.get('timeout_seconds', 180)), manifest['budget_seconds'])
     write_json(path, manifest)
@@ -363,8 +384,7 @@ def _improve(args):
     if controlled != (inference_path is not None):
         raise ValueError('controlled improvement requires --agent responses and explicit --inference-settings together')
     started = time.monotonic()
-    if getattr(args,'evaluation_store',None) is not None:
-        started=min(started,getattr(args,'_construction_started',started))
+    started=min(started,getattr(args,'_construction_started',started))
     remaining = lambda: args.timeout - (time.monotonic() - started)
     runner = evaluator()
     output = output_dir(args)
@@ -381,9 +401,9 @@ def _improve(args):
             result=dict(status='blocked',reason=repeated.blocked_reason or 'precision_target_infeasible',output=str(output),changed_files=[],
                 precision_preflight=repeated.precision,automatic_promotion=False,publication_allowed=False)
             write_json(output/'workflow.json',result);return result
-    from .progress import Progress
-    progress = Progress()
-    data = evidence(args, output, progress=progress)
+    data = evidence(args, output)
+    if getattr(args, '_progress', None) is not None:
+        args._progress('candidate_preparation', findings=len(data['analysis']['findings']))
     grading = None
     permission_audit=getattr(args,'permission_audit',None)
     if permission_audit is not None and not controlled:
@@ -412,7 +432,15 @@ def _improve(args):
     prepare = output / 'preparation'
     prepare.mkdir()
     baseline, candidate = prepare / 'baseline', prepare / 'candidate'
-    from .one_call import allowed_paths, check_configuration, check_scope
+    from .one_call import allowed_paths, check_configuration, check_scope, pinned_bank
+    bank = pinned_bank(args)
+    bank_manifest = None
+    if bank is not None:
+        from .evaluation.bank_tools import export_manifest
+        from .evaluation.task_bank import validate as validate_bank
+        bank_manifest = export_manifest(bank, prepare/'evaluation-0', max_trials=2*validate_bank(bank)['tasks'])
+        if bank_manifest['bank_digest'] != args.project_settings['bank']['sha256']:
+            raise ValueError('configured bank changed before preparation')
     original = snapshot(args.project, baseline, allowed_paths=allowed_paths(args))
     candidate_states(baseline, original)
     shutil.copytree(baseline, candidate)
@@ -458,21 +486,23 @@ def _improve(args):
     protected = {}
     refinement_feedback = []
     trials_left = getattr(args, "trial_limit", 24)
-    for attempt in range(2):
+    for attempt in range(1 if bank is not None else 2):
         check_configuration(args)
         if remaining() <= 0:
             result['status'] = 'budget_exhausted'
             break
-        if trials_left < 8:
+        preparation_trials = 1 if bank is not None else 2
+        if trials_left < (preparation_trials + 2*len(bank_manifest['tasks']) if bank is not None else 8):
             result.update(status='budget_exhausted', reason='shared_trial_budget_exhausted')
             break
-        trials_left -= 2
+        trials_left -= preparation_trials
         proposal_folder = prepare / f'proposal-{attempt}'
         proposal_folder.mkdir()
         proposal_path = proposal_folder / 'proposal.json'
         evaluation = prepare / f'evaluation-{attempt}'
         manifest_path = evaluation / 'manifest.json'
-        progress('candidate_preparation', attempt=attempt + 1)
+        if getattr(args, '_progress', None) is not None:
+            args._progress('candidate_preparation', attempt=attempt + 1)
         if controlled:
             context = role_views['proposer']
             if attempt:
@@ -506,9 +536,9 @@ Identify distinct mechanisms, successful controls and counterexamples before sel
 If none is supported, write {proposal_path} as {{"status":"no_change","reason":"evidence-based explanation"}}.
 Otherwise modify only project instructions AGENTS.md/CLAUDE.md or project-owned skill files in candidate.
 Do not build evaluation tests, launch model trials, or inspect previous held-out inputs.
-The parent freezes the patch; a separate fresh session constructs evaluation without seeing it.
+The parent freezes the patch; {'the configured task bank supplies the evaluation' if bank is not None else 'a separate fresh session constructs evaluation without seeing it'}.
 Shared ceiling is {getattr(args, 'trial_limit', 24)} preparation/task roles and {args.timeout} seconds;
-{trials_left} paired task or later preparation roles remain after this attempt's two reserved roles.
+{trials_left} paired task or later preparation roles remain after this attempt's {preparation_trials} reserved preparation roles.
 Write {proposal_path} as {{"status":"candidate","mechanisms":[...],"falsifiers":[...]}} when ready.
 The parent will reject incomplete/changed inputs, regressions, unsupported ties, and concurrent edits.
 '''
@@ -576,8 +606,18 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                 raise ValueError('project harness changed during fixed comparison')
             result.update(compared)
             break
-        progress('evaluation', attempt=attempt + 1)
-        if controlled:
+        if getattr(args, '_progress', None) is not None:
+            args._progress('evaluation', attempt=attempt + 1)
+        if bank is not None:
+            bank_manifest.update(skills=[], harness_paths=sorted(paths))
+            write_json(manifest_path, bank_manifest)
+            from .config import evaluation_settings
+            configured = evaluation_settings(args.project/'ahl.json', manifest_path, bank_manifest,
+                                             dict(baseline=baseline, candidate=frozen), agent, binary)
+            if configured['blocked_reason']:
+                result.update(status='blocked', reason=configured['blocked_reason'])
+                break
+        elif controlled:
             if access is None:
                 manifest_path,commands = construction.author(client,grading,baseline,role_views['evaluator_author'],
                     prepare/f'author-work-{attempt}',evaluation,deadline,analysis=True)
@@ -628,7 +668,9 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 break
         if runner.digest(frozen) != frozen_hash or runner.digest(baseline) != baseline_hash:
             raise ValueError('Evaluation construction changed frozen harness inputs')
-        (validate_manifest if access is None else access.validate_manifest)(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, grader_backend=grading)
+        validation_options = dict(grader_backend=grading)
+        if bank is not None: validation_options['bank_sha256'] = args.project_settings['bank']['sha256']
+        (validate_manifest if access is None else access.validate_manifest)(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, **validation_options)
 
         prerequisite_scope=getattr(args,'_prerequisite_scope',None)
         if prerequisite_scope is not None:prerequisite_scope.bind(manifest_path,baseline,frozen)
@@ -646,6 +688,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         options = argparse.Namespace(manifest=str(manifest_path), baseline=str(baseline),
             candidate=str(frozen), output=str(output / f'evaluation-{attempt}'),
             agent=agent, codex=args.codex, claude=args.claude, parent_deadline=started + args.timeout)
+        if bank is not None: options.config = args.project/'ahl.json'
         if grading is not None:
             options.sandbox_graders = True
             for name, value in grader_options.items(): setattr(options, name, value)
@@ -669,7 +712,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 result.update(status='requires_intervention',reason='permission_qualification_not_met')
                 break
         trials = evaluated['trials']
-        if controlled and evaluated.get('status') in ('blocked','budget_exhausted'):
+        if (controlled or bank is not None) and evaluated.get('status') in ('blocked','budget_exhausted'):
             result.update(status=evaluated['status'],reason=evaluated.get('reason'))
             break
         from agent_harness_lab.promotion.policy import legacy_coverage
@@ -729,11 +772,12 @@ All bundles and controls stay outside task fixtures; no grader command is execut
 def _run_improvement(args, *, parent_started=None):
     """Persist truthful completion even when a run is interrupted or raises."""
     issuer=os.getpid(); managed=getattr(args,'evaluation_store',None) is not None
-    started=time.monotonic() if managed else None
+    from .one_call import pinned_bank
+    started=time.monotonic() if managed or pinned_bank(args) is not None else None
     if managed and parent_started is not None: started=min(started,parent_started)
     for name in ('_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256'):
         if hasattr(args,name):delattr(args,name)
-    if managed: args._construction_started=started
+    if started is not None: args._construction_started=started
     try:
         from .one_call import contracts, preflight, check_configuration
         check_configuration(args)
@@ -752,6 +796,8 @@ def _run_improvement(args, *, parent_started=None):
                               remediation='Select a supported runtime/profile and budget; see ahl improve --help')
                 write_json(output/'workflow.json', result)
                 return result
+        if started is not None and time.monotonic()>=started+args.timeout:
+            raise TimeoutError('construction preflight exhausted improvement budget')
         return _improve(args)
     except BaseException as exc:
         if managed and os.getpid()!=issuer: raise

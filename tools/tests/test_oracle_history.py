@@ -75,6 +75,9 @@ class OracleHistoryTests(OfflineFixture):
         result,calls = self.run_history()
         self.assertEqual(calls,8)
         self.assertEqual(result['oracle_validity'],'current')
+        self.assertEqual(result['execution_coverage'],'sealed_fixed_schedule')
+        self.assertEqual(result['planned_trials'],4)
+        self.assertEqual(result['sealed_result_trials'],4)
         self.assertEqual(self.store.show(result['run_id'])['oracle_validity'],'current')
         self.assertEqual(self.store.analyze(result['run_id'])['oracle_validity'],'current')
         self.assertEqual(self.store.oracle(self.bundle_hash())['bundle_sha256'],self.bundle_hash())
@@ -95,7 +98,11 @@ class OracleHistoryTests(OfflineFixture):
         self.assertTrue(reports)
         path,_ = self.quarantine_record(); self.store.quarantine(path)
         self.assertEqual({p:p.read_bytes() for p in reports},reports)
-        self.assertEqual(self.store.show(result['run_id'])['oracle_validity'],'invalidated')
+        summary=self.store.show(result['run_id'])
+        self.assertEqual(summary['oracle_validity'],'invalidated')
+        self.assertEqual(summary['execution_coverage'],'sealed_fixed_schedule')
+        self.assertEqual(summary['sealed_result_trials'],summary['planned_trials'])
+        self.assertFalse(summary['automatic_promotion'])
         self.assert_not_current(lambda:self.store.analyze(result['run_id']))
 
     def test_shared_bundle_invalidates_different_task_subset_plans(self):
@@ -181,7 +188,18 @@ class OracleHistoryTests(OfflineFixture):
         with self.assertRaises(KeyboardInterrupt): self.run_history(execute=interrupted)
         run_ids = [p.parent.name for p in self.store_root.rglob('inputs.json')]
         self.assertEqual(len(run_ids),1)
-        self.assertEqual(self.store.show(run_ids[0])['oracle_validity'],'incomplete')
+        unsealed=self.store.case(run_ids[0])/'execution'/'results.json'
+        for raw in (None,'{"trials": [{"outcome": true}]}','{"trials":'):
+            with self.subTest(unsealed_result=raw):
+                if raw is not None:
+                    unsealed.write_text(raw)
+                summary=self.store.show(run_ids[0])
+                self.assertEqual(summary['oracle_validity'],'incomplete')
+                self.assertEqual(summary['execution_coverage'],'unknown')
+                self.assertEqual(summary['planned_trials'],4)
+                self.assertIsNone(summary['sealed_result_trials'])
+                self.assertFalse(summary['controller_observed'])
+                self.assertFalse(summary['automatic_promotion'])
         self.assert_not_current(lambda:self.store.analyze(run_ids[0]))
         fresh,calls = self.run_history()
         self.assertEqual(calls,8)

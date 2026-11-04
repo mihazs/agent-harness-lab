@@ -7,6 +7,25 @@ import os
 from pathlib import Path
 import runpy
 import sys
+import time
+
+
+def _progress_reporter(stream=None, clock=None):
+    stream = sys.stderr if stream is None else stream
+    clock = time.perf_counter if clock is None else clock
+    started = clock()
+    last_stage, last_time = None, started
+    def emit(stage, **counts):
+        nonlocal last_stage, last_time
+        if any(type(value) is not int or value < 0 for value in counts.values()):
+            raise ValueError('progress accepts aggregate counts only')
+        now = clock()
+        if stage == last_stage and now - last_time < 1:
+            return
+        details = ' '.join(f'{key}={value}' for key, value in counts.items())
+        print(f'ahl: {stage} {details} elapsed={now-started:.1f}s', file=stream, flush=True)
+        last_stage, last_time = stage, now
+    return emit
 
 
 def assets():
@@ -127,9 +146,11 @@ def main(argv=None):
         command = sub.add_parser(name, aliases=['analysis'] if name == 'analyze' else [],
             help=helps[name], description=helps[name],formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=('Output: private artifacts and a JSON receipt on stdout. No input bodies are public.\n'
+                'Progress: aggregate stages, counts and elapsed time on stderr.\n'
                 'Configuration constrains runtime, scope and budgets; it does not grant authority.\n'
+                +('An explicit nonstarter ahl.json bank is frozen for one cooperative comparison; its entire paired task set and preparation must fit the configured budget.\n' if name!='analyze' else '')+
                 'Exit: 0 completed; 1 execution/interruption/budget; 2 invalid input; 3 blocked/inconclusive.\n'
-                +('No model/provider calls; default capture discovery is filtered to the selected project.\n' if name=='analyze' else
+                +('No inference calls; default discovery is project-filtered; --memory-manifest opts into scoped MCP reads.\n' if name=='analyze' else
                   'May invoke the selected agent/model and spend resources; use a trusted, authenticated runtime.\n')
                 +('Watch writes a private checkpoint and continues until stopped unless --once is set.\n' if name=='watch' else '')+
                 'Example: ahl '+name+' . '+('--events ./events.jsonl --format normalized' if name=='analyze' else '--agent codex --timeout 600'+(' --once' if name=='watch' else ''))))
@@ -137,6 +158,9 @@ def main(argv=None):
         selection = command.add_mutually_exclusive_group()
         selection.add_argument('--events', type=Path, help='Existing authorized capture file instead of home discovery; its JSONL schema is selected by --format/--source-version')
         selection.add_argument('--source-root', type=Path, help='Explicit native rollout directory; requires a pinned Codex profile')
+        if name == 'analyze':
+            selection.add_argument('--memory-manifest', type=Path, help='Explicit scoped ai-memory session-observation manifest with pinned server/tool schema; read-only network retrieval, no atomic snapshot guarantee')
+            command.add_argument('--authorization-file', type=Path, help='Existing private authorization header file for --memory-manifest; never printed or discovered automatically')
         command.add_argument('--session', help='Exact native thread ID within --source-root')
         command.add_argument('--max-captures', type=int, help='Optional positive matching-capture limit after project filtering; default: unlimited')
         command.add_argument('--max-capture-scan', type=int, help='Optional positive discovery-file limit before project filtering; default: unlimited')
@@ -173,12 +197,18 @@ def main(argv=None):
             command.add_argument('--watch-budget', type=int, help='Total execution seconds per evidence/configuration (default: timeout)')
             command.add_argument('--once', action='store_true', help='Check once then exit with its disposition; default is continued watching with unchanged-work suppression')
     args = parser.parse_args(argv)
+    args._progress = _progress_reporter()
     from agent_harness_lab.workflow import analyze_project, improve, watch
     try:
         if not args.project.is_dir():
             raise ValueError('project must be an existing directory')
         args.project = args.project.resolve()
         if args.command == 'analyze':
+            if args.memory_manifest is not None:
+                if args.authorization_file is None or args.format != 'normalized' or args.source_version is not None or args.session is not None:
+                    raise ValueError('--memory-manifest requires --authorization-file and excludes capture format/version/session overrides')
+            elif args.authorization_file is not None:
+                raise ValueError('--authorization-file requires --memory-manifest')
             result = analyze_project(args)
         elif args.command == 'watch':
             from .one_call import resolve
@@ -190,11 +220,15 @@ def main(argv=None):
             if args.timeout <= 0:
                 raise ValueError('timeout must be positive')
             result = improve(args)
+        args._progress(result['status'])
         print(json.dumps(result, indent=2))
         from agent_harness_lab.monitoring.state import exit_code
         return exit_code(result['status'])
     except NotImplementedError:
         parser.exit(3, 'ahl: required filesystem capabilities unavailable; no unsafe fallback\n')
+    except KeyboardInterrupt:
+        args._progress('interrupted')
+        parser.exit(1, 'ahl: interrupted\n')
     except (ValueError, OSError, TypeError, KeyError) as exc:
         parser.exit(2, f'ahl: {exc}\n')
 
