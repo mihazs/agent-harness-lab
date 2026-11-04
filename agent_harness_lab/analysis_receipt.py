@@ -53,6 +53,21 @@ def summarize(data):
                coverage=dict(input_events=events, eligible_events=inputs.get('structured_events', 0),
                    excluded_events=events-inputs.get('structured_events', 0))),
     ]
+    retrieval = data.get('incident_retrieval')
+    if retrieval is not None:
+        methods.append(dict(id='incident_retrieval', algorithm='local lexical reviewed-incident retrieval',
+            profile='ahl-analysis-execution-v1', publication_allowed=False,
+            status='completed', selected=True, execution='completed',
+            selection_reason='Explicit corpus and query passed reviewed-approval declaration validation; declarations remain unverified.',
+            dependency_group='explicit_incident_corpus',
+            input_records=retrieval['input_records'], outputs=dict(matches=len(retrieval['results'])),
+            corpus_revision=retrieval['revision'], query_sha256=retrieval['query_sha256'],
+            coverage=dict(input_records=retrieval['input_records']), authority='untrusted_evidence_only',
+            approval=retrieval['approval']))
+    dependencies = [dict(id='captured_events', methods=[method['id'] for method in methods if method['id'] != 'incident_retrieval'], independence='unverified')]
+    if retrieval is not None:
+        dependencies.append(dict(id='explicit_incident_corpus', methods=['incident_retrieval'],
+                                 independence='unverified', overlap_with_captured_events='unknown'))
     contributions = [method['id'] for method in methods if method['selected'] and any(method['outputs'].values())]
     unqualified = [method['id'] for method in methods if not method['selected'] and any(method['outputs'].values())]
     outcomes = data.get('evaluation_outcomes', [])
@@ -76,21 +91,22 @@ def summarize(data):
                     policy=execution.get('policy', 'unavailable'),
                     stage='after_streaming_coverage_discovery', inputs=inputs,
                     target='method_dispatch' if execution.get('policy') == 'structural_prerequisites_v1' else 'supported_interpretation',
-                    output_values_used_for_selection=False, optional_execution_authorized=False),
+                    output_values_used_for_selection=False, optional_execution_authorized=retrieval is not None,
+                    authorized_optional_methods=['incident_retrieval'] if retrieval is not None else []),
                 synthesis=dict(profile='ahl-analysis-execution-v1',
                     status='descriptive_patterns' if contributions else 'no_supported_patterns',
                     contributing_methods=contributions, unqualified_method_outputs=unqualified,
                     combination='complementary_views_without_voting',
-                    dependency_groups=[dict(id='captured_events', methods=[method['id'] for method in methods],
-                                            independence='unverified')],
+                    dependency_groups=dependencies,
                     conflicts='not_inferred_without_a_shared_claim_contract',
                     interpretation='Inspect each method and its case-level evidence; agreement on the same capture is not independent corroboration, and absent findings do not establish correctness.',
                     causal_diagnosis=False, promotion_authority=False),
                 not_run=[dict(id=name, reason=reason) for name, reason in (
-                    ('incident_retrieval', 'Requires an explicitly approved reviewed incident corpus; use ahl incident-search.'),
+                    ('incident_retrieval', 'Requires explicit --incident-corpus and --incident-query with reviewed approval declarations; standalone ahl incident-search is also available.'),
                     ('classifier_benchmark', 'Requires explicit labeled data and selected local backends; use ahl benchmark.'),
                     ('paired_evaluation', 'Read-only analysis does not run task trials; ahl improve owns applicable evaluations.'),
-                    ('candidate_search', 'Read-only analysis does not propose or execute harness changes.'))],
+                    ('candidate_search', 'Read-only analysis does not propose or execute harness changes.'))
+                    if name != 'incident_retrieval' or retrieval is None],
                 caveats=caveats, next_action=action, publication_allowed=False)
 
 
@@ -101,7 +117,7 @@ def report(receipt):
         outputs = ', '.join(f'{key}: {value}' for key, value in method['outputs'].items())
         lines.append(f"| {method['algorithm']} | {method['status']} | {outputs} | {method['selection_reason']} |")
     lines += ['', '## Complementary analysis', '', receipt['synthesis']['interpretation'],
-              'All methods share captured-event evidence; no vote, causal confidence or promotion authority is derived.',
+              'Capture methods share events; explicit incident-corpus overlap and independence remain unverified. No vote, causal confidence or promotion authority is derived.',
               'Excluded cases remain in the descriptive graph; skipped methods are not negative diagnoses.', '']
     lines += ['', 'Not run by read-only analysis:', '']
     lines += [f"- {row['id']}: {row['reason']}" for row in receipt['not_run']]

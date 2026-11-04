@@ -72,8 +72,10 @@ def project_lock(project):
 def evidence(args, output, source_context=None, *, progress=None):
     from .analysis_receipt import summarize, report as execution_report
     from .cli import _progress_reporter
+    from .diagnostics.retrieval import contextual_search
     from agent_harness_lab.telemetry.ledger import Ledger
     from agent_harness_lab.telemetry.schema import serialize
+    incident_retrieval = contextual_search(getattr(args, 'incident_corpus', None), getattr(args, 'incident_query', None))
     if progress is None:
         progress = getattr(args, '_progress', None) or _progress_reporter()
     with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as events, contextlib.ExitStack() as captures:
@@ -98,6 +100,8 @@ def evidence(args, output, source_context=None, *, progress=None):
         events.seek(0)
         Ledger(output / 'events.v2.jsonl').ingest(json.loads(line) for line in events)
     if source_context is not None: data['source_context'] = source_context
+    if incident_retrieval is not None:
+        data['incident_retrieval'] = incident_retrieval
     if memory_summary is not None:
         data['memory_source'] = memory_summary
     data['execution'] = summarize(data)

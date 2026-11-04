@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.17
+
+### Patch Changes
+
+- fca4a15: Run existing local lexical retrieval in analysis when a reviewed-declaration corpus and query are explicitly supplied; retain private untrusted results and actual method receipts.
+
 ## 0.76.16
 
 ### Patch Changes

@@ -22,7 +22,7 @@ def validate_pair(baseline,candidate,strict=True):
 def public_export_allowed(records):
     if not records or isinstance(records,dict): return False
     for record in records:
-        for metadata in (record,record.get('receipt'),record.get('analysis'),record.get('context'),record.get('binding'),record.get('execution'),record.get('process_mining')):
+        for metadata in (record,record.get('receipt'),record.get('analysis'),record.get('context'),record.get('binding'),record.get('execution'),record.get('process_mining'),record.get('incident_retrieval')):
             if isinstance(metadata,dict) and (metadata.get('publication_allowed',True) is not True
                     or any(key in metadata for key in ('controller_run_id','cohort_manifest_sha256','preservation','receipt_sha256',
                         'cohort_binding','controller_qualification','qualification_sha256','controller_grade',
