@@ -107,9 +107,9 @@ scripted-reply delivery and other unobserved artifact flows remain unknown. This
 does not establish complete transient-read/write or external-delivery coverage.
 Genuine curation/oracle/untouched-lineage authority and full issue #8 remain open.
 
-The separately prepared fixed repeated-bank workflow needs its own companion
-integration of this selector and scope. This base does not import that unmerged
-workflow or claim its integration has executed.
+The [fixed repeated-bank workflow](repeated-improvement.md) shares this explicitly
+selected store and construction scope. Its request pins, shared trial limits and
+unverified scientific qualification remain in force.
 
 Run `task test:evaluation:construction-access`. Its canonical installed selector
 forwards `PYTHON`, `LAYOUT_DIR` and `EXPECTED_PACKAGE_ROOT` and asserts the actual
