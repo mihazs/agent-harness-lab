@@ -36,6 +36,8 @@ def evaluator():
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == 'analysis':
+        argv[0] = 'analyze'
     if argv and argv[0] == 'update':
         from agent_harness_lab.updater import main as update_main
         return update_main(argv[1:])
@@ -86,9 +88,9 @@ def main(argv=None):
         from tools.link_skills import main as install_skills
         install_skills(argv[1:], source=assets() / 'skills')
         return 0
-    parser = argparse.ArgumentParser(prog='ahl', description='Collect project-scoped evidence, diagnose harness patterns, and run explicit controlled evaluations.',
+    parser = argparse.ArgumentParser(prog='ahl', description='Start with ahl analyze . for read-only analysis, or ahl improve . to analyze and evaluate candidates in one call.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog='Examples:\n  ahl doctor . --json\n  ahl init . --non-interactive\n  ahl analyze . --events ./events.jsonl --format normalized\n  ahl improve . --agent codex --timeout 600\n\nUse ahl COMMAND --help for required inputs, side effects and output contracts.\nAnalysis and improvement outputs are private; hashes do not authorize publication.\nWorkflow exits: 0 completed; 1 execution/interruption/budget; 2 invalid input;\n3 blocked or inconclusive. Setup and low-level tools document their own outcomes.')
+        epilog='Everyday use:\n  ahl analyze .\n  ahl improve .\n\nOptional setup inspection:\n  ahl doctor . --json\n\nUse ahl COMMAND --help for required inputs, side effects and output contracts.\nAnalysis and improvement outputs are private; hashes do not authorize publication.\nWorkflow exits: 0 completed; 1 execution/interruption/budget; 2 invalid input;\n3 blocked or inconclusive. Setup and low-level tools document their own outcomes.')
     parser.add_argument('--version', action='version', version=version(),help='Print the installed AHL version and exit without running a command')
     sub = parser.add_subparsers(dest='command', required=True,help='Select an operation; COMMAND --help describes its inputs and side effects')
     sub.add_parser('rollback', help='Restore a journaled deployment; use ahl rollback --help',description='Restore an owned deployment from its private Journal if exact current bytes and modes still match.')
@@ -122,7 +124,8 @@ def main(argv=None):
         helps = {'analyze': 'Discover project evidence and failure candidates',
             'improve': 'Discover, stage and evaluate harness candidates; --repair-contracts explicitly applies bounded structural repairs',
             'watch': 'Recheck evidence and recommend improvements only when project evidence changes (recommendation-only)'}
-        command = sub.add_parser(name, help=helps[name], description=helps[name],formatter_class=argparse.RawDescriptionHelpFormatter,
+        command = sub.add_parser(name, aliases=['analysis'] if name == 'analyze' else [],
+            help=helps[name], description=helps[name],formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=('Output: private artifacts and a JSON receipt on stdout. No input bodies are public.\n'
                 'Configuration constrains runtime, scope and budgets; it does not grant authority.\n'
                 'Exit: 0 completed; 1 execution/interruption/budget; 2 invalid input; 3 blocked/inconclusive.\n'

@@ -69,21 +69,26 @@ def project_lock(project):
             path.unlink()
 
 
-def evidence(args, output, source_context=None):
+def evidence(args, output, source_context=None, *, progress=None):
+    from .analysis_receipt import summarize, report as execution_report
+    from .progress import Progress
     from agent_harness_lab.telemetry.ledger import Ledger
     from agent_harness_lab.telemetry.schema import serialize
+    if progress is None:
+        progress = Progress()
     with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as events:
         data = collect(args.project, events=args.events, source_format=args.format,
             event_sink=lambda row: events.write(serialize(row)+'\n'),
             source_version=getattr(args, 'source_version', None), source_root=getattr(args, 'source_root', None),
             session=getattr(args, 'session', None), max_files=getattr(args, 'max_captures', None),
             max_scan_files=getattr(args, 'max_capture_scan', None), max_events=getattr(args, 'max_events', None),
-            sequence_length=getattr(args, 'sequence_length', None))
+            sequence_length=getattr(args, 'sequence_length', None), progress=progress)
         events.seek(0)
         Ledger(output / 'events.v2.jsonl').ingest(json.loads(line) for line in events)
     if source_context is not None: data['source_context'] = source_context
+    data['execution'] = summarize(data)
     write_json(output / 'analysis.json', data)
-    (output / 'report.md').write_text(report(data['analysis'], source_context=source_context))
+    (output / 'report.md').write_text(report(data['analysis'], source_context=source_context) + execution_report(data['execution']))
     return data
 
 
@@ -93,7 +98,8 @@ def analyze_project(args):
     output = output_dir(args)
     data = evidence(args, output, source_context=context)
     result = dict(status='analyzed', output=str(output),
-                  findings=len(data['analysis']['findings']), evaluation_failures=len(data['evaluation_failures']))
+                  findings=len(data['analysis']['findings']), evaluation_failures=len(data['evaluation_failures']),
+                  analysis=data['execution'], next_action=data['execution']['next_action'])
     if context is not None: result['source_context'] = context
     write_json(output / 'workflow.json', result)
     return result
@@ -375,7 +381,9 @@ def _improve(args):
             result=dict(status='blocked',reason=repeated.blocked_reason or 'precision_target_infeasible',output=str(output),changed_files=[],
                 precision_preflight=repeated.precision,automatic_promotion=False,publication_allowed=False)
             write_json(output/'workflow.json',result);return result
-    data = evidence(args, output)
+    from .progress import Progress
+    progress = Progress()
+    data = evidence(args, output, progress=progress)
     grading = None
     permission_audit=getattr(args,'permission_audit',None)
     if permission_audit is not None and not controlled:
@@ -445,7 +453,8 @@ def _improve(args):
         write_json(plugin / '.claude-plugin/plugin.json', {'name': 'harness-toolkit'})
         shutil.copytree(assets() / 'skills', plugin / 'skills')
     used_heldout = set()
-    result = dict(status='evaluation_failed', output=str(output), changed_files=[], agent=agent)
+    result = dict(status='evaluation_failed', output=str(output), changed_files=[], agent=agent,
+                  analysis=data['execution'])
     protected = {}
     refinement_feedback = []
     trials_left = getattr(args, "trial_limit", 24)
@@ -463,6 +472,7 @@ def _improve(args):
         proposal_path = proposal_folder / 'proposal.json'
         evaluation = prepare / f'evaluation-{attempt}'
         manifest_path = evaluation / 'manifest.json'
+        progress('candidate_preparation', attempt=attempt + 1)
         if controlled:
             context = role_views['proposer']
             if attempt:
@@ -566,6 +576,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                 raise ValueError('project harness changed during fixed comparison')
             result.update(compared)
             break
+        progress('evaluation', attempt=attempt + 1)
         if controlled:
             if access is None:
                 manifest_path,commands = construction.author(client,grading,baseline,role_views['evaluator_author'],

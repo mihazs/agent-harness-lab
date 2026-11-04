@@ -5,6 +5,20 @@
 These workflows may use your authenticated runtime and incur inference costs.
 Try the offline diagnosis first. Experimental limitations below apply throughout.
 
+## Analyze, then improve
+
+Use `ahl analyze .` (or `ahl analysis .`) for read-only analysis, and `ahl improve .`
+for candidate preparation and evaluation. Improve runs the same analysis itself;
+there is no required `mine` or `diagnose` step. See [analysis methods](analysis.md)
+for which algorithms execute and which optional tools remain separate.
+
+Both commands report aggregate stages on stderr and keep stdout as one JSON
+receipt. Read the receipt's `analysis` object for executed methods, counts and
+evidence gaps. `empty` means no events or prior evaluation records were found;
+`incomplete` means collection caveats or invalid timestamps were observed;
+`observed` describes the available metadata, without certifying completeness,
+task success or independent roots. A zero finding count is not a clean bill of health.
+
 ## Automatic improvement
 
 In your project, run:
@@ -21,7 +35,7 @@ ahl improve /path/to/project --agent claude
 
 The command automatically:
 
-1. **Collects evidence.** Finds bounded local captures whose recorded working
+1. **Collects evidence.** Finds local captures whose recorded working
    directory matches the exact project, and reads existing evaluation failures
    under that project's `artifacts/` directory. It does not query ai-memory.
 2. **Identifies candidates.** Uses process analysis plus the selected agent to
@@ -48,11 +62,12 @@ An optional hint can focus the investigation without replacing discovery:
 ahl improve --focus 'Look especially at repeated checks and recovery loops'
 ```
 
-`--agent auto` chooses an available Codex CLI first, then Claude Code; specify
+`--agent auto` uses the configured runtime or the one unambiguous installed runtime.
+If both are installed, specify
 `--agent codex` or `--agent claude` to pin the runtime. Authentication, model settings,
 permissions and hooks come from that runtime. Permission bypass is never enabled.
-The default whole-run budget is 45 minutes, with at most four planning sessions and
-20 task trials. Use `--timeout SECONDS` to set a smaller budget.
+The default whole-run budget is 45 minutes and 24 shared preparation/task roles;
+project configuration can narrow these limits. Use `--timeout SECONDS` to set a smaller budget.
 Input/configuration preparation and freezing consume that budget too. Evaluation
 inherits the controller's original deadline, so a later stage cannot restart the
 clock; exhausted preparation prevents new runtime probes or model trials.
@@ -77,9 +92,12 @@ execution never becomes a fallback. Read the [role, receipt and resource contrac
 before using an API account. Model compatibility/quality and independent
 certification remain unverified; behavioral repairs still require review.
 
-Automatic adoption is limited to `AGENTS.md`, `CLAUDE.md`, project-local
+Candidate snapshots cover `AGENTS.md`, `CLAUDE.md`, project-local
 `.agents/skills/` and `.claude/skills/`, and an existing project-owned `skills/` tree.
 Symlinked/global skills and runtime permission settings are outside adoption scope.
+Behavioral candidates remain recommendations. The explicit `--repair-contracts`
+mode can apply a narrowly supported skill-header BOM repair with journaled rollback;
+it does not run behavioral optimization or certify native activation.
 The command does not commit, publish, deploy, or install a background service.
 
 Private analysis, candidate snapshots, evaluator traces, and original files remain
