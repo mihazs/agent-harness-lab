@@ -152,6 +152,32 @@ else:
             run=dict(timeout=False, exit_code=0, stdout=json.dumps(event))
             self.assertEqual(trace_result(run, 'claude')[0], 'incomplete')
 
+    def test_trace_records_split_on_line_feed_only(self):
+        from run_evaluation import trace_result
+        usage={'input_tokens':3}
+        for agent, last in (('claude', {'type':'result','subtype':'success','is_error':False,'usage':usage}),
+                            ('codex', {'type':'turn.completed','usage':usage})):
+            last=json.dumps(last)
+            for separator in (' ', ' ', '\x85', '\x0b', '\x0c', '\x1c', '\x1d', '\x1e'):
+                with self.subTest(agent=agent, separator=hex(ord(separator))):
+                    raw='{"type":"message","text":"a'+separator+'b"}'
+                    escaped=json.dumps({'type':'message','text':'a'+separator+'b'})
+                    # JSON permits raw U+2028/U+2029/U+0085 in strings but not raw C0 controls.
+                    expected=('invalid_trace', None) if separator < ' ' else ('completed', usage)
+                    for newline in ('\n', '\r\n'):
+                        self.assertEqual(trace_result(dict(timeout=False, exit_code=0, stdout=raw+newline+last+newline), agent), expected)
+                        self.assertEqual(trace_result(dict(timeout=False, exit_code=0, stdout=escaped+newline+last+newline), agent), ('completed', usage))
+                    joined=json.dumps({'type':'message'})+separator+last
+                    self.assertEqual(trace_result(dict(timeout=False, exit_code=0, stdout=joined), agent), ('invalid_trace', None))
+
+    def test_crlf_traces_and_blank_lines_are_unchanged(self):
+        from run_evaluation import trace_result
+        done=json.dumps({'type':'result','subtype':'success','is_error':False,'usage':{'n':1}})
+        for stdout in (done, done+'\r\n', '\r\n'+json.dumps({'type':'message'})+'\r\n\r\n'+done+'\r\n', '  \n'+done+'\n\n'):
+            self.assertEqual(trace_result(dict(timeout=False, exit_code=0, stdout=stdout), 'claude'), ('completed', {'n':1}))
+        self.assertEqual(trace_result(dict(timeout=False, exit_code=0, stdout=done+'\r\n{'), 'claude'), ('invalid_trace', None))
+        self.assertEqual(trace_result(dict(timeout=False, exit_code=0, stdout=''), 'claude'), ('incomplete', None))
+
     def test_harness_context_is_injected_for_each_version(self):
         (self.root/'baseline/AGENTS.md').write_text('baseline instructions')
         (self.root/'candidate/AGENTS.md').write_text('candidate instructions')

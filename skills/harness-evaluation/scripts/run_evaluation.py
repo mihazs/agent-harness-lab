@@ -85,11 +85,26 @@ def grading_status(grade, typed=False):
         return 'grader_error'
 
 
+def jsonl_lines(text):
+    """Yield JSON Lines records split on LF only, tolerating CRLF line endings.
+
+    str.splitlines() also breaks on U+2028, U+2029, U+0085 and other separators
+    that JSON permits unescaped inside strings, splitting one record in two.
+    """
+    start = 0
+    while start < len(text):
+        end = text.find('\n', start)
+        if end < 0:
+            end = len(text)
+        yield text[start:end].removesuffix('\r')
+        start = end + 1
+
+
 def trace_result(run, agent="codex"):
     if run['timeout'] or run['exit_code'] != 0:
         return 'execution_error', None
     try:
-        events = [json.loads(line) for line in run['stdout'].splitlines() if line.strip()]
+        events = [json.loads(line) for line in jsonl_lines(run['stdout']) if line.strip()]
         if any(not isinstance(e, dict) for e in events):
             return 'invalid_trace', None
         if agent == 'claude':
