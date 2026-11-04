@@ -52,7 +52,7 @@ method remains selected even when it finds nothing. Optional corpus, model and
 execution methods retain the explicit prerequisites listed below.
 
 The graph describes input capture-stream adjacency, which remains useful when
-execution order is unknown. Recurrence selects multi-event cases with monotonic
+execution order is unknown. Recurrence selects multi-event cases with strictly increasing
 declared `capture_order` or strict valid timestamps, requiring three reported roots
 in that subset. State-aware matching selects ordered cases with complete
 tool/input/result/state signatures and then checks call/effect eligibility.
@@ -60,6 +60,14 @@ Unordered cases do not suppress supported cases; per-method excluded coverage is
 reported explicitly. Structured checks require explicit execution status or a
 referenced contract flag. Tied, absent or reversed timestamps cannot establish
 order; a valid capture ordinal does not establish elapsed time or causality.
+
+The pinned Claude profile can emit several normalized facets at one physical
+record ordinal. Its current normalized contract does not retain a separate total
+order for those facets; hashed block identities and parallel content-array
+positions cannot supply execution chronology. Such cases remain explicitly
+excluded from recurrence/stateful matching while the descriptive graph retains
+them. The source-ordering follow-up is tracked in
+[#190](https://github.com/mihazs/agent-harness-lab/issues/190).
 
 The all-case descriptive graph remains available when prerequisites fail. The
 receipt records actual method dispatch as `completed` or `not_run` and distinguishes
