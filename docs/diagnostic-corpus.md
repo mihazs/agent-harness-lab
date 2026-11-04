@@ -93,7 +93,16 @@ eligibility and provenance checks run regardless.
 a manifest. It keeps the corpus assignment, mapping `fitting` to the benchmark's
 `train` split and `development` to `development`, and never re-splits. A manifest
 that names a calibration, threshold, validation or certification partition fails
-validation, so held-out labels never reach fitting or reporting. With no
+validation. An exposed item is the exception. Exposure retires it to development
+even when its declared partition was protected, and such a development row must
+carry the export's `retirement` reference to the exposure event. The reference
+must name the row's own final event or, through `supersedes`, an earlier
+revision. A row whose effective partition differs from its declared partition
+without that reference is rejected. The reference is a consistency check, not
+authentication: someone who edits the file can fabricate one. The report's
+`partitions` field therefore counts each split's rows by declared partition,
+with `retired` and `retired_from_protected` totals, so retired protected items
+are always disclosed. Protected items that were not exposed are never exported. With no
 calibration partition, threshold selection has no roots and every prediction
 abstains. Brier scores and per-root groups are still reported. `--triage-policy`
 is refused for this profile because a development export has no held-out roots.

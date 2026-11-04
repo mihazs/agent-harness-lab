@@ -142,16 +142,22 @@ class CorpusStore(PrivateJournal):
                 _fields(payload,'reason'); _text(payload['reason'])
         return case,inputs,events,submissions,final
 
+    def _retirement(self, case_id, inputs, events):
+        """Return the newest exposure event that retires this incident lineage, if any."""
+        found=None; key=case_id; history=events; prior=inputs['supersedes']; seen=set()
+        while True:
+            if found is None:
+                found=next((dict(case_id=key,event_sha256=sha,reason=event['payload']['reason'])
+                    for event,sha in history if event['kind']=='exposed'),None)
+            if prior is None: return found
+            if prior in seen or len(seen)>=MAX_CASES: raise ValueError('invalid incident revision ancestry')
+            seen.add(prior); _,previous,history,_,_=self._opened(prior); key=prior; prior=previous['supersedes']
+
     def _summary(self, case_id, inputs, events, submissions, final):
         labels=[s['label'] for s in submissions]
         disposition=('unresolved' if final is not None and final['outcome']=='unknown' else 'adjudicated' if final is not None else
             'agreement' if len(labels)==2 and labels[0]==labels[1] else 'disagreement' if len(labels)==2 else 'unresolved')
-        exposed=events[-1][0]['state']=='exposed'
-        prior=inputs['supersedes']; seen=set()
-        while prior is not None:
-            if prior in seen or len(seen)>=MAX_CASES: raise ValueError('invalid incident revision ancestry')
-            seen.add(prior); _,previous,history,_,_=self._opened(prior)
-            exposed |= any(e['kind']=='exposed' for e,_ in history); prior=previous['supersedes']
+        exposed=self._retirement(case_id,inputs,events) is not None
         return dict(schema_version=1,case_id=case_id,event_sha256=events[-1][1],state=events[-1][0]['state'],
             partition='development' if exposed else inputs['partition'],
             submissions=len(submissions),disposition=disposition,review_authentication='operator_attested',
@@ -246,11 +252,27 @@ class CorpusStore(PrivateJournal):
                 if partition not in ('fitting','development') or final is None or final['outcome']=='unknown': continue
                 if not _eligible(inputs): continue
                 exported.append(dict(case_id=key,partition=partition,record=deepcopy(inputs),annotation=deepcopy(final),
-                    review_event_sha256=events[-1][1],label_provenance=PROVENANCE,gold_label=False))
+                    review_event_sha256=events[-1][1],label_provenance=PROVENANCE,gold_label=False,
+                    retirement=self._retirement(key,inputs,events)))
             body=dict(schema_version=1,profile=FORMAT,revision_sha256=revision,records=exported,
                 publication_allowed=False,classifier_selection_allowed=False,root_independence='unverified',
                 limitations=list(LIMITATIONS))
             return dict(body,manifest_sha256=_digest(body))
+
+
+def _retired(row, inputs):
+    """Require the exported exposure reference wherever the effective partition differs.
+
+    Exposure is the last event of its case, so a reference to the row's own case must
+    name its final event; an earlier revision's reference requires a supersedes link."""
+    retirement=row['retirement']
+    if retirement is None:
+        if row['partition']!=inputs['partition']: raise ValueError('changed partition lacks exposure retirement evidence')
+        return
+    _fields(retirement,'case_id event_sha256 reason'); _sha(retirement['case_id']); _sha(retirement['event_sha256']); _text(retirement['reason'])
+    if (row['partition']!='development' or retirement['case_id']==row['case_id'] and retirement['event_sha256']!=row['review_event_sha256']
+            or retirement['case_id']!=row['case_id'] and inputs['supersedes'] is None):
+        raise ValueError('exposure retirement evidence differs from the exported row')
 
 
 def development_export(value):
@@ -270,13 +292,11 @@ def development_export(value):
     if not isinstance(rows,list) or len(rows)>MAX_CASES: raise ValueError('bounded diagnostic corpus records required')
     groups={}; texts={}; seen=set()
     for row in rows:
-        _fields(row,'case_id partition record annotation review_event_sha256 label_provenance gold_label')
+        _fields(row,'case_id partition record annotation review_event_sha256 label_provenance gold_label retirement')
         inputs=incident(row['record']); _sha(row['review_event_sha256']); partition=row['partition']
         if row['case_id']!=_digest(inputs) or row['case_id'] in seen: raise ValueError('diagnostic corpus record identity differs')
-        seen.add(row['case_id'])
-        # Exposure retires any declared partition to development; nothing else may change it.
-        if (partition not in ('fitting','development') or partition!=inputs['partition'] and partition!='development'
-                or row['label_provenance']!=PROVENANCE or row['gold_label'] is not False or not _eligible(inputs)):
+        seen.add(row['case_id']); _retired(row,inputs)
+        if (partition not in ('fitting','development') or row['label_provenance']!=PROVENANCE or row['gold_label'] is not False or not _eligible(inputs)):
             raise ValueError('diagnostic corpus export has protected, ineligible or relabelled items')
         if annotation(row['annotation'],inputs)['outcome']=='unknown': raise ValueError('unknown annotations are not exported labels')
         _separate(groups,texts,inputs,partition)

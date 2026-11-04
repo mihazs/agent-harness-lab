@@ -82,8 +82,18 @@ def read_corpus_manifest(path, limit=None):
     rows = [dict(root_case_id=item['record']['root_id'], split=CORPUS_SPLITS[item['partition']],
                  text=item['record']['summary'], label=BINARY_OUTCOMES[item['annotation']['outcome']],
                  project=item['record']['project_id'], case_id=item['case_id'], outcome=item['annotation']['outcome'],
-                 declared_partition=item['record']['partition'], label_provenance='adjudicated') for item in items]
+                 declared_partition=item['record']['partition'], retired=item['retirement'] is not None,
+                 label_provenance='adjudicated') for item in items]
     return rows, manifest
+
+
+def partition_disclosure(rows):
+    """Show every declared corpus partition behind each benchmark split, including exposure retirements."""
+    return {split: dict(declared=dict(Counter(r['declared_partition'] for r in rows if r['split'] == split)),
+                        retired=sum(r['retired'] for r in rows if r['split'] == split),
+                        retired_from_protected=sum(r['retired'] and r['declared_partition'] not in CORPUS_SPLITS
+                                                   for r in rows if r['split'] == split))
+            for split in CORPUS_SPLITS.values()}
 
 
 def group_diagnostics(rows):
@@ -404,6 +414,7 @@ def main():
                 root_independence=manifest['root_independence'], reviewer_independence='unverified',
                 label_authority='operator_attested', binary_label_mapping=BINARY_OUTCOMES,
                 outcome_counts={split: dict(Counter(r['outcome'] for r in rows if r['split'] == split)) for split in SPLITS},
+                partitions=partition_disclosure(rows),
                 corpus_limitations=manifest['limitations'])
             result['limitations'].append('Calibration, validation and certification partitions are not exported; '
                                          'without calibration roots every prediction abstains.')

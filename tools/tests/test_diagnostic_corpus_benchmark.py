@@ -96,6 +96,44 @@ class CorpusBenchmarkTests(unittest.TestCase):
         refused = self.run_cli(self.write(manifest), '--triage-policy', str(policy))
         self.assertEqual(refused.returncode, 2); self.assertIn('no held-out roots', refused.stderr)
 
+    def test_declared_held_out_rows_need_retirement_evidence_and_are_disclosed(self):
+        manifest = self.corpus()
+        for partition in ('validation', 'certification', 'calibration', 'threshold'):
+            forged = deepcopy(manifest); row = deepcopy(forged['records'][2])
+            row['record'].update(partition=partition, incident_id='forged-'+partition, root_id='forged-root-'+partition,
+                summary='Forged synthetic held-out text '+partition, source_revision_sha256=hashlib.sha256(partition.encode()).hexdigest())
+            row['case_id'] = hashlib.sha256(encoded(row['record'])).hexdigest(); forged['records'].append(row)
+            with self.subTest(partition=partition), self.assertRaisesRegex(ValueError, 'retirement'):
+                development_export(resign(forged))
+        retired = self.adjudicate(*case('retired-certification', 'certification'))
+        self.store.update(retired['case_id'], retired['event_sha256'], 'exposed', reason='Synthetic development exposure')
+        export = self.store.export_development(self.store.snapshot()['revision_sha256'])
+        row = next(r for r in export['records'] if r['case_id'] == retired['case_id'])
+        self.assertEqual((row['partition'], row['record']['partition']), ('development', 'certification'))
+        self.assertEqual(row['retirement']['event_sha256'], row['review_event_sha256'])
+        self.assertTrue(all(r['retirement'] is None for r in export['records'] if r is not row))
+        stripped = deepcopy(export); next(r for r in stripped['records'] if r['case_id'] == retired['case_id'])['retirement'] = None
+        with self.assertRaisesRegex(ValueError, 'retirement'): development_export(resign(stripped))
+        completed = self.run_cli(self.write(export))
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        disclosed = json.loads(completed.stdout)['partitions']
+        self.assertEqual(disclosed['development'], dict(declared=dict(development=3, certification=1), retired=1, retired_from_protected=1))
+        self.assertEqual(disclosed['train'], dict(declared=dict(fitting=2), retired=0, retired_from_protected=0))
+
+    def test_requeued_retirement_cites_the_exposed_revision(self):
+        value, annotation = case('lineage', 'validation')
+        old = self.store.enqueue(value)
+        old = self.store.update(old['case_id'], old['event_sha256'], 'exposed', reason='Synthetic exposure before review')
+        changed = deepcopy(value); changed.update(rubric_sha256='b'*64, supersedes=old['case_id'])
+        self.adjudicate(changed, annotation)
+        export = self.store.export_development(self.store.snapshot()['revision_sha256'])
+        row, = export['records']
+        self.assertEqual((row['partition'], row['retirement']['case_id']), ('development', old['case_id']))
+        self.assertEqual(development_export(export), export)
+        orphan = deepcopy(export); orphan['records'][0]['record']['supersedes'] = None
+        orphan['records'][0]['case_id'] = hashlib.sha256(encoded(orphan['records'][0]['record'])).hexdigest()
+        with self.assertRaisesRegex(ValueError, 'retirement'): development_export(resign(orphan))
+
     def test_adapter_smoke_labels_never_count_as_reviewed(self):
         smoke = self.folder/'smoke.jsonl'
         smoke.write_text('\n'.join(json.dumps(dict(root_case_id=f'r{i}', split=s, text='synthetic', label=bool(i % 2)))
