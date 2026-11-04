@@ -38,7 +38,7 @@ def public_export_allowed(records):
                     or metadata.get('purpose')=='protected-diagnostic-access-v1'
                     or metadata.get('profile') in ('ahl-analysis-execution-v1','ahl-improve-fixed-bank-v1','ahl-fresh-responses-comparison-v1',
                         'controller-request-reservation-v1','controller-realized-schedule-v1')
-                    or any(key in metadata for key in ('request_sha256','workflow_request_sha256','responses_binding','responses_custody_sha256','request_binding'))
+                    or any(key in metadata for key in ('request_sha256','workflow_request_sha256','responses_binding','responses_custody_sha256','request_binding','realized_schedule'))
                     or metadata.get('report_kind')=='controller_trajectory'
                     or metadata.get('outcome_mapping')=='artifact_and_required_v1'
                     or metadata.get('evidence_source')=='controller_verified_development_only'):

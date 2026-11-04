@@ -81,6 +81,13 @@ class OracleHistoryTests(OfflineFixture):
         self.assertEqual(self.store.show(result['run_id'])['oracle_validity'],'current')
         self.assertEqual(self.store.analyze(result['run_id'])['oracle_validity'],'current')
         self.assertEqual(self.store.oracle(self.bundle_hash())['bundle_sha256'],self.bundle_hash())
+        realized=self.store.historical_plan(result['run_id'])['realized_schedule']
+        self.assertEqual(realized['status'],'unknown')
+        self.assertIsNone(realized['trials'])
+        self.assertIsNone(realized['schedule_sha256'])
+        self.assertFalse(realized['publication_allowed'])
+        (self.store.case(result['run_id'])/'realized-schedule.json').write_text('{"trials": ["forged"]}')
+        self.assertEqual(self.store.historical_plan(result['run_id'])['realized_schedule'],realized)
 
     def test_noncanonical_input_cannot_create_history_inside_a_worker_view(self):
         alias = self.root/'alias'; alias.mkdir()

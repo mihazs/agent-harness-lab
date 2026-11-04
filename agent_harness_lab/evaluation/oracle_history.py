@@ -360,8 +360,11 @@ class HistoryStore(PrivateJournal):
         if not isinstance(fixtures,dict) or set(fixtures)!={t[0] for t in spec.tasks}:
             raise ValueError('earlier fixture identities unavailable')
         for value in fixtures.values(): sha256(value)
+        schedule_pin=inputs.get('responses_binding',{}).get('schedule_sha256')
+        realized=dict(profile='controller-realized-schedule-v1',status='observed' if schedule_pin else 'unknown',
+            schedule_sha256=schedule_pin,trials=schedule(spec) if schedule_pin else None,publication_allowed=False)
         return dict(run_id=run_id,event_sha256=events[-1][1],inputs_sha256=record(case/'inputs.json')[1],
-            evidence_sha256=evidence_hash,plan=spec.to_dict(),plan_sha256=spec.digest,manifest=source,
+            evidence_sha256=evidence_hash,plan=spec.to_dict(),plan_sha256=spec.digest,manifest=source,realized_schedule=realized,
             manifest_sha256=inputs['source_manifest_sha256'],fixtures=fixtures,bank_tasks=inputs.get('bank_tasks'),
             state=events[-1][0]['state'],historical_outcome='observed' if evidence_hash else 'unknown',
             fixture_mode_evidence='pinned' if inputs.get('bank_tasks') is not None else 'unknown',

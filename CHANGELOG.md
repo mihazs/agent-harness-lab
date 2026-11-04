@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.14
+
+### Patch Changes
+
+- Expose authenticated fixed experiment schedules for private inspection without changing evaluation authority.
+
 ## 0.76.13
 
 ### Patch Changes

@@ -133,3 +133,11 @@ It makes no real provider calls and authenticates no real model or native agent.
 `task test:workflow:repeated-access` checks the shared-store selection boundaries;
 `task test:workflow:repeated-access:kernel` exercises their actual public controller
 composition under the same delegated profile.
+
+`experiment-history historical-plan` exposes `realized_schedule` when the original
+history authenticates its saved schedule. The private facet includes the exact
+ordered task/root/family, arm, repeat and trial identities and schedule digest.
+Legacy histories without this binding report unknown with null trials and digest;
+they do not acquire a saved schedule from the seed. Sequential correction replay
+remains unsupported. Schedule inspection proves neither execution nor eligibility
+and grants no permission to resume, retry or apply a candidate.
