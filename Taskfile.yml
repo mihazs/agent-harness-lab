@@ -242,13 +242,13 @@ tasks:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_release_install.py" -v'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_updater.py" -v'
   test:diagnostics:corpus:
-    desc: Run the private diagnostic annotation and protected-split contracts with synthetic cases
+    desc: Run the private diagnostic annotation, protected-split and benchmark-profile contracts with synthetic cases
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
     env:
       PYTHONPATH: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_diagnostic_corpus.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_diagnostic_corpus*.py" -v'
   experiment:oracle:
     desc: Compute the verified oracle pin for an exported repeated-experiment manifest
     requires:

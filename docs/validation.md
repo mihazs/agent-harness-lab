@@ -14,6 +14,9 @@ No general improvement in agent success has been established.
 Inputs are reproduced by `examples/classifier_fixture.py`: 40 training, 80 calibration,
 40 development, and 40 held-out synthetic records. Repeated vocabulary deliberately
 makes this an easy adapter test, not a generalization benchmark. All inference was local.
+Reports label these rows `adapter_smoke`. They are never reviewed or gold labels.
+The separate [diagnostic corpus profile](diagnostic-corpus.md#benchmark-input-profile)
+reads private adjudicated development exports and is descriptive only.
 
 | Method | Held-out Brier | Accepted / labeled | Accepted accuracy |
 | --- | --- | --- | --- |

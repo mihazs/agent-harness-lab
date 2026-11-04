@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Compare local binary incident classifiers on supplied, root-separated labels.
 
-Input JSONL: root_case_id, split (train/calibration/development/heldout), text,
-optional boolean label, optional project. Labels are supplied references, not
-independently verified by this script. Missing labels never enter metrics.
+Profile adapter-smoke (default) reads JSONL: root_case_id, split
+(train/calibration/development/heldout), text, optional boolean label, optional
+project. Its labels are adapter_smoke references, never reviewed labels.
+Profile diagnostic-corpus reads a CorpusStore.export_development JSON manifest
+and keeps its fitting/development assignment; protected partitions are absent.
+Missing labels never enter metrics. Reports are descriptive only.
 Model paths must be existing local directories; no model downloads or remote code.
 """
 import argparse
+from collections import Counter
 from collections.abc import Mapping
 import hashlib
 import importlib.metadata
@@ -17,11 +21,21 @@ import resource
 import time
 
 SPLITS = ('train', 'calibration', 'development', 'heldout')
+PROVENANCE = ('adjudicated', 'single_review', 'adapter_smoke')
+# Development exports release only these partitions; there is no re-split.
+CORPUS_SPLITS = {'fitting': 'train', 'development': 'development'}
+# Binary failure detection; other terminal outcomes stay unlabeled, not negative.
+BINARY_OUTCOMES = {'task_failure': True, 'successful': False, 'external_failure': None, 'requirements_changed': None}
+CORPUS_PROFILE = 'diagnostic-corpus-benchmark-v1'
+
+
+def check_limit(limit):
+    if limit is not None and (type(limit) is not int or limit <= 0):
+        raise ValueError('example limit must be a positive integer')
 
 
 def read_examples(path, limit=None):
-    if limit is not None and (type(limit) is not int or limit <= 0):
-        raise ValueError('example limit must be a positive integer')
+    check_limit(limit)
     rows, roots = [], {}
     with Path(path).open() as stream:
         for number, line in enumerate(stream, 1):
@@ -39,6 +53,9 @@ def read_examples(path, limit=None):
                     raise ValueError()
                 if 'project' in row and (not isinstance(row['project'], str) or len(row['project']) > 256):
                     raise ValueError()
+                # Supplied JSONL labels cannot claim reviewed provenance.
+                if row.setdefault('label_provenance', 'adapter_smoke') != 'adapter_smoke':
+                    raise ValueError()
                 root = row['root_case_id']
                 if root in roots and roots[root] != row['split']:
                     raise ValueError('root case crosses splits')
@@ -49,6 +66,51 @@ def read_examples(path, limit=None):
     if not rows:
         raise ValueError('empty input')
     return rows
+
+
+def read_corpus_manifest(path, limit=None):
+    """Read verified reviewed declarations; predicted summaries are never classifier input."""
+    from agent_harness_lab.diagnostics.corpus import MAX_CASES, development_export
+    from agent_harness_lab.private_journal import record
+    check_limit(limit)
+    manifest = development_export(record(path, MAX_CASES*160*1024)[0])
+    items = manifest['records']
+    if limit is not None and len(items) > limit:
+        raise ValueError('example limit exceeded')
+    if not items:
+        raise ValueError('empty input')
+    rows = [dict(root_case_id=item['record']['root_id'], split=CORPUS_SPLITS[item['partition']],
+                 text=item['record']['summary'], label=BINARY_OUTCOMES[item['annotation']['outcome']],
+                 project=item['record']['project_id'], case_id=item['case_id'], outcome=item['annotation']['outcome'],
+                 declared_partition=item['record']['partition'], retired=item['retirement'] is not None,
+                 label_provenance='adjudicated') for item in items]
+    return rows, manifest
+
+
+def partition_disclosure(rows):
+    """Show every declared corpus partition behind each benchmark split, including exposure retirements."""
+    return {split: dict(declared=dict(Counter(r['declared_partition'] for r in rows if r['split'] == split)),
+                        retired=sum(r['retired'] for r in rows if r['split'] == split),
+                        retired_from_protected=sum(r['retired'] and r['declared_partition'] not in CORPUS_SPLITS
+                                                   for r in rows if r['split'] == split))
+            for split in CORPUS_SPLITS.values()}
+
+
+def group_diagnostics(rows):
+    """Count declared roots as the unit; repeated rows of one root are not independent."""
+    result = {}
+    for split in SPLITS:
+        subset = [r for r in rows if r['split'] == split]
+        counts, labels = Counter(r['root_case_id'] for r in subset), {}
+        for r in subset:
+            labels.setdefault(r['root_case_id'], set()).add(r.get('label'))
+        result[split] = dict(rows=len(subset), roots=len(counts), repeated_root_rows=len(subset)-len(counts),
+            max_rows_per_root=max(counts.values(), default=0),
+            conflicting_label_roots=sum(len(values-{None}) > 1 for values in labels.values()),
+            positive_rows=sum(r.get('label') is True for r in subset),
+            negative_rows=sum(r.get('label') is False for r in subset),
+            unlabeled_rows=sum(r.get('label') is None for r in subset))
+    return result
 
 
 def wilson_lower(successes, count):
@@ -81,6 +143,25 @@ def measure(rows, probabilities, threshold):
                 accepted_roots=len(root_correct),
                 root_accuracy_lower_95=wilson_lower(sum(root_correct.values()), len(root_correct)),
                 brier=sum((p-r['label'])**2 for r, p in labeled)/len(labeled) if labeled else None)
+
+
+def root_weighted(rows, probabilities):
+    """Brier score with each labeled declared root weighted once; conflicting roots are excluded and counted."""
+    grouped = {}
+    for r, p in zip(rows, probabilities):
+        grouped.setdefault(r['root_case_id'], []).append((r.get('label'), float(p)))
+    scores, conflicting, unlabeled = [], 0, 0
+    for values in grouped.values():
+        labels = {label for label, _ in values if label is not None}
+        if len(labels) > 1:
+            conflicting += 1
+        elif not labels:
+            unlabeled += 1
+        else:
+            errors = [(p-label)**2 for label, p in values if label is not None]
+            scores.append(sum(errors)/len(errors))
+    return dict(brier=sum(scores)/len(scores) if scores else None, roots=len(scores),
+                conflicting_label_roots_excluded=conflicting, unlabeled_roots=unlabeled)
 
 
 def choose_threshold(rows, probabilities, target=.9):
@@ -302,8 +383,10 @@ def main():
         epilog='Prints a JSON report with split metrics, abstentions and per-example predictions; treat it as private.\n'
         'Baseline uses only the standard library; other methods require optional ML packages.\n'
         'No downloads, remote model code or input edits. Exit 0: report printed; 2: invalid input/dependency.\n'
-        'Example: ahl benchmark examples.jsonl --method baseline > /tmp/ahl-benchmark.json')
-    parser.add_argument('input', type=Path, help='Existing JSONL examples: root_case_id, split and text; optional boolean label/project, roots must not cross splits')
+        'Example: ahl benchmark examples.jsonl --method baseline > /tmp/ahl-benchmark.json\n'
+        'Corpus: ahl benchmark export.json --profile diagnostic-corpus --method baseline > /tmp/ahl-corpus.json')
+    parser.add_argument('input', type=Path, help='Existing input: adapter-smoke JSONL rows with root_case_id, split and text (optional boolean label/project; roots must not cross splits), or a diagnostic-corpus export_development JSON manifest')
+    parser.add_argument('--profile', choices=('adapter-smoke', 'diagnostic-corpus'), default='adapter-smoke', help='Input profile: adapter-smoke supplied labels (default), or a digest-checked private corpus development export that keeps its own split and root groups')
     parser.add_argument('--method', choices=('baseline', 'tfidf', 'embeddings', 'nli'), required=True, help='Classifier: training-label prevalence, TF-IDF logistic regression, checked stock local embeddings, or NLI entailment with checked BERT/RoBERTa/XLM-R context capacity')
     parser.add_argument('--model-path', type=Path, help='Existing local model directory, required for embeddings/nli; models are never downloaded')
     parser.add_argument('--revision', help='Optional local model revision passed to embeddings/nli loaders and recorded in the JSON report')
@@ -317,7 +400,13 @@ def main():
             raise ValueError('batch size must be positive')
         if args.method in ('embeddings', 'nli') and (args.model_path is None or not args.model_path.is_dir()):
             raise ValueError('provide an existing local --model-path')
-        rows = read_examples(args.input, limit=args.max_examples)
+        manifest = None
+        if args.profile == 'diagnostic-corpus':
+            if args.triage_policy is not None:
+                raise ValueError('diagnostic corpus development exports release no held-out roots for triage policies')
+            rows, manifest = read_corpus_manifest(args.input, limit=args.max_examples)
+        else:
+            rows = read_examples(args.input, limit=args.max_examples)
         started = time.monotonic()
         probabilities = model_predict(args.method, rows, args.model_path, args.revision, args.question, args.batch_size)
         elapsed = time.monotonic()-started
@@ -333,7 +422,23 @@ def main():
                                    'NLI rejects unsupported or exceeded local model context; no truncation is performed.',
                                    'TF-IDF retains all extracted training-vocabulary features; unseen terms remain out of vocabulary.',
                                    'Embeddings require complete tokenization under the checked stock pipeline and reject unsupported or exceeded encoder context.',
-                                   'Root confidence interval assumes independent supplied root cases.'], splits={})
+                                   'Root confidence interval assumes independent supplied root cases.'], splits={},
+                      input_profile=args.profile.replace('-', '_'), qualification='descriptive_only', certification='not_issued',
+                      label_provenance_counts={name: sum(r['label_provenance'] == name for r in rows) for name in PROVENANCE},
+                      reviewed_annotations=sum(r['label_provenance'] != 'adapter_smoke' for r in rows),
+                      gold_labels=0, groups=group_diagnostics(rows))
+        if manifest is not None:
+            result.update(profile=CORPUS_PROFILE, corpus_revision_sha256=manifest['revision_sha256'],
+                manifest_sha256=manifest['manifest_sha256'], publication_allowed=False, classifier_selection_allowed=False,
+                root_independence=manifest['root_independence'], reviewer_independence='unverified',
+                label_authority='operator_attested', binary_label_mapping=BINARY_OUTCOMES,
+                outcome_counts={split: dict(Counter(r['outcome'] for r in rows if r['split'] == split)) for split in SPLITS},
+                partitions=partition_disclosure(rows), metric_weighting=dict(splits='row', root_weighted='declared_root'),
+                root_weighted={split: root_weighted([r for r in rows if r['split'] == split],
+                                                    [p for r, p in zip(rows, probabilities) if r['split'] == split]) for split in SPLITS},
+                corpus_limitations=manifest['limitations'])
+            result['limitations'].append('Calibration, validation and certification partitions are not exported; '
+                                         'without calibration roots every prediction abstains.')
         if args.triage_policy is not None:
             policy = json.loads(args.triage_policy.read_text())
             heldout = [(r, p) for r, p in zip(rows, probabilities) if r['split'] == 'heldout']
@@ -350,12 +455,17 @@ def main():
                 pass
         result['predictions'] = [dict(root_case_id=r['root_case_id'], split=r['split'],
             probability=p, value=(p >= .5) if threshold is not None and max(p, 1-p) >= threshold else None,
-            abstain=threshold is None or max(p, 1-p) < threshold) for r, p in zip(rows, probabilities)]
+            abstain=threshold is None or max(p, 1-p) < threshold, label_provenance=r['label_provenance'],
+            **({'case_id': r['case_id']} if 'case_id' in r else {})) for r, p in zip(rows, probabilities)]
         result['projects'] = {}
         for project in sorted({str(r.get('project', 'unknown')) for r in rows}):
             subset = [(r, p) for r, p in zip(rows, probabilities)
                       if str(r.get('project', 'unknown')) == project and r['split'] == 'heldout']
             result['projects'][project] = measure([r for r, _ in subset], [p for _, p in subset], threshold)
+        if manifest is not None:
+            # Corpus outcome 'unknown' is never exported; these rows are known non-binary outcomes.
+            for metrics in (*result['splits'].values(), *result['projects'].values()):
+                metrics['unlabeled_outcomes'] = metrics.pop('unknown')
         print(json.dumps(result, indent=2))
     except (ValueError, OSError, ImportError) as exc:
         parser.exit(2, f'benchmark error: {exc}\n')
