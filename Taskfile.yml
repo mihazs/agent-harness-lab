@@ -3,7 +3,7 @@ vars:
   PYTHON: '{{default "python3" .PYTHON}}'
 tasks:
   test:analysis:pipeline:
-    desc: Verify default mining, execution receipts and aggregate progress
+    desc: Verify default mining, method selection, execution receipts and aggregate progress
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
     vars:
       TEST_WORKERS: '{{default "auto" .TEST_WORKERS}}'

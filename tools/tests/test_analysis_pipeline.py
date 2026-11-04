@@ -51,7 +51,7 @@ class AnalysisPipelineTests(unittest.TestCase):
     @staticmethod
     def rows():
         return [dict(case_id=f'PRIVATE_CASE_{case}', event_id=str(offset), activity=activity,
-                     body='PRIVATE_BODY', **fields)
+                     capture_order=offset, body='PRIVATE_BODY', **fields)
                 for offset, (activity, fields) in enumerate([
                     ('tool_result', dict(tool_name='read', input_fingerprint='i', result_fingerprint='r', state_revision='s')),
                     ('tool_result', dict(tool_name='read', input_fingerprint='i', result_fingerprint='r', state_revision='s')),
@@ -69,6 +69,16 @@ class AnalysisPipelineTests(unittest.TestCase):
         self.assertEqual(methods['duplicate_observations']['outputs']['findings'], 3)
         self.assertEqual(methods['structured_checks']['outputs']['findings'], 3)
         self.assertTrue(all(row['authority'] == 'descriptive_only' for row in methods.values()))
+        self.assertTrue(all(row['selected'] for row in methods.values()))
+        self.assertEqual(receipt['analysis']['method_selection']['policy'], 'structural_prerequisites_v1')
+        self.assertFalse(receipt['analysis']['method_selection']['output_values_used_for_selection'])
+        self.assertEqual(receipt['analysis']['method_selection']['profile'], 'ahl-analysis-execution-v1')
+        synthesis = receipt['analysis']['synthesis']
+        self.assertEqual(set(synthesis['contributing_methods']), set(methods))
+        self.assertEqual(len(synthesis['dependency_groups']), 1)
+        self.assertEqual(synthesis['dependency_groups'][0]['independence'], 'unverified')
+        self.assertFalse(synthesis['promotion_authority'])
+        self.assertEqual(synthesis['profile'], 'ahl-analysis-execution-v1')
         self.assertEqual(len(receipt['analysis']['not_run']), 4)
         data = json.loads((self.root/'output/analysis.json').read_text())
         self.assertEqual(data['execution'], receipt['analysis'])
@@ -157,6 +167,119 @@ print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
         self.assertIn('candidate_preparation', err)
         self.assertFalse(list((self.root/'output').glob('evaluation-*')))
         self.assertEqual((self.project/'AGENTS.md').read_text(), 'Synthetic project instructions\n')
+        self.assertEqual(receipt['analysis']['method_selection']['policy'], 'structural_prerequisites_v1')
+
+    def test_method_selection_uses_prerequisites_instead_of_favorable_findings(self):
+        rows = [dict(case_id='case', event_id=str(index), capture_order=index,
+                     activity='tool_result', tool_name='read', input_fingerprint=str(index),
+                     result_fingerprint=str(index), state_revision='s', execution_status='returned')
+                for index in range(2)]
+        _, receipt, _ = self.invoke(rows=rows)
+        methods = {row['id']: row for row in receipt['analysis']['algorithms']}
+        self.assertTrue(methods['duplicate_observations']['selected'])
+        self.assertEqual(methods['duplicate_observations']['outputs']['findings'], 0)
+        self.assertTrue(methods['structured_checks']['selected'])
+        self.assertEqual(methods['structured_checks']['outputs']['findings'], 0)
+        self.assertFalse(methods['recurring_sequences']['selected'])
+        self.assertTrue(all(not_run['reason'] for not_run in receipt['analysis']['not_run']))
+
+    def test_activity_only_capture_keeps_graph_and_explains_missing_method_inputs(self):
+        _, receipt, _ = self.invoke(rows=[dict(case_id='case', event_id=str(index), activity=activity)
+                                          for index, activity in enumerate(('read', 'check'))])
+        methods = {row['id']: row for row in receipt['analysis']['algorithms']}
+        self.assertTrue(methods['directly_follows']['selected'])
+        self.assertEqual(methods['directly_follows']['outputs']['raw_edges'], 1)
+        for name in ('recurring_sequences', 'duplicate_observations', 'structured_checks'):
+            self.assertFalse(methods[name]['selected'])
+            self.assertEqual(methods[name]['status'], 'insufficient_support')
+        self.assertIn('execution order', methods['directly_follows']['selection_reason'])
+
+    def test_unverified_or_reversed_order_does_not_qualify_sequence_outputs(self):
+        for ordering in (None, (1, 0, 2)):
+            with self.subTest(ordering=ordering):
+                rows = self.rows()
+                for row in rows:
+                    if ordering is None:
+                        row.pop('capture_order')
+                    else:
+                        row['capture_order'] = ordering[int(row['event_id'])]
+                raw = analyze(rows)
+                data = analyze(rows, select_methods=True)
+                from agent_harness_lab.analysis_receipt import summarize
+                receipt = summarize(dict(analysis=data))
+                methods = {row['id']: row for row in receipt['algorithms']}
+                self.assertGreater(len(raw['recurring_sequences']), 0)
+                self.assertEqual(data['recurring_sequences'], [])
+                self.assertFalse(methods['recurring_sequences']['selected'])
+                self.assertFalse(methods['duplicate_observations']['selected'])
+                self.assertEqual(methods['recurring_sequences']['execution'], 'not_run')
+                self.assertEqual(data['process_mining'], raw['process_mining'])
+
+    def test_strict_timestamps_can_qualify_order_but_ties_cannot(self):
+        from agent_harness_lab.analysis_receipt import summarize
+        rows = self.rows()
+        for row in rows:
+            row.pop('capture_order')
+            row['timestamp'] = f"2026-01-01T00:00:0{row['event_id']}Z"
+        receipt = summarize(dict(analysis=analyze(rows, select_methods=True)))
+        self.assertTrue(receipt['algorithms'][1]['selected'])
+        for row in rows:
+            row['timestamp'] = '2026-01-01T00:00:00Z'
+        receipt = summarize(dict(analysis=analyze(rows, select_methods=True)))
+        self.assertFalse(receipt['algorithms'][1]['selected'])
+
+    def test_declared_shared_root_cannot_inflate_recurrence_eligibility(self):
+        from agent_harness_lab.analysis_receipt import summarize
+        rows = self.rows()
+        for row in rows:
+            row['root_case_id'] = 'shared-root'
+        receipt = summarize(dict(analysis=analyze(rows, select_methods=True)))
+        self.assertEqual(receipt['method_selection']['inputs']['sequence_roots'], 1)
+        self.assertFalse(receipt['algorithms'][1]['selected'])
+
+    def test_unordered_case_does_not_suppress_ordered_method_subsets(self):
+        from agent_harness_lab.analysis_receipt import summarize
+        ordered = self.rows()
+        unsupported = [dict(row, case_id='unordered') for row in ordered if row['case_id'] == 'PRIVATE_CASE_0']
+        for row in unsupported:
+            row.pop('capture_order')
+        selected = analyze([*ordered, *unsupported], select_methods=True)
+        supported = analyze(ordered, select_methods=True)
+        receipt = summarize(dict(analysis=selected))
+        methods = {row['id']: row for row in receipt['algorithms']}
+        self.assertTrue(methods['recurring_sequences']['selected'])
+        self.assertTrue(methods['duplicate_observations']['selected'])
+        self.assertEqual(selected['recurring_sequences'], supported['recurring_sequences'])
+        self.assertEqual(selected['findings'], supported['findings'])
+        self.assertEqual(methods['recurring_sequences']['input_events'], len(ordered))
+        self.assertEqual(methods['recurring_sequences']['discovery_input_events'], len(ordered) + len(unsupported))
+        self.assertEqual(receipt['method_selection']['inputs']['unordered_sequence_cases'], 1)
+        self.assertEqual(receipt['method_selection']['inputs']['unordered_observation_cases'], 1)
+        self.assertEqual(selected['process_mining']['events'], len(ordered) + len(unsupported))
+
+    def test_public_native_collectors_preserve_declared_capture_order_for_selection(self):
+        for source_format in ('codex', 'claude'):
+            with self.subTest(source_format=source_format):
+                rows = []
+                for case in range(3):
+                    if source_format == 'codex':
+                        rows += [dict(type='session_meta', payload=dict(id=str(case), cwd=str(self.project))),
+                                 dict(payload=dict(type='function_call', name='read', call_id=str(case))),
+                                 dict(payload=dict(type='function_call_output', call_id=str(case), output=dict(exit_code=0)))]
+                    else:
+                        rows += [dict(sessionId=str(case), uuid=f'call-{case}', type='assistant',
+                                      message=dict(content=[dict(type='tool_use', id=str(case), name='Read')])),
+                                 dict(sessionId=str(case), uuid=f'result-{case}', type='user',
+                                      message=dict(content=[dict(type='tool_result', tool_use_id=str(case), is_error=False)]))]
+                code, receipt, _ = self.invoke(rows=rows, extra=['--format', source_format,
+                    '--output', str(self.root/f'output-{source_format}')])
+                self.assertEqual(code, 0)
+                methods = {row['id']: row for row in receipt['analysis']['algorithms']}
+                self.assertTrue(methods['directly_follows']['selected'])
+                self.assertTrue(methods['recurring_sequences']['selected'])
+                self.assertTrue(methods['structured_checks']['selected'])
+                self.assertFalse(methods['duplicate_observations']['selected'])
+                self.assertEqual(receipt['analysis']['method_selection']['inputs']['capture_order_cases'], 3)
 
     def test_controlled_preparation_receives_graph_but_no_case_identity_or_body(self):
         data = collect(self.project, events=self.capture(self.rows()))

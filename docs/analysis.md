@@ -43,6 +43,51 @@ harness is correct. A method can report `no_events` or `insufficient_support`
 rather than a negative diagnosis. For example, fewer than three reported roots
 cannot establish a recurring sequence under the implemented threshold.
 
+## Evidence-based method selection
+
+`method_selection` records the versioned structural prerequisite policy after
+streaming coverage discovery. Selection uses captured fields and ordering support,
+never whether a method produced a favorable result. Every applicable complementary
+method remains selected even when it finds nothing. Optional corpus, model and
+execution methods retain the explicit prerequisites listed below.
+
+The graph describes input capture-stream adjacency, which remains useful when
+execution order is unknown. Recurrence selects multi-event cases with monotonic
+declared `capture_order` or strict valid timestamps, requiring three reported roots
+in that subset. State-aware matching selects ordered cases with complete
+tool/input/result/state signatures and then checks call/effect eligibility.
+Unordered cases do not suppress supported cases; per-method excluded coverage is
+reported explicitly. Structured checks require explicit execution status or a
+referenced contract flag. Tied, absent or reversed timestamps cannot establish
+order; a valid capture ordinal does not establish elapsed time or causality.
+
+The all-case descriptive graph remains available when prerequisites fail. The
+receipt records actual method dispatch as `completed` or `not_run` and distinguishes
+insufficient support from completed work with no findings. The explicit low-level
+`ahl diagnose` raw-analysis interface retains its legacy behavior; default
+`ahl analyze` and `ahl improve` use the selected portfolio.
+`synthesis` identifies contributing methods; method receipts retain excluded coverage. All views
+share a captured-event dependency group: agreement creates no independent vote,
+calibrated confidence or promotion authority. Findings with different questions
+are not manufactured into a contradiction; case-level observations and unresolved
+questions remain available for review. Absence of supported patterns is not proof
+that the harness is correct.
+
+Each receipt distinguishes `discovery_input_events` from method-specific
+`input_events`; a skipped method has zero dispatched inputs. The method plan and
+synthesis carry the same private profile as the execution receipt even when
+extracted for supported local reporting.
+
+The policy adapts algorithm-selection principles from
+[Rice (1976)](https://doi.org/10.1016/S0065-2458(08)60520-3), event-quality guidance
+from the [Process Mining Manifesto](https://www.vdaalst.com/publications/p658.pdf),
+and the distinction between complementary methods and independent bias structures
+in [Lawlor et al.](https://pmc.ncbi.nlm.nih.gov/articles/PMC5841843/).
+[Cawley and Talbot](https://jmlr.org/papers/v11/cawley10a.html) explain why selecting
+on finite observed performance can bias evaluation. These motivate a transparent
+prerequisite policy; they do not establish that AHL's policy is unbiased or improves
+diagnostic accuracy. That requires a separate frozen, independently labeled study.
+
 Private `analysis.json` contains the graph, findings, execution receipt and
 collection metadata. `report.md` presents counts, method statuses and caveats.
 Discovery, collection, analysis and completion progress is printed on stderr,
