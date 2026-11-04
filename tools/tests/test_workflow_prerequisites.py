@@ -1,6 +1,7 @@
 """Actual public controller receipt consumption; no provider or credential is used."""
 from contextlib import ExitStack,redirect_stdout
 from copy import copy
+from dataclasses import asdict,replace
 import gc
 import io
 import json
@@ -171,7 +172,8 @@ class PolicyAuthorityTests(PublicCase,unittest.TestCase):
         spec=math_fixture.plan(n=1000,repeats=1);analysis=math_fixture.analyze(spec,math_fixture.records(spec))
         decision=policy.decide(spec,dict(analysis,oracle_validity='current'),isolation_verified=True,
             effective_runtime_verified=True,graders_audited=True,lineage_reviewed=True,certification_reserved=True)
-        self.assertEqual(decision.status,'recommended');self.assertFalse(decision.automatic)
+        self.assertEqual(decision.status,'blocked');self.assertFalse(decision.automatic)
+        self.assertEqual(decision.declared_prerequisites,{'isolation_verified':dict(status='declared_unverified',value=True)})
         packet=policy.implementation_prerequisites(declarations={'isolation_verified':True})
         self.assertEqual(packet['declared_prerequisites']['isolation_verified']['status'],'declared_unverified')
         self.assertTrue(all(row['status']=='unknown' for row in packet['checks'].values()))
@@ -199,6 +201,74 @@ class PolicyAuthorityTests(PublicCase,unittest.TestCase):
         self.assertEqual(policy.implementation_prerequisites(scope)['status'],'unknown')
         scope.end()
         self.assertIsNone(prerequisites.current())
+
+    def synthetic_scope(self,*,boundary='qualified',permission='qualified'):
+        """In-process synthetic producer facts; no kernel, provider or credential is used."""
+        baseline=self.root/('baseline-'+str(len(list(self.root.glob('baseline-*')))));baseline.mkdir()
+        scope=prerequisites._begin(baseline,'a'*64,time.monotonic()+30);self.addCleanup(scope.end)
+        scope.data['events'].append(dict(ordinal=0,role='executor',stage='role',complete=True,image_sha256='a'*64,
+            input_digests=dict(harness=scope.data['baseline_sha256']),boundary=dict(status=boundary),
+            permission=None if permission is None else dict(qualification=permission)))
+        scope.data['pairs'].append(dict(selected_paths=1));scope._save()
+        return scope
+
+    def certification_inputs(self):
+        spec=math_fixture.plan(n=1000,repeats=1)
+        return spec,dict(math_fixture.analyze(spec,math_fixture.records(spec)),oracle_validity='current')
+
+    def test_forged_isolation_boolean_has_no_effect_and_is_recorded_as_declared(self):
+        spec,analysis=self.certification_inputs()
+        others=dict(effective_runtime_verified=True,graders_audited=True,lineage_reviewed=True,certification_reserved=True)
+        baseline=policy.decide(spec,analysis,**others)
+        for forged in (True,1,'qualified',object()):
+            with self.subTest(forged=type(forged).__name__):
+                decision=policy.decide(spec,analysis,isolation_verified=forged,**others)
+                self.assertEqual((decision.status,decision.reason,decision.isolation,decision.automatic),
+                    (baseline.status,baseline.reason,'unknown',False))
+                self.assertEqual(decision.status,'blocked')
+                self.assertEqual(decision.declared_prerequisites['isolation_verified']['status'],'declared_unverified')
+        self.assertEqual(baseline.declared_prerequisites,{})
+        json.dumps(asdict(policy.decide(spec,analysis,isolation_verified=object(),**others)),allow_nan=False)
+
+    def test_lost_oversized_copied_or_unqualified_scope_gives_unknown_isolation(self):
+        spec,analysis=self.certification_inputs()
+        others=dict(isolation_verified=True,effective_runtime_verified=True,graders_audited=True,
+            lineage_reviewed=True,certification_reserved=True)
+        def assert_unknown(scope):
+            decision=policy.decide(spec,analysis,prerequisite_scope=scope,**others)
+            self.assertEqual((decision.status,decision.isolation),('blocked','unknown'))
+        oversized=self.synthetic_scope()
+        oversized.data['synthetic_padding']='x'*prerequisites.MAX_BYTES;oversized._save()
+        self.assertTrue(oversized.lost);self.assertIsNone(prerequisites._STATES[oversized][2])
+        assert_unknown(oversized);oversized.end()
+        lost=self.synthetic_scope();lost.cancel();assert_unknown(lost);lost.end()
+        live=self.synthetic_scope()
+        assert_unknown(copy(live));assert_unknown(policy.implementation_prerequisites(live))
+        assert_unknown(None);live.end();assert_unknown(live)
+        for options in (dict(boundary='unknown'),dict(permission='unknown'),dict(permission=None),dict(permission='violated')):
+            with self.subTest(**{key:str(value) for key,value in options.items()}):
+                scope=self.synthetic_scope(**options);assert_unknown(scope);scope.end()
+
+    def test_qualified_scope_satisfies_only_the_isolation_element(self):
+        spec,analysis=self.certification_inputs();scope=self.synthetic_scope()
+        packet=policy.implementation_prerequisites(scope)
+        self.assertEqual(policy.isolation_qualification(scope),'qualified')
+        alone=policy.decide(spec,analysis,prerequisite_scope=scope)
+        self.assertEqual((alone.status,alone.reason,alone.isolation),('blocked','certification_prerequisites_unverified','qualified'))
+        others=('effective_runtime_verified','graders_audited','lineage_reviewed','certification_reserved')
+        for missing in others:
+            with self.subTest(missing=missing):
+                decision=policy.decide(spec,analysis,prerequisite_scope=scope,**{name:name!=missing for name in others})
+                self.assertEqual((decision.status,decision.isolation),('blocked','qualified'))
+        for blocked in (dict(analysis,oracle_validity='unverified'),dict(analysis,status='incomplete')):
+            self.assertEqual(policy.decide(spec,blocked,prerequisite_scope=scope,**{name:True for name in others}).status,
+                'blocked' if blocked['status']!='incomplete' else 'incomplete')
+        smoke=replace(spec,profile='descriptive_smoke')
+        self.assertEqual(policy.decide(smoke,analysis,prerequisite_scope=scope,**{name:True for name in others}).status,'inconclusive')
+        decision=policy.decide(spec,analysis,prerequisite_scope=scope,**{name:True for name in others})
+        self.assertEqual((decision.status,decision.automatic),('recommended',False))
+        self.assertTrue(all(row['status']=='unverified' for row in packet['mandatory_certification'].values()))
+        self.assertFalse(packet['adoption_authority']);self.assertFalse(packet['automatic_promotion'])
 
     def test_known_private_profile_and_packet_cannot_be_relabelled_for_benchmark_export(self):
         from agent_harness_lab.evaluation.benchmark import public_export_allowed
@@ -277,6 +347,19 @@ class PublicControllerPrerequisiteTests(PublicCase,kernel.KernelFixture):
         foreign=prerequisites._begin(baseline,'a'*64,time.monotonic()+5)
         try:self.assertEqual(policy.implementation_prerequisites(old)['status'],'unknown')
         finally:foreign.end()
+
+    def test_actual_qualified_public_scope_satisfies_only_decide_isolation_element(self):
+        spec=math_fixture.plan(n=1000,repeats=1)
+        analysis=dict(math_fixture.analyze(spec,math_fixture.records(spec)),oracle_validity='current');decisions=[]
+        def consumer(scope,read):
+            packet=self.assert_observed(scope,read)
+            with patch.object(policy,'implementation_prerequisites',side_effect=read):
+                decisions.append(policy.decide(spec,analysis,prerequisite_scope=scope,isolation_verified=False))
+            return packet
+        result,_,_,_=self.run_public(consumer=consumer)
+        self.assertEqual(result['implementation_prerequisites']['restricted_process_protocol']['status'],'qualified')
+        self.assertEqual([(row.status,row.reason,row.isolation,row.automatic) for row in decisions],
+            [('blocked','certification_prerequisites_unverified','qualified',False)])
 
     def test_missing_completion_cannot_disappear_from_admitted_coverage(self):
         result,_,_,_=self.run_public(mode='pending')

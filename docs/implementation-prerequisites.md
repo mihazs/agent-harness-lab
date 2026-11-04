@@ -60,11 +60,47 @@ synthetic runs, and cannot be relabeled for public benchmark export.
 A positive implementation packet does not discharge the mandatory certification
 requirements. Whole-boundary isolation qualification, independent lineage,
 certification evidence and effective runtime/configuration identity remain
-unverified. Legacy `promotion.policy.decide` flags remain caller declarations for
-its recommendation-only API; they do not authenticate this packet. Automatic
-promotion and adoption authority remain false. Favorable improvement runs still
-leave the target unchanged and require independent certification. This milestone
-does not complete #7 or #77 or provide an eligibility issuer.
+unverified. Automatic promotion and adoption authority remain false. Favorable
+improvement runs still leave the target unchanged and require independent
+certification. This milestone does not complete #7 or #77 or provide an
+eligibility issuer.
+
+## Isolation element of `promotion.policy.decide`
+
+The recommendation-only `decide` API derives its isolation element from this
+packet instead of a caller boolean. Pass the live scope as
+`prerequisite_scope`; `decide` reads it through `implementation_prerequisites`
+and reports `isolation: qualified` only when all of these producer facts hold:
+
+- packet `status` is `observed` (every admitted dispatch completed);
+- `restricted_process_protocol.status` is `qualified`;
+- `permission_result_capture` is `qualified`, so the
+  `permission-results-v1` audit was requested and observed no violation;
+- `owned_dispatch_completion`, `checked_worker_rootfs` and
+  `fresh_grader_artifact_handoff` are all `verified`.
+
+Anything else reports `isolation: unknown`: no scope, an ended, cancelled,
+expired, copied or foreign scope, a dictionary packet, a scope lost to the
+256 KiB receipt bound, an incomplete dispatch, an unqualified startup protocol,
+or an unrequested, unknown or violated permission capture. An unknown isolation
+element blocks with the existing `certification_prerequisites_unverified` reason.
+
+The legacy `isolation_verified` keyword is accepted for call-site compatibility
+and is declaration-only. It is recorded under `declared_prerequisites` as
+`declared_unverified` and never satisfies the isolation element; `True` cannot
+assert isolation. Decisions can only become stricter: a call that previously
+relied on `isolation_verified=True` now blocks. The other `decide` inputs
+(effective runtime verification, grader audit, lineage review and certification
+reservation) and every earlier gate are unchanged, so a qualified scope satisfies
+the isolation element and nothing else. The `ahl experiment` CLI passes no scope
+and reports `isolation: unknown`.
+
+The isolation element consumes the restricted-process qualification of observed
+dispatches only. It is not whole-boundary role isolation: the packet's
+`mandatory_certification.role_isolation` stays `unverified`, and `decide` remains a
+recommendation that never sets automatic promotion. The documented human
+residual-risk sign-off for the sandbox boundary and the narrow inference broker
+or egress policy for agent credentials remain open in #7.
 
 Run `task test:promotion:prerequisites` for declaration, fake-backend and export
 controls. Run `task test:promotion:prerequisites:kernel` for the actual public CLI

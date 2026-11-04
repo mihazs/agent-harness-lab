@@ -38,7 +38,10 @@ oracle correction/invalidation and protected certification remain separate work.
   unknown. There is no optional stopping or task retry selection.
 - The promotion policy separates descriptive results, incomplete/blocked evidence,
   and a recommendation after verified prerequisites. It never sets automatic
-  promotion true. A recommendation API call is not an isolation attestation.
+  promotion true. A recommendation API call is not an isolation attestation:
+  its isolation element comes only from a live qualified
+  [implementation-prerequisite scope](implementation-prerequisites.md#isolation-element-of-promotionpolicydecide),
+  and the legacy `isolation_verified` keyword is a recorded declaration.
 - `TaskSpec` and bank validation freeze fixture/grader bundles, provenance,
   partitions, safety and artifact boundaries. Root leakage is always rejected;
   optional family/project/time separation and copied-fixture checks are enforced.

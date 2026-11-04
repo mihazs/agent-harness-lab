@@ -1,5 +1,5 @@
 """Fail-closed behavioral promotion. Implemented statistics are not certification."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -7,26 +7,41 @@ class PromotionDecision:
     status: str
     reason: str
     automatic: bool = False
+    isolation: str = 'unknown'
+    declared_prerequisites: dict = field(default_factory=dict)
 
 
-def decide(spec, analysis, *, isolation_verified=False, effective_runtime_verified=False,
+def isolation_qualification(scope=None):
+    """Derive the isolation element only from live owned producer facts, never from a caller."""
+    packet=implementation_prerequisites(scope);checks=packet['checks']
+    qualified=(packet['status']=='observed' and packet['restricted_process_protocol']['status']=='qualified'
+        and packet['permission_result_capture']=='qualified' and all(row['status']=='verified' for row in checks.values()))
+    return 'qualified' if qualified else 'unknown'
+
+
+def decide(spec, analysis, *, prerequisite_scope=None, isolation_verified=None, effective_runtime_verified=False,
            graders_audited=False, lineage_reviewed=False, certification_reserved=False):
+    """`isolation_verified` is a legacy declaration: it is recorded and never grants isolation."""
     spec.validate()
+    isolation=isolation_qualification(prerequisite_scope)
+    declared={} if isolation_verified is None else {'isolation_verified':dict(status='declared_unverified',
+        value=isolation_verified if type(isolation_verified) is bool else 'non_boolean')}
+    def result(status,reason):return PromotionDecision(status,reason,isolation=isolation,declared_prerequisites=declared)
     if analysis['status'] in ('rejected', 'blocked', 'incomplete'):
-        return PromotionDecision(analysis['status'], analysis.get('reason', 'invalid_evidence'))
-    if spec.sequential is not None:return PromotionDecision('blocked','conditional_sequential_cannot_certify')
+        return result(analysis['status'], analysis.get('reason', 'invalid_evidence'))
+    if spec.sequential is not None:return result('blocked','conditional_sequential_cannot_certify')
     if spec.cohort_manifest_sha256 is not None:
-        return PromotionDecision('blocked','preservation_promotion_integration_unavailable')
+        return result('blocked','preservation_promotion_integration_unavailable')
     if spec.profile != 'certification':
-        return PromotionDecision('inconclusive', 'descriptive_smoke_cannot_certify')
+        return result('inconclusive', 'descriptive_smoke_cannot_certify')
     if analysis.get('oracle_validity') != 'current':
-        return PromotionDecision('blocked', 'oracle_history_unverified_or_invalidated')
-    if not all((isolation_verified, effective_runtime_verified, graders_audited, lineage_reviewed, certification_reserved)):
-        return PromotionDecision('blocked', 'certification_prerequisites_unverified')
+        return result('blocked', 'oracle_history_unverified_or_invalidated')
+    if not all((isolation=='qualified', effective_runtime_verified, graders_audited, lineage_reviewed, certification_reserved)):
+        return result('blocked', 'certification_prerequisites_unverified')
     if analysis['status'] != 'supported':
-        return PromotionDecision('inconclusive', analysis.get('reason', 'uncertain'))
+        return result('inconclusive', analysis.get('reason', 'uncertain'))
     # Recommendation only until a controller integrates authenticated attestations.
-    return PromotionDecision('recommended', 'fixed_final_evidence_supports_declared_claim')
+    return result('recommended', 'fixed_final_evidence_supports_declared_claim')
 
 
 
