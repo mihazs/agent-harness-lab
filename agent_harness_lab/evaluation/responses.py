@@ -9,7 +9,12 @@ import secrets
 import subprocess
 import sys
 import time
+from weakref import WeakKeyDictionary
 from .integrity import read_regular, unique_object
+
+_CLIENT_PIDS = WeakKeyDictionary()
+_ROLE_SCOPES = WeakKeyDictionary()
+_REQUEST_CONTEXTS = WeakKeyDictionary()
 
 # Trusted controller child: its parent can terminate DNS/TLS/header reads at deadline.
 HTTP_CLIENT = r'''import base64,http.client,json,sys
@@ -205,6 +210,7 @@ def run_arguments(item):
 
 class Client:
     def __init__(self, settings, credential, deadline, *, transport=None, record=None):
+        _CLIENT_PIDS[self] = os.getpid()
         self.settings,self.credential,self.deadline = dict(settings),credential,deadline
         self.transport = request if transport is None else transport
         self.requests = self.tool_calls = 0
@@ -257,7 +263,7 @@ class Client:
                 decision='pending_validation',reserved=False,backend_invoked=False,worker_outcome='unobserved',**argument_fields))
 
     def report(self):
-        return dict(runtime='controller-responses-executor-v1',request_attempts=self.requests,tool_call_reservations=self.tool_calls,
+        value = dict(runtime='controller-responses-executor-v1',request_attempts=self.requests,tool_call_reservations=self.tool_calls,
             requested_model=self.settings['model'],effective_model_verified=False,provider_reported_usage=list(self.usage),
             request_bytes=self.request_bytes,response_bytes_observed=self.response_bytes,
             reserved_output_tokens=self.requests*self.settings['max_output_tokens'],
@@ -265,6 +271,8 @@ class Client:
             output_token_cap_scope='per_request; whole-run reservation ceiling is max_requests * max_output_tokens',
             request_pending=self.pending,further_requests_blocked=self.poisoned,
             automatic_promotion=False)
+        if self in _REQUEST_CONTEXTS: value['request_binding'] = deepcopy(_REQUEST_CONTEXTS[self])
+        return value
 
     def action_report(self,scope=None):
         return self.actions.report(scope)
@@ -277,6 +285,8 @@ class Client:
         self.checkpoint()
 
     def respond(self, history, deadline):
+        if _CLIENT_PIDS.get(self) != os.getpid():
+            raise ValueError('inference client requires its issuing process')
         from .comparison_custody import current
         comparison=current()
         if comparison is not None and comparison.active is not None:comparison.before_request(self)
@@ -321,6 +331,22 @@ class Client:
         self.poisoned = True
         self.pending = True
         self.actions.update(request_action,reserved=True,request_ordinal=self.requests)
+        scope = _ROLE_SCOPES.get(self)
+        if scope is not None:
+            pid,scope_id,role,trial_id = scope
+            if (pid != os.getpid() or self.actions.scope != scope_id
+                    or self.actions.current['role'] != role
+                    or self.actions.current['trial_id'] != self.actions.text(trial_id,256)['text']):
+                raise ValueError('actual inference role scope changed')
+            binding = dict(profile='controller-request-reservation-v1',scope_id=scope_id,role=role,
+                trial_id=self.actions.current['trial_id'],request_ordinal=self.requests,
+                publication_allowed=False,completion_authority=False)
+            from .comparison_custody import current
+            comparison = current()
+            if comparison is not None: binding['comparison'] = comparison.reservation(self,trial_id)
+            _REQUEST_CONTEXTS[self] = binding
+        else:
+            _REQUEST_CONTEXTS.pop(self,None)
         self.checkpoint()
         self.actions.update(request_action,transport_invoked=True)
         self.response_transport_invoked = True
@@ -396,14 +422,18 @@ class Client:
 
 
 def run_role(client, backend, workspace, inputs, role, instructions, prompt, deadline,*,trial_id=None,trajectory=None):
+    if _CLIENT_PIDS.get(client) != os.getpid() or client in _ROLE_SCOPES:
+        raise ValueError('fresh issuing-process role scope required')
     try:
         if role not in ('proposer','evaluator_author','executor'): raise ValueError('unsupported inference role')
         client.actions.begin(role,trial_id,trajectory=trajectory)
+        _ROLE_SCOPES[client] = (os.getpid(),client.actions.scope,role,trial_id)
         return _run_role(client,backend,workspace,inputs,role,instructions,prompt,deadline)
     except BaseException:
         client.abort()
         raise
     finally:
+        _ROLE_SCOPES.pop(client,None)
         if client.actions.trajectory is not None: client.actions.trajectory.close()
 
 
