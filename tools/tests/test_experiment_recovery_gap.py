@@ -7,6 +7,7 @@ import tempfile
 import time
 import unittest
 
+import agent_harness_lab
 from agent_harness_lab.evaluation import responses
 from agent_harness_lab.evaluation.comparison_custody import Comparison, bundle_binding, hashed
 from agent_harness_lab.evaluation.integrity import digest
@@ -18,6 +19,8 @@ import test_sandbox_kernel as kernel
 
 class RecoveryCheckpointTests(unittest.TestCase):
     def setUp(self):
+        expected=os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
+        if expected:self.assertTrue(Path(agent_harness_lab.__file__).resolve().is_relative_to(Path(expected).resolve()))
         folder = tempfile.TemporaryDirectory(); self.addCleanup(folder.cleanup)
         self.workspace = Path(folder.name)
         self.deadline = time.monotonic()+10
