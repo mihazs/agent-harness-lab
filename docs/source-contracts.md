@@ -1253,9 +1253,21 @@ becomes a `tombstone` revision for that ID. The tombstone records
 `deleted_or_unobservable` with `deletion_confirmed: false` and unknown
 provenance. These REST listings do not report deletion, so the reader never
 labels absence as deletion or distinguishes it from lost access.
-Tombstones are deterministic per native ID and window, so repeated absence adds
-no revision. Re-observing the ID records present revisions again; journal order
-is not a deletion chronology.
+
+Listings use numbered pages with a final count check, not a server snapshot. A
+deletion and a creation between page reads can keep the count unchanged. A comment
+that still exists can then shift onto an already-read page and be tombstoned. The
+final issue/PR readbacks catch only changes in their compared fields. This
+residual risk is one reason the label stays `deleted_or_unobservable`.
+
+Each tombstone binds the present revision it supersedes. Repeated absence after
+the same present revision reproduces the same tombstone and adds nothing. When a
+comment's latest committed state is a tombstone and the comment is listed again, it
+becomes a new present revision bound to that tombstone. That happens even when the
+body and `updated_at` are unchanged. A second identical reappearance reproduces that
+revision and adds nothing. Each absence or reappearance therefore appends one record
+per change of state. Journal order records the reader's observations, not a
+deletion chronology.
 
 No tombstone is inferred for comments created outside the window or with unknown
 creation time. None is inferred for IDs still listed outside the window or prior

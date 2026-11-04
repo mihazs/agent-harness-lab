@@ -561,21 +561,40 @@ class GitHubAPI:
             if related is not None: relations.add(('timeline_comment' if kind == 'commented' else 'timeline_review', key, related))
         return unmapped
 
-    def _absences(self, source, prior, observed, records, collected):
+    def _lineage(self, prior):
+        """Commit-ordered windowed comment revisions per native ID; empty without a window."""
+        lineage = {}
+        if self.selection.window is not None:
+            for record in prior:
+                if record.record_type in WINDOWED: lineage.setdefault(record.native_id_sha256, []).append(record)
+        return lineage
+
+    @staticmethod
+    def _reobserved(value, history):
+        """A listing after a tombstone is a new present revision bound to the tombstone it supersedes."""
+        if not history: return value
+        latest = history[-1]
+        if latest.state == 'tombstone': return dict(value, reobserved_after_sha256=latest.revision_sha256)
+        for record in history:
+            candidate = dict(value, reobserved_after_sha256=record.revision_sha256)
+            if record.state == 'tombstone' and digest(candidate) == latest.revision_sha256: return candidate
+        return value
+
+    def _absences(self, source, lineage, observed, records, collected):
         """Absence from a complete in-window listing is not deletion evidence."""
         absences = {}
-        if self.selection.window is None: return absences
-        for record in prior:
-            key = record.native_id_sha256
-            if (record.state != 'present' or record.record_type not in WINDOWED or key in observed or key in records
-                    or record.original_at is None or not self.selection.contains(record.original_at)):
-                continue
-            value = dict(kind=record.record_type, native_id_sha256=key, state='deleted_or_unobservable',
+        for key, history in lineage.items():
+            present = [r for r in history if r.state == 'present']
+            if not present or key in observed or key in records: continue
+            last = present[-1]
+            if last.original_at is None or not self.selection.contains(last.original_at): continue
+            value = dict(kind=last.record_type, native_id_sha256=key, state='deleted_or_unobservable',
                 basis='absent_from_complete_native_listing', deletion_confirmed=False,
+                supersedes_revision_sha256=last.revision_sha256,
                 window=dict(since=self.selection.since, until=self.selection.until, membership='created_at'))
             revision = digest(value)
             absences[key] = value, EvidenceRecord(source.source_key, key, revision, revision, 'contextual_assertion',
-                record.record_type, collected, original_at=record.original_at, provenance='unknown',
+                last.record_type, collected, original_at=last.original_at, provenance='unknown',
                 capture_completeness='partial', state='tombstone')
         return absences
 
@@ -583,10 +602,11 @@ class GitHubAPI:
         state = dict(requests=0, used=0,
             deadline=time.monotonic()+self.transport.seconds if self.transport.seconds is not None else None)
         records, nodes, relations, observed = {}, {}, set(), set()
-        collected = datetime.now(timezone.utc).isoformat()
+        collected, lineage = datetime.now(timezone.utc).isoformat(), self._lineage(prior)
         def emit(kind, native, node, original=None):
             key = digest((kind, self.selection.repo_id, native))
             value = dict(kind=kind, native_id_sha256=key, **node)
+            if kind in WINDOWED: value = self._reobserved(value, lineage.get(key))
             revision = digest(value)
             record = EvidenceRecord(source.source_key, key, revision, revision,
                 'contextual_assertion' if kind in ('github_issue', 'github_issue_comment', 'github_review_comment', 'github_review', 'github_review_thread', 'github_commit_comment', 'github_cross_reference') else 'development_artifact',
@@ -688,7 +708,7 @@ class GitHubAPI:
             if self._commit_detail(sha, state) != before: raise ValueError('GitHub commit details or comments changed during capture')
         if self._repository(self._get('', state)[0]) != repository: raise ValueError('GitHub repository changed during capture')
         present = dict(records)
-        absences = self._absences(source, prior, observed, records, collected)
+        absences = self._absences(source, lineage, observed, records, collected)
         records.update({key: record for key, (_, record) in absences.items()})
         summary = dict(schema_version=1, api_version=API_VERSION, source_identity='repository_id_checked',
             repository=repository, nodes=[nodes[k] for k in sorted(nodes)], relations=sorted(relations),

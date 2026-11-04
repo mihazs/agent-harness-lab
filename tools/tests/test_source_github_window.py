@@ -132,6 +132,39 @@ class GitHubWindowTests(GitHubFixture, unittest.TestCase):
         self.assertEqual(self.store.path.read_bytes(), original)
         self.assertEqual(self.tombstones(), [])
 
+    def states(self, number=701):
+        key = digest(('github_issue_comment', 42, number))
+        return [r.state for r in self.store.revisions(self.source) if r.native_id_sha256 == key]
+
+    def restore_conversation_comment(self):
+        self.routes['/issues/7/comments?per_page=100&page=1'] = [self.comment]
+        self.issue['comments'] = 1
+
+    def test_unchanged_comment_reappearing_after_a_tombstone_records_a_new_present_revision(self):
+        self.ingest()
+        self.delete_conversation_comment(); self.ingest()
+        self.restore_conversation_comment()
+        reappeared = self.ingest()
+        self.assertEqual(self.states(), ['present', 'tombstone', 'present'])
+        self.assertEqual(reappeared.imported, 1)  # only the reobserved comment; the issue revision already exists
+        key = digest(('github_issue_comment', 42, 701))
+        tombstone, present = [r for r in self.store.revisions(self.source) if r.native_id_sha256 == key][1:]
+        client = GitHubAPI(self.base, self.selection); client.read(self.source, prior=self.store.revisions(self.source))
+        node = next(n for n in client.summary['nodes'] if n['native_id_sha256'] == key)
+        self.assertEqual((node['reobserved_after_sha256'], digest(node)), (tombstone.revision_sha256, present.revision_sha256))
+        again = self.ingest()
+        self.assertEqual((again.imported, again.cursor_after_sha256), (0, reappeared.cursor_after_sha256))
+        self.assertEqual(self.states(), ['present', 'tombstone', 'present'])
+
+    def test_repeated_absence_and_reappearance_alternate_without_duplicating_identical_steps(self):
+        for present in (True, False, False, True, True, False, False, True):
+            if present: self.restore_conversation_comment()
+            else: self.delete_conversation_comment()
+            self.ingest()
+        self.assertEqual(self.states(), ['present', 'tombstone', 'present', 'tombstone', 'present'])
+        key = digest(('github_issue_comment', 42, 701))
+        self.assertEqual(len({r.revision_sha256 for r in self.store.revisions(self.source) if r.native_id_sha256 == key}), 5)
+
     def test_edited_comment_is_a_new_present_revision_not_a_tombstone(self):
         self.ingest()
         self.comment.update(body='SYNTHETIC_PRIVATE_EDITED', updated_at='2026-01-02T00:00:00Z')
