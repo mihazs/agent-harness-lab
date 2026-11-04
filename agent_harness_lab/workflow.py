@@ -610,6 +610,9 @@ All bundles and controls stay outside task fixtures; no grader command is execut
     if result.get('recommendation')=='candidate_requires_independent_certification':
         result['blocked_prerequisites']=[name for name,value in result['implementation_prerequisites']['mandatory_certification'].items()
             if value['status']!='verified']
+        if controlled and permission_audit is not None and result['implementation_prerequisites']['restricted_process_protocol']['status']!='qualified':
+            result.pop('recommendation',None)
+            result.update(status='blocked',reason='restricted_process_protocol_unqualified')
     result['automatic_promotion']=False
     write_json(output / 'workflow.json', result)
     return result

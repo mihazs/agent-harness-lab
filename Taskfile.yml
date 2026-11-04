@@ -569,6 +569,23 @@ tasks:
       AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_workflow_prerequisites.py" -v'
+  test:runtime:boundary:
+    desc: Verify bounded runtime startup transport and untrusted report rejection
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_runtime_boundary.py" -v'
+  test:runtime:boundary:kernel:
+    desc: Qualify actual four-role runtime facts and reject missing startup capture
+    cmds:
+      - task: test:promotion:prerequisites:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          KERNEL_TEST_FILTER: runtime_boundary
   test:promotion:prerequisites:kernel:
     desc: Verify live public workflow implementation-prerequisite custody
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'

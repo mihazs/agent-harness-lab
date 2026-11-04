@@ -69,7 +69,7 @@ class SandboxBackend:
         workspace = Path(workspace).resolve()
         command = [self.binary, '--unshare-all', '--unshare-user', '--unshare-net', '--die-with-parent',
                    '--new-session', '--cap-drop', 'ALL', '--clearenv', '--setenv', 'PATH', '/usr/bin:/bin',
-                   '--setenv', 'HOME', '/home/worker', '--setenv', 'LANG', 'C.UTF-8']
+                   '--setenv', 'HOME', '/home/worker', '--setenv', 'LANG', 'C.UTF-8', '--setenv', 'PWD', '/work']
         command += ['--setenv', 'AHL_SANDBOX_ROLE', role]
         if self.permission_audit:
             command += ['--setenv','PYTHONDONTWRITEBYTECODE','1']
@@ -189,7 +189,7 @@ class SandboxBackend:
         aggregate = replace(limits, memory_bytes=min(limits.memory_bytes, self.disk_bytes)) if self.disk_bytes is not None else limits
         boundary = Cgroup(self.cgroup_root, aggregate, start+limits.seconds) if self.cgroup_root is not None else nullcontext(None)
         storage = PrivateWorkspace(self, workspace, inputs, role, argv, self.disk_bytes,
-            start+limits.seconds, artifact_allowlist if artifact_allowlist is not None else [], working_state) if self.disk_bytes is not None else nullcontext(None)
+            start+limits.seconds, artifact_allowlist if artifact_allowlist is not None else [], working_state,limits=limits) if self.disk_bytes is not None else nullcontext(None)
         storage_report = None
         audit_report=dict(status='not_requested',qualification='unknown',observation_scope='unobserved')
         with storage as scratch:

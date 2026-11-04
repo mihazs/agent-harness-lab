@@ -5,6 +5,10 @@ actual owned worker dispatches. The existing runtime image, cgroup and private
 disk requirements still apply. `--permission-audit permission-results-v1` remains
 optional. Cooperative/native-agent preparation does not acquire these facts.
 
+Audited runs also consume the live [restricted-process startup protocol](runtime-boundary.md)
+and block a favorable recommendation when its actual facts are unavailable or
+different. A qualified protocol leaves full mandatory certification unverified.
+
 The private `implementation_prerequisites` packet is versioned as
 `ahl-implementation-prerequisites-v1`. It distinguishes these observations:
 
