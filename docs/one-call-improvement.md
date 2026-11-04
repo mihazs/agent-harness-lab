@@ -1,5 +1,28 @@
 # One-call improvement: supported paths
 
+Change plans retain their existing schema and operation fields. Both supported
+producers also emit an immutable `harness_change_plan` with profile
+`ahl-harness-change-plan-v1`; `plan_sha256` identifies its canonical JSON. The
+workflow receipt and structural application journal carry that same identity.
+The contract records complete before/after file membership, hashes and modes,
+including creation, removal and mode-only changes. Declared surface facets flag
+executable skill files as requiring a hook contract; activation remains unknown.
+
+Project, configuration, runtime, policy, analysis and evidence revisions are
+private hash references. Diagnosis, falsifiers, dependencies and affected controls
+are also bound by digest. These references describe producer inputs and confer no
+authorization or certification. Empty operations and unresolved executable facets
+are explicit; deferred surfaces remain deferred. No raw instructions or credentials
+are embedded. Plan documents and identities are excluded from public exports.
+
+Structural application rechecks frozen inventories and current configuration,
+preserves unrelated changes, and uses the existing guarded journal and rollback.
+If any changed operation has an unresolved executable or hook facet, the entire
+repair batch is blocked before journal preparation. Its plan remains reviewable;
+no nonexecutable subset is applied and all target bytes and modes are preserved.
+Behavioral plans remain review-only with their actual certification prerequisite;
+the shared contract adds no application command or new eligible repair.
+
 `ahl improve .` collects scoped evidence, prepares candidate and independent
 evaluation sessions, freezes inputs, executes paired tasks and writes a local
 `workflow.json`. A favorable behavioral comparison now also writes a versioned
