@@ -520,9 +520,114 @@ file guards, revision mapping, identity wrapping and graph assembly with Codex.
 `task test:sources:native:compat BASELINE=FROZEN_CHECKOUT` compares both Codex preview
 contracts, including metadata/graph/checkpoint hashes, against an explicitly
 selected baseline. Ordinary test runs skip this optional frozen-baseline check.
-Native hooks/configuration are never executed. Broader Claude roots, sidecar
-relationships, incremental byte cursors, live wire validation and cross-source
-execution joins remain open in #42/#44/#58.
+Native hooks/configuration are never executed. Sidecar relationships, incremental
+byte cursors, live wire validation and cross-source execution joins remain open in
+#42/#44/#58; bounded project-root selection is the separate profile below.
+
+### Explicit bounded Claude project-root journal
+
+The separate `local_file/claude-jsonl/2.1.316-v2` profile mirrors the Codex root
+profile for Claude's per-project session directories. Its private selection JSON
+uses exactly these fields:
+
+```json
+{
+  "schema_version": 1,
+  "project": "project",
+  "source_roots": ["claude/projects", "archive/projects"],
+  "session": null,
+  "max_files": 100,
+  "max_scan_files": 2000,
+  "max_records": 10000
+}
+```
+
+Each `source_roots` entry is a non-overlapping, existing, normalized relative
+directory under the declaration directory that has the layout of a Claude
+`projects` directory; there is no home, `CLAUDE_CONFIG_DIR` or account discovery.
+`session` is `null` or one exact native session UUID; `scope_sha256` is
+`digest(selection)` and the mapping version is `claude-native-root-journal-v1`.
+
+**Established from the pinned wire reference.** Directory naming follows the
+[SDK 0.2.176 session reader](https://github.com/anthropics/claude-agent-sdk-python/blob/2146f9d8985513053e904b13200c8f744b36785a/src/claude_agent_sdk/_internal/sessions.py)
+(`_sanitize_path`, `_find_project_dir`, `_resolve_subagents_dir`): every
+character outside `[a-zA-Z0-9]` of the NFC project path becomes `-`; names over
+200 characters are truncated and suffixed with `-` plus a 32-bit base-36 hash.
+Because the CLI and SDK hashes can differ, truncated names also select sibling
+directories that share the 200-character prefix, as the reader does. A session is
+`<project-dir>/<session-uuid>.jsonl`; subagent transcripts are
+`<project-dir>/<session-uuid>/subagents/**/agent-*.jsonl`. Anthropic does not
+document this layout as a stable public contract: it is the pinned reader's
+observed schema, and synthetic fixtures (not a live CLI) validate the mapping.
+Project paths containing characters outside the Basic Multilingual Plane are
+rejected because JavaScript sanitizes UTF-16 code units and that mapping is not
+established here.
+
+**Scope.** Only the mapped directories inside the selected roots are listed and
+read. For a project name of at most 200 sanitized characters, no other project's
+directory is opened. For a truncated name, the root's directory names are listed
+and every sibling sharing the 200-character prefix is selected, listed and
+header-read like the exact directory; a different project's files there are then
+rejected by record scope, not by name. Without a session, a mapped directory is
+listed once without recursion: top-level `<uuid>.jsonl` files are candidates, and
+only `<uuid>/subagents` directories are descended. With a selected session only
+its main file and its `subagents` directory are inspected. Each `subagents` tree
+is bounded to 64 directory levels below `subagents` and 10,000 visited entries of
+any kind; reaching either bound stops that tree, records an `unknown` receipt with
+reason `subagent_tree_limit` and reached limit `subagent_tree`, and blocks the
+checkpoint. Links, hard-linked and special files are skipped without being
+followed and counted as unsafe entries.
+
+Names narrow the scan and must agree with the records; they never establish
+identity alone. Each candidate is read only up to its first attributable
+envelope, whose explicit `version`, `cwd` and `sessionId` decide admission.
+Sanitization is lossy, so a colliding project's file in the same directory is
+rejected as `foreign_project`. A top-level `<uuid>.jsonl` must carry that
+`sessionId` with `isSidechain: false`; a `<uuid>/subagents/**/agent-<id>.jsonl`
+must carry parent `sessionId` `<uuid>`, `isSidechain: true` and `agentId` `<id>`,
+the filename mapping the pinned reader documents. Any disagreement yields an
+`unknown` receipt with reason `native_location_mismatch` and blocks the checkpoint.
+
+**Merge rules.** Claude publishes no archive directory. An archived or backup copy
+is declared as another selected root with the same layout. Accepted files are
+grouped by native session and writer (`isSidechain`, `agentId`, `teamName`) and
+replayed through one v1 projection per group, so identical copies and overlapping
+prefixes deduplicate by native UUID, response usage/stop facets are computed once
+over the merged group, and incompatible approved metadata or raw revisions for one
+UUID reject the entire batch. Moving a file between roots or directories preserves
+native record identity and history. Main and subagent writers remain distinct
+cases; sidechain owners, parent sessions, task roots and independence stay
+unknown exactly as in the file profile, and parent pointers are never traversed.
+
+**Coverage receipts.** `native_summary.receipts` lists one fingerprinted receipt
+per examined `.jsonl` file with status `accepted`, `rejected` or `unknown` and a
+reason: `scoped_native_records`, `partial_native_tail`, `foreign_project`,
+`native_location_mismatch`, `native_scope_unavailable` (no attributable envelope,
+such as metadata-only files), `unsupported_native_version`,
+`unsupported_native_envelope`, `invalid_native_record`, `partial_native_scope`,
+`unrecognized_native_layout`, `subagent_tree_limit` or `not_read_after_file_limit`. `native_summary.files` carries each accepted file's
+SHA-256, input records, partial tail, duplicates and unsupported counts;
+`discovery` counts selected and missing project directories, scanned, header-read,
+accepted, rejected and unknown files, unsafe entries, filesystem entries, bytes and
+reached limits. Paths, native IDs and bodies stay out of summaries.
+
+**Admission.** Optional `max_files`, `max_scan_files` and `max_records` bound the
+run as in the Codex root profile; omission or `null` means unlimited, and coverage
+declares the selected record/file limits and counts without an aggregate byte
+bound. Top-level directory listings have no implicit entry ceiling; `max_scan_files`
+counts recognized candidates only. Preview reports `checkpoint_ready: false` for a
+partial tail, reached file/scan/subagent-tree limit, unattributable, unsupported or
+mislocated candidate, skipped unsafe entry or empty accepted scan; such previews cannot import or recheck. Unrecognized-layout
+files are reported as `unknown` but not read, and do not block admission. Unknown
+receipts never become accepted captures or failure labels. Hard resource errors,
+conflicting claims and changes to selected files, scanned directories or the
+descriptor reject the operation. Recheck uses the same exact built-in reader.
+
+**Not established.** Git worktree aggregation, `CLAUDE_CONFIG_DIR`/home
+resolution, session files outside the documented layout (not descended), `history.jsonl`, sidecar
+or subagent parent resolution, compressed or relocated histories, incremental byte
+cursors, `ahl analyze --source-root` for Claude, live CLI wire validation and
+cross-source execution joins remain open in #42/#44/#58.
 
 ## Offline Git and selected harness metadata
 

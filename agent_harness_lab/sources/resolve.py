@@ -3,7 +3,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from .github_config import GitHubConfigured
 from .git import GitExport
-from .claude import ClaudeCapture, SOURCE_VERSION as CLAUDE_VERSION
+from .claude import ClaudeCapture, SOURCE_VERSION as CLAUDE_VERSION, ROOT_VERSION as CLAUDE_ROOT_VERSION
 from .codex import CodexCapture, SOURCE_VERSION as CODEX_VERSION, ROOT_VERSION as CODEX_ROOT_VERSION
 from .graph import EvidenceGraph, STATUSES
 from .schema import digest
@@ -42,7 +42,7 @@ def recheck_codex(source, connector, proposed):
 
 
 def recheck_claude(source, connector, proposed):
-    return _native_recheck(source, connector, proposed, ClaudeCapture, 'claude-jsonl', (CLAUDE_VERSION,), 'claude')
+    return _native_recheck(source, connector, proposed, ClaudeCapture, 'claude-jsonl', (CLAUDE_VERSION, CLAUDE_ROOT_VERSION), 'claude')
 
 
 def _native_recheck(source, connector, proposed, reader, provider, versions, runtime):
