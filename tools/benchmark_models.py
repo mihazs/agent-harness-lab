@@ -147,13 +147,17 @@ def model_predict(method, rows, model_path=None, revision=None, question=None, b
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('input', type=Path)
-    parser.add_argument('--method', choices=('baseline', 'tfidf', 'embeddings', 'nli'), required=True)
-    parser.add_argument('--model-path', type=Path)
-    parser.add_argument('--revision')
-    parser.add_argument('--question')
-    parser.add_argument('--batch-size', type=int, default=8)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='Prints a JSON report with split metrics, abstentions and per-example predictions; treat it as private.\n'
+        'Baseline uses only the standard library; other methods require optional ML packages.\n'
+        'No downloads, remote model code or input edits. Exit 0: report printed; 2: invalid input/dependency.\n'
+        'Example: ahl benchmark examples.jsonl --method baseline > /tmp/ahl-benchmark.json')
+    parser.add_argument('input', type=Path, help='Existing JSONL examples: root_case_id, split and text; optional boolean label/project, roots must not cross splits')
+    parser.add_argument('--method', choices=('baseline', 'tfidf', 'embeddings', 'nli'), required=True, help='Classifier: training-label prevalence, TF-IDF logistic regression, local embeddings, or local NLI entailment')
+    parser.add_argument('--model-path', type=Path, help='Existing local model directory, required for embeddings/nli; models are never downloaded')
+    parser.add_argument('--revision', help='Optional local model revision passed to embeddings/nli loaders and recorded in the JSON report')
+    parser.add_argument('--question', help='Atomic hypothesis for NLI entailment; required with --method nli')
+    parser.add_argument('--batch-size', type=int, default=8, help='Positive number of examples per embeddings/NLI batch (default: %(default)s)')
     args = parser.parse_args()
     try:
         if args.batch_size <= 0:

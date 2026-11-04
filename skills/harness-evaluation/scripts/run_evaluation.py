@@ -729,24 +729,34 @@ def _evaluate(args):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='Requires a JSON task manifest and separate existing baseline/candidate harness directories.\n'
+        'Creates a NEW private directory with trial workspaces, artifact grades and results.json; checks input digests afterward.\n'
+        'Codex/Claude inherit their configured authentication and permissions; offline/Responses require supported Linux isolation.\n'
+        'Read results.json for machine output; passing trials never authorize promotion. Exit 0: passing trials or supported/rejected sequential decision;\n'
+        '1: failed/incomplete execution; 2: setup/input error; 3: blocked/inconclusive sequential analysis.\n'
+        'Example: ahl evaluate --manifest tasks.json --baseline baseline --candidate candidate --output /tmp/ahl-evaluation')
     for name in ('manifest', 'baseline', 'candidate', 'output'):
-        parser.add_argument('--' + name, required=True)
-    parser.add_argument('--config', help='Explicit project configuration; restricts bank, harness scope, runtime and resource caps')
+        parser.add_argument('--' + name, required=True, help={
+            'manifest':'Existing JSON task manifest with tasks and fixture/grader references resolved relative to its directory',
+            'baseline':'Existing baseline harness directory; its exact file-tree digest is recorded and checked after execution',
+            'candidate':'Existing candidate harness directory to compare against baseline under the same task manifest',
+            'output':'New private results directory; must not already exist, trial workspaces and results.json are written here'}[name])
+    parser.add_argument('--config', help='Existing ahl.json restricting bank, harness scope, cooperative runtime and caps; not supported with Responses execution')
     parser.add_argument('--agent', choices=('codex', 'claude', 'offline', 'responses'), default='codex',
-                        help='offline executes explicit fixture commands without model inference and requires bubblewrap')
-    parser.add_argument('--codex', default='codex', help='Codex executable path')
-    parser.add_argument('--claude', default='claude', help='Claude Code executable path')
-    parser.add_argument('--sandbox-graders', action='store_true', help='Require fresh offline frozen artifact graders for cooperative CLI trials')
-    parser.add_argument('--inference-settings', type=Path, help='Explicit private settings/key-file and caps for the controller Responses executor')
-    parser.add_argument('--cgroup-root', type=Path, help='Explicit predelegated cgroup v2 subtree for offline execution or sandboxed grader resources')
-    parser.add_argument('--image-root', type=Path, help='Explicit private extracted runtime rootfs for offline execution or sandboxed grading')
-    parser.add_argument('--image-sha256', help='Preapproved rootfs content pin; required with --image-root')
-    parser.add_argument('--permission-audit',choices=('permission-results-v1',),help='Require observed Linux x86_64 permission-result qualification for all offline roles')
-    parser.add_argument('--disk-bytes', type=int, help='Aggregate tmpfs data capacity for offline roles or sandboxed graders; requires --cgroup-root')
-    parser.add_argument('--source-cache', type=Path, help='Explicit private journal for live controller observations')
-    parser.add_argument('--source-project-sha256', help='Expected declared project fingerprint for the controller source')
-    parser.add_argument('--source-scope-sha256', help='Expected declared source scope fingerprint; requires --source-cache')
+                        help='Executor: cooperative codex/claude, Linux offline fixture commands without inference, or controlled responses (default: %(default)s)')
+    parser.add_argument('--codex', default='codex', help='Codex executable name/path for --agent codex (default: %(default)s)')
+    parser.add_argument('--claude', default='claude', help='Claude Code executable name/path for --agent claude (default: %(default)s)')
+    parser.add_argument('--sandbox-graders', action='store_true', help='Require fresh offline frozen artifact graders for cooperative codex/claude trials; does not isolate the agent CLI')
+    parser.add_argument('--inference-settings', type=Path, help='Existing private Responses settings JSON referencing a credential file and shared request/tool caps; required only with --agent responses')
+    parser.add_argument('--cgroup-root', type=Path, help='Existing delegated cgroup v2 subtree for isolated roles/graders; required with --agent responses')
+    parser.add_argument('--image-root', type=Path, help='Existing extracted read-only runtime rootfs for isolated roles/graders; supply --image-sha256 with it')
+    parser.add_argument('--image-sha256', help='Expected SHA-256 content pin for --image-root; root and pin must be supplied together')
+    parser.add_argument('--permission-audit',choices=('permission-results-v1',),help='Require observed Linux x86_64 permission-result qualification for offline/Responses roles; unavailable for cooperative CLIs')
+    parser.add_argument('--disk-bytes', type=int, help='Tmpfs data capacity in bytes for isolated roles/graders; requires --cgroup-root and is mandatory for Responses')
+    parser.add_argument('--source-cache', type=Path, help='Private live-controller source journal outside all run inputs/output; requires both expected source hashes and pinned offline/Responses execution')
+    parser.add_argument('--source-project-sha256', help='Expected declared project SHA-256 fingerprint; supply with --source-cache and --source-scope-sha256')
+    parser.add_argument('--source-scope-sha256', help='Expected declared source-scope SHA-256 fingerprint; supply with --source-cache and --source-project-sha256')
     args = parser.parse_args()
     try:
         return evaluate(args)

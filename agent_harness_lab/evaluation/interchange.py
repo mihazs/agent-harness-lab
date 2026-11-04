@@ -298,10 +298,13 @@ def import_local(mapping_path, source_path, output, *, registry_path=None):
 
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(prog='ahl bank-interchange',description=__doc__)
-    parser.add_argument('operation',choices=('inspect','import'))
-    for name in ('mapping','source'): parser.add_argument('--'+name,type=Path,required=True)
-    parser.add_argument('--registry',type=Path); parser.add_argument('--output',type=Path)
+    parser=argparse.ArgumentParser(prog='ahl bank-interchange',description='Inspect or import explicitly reviewed local foreign evaluation data using a versioned mapping JSON. Imported scores remain observations, never executable grades, independence proof or certified bank admission.',epilog='Examples: ahl bank-interchange inspect --mapping mapping.json --source samples.jsonl; ahl bank-interchange import --mapping mapping.json --source samples.jsonl --output /private/new-import. JSON stdout; exit 0 completed, 2 rejected input. No providers, registry code or model packages are executed.')
+    parser.add_argument('operation',choices=('inspect','import'),help='inspect validates and reports without writing; import additionally creates a new private data/proposal directory')
+    for name in ('mapping','source'): parser.add_argument('--'+name,type=Path,required=True,help={
+        'mapping':'Existing schema-1 reviewed mapping JSON declaring format, exact source digest/license, runtime provenance and item boundaries',
+        'source':'Existing local data file in the mapping-declared format; exact bytes must match the declared source SHA-256'}[name])
+    parser.add_argument('--registry',type=Path,help='Existing data-only registry JSON required for the selected OpenAI Evals mapping; never imports Python registry classes')
+    parser.add_argument('--output',type=Path,help='New private output directory, required only for import and rejected for inspect; must not already exist')
     args=parser.parse_args(argv)
     try:
         if (args.operation=='import')!=(args.output is not None): raise ValueError('only import requires a new private output')

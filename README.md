@@ -55,6 +55,8 @@ ahl improve .
 This may incur model costs. It writes private run artifacts and reports the result;
 current CLI behavioral candidates remain recommendations. Use `ahl improve --help`
 for runtime selection and budgets, and [workflows](docs/workflows.md) for details.
+See [CLI help for agents and automation](docs/cli-help.md) for safe discovery,
+input/output conventions and nested command help.
 
 Already working inside an agent session? Invoke the installed
 `harness-self-improvement` skill and ask it to improve this project's harness.

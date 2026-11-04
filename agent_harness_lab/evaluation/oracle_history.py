@@ -780,35 +780,46 @@ class HistoryStore(PrivateJournal):
 def main(argv=None):
     import argparse
     from .cli import pinned_arguments
-    parser = argparse.ArgumentParser(prog='ahl experiment-history',description=__doc__)
-    parser.add_argument('--store',type=Path,required=True,help='Explicit private controller history')
-    actions = parser.add_subparsers(dest='action',required=True)
-    run = actions.add_parser('run',help='Execute a fresh full pinned offline comparison; never import results')
-    reserve = actions.add_parser('reserve-access',help='Reserve an unqualified one-shot protected diagnostic comparison')
+    parser = argparse.ArgumentParser(prog='ahl experiment-history',description='Execute and inspect private controller-owned comparisons with exact manifest, snapshot, oracle and history bindings. Historical records never authorize a fresh run; quarantine revokes dependent comparisons.',epilog='Example: ahl experiment-history --store /private/history show --run RUN_SHA256. Put --store before the action. JSON stdout; exits: 0 completed/current, 1 incomplete execution, 2 invalid private input, 3 busy/invalidated/descriptive-only. Run/derive actions create private history; derive uses explicitly configured inference.')
+    parser.add_argument('--store',type=Path,required=True,help='Explicit owner-only private HistoryStore directory containing comparisons, snapshots, reservations and oracle state')
+    actions = parser.add_subparsers(dest='action',required=True,help='Select a controller-history operation; use ACTION --help for its exact IDs, inputs and execution profile')
+    run = actions.add_parser('run',help='Execute a fresh full pinned offline comparison; never import results',description='Freeze and execute the complete declared comparison in pinned offline workers, then record actual controller/oracle evidence. An optional reservation is consumed once; supplied result JSON cannot replace execution.',epilog='Prints JSON: exit 0 sealed/current, 1 incomplete execution, 2 invalid input, 3 invalidated/busy. The selected store retains private worker results and snapshots; successful execution does not grant promotion.')
+    reserve = actions.add_parser('reserve-access',help='Reserve an unqualified one-shot protected diagnostic comparison',description='Bind the exact manifest and baseline/candidate inputs to a private one-use protected diagnostic reservation. This writes retirement state but does not execute a comparison or establish certification.',epilog='Prints JSON with the reservation ID. Exit 0 reserved, 2 invalid input, 3 busy. The exact reservation may be supplied once to run --access-reservation.')
     for command in (run,reserve):
         for name in ('manifest','baseline','candidate'):
-            command.add_argument('--'+name,type=Path,required=True)
-    reserve.add_argument('--budget-seconds',type=float,default=60)
-    status = actions.add_parser('access-status',help='Inspect private reservation retirement without inferring worker access')
-    status.add_argument('--reservation-id',required=True)
-    derive = actions.add_parser('derive-variants',help='Explicit owned development variants; no independence or certification')
+            command.add_argument('--'+name,type=Path,required=True,help={
+                'manifest':'Existing evaluation manifest JSON with tasks, frozen fixtures/grader bundles and declared experiment',
+                'baseline':'Existing immutable baseline harness snapshot directory; exact bytes and modes are bound',
+                'candidate':'Existing immutable candidate harness snapshot directory matched to --baseline'}[name])
+    reserve.add_argument('--budget-seconds',type=float,default=60,help='Reservation preparation deadline in seconds (default: %(default)s); does not run workers')
+    status = actions.add_parser('access-status',help='Inspect private reservation retirement without inferring worker access',description='Read the recorded state of an exact private access reservation. A reservation/status report does not prove worker access or authorize reuse. Prints JSON; exit 0 observed, 2 invalid input, 3 busy.')
+    status.add_argument('--reservation-id',required=True,help='Exact reservation SHA-256 returned by reserve-access in this history store')
+    derive = actions.add_parser('derive-variants',help='Explicit owned development variants; no independence or certification',description='Generate owned development variants from one completed source run or derivation using explicitly configured controlled inference. Writes a new private output and custody history; never promotes descendants to independent certification.',epilog='Prints private JSON metadata; exit 0 completed, 2 invalid input, 3 busy. Select exactly one source; the pinned worker profile and explicit inference settings are required. Inspect derivation-status before any further authorized work.')
     sources=derive.add_mutually_exclusive_group(required=True)
-    sources.add_argument('--source-run'); sources.add_argument('--source-derivation')
-    derive.add_argument('--task',action='append',dest='task_ids')
-    derive.add_argument('--output',type=Path,required=True); derive.add_argument('--inference-settings',type=Path,required=True)
+    sources.add_argument('--source-run',help='Exact completed source-run ID in this store; mutually exclusive with --source-derivation')
+    sources.add_argument('--source-derivation',help='Exact completed owned derivation ID in this store; mutually exclusive with --source-run')
+    derive.add_argument('--task',action='append',dest='task_ids',help='Select a source task ID; repeat for multiple tasks (default: all eligible source tasks)')
+    derive.add_argument('--output',type=Path,required=True,help='New private directory for owned development variants; must not already exist')
+    derive.add_argument('--inference-settings',type=Path,required=True,help='Existing controlled Responses settings JSON with explicit credential-file reference and request/tool caps; inference occurs only for this requested derivation')
     pinned_arguments(derive)
-    derive_status=actions.add_parser('derivation-status',help='Read actual private owned construction custody')
-    derive_status.add_argument('--derivation-id',required=True)
+    derive_status=actions.add_parser('derivation-status',help='Read actual private owned construction custody',description='Read recorded owned derivation custody and completion from this controller store; does not resume generation or mint a new request. Prints JSON; exit 0 observed, 2 invalid input, 3 busy.')
+    derive_status.add_argument('--derivation-id',required=True,help='Exact owned derivation SHA-256 returned by derive-variants')
     run.add_argument('--access-reservation',help='Actual controller-owned protected diagnostic reservation ID')
     pinned_arguments(run)
     for name in ('show','analyze','historical-plan','decision','verify-decision'):
-        command = actions.add_parser(name)
-        command.add_argument('--run',dest='run_id',required=True)
-        if name=='verify-decision': command.add_argument('--receipt-sha256',required=True)
-    oracle = actions.add_parser('oracle',help='Read an observed bundle registration and current CAS identity')
-    oracle.add_argument('--bundle',required=True)
-    quarantine = actions.add_parser('quarantine',help='Revoke a known bundle across all dependent comparisons')
-    quarantine.add_argument('--record',type=Path,required=True)
+        descriptions={
+            'show':'Read recorded run state, frozen inputs and current oracle validity without executing workers',
+            'analyze':'Recompute analysis from a sealed controller run; descriptive output never grants promotion',
+            'historical-plan':'Read the frozen plan as historical evidence; never substitute it for fresh runtime bindings',
+            'decision':'Produce a private decision receipt from current controller evidence; automatic promotion remains gated',
+            'verify-decision':'Verify the exact saved decision receipt against current controller inputs and oracle state'}
+        command = actions.add_parser(name,help=descriptions[name],description=descriptions[name],epilog='Prints private JSON metadata. analyze and decision deliberately exit 3 because reports do not grant promotion; other completed reads/verifications exit 0. Exit 2 rejects input; 3 also covers a busy controller.')
+        command.add_argument('--run',dest='run_id',required=True,help='Exact controller run SHA-256 already recorded in this --store')
+        if name=='verify-decision': command.add_argument('--receipt-sha256',required=True,help='Exact saved decision-receipt SHA-256 to verify; a caller-supplied label cannot issue authority')
+    oracle = actions.add_parser('oracle',help='Read an observed bundle registration and current CAS identity',description='Inspect the current content-addressed registration and validity of a grader bundle already observed by this controller; never approves an arbitrary oracle. Prints JSON; exit 0 observed, 2 invalid input, 3 busy.')
+    oracle.add_argument('--bundle',required=True,help='Exact grader-bundle SHA-256 recorded by a controller run in this store')
+    quarantine = actions.add_parser('quarantine',help='Revoke a known bundle across all dependent comparisons',description='Append a monotone quarantine event for a known grader bundle and invalidate dependent controller comparisons. Evidence history is retained; this command does not repair or rerun results. Prints JSON; exit 0 recorded, 2 invalid input, 3 busy.')
+    quarantine.add_argument('--record',type=Path,required=True,help='Existing schema-1 quarantine JSON binding bundle_sha256, expected_event_sha256, operator provenance, evidence_refs and reason; permanently invalidates dependents')
     args = parser.parse_args(argv)
     try:
         store = HistoryStore(args.store)

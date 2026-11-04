@@ -185,13 +185,19 @@ def _install_locked(archive, archive_hash, root, bin_dir, skill_dirs):
 
 
 def main(argv=None, *, skill_dirs=None):
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--version', default='latest', help='Release version, e.g. 0.2.0 (default: latest)')
-    parser.add_argument('--root', type=Path, default=Path.home() / '.local/share/agent-harness-lab')
-    parser.add_argument('--bin-dir', type=Path, default=Path.home() / '.local/bin')
-    parser.add_argument('--agent', choices=('codex', 'claude', 'both'), default='both')
-    parser.add_argument('--archive', type=Path, help='Install a previously downloaded release archive')
-    parser.add_argument('--checksums', type=Path, help='SHA256SUMS accompanying --archive')
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='Requires Python 3.11+. Downloads release metadata/assets over HTTPS unless --archive and --checksums are supplied.\n'
+        'Checks the archive SHA-256 against SHA256SUMS; obtain both files from a trusted release source.\n'
+        'Writes a versioned installation, ahl launcher, selected global skill links and a private installation receipt.\n'
+        'Replaced links/directories are backed up; prints installation paths and shell PATH guidance.\n'
+        'Exit 0: installed; 2: invalid arguments, download or installation error.\n'
+        'Examples: python install.py --agent codex; python install.py --archive release.tar.gz --checksums SHA256SUMS')
+    parser.add_argument('--version', default='latest', help='Release version to download when --archive is omitted, with optional v prefix (default: %(default)s)')
+    parser.add_argument('--root', type=Path, default=Path.home() / '.local/share/agent-harness-lab', help='Installation root for versioned releases, backups and receipt (default: ~/.local/share/agent-harness-lab)')
+    parser.add_argument('--bin-dir', type=Path, default=Path.home() / '.local/bin', help='Directory for the ahl launcher symlink; add it to PATH (default: ~/.local/bin)')
+    parser.add_argument('--agent', choices=('codex', 'claude', 'both'), default='both', help='Global skill-link targets: ~/.agents/skills for codex, ~/.claude/skills for claude (default: %(default)s)')
+    parser.add_argument('--archive', type=Path, help='Existing local release .tar.gz for offline installation; requires matching --checksums and skips downloads')
+    parser.add_argument('--checksums', type=Path, help='Existing SHA256SUMS containing the exact --archive filename and digest; required together with --archive')
     args = parser.parse_args(argv)
     if sys.version_info < (3, 11):
         parser.error('Python 3.11+ is required')

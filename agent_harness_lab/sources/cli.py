@@ -21,13 +21,22 @@ def main(argv):
     if argv and argv[0] == 'lineage':
         from .lineage import main as lineage_main
         return lineage_main(argv[1:])
-    parser = argparse.ArgumentParser(prog='ahl sources')
-    parser.add_argument('operation', nargs='?', default='probe', choices=('probe', 'preview', 'import', 'status', 'recheck', 'lineage'))
-    parser.add_argument('--manifest')
-    parser.add_argument('--project-sha256')
-    parser.add_argument('--scope-sha256')
-    parser.add_argument('--cache')
-    parser.add_argument('--authorization-file')
+    parser = argparse.ArgumentParser(prog='ahl sources',
+        description='Inspect explicitly configured sources and maintain a private metadata cache; no source is enabled by default.',
+        epilog='Without --manifest, only the default probe is valid and reports zero enabled sources. '
+        'For a manifest, supply both expected SHA-256 scope identities. Probe checks the declaration; '
+        'preview reads selected data without importing it; import writes a cache checkpoint; status reads cache metadata; '
+        'recheck compares the selected source with its cache. Preview/import/recheck can contact a provider when the manifest selects an API source. '
+        'All operations print JSON metadata. Exit 0: completed; 2: invalid/rejected input; 3: unsupported or blocked capability/access. '
+        'Example: ahl sources preview --manifest export.json --project-sha256 PROJECT_HASH --scope-sha256 SCOPE_HASH. '
+        'For reviewed cache relationships, use ahl sources lineage --help.')
+    parser.add_argument('operation', nargs='?', default='probe', choices=('probe', 'preview', 'import', 'status', 'recheck', 'lineage'),
+        help='Requested source operation (default: %(default)s); lineage has its own subcommands and help')
+    parser.add_argument('--manifest',help='Schema-1 JSON: source/data local declaration, or source/endpoint/selection/limits GitHub configuration; no automatic discovery')
+    parser.add_argument('--project-sha256',help='Expected 64-hex project identity matching the manifest; required with --manifest')
+    parser.add_argument('--scope-sha256',help='Expected 64-hex selection/scope identity matching the manifest; required with --manifest')
+    parser.add_argument('--cache',help='Private SourceStore journal file; required for import, status and recheck')
+    parser.add_argument('--authorization-file',help='Private ASCII HTTP Authorization header file for an API source using configured authentication; never read by probe')
     args = parser.parse_args(argv)
     try:
         if args.manifest is None:

@@ -6,8 +6,9 @@ import runpy
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(prog='ahl update', description=__doc__)
-    parser.add_argument('--version', default='latest', help='Release version (default: latest)')
+    parser = argparse.ArgumentParser(prog='ahl update', description=__doc__,
+        epilog='Example: ahl update --version 0.76.0. Requires an active archive installation and its owned installation.json/launcher; source and pip installs are rejected. Downloads and verifies release assets, then updates the existing launcher/skill links through the bundled installer. Exit 0 on success; invalid ownership or setup exits 2.')
+    parser.add_argument('--version', default='latest', help='Published release tag/version to download and verify, such as 0.76.0; latest resolves the latest release (default: %(default)s)')
     args = parser.parse_args(argv)
     from .cli import assets
     current = assets().resolve()

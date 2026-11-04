@@ -108,12 +108,16 @@ def report(result, *, source_context=None):
 
 
 def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--events', type=Path, required=True)
-    parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--format', choices=('normalized', 'codex', 'claude', 'ai-memory'), default='normalized')
-    parser.add_argument('--project', help='Verified workspace/project identity for native exports')
-    parser.add_argument('--max-events', type=int, default=100000)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='Input: redacted JSONL; normalized rows require case_id, event_id and activity.\n'
+        'Writes findings.json and report.md in a NEW private directory; no inference or target edits.\n'
+        'Exit 0: report written (findings are observations, not success); 2: invalid input/setup.\n'
+        'Example: ahl diagnose --events events.jsonl --output /tmp/ahl-diagnosis')
+    parser.add_argument('--events', type=Path, required=True, help='Existing redacted JSONL capture to analyze; no automatic discovery or stdin')
+    parser.add_argument('--output', type=Path, required=True, help='New private report directory; existing directories are refused without overwriting')
+    parser.add_argument('--format', choices=('normalized', 'codex', 'claude', 'ai-memory'), default='normalized', help='Input adapter; non-normalized exports also require --project (default: %(default)s)')
+    parser.add_argument('--project', help='Verified workspace/project identity attached to non-normalized exports; required unless --format normalized')
+    parser.add_argument('--max-events', type=int, default=100000, help='Positive maximum normalized event count; exceeding it fails explicitly (default: %(default)s)')
     args = parser.parse_args()
     if args.format != 'normalized' and not args.project:
         parser.error('native exports require an explicit verified --project')
