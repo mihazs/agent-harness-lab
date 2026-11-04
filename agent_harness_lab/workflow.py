@@ -204,7 +204,7 @@ def bounded_fixture(folder, runner):
     return runner.digest(folder)
 
 
-def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_heldout, *, grader_backend=None, experiment_spec=None, control_custody=None, expected_snapshot=None, expected_deadline=None):
+def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_heldout, *, grader_backend=None, experiment_spec=None, control_custody=None, expected_snapshot=None, expected_deadline=None, bank_sha256=None):
     def check_owned():
         if expected_snapshot is not None:
             from .evaluation.working_state import WorkingState
@@ -219,6 +219,8 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
     else:manifest=json.loads(next(raw for name,_,raw in expected_snapshot.files if name=='manifest.json'))
     if not isinstance(manifest, dict):
         raise ValueError('Evaluation manifest must be an object')
+    if bank_sha256 is not None and manifest.get('bank_digest') != bank_sha256:
+        raise ValueError('configured bank digest differs from frozen evaluation')
     from .evaluation.certification_access import reject_claims
     reject_claims(manifest)
     experiment=manifest.get('experiment',{})
@@ -234,8 +236,8 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
            or not all(isinstance(a, str) for a in t['grader']) for t in tasks):
         raise ValueError('Tasks require ids, fixtures and grader argument lists')
     if experiment_spec is None:
-        if not 3 <= len(tasks) <= 5 or {t['split'] for t in tasks} != {'development', 'regression', 'heldout'}:
-            raise ValueError('Provide 3–5 tasks covering development, regression, and heldout')
+        if (bank_sha256 is None and not 3 <= len(tasks) <= 5) or {t['split'] for t in tasks} != {'development', 'regression', 'heldout'}:
+            raise ValueError('Provide development, regression, and heldout coverage; generated evaluations require 3–5 tasks')
     else:
         from .evaluation.plan import ExperimentSpec
         if type(experiment_spec) is not ExperimentSpec:raise ValueError('validated fixed experiment required')
@@ -335,7 +337,8 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
         raise TimeoutError('Improvement budget exhausted before evaluation')
     check_owned()
     manifest['no_nested_agents'] = True
-    manifest['max_trials'] = 10 if experiment_spec is None else experiment_spec.max_trials
+    if experiment_spec is not None: manifest['max_trials'] = experiment_spec.max_trials
+    elif bank_sha256 is None: manifest['max_trials'] = 10
     manifest['budget_seconds'] = remaining()
     manifest['timeout_seconds'] = min(float(manifest.get('timeout_seconds', 180)), manifest['budget_seconds'])
     write_json(path, manifest)
@@ -376,8 +379,7 @@ def _improve(args):
     if controlled != (inference_path is not None):
         raise ValueError('controlled improvement requires --agent responses and explicit --inference-settings together')
     started = time.monotonic()
-    if getattr(args,'evaluation_store',None) is not None:
-        started=min(started,getattr(args,'_construction_started',started))
+    started=min(started,getattr(args,'_construction_started',started))
     remaining = lambda: args.timeout - (time.monotonic() - started)
     runner = evaluator()
     output = output_dir(args)
@@ -425,7 +427,15 @@ def _improve(args):
     prepare = output / 'preparation'
     prepare.mkdir()
     baseline, candidate = prepare / 'baseline', prepare / 'candidate'
-    from .one_call import allowed_paths, check_configuration, check_scope
+    from .one_call import allowed_paths, check_configuration, check_scope, pinned_bank
+    bank = pinned_bank(args)
+    bank_manifest = None
+    if bank is not None:
+        from .evaluation.bank_tools import export_manifest
+        from .evaluation.task_bank import validate as validate_bank
+        bank_manifest = export_manifest(bank, prepare/'evaluation-0', max_trials=2*validate_bank(bank)['tasks'])
+        if bank_manifest['bank_digest'] != args.project_settings['bank']['sha256']:
+            raise ValueError('configured bank changed before preparation')
     original = snapshot(args.project, baseline, allowed_paths=allowed_paths(args))
     candidate_states(baseline, original)
     shutil.copytree(baseline, candidate)
@@ -470,15 +480,16 @@ def _improve(args):
     protected = {}
     refinement_feedback = []
     trials_left = getattr(args, "trial_limit", 24)
-    for attempt in range(2):
+    for attempt in range(1 if bank is not None else 2):
         check_configuration(args)
         if remaining() <= 0:
             result['status'] = 'budget_exhausted'
             break
-        if trials_left < 8:
+        preparation_trials = 1 if bank is not None else 2
+        if trials_left < (preparation_trials + 2*len(bank_manifest['tasks']) if bank is not None else 8):
             result.update(status='budget_exhausted', reason='shared_trial_budget_exhausted')
             break
-        trials_left -= 2
+        trials_left -= preparation_trials
         proposal_folder = prepare / f'proposal-{attempt}'
         proposal_folder.mkdir()
         proposal_path = proposal_folder / 'proposal.json'
@@ -517,9 +528,9 @@ Identify distinct mechanisms, successful controls and counterexamples before sel
 If none is supported, write {proposal_path} as {{"status":"no_change","reason":"evidence-based explanation"}}.
 Otherwise modify only project instructions AGENTS.md/CLAUDE.md or project-owned skill files in candidate.
 Do not build evaluation tests, launch model trials, or inspect previous held-out inputs.
-The parent freezes the patch; a separate fresh session constructs evaluation without seeing it.
+The parent freezes the patch; {'the configured task bank supplies the evaluation' if bank is not None else 'a separate fresh session constructs evaluation without seeing it'}.
 Shared ceiling is {getattr(args, 'trial_limit', 24)} preparation/task roles and {args.timeout} seconds;
-{trials_left} paired task or later preparation roles remain after this attempt's two reserved roles.
+{trials_left} paired task or later preparation roles remain after this attempt's {preparation_trials} reserved preparation roles.
 Write {proposal_path} as {{"status":"candidate","mechanisms":[...],"falsifiers":[...]}} when ready.
 The parent will reject incomplete/changed inputs, regressions, unsupported ties, and concurrent edits.
 '''
@@ -587,7 +598,13 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                 raise ValueError('project harness changed during fixed comparison')
             result.update(compared)
             break
-        if controlled:
+        if bank is not None:
+            bank_manifest.update(skills=[], harness_paths=sorted(paths))
+            write_json(manifest_path, bank_manifest)
+            from .config import evaluation_settings
+            evaluation_settings(args.project/'ahl.json', manifest_path, bank_manifest,
+                                dict(baseline=baseline, candidate=frozen), agent, binary)
+        elif controlled:
             if access is None:
                 manifest_path,commands = construction.author(client,grading,baseline,role_views['evaluator_author'],
                     prepare/f'author-work-{attempt}',evaluation,deadline,analysis=True)
@@ -638,7 +655,9 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 break
         if runner.digest(frozen) != frozen_hash or runner.digest(baseline) != baseline_hash:
             raise ValueError('Evaluation construction changed frozen harness inputs')
-        (validate_manifest if access is None else access.validate_manifest)(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, grader_backend=grading)
+        validation_options = dict(grader_backend=grading)
+        if bank is not None: validation_options['bank_sha256'] = args.project_settings['bank']['sha256']
+        (validate_manifest if access is None else access.validate_manifest)(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, **validation_options)
 
         prerequisite_scope=getattr(args,'_prerequisite_scope',None)
         if prerequisite_scope is not None:prerequisite_scope.bind(manifest_path,baseline,frozen)
@@ -656,6 +675,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         options = argparse.Namespace(manifest=str(manifest_path), baseline=str(baseline),
             candidate=str(frozen), output=str(output / f'evaluation-{attempt}'),
             agent=agent, codex=args.codex, claude=args.claude, parent_deadline=started + args.timeout)
+        if bank is not None: options.config = args.project/'ahl.json'
         if grading is not None:
             options.sandbox_graders = True
             for name, value in grader_options.items(): setattr(options, name, value)
@@ -739,11 +759,12 @@ All bundles and controls stay outside task fixtures; no grader command is execut
 def _run_improvement(args, *, parent_started=None):
     """Persist truthful completion even when a run is interrupted or raises."""
     issuer=os.getpid(); managed=getattr(args,'evaluation_store',None) is not None
-    started=time.monotonic() if managed else None
+    from .one_call import pinned_bank
+    started=time.monotonic() if managed or pinned_bank(args) is not None else None
     if managed and parent_started is not None: started=min(started,parent_started)
     for name in ('_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256'):
         if hasattr(args,name):delattr(args,name)
-    if managed: args._construction_started=started
+    if started is not None: args._construction_started=started
     try:
         from .one_call import contracts, preflight, check_configuration
         check_configuration(args)
@@ -762,6 +783,8 @@ def _run_improvement(args, *, parent_started=None):
                               remediation='Select a supported runtime/profile and budget; see ahl improve --help')
                 write_json(output/'workflow.json', result)
                 return result
+        if started is not None and time.monotonic()>=started+args.timeout:
+            raise TimeoutError('construction preflight exhausted improvement budget')
         return _improve(args)
     except BaseException as exc:
         if managed and os.getpid()!=issuer: raise

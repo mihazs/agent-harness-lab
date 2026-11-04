@@ -141,6 +141,7 @@ def main(argv=None):
             epilog=('Output: private artifacts and a JSON receipt on stdout. No input bodies are public.\n'
                 'Progress: aggregate stages, counts and elapsed time on stderr.\n'
                 'Configuration constrains runtime, scope and budgets; it does not grant authority.\n'
+                +('An explicit nonstarter ahl.json bank is frozen for one cooperative comparison; its entire paired task set and preparation must fit the configured budget.\n' if name!='analyze' else '')+
                 'Exit: 0 completed; 1 execution/interruption/budget; 2 invalid input; 3 blocked/inconclusive.\n'
                 +('No inference calls; default discovery is project-filtered; --memory-manifest opts into scoped MCP reads.\n' if name=='analyze' else
                   'May invoke the selected agent/model and spend resources; use a trusted, authenticated runtime.\n')

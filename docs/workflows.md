@@ -5,6 +5,17 @@
 These workflows may use your authenticated runtime and incur inference costs.
 Try the offline diagnosis first. Experimental limitations below apply throughout.
 
+For a cooperative `ahl.json` configuration with an explicitly pinned project task
+bank, `ahl improve` freezes the bank before preparing a candidate and evaluates
+all its tasks without an evaluation-author session. The bank must provide
+development, regression and held-out coverage; the configured trial budget must
+cover one preparation plus two trials per task. A fixed bank is used for one
+candidate only, without automatic refinement. Configured runtime overrides,
+changed bank contents, and combinations with managed/repeated experiment modes
+are rejected. Managed banks require their controlled workflow. Results remain
+recommendations; this path establishes neither certification nor isolation of
+the cooperative runtime.
+
 ## Automatic improvement
 
 In your project, run:
