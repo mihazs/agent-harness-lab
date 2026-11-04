@@ -231,7 +231,7 @@ tasks:
   test:evaluation:history:
     desc: Run native controller history, quarantine and guarded-analysis cases
     cmds:
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_oracle_history*.py" -v'
+      - '{{.PYTHON | shellQuote}} -m pytest -n {{default "auto" .TEST_WORKERS | shellQuote}} --dist worksteal -k oracle_history'
   test:evaluation:interchange:
     desc: Verify offline data-only evaluation mappings, proposals and private import boundaries
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
