@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.19
+
+### Patch Changes
+
+- 9c46288: Enforce the workflow prerequisite receipt bound on every save: measure the cached compact canonical encoding, discard oversized receipts, stop later admissions and report the encoding with the counted bytes.
+
 ## 0.76.18
 
 ### Patch Changes
