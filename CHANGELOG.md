@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.13
+
+### Patch Changes
+
+- Report authenticated fixed experiment history coverage without treating unsealed progress as evidence.
+
 ## 0.76.12
 
 ### Patch Changes
