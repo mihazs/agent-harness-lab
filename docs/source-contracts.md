@@ -586,12 +586,12 @@ execution's version. Full instruction/import/override graphs, hook lifecycle
 inventory, independently evidenced execution bindings and hosting-provider
 reconciliation remain open in #46/#58/#77–#80.
 
-The first profile caps source reads at 512 MiB, filesystem entries at 10,000,
-directory depth at 64, refs at 1,000 and selected paths at 100. Selection JSON is
-bounded to 64 KiB and each current harness file to 1 MiB. Git output is limited to
-4 MiB per command and 64 MiB per capture, with one ten-second admission deadline
-and child CPU/address-space limits. Source filesystem operations are checked
-between bounded reads but cannot be preempted at an exact deadline. Links,
+Git analysis does not impose default source-byte, entry, directory-depth, ref,
+selected-path, selection-file or command-output size ceilings. Callers can select
+explicit limits. Read-only Git invocation, path-safety and source-readback checks
+remain in place; explicitly bounded callers retain their child resource guards.
+Source filesystem operations are checked between reads but cannot be preempted
+at an exact optional deadline. Links,
 nonregular files, alternate object stores, bare repositories, reftable repositories
 and selected submodule/nested-repository contents are blocked without fallback.
 All observed source metadata are rechecked before returning; failed reads leave

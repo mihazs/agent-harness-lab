@@ -108,11 +108,11 @@ class CLIHelpTests(unittest.TestCase):
         captured={parser._help_test_source for _,parser in self.parsers()}
         for relative in PARSER_FILES:self.assertTrue(any(path.endswith('/'+relative) for path in captured),relative)
 
-    def test_workflow_options_keep_existing_defaults_and_parse_contracts(self):
+    def test_workflow_options_preserve_runtime_defaults_and_unlimited_analysis(self):
         parser=capture(lambda:cli.main([]))
         args=parser.parse_args(['improve','.'])
         self.assertEqual((args.agent,args.codex,args.claude,args.timeout),('auto','codex','claude',None))
-        self.assertEqual((args.max_captures,args.max_capture_scan,args.max_events),(100,2000,100000))
+        self.assertEqual((args.max_captures,args.max_capture_scan,args.max_events),(None,None,None))
         self.assertFalse(args.repair_contracts);self.assertEqual(args.format,'normalized')
         explicit=parser.parse_args(['improve','.','--agent','responses','--inference-settings','settings.json','--timeout','600'])
         self.assertEqual((explicit.agent,explicit.inference_settings,explicit.timeout),('responses',Path('settings.json'),600))

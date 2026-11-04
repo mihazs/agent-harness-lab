@@ -213,7 +213,7 @@ class EvidenceTests(unittest.TestCase):
         self.assertEqual(sum('Malformed' in caveat for caveat in result['caveats']),1)
 
     def test_hashing_does_not_repair_invalid_normalized_case_ids(self):
-        for case in (None, 17, '', 'x'*257):
+        for case in (None, 17, ''):
             path=self.write(self.home/'invalid.jsonl',[dict(case_id=case,event_id='1',activity='inspect')])
             with self.assertRaisesRegex(ValueError,'case identity'):
                 collect(self.project,events=path)

@@ -63,7 +63,7 @@ class ObservationCache:
             self.coverage['unmatched_result'] += 1
         dimensions = ('tool_name', 'input_fingerprint', 'result_fingerprint', 'state_revision')
         signature = tuple(event.get(k) for k in dimensions)
-        if uncertain or not all(isinstance(v, str) and 0 < len(v) <= 256 for v in signature):
+        if uncertain or not all(isinstance(v, str) and v for v in signature):
             self.clear(case, 'uncertain_or_missing_dimensions')
             return None
         self.coverage['eligible'] += 1

@@ -9,7 +9,7 @@ requires explicit rotation/deletion, never silent loss. There is no default byte
 or record ceiling; callers may supply positive retention limits. Run directories use mode 0700. These are local private data;
 hashes and opaque IDs do not authorize public export.
 
-`telemetry.schema.event` upgrades v1 records to v2, validates bounded typed fields,
+`telemetry.schema.event` upgrades v1 records to v2, validates nonempty typed fields,
 rejects unsupported schema versions and nonfinite/negative measurements, and drops
 undeclared content fields. Supplied task/root/family, runtime/config/harness hashes,
 state revisions, skill signals, timing and token measurements remain observations.
@@ -47,7 +47,7 @@ is consumed. Malformed records retain explicit caveats; valid large records and
 reports are read in full and their input hashes cover all consumed bytes.
 
 Observation matching retains all eligible history by default. Explicit API cache
-limits remain available. Recurring-sequence analysis indexes all contiguous
+and pending-call correlation limits remain available. Recurring-sequence analysis indexes all contiguous
 lengths and retains every supporting reference; `--sequence-length` optionally
 limits lengths. Repetition still requires three reported roots and does not
 establish independence. The index avoids constructing patterns that do not recur

@@ -85,11 +85,11 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
         if not isinstance(event, dict):
             raise ValueError(f'invalid event at position {number}')
         for key in ('case_id', 'event_id', 'activity'):
-            if not isinstance(event.get(key), str) or not 0 < len(event[key]) <= 256:
+            if not isinstance(event.get(key), str) or not event[key]:
                 raise ValueError(f'invalid {key} at event {number}')
         case, ident, activity = (event[k] for k in ('case_id', 'event_id', 'activity'))
         root = event.get('root_case_id', case)
-        if not isinstance(root, str) or not root or len(root) > 256:
+        if not isinstance(root, str) or not root:
             raise ValueError('invalid root_case_id')
         if case in roots and roots[case] != root:
             raise ValueError('inconsistent lineage')

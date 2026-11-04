@@ -8,8 +8,8 @@ CAPABILITIES = {
 }
 
 
-def correlate(records, max_pending=4096):
-    if type(max_pending) is not int or max_pending <= 0:
+def correlate(records, max_pending=None):
+    if max_pending is not None and (type(max_pending) is not int or max_pending <= 0):
         raise ValueError('pending-call limit must be positive')
     pending, finished = OrderedDict(), OrderedDict()
     for record in records:
@@ -21,7 +21,7 @@ def correlate(records, max_pending=4096):
                 if key in pending or key in finished:
                     record['capture_status'] = 'duplicate_call'
                 pending[key] = record.get('tool_name')
-                if len(pending) > max_pending:
+                if max_pending is not None and len(pending) > max_pending:
                     pending.popitem(last=False)
                     record['capture_status'] = 'pending_limit'
             elif record['activity'] == 'tool_result':
@@ -34,7 +34,7 @@ def correlate(records, max_pending=4096):
                 else:
                     record['capture_status'] = 'duplicate_result' if key in finished else 'unmatched_result'
                 finished[key] = None
-                if len(finished) > max_pending:
+                if max_pending is not None and len(finished) > max_pending:
                     finished.popitem(last=False)
         yield record
     # No fabricated result/outcome for calls whose captures end before a result.
