@@ -58,6 +58,8 @@ class GitHubWindowTests(GitHubFixture, unittest.TestCase):
                 dict(schema_version=5)):
             with self.subTest(change=change), self.assertRaises(ValueError): replace(self.selection, **change)
         value = self.selection.to_dict()
+        for bound in ('2025-12-01T24:00:00Z', '2025-12-31T23:59:60Z', '2025-02-29T00:00:00Z'):
+            with self.subTest(bound=bound), self.assertRaises(ValueError): replace(self.selection, since=bound)
         for broken in ({k: v for k, v in value.items() if k != 'until'}, {**value, 'schema_version': 5}):
             with self.subTest(broken=broken), self.assertRaises(ValueError): GitHubSelection.parse(broken)
 

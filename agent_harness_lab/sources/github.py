@@ -75,7 +75,10 @@ def opaque_id(value):
 def instant(value):
     if not isinstance(value, str) or re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z', value) is None:
         raise ValueError('GitHub window bounds must be canonical RFC 3339 UTC seconds')
-    return datetime.fromisoformat(value)
+    parsed = datetime.fromisoformat(value)
+    # Interpreters differ on hour 24; only the exact re-serialization names one instant.
+    if parsed.strftime('%Y-%m-%dT%H:%M:%SZ') != value: raise ValueError('GitHub window bound is not canonical')
+    return parsed
 
 
 def bigint(value):

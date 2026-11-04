@@ -1230,8 +1230,10 @@ root/grouping claims still require further #58 resolution and validation.
 `GitHubSelection(..., schema_version=6, since=SINCE, until=UNTIL)` selects a
 half-open creation-time window `[since, until)` for issue-style conversation
 comments and inline review comments. Both bounds are required canonical
-RFC 3339 UTC seconds (`2026-01-01T00:00:00Z`); offsets, fractions, reversed or
-empty windows and spans over 366 days are rejected. Version 6 accepts every v5
+RFC 3339 UTC seconds (`2026-01-01T00:00:00Z`). A bound must equal its own
+re-serialization, so hour 24, leap seconds, offsets and fractions are rejected on
+every supported interpreter. Reversed or empty windows and spans over 366 days are
+also rejected. Version 6 accepts every v5
 detail flag and explicit commit selection. Both bounds enter the selection
 fingerprint, so different windows yield different scopes, source keys and
 journals. Versions 1–5 retain their exact serialization, fingerprints and
