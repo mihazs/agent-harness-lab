@@ -41,6 +41,37 @@ Omitting the optional target preserves existing plan hashes and trial IDs. The
 standalone command exits 0 for a feasible design and 3 for an infeasible design;
 invalid inputs are errors.
 
+## Minimum independent roots
+
+The same report includes `sample_size_plan` (profile
+`precision-sample-size-v1`). It inverts the frozen method: for the plan's
+alpha allocation, margins, root minimum, family weights, optional
+`precision_half_width` and repeats, it returns the minimum declared roots per
+family, or `infeasible` with explicit reasons. Each candidate size is accepted
+only by the same endpoint code that computes the reported half-widths, so a plan
+resized to the solution passes this preflight and removing any one root does not.
+The total is minimal: an equal-weight family endpoint fixes each family's floor,
+then roots are added to the family with the largest reduction of the primary
+weighted sum until the primary endpoint and root minimum are met.
+
+For one family at total alpha .05, a .1 target needs 877 roots; 876 roots leave
+the half-width above .1. With weights .8/.2, effect margin .5 and no target, the
+primary endpoint needs 30 and 9 roots. No variance estimate is used: the Hoeffding
+range bound on paired root means in `[-1, 1]` is at least as conservative as a
+worst-case Bernoulli(p=0.5) outcome. Repeats never become roots; the solved roots
+are unchanged by repeats, which only multiply the minimum planned trials (one task
+per root at the frozen repeat count). Reasons include a family or total over the
+1000-task cap, a trial ceiling below the minimum trials, and a frozen required
+cohort with too few members. Frozen cohort members raise their family floor and
+are never reselected.
+
+The plan is descriptive only. It does not add roots or trials, mutate the bank or
+plan, change budgets, verify root independence, establish oracle authority or
+adopt anything; `publication_allowed` is false and the profile is excluded from
+public export. Resizing requires a newly frozen plan with new admitted roots and
+a new hash. This supplies the sizing part of issue #8's precision-plan criterion;
+independent curation, semantic oracle authority and the rest of #8 remain open.
+
 This is analytic precision, **not statistical power**, verified root independence,
 current bank eligibility, observed improvement or adoption authority. Wall-clock
 feasibility is unknown without a preregistered execution-cost model. Unselected

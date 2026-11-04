@@ -9,6 +9,23 @@ PROFILE = 'fixed-root-precision-v1'
 MAX_TASKS = 1000
 
 
+def measure(weights, alpha, margin, strict, minimum_roots):
+    """The one frozen endpoint evaluation shared by reporting and the inverse solver."""
+    try:
+        width=radius(weights,alpha)
+        if not math.isfinite(width): raise ValueError('unrepresentable precision')
+        best=bound([1]*len(weights),weights,alpha)['low']
+        return dict(half_width=width,minimum_observed_effect=margin+width,best_case_lower=best,
+            criteria_possible=len(weights)>=minimum_roots and (best>margin if strict else best>=margin))
+    except (OverflowError,ZeroDivisionError,ValueError):
+        return dict(criteria_possible=False,numeric_status='unrepresentable_by_frozen_method')
+
+
+def meets(item, target):
+    """Preflight's per-endpoint acceptance: possible criteria and, when frozen, the half-width target."""
+    return item['criteria_possible'] and (target is None or item.get('half_width') is not None and item['half_width']<=target)
+
+
 def preflight(spec, *, cohort_manifest_json=None, trial_limit=None, budget_seconds=None):
     if not isinstance(spec, ExperimentSpec): raise ValueError('a frozen experiment spec is required')
     spec.validate()
@@ -40,15 +57,7 @@ def preflight(spec, *, cohort_manifest_json=None, trial_limit=None, budget_secon
         item=dict(declared_roots=len(weights),required=required,margin=margin,strict=strict,
             min_roots=minimum_roots,per_endpoint_alpha=alpha if required else None,
             half_width=None,minimum_observed_effect=None,best_case_lower=None,criteria_possible=None)
-        if required:
-            try:
-                width=radius(weights,alpha)
-                if not math.isfinite(width): raise ValueError('unrepresentable precision')
-                best=bound([1]*len(weights),weights,alpha)['low']
-                item.update(half_width=width,minimum_observed_effect=margin+width,best_case_lower=best,
-                    criteria_possible=len(weights)>=minimum_roots and (best>margin if strict else best>=margin))
-            except (OverflowError,ZeroDivisionError,ValueError):
-                item.update(criteria_possible=False,numeric_status='unrepresentable_by_frozen_method')
+        if required: item.update(measure(weights,alpha,margin,strict,minimum_roots))
         endpoints[name]=item
     weights=dict(spec.family_weights)
     primary=[weight/len(families[family]) for family,weight in spec.family_weights for _ in families[family]]
@@ -63,7 +72,10 @@ def preflight(spec, *, cohort_manifest_json=None, trial_limit=None, budget_secon
     target=spec.precision_half_width
     target_met=None if target is None else all(e['half_width'] is not None and e['half_width']<=target for e in needed)
     planned=2*len(spec.tasks)*spec.repeats
-    budget_met=planned<=min(spec.max_trials,trial_limit if trial_limit is not None else spec.max_trials)
+    ceiling=min(spec.max_trials,trial_limit if trial_limit is not None else spec.max_trials)
+    budget_met=planned<=ceiling
+    from .precision_solver import solve
+    sample_size_plan=solve(spec,families,cohorts,alpha,ceiling)
     possible=all(e['criteria_possible'] for e in needed) and budget_met
     return dict(schema_version=1,profile=PROFILE,plan_sha256=spec.digest,
         status='feasible' if possible and target_met is not False else 'infeasible',
@@ -77,7 +89,7 @@ def preflight(spec, *, cohort_manifest_json=None, trial_limit=None, budget_secon
         weight_sum=sum(weights.values()),weight_policy='frozen_weights_without_posthoc_renormalization',
         error_allocation=dict(method='Bonferroni',total_alpha=spec.alpha,endpoints=count,
             required_cohorts=required,per_endpoint_alpha=alpha),
-        endpoints=endpoints,precision_half_width=target,precision_target_met=target_met,
+        endpoints=endpoints,sample_size_plan=sample_size_plan,precision_half_width=target,precision_target_met=target_met,
         precision_target_scope='primary_and_all_required_family_and_cohort_endpoints',
         execution_allowed=budget_met and (target is None or possible and target_met is True),
         qualification_authority='not_validated_by_analytic_precision',root_independence='unverified',
