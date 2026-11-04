@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.9
+
+### Patch Changes
+
+- 5119c78: Retain all extracted TF-IDF training features and reject unsupported or exceeded NLI model contexts instead of silently truncating evidence or hypotheses. Long inputs still require a local model with sufficient supported capacity.
+
 ## 0.76.8
 
 ### Patch Changes
