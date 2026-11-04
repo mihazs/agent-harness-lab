@@ -688,6 +688,8 @@ def _evaluate(args):
             from agent_harness_lab.evaluation.permission_audit import qualification
             record['isolation_qualification']=qualification(backend.permission_reports[audit_offset:])
             results['isolation_qualification']=backend.permission_qualification()
+            if controlled and results['isolation_qualification']['qualification']!='qualified':
+                client.abort()
         source_inputs_unchanged = verify_inputs(record)
         if source_capture is not None:
             record['source_capture'] = source_sink.finish(source_capture,source_inputs_unchanged)
