@@ -415,7 +415,7 @@ def _improve(args):
     access = None
     if controlled:
         from .evaluation import construction, responses
-        from .evaluation.working_state import WorkingState
+        from .evaluation.working_state import analysis_snapshot
         deadline = started+args.timeout
         from .promotion.prerequisites import _begin
         args._prerequisite_scope=_begin(baseline,grader_options['image_sha256'],deadline)
@@ -469,13 +469,13 @@ def _improve(args):
                 context = prepare / f'proposer-context-{attempt}'
                 shutil.copytree(role_views['proposer'],context,symlinks=True)
                 write_json(context/'feedback.json',dict(trials=refinement_feedback))
-                WorkingState(context,deadline)
+                analysis_snapshot(context,deadline)
                 if access is None: construction.proposer_seed(candidate,prepare/f'proposer-work-{attempt}',deadline)
             if access is None:
                 proposal,candidate,commands = construction.propose(client,grading,baseline,context,
-                    prepare/f'proposer-work-{attempt}',output/f'proposer-{attempt}',deadline,focus=getattr(args,'focus',None))
+                    prepare/f'proposer-work-{attempt}',output/f'proposer-{attempt}',deadline,focus=getattr(args,'focus',None),analysis=True)
             else:
-                proposal,candidate,commands=access.propose(context,candidate,output/f'proposer-{attempt}',focus=getattr(args,'focus',None))
+                proposal,candidate,commands=access.propose(context,candidate,output/f'proposer-{attempt}',focus=getattr(args,'focus',None),analysis=True)
             write_json(proposal_path,proposal)
             write_json(output/f'preparation-{attempt}.json',dict(inference=client.report(),worker_commands=commands))
             protected[output/f'proposer-{attempt}'] = runner.digest(output/f'proposer-{attempt}')
@@ -569,9 +569,9 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         if controlled:
             if access is None:
                 manifest_path,commands = construction.author(client,grading,baseline,role_views['evaluator_author'],
-                    prepare/f'author-work-{attempt}',evaluation,deadline)
+                    prepare/f'author-work-{attempt}',evaluation,deadline,analysis=True)
             else:
-                manifest_path,commands=access.author(role_views['evaluator_author'],evaluation)
+                manifest_path,commands=access.author(role_views['evaluator_author'],evaluation,analysis=True)
             write_json(output/f'evaluation-construction-{attempt}.json',dict(inference=client.report(),worker_commands=commands))
         else:
             evaluation.mkdir()

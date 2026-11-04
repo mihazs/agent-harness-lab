@@ -15,6 +15,7 @@ import time
 from .cgroup import Cgroup
 from .image import RuntimeImage
 from .integrity import digest
+from .analysis_inputs import input_digest,check_role
 from .workspace import PrivateWorkspace, policy
 
 ROLES = {'proposer', 'evaluator_author', 'executor', 'grader'}
@@ -60,6 +61,7 @@ class SandboxBackend:
             semantic_intent='unknown',automatic_promotion=False,publication_allowed=False)
 
     def command(self, argv, workspace, inputs, role):
+        check_role(inputs,role)
         if role not in ROLES or not argv or not all(isinstance(a, str) for a in argv):
             raise ValueError('invalid role/command')
         if not self.binary:
@@ -87,7 +89,7 @@ class SandboxBackend:
         for name, folder in sorted(inputs.items()):
             if name not in ('harness', 'fixture', 'oracle') or (name == 'oracle' and role != 'grader'):
                 raise ValueError('role cannot access this input')
-            digest(folder)
+            input_digest(inputs,name)
             folder = Path(folder).resolve()
             if workspace.is_relative_to(folder) or folder.is_relative_to(workspace):
                 raise ValueError('writable workspace and readonly inputs must not overlap')
@@ -170,7 +172,7 @@ class SandboxBackend:
         command = self.command(argv, workspace, inputs, role)
         if self.disk_bytes is not None and role != 'grader' and artifact_allowlist is None and working_state is None:
             raise ValueError('bounded workers require an explicit artifact allowlist')
-        before = {name: digest(folder) for name, folder in inputs.items()}
+        before = {name: input_digest(inputs,name) for name in inputs}
         if time.monotonic() - start >= limits.seconds:
             raise TimeoutError('sandbox budget exhausted before launch')
         def constrain():
@@ -253,7 +255,7 @@ class SandboxBackend:
                     raise
                 finally:
                     poll.close()
-            unchanged = all(digest(folder) == before[name] for name, folder in inputs.items())
+            unchanged = all(input_digest(inputs,name) == before[name] for name in inputs)
             if image:
                 image.update(verified_before=True, verified_after=False)
                 try:
