@@ -150,7 +150,7 @@ def _evaluation_results(project, max_files, sources, fingerprint, caveats):
     return failures
 
 
-def collect(project, events=None, source_format='normalized', max_files=None, max_events=None, max_scan_files=None, event_sink=None, source_version=None, source_root=None, session=None, sequence_length=None):
+def collect(project, events=None, source_format='normalized', max_files=None, max_events=None, max_scan_files=None, event_sink=None, source_version=None, source_root=None, session=None, sequence_length=None, progress=None):
     """Return local evidence, not a claim of task success or a causal diagnosis."""
     project = Path(project).resolve()
     if not project.is_dir():
@@ -169,6 +169,8 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
     if source_version is not None and (events is None and source_root is None or not pinned and source_version != CAPABILITIES.get(source_format, {}).get('version')):
         raise ValueError('source version requires an explicit supported capture')
     caveats, sources, errors = [], [], []
+    notify = progress or (lambda stage, **counts: None)
+    notify('discovery', scanned=0, selected=0)
     fingerprint = hashlib.sha256()
     selected = []
     if events is not None or source_root is not None:
@@ -183,10 +185,14 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                  (Path(os.environ.get('CLAUDE_CONFIG_DIR', str(Path.home() / '.claude'))) / 'projects', 'claude')]
         candidates = ((mtime, name, path, fmt) for root, fmt in roots
                       for mtime, name, path in _capture_candidates(root))
+        def discovered():
+            for scanned, candidate in enumerate(candidates, 1):
+                notify('discovery', scanned=scanned, selected=len(selected))
+                yield candidate
         if max_scan_files is None:
-            latest = candidates if max_files is None else sorted(candidates, reverse=True)
+            latest = discovered() if max_files is None else sorted(discovered(), reverse=True)
         else:
-            scanned = list(itertools.islice(candidates, max_scan_files + 1))
+            scanned = list(itertools.islice(discovered(), max_scan_files + 1))
             latest = heapq.nlargest(max_scan_files, scanned[:max_scan_files])
             if len(scanned) > max_scan_files:
                 _warn(caveats, 'Capture discovery reached its separate scan-file limit; older project history may be absent.')
@@ -196,9 +202,12 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                     _warn(caveats, 'Matching captures reached the accepted-file limit; project history is incomplete.')
                     break
                 selected.append((path, fmt))
+    notify('capture_selection', selected=len(selected), incomplete=int(bool(caveats)))
 
     def normalized_events():
-        for path, fmt in sorted(selected, key=lambda pair: str(pair[0])):
+        total_events = 0
+        for capture, (path, fmt) in enumerate(sorted(selected, key=lambda pair: str(pair[0])), 1):
+            notify('capture_processing', capture=capture, selected=len(selected), events=total_events)
             source_digest = hashlib.sha256()
             source_id = hashlib.sha256(str(path).encode()).hexdigest()[:16]
             source = dict(format=fmt, events=0)
@@ -247,6 +256,9 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                 tool_error = event.get('execution_status') == 'error'
                 fingerprint.update(json.dumps(dict(event=event, tool_error=tool_error), sort_keys=True).encode() + b'\n')
                 source['events'] += 1
+                total_events += 1
+                if total_events % 1000 == 0:
+                    notify('capture_processing', capture=capture, selected=len(selected), events=total_events)
                 if tool_error:
                     errors.append(dict(kind='tool_error', status='observed_pattern',
                         evidence=[dict(case_id=event['case_id'], event_id=event['event_id'])],
@@ -255,14 +267,19 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                     event_sink(event)
                 yield event
             source['sha256'] = native_digest if pinned else source_digest.hexdigest()
+        notify('analysis', events=total_events)
 
     analysis = analyze(normalized_events(), max_events=max_events, sequence_length=sequence_length)
     analysis['findings'].extend(errors)
+    notify('evaluation_reports', events=analysis['events'])
     outcomes = [] if events is not None or source_root is not None else _evaluation_results(project, max_files, sources, fingerprint, caveats)
     if not selected:
         _warn(caveats, 'No matching local capture was found; absence of evidence is not success.')
     failures = [record for record in outcomes if record['status'] in FAILURES]
     successes = [record for record in outcomes if record['status'] == 'passed']
+    stage = 'evidence_empty' if not analysis['events'] and not outcomes else 'evidence_incomplete' if caveats else 'collection_complete'
+    notify(stage, events=analysis['events'], eligible=analysis['eligible_observations'],
+           findings=len(analysis['findings']), evaluation_outcomes=len(outcomes), incomplete=int(bool(caveats)))
     return dict(analysis=analysis, evaluation_failures=failures, evaluation_successes=successes,
                 evaluation_outcomes=outcomes, discovery_limits=dict(scan_files=max_scan_files, accepted_files=max_files), sources=sources,
                 fingerprint=fingerprint.hexdigest(), caveats=caveats)

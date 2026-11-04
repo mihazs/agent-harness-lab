@@ -78,7 +78,7 @@ def evidence(args, output, source_context=None):
             source_version=getattr(args, 'source_version', None), source_root=getattr(args, 'source_root', None),
             session=getattr(args, 'session', None), max_files=getattr(args, 'max_captures', None),
             max_scan_files=getattr(args, 'max_capture_scan', None), max_events=getattr(args, 'max_events', None),
-            sequence_length=getattr(args, 'sequence_length', None))
+            sequence_length=getattr(args, 'sequence_length', None), progress=getattr(args, '_progress', None))
         events.seek(0)
         Ledger(output / 'events.v2.jsonl').ingest(json.loads(line) for line in events)
     if source_context is not None: data['source_context'] = source_context
@@ -376,6 +376,8 @@ def _improve(args):
                 precision_preflight=repeated.precision,automatic_promotion=False,publication_allowed=False)
             write_json(output/'workflow.json',result);return result
     data = evidence(args, output)
+    if getattr(args, '_progress', None) is not None:
+        args._progress('candidate_preparation', findings=len(data['analysis']['findings']))
     grading = None
     permission_audit=getattr(args,'permission_audit',None)
     if permission_audit is not None and not controlled:
