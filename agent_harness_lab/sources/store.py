@@ -280,6 +280,12 @@ class SourceStore:
             target_project_binding='unverified', capture_completeness='unknown',
             independent_roots=None, task_outcomes_verified=False, cache_read=present, source_read=False, network_used=False, execution_authorized=False)
 
+    def revisions(self, source):
+        """Committed revisions of one source, in commit order; reading never changes the journal."""
+        self._bind(source)
+        return tuple(EvidenceRecord.parse(e['record']) for e in self._read()['records']
+            if e['record']['source_sha256'] == source.source_key)
+
     def history(self, source, native_id_sha256):
         self._bind(source); fingerprint(native_id_sha256)
         return [entry for entry in self._read()['records'] if

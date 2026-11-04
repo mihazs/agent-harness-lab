@@ -1,6 +1,6 @@
 """Explicit read-only GitHub captures; comments and approvals are not task grades."""
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import re
 import time
@@ -13,6 +13,8 @@ from .transport import JsonAPI, TransportError, _json_exchange, endpoint
 
 API_VERSION = '2026-03-10'
 SOURCE_VERSION = API_VERSION+'-v1'
+WINDOW_SPAN = timedelta(days=366)
+WINDOWED = ('github_issue_comment', 'github_review_comment')
 
 THREAD_FIELDS = '''fragment ThreadFields on PullRequestReviewThread {
   id repository { id } pullRequest { id number headRefOid }
@@ -70,6 +72,12 @@ def opaque_id(value):
     return value
 
 
+def instant(value):
+    if not isinstance(value, str) or re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z', value) is None:
+        raise ValueError('GitHub window bounds must be canonical RFC 3339 UTC seconds')
+    return datetime.fromisoformat(value)
+
+
 def bigint(value):
     if isinstance(value, str) and re.fullmatch(r'[1-9][0-9]{0,18}', value): value = int(value)
     return integer(value, minimum=1)
@@ -83,11 +91,17 @@ class GitHubSelection(Contract):
     schema_version: int = 1
     details: tuple = ()
     commits: tuple = ()
+    since: str | None = None
+    until: str | None = None
 
     def __post_init__(self):
-        if type(self.schema_version) is not int or self.schema_version not in (1, 2, 3, 4, 5): raise ValueError('unsupported GitHub selection version')
+        if type(self.schema_version) is not int or self.schema_version not in (1, 2, 3, 4, 5, 6): raise ValueError('unsupported GitHub selection version')
         integer(self.repo_id, minimum=1)
-        allowed = (('checks', 'graph', 'threads', 'timeline') if self.schema_version == 5 else
+        if self.schema_version < 6:
+            if (self.since, self.until) != (None, None): raise ValueError('GitHub windows require selection version 6')
+        elif not timedelta(0) < instant(self.until)-instant(self.since) <= WINDOW_SPAN:
+            raise ValueError('GitHub window must be ordered and bounded')
+        allowed = (('checks', 'graph', 'threads', 'timeline') if self.schema_version >= 5 else
             ('checks', 'threads', 'timeline') if self.schema_version >= 3 else ('checks', 'timeline'))
         if (type(self.details) is not tuple or len(self.details) > len(allowed) or any(d not in allowed for d in self.details)
                 or tuple(sorted(set(self.details))) != self.details or self.schema_version == 1 and self.details):
@@ -106,8 +120,9 @@ class GitHubSelection(Contract):
     def parse(cls, value):
         if not isinstance(value, dict): raise ValueError('invalid GitHub selection')
         fields = set(cls.__dataclass_fields__)
-        if value.get('schema_version') not in (2, 3, 4, 5): fields.remove('details')
-        if value.get('schema_version') not in (4, 5): fields.remove('commits')
+        if value.get('schema_version') not in (2, 3, 4, 5, 6): fields.remove('details')
+        if value.get('schema_version') not in (4, 5, 6): fields.remove('commits')
+        if value.get('schema_version') != 6: fields -= {'since', 'until'}
         if set(value) != fields: raise ValueError('invalid GitHub selection fields')
         if not all(isinstance(value[k], (list, tuple)) for k in ('issues', 'pulls')): raise ValueError('invalid GitHub number collections')
         if 'details' in value and not isinstance(value['details'], (list, tuple)): raise ValueError('invalid GitHub details collection')
@@ -119,7 +134,17 @@ class GitHubSelection(Contract):
         value = super().to_dict()
         if self.schema_version == 1: value.pop('details')
         if self.schema_version < 4: value.pop('commits')
+        if self.schema_version < 6: value.pop('since'); value.pop('until')
         return value
+
+    @property
+    def window(self): return None if self.schema_version < 6 else (instant(self.since), instant(self.until))
+
+    def contains(self, created_at):
+        """Window membership uses immutable creation time; unknown membership blocks capture."""
+        if self.window is None: return True
+        if created_at is None: raise ValueError('GitHub comment window membership is unknown')
+        return self.window[0] <= datetime.fromisoformat(created_at) < self.window[1]
 
     @property
     def source_version(self): return API_VERSION+'-v'+str(self.schema_version)
@@ -441,14 +466,19 @@ class GitHubAPI:
             submitted_at=moment(value['submitted_at']), actor_sha256=self._actor(value['user']),
             matches_head=None if value['commit_id'] is None or head is None else commit_hash(value['commit_id']) == head)
 
-    def read(self, source):
+    reconciles_absence = True
+
+    def read(self, source, *, prior=None):
         try:
             if not isinstance(source, SourceSpec) or (source.provider, source.version) != ('github', self.selection.source_version): raise ValueError('unsupported GitHub source')
             self.transport._authorize(source, project_sha256=self.selection.project_sha256,
                 scope_sha256=self.selection.sha256, authorization=self.authorization)
             if 'threads' in self.selection.details and (self.authorization is None or any(n > 2**31-1 for n in self.selection.pulls)):
                 raise ValueError('GitHub threads require explicit authentication and GraphQL PR numbers')
-            return self._capture(source)
+            if prior is not None and (not isinstance(prior, (list, tuple)) or any(
+                    not isinstance(r, EvidenceRecord) or r.source_sha256 != source.source_key for r in prior)):
+                raise ValueError('prior GitHub checkpoint records exceed the selected source')
+            return self._capture(source, tuple(prior or ()))
         except Exception:
             raise TransportError('GitHub capture blocked or incomplete; no automatic retry or checkpoint commit') from None
 
@@ -508,8 +538,9 @@ class GitHubAPI:
             namespace = 'issue_event'
             related = None
             if kind == 'commented':
-                comment = self._comment(event, number)
-                related = emit('github_issue_comment', native, comment, comment['created_at']); namespace = 'comment'
+                comment = self._comment(event, number); namespace = 'comment'
+                if self.selection.contains(comment['created_at']):
+                    related = emit('github_issue_comment', native, comment, comment['created_at'])
             elif kind == 'reviewed':
                 review = self._review(event, number, pulls.get(number, {}).get('head_sha256'), timeline=True)
                 namespace = 'review'
@@ -527,10 +558,28 @@ class GitHubAPI:
             if related is not None: relations.add(('timeline_comment' if kind == 'commented' else 'timeline_review', key, related))
         return unmapped
 
-    def _capture(self, source):
+    def _absences(self, source, prior, observed, records, collected):
+        """Absence from a complete in-window listing is not deletion evidence."""
+        absences = {}
+        if self.selection.window is None: return absences
+        for record in prior:
+            key = record.native_id_sha256
+            if (record.state != 'present' or record.record_type not in WINDOWED or key in observed or key in records
+                    or record.original_at is None or not self.selection.contains(record.original_at)):
+                continue
+            value = dict(kind=record.record_type, native_id_sha256=key, state='deleted_or_unobservable',
+                basis='absent_from_complete_native_listing', deletion_confirmed=False,
+                window=dict(since=self.selection.since, until=self.selection.until, membership='created_at'))
+            revision = digest(value)
+            absences[key] = value, EvidenceRecord(source.source_key, key, revision, revision, 'contextual_assertion',
+                record.record_type, collected, original_at=record.original_at, provenance='unknown',
+                capture_completeness='partial', state='tombstone')
+        return absences
+
+    def _capture(self, source, prior=()):
         state = dict(requests=0, used=0,
             deadline=time.monotonic()+self.transport.seconds if self.transport.seconds is not None else None)
-        records, nodes, relations = {}, {}, set()
+        records, nodes, relations, observed = {}, {}, set(), set()
         collected = datetime.now(timezone.utc).isoformat()
         def emit(kind, native, node, original=None):
             key = digest((kind, self.selection.repo_id, native))
@@ -554,6 +603,8 @@ class GitHubAPI:
             if len(comments) != node['comments']: raise ValueError('GitHub conversation listing is incomplete')
             for comment in comments:
                 child = self._comment(comment, number)
+                observed.add(digest(('github_issue_comment', self.selection.repo_id, comment['id'])))
+                if not self.selection.contains(child['created_at']): continue
                 key = emit('github_issue_comment', comment['id'], child, child['created_at'])
                 relations.add(('conversation_on', key, parent))
         thread_reads = {}
@@ -590,6 +641,8 @@ class GitHubAPI:
                     relations.add(('thread_on', key, parent))
             for comment in comments:
                 value = self._comment(comment, number, inline=True, head=node['head_sha256'])
+                observed.add(digest(('github_review_comment', self.selection.repo_id, comment['id'])))
+                if not self.selection.contains(value['created_at']): continue
                 if comment['id'] in thread_links: value.update(thread_links[comment['id']])
                 key = emit('github_review_comment', comment['id'], value, value['created_at'])
                 relations.add(('inline_on', key, parent))
@@ -631,6 +684,9 @@ class GitHubAPI:
         for sha, before in commit_reads.items():
             if self._commit_detail(sha, state) != before: raise ValueError('GitHub commit details or comments changed during capture')
         if self._repository(self._get('', state)[0]) != repository: raise ValueError('GitHub repository changed during capture')
+        present = dict(records)
+        absences = self._absences(source, prior, observed, records, collected)
+        records.update({key: record for key, (_, record) in absences.items()})
         summary = dict(schema_version=1, api_version=API_VERSION, source_identity='repository_id_checked',
             repository=repository, nodes=[nodes[k] for k in sorted(nodes)], relations=sorted(relations),
             capture_completeness='partial', warnings=['selected_resources_only', 'thread_resolution_unknown', 'execution_binding_unknown'])
@@ -642,13 +698,17 @@ class GitHubAPI:
                 summary['warnings'].remove('thread_resolution_unknown')
                 summary['warnings'].append('thread_readbacks_non_atomic')
             if self.selection.commits: summary['warnings'].append('commit_file_inventory_limited')
+        if self.selection.window is not None:
+            summary.update(window=dict(since=self.selection.since, until=self.selection.until, membership='created_at',
+                kinds=list(WINDOWED)), absences=[absences[k][0] for k in sorted(absences)])
+            summary['warnings'].append('absence_is_not_deletion_evidence')
         coverage = CoverageManifest(source.source_key, source.scope_sha256, source.scope_sha256, self.selection.source_version,
             'github-rest-graphql-v1' if 'threads' in self.selection.details else 'github-rest-v'+str(self.selection.schema_version),
             (ScanBound('records', None, len(records)), ScanBound('pages', self.transport.max_pages, state['requests']),
             ScanBound('bytes', self.transport.max_bytes, state['used'])), gaps=('not_captured',), reported_completeness='partial')
         graph = None
         if 'graph' in self.selection.details:
-            refs = {k: RecordRef(r.source_sha256, r.native_id_sha256, r.revision_sha256) for k, r in records.items()}
+            refs = {k: RecordRef(r.source_sha256, r.native_id_sha256, r.revision_sha256) for k, r in present.items()}
             joins = tuple(JoinReceipt(refs[left], refs[right], relation, 'github.native', 'github-claims-v1',
                 (refs[left], refs[right]), basis='native_fields') for relation, left, right in sorted(relations))
             graph = EvidenceGraph(source.source_key, source.project_sha256, source.scope_sha256, source.version, tuple(refs.values()), joins)

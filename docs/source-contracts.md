@@ -1051,12 +1051,13 @@ the explicit v5 profile below persists revision-bound claims. Verified joins rem
 fingerprinted typed records and declared partial coverage through journal v4.
 Raw comment/code/message text is neither stored nor printed. Fingerprints remain
 private metadata rather than an anonymization guarantee. The reader emits no
-execution identities, inferred tombstones, causal labels or scientific independence.
+execution identities, causal labels or scientific independence. Only the explicit
+v6 window profile below records absence tombstones; earlier profiles infer none.
 
 Version 1 leaves thread resolution/outdated state unknown without native GraphQL
 evidence and does not read timelines or CI/checks; the explicit profile below adds
-those reads. Per-commit file detail, commit comments, conditional/incremental/deletion
-handling and time windows remain open in #45/#42. An omitted
+those reads. Later profiles add commit detail and bounded comment windows.
+Conditional (ETag) and incremental requests remain open in #45/#42. An omitted
 comment is not proof of deletion or no defect.
 Readbacks limit head inconsistency but do not make multiple REST calls an atomic
 server snapshot. Native unittest fixtures cover the client contract using fake
@@ -1107,8 +1108,8 @@ establish complete check history, so `latest_checks_only` remains explicit. All 
 calls share the original request/byte/deadline budgets, and final issue/PR/repository
 readbacks still gate the snapshot. HTTP denial and an unavailable detail surface
 cannot be reported as an empty successful check/review set. The explicit profile
-below adds GraphQL thread state. Per-commit files/comments, conditional/incremental/deletion handling,
-time windows and durable structured joins remain open.
+below adds GraphQL thread state. Later profiles add commit detail, durable claims and
+comment windows; conditional and incremental requests remain open.
 
 ### Authenticated native review threads
 
@@ -1197,8 +1198,8 @@ references require exact SHAs; open-PR test-merge references remain separate fro
 reported merged results. No revert/cherry-pick relationship is inferred from a
 message, and no comment or merge establishes a task outcome or independent root.
 Structured relationships remain in memory unless the v5 graph profile is selected.
-Persisted/cross-source resolution remains #58 work. Conditional requests,
-incremental/tombstone reconciliation and time windows remain open in #45/#42.
+Persisted/cross-source resolution remains #58 work. Conditional and incremental
+requests remain open in #45/#42; comment windows are described below.
 
 `task test:sources:github:commit:live` runs the native public-service acceptance
 case only with explicit `GITHUB_ENDPOINT`, `GITHUB_REPO_ID` and `GITHUB_COMMIT`
@@ -1223,6 +1224,54 @@ changes cannot relabel an older graph. Structured relationships persist only wit
 this explicit profile; ordinary summaries remain in memory. Current native links
 may be explicitly rechecked below; persisted/cross-source proofs and independent
 root/grouping claims still require further #58 resolution and validation.
+
+### Explicit comment windows and absence tombstones
+
+`GitHubSelection(..., schema_version=6, since=SINCE, until=UNTIL)` selects a
+half-open creation-time window `[since, until)` for issue-style conversation
+comments and inline review comments. Both bounds are required canonical
+RFC 3339 UTC seconds (`2026-01-01T00:00:00Z`); offsets, fractions, reversed or
+empty windows and spans over 366 days are rejected. Version 6 accepts every v5
+detail flag and explicit commit selection. Both bounds enter the selection
+fingerprint, so different windows yield different scopes, source keys and
+journals. Versions 1–5 retain their exact serialization, fingerprints and
+requests and ignore committed history.
+
+The window does not narrow requests. Each selected comment listing is still read
+in full and must match its native count, so the observation basis stays the
+complete listing. Every comment is validated; only in-window comments become
+records. Timeline comment projections follow the same rule. Issues, PRs, reviews,
+threads, files, commits, commit comments and checks are not windowed. A missing
+creation time leaves membership unknown and blocks the capture.
+
+On `import`, the registry passes the selected journal's committed revisions only
+to collectors that explicitly opt in. A previously present in-window comment whose
+native ID is absent from every complete listing of a fully successful capture
+becomes a `tombstone` revision for that ID. The tombstone records
+`deleted_or_unobservable` with `deletion_confirmed: false` and unknown
+provenance. These REST listings do not report deletion, so the reader never
+labels absence as deletion or distinguishes it from lost access.
+Tombstones are deterministic per native ID and window, so repeated absence adds
+no revision. Re-observing the ID records present revisions again; journal order
+is not a deletion chronology.
+
+No tombstone is inferred for comments created outside the window or with unknown
+creation time. None is inferred for IDs still listed outside the window or prior
+tombstones. HTTP denial, 429, count mismatches, truncated pagination, exhausted
+budgets and changed readbacks reject capture before reconciliation. The journal
+and checkpoint then stay unchanged. Preview has no committed history and reports
+no tombstones. Edits keep their native ID and produce a new present revision
+because the body fingerprint and `updated_at` change. Tombstones are excluded
+from the v5 relationship graph. The summary reports the window and hash-only
+absences with an `absence_is_not_deletion_evidence` warning. Coverage remains
+partial.
+
+Synthetic fixtures cover window validation, fingerprint compatibility, journal
+separation, edits, absence, idempotence and rejected captures. They do not
+establish live GitHub listing semantics, deletion detection or diagnostic
+utility. Conditional requests remain open; a `304 Not Modified` must not advance
+a checkpoint. `since`-filtered incremental requests, recheck windows and
+deletion signals beyond REST listings also remain open in #45.
 
 ### Explicit GitHub CLI configuration and native recheck
 

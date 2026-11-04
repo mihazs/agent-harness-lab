@@ -53,9 +53,12 @@ class Registry:
         return capability, connector
 
     def preview(self, source, **scope):
+        return self._snapshot(source, scope)
+
+    def _snapshot(self, source, scope, prior=None):
         from .snapshot import Snapshot
         capability, connector = self._resolve(source, scope)
-        snapshot = connector.read(source)
+        snapshot = connector.read(source) if prior is None else connector.read(source, prior=prior)
         if not isinstance(snapshot, Snapshot):
             raise ValueError('collector must return a frozen snapshot')
         for record in snapshot.records:
@@ -66,10 +69,12 @@ class Registry:
         return snapshot
 
     def ingest(self, source, store, **scope):
-        self._resolve(source, scope)
+        _, connector = self._resolve(source, scope)
         store._bind(source, writing=True)
         before = store.status(source)['cursor_sha256']
-        snapshot = self.preview(source, **scope)
+        # Only collectors that explicitly opt in receive committed revisions for absence reconciliation.
+        prior = store.revisions(source) if getattr(type(connector), 'reconciles_absence', False) is True else None
+        snapshot = self._snapshot(source, scope, prior)
         if not snapshot.checkpoint_ready: raise ValueError('capture is not ready for a committed checkpoint')
         return store.ingest(source, snapshot.records, cursor_before=before, snapshot_sha256=snapshot.sha256,
             metadata=snapshot.metadata, graph=snapshot.graph)
