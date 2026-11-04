@@ -16,6 +16,7 @@ from agent_harness_lab.cli import main, assets, _progress_reporter
 from agent_harness_lab.evidence import collect
 from agent_harness_lab.evaluation.construction import views
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
+from agent_harness_lab.diagnostics.process_mining import mine
 from tools.diagnose import analyze
 
 
@@ -90,14 +91,20 @@ class AnalysisPipelineTests(unittest.TestCase):
         _, result, _ = self.invoke(rows=self.rows())
         provenance = dict(source_kind='synthetic', source_ref='synthetic:test',
                           approved_publication=True, derived_from_private=False)
-        receipt = dict(result['analysis'], publication_allowed=True, provenance=provenance)
-        for wrapper in (None, 'execution', 'receipt', 'analysis', 'context', 'binding'):
-            with self.subTest(wrapper=wrapper):
-                record = receipt if wrapper is None else dict(publication_allowed=True,
-                    provenance=provenance, **{wrapper: receipt})
-                self.assertFalse(public_export_allowed([record]))
+        analysis = json.loads((self.root/'output/analysis.json').read_text())['analysis']
+        for name, value in (('receipt', result['analysis']), ('diagnosis', analysis),
+                            ('graph', analysis['process_mining'])):
+            facet = dict(value, publication_allowed=True, provenance=provenance)
+            for wrapper in (None, 'execution', 'receipt', 'analysis', 'context', 'binding', 'process_mining'):
+                with self.subTest(facet=name, wrapper=wrapper):
+                    record = facet if wrapper is None else dict(publication_allowed=True,
+                        provenance=provenance, **{wrapper: facet})
+                    self.assertFalse(public_export_allowed([record]))
         self.assertTrue(public_export_allowed([dict(publication_allowed=True,
             provenance=provenance, execution=dict(exit_code=0))]))
+        public_graph = mine(json.dumps(row) for row in self.rows())
+        self.assertTrue(public_export_allowed([dict(public_graph,
+            publication_allowed=True, provenance=provenance)]))
 
     def test_partial_capture_and_thin_support_do_not_report_clean_evidence(self):
         path = self.capture([dict(case_id='s', event_id='1', activity='read')])

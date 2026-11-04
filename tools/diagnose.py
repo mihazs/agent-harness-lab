@@ -114,14 +114,15 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
                 explanation='Caller supplied contract evidence; verify against the applicable contract.'))
     repeated = recurring_sequences(cases,roots,sequence_length)
     n = sum(counts.values())
-    return dict(schema_version=1, events=n, cases=len(roots), reported_roots=len(set(roots.values())),
+    return dict(schema_version=1, profile='ahl-private-diagnosis-v1',
+                events=n, cases=len(roots), reported_roots=len(set(roots.values())),
                 field_coverage={k: dict(known=fields[k], total=n) for k in
                                 ('tool_name', 'outcome', 'state_revision', 'lineage_verified')},
                 activities=dict(counts), eligible_observations=observations.coverage['eligible'],
                 observation_coverage=dict(observations.coverage),
                 observation_limits=dict(per_case=observation_per_case, total=observation_total, max_age=observation_max_age),
                 sequence_length_limit=sequence_length,
-                process_mining=process.result(),
+                process_mining=dict(process.result(), profile='ahl-analysis-process-graph-v1'),
                 recurring_sequences=repeated, findings=findings,
                 deferred_mechanisms={
                     'tool_waste': 'Needs necessity contract or outcome-preserving intervention.',
