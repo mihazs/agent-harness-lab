@@ -92,6 +92,8 @@ def _native(rows, source_format='normalized', project=None):
             session = payload.get('id', session)
         activity = {'function_call': 'tool_call', 'function_call_output': 'tool_result',
                     'user-prompt': 'user_message', 'stop': 'turn_stop'}.get(kind, kind)
+        if source_format == 'ai-memory':
+            activity = {'pre-tool-use': 'tool_call', 'post-tool-use': 'tool_result'}.get(kind, activity)
         output = payload.get('output')
         code = output.get('exit_code') if isinstance(output, dict) else None
         execution_status = ('error' if code != 0 else 'returned') if type(code) is int else None

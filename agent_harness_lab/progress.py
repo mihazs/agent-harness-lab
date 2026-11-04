@@ -12,9 +12,14 @@ class Progress:
         self.stage = None
 
     def __call__(self, stage, **counts):
-        if stage not in ('discovery', 'collection', 'analysis', 'complete', 'candidate_preparation', 'evaluation'):
+        if stage not in ('discovery', 'capture_selection', 'capture_processing', 'collection',
+                         'analysis', 'evaluation_reports', 'evidence_empty', 'evidence_incomplete',
+                         'collection_complete', 'complete', 'memory_collection', 'memory_readback',
+                         'candidate_preparation', 'evaluation'):
             raise ValueError('unsupported progress stage')
-        if any(key not in ('files', 'captures', 'events', 'findings', 'edges', 'attempt')
+        if any(key not in ('files', 'scanned', 'selected', 'capture', 'captures', 'events',
+                           'eligible', 'findings', 'edges', 'evaluation_outcomes', 'incomplete',
+                           'pages', 'observations', 'attempt')
                or type(value) is not int or value < 0 for key, value in counts.items()):
             raise ValueError('progress accepts aggregate counts only')
         now = self.clock()

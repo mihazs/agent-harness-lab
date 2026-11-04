@@ -51,8 +51,9 @@ class GitSourceTests(unittest.TestCase):
         self.declare()
 
     def git(self, *arguments, cwd=None):
+        # Fixture writes must not leave detached maintenance changing the read-only snapshot.
         return subprocess.check_output(['/usr/bin/git', '-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false',
-            '-c', 'commit.gpgsign=false', *arguments], cwd=cwd or self.repo, env=self.env, stderr=subprocess.DEVNULL)
+            '-c', 'commit.gpgsign=false', '-c', 'maintenance.auto=false', *arguments], cwd=cwd or self.repo, env=self.env, stderr=subprocess.DEVNULL)
 
     def commit(self):
         self.git('add', '--all'); self.git('commit', '-m', 'SYNTHETIC_PRIVATE_MESSAGE')

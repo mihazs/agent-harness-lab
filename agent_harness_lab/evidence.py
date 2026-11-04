@@ -152,7 +152,7 @@ def _evaluation_results(project, max_files, sources, fingerprint, caveats):
     return failures
 
 
-def collect(project, events=None, source_format='normalized', max_files=None, max_events=None, max_scan_files=None, event_sink=None, source_version=None, source_root=None, session=None, sequence_length=None, progress=None):
+def collect(project, events=None, source_format='normalized', max_files=None, max_events=None, max_scan_files=None, event_sink=None, source_version=None, source_root=None, session=None, sequence_length=None, progress=None, source_identity=None):
     """Return local evidence, not a claim of task success or a causal diagnosis."""
     project = Path(project).resolve()
     if not project.is_dir():
@@ -166,17 +166,20 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
     from .telemetry.claude_native import VERSION as CLAUDE_NATIVE_VERSION
     codex_pinned = source_format == 'codex' and source_version == CODEX_NATIVE_VERSION
     pinned = codex_pinned or source_format == 'claude' and source_version == CLAUDE_NATIVE_VERSION
+    if source_identity is not None:
+        from .sources.schema import fingerprint as validate_fingerprint
+        validate_fingerprint(source_identity)
+        if events is None or pinned:
+            raise ValueError('logical source identity requires an explicit unpinned event input')
     if source_root is not None and (not codex_pinned or events is not None) or session is not None and source_root is None:
         raise ValueError('native source-root/session requires the explicit pinned Codex profile and excludes --events')
     if source_version is not None and (events is None and source_root is None or not pinned and source_version != CAPABILITIES.get(source_format, {}).get('version')):
         raise ValueError('source version requires an explicit supported capture')
     caveats, sources, errors = [], [], []
+    notify = progress or (lambda stage, **counts: None)
+    notify('discovery', files=0, scanned=0, selected=0)
     fingerprint = hashlib.sha256()
     selected = []
-    def notify(stage, **counts):
-        if progress is not None:
-            progress(stage, **counts)
-    notify('discovery', files=0)
     if events is not None or source_root is not None:
         chosen = events if events is not None else source_root
         path = Path(chosen).absolute() if pinned else Path(chosen).resolve()
@@ -187,37 +190,41 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
     else:
         roots = [(Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'sessions', 'codex'),
                  (Path(os.environ.get('CLAUDE_CONFIG_DIR', str(Path.home() / '.claude'))) / 'projects', 'claude')]
-        def candidates():
-            scanned = 0
-            for root, fmt in roots:
-                for mtime, name, path in _capture_candidates(root):
-                    scanned += 1
-                    notify('discovery', files=scanned)
-                    yield mtime, name, path, fmt
-        discovered = candidates()
+        candidates = ((mtime, name, path, fmt) for root, fmt in roots
+                      for mtime, name, path in _capture_candidates(root))
+        scan_count = 0
+        def discovered():
+            nonlocal scan_count
+            for scan_count, candidate in enumerate(candidates, 1):
+                notify('discovery', files=scan_count, scanned=scan_count, selected=len(selected))
+                yield candidate
         if max_scan_files is None:
-            latest = discovered if max_files is None else sorted(discovered, reverse=True)
+            latest = discovered() if max_files is None else sorted(discovered(), reverse=True)
         else:
-            scanned = list(itertools.islice(discovered, max_scan_files + 1))
-            latest = heapq.nlargest(max_scan_files, scanned[:max_scan_files])
-            if len(scanned) > max_scan_files:
+            scanned_candidates = list(itertools.islice(discovered(), max_scan_files + 1))
+            latest = heapq.nlargest(max_scan_files, scanned_candidates[:max_scan_files])
+            if len(scanned_candidates) > max_scan_files:
                 _warn(caveats, 'Capture discovery reached its separate scan-file limit; older project history may be absent.')
         for _, _, path, fmt in latest:
-            if _owned(path, project, caveats, tick=lambda: notify('discovery', captures=len(selected))):
+            if _owned(path, project, caveats,
+                      tick=lambda: notify('discovery', files=scan_count, scanned=scan_count, captures=len(selected))):
                 if max_files is not None and len(selected) >= max_files:
                     _warn(caveats, 'Matching captures reached the accepted-file limit; project history is incomplete.')
                     break
                 selected.append((path, fmt))
+    notify('capture_selection', selected=len(selected), incomplete=int(bool(caveats)))
 
     def normalized_events():
         total_events = 0
         notify('collection', captures=0, events=0)
         for index, (path, fmt) in enumerate(sorted(selected, key=lambda pair: str(pair[0])), 1):
+            notify('capture_processing', capture=index, selected=len(selected), events=total_events)
             notify('collection', captures=index - 1, events=total_events)
             source_digest = hashlib.sha256()
-            source_id = hashlib.sha256(str(path).encode()).hexdigest()[:16]
+            source_id = (source_identity or hashlib.sha256(str(path).encode()).hexdigest())[:16]
             source = dict(format=fmt, events=0)
-            if pinned: source['path_sha256'] = hashlib.sha256(str(path).encode()).hexdigest()
+            if source_identity is not None: source['source_sha256'] = source_identity
+            elif pinned: source['path_sha256'] = hashlib.sha256(str(path).encode()).hexdigest()
             else: source['path'] = str(path)
             sources.append(source)
             def scoped_rows():
@@ -265,6 +272,8 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                 source['events'] += 1
                 total_events += 1
                 notify('collection', captures=index - 1, events=total_events)
+                if total_events % 1000 == 0:
+                    notify('capture_processing', capture=index, selected=len(selected), events=total_events)
                 if tool_error:
                     errors.append(dict(kind='tool_error', status='observed_pattern',
                         evidence=[dict(case_id=event['case_id'], event_id=event['event_id'])],
@@ -277,13 +286,15 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
 
     analysis = analyze(normalized_events(), max_events=max_events, sequence_length=sequence_length)
     analysis['findings'].extend(errors)
+    notify('evaluation_reports', events=analysis['events'])
     outcomes = [] if events is not None or source_root is not None else _evaluation_results(project, max_files, sources, fingerprint, caveats)
     if not selected:
         _warn(caveats, 'No matching local capture was found; absence of evidence is not success.')
     failures = [record for record in outcomes if record['status'] in FAILURES]
     successes = [record for record in outcomes if record['status'] == 'passed']
-    notify('complete', events=analysis['events'], findings=len(analysis['findings']),
-           edges=len(analysis['process_mining']['raw_edges']))
+    stage = 'evidence_empty' if not analysis['events'] and not outcomes else 'evidence_incomplete' if caveats else 'collection_complete'
+    notify(stage, events=analysis['events'], eligible=analysis['eligible_observations'],
+           findings=len(analysis['findings']), evaluation_outcomes=len(outcomes), incomplete=int(bool(caveats)))
     return dict(analysis=analysis, evaluation_failures=failures, evaluation_successes=successes,
                 evaluation_outcomes=outcomes, discovery_limits=dict(scan_files=max_scan_files, accepted_files=max_files), sources=sources,
                 fingerprint=fingerprint.hexdigest(), caveats=caveats)
