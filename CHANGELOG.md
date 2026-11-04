@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.18
+
+### Patch Changes
+
+- a52d494: Report a committed contract repair truthfully when recording its result fails or is interrupted: read back the journal and exact expected inventory, keep the deployment and rollback identity, and require intervention when the target changed.
+
 ## 0.76.17
 
 ### Patch Changes
