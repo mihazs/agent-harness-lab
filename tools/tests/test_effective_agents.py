@@ -9,6 +9,7 @@ import time
 from types import SimpleNamespace
 import unittest
 
+import agent_harness_lab
 from agent_harness_lab.evaluation import responses
 import test_sandbox_inference as wire
 
@@ -17,6 +18,8 @@ PROTOCOL='ahl-controlled-agents-v1'
 
 class InstructionFixture:
     def setUp(self):
+        expected=os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
+        if expected:self.assertTrue(Path(agent_harness_lab.__file__).resolve().is_relative_to(Path(expected).resolve()))
         folder=tempfile.TemporaryDirectory();self.addCleanup(folder.cleanup);self.root=Path(folder.name)
         self.harness=self.root/'harness';self.harness.mkdir();(self.harness/'AGENTS.md').write_text('SYNTHETIC_GUIDANCE')
         self.work=self.root/'work';self.work.mkdir();self.deadline=time.monotonic()+10
