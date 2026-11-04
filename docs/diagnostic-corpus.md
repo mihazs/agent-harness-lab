@@ -111,6 +111,9 @@ The classifier text is the frozen human `summary`. The predicted summary is
 never read. The binary label is `true` for `task_failure` and `false` for
 `successful`. `external_failure` and `requirements_changed` remain unlabeled
 rather than becoming negatives, and `outcome_counts` reports them separately.
+In corpus reports, split and project metrics name these rows
+`unlabeled_outcomes`, not `unknown`, because the corpus `unknown` outcome is
+never exported. The adapter profile keeps its `unknown` field.
 `groups` reports rows, declared roots, repeated-root rows, the most rows for one
 root and roots with conflicting labels for each split. The `splits` metrics are
 row-weighted (`metric_weighting.splits: row`), as in the adapter profile: labeled

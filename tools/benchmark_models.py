@@ -462,6 +462,10 @@ def main():
             subset = [(r, p) for r, p in zip(rows, probabilities)
                       if str(r.get('project', 'unknown')) == project and r['split'] == 'heldout']
             result['projects'][project] = measure([r for r, _ in subset], [p for _, p in subset], threshold)
+        if manifest is not None:
+            # Corpus outcome 'unknown' is never exported; these rows are known non-binary outcomes.
+            for metrics in (*result['splits'].values(), *result['projects'].values()):
+                metrics['unlabeled_outcomes'] = metrics.pop('unknown')
         print(json.dumps(result, indent=2))
     except (ValueError, OSError, ImportError) as exc:
         parser.exit(2, f'benchmark error: {exc}\n')

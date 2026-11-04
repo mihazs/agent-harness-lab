@@ -75,7 +75,8 @@ class CorpusBenchmarkTests(unittest.TestCase):
         self.assertEqual((report['reviewed_annotations'], report['gold_labels']), (5, 0))
         self.assertEqual((report['qualification'], report['certification']), ('descriptive_only', 'not_issued'))
         self.assertEqual(report['outcome_counts']['development'], dict(task_failure=1, successful=1, external_failure=1))
-        self.assertEqual(report['splits']['development']['unknown'], 1)
+        self.assertEqual(report['splits']['development']['unlabeled_outcomes'], 1)
+        self.assertFalse(any('unknown' in metrics for metrics in (*report['splits'].values(), *report['projects'].values())))
         self.assertIsNone(report['threshold'])
         self.assertFalse(report['publication_allowed']); self.assertFalse(report['classifier_selection_allowed'])
         for forged in (report, {**report, **benchmark_fixtures.record(), 'publication_allowed': True}):
@@ -146,6 +147,7 @@ class CorpusBenchmarkTests(unittest.TestCase):
         self.assertEqual(report['label_provenance_counts'], dict(adjudicated=0, single_review=0, adapter_smoke=4))
         self.assertEqual((report['reviewed_annotations'], report['gold_labels']), (0, 0))
         self.assertEqual({p['label_provenance'] for p in report['predictions']}, {'adapter_smoke'})
+        self.assertEqual(report['splits']['heldout']['unknown'], 0); self.assertNotIn('unlabeled_outcomes', report['splits']['heldout'])
         for claimed in ('adjudicated', 'single_review', 'gold'):
             smoke.write_text(json.dumps(dict(root_case_id='r', split='train', text='synthetic', label=True, label_provenance=claimed)))
             with self.subTest(claimed=claimed), self.assertRaises(ValueError): bench.read_examples(smoke)
