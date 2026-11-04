@@ -108,6 +108,62 @@ class OneCallTests(unittest.TestCase):
         if expected:
             self.assertTrue(Path(agent_harness_lab.__file__).resolve().is_relative_to(Path(expected).resolve()))
 
+    def test_postcommit_record_failure_reports_actual_committed_repair(self):
+        from agent_harness_lab import workflow
+        original=workflow.write_json
+        for change,error in [('none',KeyboardInterrupt),('none',OSError),('body',KeyboardInterrupt),
+                             ('mode',OSError),('readback',KeyboardInterrupt)]:
+            with self.subTest(change=change,error=error.__name__):
+                self.project=Path(tempfile.mkdtemp(dir=self.root,prefix='project-'))
+                self.skill=self.project/'.agents/skills/example/SKILL.md';self.skill.parent.mkdir(parents=True)
+                self.skill.write_bytes(b'\xef\xbb\xbf'+self.valid);self.skill.chmod(0o640)
+                failed=[]
+                def record(path,value):
+                    if path.name=='workflow.json' and value.get('status')=='applied' and not failed:
+                        self.assertEqual(self.skill.read_bytes(),self.valid)
+                        if change=='body':self.skill.write_bytes(b'foreign edit')
+                        if change=='mode':self.skill.chmod(0o600)
+                        if change=='readback':self.skill.unlink();self.skill.mkdir(mode=0o700)
+                        failed.append(path);raise error('synthetic post-commit failure')
+                    return original(path,value)
+                with patch.object(workflow,'write_json',side_effect=record):
+                    code,result=self.invoke('--repair-contracts')
+                self.assertEqual(len(failed),1)
+                self.assertEqual(json.loads(failed[0].read_bytes()),result)
+                self.assertEqual(Journal(self.project,result['journal']).load(result['deployment'])['status'],'committed')
+                self.assertEqual(result['changed_files'],['.agents/skills/example/SKILL.md'])
+                self.assertEqual((result['commit_observation'],result['post_commit_error_type']),('committed',error.__name__))
+                self.assertIn('rollback',result)
+                if change=='none':
+                    self.assertEqual((code,result['status'],result['target_readback']),(0,'applied','matched'))
+                    self.assertNotIn('remaining_change_ownership',result)
+                    with contextlib.redirect_stdout(io.StringIO()):
+                        self.assertEqual(main(['rollback',result['deployment'],'--project',str(self.project)]),0)
+                else:
+                    self.assertEqual((code,result['status'],result['target_readback']),
+                                     (1,'requires_intervention','changed_or_unavailable'))
+                    self.assertEqual(result['remaining_change_ownership'],'unverified')
+                    if change=='readback':self.assertTrue(self.skill.is_dir())
+                    else:self.assertEqual(self.skill.read_bytes(),b'foreign edit' if change=='body' else self.valid)
+
+    def test_postcommit_record_failure_keeps_result_when_rerecording_fails(self):
+        from agent_harness_lab import workflow
+        original=workflow.write_json
+        def record(path,value):
+            if path.name=='workflow.json' and value.get('status')=='applied':raise OSError('synthetic full disk')
+            return original(path,value)
+        with patch.object(workflow,'write_json',side_effect=record):
+            code,result=self.invoke('--repair-contracts')
+        self.assertEqual((code,result['status'],result['workflow_completion']),(0,'applied','unrecorded'))
+        self.assertEqual(self.skill.read_bytes(),self.valid)
+
+    def test_precommit_failure_still_reports_no_changed_files(self):
+        from agent_harness_lab.promotion.journal import Journal as Owned
+        with patch.object(Owned,'_execute',side_effect=KeyboardInterrupt):
+            code,result=self.invoke('--repair-contracts')
+        self.assertEqual((code,result['status'],result['changed_files']),(1,'interrupted',[]))
+        self.assertEqual(self.skill.read_bytes(),b'\xef\xbb\xbf'+self.valid)
+
     def test_nested_example_skill_is_preserved(self):
         example=self.skill.parent/'examples/nested/SKILL.md'
         example.parent.mkdir(parents=True)

@@ -191,7 +191,28 @@ def contracts(args):
             result.update(status='applied', changed_files=sorted(o['path'] for o in operations),
                           deployment=receipt['deployment'], journal=str(journal.folder),
                           rollback=f'ahl rollback {receipt["deployment"]} --project {shlex.quote(str(args.project))}')
-    write_json(output/'workflow.json', result)
+    try:
+        write_json(output/'workflow.json', result)
+    except BaseException as exc:
+        if result['status'] != 'applied':
+            raise
+        # The Journal already returned its committed receipt. Observe it and the
+        # exact expected inventory; never replay or restore after commit.
+        observed = False
+        try:
+            observed = (journal.active == receipt['deployment'] and journal.load(receipt['deployment']) == receipt
+                        and all(file_state(args.project/name) == state for name, state in proposed.items()))
+        except (OSError, ValueError, KeyError, TypeError, KeyboardInterrupt):
+            pass
+        result.update(status='applied' if observed else 'requires_intervention', commit_observation='committed',
+                      target_readback='matched' if observed else 'changed_or_unavailable',
+                      post_commit_error_type=type(exc).__name__)
+        if not observed:
+            result['remaining_change_ownership'] = 'unverified'
+        try:
+            write_json(output/'workflow.json', result)
+        except (OSError, KeyboardInterrupt):
+            result['workflow_completion'] = 'unrecorded'
     return result
 
 
