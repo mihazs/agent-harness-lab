@@ -344,6 +344,21 @@ tasks:
     desc: Run source contracts and checkpoint unittest cases
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_*.py"'
+  test:sources:transport:
+    desc: Verify caller-limited or unlimited HTTPS intake with synthetic responses
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_transport.py" -v'
+  test:sources:github:
+    desc: Verify GitHub intake and pagination with synthetic responses only
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_TEST_GITHUB_LIVE: '0'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_github*.py" -v'
   test:sources:controller:
     desc: Run live controller source admission and untrusted receipt controls
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
