@@ -386,7 +386,7 @@ unsupported versions, traversal, links, resource expiry and changed declarations
 likewise cannot advance the committed cursor. Selection and source input are
 revalidated after conversion and Snapshot validation.
 
-Limits are the shared 64 MiB file read, 1 MiB line and ten-second lifecycle budget,
+Limits are 64 MiB per capture file, 1 MiB per line and a ten-second lifecycle budget,
 at most 10,000 selected input records/normalized source records and 1,000 execution
 subjects. Coverage `records` counts observed input lines; derived source coverage
 records are separately bounded. Coverage remains partial even at native stop.
@@ -436,11 +436,14 @@ counts each response once; journal admission additionally checks raw fingerprint
 
 The entire root scan, correlation, record conversion, identity/graph validation,
 selection revalidation and final selected-file/directory verification share one
-bounded lifecycle. Limits remain 64 MiB cumulatively across header/full reads,
-1 MiB per line, ten seconds, 10,000 filesystem entries and depth 64. The descriptor
+bounded lifecycle. Limits remain 64 MiB per selected file, 1 MiB per header/line,
+ten seconds, 10,000 filesystem entries and depth 64. There is no cumulative byte
+ceiling across header and selected-file reads. The descriptor
 caps accepted files at 100, candidate files at 2,000 and total input/normalized
-source records at 10,000; execution subjects remain capped at 1,000. The root
-mapping version is `codex-native-root-journal-v1`.
+source records at 10,000; execution subjects remain capped at 1,000. Coverage
+declares record/file bounds; `native_summary.bytes_read` reports actual cumulative
+reads without declaring an aggregate byte bound. The root mapping version is
+`codex-native-root-journal-v1`.
 
 Preview exposes `checkpoint_ready: false` for any selected partial tail, reached
 file/scan cutoff, unsupported header, skipped unsafe entry or empty accepted scan.

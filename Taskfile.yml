@@ -382,6 +382,16 @@ tasks:
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_codex_rollout.py" -v'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_codex_discovery.py" -v'
+  test:captures:read-budget:
+    desc: Verify aggregate read ceilings are absent while record, file and Git bounds remain
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -c "import os,pathlib,agent_harness_lab; assert pathlib.Path(agent_harness_lab.__file__).resolve().is_relative_to(pathlib.Path(os.environ[''AHL_EXPECTED_PACKAGE_ROOT'']).resolve())"'
+      - for: [test_evidence.py, test_monitoring.py, test_codex_rollout.py, test_codex_discovery.py, test_claude_native.py, 'test_source_codex*.py', test_source_claude.py, test_source_git.py]
+        cmd: '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p {{.ITEM | shellQuote}} -v'
   test:captures:claude:
     desc: Run pinned Claude native scope, privacy, response consistency and resource controls
     cmds:
