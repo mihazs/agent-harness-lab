@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.78.0
+
+### Minor Changes
+
+- 325b2c6: Configure existing controlled Responses settings and bounded worker references once in ahl.json, then resolve them through plain improvement and watch. Preserve offline policy, explicit overrides and legacy runtime shapes; report local readiness without authenticating or launching a runtime, and stop further transport when admitted references change.
+
 ## 0.77.0
 
 ### Minor Changes
