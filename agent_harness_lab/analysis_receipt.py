@@ -37,7 +37,8 @@ def summarize(data):
     else:
         state = 'observed'
         action = 'Run ahl improve . to inspect current contracts and evaluate supported candidates.'
-    return dict(schema_version=1, evidence_state=state, events=events, cases=analysis['cases'],
+    return dict(schema_version=1, profile='ahl-analysis-execution-v1',
+                evidence_state=state, events=events, cases=analysis['cases'],
                 reported_roots=roots, findings=len(analysis['findings']),
                 evaluation_records=len(outcomes), algorithms=methods,
                 not_run=[dict(id=name, reason=reason) for name, reason in (
