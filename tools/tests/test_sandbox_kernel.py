@@ -768,6 +768,12 @@ class TrajectoryKernelTests(KernelFixture):
             self.assertEqual(source['status'],'observed',source)
             live=source['live_verification']
             self.assertEqual(live['statuses']['verified'],1)
+            harness=live['controller_harness_input']
+            self.assertEqual(harness['status'],'observed')
+            self.assertEqual(harness['sha256'],digest(getattr(args,trial['version'])))
+            self.assertEqual(harness['observation_scope'],'controller_input_checks_before_and_after_executor')
+            self.assertEqual(harness['effective_loading'],'unverified')
+            self.assertFalse(harness['publication_allowed'])
             fields={field['name']:field for field in live['verified_execution']['fields']}
             self.assertEqual(fields['runtime_version']['value_sha256'],frozen['sha256'])
             self.assertEqual(fields['runtime_version']['status'],'verified')
@@ -803,7 +809,7 @@ class TrajectoryKernelTests(KernelFixture):
             "print(json.dumps(dict(schema_version=1,valid=True,outcome=ok,grader_id='synthetic-source',grader_version='v1'))); sys.exit(0 if ok else 1)")
         oracle_hash=digest(oracle)
         argv=['/usr/bin/python3','-I','-c',"from pathlib import Path; Path('result.txt').write_text('done')"]
-        for mode in ('valid','artifact_swap','copy','mutation','nonce','missing_result','deadline','input_changed','foreign_scope'):
+        for mode in ('valid','artifact_swap','copy','mutation','input_digest','nonce','missing_result','deadline','input_changed','foreign_scope'):
             with self.subTest(mode=mode),owned.session():
                 sink=SourceSink(self.root/(mode+'-journal.json'),source_digest('synthetic-project'),source_digest('synthetic-scope'))
                 capture=sink.begin(['result.txt'],time.monotonic()+15)
@@ -814,6 +820,7 @@ class TrajectoryKernelTests(KernelFixture):
                     with self.assertRaises(ValueError): backend.run(argv,self.work,{},'executor',Limits(seconds=0),artifact_allowlist=['result.txt'])
                 regrade_artifacts(self.work,['result.txt'],oracle,oracle_hash,backend,limits=Limits(seconds=8))
                 if mode=='mutation': capture.data['grade']['oracle_sha256']='0'*64
+                if mode=='input_digest': capture.data['kernels'][0]['input_digests']['harness']='0'*64
                 if mode=='nonce': capture.data['attempt_sha256']='0'*64
                 if mode=='copy': capture=copy(capture)
                 if mode=='foreign_scope': sink=SourceSink(self.root/'foreign-journal.json',source_digest('foreign'),source_digest('synthetic-scope'))
@@ -824,6 +831,8 @@ class TrajectoryKernelTests(KernelFixture):
                 if mode=='valid':
                     snapshot=ControllerCapture(sink.source,capture).read(sink.source)
                     live=result['live_verification']
+                    self.assertEqual(live['controller_harness_input']['status'],'unknown')
+                    self.assertIsNone(live['controller_harness_input']['sha256'])
                     identity=live['verified_execution']; fields=tuple(IdentityField.parse(field) for field in identity['fields'])
                     declared=snapshot.metadata.identities[0]
                     forged=ExecutionMetadata((ExecutionIdentity(declared.subject,fields),),snapshot.metadata.coverage)
