@@ -11,7 +11,7 @@ import re
 import stat
 import unicodedata
 from .claude_native import ENTRY_TYPES, UPSTREAM_COMMIT, VERSION, Projection
-from .native import correlated, invalid_constant, jsonl, lines, optional_limit
+from .native import WalkLimit, bounded_walk, correlated, invalid_constant, jsonl, lines, listing, optional_limit
 from ..evaluation.integrity import unique_object
 from ..sources.schema import digest
 
@@ -68,35 +68,6 @@ def selected_directories(folder, root, project):
     return [str(PurePosixPath(root, name)) for name in sorted(names)]
 
 
-class TreeLimit(Exception):
-    pass
-
-
-def listing(folder, name, budget=None):
-    """List one directory without following links; a budget counts every visited entry."""
-    descriptor = folder.directory(name)
-    try:
-        folder.observe(name, os.fstat(descriptor)); found = []
-        with os.scandir(descriptor) as entries:
-            for entry in entries:
-                folder.entries += 1; folder.check()
-                if budget is not None:
-                    budget[0] -= 1
-                    if budget[0] < 0: raise TreeLimit()
-                found.append((entry.name, entry.stat(follow_symlinks=False)))
-        return sorted(found, key=lambda item: item[0])
-    finally: os.close(descriptor)
-
-
-def subtree(folder, name, budget, depth=0):
-    if depth > MAX_SUBAGENT_DEPTH: raise TreeLimit()
-    for entry, info in listing(folder, name, budget):
-        path = str(PurePosixPath(name, entry))
-        if stat.S_ISDIR(info.st_mode): yield from subtree(folder, path, budget, depth+1)
-        elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1: yield path
-        else: folder.unsafe_entries += 1
-
-
 def candidates(folder, directory, session, limited):
     """Yield regular files of the documented layout; each subagents tree is depth- and entry-bounded."""
     if session is None: entries = listing(folder, directory)
@@ -110,8 +81,8 @@ def candidates(folder, directory, session, limited):
             nested = str(PurePosixPath(path, 'subagents')); info = folder.inspect(nested)
             if info is not None and not stat.S_ISDIR(info.st_mode): folder.unsafe_entries += 1
             elif info is not None:
-                try: yield from subtree(folder, nested, [MAX_SUBAGENT_ENTRIES])
-                except TreeLimit: limited(nested)
+                try: yield from bounded_walk(folder, nested, MAX_SUBAGENT_DEPTH, MAX_SUBAGENT_ENTRIES)
+                except WalkLimit: limited(nested)
 
 
 def scope(folder, name, project, expected, limits):

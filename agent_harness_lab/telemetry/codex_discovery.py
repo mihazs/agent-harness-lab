@@ -4,9 +4,12 @@ from contextlib import closing, contextmanager
 import json
 from pathlib import Path
 from .codex_rollout import VERSION, UPSTREAM_COMMIT, Projection, correlated, decode, invalid_constant, text
-from .native import lines, optional_limit
+from .native import WalkLimit, bounded_walk, lines, optional_limit
 from ..evaluation.integrity import unique_object
 from ..sources.schema import digest
+
+MAX_WALK_DEPTH = 128  # directory levels below the selected root
+MAX_WALK_ENTRIES = 10000  # visited filesystem entries of any kind under the selected root
 
 
 def scan(root, project, *, session=None, max_files=None, max_scan_files=None, max_records=None, **limits):
@@ -30,13 +33,20 @@ def capture(root, project, *, session=None, max_files=None, max_scan_files=None,
     files, names, limits = [], [], []
     foreign = other_session = unsupported = headers = duplicates = consumed = 0
     with Folder(root.parent, deadline, limit_total_bytes=False, limit_tree=False) as folder:
-        with closing(folder.walk(root.name, skip_unsafe=True)) as paths:
-            for name in paths:
-                path = Path(name)
-                if not path.name.startswith('rollout-') or path.suffix != '.jsonl': continue
-                if max_scan_files is not None and len(names) == max_scan_files:
-                    limits.append('scan_files'); break
-                names.append(name)
+        walk_limits = []
+        try:
+            with closing(bounded_walk(folder, root.name, MAX_WALK_DEPTH, MAX_WALK_ENTRIES)) as paths:
+                for name in paths:
+                    path = Path(name)
+                    if not path.name.startswith('rollout-') or path.suffix != '.jsonl': continue
+                    if max_scan_files is not None and len(names) == max_scan_files:
+                        limits.append('scan_files'); break
+                    names.append(name)
+        except WalkLimit as limit:
+            # The unread remainder is unknown coverage, never an empty or successful scan.
+            limits.append('scan_'+limit.reason)
+            walk_limits.append(dict(path_sha256=digest(str(Path(limit.name).relative_to(root.name))), status='unknown',
+                reason=f'scan_{limit.reason}_limit'))
         # Excluded headers do not become dependencies of the selected-file snapshot.
         for name in sorted(names, key=lambda n: (Path(n).name, n), reverse=True):
             folder.check()
@@ -104,7 +114,8 @@ def capture(root, project, *, session=None, max_files=None, max_scan_files=None,
         discovery = dict(scanned_files=len(names), headers_read=headers, accepted_files=len(files), foreign_files=foreign,
             other_sessions=other_session, unsupported_headers=unsupported, unsafe_entries_skipped=folder.unsafe_entries,
             filesystem_entries=folder.entries, bytes_read=folder.bytes, input_records=consumed,
-            max_files=max_files, max_scan_files=max_scan_files, max_records=max_records, reached_limits=limits)
+            max_files=max_files, max_scan_files=max_scan_files, max_records=max_records, reached_limits=limits,
+            **(dict(walk_limits=walk_limits) if walk_limits else {}))
         totals = {key: sum(f['coverage'][key] for f in files) for key in ('inherited_records_skipped', 'duplicates_skipped', 'unsupported_records')}
         totals['duplicates_skipped'] += duplicates
         summary = dict(adapter_version=VERSION, upstream_commit=UPSTREAM_COMMIT, capture_completeness='partial',

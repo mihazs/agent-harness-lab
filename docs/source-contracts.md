@@ -439,8 +439,16 @@ counts each response once; journal admission additionally checks raw fingerprint
 
 The entire root scan, correlation, record conversion, identity/graph validation,
 selection revalidation and final selected-file/directory verification share one
-stable-input lifecycle. There are no implicit byte, line, filesystem-entry,
-directory-depth, time or collection-count ceilings. Optional descriptor fields
+stable-input lifecycle. The root walk is iterative and has two fixed bounds: 128
+directory levels below `source_root` and 10,000 visited filesystem entries of any
+kind (files, directories, links and special files, related to rollouts or not).
+Reaching either bound stops the walk, adds `scan_depth` or `scan_entries` to
+`reached_limits` and records a fingerprinted `discovery.walk_limits` receipt with
+status `unknown` and reason `scan_depth_limit` or `scan_entries_limit`; the unread
+remainder is unknown coverage, never an empty or successful scan, and the
+checkpoint is blocked. Trees within both bounds produce unchanged summaries,
+records and fingerprints. There are no implicit byte, line, time or
+collection-count ceilings. Optional descriptor fields
 `max_files`, `max_scan_files` and `max_records` preserve caller-selected limits;
 omission or `null` means unlimited. Coverage declares the selected record/file
 limits and actual counts; `native_summary.bytes_read` reports cumulative reads
@@ -448,7 +456,7 @@ without declaring an aggregate byte bound. The root mapping version is
 `codex-native-root-journal-v1`.
 
 Preview exposes `checkpoint_ready: false` for any selected partial tail, reached
-file/scan cutoff, unsupported header, skipped unsafe entry or empty accepted scan.
+file/scan/walk cutoff, unsupported header, skipped unsafe entry or empty accepted scan.
 Those previews can neither import nor recheck relationships. Hard resource errors,
 conflicting claims or concurrent selected-input/descriptor changes reject the
 operation. No incomplete batch can create or advance a checkpoint, and successful

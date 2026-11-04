@@ -164,6 +164,21 @@ class NativeRootTests(unittest.TestCase):
         self.assertEqual(preview['records'], 0); self.assertFalse(preview['checkpoint_ready'])
         self.assertEqual(f.invoke('import')[0], 2); self.assertFalse(f.cache.parent.exists())
 
+    def test_walk_depth_and_entry_limits_are_labelled_and_block_the_checkpoint(self):
+        import shutil
+        from agent_harness_lab.telemetry import codex_discovery
+        f = self.f; (self.captures/('d/'*(codex_discovery.MAX_WALK_DEPTH+1))).mkdir(parents=True)
+        code, preview = f.invoke('preview'); self.assertEqual(code, 0); self.assertFalse(preview['checkpoint_ready'])
+        self.assertEqual(preview['native_summary']['discovery']['reached_limits'], ['scan_depth'])
+        self.assertEqual(f.invoke('import')[0], 2)
+        shutil.rmtree(self.captures/'d'); self.assertTrue(f.invoke('preview')[1]['checkpoint_ready'])
+        for index in range(3): (self.captures/f'note-{index}.txt').write_bytes(b'')
+        with patch.object(codex_discovery, 'MAX_WALK_ENTRIES', 3):
+            code, preview = f.invoke('preview'); self.assertEqual(code, 0); self.assertFalse(preview['checkpoint_ready'])
+            self.assertEqual([r['reason'] for r in preview['native_summary']['discovery']['walk_limits']], ['scan_entries_limit'])
+            self.assertEqual(f.invoke('import')[0], 2)
+        self.assertFalse(f.cache.exists())
+
     def test_invalid_selection_or_scope_is_rejected_before_scanning(self):
         f = self.f; original = dict(f.selected)
         with patch('agent_harness_lab.telemetry.codex_discovery.capture', side_effect=AssertionError('no capture read')):
