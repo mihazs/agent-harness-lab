@@ -582,9 +582,10 @@ and effective settings remain `unknown`. File presence, names and contents do no
 prove that an agent loaded them. Preview includes these metadata in `git_summary`;
 import keeps normalized development-artifact records in the journal. Collector
 checkpoints describe committed captures, not the current live source or a historical
-execution's version. Full instruction/import/override graphs, hook lifecycle
-inventory, independently evidenced execution bindings and hosting-provider
-reconciliation remain open in #46/#58/#77–#80.
+execution's version. Declared Codex and Claude Code instruction inventories are
+described below; observed loading, managed/global and path-scoped rule graphs,
+hook lifecycle inventory, independently evidenced execution bindings and
+hosting-provider reconciliation remain open in #46/#58/#77–#80.
 
 Git analysis does not impose default source-byte, entry, directory-depth, ref,
 selected-path, selection-file or command-output size ceilings. Callers can select
@@ -771,7 +772,8 @@ other non-empty candidates in that directory remain visible as shadowed. Selecte
 files outside that directory chain are out of scope; unrecognized filenames within
 it remain unsupported. Parent and shadowing edges describe declared hierarchy,
 without resolving semantic contradictions in the text. Imports, path-scoped Claude
-rules, managed/global influence and hooks are outside this first profile.
+rules, managed/global influence and hooks are outside this Codex profile; the
+Claude Code profile below declares bounded project imports only.
 
 `GitExport.instructions` is a frozen `InstructionInventory`. Its fingerprint binds
 the profile, task cwd, all inspected file hashes/modes, missing-file states and the
@@ -789,6 +791,70 @@ submodule crossings fail the capture. The collector does not guess native partia
 file truncation: when selected non-empty files and separators exceed the declared
 byte cap, resolution is blocked and affected applicability remains unknown. A
 blocked or unsupported receipt is not a resolved effective instruction closure.
+
+### Declared Claude Code project memory inventory
+
+The same optional `instruction_profile` accepts one Claude Code declaration. It has
+no fallback names or byte-limit field; a Codex-shaped profile for this version, or
+this shape for the Codex version, is rejected:
+
+```json
+{"schema_version": 1, "runtime": "claude-code", "version": "2.1.317", "task_cwd": "src/task"}
+```
+
+The profile follows the public [Claude Code memory documentation](https://code.claude.com/docs/en/memory),
+checked 2026-11-04. That page is not versioned per release, so the mapping from it
+to `2.1.317` is an assumption. Other versions return an unsupported receipt.
+The reader does not run Claude Code, read user/managed settings, or follow
+anything outside the selected checkout. Synthetic tests check this
+documentation-derived resolver; they are not native loading evidence.
+
+What the receipt declares, never verifies:
+
+- **Launch files.** In each directory from the checkout root through `task_cwd`,
+  a non-empty UTF-8 `CLAUDE.md`, `.claude/CLAUDE.md` and `CLAUDE.local.md` are
+  `declared_applicable` with reason `directory_concatenation`. They are
+  concatenated, not shadowed. `parent` edges link consecutive directory levels.
+  Order within one directory is not encoded. Directories above the checkout are
+  not read; their influence stays in `ambient_state: unknown`.
+- **Imports.** `@path` tokens that start a line or follow whitespace are parsed
+  outside code spans and fenced code blocks. Backslash-escaped spaces are kept;
+  quoted tokens are skipped. A relative path resolves from the importing file's
+  directory. Each newly declared file is expanded once, breadth-first, up to the
+  documented maximum of four hops (a launch file is hop 0); a file reached at
+  hop 5 is hashed but stays `unknown` (`import_depth_limit`) and is not expanded.
+  `imports` edges record each importer→target pair. An edge whose target already
+  reaches the importer is `import_cycle`, so cycles end without re-reading.
+- **Unknown or unsupported targets.** Missing targets are `missing`/`unknown`.
+  Absolute, `~` and root-escaping imports are never read: they become
+  content-free `external_reference` nodes with `unknown` presence. In-checkout
+  targets outside `task_cwd` are hashed but stay `unknown`
+  (`external_import_requires_approval`), because Claude Code asks for approval
+  first. Imports inside HTML comments, non-UTF-8 targets and files over the
+  documented 4 MiB skip threshold also stay `unknown`. `.git` paths, directories
+  and invalid paths are `unsupported` and are not read.
+- **AGENTS.md.** `AGENTS.md` and `.claude/AGENTS.md` in the chain are
+  `shadowed` with reason `default_instruction_files_setting` when a launch
+  `CLAUDE.md` is present, because that is the documented default. Otherwise they
+  are `unknown`, because the controlling setting is read only from user or
+  managed configuration. An `AGENTS.md` imported by a declared file becomes
+  `declared_applicable` through that import.
+- **Explicitly unknown.** Selected `.claude/rules/` files (`rules_not_modeled`)
+  and launch filenames below `task_cwd` (`on_demand_subdirectory`) stay unknown.
+  Files below `task_cwd` are not discovered unless the caller selects them.
+  Managed and user files, `claudeMdExcludes`, approval decisions, on-demand
+  truncation and path-scoped rule matching are not captured. A selected
+  `AGENTS.override.md` or other unrecognized file in the chain is `unsupported`.
+
+Links and nested repositories that an import crosses fail the capture, as do
+non-UTF-8 launch files. Like the Codex profile, files are read and hashed in full
+with no inventory-specific node, edge or byte cap. Import expansion is bounded by
+the four-hop rule and by the checkout's own files. The receipt uses the existing
+`InstructionInventory` shape and `instruction_inventory` record. Observed loading
+stays `unknown`, and the receipt grants no edit authority. Content, import, cwd
+and profile changes invalidate it. Native `InstructionsLoaded` evidence, managed
+and global capture, rules and on-demand modeling, and execution binding remain
+open in #46.
 
 ## ai-memory OKF project exports
 

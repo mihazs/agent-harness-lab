@@ -289,6 +289,22 @@ class GitSourceTests(unittest.TestCase):
         self.assertNotEqual(before.sha256, collector.instructions.sha256)
         self.assertEqual(before.observed_loading, 'unknown')
 
+    def test_declared_claude_memory_imports_bind_to_the_captured_harness(self):
+        self.instruction_profile()
+        self.selection['instruction_profile'] = dict(schema_version=1, runtime='claude-code', version='2.1.317', task_cwd='src/task')
+        self.declare()
+        (self.repo/'src/task/CLAUDE.md').write_text('@guide.md')
+        guide = self.repo/'src/task/guide.md'; guide.write_text('SYNTHETIC_GUIDE')
+        collector, first = self.read(); before = collector.instructions
+        active = {n.path_sha256 for n in before.nodes if n.applicability == 'declared_applicable'}
+        self.assertEqual(active, {digest('src/task/CLAUDE.md'), digest('src/task/guide.md')})
+        self.assertEqual((before.resolution_status, before.observed_loading), ('declared', 'unknown'))
+        self.assertEqual(collector.summary['instruction_inventory_sha256'], before.sha256)
+        code, preview = self.invoke('preview')
+        self.assertEqual(code, 0); self.assertNotIn('SYNTHETIC_GUIDE', json.dumps(preview))
+        guide.write_text('SYNTHETIC_CHANGED_GUIDE')
+        self.assertNotEqual(before.sha256, (collector.read(self.source), collector.instructions.sha256)[1])
+
     def test_instruction_scope_cannot_cross_a_gitlink_or_nested_repository(self):
         oid = self.git('rev-parse', 'HEAD').decode().strip()
         self.git('update-index', '--add', '--cacheinfo', f'160000,{oid},vendor')
