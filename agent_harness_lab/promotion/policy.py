@@ -38,8 +38,7 @@ def legacy_coverage(manifest, trials):
 
 def implementation_prerequisites(scope=None, *, declarations=None):
     """Read live producer facts; legacy recommendation flags stay declarations."""
-    from .prerequisites import _Scope,PROFILE,MAX_DISPATCHES,MAX_BYTES
-    from agent_harness_lab.private_journal import encoded
+    from .prerequisites import _Scope,PROFILE,MAX_DISPATCHES,MAX_BYTES,RECEIPT_ENCODING
     from agent_harness_lab.evaluation.runtime_boundary import PROFILE as BOUNDARY_PROFILE
     packet=dict(schema_version=1,profile=PROFILE,status='unrequested' if scope is None else 'unknown',
         verification_scope='post_preflight_owned_dispatches_only',publication_allowed=False,automatic_promotion=False,
@@ -57,7 +56,7 @@ def implementation_prerequisites(scope=None, *, declarations=None):
         permission_result_capture='unrequested' if scope is None else 'unknown',
         permission_result_scope='project_role_errno_results_only',
         coverage=dict(dimension='post_preflight_dispatch_admissions',admitted=None,completed=None,limit=MAX_DISPATCHES,
-            receipt_bytes=None,receipt_bytes_limit=MAX_BYTES,roles=[],capability_probes=None,
+            receipt_bytes=None,receipt_encoding=RECEIPT_ENCODING,receipt_bytes_limit=MAX_BYTES,roles=[],capability_probes=None,
             independence='unverified',task_fixture_coverage='unverified'))
     if type(scope) is not _Scope:return packet
     try:data=_Scope.read(scope)
@@ -66,7 +65,7 @@ def implementation_prerequisites(scope=None, *, declarations=None):
     packet.update(status='observed' if complete else 'unknown',
         coverage=dict(dimension='post_preflight_dispatch_admissions',admitted=len(events),
             completed=sum(row['complete'] for row in events),limit=MAX_DISPATCHES,
-            receipt_bytes=len(encoded(data)),
+            receipt_bytes=len(scope._state()),receipt_encoding=RECEIPT_ENCODING,
             receipt_bytes_limit=MAX_BYTES,roles=sorted({row['role'] for row in events if row['stage']=='role'}),
             capability_probes=sum(row['stage']=='capability_probe' for row in events),
             independence='unverified',task_fixture_coverage='unverified'),
