@@ -682,7 +682,8 @@ study remain open in #58.
 `sources.commit_join.join_commit(git_source, git_store, github_source, github_store,
 repository_id=ID, commit_sha=SHA)` relates one commit across two already imported
 private journals: a `local_git/git` journal and an `api/github` journal. It reads
-only the selected journals' latest checkpoints. It reads no source, runs no Git,
+only the selected journals: their latest checkpoints, plus their stored record
+history to classify staleness. It reads no source, runs no Git,
 makes no network or model calls and does not change either journal. There is no
 CLI exposure yet.
 
@@ -692,8 +693,9 @@ padded, 64-hex and non-string SHAs are rejected before any journal is read; no
 case folding or prefix search is performed. SHA-256 object-format repositories are
 outside this join. Both source specifications must declare that repository
 fingerprint as their project. The GitHub journal's current checkpoint must contain
-the `github_repository` record the built-in reader emits only after checking the
-numeric repository ID. The Git checkout's repository membership remains a caller
+a current `github_repository` record. The built-in reader emits it only after
+checking the numeric repository ID, but the join does not verify which reader
+produced a stored journal, so the report labels this `journal_declared_current`. The Git checkout's repository membership remains a caller
 declaration: local Git capture ignores remotes and source configuration, so no
 local field verifies which hosted repository a checkout belongs to.
 
@@ -705,7 +707,7 @@ detail). The report's `status` is one of:
 | --- | --- |
 | `matched` | The exact commit record is a current node in both latest checkpoints under one repository fingerprint |
 | `stale` | A commit record exists in a journal's history but not in its latest checkpoint (for example after a force-push or a rewritten PR), or the current revision is a tombstone |
-| `unlinked` | Either source declares a different repository fingerprint, so an identical SHA in a fork or unrelated repository is not joined |
+| `unlinked` | The two sources do not declare the same repository fingerprint (`repository_identity_not_shared`), so an identical SHA in a fork, an unrelated repository or an undeclared checkout is not joined; this does not establish that the repositories differ |
 | `unknown` | No repository ID was supplied, the GitHub repository record is absent, a latest checkpoint or graph is unavailable, the commit is unobserved, observed only as a Git reference, absent from a truncated history or ambiguous |
 
 A `matched` report carries one `same_commit` `JoinReceipt` from the Git commit

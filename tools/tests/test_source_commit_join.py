@@ -91,7 +91,7 @@ class CommitJoinTests(unittest.TestCase):
         result = self.join()
         self.assertDescriptive(result, 'matched', 'exact_commit_identity')
         self.assertEqual(result['repository'], dict(key_sha256=digest(('github.repository', 42)),
-            github='connector_checked_at_capture', git='caller_declared'))
+            github='journal_declared_current', git='caller_declared'))
         receipt = JoinReceipt.parse(result['receipt'])
         self.assertEqual((receipt.relation, receipt.status, receipt.basis, receipt.reason),
             ('same_commit', 'candidate', 'source_declaration', 'not_validated'))
@@ -106,11 +106,11 @@ class CommitJoinTests(unittest.TestCase):
         for repository_id in (42, 43):
             with self.subTest(repository_id=repository_id):
                 result = self.join(hub=fork, repository_id=repository_id)
-                self.assertDescriptive(result, 'unlinked', 'repository_mismatch')
+                self.assertDescriptive(result, 'unlinked', 'repository_identity_not_shared')
         other = self.git_source(43, 'unrelated-checkout')
         self.capture(other, git_commit(other, SHA))
         self.capture(self.hub, hub_repository(self.hub, 42), hub_commit(self.hub, 42, SHA))
-        self.assertDescriptive(self.join(git=other), 'unlinked', 'repository_mismatch')
+        self.assertDescriptive(self.join(git=other), 'unlinked', 'repository_identity_not_shared')
 
     def test_force_pushed_commits_missing_from_the_current_checkpoint_are_stale(self):
         self.capture(self.git, git_commit(self.git, SHA))
@@ -222,7 +222,7 @@ class NativeCommitJoinTests(GitHubFixture, unittest.TestCase):
             registry.ingest(source, stores[source.kind], project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)
         join = lambda **options: join_commit(self.git, stores['local_git'], self.source, stores['api'], **{'repository_id': 42, 'commit_sha': self.sha, **options})
         result = join()
-        self.assertEqual((result['status'], result['repository']['github']), ('matched', 'connector_checked_at_capture'))
+        self.assertEqual((result['status'], result['repository']['github']), ('matched', 'journal_declared_current'))
         self.assertEqual(JoinReceipt.parse(result['receipt']).status, 'candidate')
         self.assertEqual(join(repository_id=43)['status'], 'unlinked')
         self.assertEqual(join(commit_sha='0'*40)['status'], 'unknown')

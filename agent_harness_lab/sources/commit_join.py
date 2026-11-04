@@ -36,7 +36,7 @@ def _report(status, reason, key, sha, git, hub, receipt=None):
         return {k: v for k, v in side.items() if k != 'refs'} | dict(current_records={
             kind: ref.to_dict() for kind, ref in sorted(side['refs'].items())})
     return dict(schema_version=1, profile=PROFILE, resolver_version=RESOLVER_VERSION, status=status, reason=reason,
-        commit_sha256=digest(sha), repository=dict(key_sha256=key, github='connector_checked_at_capture'
+        commit_sha256=digest(sha), repository=dict(key_sha256=key, github='journal_declared_current'
             if hub and hub['observations'].get('github_repository') == 'current' else 'unknown', git='caller_declared'),
         git=public(git) if git else None, github=public(hub) if hub else None,
         receipt=receipt.to_dict() if receipt is not None else None,
@@ -66,7 +66,7 @@ def join_commit(git_source, git_store, github_source, github_store, *, repositor
     hub = _observe(github_store, github_source, dict(github_commit=digest(('github_commit', repository_id, commit_sha)),
         github_repository=digest(('github_repository', repository_id, repository_id))))
     outcome = lambda status, reason, receipt=None: _report(status, reason, key, commit_sha, git, hub, receipt)
-    if (git_source.project_sha256, github_source.project_sha256) != (key, key): return outcome('unlinked', 'repository_mismatch')
+    if (git_source.project_sha256, github_source.project_sha256) != (key, key): return outcome('unlinked', 'repository_identity_not_shared')
     if 'unavailable' in (git['observations']['git_commit'], hub['observations']['github_commit']):
         return outcome('unknown', 'checkpoint_unavailable')
     if hub['observations']['github_repository'] != 'current': return outcome('unknown', 'repository_identity_unobserved')
