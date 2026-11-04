@@ -388,6 +388,7 @@ def adopt(project, baseline, candidate, original, proposed):
 
 def _improve(args):
     from agent_harness_lab.cli import assets, evaluator, _progress_reporter
+    from .one_call import invocation_context
     if args.timeout <= 0:
         raise ValueError('timeout must be positive')
     controlled = args.agent == 'responses'
@@ -400,6 +401,8 @@ def _improve(args):
     remaining = lambda: args.timeout - (time.monotonic() - started)
     runner = evaluator()
     output = output_dir(args)
+    if getattr(args,'_invocation_origin',None)=='skill':
+        write_json(output/'invocation.json',invocation_context(args,output,started+args.timeout))
     access_path=None
     if getattr(args,'evaluation_store',None) is not None:
         from .evaluation.construction_access import selection
@@ -538,7 +541,8 @@ def _improve(args):
             protected[output/f'proposer-{attempt}'] = runner.digest(output/f'proposer-{attempt}')
         else:
             write_json(prepare / 'context.json', dict(project=str(args.project), baseline=str(baseline),
-                candidate=str(candidate), evaluation=str(proposal_folder), phase='candidate', attempt=attempt, focus=getattr(args, 'focus', None)))
+                candidate=str(candidate), evaluation=str(proposal_folder), phase='candidate', attempt=attempt, focus=getattr(args, 'focus', None),
+                invocation=invocation_context(args,output,started+args.timeout,remaining_seconds=remaining(),remaining_trials=trials_left)))
             prompt = f'''Load {plugin / 'skills/harness-self-improvement/SKILL.md'} and the sibling evaluation skill.
 You are the preparation stage of ahl improve, not an interactive request for a failure description.
 Discover improvement candidates yourself from {output / 'analysis.json'}, baseline instructions,
@@ -565,7 +569,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             if remaining() <= 0:
                 result['status'] = 'budget_exhausted'
                 break
-            run = runner.execute(command, prepare, remaining(), prompt)
+            run = runner.execute(command, prepare, remaining(), prompt,env=runner.managed_environment(output.name))
             (output / f'preparation-{attempt}.jsonl').write_text(run.pop('stdout'))
             (output / f'preparation-{attempt}.stderr').write_text(run.pop('stderr'))
             check = dict(run, stdout=(output / f'preparation-{attempt}.jsonl').read_text())
@@ -643,7 +647,8 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         else:
             evaluation.mkdir()
             write_json(evaluation / 'context.json', dict(project=str(args.project), baseline=str(baseline),
-                evaluation=str(evaluation), harness_paths=sorted(paths), phase='evaluation', attempt=attempt))
+                evaluation=str(evaluation), harness_paths=sorted(paths), phase='evaluation', attempt=attempt,
+                invocation=invocation_context(args,output,started+args.timeout,remaining_seconds=remaining(),remaining_trials=trials_left)))
             evaluation_prompt = f"""Load {plugin / 'skills/harness-evaluation/SKILL.md'}.
 You are an independent evaluation-construction session for an automatic harness improvement.
 Discover acceptance criteria from {output / 'analysis.json'}, the baseline {baseline}, and
@@ -675,7 +680,7 @@ Graders must print schema_version=1, valid=true, outcome=boolean, grader_id and 
 with exit0 for true and exit1 for false. Broken/partial controls must produce a valid false grade.
 All bundles and controls stay outside task fixtures; no grader command is executed on the host.
 """
-            construction = runner.execute(command, evaluation, remaining(), evaluation_prompt)
+            construction = runner.execute(command, evaluation, remaining(), evaluation_prompt,env=runner.managed_environment(output.name))
             (output / f'evaluation-construction-{attempt}.jsonl').write_text(construction.pop('stdout'))
             (output / f'evaluation-construction-{attempt}.stderr').write_text(construction.pop('stderr'))
             check = dict(construction, stdout=(output / f'evaluation-construction-{attempt}.jsonl').read_text())

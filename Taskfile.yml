@@ -2,6 +2,14 @@ version: '3'
 vars:
   PYTHON: '{{default "python3" .PYTHON}}'
 tasks:
+  test:skill-invocation:
+    desc: Execute installed skill entry routing and managed-child denial contracts
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_skill_invocation.py" -v'
   test:analysis:pipeline:
     desc: Verify default mining, method selection, execution receipts and aggregate progress
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
