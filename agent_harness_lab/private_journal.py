@@ -1,4 +1,4 @@
-"""Owner-only bounded journals; domain transitions remain with each controller."""
+"""Owner-only journals with explicit size policies; controllers own transitions."""
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import fcntl
@@ -20,7 +20,7 @@ def encoded(value):
 
 
 def record_bytes(raw, limit=256*1024):
-    if not isinstance(raw, bytes) or len(raw) > limit: raise ValueError('case metadata byte bound exceeded')
+    if not isinstance(raw, bytes) or limit is not None and len(raw) > limit: raise ValueError('case metadata byte bound exceeded')
     try: value = json.loads(raw, object_pairs_hook=unique_object, parse_constant=invalid_constant)
     except RecursionError: raise ValueError('case metadata nesting limit exceeded') from None
     if not isinstance(value, dict): raise ValueError('case metadata must be an object')
@@ -44,12 +44,15 @@ def write_bytes(path, raw):
 
 
 class PrivateJournal:
-    def __init__(self, root, store_format, transition):
+    def __init__(self, root, store_format, transition, *, max_events=MAX_EVENTS,max_metadata=MAX_METADATA,max_entries=128):
         self.root = Path(root).absolute()
         if '..' in self.root.parts: raise ValueError('case store path must be canonical')
         if not isinstance(store_format, str) or not 0 < len(store_format) <= 128 or not callable(transition):
             raise ValueError('invalid private journal controller')
         self.format, self._transition = store_format, transition
+        for limit in (max_events,max_metadata,max_entries):
+            if limit is not None and (type(limit) is not int or limit<=0):raise ValueError('positive journal size or None required')
+        self.max_events,self.max_metadata,self.max_entries=max_events,max_metadata,max_entries
 
     @contextmanager
     def locked(self, *, create=False):
@@ -87,14 +90,14 @@ class PrivateJournal:
         return contained(self.root, 'cases/'+case_id)
 
     def case_ids(self, maximum):
-        """Enumerate bounded canonical case directories without following links."""
-        if type(maximum) is not int or maximum<=0: raise ValueError('positive case count bound required')
+        """Enumerate canonical directories; None removes only the count bound."""
+        if maximum is not None and (type(maximum) is not int or maximum<=0): raise ValueError('positive case count bound required')
         folder=contained(self.root,'cases')
         if not folder.exists(): return []
         result=[]
         with os.scandir(folder) as entries:
             for entry in entries:
-                if len(result)>=maximum: raise ValueError('case directory count bound exceeded')
+                if maximum is not None and len(result)>=maximum: raise ValueError('case directory count bound exceeded')
                 path=self.case(entry.name)
                 if not entry.is_dir(follow_symlinks=False) or not path.is_dir(): raise ValueError('invalid case directory')
                 result.append(entry.name)
@@ -105,11 +108,11 @@ class PrivateJournal:
         with os.scandir(case/'events') as entries:
             paths = []
             for index, entry in enumerate(entries):
-                if index >= 128: raise ValueError('case journal entry bound exceeded')
+                if self.max_entries is not None and index >= self.max_entries: raise ValueError('case journal entry bound exceeded')
                 if not entry.name.startswith('.'): paths.append(Path(entry.path))
-        for index, path in enumerate(sorted(paths)):
+        for index, path in enumerate(sorted(paths,key=lambda path:(len(path.stem),path.name))):
             if path.name != f'{index:04d}.json': raise ValueError('case journal gap or unknown entry')
-            event, identity = record(path)
+            event, identity = record(path,self.max_metadata)
             if set(event) != set('schema_version index previous_sha256 kind state payload recorded_at'.split()):
                 raise ValueError('case event fields do not match the journal schema')
             previous = events[-1] if events else None
@@ -127,11 +130,11 @@ class PrivateJournal:
         previous = events[-1] if events else None
         if not self._transition(previous[0]['state'] if previous else None, kind, state, previous[0]['kind'] if previous else None):
             raise ValueError('invalid case lifecycle transition')
-        if len(events) >= MAX_EVENTS: raise ValueError('case journal operation bound exceeded')
+        if self.max_events is not None and len(events) >= self.max_events: raise ValueError('case journal operation bound exceeded')
         value = dict(schema_version=1, index=len(events), previous_sha256=previous[1] if previous else None,
             kind=kind, state=state, payload=payload, recorded_at=datetime.now(timezone.utc).isoformat())
-        if len(encoded(value)) > MAX_METADATA: raise ValueError('complete case event exceeds metadata bound')
+        if self.max_metadata is not None and len(encoded(value)) > self.max_metadata: raise ValueError('complete case event exceeds metadata bound')
         path = case/'events'/f'{len(events):04d}.json'
         if path.exists(): raise ValueError('immutable case event already exists')
         atomic_json(path, value)
-        events.append((value, hashlib.sha256(read_regular(path, 256*1024)).hexdigest()))
+        events.append((value, hashlib.sha256(read_regular(path,self.max_metadata)).hexdigest()))

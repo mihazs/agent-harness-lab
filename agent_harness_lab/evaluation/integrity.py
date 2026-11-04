@@ -12,8 +12,8 @@ def unique_object(pairs):
     return value
 
 
-def read_regular(path, max_bytes):
-    """Read one bounded, single-link file without following symlink ancestors."""
+def _regular_chunks(path, max_bytes):
+    """Stream one safely opened file, retaining optional byte admission checks."""
     path = Path(path)
     if not all(hasattr(os, name) for name in ('O_NOFOLLOW', 'O_NONBLOCK')):
         raise NotImplementedError('safe file reads require POSIX filesystem APIs')
@@ -22,15 +22,24 @@ def read_regular(path, max_bytes):
     descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
     try:
         info = os.fstat(descriptor)
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_size > max_bytes:
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or max_bytes is not None and info.st_size > max_bytes:
             raise ValueError('input must be a bounded single-link regular file')
         with os.fdopen(descriptor, 'rb', closefd=False) as stream:
-            raw = stream.read(max_bytes+1)
-        if len(raw) > max_bytes:
-            raise ValueError('input byte limit exceeded')
-        return raw
+            total=0
+            while True:
+                size=1024*1024 if max_bytes is None else min(1024*1024,max_bytes-total+1)
+                raw=stream.read(size)
+                if not raw:break
+                total+=len(raw)
+                if max_bytes is not None and total>max_bytes:raise ValueError('input byte limit exceeded')
+                yield raw
     finally:
         os.close(descriptor)
+
+
+def read_regular(path, max_bytes):
+    """Read one single-link file; None removes the byte bound, not path checks."""
+    return b''.join(_regular_chunks(path,max_bytes))
 
 
 def relative(value):
@@ -52,24 +61,28 @@ def contained(root, value):
     return path
 
 
-def tree(root, max_files=1000, max_bytes=10 * 1024 * 1024):
+def tree(root, max_files=1000, max_bytes=10 * 1024 * 1024, *, max_entries=5000,max_depth=64):
     root = Path(root)
     if any(p.is_symlink() for p in (root, *root.absolute().parents)) or not root.is_dir():
         raise ValueError('input must be a regular directory')
     result, total = {}, 0
     for index, path in enumerate(root.rglob('*')):
-        if index >= 5000 or len(path.relative_to(root).parts) > 64:
+        if (max_entries is not None and index >= max_entries
+                or max_depth is not None and len(path.relative_to(root).parts) > max_depth):
             raise ValueError('tree entry/depth bound exceeded')
         info = path.lstat()
         if stat.S_ISDIR(info.st_mode):
             continue
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
             raise ValueError('input contains symlink, hardlink or special file')
-        if len(result) >= max_files or info.st_size > max_bytes-total:
+        remaining=None if max_bytes is None else max_bytes-total
+        if (max_files is not None and len(result) >= max_files
+                or remaining is not None and info.st_size > remaining):
             raise ValueError('tree resource bound exceeded')
-        raw = read_regular(path, max_bytes-total)
-        total += len(raw)
-        result[str(path.relative_to(root))] = dict(sha256=hashlib.sha256(raw).hexdigest(),
+        identity=hashlib.sha256()
+        for raw in _regular_chunks(path,remaining):
+            total+=len(raw);identity.update(raw)
+        result[str(path.relative_to(root))] = dict(sha256=identity.hexdigest(),
                                                   mode=stat.S_IMODE(info.st_mode))
     return dict(sorted(result.items()))
 
@@ -79,8 +92,8 @@ def tree_digest(files):
     return hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()
 
 
-def digest(root):
-    return tree_digest(tree(root))
+def digest(root, **limits):
+    return tree_digest(tree(root,**limits))
 
 
 def copy_frozen(source, destination, expected):
