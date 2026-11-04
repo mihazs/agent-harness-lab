@@ -1,4 +1,5 @@
 """Owned controller harness input versus an owned local-Git snapshot; never loading or authority."""
+import hashlib
 import os
 from pathlib import PurePosixPath
 import time
@@ -16,13 +17,32 @@ class HarnessCapture:
     __slots__ = ('__weakref__',)
 
 
-def issue(source, snapshot, roots, files):
-    """Called by the built-in Git reader after its source readback; facts stay process-local."""
+class _Issuer:
+    __slots__ = ('__weakref__',)
+
+
+_ISSUER = []
+
+
+def _register_issuer():
+    """One-shot: the built-in Git reader claims the only issuer when it is imported."""
+    if _ISSUER: raise ValueError('harness capture issuer already registered')
+    _ISSUER.append(_Issuer())
+    return _ISSUER[0]
+
+
+def _issue(issuer, source, snapshot, roots, files):
+    """Issuance requires the registered issuer; process-private access/monkeypatching remains trusted."""
+    if not _ISSUER or issuer is not _ISSUER[0]: raise ValueError('built-in Git harness capture issuer required')
     handle = HarnessCapture()
     _ISSUED[handle] = dict(pid=os.getpid(), captured_ns=time.monotonic_ns(), source_sha256=source.source_key,
         project_sha256=source.project_sha256, snapshot_sha256=snapshot.sha256, head_sha256=snapshot.head_sha256,
         roots=dict(roots), files=tuple(files))
     return handle
+
+
+def path_sha256(name):
+    return hashlib.sha256(os.fsencode(name)).hexdigest()
 
 
 def _receipt(status, reason, **values):
@@ -40,7 +60,7 @@ def _compare(captured, observed_sha256, location_sha256, started_ns):
     """Pure comparison of already-owned facts; unknown is coverage, never a failure label."""
     if observed_sha256 is None: return 'unknown', 'controller_harness_input_unobserved'
     if captured['captured_ns'] >= started_ns: return 'unknown', 'snapshot_not_captured_before_execution'
-    root = captured['roots'].get(location_sha256) if location_sha256 is not None else None
+    root, listing = captured['roots'].get(location_sha256, (None, None)) if location_sha256 is not None else (None, None)
     if root is None: return 'unknown', 'harness_location_not_in_captured_checkout'
     base = PurePosixPath(root)
     tree = {}
@@ -56,6 +76,8 @@ def _compare(captured, observed_sha256, location_sha256, started_ns):
                 or bool(mode & 0o100) != (committed_mode == 0o100755)):
             return 'unknown', 'snapshot_not_clean'
         tree[str(name if root == '.' else name.relative_to(base))] = dict(sha256=content, mode=mode)
+    # The controller digest covers every file under the root; unselected files at capture are a coverage gap.
+    if listing is None or listing != frozenset(map(path_sha256, tree)): return 'unknown', 'snapshot_does_not_cover_input_tree'
     return ('verified', None) if tree_digest(dict(sorted(tree.items()))) == observed_sha256 else ('mismatch', 'input_tree_differs')
 
 
@@ -69,7 +91,8 @@ def bind(attempt, harness_capture):
     if captured['project_sha256'] != attempt.source.project_sha256: return _receipt('unknown', 'declared_project_differs')
     executor = data['kernels'][data['grade']['executor_ordinal']]
     observed = executor['input_digests'].get('harness')
-    status, reason = _compare(captured, observed, executor.get('harness_location_sha256'), attempt.started_ns)
+    location = attempt.locations.get(str(data['grade']['executor_ordinal']))
+    status, reason = _compare(captured, observed, location, attempt.started_ns)
     return _receipt(status, reason, controller_attempt_sha256=data['attempt_sha256'], controller_harness_input_sha256=observed,
         harness_snapshot_sha256=captured['snapshot_sha256'], head_sha256=captured['head_sha256'],
         git_source_sha256=captured['source_sha256'])

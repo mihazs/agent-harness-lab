@@ -119,25 +119,34 @@ process. It returns a private `ahl-harness-snapshot-binding-v1` receipt whose
 Each input must be owned. The attempt must be the exact live `_Attempt` returned by
 `SourceSink.begin`, closed by `finish` and still readable within its session and
 deadline. The capture must be the opaque `GitExport.harness_capture` handle that the
-built-in reader (not a subclass) issues after its source readback. That handle's
-facts stay in a private registry inside the issuing process. Serialized
+built-in reader (not a subclass) issues after its source readback. There is no
+public issuance function: issuance requires a one-shot issuer object that the
+built-in Git module claims when it is imported, and a second claim fails. That
+handle's facts stay in a private registry inside the issuing process. Serialized
 `HarnessSnapshot` values, `git_summary`, journal metadata or graphs, handles
 constructed by callers, dictionaries and handles in a forked process all return
-`unknown` with every fingerprint set to `null`.
+`unknown` with every fingerprint set to `null`. As with the controller issuer, the
+trusted boundary is the host process: code that reads or mutates private module
+registries, or monkeypatches the reader or controller, is outside this protection.
 
 On the sandbox's private-workspace path, the controller now also records a private
 location fingerprint for the executor's `harness` input directory. The fingerprint
 covers the normalized absolute path and the device and inode numbers. It is recorded
 at launch and again after the input checks, and it is kept only when both readings
-agree. The Git capture records the same fingerprint for the checkout and for every
-ancestor directory of its selected paths. Neither fingerprint enters a report or
+agree. It is kept in the attempt's private state, outside the hashed kernel event
+data, so receipt revisions, journal records and their sizes are unchanged. The Git
+capture records the same fingerprint for the checkout and for every ancestor
+directory of its selected paths. For each such directory it also keeps a bounded
+listing of the hashed relative path of every non-directory entry. The listing
+holds at most 10,000 entries and 64 nesting levels; on overflow the directory's
+coverage is unknown. Neither fingerprint nor the listing enters a report or
 journal. The receipt is:
 
 | Status | Condition |
 | --- | --- |
-| `verified` | The capture finished before the attempt began. The executor's harness location equals a captured checkout directory. Every selected file under that directory was clean at capture (worktree content equals the HEAD blob, executable bit matches the Git mode, nothing untracked, deleted or a symlink). No selected path lies outside it. The controller's before/after input-tree digest equals the tree digest of those files' relative paths, contents and permission bits |
-| `mismatch` | The same ownership, timing, location and cleanliness conditions hold, but the digests differ: a file changed, was added (including an untracked file), removed or changed mode after capture |
-| `unknown` | Any other case: a missing or non-owned input, a capture taken after the attempt began, no observed harness input or location, a renamed, relocated, copied or different checkout (even with identical content), a selection dirty at capture, a selection outside the executed directory, or differing declared project fingerprints |
+| `verified` | The capture finished before the attempt began. The executor's harness location equals a captured checkout directory. Every selected file under that directory was clean at capture (worktree content equals the HEAD blob, executable bit matches the Git mode, nothing untracked, deleted or a symlink). No selected path lies outside it, and the directory held no file outside the selection at capture. The controller's before/after input-tree digest equals the tree digest of those files' relative paths, contents and permission bits |
+| `mismatch` | The same ownership, timing, location, cleanliness and coverage conditions hold, but the digests differ: a covered file changed content or mode, or a file was added (including an untracked file) or removed after capture |
+| `unknown` | Any other case: a missing or non-owned input, a capture taken after the attempt began, no observed harness input or location, a renamed, relocated, copied or different checkout (even with identical content), a selection dirty at capture, a selection outside the executed directory, a directory that held unselected, untracked, ignored or `.git` files at capture (`snapshot_does_not_cover_input_tree`, a coverage gap rather than a difference), or differing declared project fingerprints |
 
 `reason` names the deciding condition. A verified or mismatched receipt carries the
 controller attempt, the controller harness-input digest, the `HarnessSnapshot`

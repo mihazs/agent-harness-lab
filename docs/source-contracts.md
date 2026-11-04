@@ -727,9 +727,10 @@ the committed journal untouched. Private copies are removed after success or err
 Each successful built-in read also exposes `GitExport.harness_capture`, an opaque
 handle valid only in the reading process. It privately keeps the selected paths'
 content/mode facts and location fingerprints (normalized absolute path plus
-device/inode) for the checkout and the selected paths' ancestor directories. The
+device/inode) for the checkout and the selected paths' ancestor directories, plus a
+bounded listing of hashed relative file paths in each of those directories. The
 snapshot, summary, records and journal are unchanged; a subclass reader gets
-`None`. Only the [controller harness binding](controller-sources.md#owned-git-harness-snapshot-binding)
+`None`, and there is no public issuance function. Only the [controller harness binding](controller-sources.md#owned-git-harness-snapshot-binding)
 consumes the handle. A renamed or copied checkout, a journal checkpoint or a
 serialized snapshot cannot stand in for it.
 

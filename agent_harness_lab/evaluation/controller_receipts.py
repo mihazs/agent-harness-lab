@@ -114,12 +114,13 @@ class _Attempt:
         self.closed = self.lost = False
         self.latest = self.executor = None
         self.started_ns = time.monotonic_ns()
+        self.locations = {}
         _ACTIVE.set(self)
         _PENDING[self] = self._state()
 
     def _state(self):
         return encoded(dict(data=self.data,expected=sorted(self.expected),deadline=self.deadline,owner=id(self.owner),
-            closed=self.closed,lost=self.lost,executor=self.executor,started_ns=self.started_ns,
+            closed=self.closed,lost=self.lost,executor=self.executor,started_ns=self.started_ns,locations=self.locations,
             latest=None if self.latest is None else (id(self.latest[0]),self.latest[1]['ordinal']),source=self.source.to_dict()))
 
     def cancel(self):
@@ -298,8 +299,8 @@ def _kernel_finished(ticket, run, argv, exports):
     fact=_Fact();_FACTS[fact]=(ref(ticket),ref(scope) if scope is not None else lambda:None,encoded(dict(value,exports=exports)),ref(ticket.comparison) if ticket.comparison is not None else lambda:None)
     if capture is not None:
         event.update(value);capture.latest=run,event
-        # Private to this attempt: the same harness directory location at launch and after the input checks.
-        event['harness_location_sha256']=harness_location if harness_location is not None and _harness_location(scratch)==harness_location else None
+        # Private attempt state, outside hashed event data: the same harness location at launch and after input checks.
+        if harness_location is not None and _harness_location(scratch)==harness_location:capture.locations[str(event['ordinal'])]=harness_location
         if event['role']=='executor':
             selected=tuple(pair for pair in exports if pair[0] in capture.expected)
             capture.executor=event['ordinal'],selected

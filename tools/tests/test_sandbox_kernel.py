@@ -903,6 +903,8 @@ class TrajectoryKernelTests(KernelFixture):
                         self.assertEqual(receipt['controller_harness_input_sha256'],result['live_verification']['controller_harness_input']['sha256'])
                         self.assertEqual(receipt['git_source_sha256'],fixture.source.source_key)
                         self.assertNotIn(str(self.root),json.dumps(receipt))
+                        self.assertEqual(len(capture.locations),1)
+                        self.assertNotIn('harness_location_sha256',json.dumps(capture.read()))
                     if outcome[0]=='unknown': self.assertIsNone(receipt['harness_snapshot_sha256'])
                     self.assertTrue(all(field.status=='declared' for item in sink.store.capture(sink.source).identities for field in item.fields))
                 after=harness_binding.bind(capture,collector.harness_capture)

@@ -136,7 +136,43 @@ class HarnessBindingTests(unittest.TestCase):
         self.fixture.declare('repo', ['ROOT.md', 'harness/AGENTS.md', 'harness/settings.json'])
         collector, _ = self.fixture.capture()
         self.assertEqual(self.compare(collector), ('unknown', 'snapshot_exceeds_harness_root'))
-        self.assertEqual(self.compare(collector, self.fixture.repo), ('mismatch', 'input_tree_differs'))
+        self.assertEqual(self.compare(collector, self.fixture.repo), ('unknown', 'snapshot_does_not_cover_input_tree'))
+
+    def test_unselected_files_in_the_executed_directory_are_a_coverage_gap_not_a_difference(self):
+        (self.harness/'unselected.md').write_text('SYNTHETIC_UNSELECTED_AT_CAPTURE\n')
+        collector, _ = self.fixture.capture()
+        self.assertEqual(self.compare(collector), ('unknown', 'snapshot_does_not_cover_input_tree'))
+        (self.harness/'unselected.md').unlink()
+        self.assertEqual(self.compare(collector), ('unknown', 'snapshot_does_not_cover_input_tree'))
+        (self.harness/'nested').mkdir(); (self.harness/'nested/ignored.txt').write_text('SYNTHETIC_IGNORED\n')
+        collector, _ = self.fixture.capture()
+        self.assertEqual(self.compare(collector), ('unknown', 'snapshot_does_not_cover_input_tree'))
+        (self.harness/'nested/ignored.txt').unlink(); (self.harness/'nested').rmdir()
+        collector, _ = self.fixture.capture()
+        self.assertEqual(self.compare(collector), ('verified', None))
+
+    def test_direct_issuance_cannot_mint_a_capture_handle(self):
+        from agent_harness_lab.sources.git import HarnessSnapshot
+        self.assertFalse(hasattr(harness_binding, 'issue'))
+        snapshot = HarnessSnapshot(digest('fabricated-head'), ())
+        fabricated = {location(self.harness): ('harness', frozenset())}
+        with self.assertRaises(ValueError):
+            harness_binding._issue(object(), self.fixture.source, snapshot, fabricated, ())
+        with self.assertRaises(ValueError):
+            harness_binding._register_issuer()
+        before = len(harness_binding._ISSUED)
+        self.assertEqual(len(harness_binding._ISSUED), before)
+
+    def test_attempt_keeps_harness_location_out_of_hashed_event_data(self):
+        sink = SourceSink(self.root/'controller.json', self.fixture.source.project_sha256, digest('synthetic-scope'))
+        with owned.session():
+            attempt = sink.begin(['result.txt'], time.monotonic()+5)
+            self.assertEqual(attempt.locations, {})
+            state = attempt._state()
+            attempt.locations['0'] = '0'*64
+            self.assertNotEqual(attempt._state(), state)
+            self.assertNotIn('locations', attempt.data)
+            self.assertNotIn('harness_location_sha256', json.dumps(attempt.data))
 
     def test_imported_journal_forged_handles_and_reader_subclasses_cannot_bind(self):
         collector, snapshot = self.fixture.capture()
