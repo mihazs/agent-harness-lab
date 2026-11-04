@@ -12,7 +12,10 @@ class PromotionDecision:
 
 
 def isolation_qualification(scope=None):
-    """Derive the isolation element only from live owned producer facts, never from a caller."""
+    """Derive the isolation element from live owned producer facts, never from a caller-declared value.
+
+    In-process code that holds the live scope object is trusted; this is not a sandbox boundary.
+    """
     packet=implementation_prerequisites(scope);checks=packet['checks']
     qualified=(packet['status']=='observed' and packet['restricted_process_protocol']['status']=='qualified'
         and packet['permission_result_capture']=='qualified' and all(row['status']=='verified' for row in checks.values()))
@@ -80,7 +83,7 @@ def implementation_prerequisites(scope=None, *, declarations=None):
     packet.update(status='observed' if complete else 'unknown',
         coverage=dict(dimension='post_preflight_dispatch_admissions',admitted=len(events),
             completed=sum(row['complete'] for row in events),limit=MAX_DISPATCHES,
-            receipt_bytes=len(scope._state()),receipt_encoding=RECEIPT_ENCODING,
+            receipt_bytes=len(_Scope._state(scope)),receipt_encoding=RECEIPT_ENCODING,
             receipt_bytes_limit=MAX_BYTES,roles=sorted({row['role'] for row in events if row['stage']=='role'}),
             capability_probes=sum(row['stage']=='capability_probe' for row in events),
             independence='unverified',task_fixture_coverage='unverified'),

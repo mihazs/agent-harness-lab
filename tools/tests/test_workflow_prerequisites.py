@@ -202,6 +202,16 @@ class PolicyAuthorityTests(PublicCase,unittest.TestCase):
         scope.end()
         self.assertIsNone(prerequisites.current())
 
+    def test_lost_scope_cannot_be_restored_by_clearing_lost_or_overriding_state(self):
+        scope=self.synthetic_scope();self.assertEqual(policy.isolation_qualification(scope),'qualified')
+        raw=prerequisites._STATES[scope][2]
+        scope.data['events'][0]['boundary']=dict(status='qualified',forged=True)
+        self.assertEqual(policy.isolation_qualification(scope),'unknown');self.assertTrue(scope.lost)
+        scope.lost=False;scope._save()
+        self.assertEqual(policy.isolation_qualification(scope),'unknown')
+        scope.lost=False;scope._state=lambda *args,**kwargs:raw
+        self.assertEqual(policy.isolation_qualification(scope),'unknown')
+
     def synthetic_scope(self,*,boundary='qualified',permission='qualified'):
         """In-process synthetic producer facts; no kernel, provider or credential is used."""
         baseline=self.root/('baseline-'+str(len(list(self.root.glob('baseline-*')))));baseline.mkdir()

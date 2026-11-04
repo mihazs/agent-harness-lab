@@ -70,7 +70,10 @@ eligibility issuer.
 The recommendation-only `decide` API derives its isolation element from this
 packet instead of a caller boolean. Pass the live scope as
 `prerequisite_scope`; `decide` reads it through `implementation_prerequisites`
-and reports `isolation: qualified` only when all of these producer facts hold:
+and reports `isolation: qualified` only when all of these producer facts hold (code
+running in the same process with the live scope object is trusted; this is not a
+sandbox against in-process callers, but loss is sticky and cached state cannot be
+restored by clearing attributes):
 
 - packet `status` is `observed` (every admitted dispatch completed);
 - `restricted_process_protocol.status` is `qualified`;
