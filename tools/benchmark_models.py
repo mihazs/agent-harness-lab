@@ -7,6 +7,7 @@ independently verified by this script. Missing labels never enter metrics.
 Model paths must be existing local directories; no model downloads or remote code.
 """
 import argparse
+from collections.abc import Mapping
 import hashlib
 import importlib.metadata
 import json
@@ -168,14 +169,14 @@ def model_digest(path):
     return digest.hexdigest()
 
 
-def nli_context_length(tokenizer, model):
+def model_context_length(tokenizer, model, role):
     """Resolve known learned-position profiles without trusting an unbounded sentinel."""
     from transformers.tokenization_utils_base import LARGE_INTEGER
-    configuration = model.config
+    configuration = getattr(model, 'config', None)
     kind = getattr(configuration, 'model_type', None)
     if (kind not in ('bert', 'roberta', 'xlm-roberta')
             or getattr(configuration, 'position_embedding_type', 'absolute') != 'absolute'):
-        raise ValueError('NLI context capacity unsupported; use a checked BERT, RoBERTa or XLM-R absolute-position model')
+        raise ValueError(f'{role} context capacity unsupported; use a checked BERT, RoBERTa or XLM-R absolute-position model')
     embeddings = getattr(getattr(model, 'base_model', None), 'embeddings', None)
     table = getattr(embeddings, 'position_embeddings', None)
     positions = getattr(configuration, 'max_position_embeddings', None)
@@ -183,25 +184,68 @@ def nli_context_length(tokenizer, model):
     if (type(positions) is not int or not 0 < positions < LARGE_INTEGER
             or type(getattr(table, 'num_embeddings', None)) is not int
             or table.num_embeddings != positions or len(shape) != 2 or shape[0] != positions):
-        raise ValueError('NLI context capacity unavailable or inconsistent with learned position weights')
+        raise ValueError(f'{role} context capacity unavailable or inconsistent with learned position weights')
     offset = 0
     if kind in ('roberta', 'xlm-roberta'):
         padding = getattr(configuration, 'pad_token_id', None)
         if (type(padding) is not int or padding < 0 or getattr(embeddings, 'padding_idx', None) != padding
                 or getattr(table, 'padding_idx', None) != padding):
-            raise ValueError('NLI context capacity has an unsupported position-padding offset')
+            raise ValueError(f'{role} context capacity has an unsupported position-padding offset')
         offset = padding+1
     elif getattr(table, 'padding_idx', None) is not None:
-        raise ValueError('NLI context capacity has an unexpected BERT position-padding offset')
+        raise ValueError(f'{role} context capacity has an unexpected BERT position-padding offset')
     maximum = positions-offset
     declared = getattr(tokenizer, 'model_max_length', None)
     if declared is not None:
         if type(declared) is not int or declared <= 0:
-            raise ValueError('NLI tokenizer context capacity is invalid')
+            raise ValueError(f'{role} tokenizer context capacity is invalid')
         if declared < LARGE_INTEGER: maximum = min(maximum, declared)
     if maximum <= 0:
-        raise ValueError('NLI context capacity has no usable positions')
+        raise ValueError(f'{role} context capacity has no usable positions')
     return maximum
+
+
+def check_embedding_inputs(encoder, texts, batch_size):
+    """Admit only a stock unprompted pipeline with complete observed tokenization."""
+    from sentence_transformers import models
+    from transformers.tokenization_utils_base import LARGE_INTEGER
+    import torch
+    try:
+        pipeline = list(encoder)
+    except TypeError:
+        raise ValueError('Embedding context profile requires an inspectable stock pipeline') from None
+    if tuple(type(module) for module in pipeline) != (getattr(models, 'Transformer', None), getattr(models, 'Pooling', None)):
+        raise ValueError('Embedding context profile unsupported; use a stock Transformer and Pooling pipeline')
+    first = pipeline[0]
+    if (not hasattr(encoder, 'default_prompt_name') or encoder.default_prompt_name is not None
+            or not isinstance(getattr(encoder, 'prompts', None), dict)
+            or type(getattr(first, 'do_lower_case', None)) is not bool
+            or not callable(getattr(first, 'tokenizer', None)) or not callable(getattr(encoder, 'tokenize', None))):
+        raise ValueError('Embedding preprocessing or active prompt is unsupported by the checked context profile')
+    maximum = model_context_length(first.tokenizer, getattr(first, 'auto_model', None), 'Embedding')
+    declared = getattr(first, 'max_seq_length', None)
+    if declared is not None:
+        if type(declared) is not int or declared <= 0:
+            raise ValueError('Embedding encoder context capacity is invalid')
+        if declared < LARGE_INTEGER: maximum = min(maximum, declared)
+    for start in range(0, len(texts), batch_size):
+        batch = texts[start:start+batch_size]
+        prepared = [text.strip().lower() if first.do_lower_case else text.strip() for text in batch]
+        complete = first.tokenizer(prepared, padding=True, truncation=False, return_tensors='pt')
+        if (not isinstance(complete, Mapping) or not {'input_ids', 'attention_mask'} <= complete.keys()
+                or not all(torch.is_tensor(value) for value in complete.values())):
+            raise ValueError('Embedding complete tokenization is unavailable')
+        shape = complete['input_ids'].shape
+        if len(shape) != 2 or any(value.shape != shape for value in complete.values()):
+            raise ValueError('Embedding complete tokenization has unsupported tensor shapes')
+        if shape[-1] > maximum:
+            raise ValueError(f'Embedding input exceeds checked encoder context ({maximum} tokens); no truncated input scored')
+        observed = encoder.tokenize(batch)
+        if (not isinstance(observed, Mapping) or set(observed)-set(complete)-{'modality'}
+                or observed.get('modality', 'text') != 'text'
+                or any(key not in observed or not torch.is_tensor(observed[key])
+                       or not torch.equal(value, observed[key]) for key, value in complete.items())):
+            raise ValueError('Embedding preprocessing does not preserve complete input tokens under the checked profile')
 
 
 def model_predict(method, rows, model_path=None, revision=None, question=None, batch_size=8):
@@ -224,6 +268,7 @@ def model_predict(method, rows, model_path=None, revision=None, question=None, b
             from sentence_transformers import SentenceTransformer
             encoder = SentenceTransformer(str(model_path), revision=revision, local_files_only=True,
                                           trust_remote_code=False, device='cpu')
+            check_embedding_inputs(encoder, texts, batch_size)
             x_train = encoder.encode([r['text'] for r in train], batch_size=batch_size)
             x_all = encoder.encode(texts, batch_size=batch_size)
         classifier = LogisticRegression(random_state=0, max_iter=1000)
@@ -239,7 +284,7 @@ def model_predict(method, rows, model_path=None, revision=None, question=None, b
     labels = {str(v).lower(): int(k) for k, v in model.config.id2label.items()}
     if 'entailment' not in labels:
         raise ValueError('NLI model must declare entailment in id2label')
-    maximum = nli_context_length(tokenizer, model)
+    maximum = model_context_length(tokenizer, model, 'NLI')
     probabilities = []
     for start in range(0, len(texts), batch_size):
         batch = texts[start:start+batch_size]
@@ -259,7 +304,7 @@ def main():
         'No downloads, remote model code or input edits. Exit 0: report printed; 2: invalid input/dependency.\n'
         'Example: ahl benchmark examples.jsonl --method baseline > /tmp/ahl-benchmark.json')
     parser.add_argument('input', type=Path, help='Existing JSONL examples: root_case_id, split and text; optional boolean label/project, roots must not cross splits')
-    parser.add_argument('--method', choices=('baseline', 'tfidf', 'embeddings', 'nli'), required=True, help='Classifier: training-label prevalence, TF-IDF logistic regression, local embeddings, or NLI entailment with checked BERT/RoBERTa/XLM-R context capacity')
+    parser.add_argument('--method', choices=('baseline', 'tfidf', 'embeddings', 'nli'), required=True, help='Classifier: training-label prevalence, TF-IDF logistic regression, checked stock local embeddings, or NLI entailment with checked BERT/RoBERTa/XLM-R context capacity')
     parser.add_argument('--model-path', type=Path, help='Existing local model directory, required for embeddings/nli; models are never downloaded')
     parser.add_argument('--revision', help='Optional local model revision passed to embeddings/nli loaders and recorded in the JSON report')
     parser.add_argument('--question', help='Atomic hypothesis for NLI entailment; required with --method nli')
@@ -287,7 +332,7 @@ def main():
                                    'NLI scores mean hypothesis entailment, not factual truth; neutral mass is not evidence of falsity.',
                                    'NLI rejects unsupported or exceeded local model context; no truncation is performed.',
                                    'TF-IDF retains all extracted training-vocabulary features; unseen terms remain out of vocabulary.',
-                                   'Local sentence-embedding models may truncate inputs at their configured maximum sequence length.',
+                                   'Embeddings require complete tokenization under the checked stock pipeline and reject unsupported or exceeded encoder context.',
                                    'Root confidence interval assumes independent supplied root cases.'], splits={})
         if args.triage_policy is not None:
             policy = json.loads(args.triage_policy.read_text())
