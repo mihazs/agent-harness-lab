@@ -142,7 +142,10 @@ be exactly `AGENTS.md`. Unread checkout files, including Git objects, are not
 classified as observed inputs and do not consume this snapshot's bounds. Other
 harness selections need a separately complete supported profile. Baseline, source
 and methodology snapshots retain their existing bounds; unsafe or oversized actual
-inputs are unsupported, not partially accepted.
+inputs are unsupported, not partially accepted. Project input files and events-file
+sources must be owned by the invoking user and not group or world writable, so
+another local account cannot swap signed bytes between pins; a permissive umask
+(for example 002) therefore refuses the domain.
 This profile rejects every non-`None` focus input before collection and at the direct
 proposal boundary. Legacy workflows retain their existing focus behavior.
 It also rejects controller source context, session-observation memory manifests and

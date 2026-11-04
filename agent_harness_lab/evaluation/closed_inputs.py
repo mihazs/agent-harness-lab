@@ -53,6 +53,7 @@ def project_snapshot(project,selection,deadline):
         check_deadline(deadline);_path(path);info=path.lstat()
         if not stat.S_ISREG(info.st_mode) or info.st_nlink!=1 or info.st_mode&0o7000:
             raise ValueError('project inputs require bounded regular single-link files')
+        _owned(info,'project inputs')
         limit=65536 if path.name=='ahl.json' else 1024*1024-total
         raw=read_regular(path,limit);total+=len(raw)
         if total>1024*1024:raise ValueError('selected project input byte bound exceeded')
@@ -60,6 +61,12 @@ def project_snapshot(project,selection,deadline):
     if 'ahl.json' not in {name for name,_,_ in files}:raise ValueError('full project configuration input required')
     check_deadline(deadline)
     return Snapshot(stat.S_IMODE(project.stat().st_mode),(),tuple(files))
+
+
+def _owned(info,label):
+    """Signed bytes must not be replaceable by another local user between pins."""
+    if info.st_uid!=os.geteuid() or info.st_mode&0o022:
+        raise ValueError(label+' must be owned by the invoking user and not group or world writable')
 
 
 def check_project(project,declaration,deadline):
@@ -75,6 +82,7 @@ def source_pin(source,deadline):
     info=path.lstat()
     if not stat.S_ISREG(info.st_mode) or info.st_nlink!=1 or info.st_mode&0o7000:
         raise ValueError('closed source requires a regular single-link input')
+    _owned(info,'closed source')
     raw=read_regular(path,32*1024*1024);check_deadline(deadline)
     return pin(dict(mode=stat.S_IMODE(info.st_mode),sha256=hashlib.sha256(raw).hexdigest()))
 
@@ -94,7 +102,7 @@ def issue(verified):
     check_project(project,value,deadline)
     if (pin(engine())!=value['engine_sha256']
             or tree_pin(assets()/'skills',deadline)!=value['methodology_sha256']
-            or store_identity(history.root)!=value['history_identity_sha256']
+            or current_store_identity(history.root)!=value['history_identity_sha256']
             or any(source_pin(source,deadline)!=source['snapshot_sha256'] for source in value['sources'])):
         raise ValueError('signed closed inputs differ from actual configured sources')
     handle=ClosedDomain()

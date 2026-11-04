@@ -242,7 +242,7 @@ class WorkflowAccess:
         data['attempts'].append((ident,role,_hash(inputs)))
         folder=contained(store.root,'constructions/'+ident)
         active=contained(data['output'],'.construction-roles/'+ident)
-        completed=False; issuer=os.getpid(); handle=None
+        completed=False; issuer=os.getpid(); handle=None; capture=None
         try:
             with store.locked():
                 folder.parent.mkdir(mode=0o700,exist_ok=True); folder.mkdir(mode=0o700)
@@ -341,6 +341,9 @@ class WorkflowAccess:
                 return proposal,destination/'candidate',commands
             return destination/'manifest.json',commands
         except BaseException:
+            if capture is not None:
+                from .construction_seals import cancel
+                cancel(capture)
             if not completed and os.getpid()==issuer:
                 ledger.finish_construction(store.access_ledger().path,ident,_hash(inputs))
             raise

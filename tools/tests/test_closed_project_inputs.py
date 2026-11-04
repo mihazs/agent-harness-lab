@@ -40,6 +40,19 @@ class ClosedProjectInputTests(unittest.TestCase):
                 with self.assertRaises(ValueError):closed.check_project(self.project,self.declaration,self.deadline)
                 path.chmod(mode)
 
+    def test_group_or_world_writable_signed_inputs_are_refused(self):
+        for name in ('AGENTS.md','ahl.json'):
+            for extra in (0o020,0o002):
+                with self.subTest(name=name,mode=oct(extra)):
+                    path=self.project/name;mode=path.stat().st_mode&0o777;path.chmod(mode|extra)
+                    with self.assertRaisesRegex(ValueError,'not group or world writable'):
+                        closed.project_snapshot(self.project,self.selection,self.deadline)
+                    path.chmod(mode)
+        events=self.root/'events.jsonl';events.write_text('');events.chmod(0o620)
+        source=dict(kind='events_file',selection=str(events))
+        with self.assertRaisesRegex(ValueError,'not group or world writable'):closed.source_pin(source,self.deadline)
+        events.chmod(0o600);self.assertIsInstance(closed.source_pin(source,self.deadline),str)
+
     def test_root_mode_membership_and_exact_project_identity_are_bound(self):
         mode=self.project.stat().st_mode&0o777;self.project.chmod(mode^0o010)
         with self.assertRaises(ValueError):closed.check_project(self.project,self.declaration,self.deadline)

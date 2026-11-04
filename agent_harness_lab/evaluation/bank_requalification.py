@@ -86,7 +86,7 @@ def prepare(store,case_id,reviewer,domain,runtime,*,deadline,request_path=None):
         with ledger._locked(history.access_ledger().path) as (_,state):
             epoch,_=bankq.exposure_check(store,case,state)
             if runtime['image_sha256']!=metadata['image_sha256']:raise ValueError('delegation runtime differs from actual controls')
-            if domain['history_identity_sha256']!=closed_inputs.store_identity(history.root):
+            if domain['history_identity_sha256']!=closed_inputs.current_store_identity(history.root):
                 raise ValueError('delegation history differs from actual controller')
             review=dict(profile=PROFILE,protocol=PROTOCOL,case_id=case_id,reviewer=dict(identity=reviewer),
                 static_parent=metadata,expected_event_sha256=events[-1][1],exposure_epoch=epoch,
