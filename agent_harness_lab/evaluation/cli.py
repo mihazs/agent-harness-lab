@@ -55,21 +55,24 @@ def main(argv):
     args = parser.parse_args(argv)
     try:
         if args.command == 'bank':
-            from .task_bank import validate
+            from .task_bank import inspect, validate
             if args.starter:
                 args.manifest=Path(__file__).parent/'fixtures/starter-v1/bank.json'
             if args.adversarial:
                 args.manifest=Path(__file__).parent/'fixtures/adversarial-v1/bank.json'
             if args.max_trials!=24 and not args.export:
                 raise ValueError('trial ceiling requires an explicit export')
-            result = validate(args.manifest)
+            inspection_only = not args.audit and not args.export
+            result = inspect(args.manifest) if inspection_only else validate(args.manifest)
             if args.audit:
                 from .bank_tools import audit_graders
                 result['grader_audit']=audit_graders(args.manifest,cooperative=args.cooperative_controls,sandbox=args.sandbox_controls)
             if args.export:
                 from .bank_tools import export_manifest
                 result['export']=dict(tasks=len(export_manifest(args.manifest,args.export,args.max_trials)['tasks']),profile='descriptive_smoke')
-            if args.list:
+            if inspection_only and not args.list:
+                result.pop('task_index')
+            if args.list and not inspection_only:
                 result['task_index'] = [{k: t[k] for k in ('task_id', 'root_id', 'family', 'partition', 'review_status')}
                                         for t in json.loads(args.manifest.read_text())['tasks']]
             code = 0 if result['certification_eligible'] else 3

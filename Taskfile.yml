@@ -306,6 +306,10 @@ tasks:
       AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_bank_qualification*.py" -v'
+  test:evaluation:bank-inspection:
+    desc: Verify complete public bank inspection and unchanged execution-validation boundaries
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_bank_inspection.py" -v'
   test:evaluation:bank-export:
     desc: Run native bank export path and frozen-manifest cases
     cmds:

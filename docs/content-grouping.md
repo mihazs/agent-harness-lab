@@ -1,6 +1,6 @@
 # Content exposure in task banks
 
-New in 0.42, `ahl bank --manifest BANK` performs bounded content checks in addition
+New in 0.42, `ahl bank --manifest BANK` performs content checks in addition
 to the existing root/family/project/time and exact-fixture checks. No new account,
 network access, inference dependency or automatic import is involved.
 
@@ -20,8 +20,16 @@ ahl bank --starter --export /path/to/new/private-export
 ```
 
 The synthetic starter bank remains descriptive and independence-unverified. Its
-normal exit code is 3. A malformed, ambiguous or over-budget fixture returns the
-existing contract-error exit code 2. No command executes an agent by default.
+normal exit code is 3. A malformed or ambiguous fixture returns the existing
+contract-error exit code 2. Execution modes also reject inputs beyond their
+execution-validation limits. No command executes an agent by default.
+
+Plain bank inspection and `--list` read all declared tasks and fixture/grader
+contents without implicit manifest, task-count, identifier-length or tree-size
+ceilings. Their report is explicitly `analysis_only`; it cannot grant admission,
+execution or certification authority. Controller profiles remain unverified
+declarations during inspection. `--audit`, `--export`, qualification and oracle
+history keep the existing execution-validation limits and authority checks.
 
 ## Fingerprint and receipt contracts
 
