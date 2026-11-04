@@ -604,8 +604,11 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             bank_manifest.update(skills=[], harness_paths=sorted(paths))
             write_json(manifest_path, bank_manifest)
             from .config import evaluation_settings
-            evaluation_settings(args.project/'ahl.json', manifest_path, bank_manifest,
-                                dict(baseline=baseline, candidate=frozen), agent, binary)
+            configured = evaluation_settings(args.project/'ahl.json', manifest_path, bank_manifest,
+                                             dict(baseline=baseline, candidate=frozen), agent, binary)
+            if configured['blocked_reason']:
+                result.update(status='blocked', reason=configured['blocked_reason'])
+                break
         elif controlled:
             if access is None:
                 manifest_path,commands = construction.author(client,grading,baseline,role_views['evaluator_author'],
@@ -701,7 +704,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 result.update(status='requires_intervention',reason='permission_qualification_not_met')
                 break
         trials = evaluated['trials']
-        if controlled and evaluated.get('status') in ('blocked','budget_exhausted'):
+        if (controlled or bank is not None) and evaluated.get('status') in ('blocked','budget_exhausted'):
             result.update(status=evaluated['status'],reason=evaluated.get('reason'))
             break
         from agent_harness_lab.promotion.policy import legacy_coverage

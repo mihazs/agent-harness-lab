@@ -19,6 +19,9 @@ class PinnedBankOneCallTests(unittest.TestCase):
         self.fixture = WorkflowTests()
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
+        local_runtime = patch.dict('os.environ', {'CODEX_HOME': str(self.fixture.root/'codex-home')})
+        local_runtime.start()
+        self.addCleanup(local_runtime.stop)
         self.project = self.fixture.project
         self.bank = self.project/'task-bank/bank.json'
         shutil.copytree(config.starter().parent, self.bank.parent)
@@ -164,6 +167,34 @@ print(json.dumps(dict(type='turn.completed',usage=dict(output_tokens=1))))
                     code, result = self.invoke(*arguments)
                 self.assertEqual(code, 3)
                 self.assertEqual(result['reason'], reason)
+
+    def test_disappearing_runtime_preserves_its_blocked_reason(self):
+        executable = self.fixture.agent.read_bytes()
+        for phase in ('before_controls', 'before_evaluation'):
+            with self.subTest(phase=phase):
+                self.fixture.agent.write_bytes(executable)
+                self.fixture.agent.chmod(0o700)
+                runner = evaluator()
+                execute, evaluate = runner.execute, runner.evaluate
+                calls = []
+                def dispatch(*args, **kwargs):
+                    calls.append(args)
+                    result = execute(*args, **kwargs)
+                    if phase=='before_controls': self.fixture.agent.unlink(missing_ok=True)
+                    return result
+                def evaluate_without_runtime(options):
+                    self.fixture.agent.unlink(missing_ok=True)
+                    return evaluate(options)
+                with patch('agent_harness_lab.cli.evaluator', return_value=runner), \
+                        patch.object(runner, 'execute', side_effect=dispatch), \
+                        patch.object(runner, 'evaluate', side_effect=evaluate_without_runtime):
+                    code, result = self.invoke()
+                self.assertEqual((code, result['status']), (3, 'blocked'))
+                self.assertEqual(result['reason'], 'configured_executable_unavailable')
+                self.assertEqual(result['changed_files'], [])
+                self.assertEqual((self.project/'AGENTS.md').read_text(), 'bad')
+                self.assertEqual(sum(Path(call[0][0])==self.fixture.agent for call in calls), 1)
+                if phase=='before_controls': self.assertEqual(len(calls), 1)
 
     def test_grader_failure_and_interruption_preserve_target(self):
         for interrupted in (False, True):
