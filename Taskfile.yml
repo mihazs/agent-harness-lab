@@ -149,10 +149,24 @@ tasks:
     cmds:
       - '{{.PYTHON | shellQuote}} scripts/check_docs.py'
   test:
-    desc: Run both native README test suites
+    desc: Collect both test suites once and distribute tests across CPU cores
+    vars:
+      TEST_WORKERS: '{{default "auto" .TEST_WORKERS}}'
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
     cmds:
-      - task: test:tools
-      - task: test:evaluator
+      - '{{.PYTHON | shellQuote}} -m pytest -n {{.TEST_WORKERS | shellQuote}} --dist worksteal'
+  setup:test:installed:
+    desc: Install test extras for the already installed release without replacing it
+    vars:
+      PACKAGE_VERSION:
+        sh: '{{.PYTHON | shellQuote}} -m agent_harness_lab --version'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m pip install "agent-harness-lab[test]=={{.PACKAGE_VERSION}}"'
+  setup:test:
+    desc: Install pinned test tools into the selected Python environment
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m pip install -e ".[test]"'
   test:tools:
     desc: Run application and tooling unittest cases
     cmds:
@@ -802,134 +816,18 @@ tasks:
     cmds:
       - '{{.PYTHON | shellQuote}} -m agent_harness_lab.evaluation.image {{.ROOTFS | shellQuote}}'
   test:installed:
-    desc: Run native tests against an installed wheel or extracted archive
+    desc: Run the complete suite against an installed wheel or archive in one parallel collection
     dir: '{{.LAYOUT_DIR}}'
     requires:
       vars: [LAYOUT_DIR, EXPECTED_PACKAGE_ROOT]
+    vars:
+      TEST_WORKERS: '{{default "auto" .TEST_WORKERS}}'
     env:
       PYTHONPATH: ''
+      PYTHONDONTWRITEBYTECODE: '1'
       AHL_EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_installed_layout.py"'
-      - task: test:evaluation:review-authority
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-
-      - task: test:workflow:one-call
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - task: test:release:update
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_*.py"'
-      - task: test:sources:normalized-exports
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_codex_rollout.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_codex_discovery.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_claude_native.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_sandbox_*.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_controller_actions.py"'
-      - task: test:evaluation:bank-qualification
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - task: test:sandbox:permission-audit
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - task: test:evaluation:interchange
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - task: test:evaluation:protected-access
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - task: test:evaluation:derivation
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - task: test:evaluation:construction-access
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - task: test:evaluation:construction-consumer-boundary
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - task: test:workflow:repeated-access
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-
-      - task: test:evaluation:controller-emissions
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - task: test:evaluation:sequential
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - task: test:evaluation:precision
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - task: test:evaluation:trajectory
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - task: test:diagnostics:corpus
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - task: test:promotion:prerequisites
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_behavior.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_adversarial_bank.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_offline_evaluation.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_regression_*.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_grader_budget.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_oracle_*.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_grader_correction*.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_grader_control_core.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_bank_export.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_bank_corrections.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_benchmark_contracts.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_experimental_cli.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_history_report.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_optimization_history.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_search_history.py"'
-      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_preservation_*.py"'
-      - task: test:evaluation:requalification
-        vars:
-          PYTHON: '{{.PYTHON}}'
-          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
-          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tools/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n {{.TEST_WORKERS | shellQuote}} --dist worksteal'
   test:installed:sources:
     desc: Run native source checks against an installed layout, including optional extras when installed
     dir: '{{.LAYOUT_DIR}}'
