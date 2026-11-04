@@ -5,3 +5,7 @@ pre-commit:
   jobs:
     - name: zero-clones
       run: task duplication:check
+commit-msg:
+  jobs:
+    - name: conventional-commits
+      run: python3 scripts/check_commit_message.py {1}
