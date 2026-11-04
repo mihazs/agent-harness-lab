@@ -34,7 +34,7 @@ def policy_sha256(policy):
     return hashlib.sha256(json.dumps(policy, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
 
 
-def _number(value, upper=1):
+def _number(value, upper: float | None = 1):
     return type(value) in (int, float) and math.isfinite(value) and 0 <= value and (upper is None or value <= upper)
 
 
@@ -58,7 +58,7 @@ def check_policy(policy):
     if not isinstance(classes, dict) or len(classes) < 2:
         raise ValueError('triage policy v2 requires at least two declared classes')
     for name, spec in classes.items():
-        if not isinstance(name, str) or not name or len(name) > 128 or name != name.strip() or name == ABSTAINED:
+        if not isinstance(name, str) or not name or len(name) > 128 or name != name.strip() or ':' in name or name.startswith(ABSTAINED):
             raise ValueError('invalid triage class name')
         if not isinstance(spec, dict) or set(spec) != CLASS_FIELDS or spec['severity'] not in SEVERITIES:
             raise ValueError('invalid triage class policy')

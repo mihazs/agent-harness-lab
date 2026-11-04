@@ -85,7 +85,10 @@ declared costs. A severe miss is a severe-class root predicted as a non-severe
 class, or abstained and not routed to review. Severe misses are counted
 separately in `severe_misses`, with their root hashes, even when aggregate
 metrics are high. A wrong severe-class alert counts as `wrong_class`. Decisions
-and lists carry `root_sha256` only, never raw root IDs.
+and lists carry `root_sha256` only, never raw root IDs. Role-root refusal compares SHA-256 digests of the declared root IDs byte for byte;
+IDs are not normalized, so fitting, calibration and threshold-tuning lists must use
+exactly the evaluated `root_case_id` strings. Class names may not contain `:` or start
+with `abstained`, which is reserved for abstention outcomes.
 
 Any failed constraint returns `rejected`. Otherwise the status is
 `insufficient_evidence`, and undefined metrics or classes without validation

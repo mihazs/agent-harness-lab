@@ -148,6 +148,15 @@ class TriagePolicyV2Tests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(ValueError):
                 triage.evaluate(policy(), value)
 
+    def test_class_names_cannot_collide_with_abstention_outcomes(self):
+        for name in ('abstained:x', 'abstained', 'a:b'):
+            with self.subTest(name=name):
+                classes = {name if key == SEVERE else key: spec for key, spec in policy()['classes'].items()}
+                scores = {name: .9, NORMAL: .1, NONE: 0.}
+                rows = [dict(root_case_id='p', split='heldout', label=name, scores=scores)]
+                with self.assertRaisesRegex(ValueError, 'invalid triage class name'):
+                    triage.evaluate(policy(classes=classes), rows)
+
     def test_streamed_rows_match_lists_and_labels_cannot_change_decisions(self):
         rows = [row(f'r{i}', (SEVERE, NORMAL, NONE)[i % 3], (SEVERE, NONE, NORMAL)[i % 3], .5+i % 5/10) for i in range(30)]
         listed = triage.evaluate(policy(), rows)
