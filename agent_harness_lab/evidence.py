@@ -290,7 +290,7 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
             source['sha256'] = native_digest if pinned else source_digest.hexdigest()
         notify('analysis', events=total_events, captures=len(selected))
 
-    analysis = analyze(normalized_events(), max_events=max_events, sequence_length=sequence_length)
+    analysis = analyze(normalized_events(), max_events=max_events, sequence_length=sequence_length, select_methods=True)
     analysis['findings'].extend(errors)
     notify('evaluation_reports', events=analysis['events'])
     outcomes = [] if events is not None or source_root is not None else _evaluation_results(project, max_files, sources, fingerprint, caveats)

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.16
+
+### Patch Changes
+
+- 3b7c194: Select supported analysis interpretations from structural evidence prerequisites and report complementary methods with shared-input dependence and unqualified raw outputs.
+
 ## 0.76.15
 
 ### Patch Changes

@@ -11,7 +11,8 @@ from .analysis_inputs import AnalysisInputs
 
 def views(data, assets, root, deadline):
     analysis = data['analysis']
-    summary = {key:analysis.get(key) for key in ('events','cases','activities','field_coverage','deferred_mechanisms','process_mining')}
+    summary = {key:analysis.get(key) for key in ('events','cases','activities','field_coverage','deferred_mechanisms','process_mining','method_inputs','method_execution')}
+    summary['profile'] = 'ahl-analysis-execution-v1'
     summary['findings'] = [{key:finding.get(key) for key in ('kind','status','explanation')} for finding in analysis.get('findings',[])]
     summary['recurring_sequences'] = [{key:sequence.get(key) for key in ('activities','reported_roots')} for sequence in analysis.get('recurring_sequences',[])]
     summary['limitations'] = ['Metadata patterns are unverified; task outcomes and independent lineage are not supplied.',
