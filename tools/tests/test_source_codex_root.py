@@ -173,10 +173,27 @@ class NativeRootTests(unittest.TestCase):
         self.assertEqual(f.invoke('import')[0], 2)
         shutil.rmtree(self.captures/'d'); self.assertTrue(f.invoke('preview')[1]['checkpoint_ready'])
         for index in range(3): (self.captures/f'note-{index}.txt').write_bytes(b'')
-        with patch.object(codex_discovery, 'MAX_WALK_ENTRIES', 3):
-            code, preview = f.invoke('preview'); self.assertEqual(code, 0); self.assertFalse(preview['checkpoint_ready'])
-            self.assertEqual([r['reason'] for r in preview['native_summary']['discovery']['walk_limits']], ['scan_entries_limit'])
-            self.assertEqual(f.invoke('import')[0], 2)
+        self.select(max_walk_entries=3)
+        code, preview = f.invoke('preview'); self.assertEqual(code, 0); self.assertFalse(preview['checkpoint_ready'])
+        self.assertEqual([r['reason'] for r in preview['native_summary']['discovery']['walk_limits']], ['scan_entries_limit'])
+        self.assertEqual(f.invoke('import')[0], 2)
+        self.assertFalse(f.cache.exists())
+
+    def test_absent_walk_override_keeps_the_selection_digest_and_present_override_enters_it(self):
+        f = self.f; literal = 'd2b73615303a3a50fb687e23d27b9517871ec071b840b1006226d6b1d1be1582'
+        self.assertEqual(f.source.scope_sha256, literal)
+        self.assertNotIn('max_walk_entries', f.invoke('preview')[1]['native_summary']['discovery'])
+        baseline = self.snapshot()
+        self.select(max_walk_entries=5000000); self.assertNotEqual(f.source.scope_sha256, literal)
+        code, preview = f.invoke('preview'); self.assertEqual(code, 0); self.assertTrue(preview['checkpoint_ready'])
+        self.assertEqual(preview['native_summary']['discovery']['max_walk_entries'], 5000000)
+        self.assertEqual([r.native_id_sha256 for r in self.snapshot().records], [r.native_id_sha256 for r in baseline.records])
+
+    def test_invalid_walk_override_is_rejected_before_scanning(self):
+        f = self.f; original = dict(f.selected)
+        with patch('agent_harness_lab.telemetry.codex_discovery.capture', side_effect=AssertionError('no capture read')):
+            for value in (0, -1, True, 1.5, '10', None, 5000001):
+                f.selected = dict(original, max_walk_entries=value); self.select(); self.assertEqual(f.invoke('preview')[0], 2, value)
         self.assertFalse(f.cache.exists())
 
     def test_invalid_selection_or_scope_is_rejected_before_scanning(self):

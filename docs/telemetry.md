@@ -223,8 +223,10 @@ selection requires the pinned Codex profile and never falls back to home discove
 Only uncompressed `rollout-*.jsonl` files qualify. Prompt indexes such as
 `history.jsonl` and compressed captures are not treated as transcripts.
 
-Native root discovery walks iteratively within fixed bounds of 128 directory
-levels and 10,000 visited filesystem entries; reaching one is reported in
+Native root discovery walks iteratively within bounds of 128 directory levels and
+250,000 visited filesystem entries (`ahl analyze --source-root` always uses these
+defaults; the source-journal descriptor's optional `max_walk_entries` can change
+the entry bound, up to 5,000,000); reaching one is reported in
 `reached_limits` (`scan_depth`/`scan_entries`) and `walk_limits`, with an
 incomplete-history caveat. It has no implicit file-count, record-count, byte or
 time ceiling. Caller-selected scan/accepted-file and record

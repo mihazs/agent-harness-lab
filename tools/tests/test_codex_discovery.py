@@ -186,11 +186,16 @@ class CodexDiscoveryTests(unittest.TestCase):
         from agent_harness_lab.telemetry.codex_discovery import MAX_WALK_ENTRIES, scan
         self.write('a/rollout-2026-a.jsonl'); wide = self.captures/'wide'; wide.mkdir()
         for index in range(20000): (wide/f'n{index}.txt').write_bytes(b'')
-        records, summary, _ = scan(self.captures, self.project); discovery = summary['discovery']
+        self.assertEqual(MAX_WALK_ENTRIES, 250000)
+        ordinary = scan(self.captures, self.project)[1]['discovery']
+        self.assertEqual(ordinary['reached_limits'], []); self.assertNotIn('walk_limits', ordinary)
+        records, summary, _ = scan(self.captures, self.project, max_walk_entries=10000); discovery = summary['discovery']
         self.assertTrue(records); self.assertEqual(discovery['reached_limits'], ['scan_entries'])
         self.assertEqual([r['status']+':'+r['reason'] for r in discovery['walk_limits']], ['unknown:scan_entries_limit'])
-        self.assertEqual(discovery['filesystem_entries'], MAX_WALK_ENTRIES+1)
-        caveats = self.collect()['caveats']; self.assertTrue(any('reached limits' in c for c in caveats))
+        self.assertEqual(discovery['filesystem_entries'], 10001); self.assertEqual(discovery['max_walk_entries'], 10000)
+        with patch('agent_harness_lab.telemetry.codex_discovery.MAX_WALK_ENTRIES', 10000):
+            caveats = self.collect()['caveats']
+        self.assertTrue(any('reached limits' in c for c in caveats))
 
     def test_deep_chain_reaches_a_labelled_depth_limit_without_recursion_error(self):
         from agent_harness_lab.telemetry.codex_discovery import scan
