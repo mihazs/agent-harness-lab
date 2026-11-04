@@ -582,9 +582,10 @@ and effective settings remain `unknown`. File presence, names and contents do no
 prove that an agent loaded them. Preview includes these metadata in `git_summary`;
 import keeps normalized development-artifact records in the journal. Collector
 checkpoints describe committed captures, not the current live source or a historical
-execution's version. Full instruction/import/override graphs, hook lifecycle
-inventory, independently evidenced execution bindings and hosting-provider
-reconciliation remain open in #46/#58/#77–#80.
+execution's version. Declared Codex and Claude Code instruction inventories are
+described below; observed loading, managed/global and path-scoped rule graphs,
+hook lifecycle inventory, independently evidenced execution bindings and
+hosting-provider reconciliation remain open in #46/#58/#77–#80.
 
 Git analysis does not impose default source-byte, entry, directory-depth, ref,
 selected-path, selection-file or command-output size ceilings. Callers can select
@@ -771,7 +772,8 @@ other non-empty candidates in that directory remain visible as shadowed. Selecte
 files outside that directory chain are out of scope; unrecognized filenames within
 it remain unsupported. Parent and shadowing edges describe declared hierarchy,
 without resolving semantic contradictions in the text. Imports, path-scoped Claude
-rules, managed/global influence and hooks are outside this first profile.
+rules, managed/global influence and hooks are outside this Codex profile; the
+Claude Code profile below declares bounded project imports only.
 
 `GitExport.instructions` is a frozen `InstructionInventory`. Its fingerprint binds
 the profile, task cwd, all inspected file hashes/modes, missing-file states and the
@@ -789,6 +791,89 @@ submodule crossings fail the capture. The collector does not guess native partia
 file truncation: when selected non-empty files and separators exceed the declared
 byte cap, resolution is blocked and affected applicability remains unknown. A
 blocked or unsupported receipt is not a resolved effective instruction closure.
+
+### Declared Claude Code project memory inventory
+
+The same optional `instruction_profile` accepts one Claude Code declaration. It has
+no fallback names or byte-limit field; a Codex-shaped profile for this version, or
+this shape for the Codex version, is rejected:
+
+```json
+{"schema_version": 1, "runtime": "claude-code", "version": "2.1.317", "task_cwd": "src/task"}
+```
+
+The profile follows the public [Claude Code memory documentation](https://code.claude.com/docs/en/memory),
+checked 2026-11-04. That page is not versioned per release, so the mapping from it
+to `2.1.317` is an assumption. Other versions return an unsupported receipt.
+The reader does not run Claude Code, read user/managed settings, or follow
+anything outside the selected checkout. Synthetic tests check this
+documentation-derived resolver; they are not native loading evidence.
+
+What the receipt declares, never verifies:
+
+- **Launch files.** In each directory from the checkout root through `task_cwd`,
+  a non-empty UTF-8 `CLAUDE.md`, `.claude/CLAUDE.md` and `CLAUDE.local.md` are
+  `declared_applicable` with reason `directory_concatenation`. They are
+  concatenated, not shadowed. A whitespace-only launch file is hashed but stays
+  `unknown` with reason `empty`. `parent` edges link consecutive directory
+  levels; order within one directory is not encoded. Directories above the
+  checkout are not read; their influence stays in `ambient_state: unknown`.
+- **Imports.** An `@path` token must start a line or follow whitespace.
+  Backslash-escaped spaces are kept and quoted tokens are skipped. A relative
+  path resolves from the importing file's directory. Each newly declared file is
+  expanded once, breadth-first, up to the documented maximum of four hops (a
+  launch file is hop 0). A file reached at hop 5 is hashed but stays `unknown`
+  (`import_depth_limit`) and is not expanded. Each distinct importer→target
+  pair is one edge. After the graph is built, every edge inside a strongly
+  connected import component (including a self-import) is `import_cycle`;
+  others are `imports`. Cycle detection is linear in distinct edges.
+- **Markdown constructs.** Tokens are skipped inside fenced code blocks (three or
+  more backticks or tildes, also after `>` blockquote markers or a list marker;
+  a backtick line with a later backtick is inline code, not a fence) and inside
+  backtick code spans that close on the same line. A token is
+  recorded but stays `unknown` with reason `import_markdown_context_uncertain`
+  when it is in a code span left open across lines (until it closes or a blank
+  line), or on a line indented by four or more spaces or a tab. Tokens inside
+  `<!-- -->` comments stay `unknown` (`import_inside_html_comment`). Other
+  Markdown structure, such as HTML blocks, link syntax and reference
+  definitions, is not interpreted.
+- **Unresolved references.** Missing targets, absolute, `~` and root-escaping
+  imports, `.git` paths, directories and invalid paths are never read. Each
+  importing file gets at most one content-free node per reason:
+  `import_missing` (`missing`), `external_import_not_captured`
+  (`external_reference`, `unknown` presence), `unsafe_import_target`,
+  `import_target_not_regular_file` and `invalid_import_path` (`unsupported`).
+  Their identity is the importer plus the reason; token counts and target names
+  are not retained.
+- **Readable but unknown targets.** In-checkout targets outside `task_cwd` are
+  hashed but stay `unknown` (`external_import_requires_approval`), because
+  Claude Code asks for approval first. Non-UTF-8 targets and files over the
+  documented 4 MiB skip threshold also stay `unknown`.
+- **AGENTS.md.** When a launch `CLAUDE.md` (including an empty one) is present,
+  `AGENTS.md` and `.claude/AGENTS.md` in the chain are `shadowed` with reason
+  `assumed_default_instruction_files_setting`. That reason means the documented
+  default setting was assumed, not read: the setting lives only in user or
+  managed configuration. Without a launch `CLAUDE.md` they are `unknown`. An
+  `AGENTS.md` imported by a declared file becomes `declared_applicable` through
+  that import.
+- **Explicitly unknown.** Selected `.claude/rules/` files (`rules_not_modeled`)
+  and launch filenames below `task_cwd` (`on_demand_subdirectory`) stay unknown.
+  Files below `task_cwd` are not discovered unless the caller selects them.
+  Managed and user files, `claudeMdExcludes`, approval decisions, on-demand
+  truncation and path-scoped rule matching are not captured. A selected
+  `AGENTS.override.md` or other unrecognized file in the chain is `unsupported`.
+
+An import whose path crosses a symbolic link, a non-directory component or a
+nested repository fails the capture, as does a linked final target or a non-UTF-8
+launch file. Only a genuinely absent path is `import_missing`. Like the Codex
+profile, files are read and hashed in full with no byte cap. Node count is bounded
+by the launch candidates, the distinct in-checkout files reached within four hops,
+five unresolved-reference nodes per expanded file and the selected files. The
+receipt uses the existing `InstructionInventory` shape and `instruction_inventory`
+record. Observed loading stays `unknown`, and the receipt grants no edit authority.
+Content, import, cwd and profile changes invalidate it. Native
+`InstructionsLoaded` evidence, managed and global capture, rules and on-demand
+modeling, and execution binding remain open in #46.
 
 ## ai-memory OKF project exports
 
