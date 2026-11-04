@@ -112,7 +112,7 @@ class OneCallTests(unittest.TestCase):
         from agent_harness_lab import workflow
         original=workflow.write_json
         for change,error in [('none',KeyboardInterrupt),('none',OSError),('body',KeyboardInterrupt),
-                             ('mode',OSError),('readback',KeyboardInterrupt)]:
+                             ('mode',OSError),('readback',KeyboardInterrupt),('journal',OSError)]:
             with self.subTest(change=change,error=error.__name__):
                 self.project=Path(tempfile.mkdtemp(dir=self.root,prefix='project-'))
                 self.skill=self.project/'.agents/skills/example/SKILL.md';self.skill.parent.mkdir(parents=True)
@@ -124,6 +124,7 @@ class OneCallTests(unittest.TestCase):
                         if change=='body':self.skill.write_bytes(b'foreign edit')
                         if change=='mode':self.skill.chmod(0o600)
                         if change=='readback':self.skill.unlink();self.skill.mkdir(mode=0o700)
+                        if change=='journal':(Path(value['journal'])/'active.json').unlink()
                         failed.append(path);raise error('synthetic post-commit failure')
                     return original(path,value)
                 with patch.object(workflow,'write_json',side_effect=record):
@@ -131,6 +132,7 @@ class OneCallTests(unittest.TestCase):
                 self.assertEqual(len(failed),1)
                 self.assertEqual(json.loads(failed[0].read_bytes()),result)
                 self.assertEqual(Journal(self.project,result['journal']).load(result['deployment'])['status'],'committed')
+                if change=='journal':self.assertIsNone(Journal(self.project,result['journal']).active)
                 self.assertEqual(result['changed_files'],['.agents/skills/example/SKILL.md'])
                 self.assertEqual((result['commit_observation'],result['post_commit_error_type']),('committed',error.__name__))
                 self.assertIn('rollback',result)
@@ -145,6 +147,7 @@ class OneCallTests(unittest.TestCase):
                     self.assertEqual(result['remaining_change_ownership'],'unverified')
                     if change=='readback':self.assertTrue(self.skill.is_dir())
                     else:self.assertEqual(self.skill.read_bytes(),b'foreign edit' if change=='body' else self.valid)
+                    self.assertEqual(self.skill.stat().st_mode&0o777,{'mode':0o600,'readback':0o700}.get(change,0o640))
 
     def test_postcommit_record_failure_keeps_result_when_rerecording_fails(self):
         from agent_harness_lab import workflow
