@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import agent_harness_lab
@@ -73,7 +74,7 @@ class AnalysisPipelineTests(unittest.TestCase):
         self.assertEqual(data['execution'], receipt['analysis'])
         self.assertNotIn('independent_roots', data['analysis']['process_mining'])
         self.assertIn('Directly-follows edges: 2', (self.root/'output/report.md').read_text())
-        for stage in ('discovery', 'capture_processing', 'analysis', 'collection_complete'):
+        for stage in ('discovery', 'collection', 'analysis', 'collection_complete'):
             self.assertIn('ahl: '+stage, err)
         for canary in ('PRIVATE_CASE', 'PRIVATE_BODY', 'synthetic.jsonl'):
             self.assertNotIn(canary, err + json.dumps(receipt))
@@ -188,7 +189,27 @@ print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
         actual = collect(self.project, events=capture, progress=lambda stage, **counts: calls.append((stage, counts)))
         self.assertEqual(initial, actual)
         self.assertEqual(calls[-1][0], 'collection_complete')
-        self.assertTrue(any(stage == 'capture_processing' and counts['events'] < 9 for stage, counts in calls))
+        self.assertTrue(any(stage == 'collection' and counts['events'] < 9 for stage, counts in calls))
+
+    def test_discovery_heartbeats_continue_before_late_project_metadata(self):
+        captures = self.root/'codex/sessions'; captures.mkdir(parents=True)
+        rows = [dict(type='event_msg', payload=dict(type='unknown')) for _ in range(20)]
+        rows.append(dict(type='session_meta', payload=dict(id='synthetic', cwd=str(self.project))))
+        (captures/'late-scope.jsonl').write_text(''.join(json.dumps(row)+'\n' for row in rows))
+        calls = []
+        collect(self.project, progress=lambda stage, **counts: calls.append((stage, counts)))
+        heartbeats = [counts for stage, counts in calls if stage == 'discovery' and 'captures' in counts]
+        self.assertEqual(len(heartbeats), len(rows))
+        self.assertTrue(all(counts['captures'] == 0 for counts in heartbeats))
+
+    def test_workflow_evidence_retains_explicit_progress_callback(self):
+        from agent_harness_lab.workflow import evidence
+        output = self.root/'explicit-progress'; output.mkdir()
+        args = SimpleNamespace(project=self.project, events=self.capture(self.rows()), format='normalized')
+        calls = []
+        data = evidence(args, output, progress=lambda stage, **counts: calls.append((stage, counts)))
+        self.assertEqual(calls[-1][0], 'collection_complete')
+        self.assertEqual(calls[-1][1]['events'], data['analysis']['events'])
 
     def test_bounded_multifile_discovery_reports_incomplete_and_progress_before_last_file(self):
         captures = self.root/'codex/sessions'
@@ -201,8 +222,8 @@ print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
             observed.append((stage, counts))
         data = collect(self.project, max_scan_files=1, progress=progress)
         self.assertTrue(any('scan-file limit' in caveat for caveat in data['caveats']))
-        self.assertTrue(any(stage == 'discovery' and counts.get('scanned') == 1 for stage, counts in observed))
-        self.assertTrue(any(stage == 'discovery' and counts.get('scanned') == 2 for stage, counts in observed))
+        self.assertTrue(any(stage == 'discovery' and counts.get('files') == 1 for stage, counts in observed))
+        self.assertTrue(any(stage == 'discovery' and counts.get('files') == 2 for stage, counts in observed))
         self.assertEqual(observed[-1][0], 'evidence_incomplete')
 
     def test_all_malformed_records_are_incomplete_rather_than_clean_empty_history(self):

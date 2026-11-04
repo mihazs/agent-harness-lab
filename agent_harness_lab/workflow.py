@@ -69,17 +69,20 @@ def project_lock(project):
             path.unlink()
 
 
-def evidence(args, output, source_context=None):
+def evidence(args, output, source_context=None, *, progress=None):
     from .analysis_receipt import summarize, report as execution_report
+    from .cli import _progress_reporter
     from agent_harness_lab.telemetry.ledger import Ledger
     from agent_harness_lab.telemetry.schema import serialize
+    if progress is None:
+        progress = getattr(args, '_progress', None) or _progress_reporter()
     with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as events, contextlib.ExitStack() as captures:
         selected, source_format, memory_summary = args.events, args.format, None
         source_identity = {}
         if getattr(args, 'memory_manifest', None) is not None:
             from .sources.observations import capture
             from .sources.schema import digest
-            records, memory_summary = capture(args.memory_manifest, args.authorization_file, progress=getattr(args, '_progress', None))
+            records, memory_summary = capture(args.memory_manifest, args.authorization_file, progress=progress)
             source_identity = dict(source_identity=digest([memory_summary['source_sha256'], memory_summary['session_sha256']]))
             temporary = captures.enter_context(tempfile.NamedTemporaryFile(mode='w+', encoding='utf-8'))
             for record in records:
@@ -91,7 +94,7 @@ def evidence(args, output, source_context=None):
             source_version=getattr(args, 'source_version', None), source_root=getattr(args, 'source_root', None),
             session=getattr(args, 'session', None), max_files=getattr(args, 'max_captures', None),
             max_scan_files=getattr(args, 'max_capture_scan', None), max_events=getattr(args, 'max_events', None),
-            sequence_length=getattr(args, 'sequence_length', None), progress=getattr(args, '_progress', None), **source_identity)
+            sequence_length=getattr(args, 'sequence_length', None), progress=progress, **source_identity)
         events.seek(0)
         Ledger(output / 'events.v2.jsonl').ingest(json.loads(line) for line in events)
     if source_context is not None: data['source_context'] = source_context
@@ -99,11 +102,11 @@ def evidence(args, output, source_context=None):
         data['memory_source'] = memory_summary
     data['execution'] = summarize(data)
     write_json(output / 'analysis.json', data)
-    (output / 'report.md').write_text(report(data['analysis'], source_context=source_context) + execution_report(data['execution']))
+    report_text = report(data['analysis'], source_context=source_context) + execution_report(data['execution'])
     if memory_summary is not None:
-        with (output / 'report.md').open('a') as stream:
-            stream.write('\nSession-observation evidence is insufficient for diagnosis. Snapshot atomicity is unavailable. '
-                +memory_summary['remediation']+'\n')
+        report_text += ('\nSession-observation evidence is insufficient for diagnosis. Snapshot atomicity is unavailable. '
+                        +memory_summary['remediation']+'\n')
+    (output / 'report.md').write_text(report_text)
     return data
 
 
@@ -376,7 +379,7 @@ def adopt(project, baseline, candidate, original, proposed):
 
 
 def _improve(args):
-    from agent_harness_lab.cli import assets, evaluator
+    from agent_harness_lab.cli import assets, evaluator, _progress_reporter
     if args.timeout <= 0:
         raise ValueError('timeout must be positive')
     controlled = args.agent == 'responses'
@@ -401,9 +404,9 @@ def _improve(args):
             result=dict(status='blocked',reason=repeated.blocked_reason or 'precision_target_infeasible',output=str(output),changed_files=[],
                 precision_preflight=repeated.precision,automatic_promotion=False,publication_allowed=False)
             write_json(output/'workflow.json',result);return result
-    data = evidence(args, output)
-    if getattr(args, '_progress', None) is not None:
-        args._progress('candidate_preparation', findings=len(data['analysis']['findings']))
+    progress = getattr(args, '_progress', None) or _progress_reporter()
+    data = evidence(args, output, progress=progress)
+    progress('candidate_preparation', findings=len(data['analysis']['findings']))
     grading = None
     permission_audit=getattr(args,'permission_audit',None)
     if permission_audit is not None and not controlled:
@@ -501,8 +504,7 @@ def _improve(args):
         proposal_path = proposal_folder / 'proposal.json'
         evaluation = prepare / f'evaluation-{attempt}'
         manifest_path = evaluation / 'manifest.json'
-        if getattr(args, '_progress', None) is not None:
-            args._progress('candidate_preparation', attempt=attempt + 1)
+        progress('candidate_preparation', attempt=attempt + 1)
         if controlled:
             context = role_views['proposer']
             if attempt:
@@ -606,8 +608,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                 raise ValueError('project harness changed during fixed comparison')
             result.update(compared)
             break
-        if getattr(args, '_progress', None) is not None:
-            args._progress('evaluation', attempt=attempt + 1)
+        progress('evaluation', attempt=attempt + 1)
         if bank is not None:
             bank_manifest.update(skills=[], harness_paths=sorted(paths))
             write_json(manifest_path, bank_manifest)
