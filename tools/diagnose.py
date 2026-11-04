@@ -154,7 +154,7 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
         repeated = recurring_sequences(cases, roots, sequence_length)
     return dict(schema_version=1, profile='ahl-private-diagnosis-v1',
                 events=n, cases=len(roots), reported_roots=len(set(roots.values())),
-                method_inputs=dict(structured_events=fields['structured_events'],
+                method_inputs=dict(profile='ahl-analysis-execution-v1', structured_events=fields['structured_events'],
                     sequence_roots=sequence_roots, sequence_cases=len(sequence_cases),
                     sequence_events=sum(len(entries) for entries in sequence_inputs.values()),
                     selected_sequence_cases=len(sequence_inputs), observation_cases=len(observation_cases),
@@ -165,7 +165,8 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
                     unordered_observation_cases=len(observation_cases - ordered),
                     capture_order_cases=sum(state['capture'] for state in ordering.values()),
                     timestamp_order_cases=sum(state['timestamp'] for state in ordering.values())),
-                method_execution=dict(policy='structural_prerequisites_v1' if select_methods else 'legacy_raw_analysis',
+                method_execution=dict(profile='ahl-analysis-execution-v1',
+                    policy='structural_prerequisites_v1' if select_methods else 'legacy_raw_analysis',
                     directly_follows='completed' if n else 'not_run',
                     recurring_sequences='completed' if not select_methods or sequence_roots >= 3 else 'not_run',
                     duplicate_observations='completed' if not select_methods or selected_observations else 'not_run',

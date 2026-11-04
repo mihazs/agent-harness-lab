@@ -102,14 +102,18 @@ class AnalysisPipelineTests(unittest.TestCase):
         _, result, _ = self.invoke(rows=self.rows())
         provenance = dict(source_kind='synthetic', source_ref='synthetic:test',
                           approved_publication=True, derived_from_private=False)
-        analysis = json.loads((self.root/'output/analysis.json').read_text())['analysis']
-        for name, value in (('receipt', result['analysis']), ('diagnosis', analysis),
-                            ('graph', analysis['process_mining'])):
-            facet = dict(value, publication_allowed=True, provenance=provenance)
+        data = json.loads((self.root/'output/analysis.json').read_text())
+        prepared = views(data, assets(), self.root/'private-role-views', time.monotonic()+30)
+        facets = [result['analysis'], result['analysis']['method_selection'], result['analysis']['synthesis'],
+                  data['analysis'], data['analysis']['process_mining'],
+                  data['analysis']['method_inputs'], data['analysis']['method_execution']]
+        facets += [json.loads((folder/'analysis-summary.json').read_text()) for folder in prepared.values()]
+        for index, facet in enumerate(facets):
+            receipt = dict(facet, publication_allowed=True, provenance=provenance)
             for wrapper in (None, 'execution', 'receipt', 'analysis', 'context', 'binding', 'process_mining'):
-                with self.subTest(facet=name, wrapper=wrapper):
-                    record = facet if wrapper is None else dict(publication_allowed=True,
-                        provenance=provenance, **{wrapper: facet})
+                with self.subTest(facet=index, wrapper=wrapper):
+                    record = receipt if wrapper is None else dict(publication_allowed=True,
+                        provenance=provenance, **{wrapper: receipt})
                     self.assertFalse(public_export_allowed([record]))
         self.assertTrue(public_export_allowed([dict(publication_allowed=True,
             provenance=provenance, execution=dict(exit_code=0))]))
@@ -287,6 +291,8 @@ print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
         for folder in prepared.values():
             summary = (folder/'analysis-summary.json').read_text()
             self.assertEqual(len(json.loads(summary)['process_mining']['raw_edges']), 2)
+            self.assertEqual(json.loads(summary)['method_execution']['policy'], 'structural_prerequisites_v1')
+            self.assertEqual(json.loads(summary)['method_inputs']['sequence_roots'], 3)
             self.assertNotIn('PRIVATE_CASE', summary)
             self.assertNotIn('PRIVATE_BODY', summary)
 
