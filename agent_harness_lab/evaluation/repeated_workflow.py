@@ -59,7 +59,6 @@ class Request:
         self.root=output/'fixed-bank';copy_frozen(self.source.parent,self.root,value['bank_sha256'])
         self.manifest=self.root/self.source.name
         source,pin=record(self.manifest,1024*1024)
-        if not isinstance(source,dict):raise ValueError('fixed bank manifest must be an object')
         if pin!=value['manifest_sha256']:raise ValueError('fixed bank manifest identity differs')
         if source.get('skills') or source.get('harness_paths') or 'experiment' in source or 'protected_access' in source:
             raise ValueError('fixed-bank request needs exposed artifact tasks and a newly controller-bound plan')

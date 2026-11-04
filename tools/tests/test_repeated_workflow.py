@@ -2,6 +2,7 @@
 from contextlib import ExitStack,redirect_stdout
 from copy import copy
 import gc
+import hashlib
 import io
 import json
 import os
@@ -118,7 +119,7 @@ class RepeatedWorkflowAdmissionTests(PublicFixture,unittest.TestCase):
         for index,value in enumerate(malformed):
             with self.subTest(index=index):
                 self.manifest.write_bytes(encoded(value))
-                self.request_value.update(manifest_sha256=record(self.manifest)[1],bank_sha256=digest(self.bank))
+                self.request_value.update(manifest_sha256=hashlib.sha256(self.manifest.read_bytes()).hexdigest(),bank_sha256=digest(self.bank))
                 self.request.write_bytes(encoded(self.request_value))
                 with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=AssertionError('no probe')):
                     with self.assertRaises(SystemExit) as error:
