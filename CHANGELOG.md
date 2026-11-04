@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.5
+
+### Patch Changes
+
+- e904932: Analyze an explicitly scoped, pinned ai-memory session through paginated read-only MCP, with faithful lifecycle activity and explicit diagnostic coverage and snapshot limitations.
+
 ## 0.76.4
 
 ### Patch Changes
