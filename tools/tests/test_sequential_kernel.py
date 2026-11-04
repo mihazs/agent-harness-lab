@@ -52,7 +52,7 @@ class SequentialKernelTests(kernel.KernelFixture):
                 self.assertTrue(attestation['runtime_image']['verified_before'])
                 self.assertTrue(attestation['runtime_image']['verified_after'])
         receipt = self.fixture.store.decision(result['run_id'])
-        self.assertEqual(receipt['analysis_disposition']['status'], 'supported')
+        self.assertEqual(receipt['receipt']['analysis_disposition']['status'], 'supported')
         self.assertFalse(receipt['adoption_authority'])
         with patch.object(SandboxBackend, 'run', side_effect=AssertionError('receipt replay must not execute')):
             self.assertEqual(self.fixture.store.verify_decision(result['run_id'], receipt['receipt_sha256']), receipt)
