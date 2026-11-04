@@ -68,7 +68,7 @@ def recheck(source, connector, proposed):
     if harness is not None:fingerprint(harness)
     result.update(profile=owned.PROFILE,verification_scope='closed_live_controller_attempt_only',publication_allowed=False,
         verified_execution=dict(**observed.to_dict(),profile=owned.PROFILE,publication_allowed=False),
-        controller_harness_input=dict(schema_version=1,namespace='ahl.controller_checked_input_tree',
+        controller_harness_input=dict(schema_version=1,profile=owned.PROFILE,namespace='ahl.controller_checked_input_tree',
             status='observed' if harness is not None else 'unknown',sha256=harness,
             observation_scope='controller_input_checks_before_and_after_executor',
             effective_loading='unverified',publication_allowed=False),

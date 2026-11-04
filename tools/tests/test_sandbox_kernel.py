@@ -774,6 +774,11 @@ class TrajectoryKernelTests(KernelFixture):
             self.assertEqual(harness['observation_scope'],'controller_input_checks_before_and_after_executor')
             self.assertEqual(harness['effective_loading'],'unverified')
             self.assertFalse(harness['publication_allowed'])
+            from agent_harness_lab.evaluation.benchmark import public_export_allowed
+            public=dict(publication_allowed=True,provenance=dict(source_kind='synthetic',
+                approved_publication=True,source_ref='synthetic:source-fixture',derived_from_private=False))
+            self.assertFalse(public_export_allowed([{**harness,**public}]))
+            self.assertFalse(public_export_allowed([{**public,'controller_harness_input':{**harness,'publication_allowed':True}}]))
             fields={field['name']:field for field in live['verified_execution']['fields']}
             self.assertEqual(fields['runtime_version']['value_sha256'],frozen['sha256'])
             self.assertEqual(fields['runtime_version']['status'],'verified')
