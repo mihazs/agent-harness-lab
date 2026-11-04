@@ -57,12 +57,20 @@ Unsupported, missing or inconsistent capacity and overlong pairs exit 2 without
 a scored report. Long inputs still cannot be scored by a model lacking enough
 supported context; no window aggregation protocol is implied.
 
-The optional sentence-embedding adapter still follows its model's configured
-maximum sequence length and can truncate longer inputs. Full embedding-context
-coverage remains outside this change.
+The sentence-embedding adapter admits only a stock, unprompted Transformer and
+Pooling pipeline. Before either encoding call, every input is tokenized without
+truncation using the checked stripping/lowercase preprocessing. Full token IDs
+and masks must equal the encoder's observed tokenization, and the input must fit
+both its saved encoder limit and the checked learned-position/tokenizer capacity.
+Unknown modules, active default prompts, preprocessing mismatches and overlong
+inputs exit 2 without a scored report. The documented multilingual MiniLM model's
+saved encoder limit is 128 tokens. Longer examples remain unscorable by that
+configuration; no chunk aggregation or model-setting override is applied.
 
 These contracts follow [Transformers padding/truncation](https://huggingface.co/docs/transformers/main/pad_truncation),
 the [BERT implementation](https://github.com/huggingface/transformers/blob/main/src/transformers/models/bert/modeling_bert.py),
 the [RoBERTa position implementation](https://github.com/huggingface/transformers/blob/main/src/transformers/models/roberta/modeling_roberta.py),
 [TF-IDF vocabulary semantics](https://scikit-learn.org/stable/modules/generated/sklearn.feature_extraction.text.TfidfVectorizer.html)
 and [Sentence Transformers sequence lengths](https://www.sbert.net/examples/sentence_transformer/applications/computing-embeddings/README.html).
+The stock preprocessing profile follows the [version 3 tokenizer implementation](https://github.com/huggingface/sentence-transformers/blob/v3.0.1/sentence_transformers/models/Transformer.py)
+and the [current prompt/encoding API](https://www.sbert.net/docs/package_reference/sentence_transformer/model.html).
