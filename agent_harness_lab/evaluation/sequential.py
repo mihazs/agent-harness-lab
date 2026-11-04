@@ -119,7 +119,7 @@ def create_binding(spec, cohorts, *, inputs_sha256='0'*64):
     for i in range(1,len(roots)+1):
         # The actual positive predictable binary value IS the tuning parameter.
         # The theorem does not require exact approximation to the paper's suggested tuning.
-        lam=min(.5,math.sqrt(2*(math.log(2)-math.log(float(alpha)))/(i*math.log(i+1))))
+        lam=min(.5,math.sqrt(2*(math.log(2)-math.log(alpha.numerator)+math.log(alpha.denominator))/(i*math.log(i+1))))
         lambdas.append(packed(Fraction(lam)))
     return dict(schema_version=1,profile=PROFILE,plan_sha256=spec.digest,nonce=secrets.token_hex(32),
         root_order=roots,lambdas=lambdas,engine_sha256=engine_pin(),

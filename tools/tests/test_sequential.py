@@ -51,6 +51,15 @@ class SequentialMathTests(unittest.TestCase):
         expected=os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
         if expected:self.assertTrue(Path(agent_harness_lab.__file__).resolve().is_relative_to(Path(expected).resolve()))
 
+    def test_positive_subnormal_alpha_survives_family_allocation(self):
+        plan=replace(spec(3),alpha=math.ulp(0.0),
+            tasks=(('a','ra','first'),('b','rb','second'),('c','rc','third')),
+            family_weights=(('first',.2),('second',.3),('third',.5)))
+        plan.validate();binding=core.create_binding(plan,[])
+        core.validate_binding(plan,binding)
+        bounds=core.endpoint([Fraction(1)],1,core.rational(plan.alpha)/3,binding['lambdas'])
+        self.assertEqual(bounds[:2],(Fraction(1),Fraction(1)))
+
     def test_uniform_fisher_yates_is_not_a_user_seeded_shuffle(self):
         plan=spec(3);orders=set()
         for first in range(3):
