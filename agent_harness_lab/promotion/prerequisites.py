@@ -42,6 +42,7 @@ class _Scope:
         self.nonce=_hash(('ahl.workflow-prerequisites-v1',secrets.token_hex(32)))
         self.data=dict(events=[],pairs=[],bindings=[],baseline_sha256=digest(self.baseline))
         self.latest=self.executor=None;self.closed=self.lost=False
+        self.instruction_client=None
         if time.monotonic()>=deadline:raise TimeoutError('workflow prerequisite admission budget exhausted')
         token=_ACTIVE.set(self)
         try:
@@ -53,7 +54,7 @@ class _Scope:
 
     def _state(self):
         return encoded(dict(data=self.data,baseline=str(self.baseline),image=self.image,deadline=self.deadline,
-            nonce=self.nonce,closed=self.closed,lost=self.lost,executor=self.executor,
+            nonce=self.nonce,closed=self.closed,lost=self.lost,executor=self.executor,instruction_client=id(self.instruction_client),
             latest=None if self.latest is None else (id(self.latest[0]),id(self.latest[2]))))
 
     def _save(self):
@@ -75,10 +76,44 @@ class _Scope:
         if not self._valid():raise ValueError('workflow scope changed during tree readback')
         return value
 
+    def _request_capacity(self,value,client=None):
+        if not self._valid():raise ValueError('current instruction scope required')
+        if client is not None and self.instruction_client is not None and self.instruction_client is not client:
+            raise ValueError('one owned instruction client required')
+        rows=self.data.get('instruction_requests',[])
+        if value['request_ordinal']!=len(rows)+1 or rows and not rows[-1]['complete']:
+            raise ValueError('instruction request coverage is not contiguous')
+        if len(rows)>=MAX_DISPATCHES or len(encoded(dict(self.data,instruction_requests=rows+[dict(binding=value,complete=False)])))>MAX_BYTES:
+            raise ValueError('instruction request metadata bound exceeded')
+
+    def _request(self,client,token,complete):
+        from agent_harness_lab.evaluation.responses import _read_request
+        if not self._valid():raise ValueError('current instruction scope required')
+        value=_read_request(client,token,complete=complete)
+        rows=self.data.get('instruction_requests',[])
+        if self.instruction_client is not None and self.instruction_client is not client:
+            raise ValueError('one owned instruction client required')
+        if complete:
+            if not rows or rows[-1]['complete'] or rows[-1]['binding']!=value:
+                raise ValueError('owned instruction reservation differs or completed twice')
+            rows[-1]['complete']=True
+        else:
+            self._request_capacity(value,client)
+            self.instruction_client=client
+            self.data['instruction_requests']=rows+[dict(binding=value,complete=False)]
+        self._save()
+
     def _admit(self,role,stage):
         if not self._valid() or len(self.data['events'])>=MAX_DISPATCHES:
             self.lost=True;return None
         event=dict(ordinal=len(self.data['events']),role=role,stage=stage,complete=False)
+        if self.instruction_client is not None and role in ('proposer','evaluator_author','executor') and stage=='role':
+            from agent_harness_lab.evaluation.responses import _read_request
+            try:request=_read_request(self.instruction_client,complete=True)
+            except ValueError:self.lost=True;return None
+            if request['role']!=role:self.lost=True;return None
+            event['instruction_request']=request['request_ordinal']
+            event['instruction_scope']=request['scope_id']
         self.data['events'].append(event);self.latest=None;self._save()
         return event
 
@@ -89,6 +124,10 @@ class _Scope:
         event=ticket.scope_event
         if value is None or event is None or self.data['events'][event['ordinal']] is not event or event['complete']:
             self.lost=True;return
+        if 'instruction_request' in event:
+            request=self.data['instruction_requests'][event['instruction_request']-1]['binding']['instruction_binding']
+            if value['input_digests']!=request['input_digests'] or value['image_sha256']!=request['image_sha256']:
+                self.lost=True;return
         exports=value.pop('exports')
         exports=tuple(tuple(pair) for pair in exports) if exports is not None else None
         event.update(value)
@@ -156,6 +195,14 @@ class _Scope:
                     or hashlib.sha256(read_regular(Path(binding['manifest']),1024*1024)).hexdigest()!=binding['manifest_sha256']
                     or any(self._tree(Path(root))!=sha for root,sha in binding['oracle_roots'].items())):
                 self.lost=True;raise ValueError('workflow prerequisite binding changed')
+        if self.instruction_client is not None:
+            rows=self.data['instruction_requests']
+            if (self.instruction_client.requests!=len(rows) or self.instruction_client.pending or self.instruction_client.poisoned
+                    or any(not row['complete'] for row in rows)):
+                raise ValueError('instruction request coverage is unresolved')
+            from agent_harness_lab.evaluation.instruction_context import pin
+            if any(row['binding']['instruction_binding']['settings_sha256']!=pin(self.instruction_client.settings) for row in rows):
+                raise ValueError('instruction request settings changed')
         if not self._valid():raise ValueError('workflow scope changed during input readback')
         return deepcopy(self.data)
 
@@ -164,4 +211,4 @@ class _Scope:
     def end(self):
         owner=_STATES.pop(self,None)
         if owner is not None and owner[0]==os.getpid() and _ACTIVE.get() is self:_ACTIVE.reset(owner[1])
-        self.closed=True;self.latest=self.executor=None
+        self.closed=True;self.latest=self.executor=None;self.instruction_client=None

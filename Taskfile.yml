@@ -886,6 +886,25 @@ tasks:
     desc: Require zero clones in working source
     cmds:
       - node_modules/.bin/jscpd --config .jscpd.json --no-colors
+  test:evaluation:instruction-protocol:
+    desc: Verify actual root instruction injection and owned request controls
+    cmds:
+      - task: test:workflow:repeated
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          REPEATED_TEST_PATTERN: test_effective_agents.py
+  test:evaluation:instruction-protocol:kernel:
+    desc: Exercise actual injected request bytes with real workers and artifact grading
+    cmds:
+      - task: test:workflow:repeated:kernel
+        vars:
+          PYTHON: '{{.PYTHON}}'
+          LAYOUT_DIR: '{{.LAYOUT_DIR}}'
+          EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
+          REPEATED_TEST_PATTERN: test_effective_agents.py
+          KERNEL_TEST_FILTER: InstructionProtocolKernelTests
   test:evaluation:recovery-gap:kernel:
     cmds:
       - task: test:workflow:repeated:kernel
