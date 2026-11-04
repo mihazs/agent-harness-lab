@@ -11,6 +11,9 @@ FORMAT = 'diagnostic-corpus-v1'
 PARTITIONS = ('fitting','calibration','threshold','development','validation','certification')
 OUTCOMES = ('task_failure','successful','external_failure','requirements_changed','unknown')
 MAX_CASES = 128
+PROVENANCE = 'operator_attested_adjudication'
+LIMITATIONS = ('Local reviewer identities are unauthenticated; annotations are not executable task oracles.',
+    'Near-duplicate adjudication, verified lineage binding and held-out classifier evaluation are not implemented.')
 
 
 def _fields(value, names):
@@ -82,6 +85,17 @@ def annotation(value, inputs):
         raise ValueError('missing outcome/capture evidence requires an unknown annotation')
     if value['mechanisms'] and not value['evidence_refs']: raise ValueError('mechanism labels require cited evidence')
     return deepcopy(value)
+
+
+def _eligible(inputs):
+    return inputs['capture_complete'] is True and inputs['permission']=='approved' and not inputs['ambiguity']
+
+
+def _separate(groups, texts, inputs, partition):
+    for group in (('root',inputs['root_id']),('incident',inputs['incident_id']),('source',inputs['source_revision_sha256'])):
+        if groups.setdefault(group,partition)!=partition: raise ValueError('protected corpus split leakage')
+    normalized=' '.join(inputs['summary'].split()).casefold()
+    if texts.setdefault(normalized,partition)!=partition: raise ValueError('copied text aliases leak across protected splits')
 
 
 def transition(state, kind, target, previous_kind=None):
@@ -228,17 +242,42 @@ class CorpusStore(PrivateJournal):
             if revision!=expected_revision_sha256: raise ValueError('stale corpus export revision')
             groups={}; texts={}; exported=[]
             for (key,(_,inputs,events,submissions,final)),summary in zip(rows,summaries):
-                partition=summary['partition']
-                for group in (('root',inputs['root_id']),('incident',inputs['incident_id']),('source',inputs['source_revision_sha256'])):
-                    if groups.setdefault(group,partition)!=partition: raise ValueError('protected corpus split leakage')
-                normalized=' '.join(inputs['summary'].split()).casefold()
-                if texts.setdefault(normalized,partition)!=partition: raise ValueError('copied text aliases leak across protected splits')
+                partition=summary['partition']; _separate(groups,texts,inputs,partition)
                 if partition not in ('fitting','development') or final is None or final['outcome']=='unknown': continue
-                if inputs['capture_complete'] is not True or inputs['permission']!='approved' or inputs['ambiguity']:
-                    continue
+                if not _eligible(inputs): continue
                 exported.append(dict(case_id=key,partition=partition,record=deepcopy(inputs),annotation=deepcopy(final),
-                    review_event_sha256=events[-1][1],label_provenance='operator_attested_adjudication',gold_label=False))
-            return dict(schema_version=1,profile=FORMAT,revision_sha256=revision,records=exported,
+                    review_event_sha256=events[-1][1],label_provenance=PROVENANCE,gold_label=False))
+            body=dict(schema_version=1,profile=FORMAT,revision_sha256=revision,records=exported,
                 publication_allowed=False,classifier_selection_allowed=False,root_independence='unverified',
-                limitations=['Local reviewer identities are unauthenticated; annotations are not executable task oracles.',
-                    'Near-duplicate adjudication, verified lineage binding and held-out classifier evaluation are not implemented.'])
+                limitations=list(LIMITATIONS))
+            return dict(body,manifest_sha256=_digest(body))
+
+
+def development_export(value):
+    """Check an export_development manifest for read-only consumers such as the benchmark.
+
+    The digest detects changed or truncated content; it is not an authenticity signature,
+    so the protected-partition, eligibility and provenance checks run independently."""
+    _fields(value,'schema_version profile revision_sha256 records publication_allowed classifier_selection_allowed root_independence limitations manifest_sha256')
+    _sha(value['revision_sha256']); _sha(value['manifest_sha256'])
+    if value['manifest_sha256']!=_digest({k:v for k,v in value.items() if k!='manifest_sha256'}):
+        raise ValueError('diagnostic corpus manifest digest differs')
+    if (type(value['schema_version']) is not int or value['schema_version']!=1 or value['profile']!=FORMAT
+            or value['publication_allowed'] is not False or value['classifier_selection_allowed'] is not False
+            or value['root_independence']!='unverified' or value['limitations']!=list(LIMITATIONS)):
+        raise ValueError('diagnostic corpus manifest authority differs')
+    rows=value['records']
+    if not isinstance(rows,list) or len(rows)>MAX_CASES: raise ValueError('bounded diagnostic corpus records required')
+    groups={}; texts={}; seen=set()
+    for row in rows:
+        _fields(row,'case_id partition record annotation review_event_sha256 label_provenance gold_label')
+        inputs=incident(row['record']); _sha(row['review_event_sha256']); partition=row['partition']
+        if row['case_id']!=_digest(inputs) or row['case_id'] in seen: raise ValueError('diagnostic corpus record identity differs')
+        seen.add(row['case_id'])
+        # Exposure retires any declared partition to development; nothing else may change it.
+        if (partition not in ('fitting','development') or partition!=inputs['partition'] and partition!='development'
+                or row['label_provenance']!=PROVENANCE or row['gold_label'] is not False or not _eligible(inputs)):
+            raise ValueError('diagnostic corpus export has protected, ineligible or relabelled items')
+        if annotation(row['annotation'],inputs)['outcome']=='unknown': raise ValueError('unknown annotations are not exported labels')
+        _separate(groups,texts,inputs,partition)
+    return deepcopy(value)

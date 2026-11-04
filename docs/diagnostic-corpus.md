@@ -73,12 +73,58 @@ authority.
 All storage and exports remain private, including synthetic-source declarations.
 The existing benchmark exporter rejects all canonical corpus outputs even if
 their publication flag and public provenance are forged.
-No public exporter or corpus-to-classifier adapter is included. The next slices
-still need verified grouping, near-duplicate adjudication, a production review
-authentication policy, protected evaluation access, class-wise uncertainty plans
-and the #74 classifier gate. A reviewed diagnostic annotation remains distinct
-from #8's independently reproduced and graded executable regression case.
+No public exporter is included. The next slices still need verified grouping,
+near-duplicate adjudication, a production review authentication policy, protected
+evaluation access, class-wise uncertainty plans and the #74 classifier gate. A
+reviewed diagnostic annotation remains distinct from #8's independently
+reproduced and graded executable regression case.
 
-Run `task test:diagnostics:corpus` for native synthetic controls. The same task is
+## Benchmark input profile
+
+Each development export carries `manifest_sha256` over all of its other fields.
+`development_export(manifest)` checks that digest, the frozen export authority
+fields and limitations, each record's case ID against its frozen incident, the
+annotation against that incident, export eligibility and fitting/development
+separation. The digest detects changed or truncated files. Anyone who can edit
+the file can recompute it, so it is not an authenticity signature; the partition,
+eligibility and provenance checks run regardless.
+
+`ahl benchmark export.json --profile diagnostic-corpus --method baseline` reads such
+a manifest. It keeps the corpus assignment, mapping `fitting` to the benchmark's
+`train` split and `development` to `development`, and never re-splits. A manifest
+that names a calibration, threshold, validation or certification partition fails
+validation, so held-out labels never reach fitting or reporting. With no
+calibration partition, threshold selection has no roots and every prediction
+abstains. Brier scores and per-root groups are still reported. `--triage-policy`
+is refused for this profile because a development export has no held-out roots.
+
+The classifier text is the frozen human `summary`. The predicted summary is
+never read. The binary label is `true` for `task_failure` and `false` for
+`successful`. `external_failure` and `requirements_changed` remain unlabeled
+rather than becoming negatives, and `outcome_counts` reports them separately.
+`groups` reports rows, declared roots, repeated-root rows, the most rows for one
+root and roots with conflicting labels for each split. Root-level metrics count a
+repeated root once. Root independence remains `unverified`.
+
+Every report states `label_provenance_counts` for `adjudicated`, `single_review`
+and `adapter_smoke`, plus `reviewed_annotations` and `gold_labels: 0`. Corpus
+rows are `adjudicated` operator-attested declarations. The current store exports
+no single-review labels, so that count is zero. Rows from the default
+`adapter-smoke` JSONL profile, including the synthetic classifier fixture, are
+`adapter_smoke`. They never count as reviewed annotations, and a JSONL row that
+claims another provenance is rejected. A corpus report has
+`qualification: descriptive_only`, `certification: not_issued`,
+`publication_allowed: false` and `classifier_selection_allowed: false`. It uses
+the private `diagnostic-corpus-benchmark-v1` profile, which the benchmark exporter
+rejects even with forged public provenance.
+
+This profile shows that local adjudicated declarations can be scored under the
+corpus's own split and root groups without exposing protected items. It is not
+evidence of classifier accuracy. Real reviewed gold labels need authenticated,
+independent human reviewers and an agreed gold-label policy, both still open in
+#73. The same applies to protected held-out evaluation and the #74 acceptance gate.
+
+Run `task test:diagnostics:corpus` for native synthetic controls, including the
+benchmark profile. The same task is
 included in installed wheel/archive verification. No model, network, browser or
 optional ML dependency is required.
