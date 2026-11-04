@@ -1,5 +1,6 @@
 """Bounded private Git views: source configuration is data, never execution policy."""
 import hashlib
+from contextlib import contextmanager
 import math
 import os
 from pathlib import Path
@@ -19,9 +20,12 @@ MAX_OUTPUT = 4*1024*1024
 
 
 class Folder:
-    def __init__(self, root, deadline, *, limit_total_bytes=True):
+    def __init__(self, root, deadline, *, limit_total_bytes=True, limit_tree=True):
+        if deadline is not None and (type(deadline) not in (int, float) or not math.isfinite(deadline)):
+            raise ValueError('invalid filesystem deadline')
         self.root, self.deadline = Path(root).absolute(), deadline
         self.limit_total_bytes = limit_total_bytes
+        self.limit_tree = limit_tree
         self.fd, self.bytes, self.entries, self.observed = None, 0, 0, {}
         self.unsafe_entries = 0
 
@@ -38,7 +42,7 @@ class Folder:
         if self.fd is not None: os.close(self.fd)
 
     def check(self):
-        if time.monotonic() >= self.deadline: raise TimeoutError('Git snapshot budget exhausted')
+        if self.deadline is not None and time.monotonic() >= self.deadline: raise TimeoutError('Git snapshot budget exhausted')
 
     def directory(self, name):
         if name != '.': relative(name)
@@ -76,41 +80,53 @@ class Folder:
             return info
         finally: os.close(parent)
 
-    def read(self, name, maximum=65536, *, prefix=False):
+    @contextmanager
+    def open(self, name, maximum=None, *, prefix=False):
         info = self.inspect(name)
-        if info is None: return None
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not prefix and info.st_size > maximum:
+        if info is None:
+            yield None
+            return
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or not prefix and maximum is not None and info.st_size > maximum:
             raise ValueError('Git input must be a bounded single-link regular file')
         parts = Path(name).parts; parent = self.directory(str(Path(*parts[:-1])))
         try: descriptor = os.open(parts[-1], os.O_RDONLY|os.O_NOFOLLOW|os.O_NONBLOCK, dir_fd=parent)
         finally: os.close(parent)
         try:
             if self.stamp(os.fstat(descriptor)) != self.stamp(info): raise ValueError('Git input changed before reading')
+            yield descriptor, info
+        finally:
+            try:
+                if self.stamp(os.fstat(descriptor)) != self.stamp(info): raise ValueError('Git input changed during reading')
+            finally: os.close(descriptor)
+
+    def read(self, name, maximum=65536, *, prefix=False):
+        with self.open(name, maximum, prefix=prefix) as opened:
+            if opened is None: return None
+            descriptor, info = opened
             raw = bytearray()
             while True:
                 self.check()
-                if prefix and len(raw) >= maximum: break
-                block = os.read(descriptor, min(65536, maximum-len(raw)+(0 if prefix else 1)))
+                if prefix and maximum is not None and len(raw) >= maximum: break
+                block = os.read(descriptor, 65536 if maximum is None else min(65536, maximum-len(raw)+(0 if prefix else 1)))
                 if not block: break
                 raw.extend(block); self.bytes += len(block)
-                if len(raw) > maximum or self.limit_total_bytes and self.bytes > MAX_BYTES:
+                if maximum is not None and len(raw) > maximum or self.limit_total_bytes and self.bytes > MAX_BYTES:
                     raise ValueError('Git input byte budget exceeded')
-            expected = min(info.st_size, maximum) if prefix else info.st_size
+            expected = min(info.st_size, maximum) if prefix and maximum is not None else info.st_size
             if len(raw) != expected or self.stamp(os.fstat(descriptor)) != self.stamp(info):
                 raise ValueError('Git input changed during reading')
             return bytes(raw)
-        finally: os.close(descriptor)
 
     def walk(self, name, depth=0, *, excluded=(), skip_unsafe=False):
         self.check()
-        if depth > 64: raise ValueError('Git directory depth exceeded')
+        if self.limit_tree and depth > 64: raise ValueError('Git directory depth exceeded')
         descriptor = self.directory(name)
         try:
             self.observe(name, os.fstat(descriptor))
             with os.scandir(descriptor) as entries:
                 for entry in entries:
                     self.entries += 1; self.check()
-                    if self.entries > MAX_ENTRIES: raise ValueError('Git entry budget exceeded')
+                    if self.limit_tree and self.entries > MAX_ENTRIES: raise ValueError('Git entry budget exceeded')
                     path = str(Path(name)/entry.name)
                     if path in excluded: continue
                     info = entry.stat(follow_symlinks=False)
