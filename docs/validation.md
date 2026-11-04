@@ -44,7 +44,25 @@ complete evidence text. `--max-examples N` optionally rejects input exceeding a
 positive row limit chosen by the caller. Root identity, label type, nonempty
 text and cross-split validation still apply.
 
-Reader acceptance does not establish full model-context coverage. The optional
-NLI adapter explicitly enables tokenizer truncation, and the TF-IDF adapter uses
-a 20,000-feature vocabulary. Those model behaviors remain recorded limitations;
-the size controls here govern input admission only.
+TF-IDF retains all features extracted from training examples. Terms absent from
+that training vocabulary remain unrepresented during prediction; fitting on the
+validation data would change the evaluation protocol.
+
+NLI tokenization preserves the complete evidence/hypothesis pair. The adapter
+supports BERT, RoBERTa and XLM-R learned absolute-position profiles, checks the
+configuration against the actual position table and applies the RoBERTa padding
+offset. Its maximum is the smaller of that capacity and a finite tokenizer
+declaration. Hugging Face's unspecified-length sentinel contributes no capacity.
+Unsupported, missing or inconsistent capacity and overlong pairs exit 2 without
+a scored report. Long inputs still cannot be scored by a model lacking enough
+supported context; no window aggregation protocol is implied.
+
+The optional sentence-embedding adapter still follows its model's configured
+maximum sequence length and can truncate longer inputs. Full embedding-context
+coverage remains outside this change.
+
+These contracts follow [Transformers padding/truncation](https://huggingface.co/docs/transformers/main/pad_truncation),
+the [BERT implementation](https://github.com/huggingface/transformers/blob/main/src/transformers/models/bert/modeling_bert.py),
+the [RoBERTa position implementation](https://github.com/huggingface/transformers/blob/main/src/transformers/models/roberta/modeling_roberta.py),
+[TF-IDF vocabulary semantics](https://scikit-learn.org/stable/modules/generated/sklearn.feature_extraction.text.TfidfVectorizer.html)
+and [Sentence Transformers sequence lengths](https://www.sbert.net/examples/sentence_transformer/applications/computing-embeddings/README.html).
