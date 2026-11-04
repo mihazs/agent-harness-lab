@@ -44,6 +44,9 @@ class ClaudeInstructionInventoryTests(unittest.TestCase):
         node = self.nodes(receipt)[digest(path)]
         return node.applicability, node.reason
 
+    def unresolved(self, receipt, importer, reason):
+        return self.nodes(receipt)[digest(['unresolved_imports', importer, reason])]
+
     def test_root_nested_dot_claude_and_local_files_are_concatenated_not_shadowed(self):
         for name in ('CLAUDE.md', '.claude/CLAUDE.md', 'src/CLAUDE.local.md', 'src/task/CLAUDE.md'):
             self.write(name, 'SYNTHETIC_MEMORY')
@@ -76,20 +79,22 @@ class ClaudeInstructionInventoryTests(unittest.TestCase):
         self.write('CLAUDE.md', '@a.md @absent.md @CLAUDE.md')
         self.write('a.md', '@b.md'); self.write('b.md', '@a.md')
         receipt = self.read(); edges = self.edges(receipt)
-        absent = self.nodes(receipt)[digest('absent.md')]
+        absent = self.unresolved(receipt, 'CLAUDE.md', 'import_missing')
         self.assertEqual((absent.presence, absent.applicability, absent.reason), ('missing', 'unknown', 'import_missing'))
         self.assertIn(('import_cycle', digest('CLAUDE.md'), digest('CLAUDE.md')), edges)
         self.assertIn(('import_cycle', digest('b.md'), digest('a.md')), edges)
-        self.assertIn(('imports', digest('a.md'), digest('b.md')), edges)
+        self.assertIn(('import_cycle', digest('a.md'), digest('b.md')), edges)
+        self.assertIn(('imports', digest('CLAUDE.md'), digest('a.md')), edges)
         self.assertEqual(self.state(receipt, 'b.md'), ('declared_applicable', 'import'))
 
     def test_import_syntax_skips_code_quotes_and_mentions_and_flags_comments(self):
         text = '\n'.join(['see @real.md and `@span.md` or ``@double.md``', 'mail user@example.com @"quoted.md"',
                           '```', '@fenced.md', '```', '~~~~', '@tilde.md', '~~~', '@still-fenced.md', '~~~~',
                           r'@Design\ Docs/api.md', '<!-- @hidden.md', '@hidden-too.md -->@after.md'])
-        self.assertEqual(imports(text), [('real.md', False), ('Design Docs/api.md', False), ('hidden.md', True),
-                                         ('hidden-too.md', True)])
-        self.assertEqual(imports('<!-- a --> @after.md <!-- @in.md'), [('after.md', False), ('in.md', True)])
+        comment = 'import_inside_html_comment'
+        self.assertEqual(imports(text), [('real.md', None), ('Design Docs/api.md', None), ('hidden.md', comment),
+                                         ('hidden-too.md', comment)])
+        self.assertEqual(imports('<!-- a --> @after.md <!-- @in.md'), [('after.md', None), ('in.md', comment)])
         self.profile['task_cwd'] = '.'
         self.write('CLAUDE.md', '<!-- @note.md -->'); self.write('note.md', 'SYNTHETIC_NOTE')
         self.assertEqual(self.state(self.read(), 'note.md'), ('unknown', 'import_inside_html_comment'))
@@ -104,7 +109,7 @@ class ClaudeInstructionInventoryTests(unittest.TestCase):
             return original(folder, name, *args)
         with patch.object(Folder, 'read', guarded): receipt = self.read()
         external = [n for n in receipt.nodes if n.origin == 'external_reference']
-        self.assertEqual(len(external), 3)
+        self.assertEqual(len(external), 1)
         self.assertTrue(all((n.presence, n.content_sha256, n.applicability) == ('unknown', None, 'unknown') for n in external))
         self.assertEqual(self.state(receipt, 'shared.md'), ('unknown', 'external_import_requires_approval'))
         self.assertNotIn(digest('deeper.md'), self.nodes(receipt))
@@ -114,12 +119,12 @@ class ClaudeInstructionInventoryTests(unittest.TestCase):
         self.assertEqual(self.state(self.read(), 'AGENTS.md'), ('unknown', 'instruction_files_setting_unknown'))
         self.write('src/CLAUDE.md', 'SYNTHETIC_CLAUDE')
         receipt = self.read()
-        self.assertEqual(self.state(receipt, 'AGENTS.md'), ('shadowed', 'default_instruction_files_setting'))
+        self.assertEqual(self.state(receipt, 'AGENTS.md'), ('shadowed', 'assumed_default_instruction_files_setting'))
         self.assertIn(('shadows', digest('src/CLAUDE.md'), digest('AGENTS.md')), self.edges(receipt))
         self.write('src/CLAUDE.md', '@../AGENTS.md')
         self.profile['task_cwd'] = 'src'
         receipt = self.read()
-        self.assertEqual(self.state(receipt, 'AGENTS.md'), ('shadowed', 'default_instruction_files_setting'))
+        self.assertEqual(self.state(receipt, 'AGENTS.md'), ('shadowed', 'assumed_default_instruction_files_setting'))
         self.assertIn(('imports', digest('src/CLAUDE.md'), digest('AGENTS.md')), self.edges(receipt))
         self.profile['task_cwd'] = '.'; self.write('CLAUDE.md', '@AGENTS.md')
         receipt = self.read()
@@ -141,20 +146,82 @@ class ClaudeInstructionInventoryTests(unittest.TestCase):
         self.profile['task_cwd'] = '.'
         (self.root/'project/.git').mkdir(); self.write('.git/config', 'SYNTHETIC_GIT_CONFIG')
         self.write('docs/x.md', 'SYNTHETIC_DOC'); self.write('binary.md', b'\xff\xfe')
-        self.write('CLAUDE.md', '@.git/config @docs @binary.md @CLAUDE.md/child')
+        self.write('CLAUDE.md', '@.git/config @docs @binary.md')
         receipt = self.read(); nodes = self.nodes(receipt)
         unsafe = [n for n in receipt.nodes if n.reason == 'unsafe_import_target']
         self.assertEqual([(n.presence, n.applicability) for n in unsafe], [('unknown', 'unsupported')])
-        self.assertEqual((nodes[digest('docs')].presence, nodes[digest('docs')].reason), ('unknown', 'import_target_not_regular_file'))
+        directory = self.unresolved(receipt, 'CLAUDE.md', 'import_target_not_regular_file')
+        self.assertEqual((directory.presence, directory.applicability), ('unknown', 'unsupported'))
         self.assertEqual(nodes[digest('binary.md')].content_sha256, hashlib.sha256(b'\xff\xfe').hexdigest())
         self.assertEqual(self.state(receipt, 'binary.md'), ('unknown', 'non_utf8_import'))
-        self.assertEqual(nodes[digest('CLAUDE.md/child')].presence, 'missing')
         (self.root/'project/link.md').symlink_to(self.root/'project/docs/x.md')
         self.write('CLAUDE.md', '@link.md')
         with self.assertRaises(ValueError): self.read()
         (self.root/'project/vendor').mkdir(); (self.root/'project/vendor/.git').write_text('gitdir: elsewhere')
         self.write('vendor/x.md', 'SYNTHETIC_VENDOR'); self.write('CLAUDE.md', '@vendor/x.md')
         with self.assertRaises(ValueError): self.read()
+
+    def test_import_through_a_link_or_file_component_fails_closed(self):
+        self.profile['task_cwd'] = '.'
+        self.write('docs/x.md', 'SYNTHETIC_DOC'); self.write('../elsewhere/x.md', 'SYNTHETIC_OUTSIDE')
+        (self.root/'project/inside').symlink_to(self.root/'project/docs', target_is_directory=True)
+        (self.root/'project/outside').symlink_to(self.root/'elsewhere', target_is_directory=True)
+        for text in ('@inside/x.md', '@outside/x.md', '@docs/x.md/child', '@inside/absent.md'):
+            with self.subTest(text=text):
+                self.write('CLAUDE.md', text)
+                with self.assertRaises(ValueError): self.read()
+        self.write('CLAUDE.md', '@absent/x.md')
+        self.assertEqual(self.unresolved(self.read(), 'CLAUDE.md', 'import_missing').presence, 'missing')
+
+    def test_cycle_detection_stays_near_linear_for_repeated_imports(self):
+        self.profile['task_cwd'] = '.'
+        count = 8000
+        self.write('CLAUDE.md', '@hub.md @back.md')
+        self.write('hub.md', ' '.join(f'@f{i}.md' for i in range(count)))
+        for i in range(count): self.write(f'f{i}.md', '')
+        self.write('back.md', ' '.join(['@hub.md']*count+['@CLAUDE.md']))
+        started = time.perf_counter(); receipt = self.read(); elapsed = time.perf_counter()-started
+        self.assertLess(elapsed, 5.0)
+        edges = self.edges(receipt)
+        self.assertIn(('import_cycle', digest('back.md'), digest('CLAUDE.md')), edges)
+        self.assertIn(('import_cycle', digest('CLAUDE.md'), digest('back.md')), edges)
+        self.assertIn(('imports', digest('back.md'), digest('hub.md')), edges)
+        self.assertIn(('imports', digest('hub.md'), digest('f0.md')), edges)
+
+    def test_cycle_classification_is_iterative_on_deep_chains(self):
+        from agent_harness_lab.sources.claude_instructions import cyclic
+        chain = [(i, i+1) for i in range(200000)]
+        self.assertEqual(cyclic(chain), set())
+        self.assertEqual(len(cyclic(chain+[(200000, 0)])), 200001)
+
+    def test_unresolved_references_are_aggregated_per_importing_file(self):
+        self.profile['task_cwd'] = '.'
+        tokens = [f'@missing-{i}.md @/abs/{i}.md @~/home-{i}.md @bad\\{i}.md' for i in range(1000)]
+        self.write('CLAUDE.md', ' '.join(tokens))
+        receipt = self.read()
+        imported = [n for n in receipt.nodes if n.reason != 'missing' and n.path_sha256 != digest('CLAUDE.md')]
+        self.assertEqual(sorted(n.reason for n in imported),
+                         ['external_import_not_captured', 'import_missing', 'invalid_import_path'])
+
+    def test_uncertain_markdown_regions_never_yield_declared_imports(self):
+        uncertain = 'import_markdown_context_uncertain'
+        text = '\n'.join(['start `span', '@span-inside.md', 'end` @after-span.md', '', '> ```', '> @quoted-fence.md',
+                          '> ```', '- ```', '  @list-fence.md', '  ```', '', '    @indented.md', '\t@tabbed.md', '@plain.md'])
+        found = dict(imports(text))
+        self.assertEqual(found['span-inside.md'], uncertain)
+        self.assertEqual(found['after-span.md'], None)
+        self.assertNotIn('quoted-fence.md', found); self.assertNotIn('list-fence.md', found)
+        self.assertEqual((found['indented.md'], found['tabbed.md'], found['plain.md']), (uncertain, uncertain, None))
+        self.assertEqual(imports('```@inline.md``` text\n@next.md'), [('next.md', None)])
+        self.profile['task_cwd'] = '.'
+        self.write('CLAUDE.md', 'a `b\n@target.md c` d'); self.write('target.md', 'SYNTHETIC_TARGET')
+        self.assertEqual(self.state(self.read(), 'target.md'), ('unknown', uncertain))
+
+    def test_empty_launch_file_is_visible_but_not_applicable(self):
+        self.write('CLAUDE.md', ' \n\t'); self.write('AGENTS.md', 'SYNTHETIC_AGENTS')
+        receipt = self.read()
+        self.assertEqual(self.state(receipt, 'CLAUDE.md'), ('unknown', 'empty'))
+        self.assertEqual(self.state(receipt, 'AGENTS.md'), ('shadowed', 'assumed_default_instruction_files_setting'))
 
     def test_content_import_and_cwd_changes_invalidate_the_receipt(self):
         self.write('CLAUDE.md', '@notes.md'); self.write('src/task/CLAUDE.md', 'SYNTHETIC_LEAF')
