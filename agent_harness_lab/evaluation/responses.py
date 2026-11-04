@@ -511,11 +511,14 @@ def _run_role(client, backend, workspace, inputs, role, instructions, prompt, de
         dict(role='user',content=prompt)]
     role_scope=_ROLE_SCOPES.get(client)
     if role_scope is not None and len(role_scope)==5:history=deepcopy(role_scope[4]['prefix'])
+    from .construction_seals import observe_input,observe_output
+    observe_input(client,backend,workspace,inputs,role,state)
     commands = []
     while True:
         output,calls = client.respond(history,deadline)
         history.extend(output)
         if not calls:
+            observe_output(client,backend,state)
             return state,commands
         call_id,argv = calls[0]
         action = client.response_actions[0]

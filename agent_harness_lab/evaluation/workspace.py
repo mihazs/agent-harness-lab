@@ -107,7 +107,8 @@ class PrivateWorkspace:
         self.comparison_roots={};self.comparison_inputs=None
         from .comparison_custody import current,bundle_binding
         comparison=current()
-        if comparison is not None and comparison.active is not None and role=='executor':
+        from .construction_seals import current as construction_current
+        if (comparison is not None and comparison.active is not None and role=='executor' or construction_current() is not None):
             self.comparison_roots=dict(inputs)
             self.comparison_inputs={name:bundle_binding(path,deadline) for name,path in inputs.items()}
         if role == 'grader' and self.outputs: raise ValueError('graders cannot export storage artifacts')
@@ -214,7 +215,8 @@ class PrivateWorkspace:
             self.working_state.seed(self.fd,self.deadline)
             from .comparison_custody import current,snapshot_pin
             comparison=current()
-            if comparison is not None and comparison.active is not None:
+            from .construction_seals import current as construction_current
+            if comparison is not None and comparison.active is not None or construction_current() is not None:
                 from .working_state import Snapshot
                 observed=Snapshot.capture(self.fd,self.deadline)
                 if observed!=self.working_state.snapshot:raise ValueError('physical comparison seed changed')
