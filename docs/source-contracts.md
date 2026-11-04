@@ -726,9 +726,9 @@ result grants permission to edit a file. Observed loading and ambient influence
 always remain unknown. A changed cwd, profile, HEAD, file content or mode invalidates
 the receipt. Consumers must also retain the enclosing source/project identity.
 
-The profile allows at most 32 cwd components, eight fallback basenames and a declared
-project instruction cap of 0–1 MiB. Files use the existing 1 MiB per-file and shared
-Git capture read/deadline bounds; non-UTF-8 files, links, nested repositories and
+The profile imposes no cwd-depth, fallback-name or instruction-byte ceiling of its
+own; only the optional declared `project_doc_max_bytes` and the enclosing Git
+capture's read/deadline bounds apply. Non-UTF-8 files, links, nested repositories and
 submodule crossings fail the capture. The collector does not guess native partial
 file truncation: when selected non-empty files and separators exceed the declared
 byte cap, resolution is blocked and affected applicability remains unknown. A
