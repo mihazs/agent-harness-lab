@@ -13,9 +13,12 @@ descendants. EACCES, EPERM and EROFS in the role are permission-result violation
 including errors caught by a worker that eventually exits zero. The artifact
 grader outcome stays separate. A violated/unknown qualification prevents a
 successful evaluator exit or improvement recommendation. Controlled inference
-stops after an unsuccessful proposer, evaluator-author or executor command
-qualification. A grader's violated or unknown audit blocks final qualification;
-remaining scheduled trials can still run. Automatic promotion stays off.
+stops after an unsuccessful proposer, evaluator-author, executor or grader
+qualification. A grader's violated or unknown audit preserves its separate
+artifact outcome and stops later controlled requests. Fixed schedules record later
+trials as not executed; sequential schedules retain the stopped prefix and existing
+terminal/coverage reporting. Offline runs can continue their remaining scheduled
+trials for diagnostics. Automatic promotion stays off.
 
 The observer does **not** infer malicious intent or complete authorization
 coverage. ENOENT, absent mounts, denied reads that return a different result,
