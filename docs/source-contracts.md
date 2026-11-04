@@ -717,6 +717,10 @@ Git analysis does not impose default source-byte, entry, directory-depth, ref,
 selected-path, selection-file or command-output size ceilings. Callers can select
 explicit limits. Read-only Git invocation, path-safety and source-readback checks
 remain in place; explicitly bounded callers retain their child resource guards.
+Object-store files are copied into the private view, and commit patches and the
+Git binary are hashed, in fixed-size chunks, so capture memory does not grow with
+pack, loose-object or patch size. Commit, tree and selected harness contents are
+still read whole.
 Source filesystem operations are checked between reads but cannot be preempted
 at an exact optional deadline. Links,
 nonregular files, alternate object stores, bare repositories, reftable repositories

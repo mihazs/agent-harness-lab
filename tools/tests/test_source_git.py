@@ -1,15 +1,19 @@
 """Synthetic native Git repositories; source code/config must never be executed."""
 from contextlib import redirect_stderr, redirect_stdout
+from datetime import datetime, timezone
 import io
 import hashlib
 import json
 import os
 from pathlib import Path
+import random
 import re
+import shutil
 import socket
 import subprocess
 import tempfile
 import time
+import tracemalloc
 import unittest
 import zlib
 from dataclasses import FrozenInstanceError, replace
@@ -17,6 +21,7 @@ from unittest.mock import Mock, patch
 
 from agent_harness_lab.cli import main
 from agent_harness_lab.sources.git import GitExport, HarnessSnapshot
+from agent_harness_lab.sources import git_view
 from agent_harness_lab.sources.git_view import Folder, GitView
 from agent_harness_lab.sources.schema import SourceSpec, digest
 from agent_harness_lab.sources.store import SourceStore
@@ -424,6 +429,125 @@ class GitSourceTests(unittest.TestCase):
         for index in range(1001): (refs/f'synthetic-{index}').write_text(oid+'\n')
         self.declare(); collector, _ = self.read()
         self.assertEqual(len(collector.summary['refs']), 1002)
+
+    def packed_and_loose(self, blob_bytes):
+        # Synthetic incompressible blob packed by gc, then a loose commit on top.
+        (self.repo/'blob.bin').write_bytes(random.Random(219).randbytes(blob_bytes)); self.commit()
+        self.git('-c', 'gc.auto=0', 'gc', '--prune=now', '--quiet')
+        (self.repo/'AGENTS.md').write_text('SYNTHETIC_LOOSE'); (self.repo/'small.bin').write_bytes(bytes(range(256))*16)
+        self.commit()
+        self.assertTrue(any((self.repo/'.git/objects/pack').glob('*.pack')))
+        self.assertTrue(any(p.is_file() for p in (self.repo/'.git/objects').glob('[0-9a-f][0-9a-f]/*')))
+
+    def frozen_capture(self):
+        """Capture outputs that must stay byte-identical, with the record clock fixed."""
+        class Fixed(datetime):
+            @classmethod
+            def now(cls, tz=None): return datetime(2026, 2, 2, tzinfo=timezone.utc)
+        copies, original = {}, GitExport.objects
+        def observe(collector, common):
+            original(collector, common)
+            base = collector.view.root/'objects'
+            copies.update({str(p.relative_to(base)): (p.read_bytes(), p.stat().st_mode)
+                           for p in base.rglob('*') if p.is_file()})
+        cache = self.root/'equivalence-journal.json'; cache.unlink(missing_ok=True)
+        with patch('agent_harness_lab.sources.git.datetime', Fixed), patch.object(GitExport, 'objects', observe):
+            collector, snapshot = self.read()
+            self.assertEqual(self.invoke('import', '--cache', str(cache))[0], 0)
+        extra = (snapshot.graph.to_dict(), snapshot.metadata.to_dict()) if snapshot.graph is not None else None
+        return (json.dumps(collector.summary, sort_keys=True), snapshot.sha256,
+                [r.to_dict() for r in snapshot.records], extra, cache.read_bytes(), copies)
+
+    def test_streamed_object_copies_and_digests_match_whole_buffer_reference(self):
+        def whole_copy(folder, name, destination, maximum=None):
+            raw = folder.read(name, maximum)
+            if raw is None: return None
+            Path(destination).write_bytes(raw); return len(raw)
+        def whole_digest(view, *arguments): return hashlib.sha256(view.run(*arguments)).hexdigest()
+        def whole_object(collector, kind, oid):
+            raw = collector.view.run('cat-file', kind, oid.decode())
+            header = kind.encode()+b' '+str(len(raw)).encode()+b'\0'
+            if hashlib.new(collector.algorithm, header+raw).hexdigest().encode() != oid: raise ValueError('mismatch')
+            return raw
+        for fmt in ('sha1', 'sha256'):
+            with self.subTest(object_format=fmt):
+                if fmt == 'sha256':
+                    shutil.rmtree(self.repo/'.git')
+                    (self.repo/'blob.bin').unlink(missing_ok=True); (self.repo/'small.bin').unlink(missing_ok=True)
+                    (self.repo/'AGENTS.md').write_text('SYNTHETIC_PRIVATE_INSTRUCTION\n')
+                    self.git('init', '-b', 'main', '--object-format=sha256'); self.commit()
+                self.packed_and_loose(256*1024)
+                for version in ('v1', 'v2'):
+                    self.source_version = version; self.declare()
+                    streamed = self.frozen_capture()
+                    with (patch.object(Folder, 'copy', whole_copy), patch.object(GitView, 'run_digest', whole_digest),
+                            patch.object(GitExport, 'object', whole_object)):
+                        reference = self.frozen_capture()
+                    self.assertEqual(streamed, reference)
+                    names = set(streamed[-1])
+                    self.assertTrue(any(n.endswith('.pack') for n in names) and any(n.endswith('.idx') for n in names))
+                    self.assertTrue(any(re.fullmatch(r'[0-9a-f]{2}/[0-9a-f]+', n) for n in names))
+                    for name, (raw, _) in streamed[-1].items():
+                        self.assertEqual(raw, (self.repo/'.git/objects'/name).read_bytes())
+                summary = json.loads(streamed[0])
+                self.assertEqual(summary['git_binary_sha256'], hashlib.sha256(Path('/usr/bin/git').read_bytes()).hexdigest())
+                head = self.git('rev-parse', 'HEAD').decode().strip()
+                patch_bytes = self.git('diff-tree', '--root', '--no-commit-id', '-r', '--no-renames', '--no-ext-diff', '--no-textconv',
+                    '--patch', '--binary', '--full-index', '--no-color', head+'^', head)
+                self.assertEqual(summary['commits'][0]['diff_sha256'], hashlib.sha256(patch_bytes).hexdigest())
+
+    def test_capture_peak_memory_is_bounded_by_chunk_size_not_pack_size(self):
+        self.packed_and_loose(24*1024*1024)
+        pack = max(p.stat().st_size for p in (self.repo/'.git/objects/pack').glob('*.pack'))
+        bound = 4*git_view.CHUNK
+        self.assertGreater(pack, 5*bound)
+        collector = GitExport(self.manifest)
+        tracemalloc.start()
+        try:
+            collector.read(self.source); peak = tracemalloc.get_traced_memory()[1]
+        finally: tracemalloc.stop()
+        self.assertLess(peak, bound)
+
+    def test_streamed_reads_keep_byte_output_and_binary_thresholds(self):
+        target = self.root/'payload'; target.write_bytes(b'x'*(3*git_view.CHUNK+5)); size = target.stat().st_size
+        with Folder(self.root, None) as folder:
+            self.assertIsNone(folder.copy('absent', self.root/'never'))
+            self.assertFalse((self.root/'never').exists())
+            self.assertEqual(folder.copy('payload', self.root/'copied'), size)
+            self.assertEqual(folder.bytes, size)
+            self.assertEqual((self.root/'copied').read_bytes(), target.read_bytes())
+            with self.assertRaisesRegex(ValueError, 'bounded single-link'): folder.copy('payload', self.root/'small', size-1)
+            self.assertEqual(folder.copy('payload', self.root/'exact', size), size)
+        for limit, accepted in ((size, True), (size-1, False)):
+            with patch('agent_harness_lab.sources.git_view.MAX_BYTES', limit), Folder(self.root, None) as folder:
+                if accepted: self.assertEqual(folder.copy('payload', self.root/'budget'), size)
+                else:
+                    with self.assertRaisesRegex(ValueError, 'byte budget'): folder.copy('payload', self.root/'budget')
+        original = os.read
+        def growing(descriptor, count):
+            block = original(descriptor, count)
+            if block and target.stat().st_size == size: target.write_bytes(b'y'*(size+1))
+            return block
+        with Folder(self.root, None) as folder, patch('agent_harness_lab.sources.git_view.os.read', growing):
+            with self.assertRaisesRegex(ValueError, 'changed'): folder.copy('payload', self.root/'raced')
+        configuration = self.root/'output-config'; configuration.write_text('[synthetic]\nvalue='+'v'*300000+'\n')
+        arguments = ('config', '--file', str(configuration), '--null', '--list')
+        with GitView(None) as view:
+            raw = view.run(*arguments)
+            self.assertEqual(view.run_digest(*arguments), hashlib.sha256(raw).hexdigest())
+            for limit, accepted in ((len(raw), True), (len(raw)-1, False)):
+                with patch('agent_harness_lab.sources.git_view.MAX_OUTPUT', limit):
+                    for operation in (view.run, view.run_digest):
+                        if accepted: operation(*arguments)
+                        else:
+                            with self.assertRaisesRegex(ValueError, 'output budget'): operation(*arguments)
+            with self.assertRaisesRegex(ValueError, 'allowlisted'): view.run_digest('fetch')
+            with self.assertRaisesRegex(ValueError, 'operation failed'): view.run_digest('cat-file', 'blob', '0'*40)
+        binary = Path('/usr/bin/git').stat().st_size
+        with patch('agent_harness_lab.sources.git_view.MAX_BINARY', binary), GitView(None) as view:
+            self.assertEqual(view.binary_sha256, hashlib.sha256(Path('/usr/bin/git').read_bytes()).hexdigest())
+        with patch('agent_harness_lab.sources.git_view.MAX_BINARY', binary-1):
+            with self.assertRaisesRegex(ValueError, 'exceeds bound'): GitView(None).__enter__()
 
     def use_evidence_profile(self):
         self.source_version = 'v2'; self.declare()

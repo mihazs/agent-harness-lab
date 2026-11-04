@@ -142,7 +142,7 @@ class GitExport(LocalExport):
                     flags = ('diff-tree', '--root', '--no-commit-id', '-r', '--no-renames', '--no-ext-diff', '--no-textconv')
                     numbers = view.run(*flags, '--numstat', '-z', *pair)
                     changes = tuple(self.change(row) for row in numbers.split(b'\0') if row)
-                    patch = hashlib.sha256(view.run(*flags, '--patch', '--binary', '--full-index', '--no-color', *pair)).hexdigest()
+                    patch = view.run_digest(*flags, '--patch', '--binary', '--full-index', '--no-color', *pair)
                 node = dict(commit_sha256=digest(oid.decode()), parents_sha256=[digest(p.decode()) for p in parents],
                             message_sha256=hashlib.sha256(message).hexdigest(), changes=changes, diff_sha256=patch,
                             comparison='first_parent', original_at=original)
@@ -321,15 +321,16 @@ class GitExport(LocalExport):
             if not (re.fullmatch(r'[0-9a-f]{2}/[0-9a-f]{38}(?:[0-9a-f]{24})?', suffix)
                     or re.fullmatch(r'pack/pack-[0-9a-f]{40}(?:[0-9a-f]{24})?\.(?:pack|idx|rev)', suffix)):
                 continue
-            raw = self.folder.read(name, None)
             output = self.view.root/'objects'/suffix; output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_bytes(raw)
+            # Chunked copy: memory stays bounded by the chunk size, not by the largest pack.
+            if self.folder.copy(name, output) is None: raise ValueError('Git input changed during reading')
 
     def object(self, kind, oid):
         self.oid(oid)
         raw = self.view.run('cat-file', kind, oid.decode())
-        actual = hashlib.new(self.algorithm, kind.encode()+b' '+str(len(raw)).encode()+b'\0'+raw).hexdigest().encode()
-        if actual != oid: raise ValueError('Git object checksum mismatch')
+        actual = hashlib.new(self.algorithm, kind.encode()+b' '+str(len(raw)).encode()+b'\0')
+        actual.update(raw)
+        if actual.hexdigest().encode() != oid: raise ValueError('Git object checksum mismatch')
         return raw
 
     def valid_refs(self, refs):

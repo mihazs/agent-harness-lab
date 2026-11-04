@@ -17,6 +17,8 @@ from agent_harness_lab.evaluation.integrity import relative
 MAX_BYTES = 512*1024*1024
 MAX_ENTRIES = 10000
 MAX_OUTPUT = 4*1024*1024
+MAX_BINARY = 64*1024*1024
+CHUNK = 1024*1024
 
 
 class Folder:
@@ -99,23 +101,38 @@ class Folder:
                 if self.stamp(os.fstat(descriptor)) != self.stamp(info): raise ValueError('Git input changed during reading')
             finally: os.close(descriptor)
 
+    def blocks(self, descriptor, info, maximum, prefix, size):
+        """Yield checked blocks; the byte budget and final size/stamp checks are shared by every reader."""
+        total = 0
+        while True:
+            self.check()
+            if prefix and maximum is not None and total >= maximum: break
+            block = os.read(descriptor, size if maximum is None else min(size, maximum-total+(0 if prefix else 1)))
+            if not block: break
+            total += len(block); self.bytes += len(block)
+            if maximum is not None and total > maximum or self.limit_total_bytes and self.bytes > MAX_BYTES:
+                raise ValueError('Git input byte budget exceeded')
+            yield block
+        expected = min(info.st_size, maximum) if prefix and maximum is not None else info.st_size
+        if total != expected or self.stamp(os.fstat(descriptor)) != self.stamp(info):
+            raise ValueError('Git input changed during reading')
+
     def read(self, name, maximum=65536, *, prefix=False):
         with self.open(name, maximum, prefix=prefix) as opened:
             if opened is None: return None
-            descriptor, info = opened
             raw = bytearray()
-            while True:
-                self.check()
-                if prefix and maximum is not None and len(raw) >= maximum: break
-                block = os.read(descriptor, 65536 if maximum is None else min(65536, maximum-len(raw)+(0 if prefix else 1)))
-                if not block: break
-                raw.extend(block); self.bytes += len(block)
-                if maximum is not None and len(raw) > maximum or self.limit_total_bytes and self.bytes > MAX_BYTES:
-                    raise ValueError('Git input byte budget exceeded')
-            expected = min(info.st_size, maximum) if prefix and maximum is not None else info.st_size
-            if len(raw) != expected or self.stamp(os.fstat(descriptor)) != self.stamp(info):
-                raise ValueError('Git input changed during reading')
+            for block in self.blocks(*opened, maximum, prefix, 65536): raw.extend(block)
             return bytes(raw)
+
+    def copy(self, name, destination, maximum=None):
+        """Copy one checked input into a new private file in bounded chunks; None when the input is absent."""
+        with self.open(name, maximum) as opened:
+            if opened is None: return None
+            copied = 0
+            with open(destination, 'wb') as output:
+                for block in self.blocks(*opened, maximum, False, CHUNK):
+                    output.write(block); copied += len(block)
+            return copied
 
     def walk(self, name, depth=0, *, excluded=(), skip_unsafe=False):
         self.check()
@@ -162,10 +179,14 @@ class GitView:
             self.configure('sha1')
             with self.binary.open('rb') as stream:
                 before = Folder.stamp(os.fstat(stream.fileno()))
-                binary = stream.read(64*1024*1024+1)
+                binary, size = hashlib.sha256(), 0
+                while size <= MAX_BINARY:
+                    block = stream.read(min(CHUNK, MAX_BINARY+1-size))
+                    if not block: break
+                    binary.update(block); size += len(block)
                 self.binary_stamp = Folder.stamp(os.fstat(stream.fileno()))
-            if before != self.binary_stamp or len(binary) > 64*1024*1024: raise ValueError('trusted Git binary changed or exceeds bound')
-            self.binary_sha256 = hashlib.sha256(binary).hexdigest()
+            if before != self.binary_stamp or size > MAX_BINARY: raise ValueError('trusted Git binary changed or exceeds bound')
+            self.binary_sha256 = binary.hexdigest()
             raw = self.run('--version')
             match = re.fullmatch(rb'git version (2)\.(\d+)\.(\d+)[^\n]*\n?', raw)
             if not match or int(match[2]) < 43: raise NotImplementedError('Git 2.43 or newer in major version 2 is required')
@@ -184,6 +205,17 @@ class GitView:
         (self.root/'config').write_text(text+'[protocol]\nallow = never\n')
 
     def run(self, *arguments, data=None):
+        result = bytearray()
+        self.stream(arguments, data, result.extend)
+        return bytes(result)
+
+    def run_digest(self, *arguments):
+        """SHA-256 of a command's output, hashed as it arrives under the same output bounds as run."""
+        value = hashlib.sha256()
+        self.stream(arguments, None, value.update)
+        return value.hexdigest()
+
+    def stream(self, arguments, data, sink):
         if not arguments or arguments[0] not in ('--version', 'config', 'cat-file', 'rev-list', 'diff-tree', 'fsck'):
             raise ValueError('Git operation is not read-only allowlisted')
         remaining = None if self.deadline is None else self.deadline-time.monotonic()
@@ -197,7 +229,7 @@ class GitView:
                    '--git-dir='+str(self.root), *arguments]
         with subprocess.Popen(command, cwd=self.root, env=self.env, stdin=subprocess.PIPE if data else subprocess.DEVNULL,
                               stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True, preexec_fn=limits) as child:
-            pending, result = memoryview(data or b''), bytearray()
+            pending, received = memoryview(data or b''), 0
             with selectors.DefaultSelector() as events:
                 try:
                     os.set_blocking(child.stdout.fileno(), False)
@@ -213,16 +245,15 @@ class GitView:
                                 pending = pending[os.write(event.fd, pending):]
                                 if not pending: events.unregister(child.stdin); child.stdin.close()
                             else:
-                                chunk = os.read(event.fd, min(65536, MAX_OUTPUT-len(result)+1) if self.limit_output else 65536)
+                                chunk = os.read(event.fd, min(65536, MAX_OUTPUT-received+1) if self.limit_output else 65536)
                                 if not chunk: events.unregister(child.stdout)
-                                result.extend(chunk)
+                                sink(chunk); received += len(chunk)
                                 self.output_bytes += len(chunk)
-                                if self.limit_output and (len(result) > MAX_OUTPUT or self.output_bytes > 64*1024*1024):
+                                if self.limit_output and (received > MAX_OUTPUT or self.output_bytes > 64*1024*1024):
                                     raise ValueError('Git output budget exceeded')
                     try: code = child.wait(timeout=None if self.deadline is None else max(.01, self.deadline-time.monotonic()))
                     except subprocess.TimeoutExpired: raise TimeoutError('Git command timed out') from None
                     if code != 0: raise ValueError('read-only Git operation failed')
-                    return bytes(result)
                 finally:
                     try: os.killpg(child.pid, signal.SIGKILL)
                     except ProcessLookupError: pass
