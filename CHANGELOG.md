@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.76.1
+
+### Patch Changes
+
+- 6e07347: Remove aggregate read budgets from evidence collection and native capture discovery while retaining bounded record reads, individual native file limits, deadlines, project filtering and configurable event/file limits.
+
 ## 0.76.0
 
 ### Minor Changes
