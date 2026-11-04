@@ -49,7 +49,7 @@ def integer(value, *, minimum=0):
 
 def text_hash(value, *, required=False):
     if required and (not isinstance(value, str) or not value): raise ValueError('required GitHub text identity missing')
-    if value is not None and (not isinstance(value, str) or len(value) > 4*1024*1024): raise ValueError('invalid GitHub text')
+    if value is not None and not isinstance(value, str): raise ValueError('invalid GitHub text')
     return digest(value) if value is not None else None
 
 
@@ -65,7 +65,7 @@ def commit_hash(value):
 
 
 def opaque_id(value):
-    if not isinstance(value, str) or not 1 <= len(value) <= 1024 or any(not 32 < ord(c) < 127 for c in value):
+    if not isinstance(value, str) or not value or any(not 32 < ord(c) < 127 for c in value):
         raise ValueError('invalid GitHub node identity or cursor')
     return value
 
@@ -93,11 +93,10 @@ class GitHubSelection(Contract):
                 or tuple(sorted(set(self.details))) != self.details or self.schema_version == 1 and self.details):
             raise ValueError('invalid explicit GitHub details')
         for numbers in (self.issues, self.pulls):
-            if type(numbers) is not tuple or len(numbers) > 10: raise ValueError('invalid GitHub selection')
+            if type(numbers) is not tuple: raise ValueError('invalid GitHub selection')
             for number in numbers: integer(number, minimum=1)
             if tuple(sorted(set(numbers))) != numbers: raise ValueError('GitHub numbers must be unique and ascending')
-        if len(set(self.issues)|set(self.pulls)) > 10: raise ValueError('GitHub selection exceeds ten issue/PR numbers')
-        if type(self.commits) is not tuple or len(self.commits) > 10 or self.schema_version < 4 and self.commits:
+        if type(self.commits) is not tuple or self.schema_version < 4 and self.commits:
             raise ValueError('invalid explicit GitHub commits')
         for sha in self.commits:
             if commit_hash(sha) is None: raise ValueError('selected GitHub commit identity missing')
@@ -154,7 +153,9 @@ class GitHubAPI:
         return self._request(target+('?' + query if query else ''), state)
 
     def _request(self, target, state, *, body=None):
-        if state['requests'] >= self.transport.max_pages or state['used'] >= self.transport.max_bytes or time.monotonic() >= state['deadline']:
+        if (self.transport.max_pages is not None and state['requests'] >= self.transport.max_pages
+                or self.transport.max_bytes is not None and state['used'] >= self.transport.max_bytes
+                or state['deadline'] is not None and time.monotonic() >= state['deadline']):
             raise TransportError('GitHub capture budget exhausted')
         headers = {'Accept': 'application/vnd.github+json', 'Accept-Encoding': 'identity', 'User-Agent': 'agent-harness-lab-reader'}
         if body is None: headers['X-GitHub-Api-Version'] = API_VERSION
@@ -162,7 +163,8 @@ class GitHubAPI:
         if self.authorization is not None: headers['Authorization'] = self.authorization
         state['requests'] += 1
         value, metadata, size = _json_exchange(self.transport.origin, target, headers, body=body,
-            timeout=self.transport.timeout, deadline=state['deadline'], max_bytes=self.transport.max_bytes-state['used'])
+            timeout=self.transport.timeout, deadline=state['deadline'],
+            max_bytes=self.transport.max_bytes-state['used'] if self.transport.max_bytes is not None else None)
         state['used'] += size
         metadata = {k.lower(): v for k, v in metadata.items()}
         if (body is None and metadata.get('x-github-api-version-selected') != API_VERSION
@@ -184,7 +186,7 @@ class GitHubAPI:
         while True:
             value = fetch(cursor)
             count = integer(value['totalCount'])
-            if count > 10000 or total is not None and total != count: raise ValueError('GitHub GraphQL total changed or excessive')
+            if total is not None and total != count: raise ValueError('GitHub GraphQL total changed')
             total, nodes, page = count, value['nodes'], value['pageInfo']
             if not isinstance(nodes, list) or len(nodes) > 100 or type(page['hasNextPage']) is not bool:
                 raise ValueError('invalid GitHub GraphQL connection')
@@ -277,7 +279,7 @@ class GitHubAPI:
 
     def _next(self, link, suffix, current):
         if link is None: return None
-        if not isinstance(link, str) or len(link) > 8192: raise ValueError('invalid GitHub pagination header')
+        if not isinstance(link, str): raise ValueError('invalid GitHub pagination header')
         following = None
         for part in link.split(','):
             match = re.fullmatch(r'\s*<([^<>]+)>;\s*rel="(next|prev|first|last)"\s*', part)
@@ -290,7 +292,7 @@ class GitHubAPI:
             pairs = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
             values = dict(pairs)
             if (len(pairs) != 2 or set(values) != {'page', 'per_page'} or values['per_page'] != '100'
-                    or re.fullmatch(r'[1-9][0-9]{0,6}', values['page']) is None or int(values['page']) != current+1):
+                    or re.fullmatch(r'[1-9][0-9]*', values['page']) is None or int(values['page']) != current+1):
                 raise ValueError('GitHub pagination skipped or repeated a page')
             following = int(values['page'])
         return following
@@ -304,8 +306,8 @@ class GitHubAPI:
                 count = integer(value['total_count'])
                 if total is not None and total != count: raise ValueError('GitHub listing total changed')
                 total, value = count, value[envelope]
-            if not isinstance(value, list) or len(value) > 100 or len(result)+len(value) > 10000:
-                raise ValueError('GitHub listing is malformed or excessive')
+            if not isinstance(value, list) or len(value) > 100:
+                raise ValueError('GitHub listing is malformed')
             for item in value:
                 if not isinstance(item, dict): raise ValueError('invalid GitHub listing item')
                 if key is not None:
@@ -338,7 +340,7 @@ class GitHubAPI:
     def _commit(self, value):
         sha = value['sha']; self._url(value['url'], '/commits/'+sha)
         detail, parents = value['commit'], value['parents']
-        if not isinstance(parents, list) or len(parents) > 100: raise ValueError('GitHub parent cap exceeded')
+        if not isinstance(parents, list): raise ValueError('GitHub parent list required')
         return dict(commit_sha256=commit_hash(sha), parents_sha256=[commit_hash(p['sha']) for p in parents],
             message_sha256=text_hash(detail['message']), author_at=moment(detail['author']['date']), committer_at=moment(detail['committer']['date']))
 
@@ -388,7 +390,7 @@ class GitHubAPI:
         self._url(value['url'], f'/issues/{number}')
         if integer(value['number'], minimum=1) != number or value['state'] not in ('open', 'closed'): raise ValueError('GitHub issue mismatch')
         labels = value['labels']
-        if not isinstance(labels, list) or len(labels) > 1000: raise ValueError('GitHub label bound exceeded')
+        if not isinstance(labels, list): raise ValueError('GitHub label list required')
         milestone = value['milestone']
         pull = value.get('pull_request')
         if pull is not None: self._url(pull['url'], f'/pulls/{number}')
@@ -526,7 +528,8 @@ class GitHubAPI:
         return unmapped
 
     def _capture(self, source):
-        state = dict(requests=0, used=0, deadline=time.monotonic()+self.transport.seconds)
+        state = dict(requests=0, used=0,
+            deadline=time.monotonic()+self.transport.seconds if self.transport.seconds is not None else None)
         records, nodes, relations = {}, {}, set()
         collected = datetime.now(timezone.utc).isoformat()
         def emit(kind, native, node, original=None):
@@ -538,7 +541,6 @@ class GitHubAPI:
                 kind, collected, original_at=original, provenance='native_field', capture_completeness='partial')
             if key in records and records[key].revision_sha256 != revision: raise ValueError('conflicting GitHub native revision')
             records[key], nodes[key] = record, value
-            if len(records) > 10000: raise ValueError('GitHub record cap exceeded')
             return key
         raw_repository = self._get('', state)[0]
         repository = self._repository(raw_repository)
@@ -642,7 +644,7 @@ class GitHubAPI:
             if self.selection.commits: summary['warnings'].append('commit_file_inventory_limited')
         coverage = CoverageManifest(source.source_key, source.scope_sha256, source.scope_sha256, self.selection.source_version,
             'github-rest-graphql-v1' if 'threads' in self.selection.details else 'github-rest-v'+str(self.selection.schema_version),
-            (ScanBound('records', 10000, len(records)), ScanBound('pages', self.transport.max_pages, state['requests']),
+            (ScanBound('records', None, len(records)), ScanBound('pages', self.transport.max_pages, state['requests']),
             ScanBound('bytes', self.transport.max_bytes, state['used'])), gaps=('not_captured',), reported_completeness='partial')
         graph = None
         if 'graph' in self.selection.details:

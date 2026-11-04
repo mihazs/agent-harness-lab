@@ -14,10 +14,10 @@ class GitHubConfigured:
     def declaration(self, *, project_sha256, scope_sha256):
         fingerprint(project_sha256); fingerprint(scope_sha256)
         value = read_json(self.manifest)
-        if (not isinstance(value, dict) or set(value) != {'schema_version', 'source', 'endpoint', 'selection', 'limits'}
+        if (not isinstance(value, dict) or set(value)-{'limits'} != {'schema_version', 'source', 'endpoint', 'selection'}
                 or type(value['schema_version']) is not int or value['schema_version'] != 1
-                or not isinstance(value['limits'], dict)
-                or set(value['limits'])-{'max_pages', 'max_bytes', 'timeout', 'seconds'}):
+                or not isinstance(value.get('limits',{}), dict)
+                or set(value.get('limits',{}))-{'max_pages', 'max_bytes', 'timeout', 'seconds'}):
             raise ValueError('invalid explicit GitHub configuration')
         source = SourceSpec.parse(value['source']); selection = GitHubSelection.parse(value['selection'])
         if ((source.project_sha256, source.scope_sha256) != (project_sha256, scope_sha256)
@@ -26,7 +26,7 @@ class GitHubConfigured:
                 or source.root_sha256 != digest(value['endpoint'])
                 or (source.project_sha256, source.scope_sha256) != (selection.project_sha256, selection.sha256)):
             raise ValueError('GitHub configuration exceeds its authorized identity/scope')
-        GitHubAPI(value['endpoint'], selection, **value['limits'])
+        GitHubAPI(value['endpoint'], selection, **value.get('limits',{}))
         return source, value
 
     def read(self, source):
@@ -39,4 +39,4 @@ class GitHubConfigured:
         elif self.authorization_file is not None:
             raise ValueError('authorization file conflicts with the selected source')
         return GitHubAPI(value['endpoint'], GitHubSelection.parse(value['selection']),
-            authorization=authorization, **value['limits']).read(source)
+            authorization=authorization, **value.get('limits',{})).read(source)

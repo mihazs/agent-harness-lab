@@ -85,6 +85,60 @@ class GitHubFixture:
 
 
 class GitHubSourceTests(GitHubFixture, unittest.TestCase):
+    def test_large_selection_text_labels_and_parent_lists_preserve_exact_identities(self):
+        selection=GitHubSelection(42,tuple(range(1,12)),tuple(range(12,23)),schema_version=4,
+            commits=tuple(f'{index:040x}' for index in range(11)))
+        self.assertEqual(GitHubSelection.parse(selection.to_dict()),selection)
+        self.issue['labels']=[dict(id=index+1,name='SYNTHETIC_PRIVATE_LABEL') for index in range(1001)]
+        self.commit['parents']=[dict(sha=f'{index:040x}') for index in range(101)]
+        client,_=self.read()
+        issue=next(row for row in client.summary['nodes'] if row['kind']=='github_issue' and row['number_sha256']==digest(7))
+        commit=next(row for row in client.summary['nodes'] if row['kind']=='github_commit')
+        self.assertEqual(len(issue['labels_sha256']),1001)
+        self.assertEqual(len(commit['parents_sha256']),101)
+
+    def test_capture_exhausts_more_than_one_hundred_pages_and_ten_thousand_records(self):
+        self.selection=replace(self.selection,pulls=())
+        self.source=replace(self.source,scope_sha256=self.selection.sha256)
+        self.issue.update(comments=10001,body='SYNTHETIC_PRIVATE_BODY'*220000)
+        for page in range(101):
+            start=page*100
+            comments=[dict(self.comment,id=index+100000,url=self.base+f'/issues/comments/{index+100000}')
+                for index in range(start,min(start+100,10001))]
+            headers=dict(self.headers)
+            if page<100: headers['Link']='<'+self.base+f'/issues/7/comments?per_page=100&page={page+2}>; rel="next"'
+            self.routes[f'/issues/7/comments?per_page=100&page={page+1}']=lambda rows=comments,meta=headers: Response(rows,headers=meta)
+        client,snapshot=self.read()
+        self.assertEqual(len(snapshot.records),10003)
+        self.assertGreater(len(self.targets),100)
+        self.assertIsNone(self.wire.call_args.kwargs['timeout'])
+        self.assertTrue(all(bound.limit is None for bound in snapshot.metadata.coverage.scan_bounds))
+        self.assertEqual(snapshot.metadata.coverage.reported_completeness,'partial')
+        self.assertEqual(client.summary['capture_completeness'],'partial')
+        self.assertEqual(len({record.native_id_sha256 for record in snapshot.records}),10003)
+
+    def test_configuration_without_limits_keeps_intake_unlimited_and_scope_checked(self):
+        from agent_harness_lab.sources.github_config import GitHubConfigured
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'synthetic-github.json'
+            value=dict(schema_version=1,source=self.source.to_dict(),endpoint=self.base,selection=self.selection.to_dict())
+            for limits in (None,{}):
+                if limits is not None: value['limits']=limits
+                path.write_text(json.dumps(value))
+                connector=GitHubConfigured(path)
+                declared,_=connector.declaration(project_sha256=self.source.project_sha256,scope_sha256=self.source.scope_sha256)
+                self.assertEqual(declared,self.source)
+                captured=connector.read(self.source)
+                self.assertTrue(all(bound.limit is None for bound in captured.metadata.coverage.scan_bounds))
+
+    def test_pagination_has_no_header_or_page_number_size_ceiling(self):
+        client=GitHubAPI(self.base,self.selection)
+        suffix='/issues/7/comments'
+        next_link='<'+self.base+suffix+'?per_page=100&page=10000000>; rel="next"'
+        self.assertEqual(client._next(next_link,suffix,9999999),10000000)
+        large_link='<'+self.base+'/'+('synthetic'*1200)+'>; rel="first", <'+self.base+suffix+'?per_page=100&page=2>; rel="next"'
+        self.assertEqual(client._next(large_link,suffix,1),2)
+
     def test_explicit_capture_distinguishes_three_review_forms_and_never_grades_approval(self):
         client, snapshot = self.read()
         kinds = {r.record_type for r in snapshot.records}
