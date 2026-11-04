@@ -14,6 +14,10 @@ Recurring sequences: 0.
 
 Review recurring sequences against successful controls before proposing a skill or repair.
 
+Directly-follows edges: 2; run-collapsed edges: 2.
+Unusable timestamps: 4 (invalid: 0); timestamp reversals: 0.
+Graphs describe capture order; reported roots are not verified independent samples.
+
 
 - duplicate_observation (observed_pattern): Same observation at the same recorded state; necessity is unverified. Evidence: [{'case_id': 'synthetic-repeat', 'event_id': '2'}, {'case_id': 'synthetic-repeat', 'event_id': '4'}]
 
