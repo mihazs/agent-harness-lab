@@ -105,6 +105,7 @@ class SandboxBackend:
             if not supported() or self.image is None or self.disk_bytes is None or self.cgroup_root is None:
                 return dict(status='unsupported',reason='permission_audit_profile_unavailable',automatic_promotion=False)
         import tempfile
+        from .controller_receipts import _capability_probe
         with tempfile.TemporaryDirectory() as folder:
             try:
                 checkpoint=len(self.permission_reports)
@@ -112,9 +113,11 @@ class SandboxBackend:
                     fixture=Path(folder)/'fixture';fixture.mkdir();(fixture/'marker').write_text('synthetic')
                     work=Path(folder)/'work';work.mkdir()
                     code="from pathlib import Path\nPath('/work/allowed').write_text('synthetic')\ntry:Path('/inputs/fixture/marker').write_text('bad')\nexcept OSError as exc:assert exc.errno in (1,13,30)\nelse:raise AssertionError('readonly boundary absent')"
-                    run=self.run(['/usr/bin/python3','-c',code],work,{'fixture':fixture},'grader',Limits(seconds=seconds))
+                    with _capability_probe():
+                        run=self.run(['/usr/bin/python3','-c',code],work,{'fixture':fixture},'grader',Limits(seconds=seconds))
                 else:
-                    run = self.run(['/usr/bin/true'], Path(folder), {}, 'grader', Limits(seconds=seconds))
+                    with _capability_probe():
+                        run = self.run(['/usr/bin/true'], Path(folder), {}, 'grader', Limits(seconds=seconds))
                 del self.permission_reports[checkpoint:]
             except TimeoutError:
                 return dict(status='unsupported', reason='namespace_probe_timeout', automatic_promotion=False)
