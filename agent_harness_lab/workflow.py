@@ -395,6 +395,7 @@ def _improve(args):
     if controlled != (inference_path is not None):
         raise ValueError('controlled improvement requires --agent responses and explicit --inference-settings together')
     started = time.monotonic()
+    if getattr(args,'_configured_started',None) is not None:started=min(started,args._configured_started)
     started=min(started,getattr(args,'_construction_started',started))
     remaining = lambda: args.timeout - (time.monotonic() - started)
     runner = evaluator()
@@ -472,11 +473,17 @@ def _improve(args):
         if access_path is None: construction.proposer_seed(candidate,prepare/'proposer-work-0',deadline)
         credential = responses.read_credential(settings,[args.project,output,grader_options['image_root'],assets()/'skills',*([access_path] if access_path is not None else [])])
         def record(receipt):
-            if settings.get('instruction_protocol') is not None:check_configuration(args)
+            if settings.get('instruction_protocol') is not None or getattr(args,'_configured_responses',False):check_configuration(args)
             if responses.read_settings(inference_path)[1] != settings_hash:
                 raise ValueError('inference settings changed during the controlled run')
+            if references is not None:
+                receipt['configured_response_references_sha256']=pin(references)
+                receipt['project_configuration_sha256']=getattr(args,'configuration_sha256',None)
             write_json(output/'inference.json',receipt)
-        client = responses.Client(settings,credential,deadline,record=record,configuration_sha256=getattr(args,'configuration_sha256',None))
+        from .evaluation.instruction_context import pin
+        references=getattr(args,'_response_references',None)
+        client = responses.Client(settings,credential,deadline,record=record,configuration_sha256=getattr(args,'configuration_sha256',None),
+            configuration_references_sha256=pin(references) if references is not None else None)
         if access_path is not None:
             from .evaluation.construction_access import WorkflowAccess
             access=WorkflowAccess(args,output,baseline,client,grading,deadline)
@@ -789,11 +796,13 @@ def _run_improvement(args, *, parent_started=None):
     """Persist truthful completion even when a run is interrupted or raises."""
     issuer=os.getpid(); managed=getattr(args,'evaluation_store',None) is not None
     from .one_call import pinned_bank
-    started=time.monotonic() if managed or pinned_bank(args) is not None else None
-    if managed and parent_started is not None: started=min(started,parent_started)
-    for name in ('_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256'):
+    configured=getattr(args,'_configured_responses',False)
+    started=time.monotonic() if managed or configured or pinned_bank(args) is not None else None
+    if (managed or configured) and parent_started is not None: started=min(started,parent_started)
+    for name in ('_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256','_configured_started'):
         if hasattr(args,name):delattr(args,name)
     if started is not None: args._construction_started=started
+    if configured: args._configured_started=started
     try:
         from .one_call import contracts, preflight, check_configuration
         check_configuration(args)
@@ -806,6 +815,7 @@ def _run_improvement(args, *, parent_started=None):
             return contracts(args)
         if hasattr(args, 'project_settings'):
             reason = preflight(args)
+            if configured and time.monotonic()>=started+args.timeout:raise TimeoutError('configured preflight exhausted improvement budget')
             if reason:
                 output = output_dir(args)
                 result = dict(status='blocked', reason=reason, output=str(output), changed_files=[],
@@ -867,6 +877,14 @@ def improve(args):
 
 
 def watch_configuration(args):
+    if hasattr(args,'_configuration_invocation'):
+        from .one_call import check_configuration,resolve
+        check_configuration(args)
+        resolved=argparse.Namespace(**vars(args));resolve(resolved,args._configuration_explicit)
+        if getattr(resolved,'_configured_responses',False):
+            from . import config
+            args._response_references=config.response_references(args.project,vars(resolved))
+        args=resolved
     settings = {k: getattr(args, k, None) for k in ('agent', 'codex', 'claude', 'timeout', 'format',
                 'focus', 'max_attempts', 'retry_delay', 'watch_budget', 'sandbox_graders',
                 'image_sha256', 'disk_bytes', 'permission_audit', 'configuration_sha256', 'trial_limit')}
@@ -885,6 +903,10 @@ def watch_configuration(args):
     if inference_path is not None:
         from .evaluation.responses import read_settings
         settings['inference_settings'] = [str(Path(inference_path).resolve()),read_settings(inference_path)[1]]
+        if getattr(args,'_configured_responses',False):
+            from .evaluation.instruction_context import pin
+            from . import config
+            settings['controlled_references_sha256']=pin(config.stable_references(config.response_references(args.project,vars(args))))
     for key in (() if args.agent == 'responses' else ('codex', 'claude')):
         binary = shutil.which(getattr(args, key))
         if binary:
@@ -895,7 +917,8 @@ def watch_configuration(args):
 
 def watch(args):
     issuer=os.getpid(); managed=getattr(args,'evaluation_store',None) is not None
-    first_started=time.monotonic() if managed else None
+    timed=managed or getattr(args,'_configured_responses',False)
+    first_started=time.monotonic() if timed else None
     attempts = getattr(args, 'max_attempts', 3)
     delay = getattr(args, 'retry_delay', 60)
     budget = getattr(args, 'watch_budget', None)
@@ -911,9 +934,9 @@ def watch(args):
         while True:
             # The same lock covers scheduling, execution and final checkpoint write.
             with project_lock(args.project):
-                iteration_started=(first_started if first_started is not None else time.monotonic()) if managed else None
+                iteration_started=(first_started if first_started is not None else time.monotonic()) if timed else None
                 first_started=None
-                if managed: configuration=watch_configuration(args)
+                if timed: configuration=watch_configuration(args)
                 state = checkpoint_state.load(checkpoint)
                 fingerprint = collect(args.project, events=args.events, source_format=args.format)['fingerprint']
                 now = time.time()
@@ -929,9 +952,9 @@ def watch(args):
                     state.update(disposition='in_progress', last_attempt=now,
                                  attempt_count=state['attempt_count'] + 1, run_id=uuid.uuid4().hex)
                     write_json(checkpoint, state)
-                    started = iteration_started if managed else time.monotonic()
+                    started = iteration_started if timed else time.monotonic()
                     try:
-                        result = _run_improvement(options,parent_started=started) if managed else _run_improvement(options)
+                        result = _run_improvement(options,parent_started=started) if timed else _run_improvement(options)
                     except (ValueError, OSError, TypeError, KeyError) as exc:
                         if managed and os.getpid()!=issuer: raise
                         result = dict(status='invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error',
