@@ -16,6 +16,8 @@ from ..evaluation.integrity import unique_object
 from ..sources.schema import digest
 
 MAX_SANITIZED_LENGTH = 200
+MAX_SUBAGENT_DEPTH = 64  # directory levels below one <session>/subagents directory
+MAX_SUBAGENT_ENTRIES = 10000  # visited entries of any kind in one <session>/subagents tree
 SESSION = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.IGNORECASE)
 
 
@@ -41,10 +43,13 @@ def directory_names(project):
 
 
 def native_layout(parts):
+    """Return the (session, sidechain, agent) a layout path must carry; None ignores it, False is unrecognized."""
     if not parts[-1].endswith('.jsonl'): return None
-    if len(parts) == 1: return 'main' if SESSION.match(parts[0][:-len('.jsonl')]) else False
-    return 'sidechain' if (len(parts) >= 3 and SESSION.match(parts[0]) and parts[1] == 'subagents'
-        and parts[-1].startswith('agent-')) else False
+    if len(parts) == 1:
+        stem = parts[0][:-len('.jsonl')]
+        return (stem, False, None) if SESSION.match(stem) else False
+    agent = parts[-1][len('agent-'):-len('.jsonl')] if parts[-1].startswith('agent-') else ''
+    return (parts[0], True, agent) if len(parts) >= 3 and SESSION.match(parts[0]) and parts[1] == 'subagents' and agent else False
 
 
 def selected_directories(folder, root, project):
@@ -63,24 +68,53 @@ def selected_directories(folder, root, project):
     return [str(PurePosixPath(root, name)) for name in sorted(names)]
 
 
-def candidates(folder, directory, session):
-    """Yield every regular file below one selected directory without following links."""
-    if session is None:
-        yield from folder.walk(directory, skip_unsafe=True); return
-    main = str(PurePosixPath(directory, session+'.jsonl'))
-    info = folder.inspect(main)
-    if info is not None and stat.S_ISREG(info.st_mode) and info.st_nlink == 1: yield main
-    elif info is not None: folder.unsafe_entries += 1
-    branch = str(PurePosixPath(directory, session))
-    info = folder.inspect(branch)
-    if info is not None and not stat.S_ISDIR(info.st_mode): folder.unsafe_entries += 1
-    elif info is not None:
-        nested = str(PurePosixPath(branch, 'subagents')); info = folder.inspect(nested)
-        if info is not None and stat.S_ISDIR(info.st_mode): yield from folder.walk(nested, skip_unsafe=True)
-        elif info is not None: folder.unsafe_entries += 1
+class TreeLimit(Exception):
+    pass
 
 
-def scope(folder, name, project, session, limits):
+def listing(folder, name, budget=None):
+    """List one directory without following links; a budget counts every visited entry."""
+    descriptor = folder.directory(name)
+    try:
+        folder.observe(name, os.fstat(descriptor)); found = []
+        with os.scandir(descriptor) as entries:
+            for entry in entries:
+                folder.entries += 1; folder.check()
+                if budget is not None:
+                    budget[0] -= 1
+                    if budget[0] < 0: raise TreeLimit()
+                found.append((entry.name, entry.stat(follow_symlinks=False)))
+        return sorted(found, key=lambda item: item[0])
+    finally: os.close(descriptor)
+
+
+def subtree(folder, name, budget, depth=0):
+    if depth > MAX_SUBAGENT_DEPTH: raise TreeLimit()
+    for entry, info in listing(folder, name, budget):
+        path = str(PurePosixPath(name, entry))
+        if stat.S_ISDIR(info.st_mode): yield from subtree(folder, path, budget, depth+1)
+        elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1: yield path
+        else: folder.unsafe_entries += 1
+
+
+def candidates(folder, directory, session, limited):
+    """Yield regular files of the documented layout; each subagents tree is depth- and entry-bounded."""
+    if session is None: entries = listing(folder, directory)
+    else: entries = [(name, folder.inspect(str(PurePosixPath(directory, name)))) for name in (session+'.jsonl', session)]
+    for entry, info in entries:
+        path = str(PurePosixPath(directory, entry))
+        if info is None: continue
+        if stat.S_ISREG(info.st_mode) and info.st_nlink == 1: yield path
+        elif not stat.S_ISDIR(info.st_mode): folder.unsafe_entries += 1
+        elif SESSION.match(entry):
+            nested = str(PurePosixPath(path, 'subagents')); info = folder.inspect(nested)
+            if info is not None and not stat.S_ISDIR(info.st_mode): folder.unsafe_entries += 1
+            elif info is not None:
+                try: yield from subtree(folder, nested, [MAX_SUBAGENT_ENTRIES])
+                except TreeLimit: limited(nested)
+
+
+def scope(folder, name, project, expected, limits):
     """Read only through the first attributable envelope; return (status, reason, writer key)."""
     with closing(lines(folder, name, **limits)) as stream:
         for line in stream:
@@ -95,7 +129,9 @@ def scope(folder, name, project, session, limits):
             if Path(row['cwd']) != project: return 'rejected', 'foreign_project', None
             try: Projection(project, None, folder.check).add(row, 0)
             except (ValueError, TypeError): return 'unknown', 'unsupported_native_envelope', None
-            if session is not None and row['sessionId'] != session: return 'rejected', 'other_session', None
+            owner, sidechain, agent = expected
+            if row['sessionId'] != owner or row['isSidechain'] is not sidechain or sidechain and row.get('agentId') != agent:
+                return 'unknown', 'native_location_mismatch', None
             return 'accepted', 'scoped_native_records', (row['sessionId'], row['isSidechain'], row.get('agentId'), row.get('teamName'))
     return 'unknown', 'native_scope_unavailable', None
 
@@ -116,7 +152,7 @@ def capture(roots, project, *, session=None, revisions=None, deadline=None,
     base = Path(os.path.commonpath(roots)).parent
     limits = dict(max_bytes=max_bytes, max_line_bytes=max_line_bytes)
     receipts, names, reached = [], [], []
-    counts = dict(foreign_files=0, other_sessions=0, unsupported_headers=0, unrecognized_files=0, missing_project_directories=0)
+    counts = dict(foreign_files=0, unsupported_headers=0, unrecognized_files=0, missing_project_directories=0)
     with Folder(base, deadline, limit_total_bytes=False, limit_tree=False) as folder:
         directories = [d for root in roots for d in selected_directories(folder, str(root.relative_to(base)), project)]
         def receipt(name, status, reason, root):
@@ -126,30 +162,33 @@ def capture(roots, project, *, session=None, revisions=None, deadline=None,
             if info is None: counts['missing_project_directories'] += 1; continue
             if not stat.S_ISDIR(info.st_mode): folder.unsafe_entries += 1; continue
             root = str(PurePosixPath(directory).parent)
-            with closing(candidates(folder, directory, session)) as paths:
+            def limited(name, root=root):
+                if 'subagent_tree' not in reached: reached.append('subagent_tree')
+                receipt(name, 'unknown', 'subagent_tree_limit', root)
+            with closing(candidates(folder, directory, session, limited)) as paths:
                 for name in paths:
-                    kind = native_layout(PurePosixPath(name).relative_to(directory).parts)
-                    if kind is None: continue
-                    if kind is False:
+                    expected = native_layout(PurePosixPath(name).relative_to(directory).parts)
+                    if expected is None: continue
+                    if expected is False:
                         counts['unrecognized_files'] += 1; receipt(name, 'unknown', 'unrecognized_native_layout', root); continue
                     if max_scan_files is not None and len(names) == max_scan_files:
                         reached.append('scan_files'); break
-                    names.append((name, root))
-            if reached: break
-        names.sort()
+                    names.append((name, root, expected))
+            if 'scan_files' in reached: break
+        names.sort(key=lambda item: item[0])
         groups, accepted, probed = {}, 0, 0
-        for index, (name, root) in enumerate(names):
+        for index, (name, root, expected) in enumerate(names):
             folder.check()
             if max_files is not None and accepted == max_files:
                 reached.append('accepted_files')
-                for skipped, owner in names[index:]: receipt(skipped, 'unknown', 'not_read_after_file_limit', owner)
+                for skipped, owner, _ in names[index:]: receipt(skipped, 'unknown', 'not_read_after_file_limit', owner)
                 break
-            status, reason, key = scope(folder, name, project, session, limits)
+            status, reason, key = scope(folder, name, project, expected, limits)
             probed += 1
             receipt(name, status, reason, root)
             if status != 'accepted':
                 folder.observed.pop(name, None)
-                counts[{'foreign_project': 'foreign_files', 'other_session': 'other_sessions'}.get(reason, 'unsupported_headers')] += 1
+                counts['foreign_files' if reason == 'foreign_project' else 'unsupported_headers'] += 1
                 continue
             accepted += 1; groups.setdefault(key, []).append((name, root, receipts[-1]))
         # Copies of one native writer merge by UUID; identical rows deduplicate and conflicts reject.

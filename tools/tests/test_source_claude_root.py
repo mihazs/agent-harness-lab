@@ -3,6 +3,7 @@ from copy import deepcopy
 from dataclasses import replace
 import json
 from pathlib import Path
+import shutil
 import unittest
 from unittest.mock import patch
 if __package__:
@@ -48,7 +49,7 @@ class ClaudeRootTests(unittest.TestCase):
 
     def reasons(self, preview): return sorted((r['status'], r['reason']) for r in preview['native_summary']['receipts'])
 
-    def sidechain(self, agent='agent-1'):
+    def sidechain(self, agent='a1'):
         rows = deepcopy(self.f.rows[1:6])
         for row in rows: row.update(isSidechain=True, agentId=agent)
         return rows
@@ -112,7 +113,7 @@ class ClaudeRootTests(unittest.TestCase):
             self.assertEqual(f.invoke(operation)[0], 2); self.assertEqual(f.cache.read_bytes(), before)
 
     def test_subagent_transcripts_keep_their_own_writer_and_unknown_parent_session(self):
-        self.write(SESSION+'/subagents/agent-1.jsonl', self.sidechain())
+        self.write(SESSION+'/subagents/agent-a1.jsonl', self.sidechain())
         other = deepcopy(self.f.rows)
         for row in other:
             if 'sessionId' in row: row['sessionId'] = OTHER
@@ -127,20 +128,45 @@ class ClaudeRootTests(unittest.TestCase):
         self.select(session=SESSION); selected = self.preview()
         self.assertEqual(selected['native_summary']['discovery']['accepted_files'], 2); self.assertTrue(selected['checkpoint_ready'])
 
-    def test_session_named_file_with_other_records_is_rejected_not_attributed(self):
+    def test_session_named_file_with_other_records_is_not_attributed(self):
         other = deepcopy(self.f.rows)
         for row in other:
             if 'sessionId' in row: row['sessionId'] = OTHER
         self.primary.write_text(''.join(json.dumps(row)+'\n' for row in other)); self.select(session=SESSION)
         preview = self.preview(); self.assertEqual(preview['records'], 0); self.assertFalse(preview['checkpoint_ready'])
-        self.assertEqual(self.reasons(preview), [('rejected', 'other_session')])
+        self.assertEqual(self.reasons(preview), [('unknown', 'native_location_mismatch')])
+
+    def test_file_location_must_match_native_session_and_writer(self):
+        main = deepcopy(self.f.rows[1:6])
+        for name, rows in ((OTHER+'.jsonl', self.f.rows), (OTHER+'.jsonl', self.sidechain()),
+                (SESSION+'/subagents/agent-a1.jsonl', main), (SESSION+'/subagents/agent-zz.jsonl', self.sidechain()),
+                (OTHER+'/subagents/agent-a1.jsonl', self.sidechain())):
+            path = self.write(name, rows); preview = self.preview()
+            self.assertFalse(preview['checkpoint_ready'], name); self.assertEqual(preview['records'], 12)
+            self.assertIn(('unknown', 'native_location_mismatch'), self.reasons(preview)); path.unlink()
+        self.write(SESSION+'/subagents/nested/agent-a1.jsonl', self.sidechain()); self.assertTrue(self.preview()['checkpoint_ready'])
+
+    def test_subagent_tree_depth_and_entry_bounds_yield_labelled_limits(self):
+        from agent_harness_lab.telemetry import claude_discovery
+        deep = self.primary.parent/SESSION/'subagents'
+        for _ in range(claude_discovery.MAX_SUBAGENT_DEPTH+1): deep = deep/'d'
+        deep.mkdir(parents=True); (deep/'agent-a1.jsonl').write_text('')
+        preview = self.preview(); discovery = preview['native_summary']['discovery']
+        self.assertFalse(preview['checkpoint_ready']); self.assertIn('subagent_tree', discovery['reached_limits'])
+        self.assertIn(('unknown', 'subagent_tree_limit'), self.reasons(preview)); self.assertEqual(preview['records'], 12)
+        self.assertEqual(self.f.invoke('import')[0], 2); self.assertFalse(self.f.cache.exists())
+        shutil.rmtree(self.primary.parent/SESSION); wide = self.primary.parent/SESSION/'subagents'; wide.mkdir(parents=True)
+        for index in range(6): (wide/f'note-{index}.txt').write_text('')
+        with patch.object(claude_discovery, 'MAX_SUBAGENT_ENTRIES', 5): preview = self.preview()
+        self.assertFalse(preview['checkpoint_ready']); self.assertIn(('unknown', 'subagent_tree_limit'), self.reasons(preview))
+        with patch.object(claude_discovery, 'MAX_SUBAGENT_ENTRIES', 6): self.assertTrue(self.preview()['checkpoint_ready'])
 
     def test_unknown_unsafe_partial_and_limited_scans_stay_visible_without_committing(self):
         f = self.f
         metadata = self.write(OTHER+'.jsonl', [f.rows[0], f.rows[-1]])
         preview = self.preview(); self.assertFalse(preview['checkpoint_ready'])
         self.assertIn(('unknown', 'native_scope_unavailable'), self.reasons(preview)); self.assertEqual(f.invoke('import')[0], 2)
-        metadata.unlink(); self.write('notes/'+OTHER+'.jsonl')
+        metadata.unlink(); self.write('notes.jsonl')
         preview = self.preview(); self.assertTrue(preview['checkpoint_ready'])
         self.assertIn(('unknown', 'unrecognized_native_layout'), self.reasons(preview))
         linked = self.primary.parent/(OTHER+'.jsonl'); linked.symlink_to(self.primary)
