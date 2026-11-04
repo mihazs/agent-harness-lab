@@ -18,19 +18,21 @@ import time
 SPLITS = ('train', 'calibration', 'development', 'heldout')
 
 
-def read_examples(path, limit=50000):
+def read_examples(path, limit=None):
+    if limit is not None and (type(limit) is not int or limit <= 0):
+        raise ValueError('example limit must be a positive integer')
     rows, roots = [], {}
     with Path(path).open() as stream:
         for number, line in enumerate(stream, 1):
             if not line.strip():
                 continue
-            if len(rows) >= limit:
+            if limit is not None and len(rows) >= limit:
                 raise ValueError('example limit exceeded')
             try:
                 row = json.loads(line)
                 if not isinstance(row, dict):
                     raise ValueError()
-                if any(not isinstance(row.get(k), str) or not row[k] for k in ('root_case_id', 'text')) or len(row['root_case_id']) > 256 or len(row['text']) > 16384:
+                if any(not isinstance(row.get(k), str) or not row[k] for k in ('root_case_id', 'text')) or len(row['root_case_id']) > 256:
                     raise ValueError()
                 if row.get('split') not in SPLITS or (row.get('label') is not None and type(row['label']) is not bool):
                     raise ValueError()
@@ -224,13 +226,14 @@ def main():
     parser.add_argument('--question', help='Atomic hypothesis for NLI entailment; required with --method nli')
     parser.add_argument('--batch-size', type=int, default=8, help='Positive number of examples per embeddings/NLI batch (default: %(default)s)')
     parser.add_argument('--triage-policy', type=Path, help='Existing frozen JSON policy with schema_version, threshold, min_precision, min_recall and min_coverage; evaluate only heldout roots, with no certification authority')
+    parser.add_argument('--max-examples', type=int, help='Optional positive input-row limit; the default reads every example without a row or evidence-text length cap')
     args = parser.parse_args()
     try:
         if args.batch_size <= 0:
             raise ValueError('batch size must be positive')
         if args.method in ('embeddings', 'nli') and (args.model_path is None or not args.model_path.is_dir()):
             raise ValueError('provide an existing local --model-path')
-        rows = read_examples(args.input)
+        rows = read_examples(args.input, limit=args.max_examples)
         started = time.monotonic()
         probabilities = model_predict(args.method, rows, args.model_path, args.revision, args.question, args.batch_size)
         elapsed = time.monotonic()-started
@@ -244,6 +247,7 @@ def main():
                       limitations=['Supplied labels require external verification.', 'No population guarantee under project shift.',
                                    'NLI scores mean hypothesis entailment, not factual truth; neutral mass is not evidence of falsity.',
                                    'NLI tokenization truncates overlong inputs; use bounded evidence windows.',
+                                   'TF-IDF uses at most 20,000 vocabulary features.',
                                    'Root confidence interval assumes independent supplied root cases.'], splits={})
         if args.triage_policy is not None:
             policy = json.loads(args.triage_policy.read_text())
