@@ -72,18 +72,36 @@ def project_lock(project):
 def evidence(args, output, source_context=None):
     from agent_harness_lab.telemetry.ledger import Ledger
     from agent_harness_lab.telemetry.schema import serialize
-    with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as events:
-        data = collect(args.project, events=args.events, source_format=args.format,
+    with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as events, contextlib.ExitStack() as captures:
+        selected, source_format, memory_summary = args.events, args.format, None
+        source_identity = {}
+        if getattr(args, 'memory_manifest', None) is not None:
+            from .sources.observations import capture
+            from .sources.schema import digest
+            records, memory_summary = capture(args.memory_manifest, args.authorization_file, progress=getattr(args, '_progress', None))
+            source_identity = dict(source_identity=digest([memory_summary['source_sha256'], memory_summary['session_sha256']]))
+            temporary = captures.enter_context(tempfile.NamedTemporaryFile(mode='w+', encoding='utf-8'))
+            for record in records:
+                temporary.write(serialize(record)+'\n')
+            temporary.flush()
+            selected, source_format = temporary.name, 'normalized'
+        data = collect(args.project, events=selected, source_format=source_format,
             event_sink=lambda row: events.write(serialize(row)+'\n'),
             source_version=getattr(args, 'source_version', None), source_root=getattr(args, 'source_root', None),
             session=getattr(args, 'session', None), max_files=getattr(args, 'max_captures', None),
             max_scan_files=getattr(args, 'max_capture_scan', None), max_events=getattr(args, 'max_events', None),
-            sequence_length=getattr(args, 'sequence_length', None), progress=getattr(args, '_progress', None))
+            sequence_length=getattr(args, 'sequence_length', None), progress=getattr(args, '_progress', None), **source_identity)
         events.seek(0)
         Ledger(output / 'events.v2.jsonl').ingest(json.loads(line) for line in events)
     if source_context is not None: data['source_context'] = source_context
+    if memory_summary is not None:
+        data['memory_source'] = memory_summary
     write_json(output / 'analysis.json', data)
     (output / 'report.md').write_text(report(data['analysis'], source_context=source_context))
+    if memory_summary is not None:
+        with (output / 'report.md').open('a') as stream:
+            stream.write('\nSession-observation evidence is insufficient for diagnosis. Snapshot atomicity is unavailable. '
+                +memory_summary['remediation']+'\n')
     return data
 
 
@@ -95,6 +113,7 @@ def analyze_project(args):
     result = dict(status='analyzed', output=str(output),
                   findings=len(data['analysis']['findings']), evaluation_failures=len(data['evaluation_failures']))
     if context is not None: result['source_context'] = context
+    if 'memory_source' in data: result['memory_source'] = data['memory_source']
     write_json(output / 'workflow.json', result)
     return result
 

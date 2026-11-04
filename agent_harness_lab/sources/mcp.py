@@ -6,6 +6,10 @@ from .schema import digest, fingerprint, label
 from .transport import JsonAPI, TransportError, _json_exchange
 
 READ_TOOLS = frozenset(('memory_query', 'memory_read_page'))
+OBSERVATION_TOOL = 'memory_read_session_observations'
+TOOL_FIELDS = {'memory_query': {'workspace', 'project', 'query', 'limit', 'answer', 'global'},
+    'memory_read_page': {'workspace', 'project', 'path', 'max_chars'},
+    OBSERVATION_TOOL: {'workspace', 'project', 'session_id', 'limit', 'offset', 'order', 'body_max_chars'}}
 PROTOCOL = '2024-11-05'
 # The pinned ai-memory ReadPageArgs contract has no offset and clamps max_chars.
 UPSTREAM_PAGE_MAX_CHARS = 64000
@@ -18,8 +22,8 @@ class AiMemoryMCP:
                     or len(value) > 256 or any(ord(c) < 32 for c in value)):
                 raise TransportError('explicit workspace and project are required')
         label(server_version)
-        if not isinstance(tool_schemas, dict) or set(tool_schemas) != READ_TOOLS:
-            raise TransportError('both read-only tool schemas must be pinned')
+        if not isinstance(tool_schemas, dict) or set(tool_schemas) not in (READ_TOOLS, {OBSERVATION_TOOL}):
+            raise TransportError('an explicit read-only tool profile must be pinned')
         for value in tool_schemas.values():
             fingerprint(value)
         if max_requests is not None and (type(max_requests) is not int or max_requests <= 0):
@@ -33,12 +37,12 @@ class AiMemoryMCP:
         if method not in ('initialize', 'tools/list', 'tools/call'):
             raise TransportError('MCP method is unavailable')
         if method == 'tools/call':
-            if params.get('name') not in READ_TOOLS:
+            if params.get('name') not in self.schemas:
                 raise TransportError('MCP tool is unavailable')
             args = params.get('arguments', {})
             if (args.get('workspace'), args.get('project')) != (self.workspace, self.project):
                 raise TransportError('MCP tool scope mismatch')
-            allowed = {'workspace', 'project', 'query', 'limit', 'answer', 'global'} if params['name'] == 'memory_query' else {'workspace', 'project', 'path', 'max_chars'}
+            allowed = TOOL_FIELDS[params['name']]
             if set(args)-allowed or args.get('global', False) is not False or args.get('answer', False) is not False:
                 raise TransportError('MCP tool arguments exceed read-only scope')
         if state['deadline'] is not None and time.monotonic() >= state['deadline']:
@@ -82,9 +86,9 @@ class AiMemoryMCP:
                     raise TransportError('MCP tool list required')
                 for description in page['tools']:
                     name = description.get('name')
-                    if name in READ_TOOLS:
+                    if name in self.schemas:
                         schema = description.get('inputSchema')
-                        fields = {'workspace', 'project', 'query', 'limit', 'answer', 'global'} if name == 'memory_query' else {'workspace', 'project', 'path', 'max_chars'}
+                        fields = TOOL_FIELDS[name]
                         if (not isinstance(schema, dict) or schema.get('type') != 'object'
                                 or not isinstance(schema.get('properties'), dict) or not fields <= set(schema['properties'])):
                             raise TransportError('MCP scoped tool schema is unavailable')
@@ -99,7 +103,7 @@ class AiMemoryMCP:
                 seen.add(cursor)
             else:
                 raise TransportError('MCP tool pagination limit exceeded')
-            if set(discovered) != READ_TOOLS:
+            if set(discovered) != set(self.schemas):
                 raise TransportError('required read-only MCP tools unavailable')
             arguments = dict(arguments)
             if tool == 'memory_read_page':
