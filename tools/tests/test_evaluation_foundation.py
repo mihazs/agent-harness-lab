@@ -57,9 +57,11 @@ class ExperimentTests(unittest.TestCase):
         benefit = analyze(spec, records(spec))
         self.assertEqual(benefit['status'], 'supported')
         self.assertEqual(decide(spec, benefit).status, 'blocked')
+        # A caller-declared isolation boolean is recorded but cannot satisfy the isolation element.
         decision = decide(spec, dict(benefit,oracle_validity='current'), isolation_verified=True, effective_runtime_verified=True,
                           graders_audited=True, lineage_reviewed=True, certification_reserved=True)
-        self.assertEqual(decision.status, 'recommended')
+        self.assertEqual((decision.status, decision.reason), ('blocked', 'certification_prerequisites_unverified'))
+        self.assertEqual(decision.isolation, 'unknown')
         self.assertFalse(decision.automatic)
         harm = analyze(spec, records(spec, lambda t: t['version'] == 'baseline'))
         self.assertLess(harm['primary']['high'], 0)

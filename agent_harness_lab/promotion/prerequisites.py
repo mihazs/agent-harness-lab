@@ -69,9 +69,11 @@ class _Scope:
     def _valid(self):
         owner=_STATES.get(self)
         valid=(type(self) is _Scope and _ACTIVE.get() is self and not self.closed and not self.lost
-            and owner is not None and owner[0]==os.getpid() and owner[2]==self._state()
+            and owner is not None and owner[0]==os.getpid() and owner[2] is not None and owner[2]==_Scope._state(self)
             and time.monotonic()<self.deadline)
-        if not valid:self.lost=True
+        if not valid:
+            from agent_harness_lab.evaluation.controller_receipts import _lose
+            _lose(self,_STATES)
         return valid
 
     def _tree(self,path):

@@ -8,7 +8,7 @@ import math
 import os
 import secrets
 import time
-from weakref import WeakKeyDictionary, ref
+from weakref import WeakKeyDictionary, WeakSet, ref
 
 from agent_harness_lab.private_journal import encoded
 
@@ -49,11 +49,22 @@ def _artifact_fingerprints(items):
     return tuple(sorted((hashlib.sha256(name.encode()).hexdigest(),hashlib.sha256(raw).hexdigest()) for name,raw in items))
 
 
+_LOST=WeakSet()
+
+
+def _lose(handle,registry):
+    """Loss is sticky: clearing the attribute can never restore a cached receipt."""
+    handle.lost=True;_LOST.add(handle)
+    owner=registry.get(handle)
+    if owner is not None:registry[handle]=(owner[0],owner[1],None)
+
+
 def _cache_state(handle,registry,maximum):
     """Keep one bounded issuing-process cache for live custody owners."""
     owner=registry.get(handle)
     if owner is None or owner[0]!=os.getpid():handle.lost=True;return
-    raw=handle._state()
+    if handle.lost or handle in _LOST:_lose(handle,registry);return
+    raw=type(handle)._state(handle)
     if len(raw)>maximum:
         handle.lost=True;raw=None
     registry[handle]=(owner[0],owner[1],raw)
