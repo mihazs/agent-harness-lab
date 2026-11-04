@@ -90,6 +90,71 @@ def choose_threshold(rows, probabilities, target=.9):
     return None
 
 
+def evaluate_triage_policy(rows, probabilities, policy):
+    """Check a frozen policy descriptively; supplied roots/labels grant no authority."""
+    fields = {'schema_version', 'threshold', 'min_precision', 'min_recall', 'min_coverage'}
+    if (not isinstance(policy, dict) or set(policy) != fields
+            or type(policy['schema_version']) is not int or policy['schema_version'] != 1):
+        raise ValueError('invalid triage policy schema')
+    for name in fields-{'schema_version'}:
+        value = policy[name]
+        if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= 1:
+            raise ValueError('invalid triage policy constraint')
+    if policy['threshold'] < .5:
+        raise ValueError('triage confidence threshold must be at least 0.5')
+    if any(not isinstance(row, dict) or row.get('split') != 'heldout'
+           or not isinstance(row.get('root_case_id'), str) or not row['root_case_id']
+           or row.get('label') is not None and type(row['label']) is not bool for row in rows):
+        raise ValueError('triage validation requires heldout rows with declared root IDs')
+    if any(type(p) not in (int, float) for p in probabilities):
+        raise ValueError('invalid triage probability')
+    measure(rows, probabilities, policy['threshold'])
+    grouped = {}
+    for row, probability in zip(rows, probabilities):
+        root = row.get('root_case_id')
+        predicted = probability >= .5 if max(probability, 1-probability) >= policy['threshold'] else None
+        label, decisions = grouped.setdefault(root, (row.get('label'), set()))
+        if label != row.get('label'):
+            raise ValueError('conflicting labels within a declared validation root')
+        decisions.add(predicted)
+    counts = dict(tp=0, fp=0, fn=0, tn=0, abstained_positive=0, abstained_negative=0,
+                  labeled_roots=0, unknown_roots=0)
+    root_decisions = []
+    for root, (label, decisions) in grouped.items():
+        predicted = next(iter(decisions)) if len(decisions) == 1 else None
+        root_decisions.append(dict(root_case_id=root, value=predicted, abstain=predicted is None))
+        if label is None:
+            counts['unknown_roots'] += 1
+            continue
+        counts['labeled_roots'] += 1
+        if predicted is None:
+            key = 'abstained_positive' if label else 'abstained_negative'
+        else:
+            key = ('tp' if label else 'fp') if predicted else ('fn' if label else 'tn')
+        counts[key] += 1
+    positives = counts['tp']+counts['fn']+counts['abstained_positive']
+    negatives = counts['tn']+counts['fp']+counts['abstained_negative']
+    accepted = counts['tp']+counts['fp']+counts['fn']+counts['tn']
+    metrics = dict(counts, positive_roots=positives, negative_roots=negatives,
+        precision=counts['tp']/(counts['tp']+counts['fp']) if counts['tp']+counts['fp'] else None,
+        recall=counts['tp']/positives if positives else None,
+        coverage=accepted/counts['labeled_roots'] if counts['labeled_roots'] else None)
+    failed, missing = [], []
+    for name in ('precision', 'recall', 'coverage'):
+        if metrics[name] is None:
+            missing.append(name+'_undefined')
+        elif metrics[name] < policy['min_'+name]:
+            failed.append(name+'_below_minimum')
+    if not positives or not negatives:
+        missing.append('both_validation_classes_required')
+    return dict(schema_version=1, status='rejected' if failed else 'insufficient_evidence',
+        policy_sha256=hashlib.sha256(json.dumps(policy, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest(), metrics=metrics,
+        reasons=failed+missing+['independent_validation_not_verified'],
+        threshold=policy['threshold'], root_independence='unverified', label_authority='unverified',
+        decisions=root_decisions, decision_threshold_source='frozen_policy', unit='declared_root',
+        qualification='descriptive_only', automatic_promotion=False)
+
+
 def model_digest(path):
     digest = hashlib.sha256()
     for file in sorted(path.rglob('*')):
@@ -158,6 +223,7 @@ def main():
     parser.add_argument('--revision', help='Optional local model revision passed to embeddings/nli loaders and recorded in the JSON report')
     parser.add_argument('--question', help='Atomic hypothesis for NLI entailment; required with --method nli')
     parser.add_argument('--batch-size', type=int, default=8, help='Positive number of examples per embeddings/NLI batch (default: %(default)s)')
+    parser.add_argument('--triage-policy', type=Path, help='Existing frozen JSON policy with schema_version, threshold, min_precision, min_recall and min_coverage; evaluate only heldout roots, with no certification authority')
     args = parser.parse_args()
     try:
         if args.batch_size <= 0:
@@ -173,11 +239,16 @@ def main():
         result = dict(schema_version=1, method=args.method, model_path=str(args.model_path) if args.model_path else None,
                       revision=args.revision, question=args.question, input_sha256=hashlib.sha256(args.input.read_bytes()).hexdigest(),
                       threshold=threshold, elapsed_seconds=elapsed, peak_rss_native_units=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
+                      threshold_authority='descriptive_smoke_only',
                       probability_semantics='model scores; calibration is measured, not assumed',
                       limitations=['Supplied labels require external verification.', 'No population guarantee under project shift.',
                                    'NLI scores mean hypothesis entailment, not factual truth; neutral mass is not evidence of falsity.',
                                    'NLI tokenization truncates overlong inputs; use bounded evidence windows.',
                                    'Root confidence interval assumes independent supplied root cases.'], splits={})
+        if args.triage_policy is not None:
+            policy = json.loads(args.triage_policy.read_text())
+            heldout = [(r, p) for r, p in zip(rows, probabilities) if r['split'] == 'heldout']
+            result['triage'] = evaluate_triage_policy([r for r, _ in heldout], [p for _, p in heldout], policy)
         for split in SPLITS:
             subset = [(r, p) for r, p in zip(rows, probabilities) if r['split'] == split]
             result['splits'][split] = measure([r for r, _ in subset], [p for _, p in subset], threshold)
