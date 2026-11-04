@@ -29,27 +29,33 @@ def _regular(path, root):
 
 def _rows(path, caveats, digest=None, tick=None):
     try:
-        with path.open('rb') as stream:
-            while True:
-                raw = stream.readline()
-                if not raw:
-                    break
-                if tick is not None:
-                    tick()
-                if digest is not None:
-                    digest.update(raw)
-                if not raw.strip():
-                    continue
-                try:
-                    row = json.loads(raw)
-                    if not isinstance(row, dict):
-                        raise ValueError()
-                except (ValueError, UnicodeError):
-                    _warn(caveats, 'Malformed capture records were skipped; evidence is incomplete.')
-                    continue
-                yield row
+        stream = path.open('rb')
     except OSError:
         _warn(caveats, 'Unreadable capture files were skipped; evidence is incomplete.')
+        return
+    with stream:
+        while True:
+            try:
+                raw = stream.readline()
+            except OSError:
+                _warn(caveats, 'Unreadable capture files were skipped; evidence is incomplete.')
+                return
+            if not raw:
+                break
+            if tick is not None:
+                tick()
+            if digest is not None:
+                digest.update(raw)
+            if not raw.strip():
+                continue
+            try:
+                row = json.loads(raw)
+                if not isinstance(row, dict):
+                    raise ValueError()
+            except (ValueError, UnicodeError):
+                _warn(caveats, 'Malformed capture records were skipped; evidence is incomplete.')
+                continue
+            yield row
 
 
 def _cwd(row):

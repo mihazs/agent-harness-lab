@@ -211,6 +211,31 @@ print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
         self.assertEqual(calls[-1][0], 'collection_complete')
         self.assertEqual(calls[-1][1]['events'], data['analysis']['events'])
 
+    def test_progress_io_failure_propagates_instead_of_truncating_readable_capture(self):
+        capture = self.capture(self.rows())
+        heartbeats = 0
+        def progress(stage, **counts):
+            nonlocal heartbeats
+            if stage == 'collection':
+                heartbeats += 1
+                if heartbeats == 3:
+                    raise OSError('synthetic progress sink failed')
+        with self.assertRaisesRegex(OSError, 'synthetic progress sink failed'):
+            collect(self.project, events=capture, progress=progress)
+
+    def test_capture_open_and_read_errors_remain_incomplete_evidence(self):
+        capture = self.capture(self.rows())
+        class FailedRead(io.BytesIO):
+            def readline(self, *args):
+                raise OSError('synthetic source read failed')
+        for failure in ('open', 'read'):
+            with self.subTest(failure=failure):
+                options = dict(side_effect=OSError('synthetic source open failed')) if failure == 'open' else dict(return_value=FailedRead())
+                with patch.object(Path, 'open', **options):
+                    data = collect(self.project, events=capture)
+                self.assertEqual(data['analysis']['events'], 0)
+                self.assertIn('Unreadable capture files were skipped; evidence is incomplete.', data['caveats'])
+
     def test_bounded_multifile_discovery_reports_incomplete_and_progress_before_last_file(self):
         captures = self.root/'codex/sessions'
         captures.mkdir(parents=True)
