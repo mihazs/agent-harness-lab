@@ -526,7 +526,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         if not isinstance(proposal, dict):
             raise ValueError('Proposal must be an object')
         if proposal.get('status') == 'no_change':
-            result['status'] = 'no_change'
+            result.update(status='no_change',reason='proposer_no_change')
             break
         if proposal.get('status') != 'candidate':
             raise ValueError('Proposal must declare candidate or no_change')
@@ -534,7 +534,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         check_scope(args, proposed)
         check_configuration(args)
         if proposed == original:
-            result['status'] = 'no_change'
+            result.update(status='no_change',reason='candidate_identical_to_baseline')
             break
         paths = [] if controlled else original.keys() | proposed.keys()
         frozen = output / f'candidate-{attempt}'
@@ -692,7 +692,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             result['recommendation'] = 'candidate_requires_independent_certification'
             break
         if candidate_pass and controls_pass and evaluated['inputs_unchanged']:
-            result['status'] = 'no_change'
+            result.update(status='no_change',reason='evaluation_no_improvement')
             break
     if permission_audit is not None:
         result['isolation_qualification']=grading.permission_qualification()
