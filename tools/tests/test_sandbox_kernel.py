@@ -854,6 +854,60 @@ class TrajectoryKernelTests(KernelFixture):
             if mode=='valid':
                 with self.assertRaises(ValueError): capture.read()
 
+    def test_live_controller_sources_bind_executed_harness_to_owned_git_snapshot(self):
+        from agent_harness_lab.evaluation import controller_receipts as owned
+        from agent_harness_lab.evaluation.benchmark import public_export_allowed
+        from agent_harness_lab.sources import harness_binding
+        from agent_harness_lab.sources.controller import SourceSink
+        from agent_harness_lab.sources.schema import digest as source_digest
+        from test_source_harness_binding import SyntheticHarnessRepository, git_available
+        if not git_available(): self.skipTest('explicit system Git 2.43+ is required')
+        runtime=self.root/'runtime'; frozen=pinned_runtime(runtime)
+        backend=SandboxBackend(cgroup_root=self.cgroup_root,image_root=runtime,image_sha256=frozen['sha256'],disk_bytes=64*1024*1024)
+        oracle=self.root/'oracle'; oracle.mkdir()
+        (oracle/'expected.json').write_text('{}')
+        (oracle/'grade.py.txt').write_text("import json,pathlib,sys; ok=(pathlib.Path(sys.argv[1])/'result.txt').read_text()=='done'; "
+            "print(json.dumps(dict(schema_version=1,valid=True,outcome=ok,grader_id='synthetic-source',grader_version='v1'))); sys.exit(0 if ok else 1)")
+        oracle_hash=digest(oracle)
+        argv=['/usr/bin/python3','-I','-c',"from pathlib import Path; Path('result.txt').write_text('done')"]
+        expected=dict(valid=('verified',None),changed=('mismatch','input_tree_differs'),untracked=('mismatch','input_tree_differs'),
+            relocated=('unknown','harness_location_not_in_captured_checkout'),late=('unknown','snapshot_not_captured_before_execution'),
+            unobserved=('unknown','controller_harness_input_unobserved'))
+        for mode,outcome in expected.items():
+            with self.subTest(mode=mode):
+                fixture=SyntheticHarnessRepository(self.root/('git-'+mode)); harness=fixture.repo/'harness'
+                collector=None if mode=='late' else fixture.capture()[0]
+                if mode=='relocated':
+                    shutil.copytree(fixture.repo,self.root/('copy-'+mode)); harness=self.root/('copy-'+mode)/'harness'
+                with owned.session():
+                    sink=SourceSink(self.root/(mode+'-binding.json'),fixture.source.project_sha256,source_digest('synthetic-scope'))
+                    capture=sink.begin(['result.txt'],time.monotonic()+15)
+                    if mode=='late': collector=fixture.capture()[0]
+                    if mode=='changed': (harness/'AGENTS.md').write_text('SYNTHETIC_UNCOMMITTED_CHANGE\n')
+                    if mode=='untracked': (harness/'extra.md').write_text('SYNTHETIC_UNTRACKED_ADDITION\n')
+                    run=backend.run(argv,self.work,{} if mode=='unobserved' else {'harness':harness},'executor',
+                        Limits(seconds=8),artifact_allowlist=['result.txt'])
+                    self.assert_complete(run)
+                    regrade_artifacts(self.work,['result.txt'],oracle,oracle_hash,backend,limits=Limits(seconds=8))
+                    result=sink.finish(capture,True)
+                    self.assertEqual(result['status'],'observed',result)
+                    receipt=harness_binding.bind(capture,collector.harness_capture)
+                    self.assertEqual((receipt['status'],receipt['reason']),outcome,receipt)
+                    self.assertEqual(receipt['effective_loading'],'unverified')
+                    self.assertFalse(receipt['authority_granted']); self.assertFalse(receipt['publication_allowed'])
+                    self.assertFalse(public_export_allowed([{**receipt,'publication_allowed':True}]))
+                    if mode=='valid':
+                        self.assertEqual(receipt['harness_snapshot_sha256'],collector.harness.sha256)
+                        self.assertEqual(receipt['head_sha256'],collector.harness.head_sha256)
+                        self.assertEqual(receipt['controller_harness_input_sha256'],digest(harness))
+                        self.assertEqual(receipt['controller_harness_input_sha256'],result['live_verification']['controller_harness_input']['sha256'])
+                        self.assertEqual(receipt['git_source_sha256'],fixture.source.source_key)
+                        self.assertNotIn(str(self.root),json.dumps(receipt))
+                    if outcome[0]=='unknown': self.assertIsNone(receipt['harness_snapshot_sha256'])
+                    self.assertTrue(all(field.status=='declared' for item in sink.store.capture(sink.source).identities for field in item.fields))
+                after=harness_binding.bind(capture,collector.harness_capture)
+                self.assertEqual((after['status'],after['reason']),('unknown','owned_controller_capture_required'))
+
     def test_live_controller_sources_do_not_verify_replaced_executable_inventory(self):
         from agent_harness_lab.evaluation import controller_receipts as owned
         from agent_harness_lab.sources.controller import SourceSink

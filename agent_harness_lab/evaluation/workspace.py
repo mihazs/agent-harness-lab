@@ -105,6 +105,7 @@ class PrivateWorkspace:
         self.working_state = working_state
         self.comparison_seed_sha256=self.comparison_captured_sha256=None
         self.comparison_roots={};self.comparison_inputs=None
+        self.harness_root=inputs.get('harness')
         from .comparison_custody import current,bundle_binding
         comparison=current()
         from .construction_seals import current as construction_current

@@ -113,12 +113,13 @@ class _Attempt:
             observed_at=datetime.now(timezone.utc).isoformat(),kernels=[],grade=None)
         self.closed = self.lost = False
         self.latest = self.executor = None
+        self.started_ns = time.monotonic_ns()
         _ACTIVE.set(self)
         _PENDING[self] = self._state()
 
     def _state(self):
         return encoded(dict(data=self.data,expected=sorted(self.expected),deadline=self.deadline,owner=id(self.owner),
-            closed=self.closed,lost=self.lost,executor=self.executor,
+            closed=self.closed,lost=self.lost,executor=self.executor,started_ns=self.started_ns,
             latest=None if self.latest is None else (id(self.latest[0]),self.latest[1]['ordinal']),source=self.source.to_dict()))
 
     def cancel(self):
@@ -236,7 +237,12 @@ def _kernel_spawned(ticket, process, scratch, group, audit=None):
         if ticket.capture is not None:ticket.capture.lost=True
         if ticket.scope is not None:ticket.scope.lost=True
         return
-    _DISPATCHES[ticket] = process,scratch,group,audit,deepcopy(scratch.boundary_contract),deepcopy(scratch.boundary_work_identity),deepcopy(scratch.boundary_observation),scratch.comparison_seed_sha256,deepcopy(scratch.comparison_inputs)
+    _DISPATCHES[ticket] = process,scratch,group,audit,deepcopy(scratch.boundary_contract),deepcopy(scratch.boundary_work_identity),deepcopy(scratch.boundary_observation),scratch.comparison_seed_sha256,deepcopy(scratch.comparison_inputs),_harness_location(scratch)
+
+
+def _harness_location(scratch):
+    from .integrity import location
+    return location(scratch.harness_root) if scratch.harness_root is not None else None
 
 
 def _kernel_finished(ticket, run, argv, exports):
@@ -249,7 +255,7 @@ def _kernel_finished(ticket, run, argv, exports):
         if capture is not None:capture.lost=True
         if scope is not None:scope.lost=True
         return
-    process,scratch,group,audit,boundary_contract,work_identity,boundary_observation,seed_state,input_bundles = producer
+    process,scratch,group,audit,boundary_contract,work_identity,boundary_observation,seed_state,input_bundles,harness_location = producer
     attestation = run['attestation']; image = attestation.get('runtime_image') or {}
     storage = attestation.get('storage_policy') or {}; cgroup = attestation.get('cgroup_v2') or {}
     from .permission_audit import canonical_argv, _take_completion
@@ -292,6 +298,8 @@ def _kernel_finished(ticket, run, argv, exports):
     fact=_Fact();_FACTS[fact]=(ref(ticket),ref(scope) if scope is not None else lambda:None,encoded(dict(value,exports=exports)),ref(ticket.comparison) if ticket.comparison is not None else lambda:None)
     if capture is not None:
         event.update(value);capture.latest=run,event
+        # Private to this attempt: the same harness directory location at launch and after the input checks.
+        event['harness_location_sha256']=harness_location if harness_location is not None and _harness_location(scratch)==harness_location else None
         if event['role']=='executor':
             selected=tuple(pair for pair in exports if pair[0] in capture.expected)
             capture.executor=event['ordinal'],selected
