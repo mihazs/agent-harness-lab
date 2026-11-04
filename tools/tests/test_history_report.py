@@ -36,10 +36,22 @@ class HistoryReportTests(unittest.TestCase):
         malformed=deepcopy(refs); malformed[0]['safe']=True
         for changed in (refs+refs,malformed,[]):
             with self.assertRaises(ValueError): benchmark.history_summary(fixture.store.root,changed)
-        with patch.object(history_report,'MAX_REPORT_BYTES',10):
-            with self.assertRaises(ValueError): benchmark.history_summary(fixture.store.root,refs)
         fixture.revoke()
         with self.assertRaises(ValueError): benchmark.history_summary(fixture.store.root,refs)
+
+    def test_report_keeps_all_receipts_and_analysis_beyond_former_byte_ceiling(self):
+        refs=[dict(run_id=f'{index:064x}',receipt_sha256=f'{index+100:064x}') for index in range(9)]
+        analysis=dict(status='inconclusive',detail='synthetic analysis '*250000)
+        def verified(run_id,receipt_sha256):
+            return dict(receipt=dict(run_id=run_id),analysis=analysis)
+        with patch('agent_harness_lab.evaluation.oracle_history.HistoryStore') as store:
+            store.return_value.root=Path('/synthetic-report-store')
+            store.return_value.verify_decision.side_effect=verified
+            result=history_report.summary('/synthetic-report-store',refs)
+            self.assertEqual(store.return_value.verify_decision.call_count,2*len(refs))
+        self.assertEqual(len(result['comparisons']),9)
+        self.assertGreater(len(json.dumps(result)),32*1024*1024)
+        self.assertFalse(result['publication_allowed'])
 
     def test_public_mode_refuses_before_private_authority_or_input_is_opened(self):
         with patch('agent_harness_lab.evaluation.oracle_history.HistoryStore') as store:

@@ -93,8 +93,8 @@ def trajectory_summary(results):
     if results.get('trajectory_profile') != PROFILE:
         raise ValueError('unsupported controller trajectory report')
     trials = results.get('trials')
-    if not isinstance(trials,list) or not 0 < len(trials) <= 10000:
-        raise ValueError('bounded trajectory trials required')
+    if not isinstance(trials,list) or not trials:
+        raise ValueError('nonempty trajectory trials required')
     rows = []
     for trial in trials:
         if not isinstance(trial,dict): raise ValueError('trajectory trial object required')
@@ -103,20 +103,20 @@ def trajectory_summary(results):
         receipt = grade.get('trajectory',{})
         if not isinstance(receipt,dict): raise ValueError('trajectory receipt object required')
         assertions = receipt.get('assertions',[])
-        if not isinstance(assertions,list) or len(assertions)>32:
-            raise ValueError('bounded assertion report required')
+        if not isinstance(assertions,list):
+            raise ValueError('assertion report list required')
         row = {key:trial.get(key) for key in ('trial_id','task','root','family','version','status')}
         for value in row.values():
-            if value is not None and (not isinstance(value,str) or len(value.encode('utf-8'))>256):
-                raise ValueError('bounded trajectory report identity/status required')
+            if value is not None and not isinstance(value,str):
+                raise ValueError('trajectory report identity/status text required')
         if not row['task']: raise ValueError('trajectory task identity required')
         reported_assertions = []
         for assertion in assertions:
             if not isinstance(assertion,dict): raise ValueError('trajectory assertion object required')
             item = {key:assertion.get(key) for key in ('assertion_id','assertion_sha256','status')}
-            if (any(not isinstance(v,str) or not 0<len(v.encode('utf-8'))<=128 for v in item.values())
+            if (any(not isinstance(v,str) or not v for v in item.values())
                     or item['status'] not in ('satisfied','violated','unknown')):
-                raise ValueError('bounded trajectory assertion identity/status required')
+                raise ValueError('trajectory assertion identity/status required')
             item['coverage_complete'] = assertion.get('coverage_complete') is True
             reported_assertions.append(item)
         row.update(artifact_outcome=grade.get('artifact_outcome') if type(grade.get('artifact_outcome')) is bool else None,
