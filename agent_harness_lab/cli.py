@@ -1,4 +1,4 @@
-"""One entrypoint for local analysis and controlled automatic improvement."""
+"""One entrypoint for local analysis and evaluated harness recommendations."""
 import argparse
 import importlib.metadata
 import importlib.util
@@ -139,10 +139,10 @@ def main(argv=None):
     }
     for name,description in routed_help.items():
         sub.add_parser(name,help=description+'; use ahl '+name+' --help',description=description)
-    for name in ('analyze', 'improve', 'watch'):
-        helps = {'analyze': 'Discover project evidence and failure candidates',
-            'improve': 'Discover, stage and evaluate harness candidates; --repair-contracts explicitly applies bounded structural repairs',
+    helps = {'analyze': 'Discover project evidence and failure candidates',
+            'improve': 'Discover, stage, evaluate, and recommend harness candidates (no automatic adoption); --repair-contracts explicitly applies bounded structural repairs',
             'watch': 'Recheck evidence and recommend improvements only when project evidence changes (recommendation-only)'}
+    for name in ('analyze', 'improve', 'watch'):
         command = sub.add_parser(name, aliases=['analysis'] if name == 'analyze' else [],
             help=helps[name], description=helps[name],formatter_class=argparse.RawDescriptionHelpFormatter,
             epilog=('Output: private artifacts and a JSON receipt on stdout. No input bodies are public.\n'
