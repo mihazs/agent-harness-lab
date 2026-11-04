@@ -344,6 +344,11 @@ tasks:
           LAYOUT_DIR: '{{default .ROOT_DIR .LAYOUT_DIR}}'
           EXPECTED_PACKAGE_ROOT: '{{default .ROOT_DIR .EXPECTED_PACKAGE_ROOT}}'
           KERNEL_TEST_FILTER: live_controller_sources
+  test:sources:contracts:
+    desc: Run source identity, execution metadata and complete normalized export contracts
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_contracts.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_execution.py" -v'
   test:sources:normalized-exports:
     desc: Run normalized local export consistency and checkpoint guards using synthetic metadata
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'

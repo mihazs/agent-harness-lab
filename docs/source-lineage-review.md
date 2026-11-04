@@ -22,7 +22,7 @@ ahl sources lineage --store /path/to/private/reviews \
 Append one action:
 
 1. `propose --cache CACHE_JSON --claim CLAIM_JSON` validates and copies the same
-   bounded cache bytes, records the exact claim bytes and commits a proposed case.
+   selected cache bytes, records the exact claim bytes and commits a proposed case.
    The cache must already exist and validate for the explicitly supplied scope.
    Endpoints must be present, unsuperseded and unambiguous within that frozen
    cache. Evidence references must identify records in that cache. A cache change
@@ -57,8 +57,8 @@ text, timestamps, embeddings or an agent's explanation.
 | `schema_version` | Integer `1` |
 | `left`, `right` | Two distinct exact `RecordRef` objects |
 | `relation` | `same_observation`, `derived_from` or `independent_case` |
-| `author` | Bounded operator identity label |
-| `evidence` | Nonempty array of at most eight distinct cache `RecordRef`s |
+| `author` | Operator identity label |
+| `evidence` | Nonempty array of distinct cache `RecordRef`s |
 
 `derived_from` is directed: the left record derives from the right record.
 Independent-case assertions do not create links or become transitive.
@@ -70,13 +70,13 @@ Independent-case assertions do not create links or become transitive.
 | `expected_event_sha256` | Current journal-head hash from `show` |
 | `cache_sha256` | Captured cache hash from `show` |
 | `decision` | `reviewed`, `quarantined`, `rejected` or `retired` |
-| `reviewer` | Bounded operator identity label |
+| `reviewer` | Operator identity label |
 | `source` | `operator_attestation` |
-| `provenance`, `basis`, `reason` | Nonempty single-line text, at most 4,096 characters each |
-| `basis_kind` | `independent_metadata_review` for approval; bounded label for intervention |
-| `evidence` | At most eight distinct cache `RecordRef`s; nonempty for approval |
+| `provenance`, `basis`, `reason` | Nonempty single-line text, without a length ceiling |
+| `basis_kind` | `independent_metadata_review` for approval; structural label for intervention |
+| `evidence` | Distinct cache `RecordRef`s; nonempty for approval |
 
-Labels use the existing 64-character source-label contract. Different author and
+Labels retain the source-label character rules without a length ceiling. Different author and
 reviewer strings do not authenticate different people. Evidence references and
 review provenance remain declared citations; they are not independently checked
 against live upstream sources by this operation.
@@ -109,16 +109,17 @@ immutable regression admission remain work under #58/#8.
 
 The recognized store must be outside its cache, owned by the current user and
 mode 0700. Metadata and snapshots are created with mode 0600. Read operations
-cannot initialize an unrelated directory. Locks, bounded JSON decoding, immutable
+cannot initialize an unrelated directory. Locks, strict JSON decoding, immutable
 append checks and hash chains reuse the regression-review journal implementation;
 regression transitions and event bytes remain unchanged.
 
-Limits are 128 cases, eight snapshots, 64 MiB per selected cache and 128 MiB of
-snapshot files per store. Claim/review files are limited to 64 KiB; complete events
-are bounded before writing. Root-entry limits also bound abandoned staging
-folders. Interrupted or uncertain writes require inspection; nothing automatically
-retries, adopts a partial proposal or erases private history. A local hash chain
-cannot authenticate the host account or prevent its complete rewrite of a store.
+Analysis cases, snapshots, claim/review files and event metadata have no fixed
+count or byte ceiling. The lineage journal explicitly selects unlimited storage;
+other private-journal callers keep their own limits. Scope fingerprints, owner-only
+storage, immutable hashes, exact event chains and review transitions still apply.
+Interrupted or uncertain writes require inspection; nothing automatically retries,
+adopts a partial proposal or erases private history. A local hash chain cannot
+authenticate the host account or prevent its complete rewrite of a store.
 
 Successful operations return 0. Query returns 3 for stale cases or conflicts, and
 lock contention returns 3 with a busy result. Invalid/unavailable inputs return 2

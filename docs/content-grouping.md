@@ -65,12 +65,11 @@ the reruns needed after an oracle correction.
 
 ## Bounds and remaining work
 
-The existing 1,000-task and 1,000-file-per-tree limits still apply. Fingerprinting additionally
-allows at most 1 MiB per file, 100,000 tokens per fixture and 32 MiB of fixture input
-bytes per bank. Output retains at most 128 representative receipts; all overlap
-counts and affected-task issues remain visible, with truncation reported. A match
-group links each later member to one deterministic representative, rather than
-emitting every pair.
+Fingerprinting has no implicit file, byte, token or overlap-receipt ceiling.
+An explicitly supplied fixture byte budget still rejects inputs that exceed it.
+Every detected overlap keeps its receipt and affected-task issue. A match group
+links each later member to one deterministic representative, rather than emitting
+every pair. These observations do not certify independence or authorize execution.
 
 Fixture matching is path-sensitive. Arbitrary renaming, paraphrases, partial
 copies, near duplicates and hidden semantic relatedness are not completely

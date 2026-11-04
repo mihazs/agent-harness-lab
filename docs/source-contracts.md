@@ -28,7 +28,7 @@ to an instruction or grading authority.
 Behavioral records may later reference normalized v2 events; memory assertions
 must never be converted into fabricated tool events.
 
-`ImportReceipt` contains bounded counts, hashed cursor references, status and limit
+`ImportReceipt` contains nonnegative integer counts, hashed cursor references, status and limit
 coverage. Failed/incomplete imports cannot advance their committed cursor; errors
 or a reached limit cannot report completion. A complete import batch does not
 establish complete historical capture. The receipt validates data; it does not
@@ -54,7 +54,7 @@ adding fields to strict v1 `SourceSpec`, `EvidenceRecord` or `ImportReceipt` obj
 | `IdentityField` | Field name, namespace, optional fingerprint, status, provenance, evidence references, observation/effective times and missing/conflict reason |
 | `ExecutionIdentity` | A subject record revision and at most one receipt per supported identity field |
 | `CoverageManifest` | Expected/observed scope, adapter/parser versions, scan bounds, missing fields, gap reasons, truncation/limit flags and reported completeness |
-| `ExecutionMetadata` | Up to 1,000 subject identities and an optional coverage manifest |
+| `ExecutionMetadata` | Subject identities and an optional coverage manifest, without a fixed count ceiling |
 
 Identity fields cover project/worktree, original task/root, session/parent, attempt,
 requested model alias, served model, runtime/version, effective harness/config,
@@ -78,9 +78,12 @@ path observes actual pinned workers and fresh graders; its immediate verificatio
 expires with the live capability, and its journal still stores declarations.
 No receipt authorizes execution or grading.
 
-Fields and collections use fixed bounds: 16 supported identity names, eight evidence
-references or conflict alternatives per field, five scan dimensions and enumerated
-missing/gap reasons. Timestamps require timezones, validity intervals must be ordered,
+Identity names, scan dimensions and missing/gap reasons remain enumerated and
+unique. Subject identities, evidence references and conflict alternatives have no
+fixed count ceiling. A scan bound uses `null` for an unlimited scan, or a
+nonnegative integer for an explicitly selected limit; observed counts must remain
+nonnegative and cannot exceed a finite limit. Timestamps require timezones,
+validity intervals must be ordered,
 and unknown keys or mutable collections are rejected. Coverage's
 `reported_completeness` is a source assertion; import completion and the public
 summary's `capture_completeness: unknown` remain separate from that assertion.
@@ -97,7 +100,8 @@ before collecting source data; a stored provenance label is not that verificatio
 Normalized local v1–v3 exports require matching readbacks of their selected
 payload and declaration before returning a checkpoint-ready snapshot. The reader
 rechecks project/scope, enablement and the original data-file selection before
-each bounded payload read. An observed edit, removal, oversized file or symlink
+each payload read. Payload bytes and record counts have no fixed ceiling. An
+observed edit, removal or symlink
 blocks the operation and leaves an existing committed checkpoint unchanged. A
 changed selector is rejected before reading its replacement, even if its bytes
 would match. Declaration formatting and payload mtime alone do not change the
@@ -195,8 +199,8 @@ provided expected identities. The declaration is read before record data. It is
 local trusted configuration, not proof of remote authentication or Git ownership.
 No identity is inferred from directory names or timestamps.
 
-The data file is a JSON list of complete EvidenceRecord objects, limited to 8 MiB
-and 10,000 records. Only normalized metadata is supported; plaintext body fields,
+The data file is a JSON list of complete EvidenceRecord objects, without an
+implicit byte or record-count limit. Only normalized metadata is supported; plaintext body fields,
 foreign source identities and conflicting revisions are rejected. Preview freezes
 one file read and reports its SHA-256 and count without writing a cache. Import
 uses the same snapshot contract and the journal's checkpoint comparison; failure
@@ -234,13 +238,12 @@ an export assertion to verified execution evidence.
 `local_file/ahl-metadata/v3` adds a payload with exactly `schema_version: 3`,
 `records`, `execution_metadata` and `evidence_graph`. The record/declaration schemas
 stay at version 1. Execution metadata and the graph may independently be null;
-otherwise use their strict `to_dict()` representations. The 8 MiB payload bound
-still applies. Old v1/v2 payloads retain their existing shapes and behavior.
+otherwise use their strict `to_dict()` representations. Payload bytes and collection counts have no implicit size ceiling. Old v1/v2 payloads retain their existing shapes and behavior.
 
 `sources.graph.EvidenceGraph` contains the source, project and scope fingerprints,
-adapter version, up to 10,000 exact `RecordRef` nodes and 20,000 `JoinReceipt`
-claims. A join names its relation, namespace, resolver version, both endpoints
-(with an explicit null for an unavailable target), bounded evidence references,
+adapter version, exact `RecordRef` nodes and `JoinReceipt` claims, without
+fixed collection-size ceilings. A join names its relation, namespace, resolver version, both endpoints
+(with an explicit null for an unavailable target), evidence references,
 status, basis, reason and nullable validity interval. All non-null endpoints and
 evidence must be graph members with existing revisions in the authorized source.
 Foreign sources/projects, dangling revisions, duplicate entries, unknown relation

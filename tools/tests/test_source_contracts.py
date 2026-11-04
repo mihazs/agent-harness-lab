@@ -53,7 +53,7 @@ class SourceContractsTests(unittest.TestCase):
         receipt = ImportReceipt(self.source.source_key, 1, 0, 0, '8'*64, '8'*64)
         for changes in ({'cursor_after_sha256': '9'*64}, {'errors': 1, 'status': 'complete'},
                         {'limit_reached': True, 'status': 'complete'}, {'imported': True},
-                        {'skipped': -1}, {'errors': 100001}, {'capture_completeness': 'complete'}):
+                        {'skipped': -1}, {'errors': True}, {'capture_completeness': 'complete'}):
             with self.subTest(changes=changes), self.assertRaises(ValueError): replace(receipt, **changes)
         committed = replace(receipt, status='complete', cursor_after_sha256='9'*64)
         self.assertEqual(committed.capture_completeness, 'unknown')
@@ -76,3 +76,14 @@ class SourceContractsTests(unittest.TestCase):
             self.assertEqual(registry.probe(replace(source, version='v2'), **scope)['status'], 'unsupported_version')
             self.assertEqual(registry.probe(source, **{**scope, 'project_sha256': '9'*64})['status'], 'scope_mismatch')
         with self.assertRaises(ValueError): registry.register(Capability('local_file', 'synthetic', 'v1', ('contextual_assertion',)))
+
+
+class UnlimitedContractTests(unittest.TestCase):
+    def test_large_import_counts_and_structurally_valid_metadata_are_preserved(self):
+        from agent_harness_lab.sources.schema import label, timestamp
+        receipt = ImportReceipt('a'*64, 100001, 2**41, 100001)
+        self.assertEqual(ImportReceipt.parse(receipt.to_dict()), receipt)
+        label('native.'+'x'*1000)
+        timestamp('2026-01-01T00:00:00.'+'1'*100+'+00:00')
+        with self.assertRaises(ValueError): label('private/path')
+        with self.assertRaises(ValueError): timestamp('2026-01-01T00:00:00')
