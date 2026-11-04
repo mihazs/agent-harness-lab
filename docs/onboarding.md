@@ -52,7 +52,7 @@ callers must use `--non-interactive`.
 | --- | --- |
 | `schema_version` | Integer 1 |
 | `profile` | `offline`, `cooperative` or `isolated` |
-| `runtime` | `name`: `none`, `codex` or `claude`; `executable`: null for none, otherwise explicit absolute trusted executable path |
+| `runtime` | Existing `none`/`codex`/`claude` objects retain their executable contract. The additive `responses` variant uses the controlled references below and has no executable. |
 | `bank` | `path`: `starter` or safe project-relative bank path; `sha256`: reviewed lowercase SHA-256 |
 | `harness_paths` | Unique project-relative paths without traversal or `.git` |
 | `limits` | Finite positive `seconds` and positive integer `trials` |
@@ -95,8 +95,80 @@ Input hashes are frozen before any capability/version subprocess. Configured
 harness and fixture digests also cover file modes; changes during a version
 query cannot become a new accepted starting point for task execution.
 
-Existing analysis/improvement/watch commands still retain their explicit CLI
-behavior and do not consume `ahl.json`. Authentication and agent runtime versions
-remain unknown because this offline interface has no supported safe agent probe.
+Improvement and watch resolve project settings through the shared one-call path.
+Analysis remains read-only. Authentication and agent runtime versions remain
+unknown because this offline interface has no supported safe agent probe.
 Initialization itself authorizes no execution or permission changes. Doctor/init
 start no installation, login, inference, download, background service or schedule.
+
+## Configure controlled Responses once
+
+An already prepared Linux environment can select the existing controlled worker
+pipeline with this initialization input:
+
+```json
+{
+  "profile": "cooperative",
+  "runtime": {
+    "name": "responses",
+    "inference_settings": "/private/responses.json",
+    "cgroup_root": "/explicit/delegated/subtree",
+    "image_root": "/private/runtime",
+    "image_sha256": "<reviewed lowercase SHA-256>",
+    "disk_bytes": 67108864,
+    "permission_audit": "permission-results-v1"
+  },
+  "harness_paths": ["AGENTS.md"],
+  "limits": {"seconds": 150, "trials": 24}
+}
+```
+
+Create the project configuration once, then invoke the ordinary workflow:
+
+```sh
+ahl init . --config-input /private/project-settings.json --non-interactive --write
+ahl improve .
+```
+
+The existing inference settings own model declaration, private credential-file
+reference, request/tool/byte caps and the optional
+[controller-loaded AGENTS protocol](controlled-agents.md). Nothing enables that
+protocol implicitly or copies a token into ahl.json. Permission auditing is also
+optional; omitting its field preserves the existing unrequested profile.
+Configuration references may be absolute or safe project-relative paths;
+relative paths use the project containing ahl.json, never another current directory.
+Symlinked, missing or unsafe local references fail before transport.
+
+Doctor validates local references and settings schema, checks credential metadata
+without opening its contents, and reads delegation metadata without creating or
+changing controls. Its Responses `ready` result explicitly means
+`local_configuration_and_references_only`: authentication remains unknown and
+`controlled_execution` remains not checked. Doctor starts no worker/provider for
+this runtime, including when `--probe-runtime` is supplied. Actual improvement
+owns the existing full-profile capability preflight and credential read, once,
+under the shared parent budget. It creates the evaluation internally; no manual
+manifest or experiment-request sequence is required.
+
+Explicit invocation options override configured defaults. A native runtime
+override does not inherit Responses configuration references. Shared image,
+cgroup and disk CLI options remain valid for native `--sandbox-graders`;
+`--inference-settings` with a native runtime remains a contradiction. Offline
+configuration still forbids model execution even with explicit Responses flags.
+Direct `evaluate --config` does not implement this new runtime variant; use the
+controlled improvement path rather than silently falling back to a native agent.
+A pinned project bank (any `bank.path` other than `starter`) is evaluated through
+the cooperative native path only. Combined with a Responses runtime, preflight
+stops with `configured_bank_requires_cooperative_runtime` before any runtime
+lookup or reference read.
+
+Configuration, settings and local reference metadata are frozen at admission.
+Checkpoints reject changes before further transport; keys are not silently
+reloaded. Watch retains the original explicit invocation and requires restart
+after such changes instead of widening an active run. Reference digests cover
+local metadata, never credential contents, and remain private. Image content
+integrity is checked by the existing actual sandbox pipeline.
+
+Metadata cannot detect remote credential expiry or prove a model is available.
+Those remain unknown until the requested transport returns; ambiguous requests
+retain their spent reservation and are not retried. A favorable result remains
+subject to the actual certification gates and never enables automatic adoption.

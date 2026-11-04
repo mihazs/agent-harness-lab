@@ -19,17 +19,15 @@ def resolve(args, explicit):
     path = args.project / 'ahl.json'
     loaded = config.load(path) if os.path.lexists(path) else None
     settings = loaded[0] if loaded else None
-    if args.timeout is None:
-        args.timeout = settings['limits']['seconds'] if settings else 2700
-    if args.agent == 'auto' and settings and '--agent' not in explicit:
-        args.agent = settings['runtime']['name']
-    if settings and settings['runtime']['name'] in ('codex', 'claude'):
-        name = settings['runtime']['name']
-        if '--' + name not in explicit:
-            setattr(args, name, settings['runtime']['executable'])
+    requested=getattr(args,'_configuration_invocation',None)
+    if requested is None:requested={name:getattr(args,name,None) for name in config.INVOCATION_OPTIONS}
+    args._configuration_invocation=dict(requested);args._configuration_explicit=frozenset(explicit)
+    selected=config.execution_options(args.project,settings,requested,explicit)
+    for name,value in selected.items():setattr(args,name,value)
     args.trial_limit = settings['limits']['trials'] if settings else 24
     args.project_settings = settings
     args.configuration_sha256 = loaded[1] if loaded else None
+    args._configured_responses=bool(settings and settings['runtime']['name']=='responses' and args.agent=='responses')
     return settings
 
 
@@ -43,6 +41,9 @@ def preflight(args):
         if settings['profile'] != 'cooperative':
             return 'configured_profile_does_not_allow_cooperative_improvement'
         if pinned_bank(args) is not None:
+            if settings['runtime']['name'] == 'responses':
+                # Pinned project banks are evaluated through the cooperative path only.
+                return 'configured_bank_requires_cooperative_runtime'
             if args.agent == 'auto': args.agent = settings['runtime']['name']
             if args.agent != settings['runtime']['name'] or getattr(args, args.agent, None) != settings['runtime']['executable']:
                 return 'configured_runtime_differs_from_requested_runtime'
@@ -65,6 +66,8 @@ def preflight(args):
         return 'agent_runtime_unavailable'
     if pinned_bank(args) is None and getattr(args, 'trial_limit', 24) < 8:
         return 'trial_budget_requires_two_preparation_and_six_paired_trials'
+    if getattr(args,'_configured_responses',False):
+        args._response_references=config.response_references(args.project,vars(args))
     return None
 
 
@@ -88,6 +91,9 @@ def unchanged(args):
 def check_configuration(args):
     if hasattr(args, 'project_settings') and not unchanged(args):
         raise ValueError('project configuration changed during improvement')
+    references=getattr(args,'_response_references',None)
+    if references is not None and config.response_references(args.project,vars(args))!=references:
+        raise ValueError('controlled Responses references changed during improvement')
 
 
 def allowed_paths(args):

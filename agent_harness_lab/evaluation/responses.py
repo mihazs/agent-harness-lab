@@ -212,8 +212,8 @@ def run_arguments(item):
 
 
 class Client:
-    def __init__(self, settings, credential, deadline, *, transport=None, record=None, configuration_sha256=None):
-        _CLIENT_PIDS[self] = (os.getpid(),configuration_sha256,deepcopy(settings),deadline,deepcopy(TOOL)) if settings.get('instruction_protocol') is not None else os.getpid()
+    def __init__(self, settings, credential, deadline, *, transport=None, record=None, configuration_sha256=None, configuration_references_sha256=None):
+        _CLIENT_PIDS[self] = (os.getpid(),configuration_sha256,deepcopy(settings),deadline,deepcopy(TOOL),configuration_references_sha256) if settings.get('instruction_protocol') is not None else os.getpid()
         self.settings,self.credential,self.deadline = dict(settings),credential,deadline
         self.transport = request if transport is None else transport
         self.requests = self.tool_calls = 0
