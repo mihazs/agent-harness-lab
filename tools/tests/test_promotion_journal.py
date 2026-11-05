@@ -223,12 +223,13 @@ class NestedSurfaceAdoptionTests(unittest.TestCase):
 
     def test_same_named_files_in_unrelated_scopes_never_become_writable_by_discovery(self):
         from agent_harness_lab.workflow import harness_files,snapshot,candidate_states
-        for name in ('vendor/.git/HEAD','vendor/AGENTS.md','vendor/.claude/rules/x.md','plugin/skills/demo/SKILL.md',
+        # A nested repository under a project folder name; a vendor/ copy is refused lexically before staging.
+        for name in ('nested/.git/HEAD','nested/AGENTS.md','nested/.claude/rules/x.md','plugin/skills/demo/SKILL.md',
                      'my-skills/demo/CLAUDE.local.md'):
             self.write(self.project/name,'foreign')
         self.assertEqual([str(p.relative_to(self.project)) for p in harness_files(self.project)],['AGENTS.md'])
         # Even an explicit selection of a nested repository's file stages but never adopts.
-        names=['vendor/AGENTS.md','vendor/.claude/rules/x.md']
+        names=['nested/AGENTS.md','nested/.claude/rules/x.md']
         original=snapshot(self.project,self.root/'baseline',allowed_paths=names)
         import shutil; shutil.copytree(self.root/'baseline',self.root/'candidate')
         for name in names: (self.root/'candidate'/name).write_text('after')
@@ -365,3 +366,75 @@ class NestedSurfaceAdoptionTests(unittest.TestCase):
         target=self.root/'target'; target.write_text('again')
         with self.assertRaisesRegex(ValueError,'outside owned harness surface'):
             journal.prepare({'app/CLAUDE.md':file_record(self.project/'app/CLAUDE.md')},{'app/CLAUDE.md':file_record(target)})
+
+
+class VendoredTreeOwnershipTests(unittest.TestCase):
+    """node_modules, .venv and gitignored folders hold no .git of their own, yet the journal never owns them."""
+    VENDORED=('node_modules/pkg/CLAUDE.md','node_modules/pkg/.claude/rules/x.md','.venv/lib/AGENTS.md',
+              '.venv/.claude/rules/x.md','generated/CLAUDE.md','generated/.claude/rules/x.md',
+              'generated/.claude/skills/demo/SKILL.md')
+
+    def setUp(self):
+        import shutil,subprocess
+        if shutil.which('git') is None: self.skipTest('git is required for the ignore-rule probe')
+        temp=tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
+        self.root=Path(temp.name); self.project=self.root/'project'; self.project.mkdir()
+        subprocess.run(['git','init','-q'],cwd=self.project,check=True)
+        (self.project/'.gitignore').write_text('generated/\n')
+        for name in (*self.VENDORED,'app/CLAUDE.md','.claude/rules/x.md'):
+            NestedSurfaceAdoptionTests.write(self.project/name,'before')
+        self.target=self.root/'target'; self.target.write_text('after')
+
+    def prepare(self,name):
+        journal=Journal(self.project,self.root/'journals'/name.replace('/','_'))
+        return journal,lambda:journal.prepare({name:file_record(self.project/name)},{name:file_record(self.target)})
+
+    def test_vendored_and_gitignored_trees_are_never_journaled(self):
+        for name in self.VENDORED:
+            with self.subTest(name=name):
+                journal,prepare=self.prepare(name)
+                with self.assertRaisesRegex(ValueError,'outside owned harness surface'): prepare()
+                self.assertFalse(list(journal.folder.iterdir()))
+                self.assertEqual((self.project/name).read_text(),'before')
+        # Project folders in the same repository still adopt: the probe refuses only what the ignore rules exclude.
+        for name in ('app/CLAUDE.md','.claude/rules/x.md'):
+            with self.subTest(name=name):
+                journal,prepare=self.prepare(name)
+                self.assertEqual(journal.execute(prepare()['deployment'])['status'],'committed')
+                self.assertEqual((self.project/name).read_text(),'after')
+
+    def test_explicitly_selected_vendored_files_stage_but_never_adopt(self):
+        import shutil
+        from agent_harness_lab.workflow import adopt,snapshot,candidate_states
+        names=['generated/CLAUDE.md','generated/.claude/rules/x.md']
+        original=snapshot(self.project,self.root/'baseline',allowed_paths=names)
+        shutil.copytree(self.root/'baseline',self.root/'candidate')
+        for name in names: (self.root/'candidate'/name).write_text('after')
+        with patch('agent_harness_lab.workflow.state_root',return_value=self.root/'state'):
+            with self.assertRaisesRegex(ValueError,'outside owned harness surface'):
+                adopt(self.project,self.root/'baseline',self.root/'candidate',original,
+                      candidate_states(self.root/'candidate',original))
+        self.assertEqual([(self.project/n).read_text() for n in names],['before','before'])
+
+    def test_ignore_probe_is_read_only_and_fails_closed(self):
+        import subprocess
+        from agent_harness_lab.promotion import journal as module
+        self.assertTrue(module.ignored(self.project,'generated/.claude/rules/x.md'))
+        self.assertFalse(module.ignored(self.project,'app/CLAUDE.md'))
+        self.assertFalse(module.ignored(self.project,'AGENTS.md'))  # a root file has no enclosing folder to ignore
+        self.assertFalse((self.project/'.git/index').exists())  # --no-index never opens or creates the index
+        for failure in (OSError('no git'),subprocess.TimeoutExpired('git',10)):
+            with self.subTest(failure=type(failure).__name__),patch.object(module.subprocess,'run',side_effect=failure):
+                self.assertTrue(module.ignored(self.project,'app/CLAUDE.md'))
+        with patch.object(module.subprocess,'run',return_value=subprocess.CompletedProcess([],128)):
+            self.assertTrue(module.ignored(self.project,'app/CLAUDE.md'))
+        # An inherited GIT_DIR (as inside a git hook) never redirects the probe to another repository.
+        other=self.root/'other'; other.mkdir(); subprocess.run(['git','init','-q'],cwd=other,check=True)
+        (other/'.git/info').mkdir(exist_ok=True); (other/'.git/info/exclude').write_text('app/\n')
+        with patch.dict(module.os.environ,{'GIT_DIR':str(other/'.git')}):
+            self.assertFalse(module.ignored(self.project,'app/CLAUDE.md'))
+            self.assertTrue(module.ignored(self.project,'generated/CLAUDE.md'))
+        # A project outside any repository has no ignore rules, so git is never started for it.
+        plain=self.root/'plain'; plain.mkdir()
+        with patch.object(module.subprocess,'run',side_effect=AssertionError('git must not run')):
+            self.assertFalse(module.ignored(plain,'app/CLAUDE.md'))

@@ -24,6 +24,12 @@ ORIGINS = ('project', 'external_repository')
 # Selected plugin checkouts are rooted at plugin:<name>:<marketplace> labels; a path below one names that external
 # checkout, never a project folder, so it is external_repository whatever origin the caller passed.
 PLUGIN_ROOT_PREFIX = 'plugin:'
+# Third-party package and environment trees carry no .git of their own, so containment cannot tell them apart from
+# project folders. A path below one is vendored: inventories may list it, but it is never more than unsupported.
+# Generated output (dist/, build/) is not named here; the journal finds it through the project's ignore rules.
+VENDORED_DIRECTORIES = frozenset({'node_modules', '.venv', 'venv', 'vendor', 'bower_components', 'jspm_packages',
+                                  'site-packages', '__pypackages__', '.tox', '.nox'})
+VENDORED_FACET = 'vendored'
 
 
 @dataclass(frozen=True)
@@ -37,9 +43,10 @@ class SurfaceClass:
 
 class _Context:
     """Caller facts a row may need; a callable is evaluated only by the row that asks for it."""
-    def __init__(self, root_skills, external_root=False, declared_root=None, in_checkout=False):
+    def __init__(self, root_skills, external_root=False, declared_root=None, in_checkout=False, ignored=False):
         self._root_skills, self.declared_root, self._in_checkout = root_skills, declared_root, in_checkout
         self.external_root = bool(external_root) or declared_root is not None
+        self._ignored = ignored
 
     @property
     def root_skills(self):
@@ -49,6 +56,11 @@ class _Context:
     def in_checkout(self):
         if callable(self._in_checkout): self._in_checkout = bool(self._in_checkout())
         return bool(self._in_checkout)
+
+    @property
+    def ignored(self):
+        if callable(self._ignored): self._ignored = bool(self._ignored())
+        return bool(self._ignored)
 
 
 @dataclass(frozen=True)
@@ -262,13 +274,21 @@ def _verdict(row, kinds, executable, context):
     return 'contract_required' if executable else row.writability
 
 
+def vendored(parts):
+    """Whether a directory of the path is a well-known vendored package or environment tree."""
+    return any(part in VENDORED_DIRECTORIES for part in parts[:-1])
+
+
 def classify(relative_path, runtime=None, mode=None, *, root_skills=False, external_root=False, origin='project',
-             declared_root=None, in_checkout=False):
+             declared_root=None, in_checkout=False, ignored=False):
     """Classify a root-relative POSIX path; runtime None means either runtime, mode is optional st_mode bits.
 
     external_root is True only for a path relative to a caller-declared root outside the checkout;
     declared_root is that root's label and implies external_root; None means the checkout. in_checkout is the
     caller's observed fact that no nested repository encloses the path; unknown stays False.
+    ignored is the caller's observed fact that the project's ignore rules exclude a directory enclosing the path;
+    it is evaluated only for a path that would otherwise be adoptable. A vendored or ignored path is never more
+    than unsupported and carries the vendored facet.
     """
     if not isinstance(relative_path, str) or not relative_path: raise ValueError('invalid surface path')
     path = PurePosixPath(relative_path)
@@ -278,7 +298,7 @@ def classify(relative_path, runtime=None, mode=None, *, root_skills=False, exter
     if origin not in ORIGINS: raise ValueError('unknown surface origin')
     if declared_root is not None and (not isinstance(declared_root, str) or not declared_root):
         raise ValueError('invalid declared surface root')
-    parts, context = path.parts, _Context(root_skills, external_root, declared_root, in_checkout)
+    parts, context = path.parts, _Context(root_skills, external_root, declared_root, in_checkout, ignored)
     matched = [row for row in RULES if (runtime is None or runtime in row.runtimes)
                and row.match(relative_path, parts, context)]
     # Priority, then kind and name, so the answer never depends on where a row sits in the table.
@@ -296,6 +316,10 @@ def classify(relative_path, runtime=None, mode=None, *, root_skills=False, exter
                                           if row.unconfirmed is not None)), key=rank)
     if parts[0].startswith(PLUGIN_ROOT_PREFIX): origin = 'external_repository'
     if origin == 'external_repository' and writability != 'private_excluded': writability = 'recommendation_only'
+    # Last, so no other cap raises a vendored path above unsupported; only an adoptable verdict probes ignore rules.
+    if vendored(parts) or writability == 'adoptable' and len(parts) > 1 and context.ignored:
+        facets += (VENDORED_FACET,)
+        if writability != 'private_excluded': writability = 'unsupported'
     return SurfaceClass(kinds[0] if kinds else 'unsupported', str(scope), executable, writability, facets)
 
 

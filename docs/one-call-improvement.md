@@ -83,6 +83,24 @@ nothing. A verdict does not show that any runtime loads the file.
 selected plugin checkout: every such path is `recommendation_only` unless it is
 `private_excluded`.
 
+Vendored and generated trees have no `.git` of their own, so containment alone
+would treat them as project folders. A path with a directory component in
+`surfaces.VENDORED_DIRECTORIES` (`node_modules`, `.venv`, `venv`, `vendor`,
+`bower_components`, `jspm_packages`, `site-packages`, `__pypackages__`, `.tox`,
+`.nox`) keeps its kind but is at most `unsupported`, for every caller and origin,
+and carries the `vendored` facet. `private_excluded` still wins. Generated output
+is found through the project's ignore rules instead: `classify(...,
+ignored=...)` takes the caller's observed fact that those rules exclude the
+folder holding the path, and evaluates it only for a nested path that would
+otherwise be `adoptable`. `Journal.owned` passes
+`promotion.journal.ignored`, which runs a read-only `git check-ignore
+--no-index` on that folder, with fsmonitor disabled, no index read and no
+inherited `GIT_*` variables, so a hook's `GIT_DIR` cannot answer for it. A project
+with no `.git` at or above it has no ignore rules, so git is never started for
+it. A missing git binary, a timeout or any answer other than "not ignored" fails
+closed. An ignored folder's `CLAUDE.md`, `.claude/rules` or skill bundle therefore
+stages but never adopts. A root file has no enclosing folder and is not probed.
+
 Each classifier row stands alone. When several rows match a path, the strongest
 writability wins, in the order `private_excluded`, `adoptable`,
 `contract_required`, `recommendation_only`, `unsupported`. The matching row with
@@ -122,14 +140,15 @@ the frontmatter of an agent definition, a command, a path rule and a `SKILL.md`:
 depth of a Codex role file, and fails closed on undecodable bytes, a YAML escape
 or unparsable TOML. Such a file needs the hook contract and is never adopted. An
 unchanged staged file is never written, so these checks skip it. The containment
-probe runs when a promotion is prepared and again before its first write.
-Loading a recorded transaction, previewing it and rolling it back take
-containment as observed when it was prepared, so a `.git` created later below
-the project cannot strand a rollback. A new promotion of that file is still
-refused, and so is rolling back that rollback, which re-applies the promotion's
-content and is therefore probed and checked like a new promotion. Along a chain
-of rollbacks, each one that restores the original content is taken as observed,
-and each one that re-applies the promotion's content is probed and checked.
+probe runs when a promotion is prepared and again before its first write,
+together with the ignore-rule probe. Loading a recorded transaction, previewing
+it and rolling it back take containment and ignore rules as observed when it was
+prepared, so a `.git` or `.gitignore` created later below the project cannot
+strand a rollback. A new promotion of that file is still refused, and so is
+rolling back that rollback, which re-applies the promotion's content and is
+therefore probed and checked like a new promotion. Along a chain of rollbacks,
+each one that restores the original content is taken as observed, and each one
+that re-applies the promotion's content is probed and checked.
 
 `CLAUDE.local.md`, `settings*.json`, `.codex/config.toml`, hooks, workflows,
 Codex `.rules`, `.mcp.json`, memory and plugin checkouts

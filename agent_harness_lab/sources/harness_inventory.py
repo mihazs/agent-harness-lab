@@ -244,6 +244,9 @@ class _Walk:
         runtime = self.profile['runtime']
         pinned = self.profile['version'] == surfaces.PINS[runtime] and capability is not None and any(
             row.surface == capability and row.runtime == runtime for row in surfaces.CAPABILITIES)
+        # A vendored tree is still listed, labelled, so its files are never mistaken for project-owned surfaces.
+        if surfaces.VENDORED_FACET in surface.facets:
+            facts = tuple(sorted(facts + ((surfaces.VENDORED_FACET, True),)))
         self.nodes.append(InventoryNode(path, digest(path), origin, root_name, surface.kind, surface.scope_dir, state,
             status, content, mode, f'{capability}:{runtime}' if pinned else None,
             self.profile.get('project_trust', 'unknown') if origin == 'checkout' else 'unknown', facts))

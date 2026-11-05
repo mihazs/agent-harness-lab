@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import stat
+import subprocess
 import uuid
 from agent_harness_lab.evaluation.integrity import contained, relative
 from agent_harness_lab.surfaces import adoption
@@ -31,6 +32,26 @@ def in_checkout(project,name):
         folder=folder/part
         if os.path.lexists(folder/'.git'): return False
     return True
+
+
+def ignored(project,name):
+    """The project's ignore rules exclude the folder holding name, so it is generated or vendored, not owned.
+
+    A read-only `git check-ignore --no-index` on that folder: it opens no index and runs no hook or fsmonitor.
+    A project with no .git at or above it has no ignore rules. Any other git answer, a missing git binary or a
+    timeout is unknown and fails closed as ignored."""
+    folder=PurePosixPath(name).parent
+    if not folder.parts: return False
+    root=Path(project).absolute()
+    if not any(os.path.lexists(parent/'.git') for parent in (root,*root.parents)): return False
+    # Inherited GIT_DIR or GIT_WORK_TREE (a git hook sets them) would answer for another repository.
+    env={key:value for key,value in os.environ.items() if not key.startswith('GIT_')}
+    try:
+        result=subprocess.run(['git','-c','core.fsmonitor=false','check-ignore','-q','--no-index','--',f'{folder}/'],
+                              cwd=root,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
+                              env={**env,'GIT_OPTIONAL_LOCKS':'0'},timeout=10,check=False)
+    except (OSError,subprocess.SubprocessError): return True
+    return result.returncode!=1
 
 
 def validate_snapshot(record):
@@ -88,21 +109,22 @@ class Journal:
             if not isinstance(mapping,dict) or len(mapping)>1000: raise ValueError('invalid snapshot set')
             for name,snapshot in mapping.items():
                 validate_snapshot(snapshot)
-                # Containment was probed when the record was prepared, so a .git created later cannot strand
-                # its rollback; a promotion's targets are re-checked with their modes and bytes.
+                # Containment and ignore rules were probed when the record was prepared, so a later .git or
+                # .gitignore cannot strand its rollback; a promotion's targets are re-checked with modes and bytes.
                 self.owned(name,snapshot if record['kind']=='promotion' and mapping is record['after'] else None,
                            probe=False)
         return record
 
     def owned(self,name,target=None,*,probe=True):
         """Resolve an owned path. target is a snapshot about to be written (its mode and bytes are checked);
-        probe False takes containment as observed when the transaction was prepared."""
+        probe False takes containment and ignore rules as observed when the transaction was prepared."""
         relative(name)
         raw=None if target is None else base64.b64decode(target['content'],validate=True)
-        # The root skills/ and containment probes run only for a path whose row needs them.
+        # The root skills/, containment and ignore probes run only for a path whose verdict needs them.
         if adoption(name,None if target is None else target['mode'],raw,
                     root_skills=lambda:(self.project/'skills').is_dir(),
-                    in_checkout=(lambda:in_checkout(self.project,name)) if probe else True).writability!='adoptable':
+                    in_checkout=(lambda:in_checkout(self.project,name)) if probe else True,
+                    ignored=(lambda:ignored(self.project,name)) if probe else False).writability!='adoptable':
             raise ValueError('transaction outside owned harness surface')
         return contained(self.project,name)
 

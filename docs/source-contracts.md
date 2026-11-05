@@ -1213,7 +1213,11 @@ capability reference such as `instructions:codex`, which names the matching
 and `harness_sha256` names the `HarnessSnapshot` captured in the same Git read.
 The inventory therefore extends that snapshot without changing its fingerprint
 or the controller binding. Files that classify as `private_excluded` are
-`present_content_not_read`: their bytes are never read or hashed.
+`present_content_not_read`: their bytes are never read or hashed. A file below a
+vendored tree such as `node_modules` or `.venv` is still listed under its kind,
+with the fact `vendored: true`, because the classifier never makes it
+adoptable. The inventory runs no git, so a folder excluded only by ignore rules
+is not labelled here; the promotion journal checks those rules.
 `observed_loading` and `effective` are always `unknown`. Construction rejects
 any other value, because a listed file is not evidence that a runtime loaded it.
 

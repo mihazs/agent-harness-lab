@@ -405,3 +405,51 @@ class EmbeddedHookTests(unittest.TestCase):
             with self.subTest(name=name): self.assertEqual(adoption(name, 0o644, plain, in_checkout=True).writability, A)
         # A bundle file that is not SKILL.md is not parsed as frontmatter.
         self.assertEqual(adoption('pkg/.claude/skills/x/reference.md', 0o644, hooked, in_checkout=True).writability, A)
+
+
+class VendoredTreeTests(unittest.TestCase):
+    """Third-party and generated trees hold no .git of their own, yet they are never project-owned surfaces."""
+    VENDORED = ('node_modules/pkg/CLAUDE.md', 'node_modules/pkg/.claude/rules/x.md', 'node_modules/AGENTS.md',
+                '.venv/lib/python3/site-packages/pkg/AGENTS.md', '.venv/.claude/rules/x.md',
+                'vendor/lib/.claude/skills/demo/SKILL.md', 'app/node_modules/pkg/.claude/agents/r.md')
+
+    def test_vendored_paths_keep_their_kind_but_are_never_adoptable(self):
+        from agent_harness_lab.surfaces import VENDORED_FACET, classify
+        for name in self.VENDORED:
+            with self.subTest(name=name):
+                lexical = classify(name)
+                verdict = classify(name, None, 0o644, in_checkout=True, root_skills=True)
+                self.assertEqual(verdict.writability, U)
+                self.assertNotEqual(verdict.kind, 'unsupported')  # inventories still list it as its surface
+                self.assertIn(VENDORED_FACET, verdict.facets)
+                self.assertEqual((lexical.writability, lexical.kind), (U, verdict.kind))
+                self.assertEqual(classify(name, origin='external_repository', in_checkout=True).writability, U)
+                self.assertFalse(CallerCharacterization.candidate(self.caller(), name, False))
+                self.assertFalse(CallerCharacterization.owned(self.caller(), name, False))
+        # Stricter verdicts stay: VCS metadata inside a vendored tree is still private_excluded.
+        self.assertEqual(classify('node_modules/pkg/.git/config').writability, P)
+        self.assertEqual(classify('node_modules/pkg/.claude/hooks/run.sh').writability, U)
+        # Only directories count, and only exact names: project folders and files keep their verdicts.
+        for name in ('vendor.md', 'my_node_modules/CLAUDE.md', 'src/vendored/CLAUDE.md'):
+            with self.subTest(name=name):
+                self.assertNotIn(VENDORED_FACET, classify(name, in_checkout=True).facets)
+        self.assertEqual(classify('src/vendored/CLAUDE.md', in_checkout=True).writability, A)
+
+    def test_ignore_rules_are_probed_only_for_an_otherwise_adoptable_nested_path(self):
+        from agent_harness_lab.surfaces import VENDORED_FACET, classify
+        calls = []
+        probe = lambda: calls.append(1) or True
+        for name, verdict in (('AGENTS.md', A), ('CLAUDE.md', A), ('.claude/hooks/pre.sh', C), ('lefthook.yml', R),
+                              ('CLAUDE.local.md', P), ('node_modules/pkg/CLAUDE.md', U)):
+            self.assertEqual(classify(name, None, None, in_checkout=True, ignored=probe).writability, verdict)
+        self.assertEqual(calls, [])
+        for name in ('dist/CLAUDE.md', 'generated/.claude/rules/x.md', '.claude/skills/demo/SKILL.md'):
+            with self.subTest(name=name):
+                verdict = classify(name, None, None, in_checkout=True, ignored=probe)
+                self.assertEqual((verdict.writability, VENDORED_FACET in verdict.facets), (U, True))
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(classify('dist/CLAUDE.md', None, None, in_checkout=True, ignored=lambda: False).writability, A)
+
+    def caller(self):
+        helper = CallerCharacterization('test_symlinks_are_refused_by_candidate_and_journal'); helper.setUp()
+        self.addCleanup(helper.doCleanups); return helper
