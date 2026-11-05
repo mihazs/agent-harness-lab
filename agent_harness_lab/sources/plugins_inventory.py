@@ -95,6 +95,8 @@ class _CheckoutWalk(harness_inventory._Walk):
         status, facts = harness_inventory.parse(self.parsers.get(kind, (None, None))[1], path, raw, self.profile)
         facts, layout = dict(facts), _layout(path, kind, raw)
         if set(facts) & set(layout): raise ValueError('plugin layout facts collide with parser facts')
+        self.facts += len(facts) + len(layout)
+        if self.facts > harness_inventory.MAX_FACTS: raise harness_inventory._Blocked('fact_bound_exceeded')
         self.nodes.append(harness_inventory.InventoryNode(path, digest(path), 'caller_declared_external', root[1],
             kind, str(PurePosixPath(path).parent), 'present', status, hashlib.sha256(raw).hexdigest(),
             stat.S_IMODE(info.st_mode), 'plugins:' + self.profile['runtime'], 'unknown',
@@ -267,7 +269,7 @@ def manifest(nodes, refusals, runtime):
     """The first manifest in the runtime's pinned search order; a refused candidate ends the search unresolved."""
     present, refused = {n.path: dict(n.facts) for n in nodes}, {r.path for r in refusals}
     for path in MANIFESTS[runtime]:
-        if path in refused: return None
+        if any(path == r or path.startswith(r + '/') for r in refused): return None
         facts = present.get(path)
         if facts is not None and (path != 'plugin.json' or facts.get('agent_plugin_schema') is True): return path
     return None
@@ -294,17 +296,17 @@ def capture(checkout, profile, *, plugin_checkouts=None, include_local=False):
         raise ValueError('a plugin checkout must name a plugin the checkout declares enabled')
     walk, checkouts = _CheckoutWalk(profile), []
     for plugin_id in sorted(selected):
-        oid, walk.nodes, walk.refusals = head(roots[_root(plugin_id)]), [], []
+        # Node and refusal lists accumulate across checkouts so MAX_FILES, like every walk bound, is shared.
+        oid, first, refused = head(roots[_root(plugin_id)]), len(walk.nodes), len(walk.refusals)
         try: walk.root(roots[_root(plugin_id)], 'caller_declared_external', _root(plugin_id))
         except harness_inventory._Blocked as error:
             return PluginInventory(**identity, status='blocked', blocked_reason=str(error))
-        files = tuple(HarnessFile(n.path_sha256, n.content_sha256, n.mode, None, None) for n in walk.nodes)
+        nodes, refusals = tuple(walk.nodes[first:]), tuple(walk.refusals[refused:])
+        files = tuple(HarnessFile(n.path_sha256, n.content_sha256, n.mode, None, None) for n in nodes)
         snapshot = HarnessSnapshot(digest(oid), files)
         inventory = harness_inventory.HarnessInventory(runtime, profile['version'], digest(profile), digest('.'),
-            'declared', tuple(walk.nodes), tuple(walk.refusals), harness_sha256=snapshot.sha256,
-            external_roots=(_root(plugin_id),))
-        checkouts.append(PluginCheckout(plugin_id, digest(oid), snapshot.sha256,
-            manifest(walk.nodes, walk.refusals, runtime), inventory))
+            'declared', nodes, refusals, harness_sha256=snapshot.sha256, external_roots=(_root(plugin_id),))
+        checkouts.append(PluginCheckout(plugin_id, digest(oid), snapshot.sha256, manifest(nodes, refusals, runtime), inventory))
     plugins = [replace(p, resolution='external_repository') if p.enabled is True and p.plugin_id in selected else p
                for p in plugins]
     return PluginInventory(**identity, status='declared', plugins=tuple(plugins), marketplaces=tuple(marketplaces),

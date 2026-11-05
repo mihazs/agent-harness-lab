@@ -133,6 +133,17 @@ class PluginInventoryTests(unittest.TestCase):
         linked = plugin_checkout(self.base / 'linked', {'.claude-plugin/plugin.json': manifest})
         (linked / '.codex-plugin').mkdir(); (linked / '.codex-plugin/plugin.json').symlink_to('../.claude-plugin/plugin.json')
         self.assertIsNone(self.capture(CODEX, plugin_checkouts={'deploy@synthetic-market': str(linked)}).checkouts[0].manifest)
+        # A refused candidate directory (symlinked or a nested repository) also ends the search unresolved.
+        target = self.base / 'target'; target.mkdir(); (target / 'plugin.json').write_text(manifest)
+        directory = plugin_checkout(self.base / 'linked-dir', {'.claude-plugin/plugin.json': manifest})
+        (directory / '.codex-plugin').symlink_to(target, target_is_directory=True)
+        nested = plugin_checkout(self.base / 'nested-dir', {'.claude-plugin/plugin.json': manifest, '.codex-plugin/plugin.json': manifest})
+        (nested / '.codex-plugin/.git').mkdir()
+        for root in (directory, nested):
+            with self.subTest(refused=root.name):
+                checkout = self.capture(CODEX, plugin_checkouts={'deploy@synthetic-market': str(root)}).checkouts[0]
+                self.assertIn('.codex-plugin', {r.path for r in checkout.inventory.refusals})
+                self.assertIsNone(checkout.manifest)
 
     def test_nothing_in_an_external_checkout_is_ever_writable(self):
         value = self.capture(plugin_checkouts={'deploy@synthetic-market': str(self.plugin)})
@@ -222,14 +233,35 @@ class PluginInventoryTests(unittest.TestCase):
         gitfile = self.base / 'gitfile'; gitfile.mkdir(); (gitfile / '.git').write_text('gitdir: /synthetic/worktrees/x\n')
         for selection in ({'idle@synthetic-market': str(self.plugin)}, {'unknown@synthetic-market': str(self.plugin)},
                           {'deploy@synthetic-market': str(self.project / 'src')}, {'deploy@synthetic-market': str(bare)},
-                          {'deploy@synthetic-market': str(gitfile)},
-                          {'deploy@synthetic-market': str(self.plugin), 'lint@other-market': str(self.plugin / 'skills')}):
+                          {'deploy@synthetic-market': str(gitfile)}):
             with self.subTest(selection=sorted(selection.values())), self.assertRaises(ValueError):
+                self.capture(plugin_checkouts=selection)
+        # Both selections are valid checkouts on their own, so only the overlap guard refuses the pair.
+        outer = plugin_checkout(self.base / 'outer'); inner = plugin_checkout(outer / 'nested')
+        for selection in ({'deploy@synthetic-market': str(outer), 'lint@other-market': str(inner)},
+                          {'deploy@synthetic-market': str(inner), 'lint@other-market': str(outer)}):
+            with self.subTest(overlap=sorted(selection)), self.assertRaisesRegex(ValueError, 'must not overlap'):
                 self.capture(plugin_checkouts=selection)
         with patch.object(inventory, 'MAX_FILES', 2):
             blocked = self.capture(plugin_checkouts=good)
         self.assertEqual((blocked.status, blocked.blocked_reason, blocked.plugins, blocked.checkouts),
                          ('blocked', 'file_bound_exceeded', (), ()))
+        # The walk bounds are shared across every selected checkout, not reset for each one.
+        pair = {'deploy@synthetic-market': str(plugin_checkout(self.base / 'a', {f'commands/{i}.md': 'x' for i in range(3)})),
+                'lint@other-market': str(plugin_checkout(self.base / 'b', {f'commands/{i}.md': 'x' for i in range(3)}))}
+        with patch.object(inventory, 'MAX_FILES', 4):
+            self.assertEqual(self.capture(plugin_checkouts=pair).blocked_reason, 'file_bound_exceeded')
+        with patch.object(inventory, 'MAX_FILES', 6):
+            self.assertEqual(self.capture(plugin_checkouts=pair).status, 'declared')
+        with patch.object(inventory, 'MAX_FACTS', 1):
+            blocked = self.capture(plugin_checkouts=good)
+        self.assertEqual((blocked.status, blocked.blocked_reason), ('blocked', 'fact_bound_exceeded'))
+        handlers = json.dumps({'hooks': {'Stop': [{'hooks': [{'type': 'command', 'command': 'x'}]}]}})
+        many = {'deploy@synthetic-market': str(plugin_checkout(self.base / 'c', {'hooks/hooks.json': handlers})),
+                'lint@other-market': str(plugin_checkout(self.base / 'd', {'hooks/hooks.json': handlers}))}
+        single = sum(len(n.facts) for n in self.capture(plugin_checkouts={k: many[k] for k in list(many)[:1]}).checkouts[0].inventory.nodes)
+        with patch.object(inventory, 'MAX_FACTS', single + 1):
+            self.assertEqual(self.capture(plugin_checkouts=many).blocked_reason, 'fact_bound_exceeded')
         with patch.object(plugins, 'MAX_DECLARATIONS', 2):
             self.assertEqual(self.capture().blocked_reason, 'declaration_bound_exceeded')
         self.assertEqual(self.capture(dict(CLAUDE, version='2.1.316')).status, 'unsupported')
