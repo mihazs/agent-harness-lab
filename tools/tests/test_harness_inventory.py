@@ -111,20 +111,42 @@ class HarnessInventoryTests(unittest.TestCase):
         self.assertEqual((value.status, value.blocked_reason), ('blocked', 'entry_bound_exceeded'))
         self.assertEqual(len(yielded), 11)  # stops at the first entry past the bound, not after the whole directory
 
-    def test_nothing_outside_the_checkout_is_opened_without_declared_roots(self):
-        self.capture()  # warm imports so the audit sees only the inventory's own opens
+    def capture_opens(self, **options):
+        """Capture while recording (inode, path) for every os.open and every audited open or listing."""
+        self.capture(**options)  # warm imports so the audit sees only the inventory's own opens
         real, opened = os.open, []
 
         def recording(path, flags, mode=0o777, *, dir_fd=None):
             descriptor = real(path, flags, mode, dir_fd=dir_fd)
             opened.append((_identity(os.fstat(descriptor)), path)); return descriptor
 
-        home = self.outside
-        with patch.dict(os.environ, HOME=str(home), CODEX_HOME=str(home), CLAUDE_CONFIG_DIR=str(home)), \
-                patch('os.open', recording):
+        with patch('os.open', recording):
             AUDIT.append([])
-            try: value = self.capture()
+            try: value = self.capture(**options)
             finally: audited = AUDIT.pop()
+        return value, opened, audited
+
+    def test_hard_linked_surface_file_is_refused_and_its_inode_never_opened(self):
+        shared = self.checkout / '.claude/skills/delta/SKILL.md'; shared.parent.mkdir(parents=True)
+        os.link(self.outside / 'skills/gamma/SKILL.md', shared)  # a checkout name for an outside file
+        value, opened, _ = self.capture_opens()
+        self.assertIn(inventory.Refusal('.claude/skills/delta/SKILL.md', 'checkout', 'hardlink'), value.refusals)
+        self.assertNotIn('.claude/skills/delta/SKILL.md', {n.path for n in value.nodes})
+        self.assertNotIn(_identity(shared.stat()), {identity for identity, _ in opened})
+
+    def test_private_excluded_surface_file_is_recorded_but_never_read_or_hashed(self):
+        cache = self.checkout / '.claude/hooks/__pycache__/check.cpython.pyc'; cache.parent.mkdir()
+        cache.write_bytes(fixture.SECRET.encode())
+        value, opened, _ = self.capture_opens()
+        node = next(n for n in value.nodes if n.path == '.claude/hooks/__pycache__/check.cpython.pyc')
+        self.assertEqual((node.declared_state, node.parse_status, node.content_sha256, node.facts),
+                         ('present_content_not_read', 'not_read', None, ()))
+        self.assertNotIn(_identity(cache.stat()), {identity for identity, _ in opened})
+
+    def test_nothing_outside_the_checkout_is_opened_without_declared_roots(self):
+        home = self.outside
+        with patch.dict(os.environ, HOME=str(home), CODEX_HOME=str(home), CLAUDE_CONFIG_DIR=str(home)):
+            value, opened, audited = self.capture_opens()
         self.assertEqual(value.external_roots, ())
         self.assertEqual({(n.origin, n.root) for n in value.nodes}, {('checkout', 'checkout')})
         # Opens by name beneath a dir_fd carry no absolute path, so every descriptor's inode must be the
