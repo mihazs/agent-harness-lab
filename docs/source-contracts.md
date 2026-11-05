@@ -1844,7 +1844,8 @@ fails the capture. Its `source_project_id` keeps its own project identity, and a
 fork source is `source_project_state: "other_project"`. GitLab sets
 `source_project_id` to null when the source fork is deleted; that merge request
 is still recorded with `source_project_state: "unknown"` and no source project
-hash, and the capture continues. A project path that
+hash, and the capture continues. A response that omits `source_project_id`
+entirely is malformed and fails the capture. A project path that
 differs from the selection, a project or object that changes between its read
 and its readback, or a non-public project read without authorization fails the
 whole capture.

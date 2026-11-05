@@ -378,6 +378,9 @@ class GitLabSourceTests(GitLabFixture, unittest.TestCase):
         for invalid in (0, True, '77'):
             with self.subTest(source=invalid), patch.dict(self.mr, source_project_id=invalid), self.assertRaises(TransportError):
                 self.read()
+        # Only an explicit null is a deleted fork; a missing key still fails closed as malformed.
+        self.mr.pop('source_project_id')
+        with self.assertRaises(TransportError): self.read()
 
     def test_approver_without_a_user_id_is_counted_unidentified(self):
         self.approvals['approved_by'] = [dict(user=dict(username='synthetic-ghost')), dict(user=dict(id=None)),

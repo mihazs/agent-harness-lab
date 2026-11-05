@@ -192,7 +192,9 @@ class GitLabAPI:
     def _merge_request(self, value, iid):
         node, selection = self._common(value, iid, MERGE_STATES, 'MergeRequest'), self.selection
         # GitLab nulls `source_project_id` when the source fork is deleted; the merge request is still recorded.
-        raw_source = value.get('source_project_id')
+        # A response without the key at all is malformed, not a deleted fork.
+        if 'source_project_id' not in value: raise ValueError('GitLab merge request omits its source project')
+        raw_source = value['source_project_id']
         source = None if raw_source is None else integer(raw_source, minimum=1)
         target = integer(value.get('target_project_id'), minimum=1)
         if target != self.project_id: raise ValueError('GitLab merge request targets another project')
