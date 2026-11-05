@@ -2545,3 +2545,160 @@ claims, verifying the shape against a real archive, and further releases.
 No source is enabled by installation. Tests use synthetic metadata; they establish
 contract validation, checkpoint behavior and a side-effect-free registry, not
 real-source compatibility, containment, diagnostic usefulness or certification.
+
+## Offline Cognee graph exports
+
+Select `local_file/cognee-export/v1` in the existing local source declaration,
+with `data` naming a selection descriptor next to the manifest:
+
+```json
+{"schema_version": 1, "cognee_version": "1.6.5", "instance": "laptop-a",
+ "dataset": "dataset-a", "dataset_id": "0f0e0d0c-0b0a-4908-8706-050403020100",
+ "format": "graph_snapshot", "export": "exports/dataset-a.json",
+ "limits": {"max_rows": 5000}}
+```
+
+The scope fingerprint must equal `digest(selection)`. The export is one regular
+file contained in the manifest folder; symlinks, hard links and special files
+are refused, and a change during capture rejects the whole capture.
+`CogneeExport` reads only that file. It never imports Cognee, and it never calls
+`recall`, `search`, `remember`, `cognify`, `improve` or `forget`. It opens no
+relational, graph or vector store, runs no embedding or model, and contacts no
+service. Producing the export is the user's own explicit step in Cognee. On-demand
+retrieval is not implemented, and the summary reports `recall_used`,
+`inference_used`, `graph_mutated`, `network_used` and `database_opened` as
+`false`.
+
+### Pinned upstream shape
+
+The adapter models one release:
+[topoteretes/cognee `v1.6.5`](https://github.com/topoteretes/cognee/tree/v1.6.5),
+commit `37f788bd287750e10d7610173e5332b3843f6ebd`. Any other `cognee_version` is
+refused. `cognee.export(dataset, format=...)` in
+[`cognee/api/v1/export/export.py`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/api/v1/export/export.py)
+checks read permission on one dataset and writes that dataset's graph. Two of
+its file shapes are accepted:
+
+| `format` | Upstream writer at the pin | Shape |
+| --- | --- | --- |
+| `graph_snapshot` | `format="pydantic"` with a `destination`: `GraphSnapshot.save()` in [`cognee/modules/migration/snapshot.py`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/migration/snapshot.py) | `dataset_name`, `dataset_id`, `nodes`, and `edges` of `source_id`/`target_id`/`relationship`/`properties` |
+| `nodes_edges` | `format="json"`: `write_json` in [`cognee/modules/migration/formats.py`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/migration/formats.py) | `nodes`, and `edges` of `source`/`target`/`relationship_name` with properties flattened beside them |
+
+Node types come from the `DataPoint` subclasses at the pin:
+[`DataPoint`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/infrastructure/engine/models/DataPoint.py),
+[`Document`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/data/processing/document_types/Document.py)
+and its subclasses,
+[`DocumentChunk`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/chunking/models/DocumentChunk.py)
+(`document_id` and the `is_part_of` and `contains` fields), and
+[`Entity`/`EntityType`](https://github.com/topoteretes/cognee/blob/37f788bd287750e10d7610173e5332b3843f6ebd/cognee/modules/engine/models/Entity.py)
+(`is_a`). The `cogx`, `graphml` and `cypher` formats, an in-memory
+`GraphSnapshot`, and any other `format` value are refused. A `graph_snapshot`
+selection whose file has no `dataset_id` key is refused, and so is a
+`nodes_edges` selection whose file has one. The shape is read from code, not
+from a published schema, and no real export has been read: the profile reports
+`upstream_shape: source_inferred` and `compatibility: unverified`. Neither
+writer emits a version, so the release is caller-declared
+(`version_attestation: caller_declared`). If an export does carry `version`,
+`cognee_version` or `schema_version`, a value other than the declared release
+is refused.
+
+### Dataset scope
+
+Every claim ID is namespaced by `instance` and the declared `dataset` label.
+Cognee derives entity IDs from names, so the same node ID in datasets A and B
+still yields two unrelated claims. `dataset_id` is a canonical lowercase UUID or
+`null`:
+
+| Export states | Selection declares | Result |
+| --- | --- | --- |
+| the same `dataset_id` | that `dataset_id` | `dataset_lineage: export_matches_declaration`, `cross_source_joins: dataset_id_bound` |
+| another `dataset_id`, or one the selection leaves `null` | anything | refused; nothing is imported |
+| no ID (`nodes_edges`, or an empty `dataset_id`) | a `dataset_id` | `caller_declared`, joins `disabled`, `dataset_lineage_unverified` |
+| no ID | `null` | `unknown`, joins `disabled`, `dataset_lineage_unverified` |
+
+So dataset B's export cannot be imported under dataset A's selection, and a
+file without a dataset identity never supports strong cross-source joins.
+
+### Claims
+
+Each node and edge becomes one `GraphClaim` and one record. The export file adds
+one `cognee_export` record whose revision is the file's SHA-256.
+
+| Graph item | Claim type (`record_type`) | Derivation | Record provenance |
+| --- | --- | --- | --- |
+| `Document` and its subclasses | `document` (`cognee_document`) | `ingested_source` | `native_field` |
+| `DocumentChunk` | `chunk` (`cognee_chunk`) | `document_segment` | `native_field` |
+| `Entity`, `EntityType` | `entity` (`cognee_entity`) | `model_extraction` | `model_hypothesis` |
+| any other node type | `graph_node` (`cognee_graph_node`) | `unmodelled_datapoint` | `unknown` |
+| `is_part_of`, `contains`, `is_a` edges | `relation` (`cognee_relation`) | `graph_edge` | `native_field` |
+| any other edge | `relation` (`cognee_relation`) | `graph_edge` | `model_hypothesis` |
+
+Edges and entities are derived evidence. Each claim keeps an `origin_status` and,
+when it can be traced, the hashed ID of its origin document:
+
+| `origin_status` | Meaning |
+| --- | --- |
+| `self` | a document |
+| `traced` | a chunk whose `document_id` and `is_part_of` edges name one exported document; an entity that only chunks of one such document `contain`; an edge from a document, or from a traced chunk or entity |
+| `not_exported` | the named document is not in the export |
+| `missing` | a chunk that names no document, or an edge with an endpoint not in the export |
+| `conflicting` | a chunk whose `document_id` and `is_part_of` edges disagree |
+| `multiple` | an entity contained by chunks of more than one document, or by a traced chunk and an untraced one |
+| `untraced` | no origin path in the export: an `EntityType`, an unmodelled node, or an edge from one |
+
+A repeated relation is never a further independent case. Every claim carries
+`independent_case`, `factually_verified` and `task_outcome_verified` set to
+`false`, and `GraphClaim` refuses any other value. Node and relationship names,
+`text`, `description`, `raw_data_location`, `external_metadata`, `edge_text` and
+every other property are fingerprinted as `body_sha256` and never stored or
+printed. A relation's name is kept only when it is one of the three structural
+names, and is otherwise `other` plus a scoped `relationship_sha256`. A node's
+`created_at` (epoch milliseconds) and `version` are kept. An edited property or
+a bumped `version` is a new revision of the same native claim. A changed
+endpoint is a different relation.
+
+### Coverage and warnings
+
+The `cognee_summary` printed by `ahl sources preview` reports claim counts,
+`rows_rejected`, `origins` and `timestamps` counts, and these warnings:
+
+| Condition | Result |
+| --- | --- |
+| Node without a non-empty string `id` | skipped, counted, `node_without_native_identity` |
+| Edge without source, target or relationship strings | skipped, counted, `edge_without_endpoints` |
+| Edge endpoint not among exported nodes | origin `missing`, `edge_endpoint_not_exported` |
+| Chunk or entity origin other than `traced` | `chunk_origin_<status>` or `entity_origin_<status>` |
+| Node `type` absent or outside the pinned types | `node_type_missing` or `unrecognized_node_type` |
+| `version` not a positive integer | `invalid_node_version` |
+| `created_at` missing, not an integer or out of range | `missing_timestamp` or `invalid_timestamp` |
+| Repeated node ID or (source, relationship, target) | further `occurrence`, `duplicate_native_id` |
+| Extra top-level key | `unknown_envelope_fields` |
+| Snapshot edge key outside the four `GraphEdge` fields | `unknown_edge_fields` |
+| Empty snapshot `dataset_name` | `dataset_name_missing` |
+
+`entities_model_extracted`, `edges_not_independent`, `sessions_not_in_export`
+and `retrieval_scores_not_in_export` are always present. Neither writer exports
+sessions, ingestion pipeline runs or `recall` scores, so none is inferred.
+Capture stays `partial`, because a graph export leaves out the relational `Data`
+rows and the vector store. The profile is `cognee-export-v1`, which
+`public_export_allowed` rejects.
+
+Malformed input rejects the whole capture: non-UTF-8 bytes, duplicate keys,
+`NaN`, a non-object envelope, missing `nodes`/`edges` lists, or a non-object node
+or edge. Decoding reuses the hardened `load_json`, so the depth, container and
+value screens and their measured costs match the Claude-Mem section above. The
+limits and ceilings are the same: `max_export_bytes` 32 MiB, `max_rows` 100,000
+(nodes plus edges plus the export record, checked before mapping), `max_fields`
+128 per node or per edge, counting a snapshot edge's nested properties, `max_json_depth` 16,
+`max_json_containers` 1,000,000 and `max_json_values` 4,000,000. `limits` may
+only lower them.
+
+`task test:sources:cognee` runs the synthetic controls: claim types and
+provenance, origin tracing, dataset A/B separation, unknown lineage, missing
+references, conflicting chunk documents, edge and version revisions, refused
+releases and formats, bounds, capture changes, and CLI output and cache with no
+body, ID, name or path while Cognee is unimportable. Still open in #52: verifying
+the shape against a real export; `cogx` archives; sessions and session context;
+code-symbol references; `recall` result import and an opt-in, explicitly
+authorized, resource-marked retrieval mode; verified read-only API semantics;
+bounded cancellation of result streams; further releases and backends.
