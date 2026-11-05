@@ -104,6 +104,10 @@ RULES = (
     Rule('claude-workflow-script', 'workflow', 15, 'contract_required',
          lambda path, parts, context: parts[-3:-1] == ('.claude', 'workflows') and PurePosixPath(path).suffix == '.js',
          runtimes=frozenset({'claude-code'})),
+    # Claude Code command Markdown below a .claude/commands folder no skill tree encloses; adoption stays closed.
+    Rule('claude-command', 'command', 15, 'unsupported', lambda path, parts, context: path.endswith('.md') and any(
+        parts[i:i + 2] == ('.claude', 'commands') and len(parts) > i + 2 and 'skills' not in parts[:i]
+        for i in range(len(parts) - 1)), runtimes=frozenset({'claude-code'})),
     Rule('vcs-and-cache', None, 0, 'private_excluded',
          lambda path, parts, context: any(part in ('.git', '__pycache__') for part in parts)),
     # Hook registrations live in settings and config files that also hold permissions and env; the hook
@@ -255,6 +259,11 @@ CAPABILITIES = (
     _row('commands_skills', 'claude-code', '.claude/commands legacy commands and nested .claude/skills', _CLAUDE + 'skills'),
     _row('commands_skills', 'codex', '.agents/skills from the cwd to the root plus user and system roots', _CODEX + 'skills'),
     _row('commands_skills', 'codex', 'deprecated custom prompts may be removed after 0.166.0', _CODEX + 'custom-prompts', 'unverified'),
+    _row('commands_skills', 'claude-code', 'command frontmatter excludes name and paths; a same-name skill wins', _CLAUDE + 'skills'),
+    _row('commands_skills', 'claude-code', 'nested skills load on first file access, named /<subdir>:<name> on a clash', _CLAUDE + 'skills'),
+    _row('commands_skills', 'codex', 'skill name at most 64 characters, scan depth 6, agents/openai.yaml metadata', _CODEX_SOURCE + '/ext/skills/src/loader/mod.rs'),
+    _row('commands_skills', 'codex', '[[skills.config]] path or name selector with enabled', _CODEX + 'skills'),
+    _row('commands_skills', 'codex', 'skill description limit of 1024 characters', _CODEX + 'skills', 'unverified'),
     _row('plugins', 'claude-code', 'enabledPlugins, marketplaces and .claude-plugin/plugin.json layout', _CLAUDE + 'plugins-reference'),
     _row('plugins', 'claude-code', 'claude plugin validate', _CLAUDE + 'plugins-reference', gate='>=2.1.233'),
     _row('plugins', 'claude-code', 'exact plugin cache subpath', _CLAUDE + 'plugins-reference', 'unverified'),

@@ -1608,6 +1608,62 @@ commands never reach a node. Still open: `[agents.<role>] config_file`
 references in `.codex/config.toml`, emission into the hook inventory once it
 lands (#276) and loading attribution (#282).
 
+### Commands, skill roots and Codex custom prompts
+
+`commands_inventory.capture(checkout, profile, codex_home=None, codex_config=None)`
+runs the harness inventory above and resolves names across its nodes. Each entry
+records a kind (`command`, `skill` or `prompt`), an id, a name SHA-256, a path, a
+root label, a load class, the content SHA-256, flags and labels. Its
+`observed_loading` and `effective` are always `unknown`. Load classes describe
+where the pinned documentation says a file would be discovered: `startup`,
+`on_demand`, `outside_scan` or `unknown`. They never say that a runtime loaded the
+file.
+
+- Claude Code commands are Markdown files below `.claude/commands`, classified by
+  the `claude-command` row in `surfaces.RULES`. Their writability stays
+  `unsupported`. A subdirectory becomes part of the id, so
+  `.claude/commands/frontend/component.md` is `/frontend:component`. A command
+  whose id matches a skill's id is flagged `shadowed_by_skill`, because the skill
+  wins. The registered `command` parser records only flat facts: whether
+  frontmatter is present, the description length, and whether `name` or `paths`
+  keys appear. Those keys are flagged `frontmatter_name_ignored` and
+  `frontmatter_paths_ignored`, since commands do not accept them.
+- Claude Code skills in `.claude/skills` in `task_cwd` or any of its ancestors are
+  `startup`. Nested `<subdir>/.claude/skills` below `task_cwd` are `on_demand`
+  with the id `/<subdir>:<name>`.
+- Codex skills are read from `.agents/skills` in every directory from `task_cwd`
+  up to the checkout root. These entries are `startup`; other roots in the
+  checkout are `outside_scan`. Skills with the same name are all listed and
+  flagged `duplicate_name`, never merged. Entries are also flagged
+  `name_missing`, `name_too_long` (more than 64 characters) and `depth_exceeded`
+  (a `SKILL.md` more than 6 directories below the root), following
+  `openai/codex@d786ff91` `codex-rs/ext/skills/src/loader/mod.rs`.
+  `description_too_long` (more than 1024 characters) carries the
+  `description_limit_unverified` label, because that bound was not found at the
+  pin. `openai_yaml` records whether the bundle has `agents/openai.yaml`.
+- `[[skills.config]]` disables are read only from a caller-declared absolute
+  `codex_config` path (at most 1 MiB, parsed with `tomllib`). An entry needs
+  exactly one `path` or `name` selector and a boolean `enabled`; any other entry
+  is ignored. A skill matched only by `enabled = false` is flagged
+  `disabled_by_declared_config`, and a skill matched by both values is flagged
+  `config_conflict` instead of having a precedence applied to it.
+- Codex custom prompts are read only from a caller-declared `codex_home`, which
+  must not overlap the checkout. Only top-level `prompts/*.md` regular files are
+  read, using the inventory's no-follow reads, bounds and refusals. Each prompt
+  has the id `/prompts:<name>`, the load `unknown`, and the labels `deprecated`
+  and `loader_unverified_at_head`. Without a declared root, nothing outside the
+  checkout is opened, and a checkout `prompts/` folder is not a surface.
+
+`SKILL.md` frontmatter is read again without following links and must match the
+inventory node's content hash. A file that changed after the inventory is
+refused. Frontmatter is a bounded subset of YAML: top-level keys, quoted values
+and block scalars. It is never loaded as YAML, and an unterminated block or a
+duplicate key gives `parse_failed`. The document has `publication_allowed: false`
+and `loading_evidence: false`. Its summary carries only counts and the
+fingerprint. Codex prompts and the skills config require the `codex` runtime.
+User and system skill roots, plugin skills and loading attribution remain open
+in later increments.
+
 ## ai-memory OKF project exports
 
 Select `local_file/ai-memory-okf/0.2` in the existing source declaration, with

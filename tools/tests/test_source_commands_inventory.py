@@ -1,0 +1,194 @@
+"""Commands, nested and ancestor skill roots and declared Codex prompts over synthetic checkouts only."""
+from dataclasses import replace
+import json
+import os
+from pathlib import Path
+import sys
+import tempfile
+import unittest
+from unittest.mock import patch
+
+from agent_harness_lab import surfaces
+from agent_harness_lab.sources import commands_inventory as commands
+from agent_harness_lab.sources import harness_inventory as inventory
+from tools.tests import harness_surface_fixture as fixture
+
+CLAUDE = dict(schema_version=1, runtime='claude-code', version='2.1.317', task_cwd='.')
+CODEX = dict(schema_version=1, runtime='codex', version='0.166.0', task_cwd='src/task')
+SECRET = fixture.SECRET
+OPENED = []
+
+
+def _audit(event, args):
+    if OPENED and event == 'open' and isinstance(args[0], str): OPENED[-1].append(args[0])
+
+
+sys.addaudithook(_audit)
+
+
+def skill(name, description='synthetic skill'):
+    return f'---\nname: {name}\ndescription: {description}\n---\n{SECRET}\n'
+
+
+def denied(*args, **kwargs): raise AssertionError('commands inventory must not spawn processes or use the network')
+
+
+class CommandsInventoryTests(unittest.TestCase):
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix='ahl-commands-'); self.addCleanup(temp.cleanup)
+        self.base = Path(temp.name).resolve()
+
+    def build(self, files, name='checkout'):
+        return fixture.build(self.base / name, files, hostile=False)
+
+    def entries(self, value, kind=None):
+        self.assertEqual(value.status, 'declared')
+        return {e.path: e for e in value.entries if kind is None or e.kind == kind}
+
+    def test_a_command_with_a_same_name_skill_is_shadowed_and_frontmatter_name_and_paths_are_ignored(self):
+        checkout = self.build({'.claude/commands/alpha.md': f'{SECRET}\n',
+            '.claude/commands/frontend/component.md': f'---\nname: other\npaths: src/**\ndescription: d\n---\n{SECRET}\n',
+            '.claude/commands/broken.md': 'placeholder\n', '.claude/commands/notes.txt': 'not markdown\n'})
+        (checkout / '.claude/commands/broken.md').write_bytes(b'\xff\xfe')
+        value = commands.capture(checkout, CLAUDE)
+        found = self.entries(value, 'command')
+        self.assertEqual({p: (e.id, e.load, e.flags) for p, e in found.items()}, {
+            '.claude/commands/alpha.md': ('/alpha', 'startup', ('shadowed_by_skill',)),
+            '.claude/commands/broken.md': ('/broken', 'startup', ('parse_failed',)),
+            '.claude/commands/frontend/component.md': ('/frontend:component', 'startup',
+                                                       ('frontmatter_name_ignored', 'frontmatter_paths_ignored'))})
+        self.assertEqual(self.entries(value, 'skill')['.claude/skills/alpha/SKILL.md'].id, '/alpha')
+        nodes = {n.path: n for n in inventory.capture(checkout, CLAUDE).nodes}
+        component = nodes['.claude/commands/frontend/component.md']
+        self.assertEqual((component.kind, component.parse_status, component.capability_ref),
+                         ('command', 'parsed', 'commands_skills:claude-code'))
+        self.assertEqual(dict(component.facts), dict(frontmatter=True, name_key=True, paths_key=True, description_chars=1))
+        self.assertEqual(nodes['.claude/skills/alpha/SKILL.md'].parse_status, 'not_parsed')
+        # Commands are a Claude Code surface: a Codex inventory of the same checkout lists none.
+        codex = commands.capture(checkout, dict(CODEX, task_cwd='.'))
+        self.assertFalse(self.entries(codex, 'command'))
+        self.assertNotIn(SECRET, json.dumps(value.document()))
+
+    def test_nested_subdirectory_skills_load_on_demand_with_a_subdirectory_qualified_id(self):
+        checkout = self.build({'.claude/skills/deploy/SKILL.md': skill('deploy'),
+                               'apps/web/.claude/skills/deploy/SKILL.md': f'{SECRET}\n',
+                               'apps/web/.claude/commands/ship.md': f'{SECRET}\n'})
+        found = self.entries(commands.capture(checkout, CLAUDE))
+        self.assertEqual((found['.claude/skills/deploy/SKILL.md'].id, found['.claude/skills/deploy/SKILL.md'].load),
+                         ('/deploy', 'startup'))
+        nested = found['apps/web/.claude/skills/deploy/SKILL.md']
+        self.assertEqual((nested.id, nested.load, nested.flags, nested.openai_yaml), ('/apps/web:deploy', 'on_demand', (), None))
+        self.assertEqual(found['apps/web/.claude/commands/ship.md'].load, 'unknown')
+        inside = self.entries(commands.capture(checkout, dict(CLAUDE, task_cwd='apps/web')))
+        self.assertEqual((inside['apps/web/.claude/skills/deploy/SKILL.md'].id,
+                          inside['apps/web/.claude/skills/deploy/SKILL.md'].load), ('/deploy', 'startup'))
+
+    def test_codex_ancestor_skill_roots_are_all_listed_and_bounds_are_flagged(self):
+        checkout = self.build({'src/task/.agents/skills/beta/SKILL.md': skill('beta'),
+            'src/.agents/skills/long/SKILL.md': skill('n' * 65, 'd' * 1025),
+            'src/.agents/skills/long/agents/openai.yaml': 'interface: {}\n',
+            'lib/.agents/skills/beta/SKILL.md': skill('beta'),
+            '.agents/skills/a/b/c/d/e/f/deep/SKILL.md': skill('deep'),
+            '.agents/skills/nameless/SKILL.md': f'---\ndescription: x\n---\n{SECRET}\n'})
+        found = self.entries(commands.capture(checkout, CODEX), 'skill')
+        rows = {p: (e.id, e.load, e.flags, e.labels, e.openai_yaml) for p, e in found.items()}
+        self.assertEqual(rows['.agents/skills/beta/SKILL.md'], ('$beta', 'startup', ('duplicate_name',), (), False))
+        self.assertEqual(rows['src/task/.agents/skills/beta/SKILL.md'], ('$beta', 'startup', ('duplicate_name',), (), False))
+        self.assertEqual(rows['lib/.agents/skills/beta/SKILL.md'], ('$beta', 'outside_scan', (), (), False))
+        self.assertEqual(rows['src/.agents/skills/long/SKILL.md'][1:],
+                         ('startup', ('description_too_long', 'name_too_long'), ('description_limit_unverified',), True))
+        self.assertEqual(rows['.agents/skills/a/b/c/d/e/f/deep/SKILL.md'][2], ('depth_exceeded',))
+        self.assertEqual(rows['.agents/skills/nameless/SKILL.md'][:3], (None, 'startup', ('name_missing',)))
+        self.assertNotIn('.claude/skills/alpha/SKILL.md', found)  # Codex does not read .claude/skills
+        # Telemetry skill prefixes come from the unchanged adoptable bundle rows.
+        self.assertEqual(surfaces.skill_prefixes(), ('.agents/skills', '.claude/skills', 'skills'))
+
+    def test_skills_config_disables_apply_only_from_a_declared_config(self):
+        checkout = self.build({'src/task/.agents/skills/gamma/SKILL.md': skill('gamma')})
+        config = self.base / 'config.toml'
+        config.write_text(f'[[skills.config]]\npath = "{checkout}/.agents/skills/beta/SKILL.md"\nenabled = false\n'
+                          '[[skills.config]]\nname = "gamma"\nenabled = false\n'
+                          '[[skills.config]]\nname = "gamma"\npath = "/synthetic/both"\nenabled = true\n')
+        plain = self.entries(commands.capture(checkout, CODEX), 'skill')
+        self.assertFalse(any(e.flags for e in plain.values()))
+        value = commands.capture(checkout, CODEX, codex_config=str(config))
+        found = self.entries(value, 'skill')
+        self.assertEqual(value.skills_config, 'declared')
+        self.assertEqual({p: e.flags for p, e in found.items()},
+                         {'.agents/skills/beta/SKILL.md': ('disabled_by_declared_config',),
+                          'src/task/.agents/skills/gamma/SKILL.md': ('disabled_by_declared_config',)})
+        config.write_text(config.read_text() + '[[skills.config]]\nname = "gamma"\nenabled = true\n')
+        found = self.entries(commands.capture(checkout, CODEX, codex_config=str(config)), 'skill')
+        self.assertEqual(found['src/task/.agents/skills/gamma/SKILL.md'].flags, ('config_conflict',))
+        for bad in (dict(codex_config='relative.toml'), dict(codex_config=str(self.base / 'missing.toml'))):
+            with self.subTest(bad=bad), self.assertRaises((ValueError, OSError)): commands.capture(checkout, CODEX, **bad)
+        with self.assertRaises(ValueError): commands.capture(checkout, CLAUDE, codex_config=str(config))
+
+    def test_codex_prompts_are_read_only_from_a_declared_codex_home_and_stay_labelled(self):
+        checkout = self.build({'prompts/review.md': f'{SECRET}\n'})
+        home = self.base / 'codex-home'
+        (home / 'prompts/sub').mkdir(parents=True)
+        (home / 'prompts/review.md').write_text(f'---\ndescription: d\n---\n{SECRET}\n')
+        (home / 'prompts/sub/nested.md').write_text(SECRET)
+        (home / 'prompts/notes.txt').write_text(SECRET)
+        (home / 'prompts/linked.md').symlink_to(home / 'prompts/review.md')
+        OPENED.append([])
+        try: undeclared = commands.capture(checkout, dict(CODEX, task_cwd='.'))
+        finally: opened = OPENED.pop()
+        self.assertFalse(any('codex-home' in path for path in opened))
+        self.assertEqual((undeclared.prompts_root, self.entries(undeclared, 'prompt')), ('not_declared', {}))
+        self.assertNotIn('prompts/review.md', {n.path for n in inventory.capture(checkout, dict(CODEX, task_cwd='.')).nodes})
+        value = commands.capture(checkout, dict(CODEX, task_cwd='.'), codex_home=str(home))
+        prompts = self.entries(value, 'prompt')
+        self.assertEqual({p: (e.id, e.root, e.load, e.labels) for p, e in prompts.items()},
+                         {'prompts/review.md': ('/prompts:review', 'codex_home', 'unknown',
+                                                ('deprecated', 'loader_unverified_at_head'))})
+        self.assertEqual({(r.path, r.root, r.reason) for r in value.refusals}, {('prompts/linked.md', 'codex_home', 'symlink')})
+        document = json.dumps(value.document())
+        for text in ('deprecated', 'loader_unverified_at_head'): self.assertIn(text, document)
+        self.assertNotIn(SECRET, document)
+        with self.assertRaises(ValueError): commands.capture(checkout, CLAUDE, codex_home=str(home))
+        with self.assertRaises(ValueError): commands.capture(checkout, CODEX, codex_home=str(checkout / 'src'))
+
+    def test_entries_never_claim_loading_and_capture_is_read_only(self):
+        checkout = self.build({'.claude/commands/alpha.md': f'{SECRET}\n'})
+        before = fixture.tree_state(checkout)
+        with patch('subprocess.Popen', denied), patch('os.system', denied), patch('os.posix_spawn', denied), \
+                patch('os.fork', denied), patch('socket.socket', denied), patch('socket.create_connection', denied):
+            value = commands.capture(checkout, CLAUDE)
+        self.assertEqual(fixture.tree_state(checkout), before)
+        entry = value.entries[0]
+        for field, bad in (('observed_loading', 'observed'), ('effective', 'loaded'), ('flags', ('activated',)),
+                           ('labels', ('verified',)), ('load', 'always'), ('id', 'alpha'), ('openai_yaml', 'yes')):
+            with self.subTest(field=field), self.assertRaises(ValueError): replace(entry, **{field: bad})
+        with self.assertRaises(ValueError): replace(value, effective='observed')
+        self.assertEqual(value.summary()['observed_loading'], 'unknown')
+        self.assertFalse(value.document()['publication_allowed'])
+        unpinned = commands.capture(checkout, dict(CLAUDE, version='2.1.300'))
+        self.assertEqual((unpinned.status, unpinned.entries), ('unsupported', ()))
+        with patch.object(inventory, 'MAX_FILES', 1):
+            blocked = commands.capture(checkout, CLAUDE)
+        self.assertEqual((blocked.status, blocked.blocked_reason, blocked.entries), ('blocked', 'file_bound_exceeded', ()))
+
+    def test_a_skill_swapped_after_the_inventory_is_refused(self):
+        checkout = self.build({})
+        real = inventory.capture
+        def swapped(*args, **kwargs):
+            value = real(*args, **kwargs)
+            (checkout / '.claude/skills/alpha/SKILL.md').write_text(skill('other'))
+            return value
+        with patch.object(inventory, 'capture', swapped), self.assertRaisesRegex(ValueError, 'changed'):
+            commands.capture(checkout, CLAUDE)
+
+    def test_frontmatter_is_a_bounded_subset_never_a_yaml_load(self):
+        self.assertIsNone(commands.frontmatter(b'# no frontmatter\n'))
+        self.assertEqual(commands.frontmatter(b'---\nname: "q"\n# c\ndescription: |\n  one\n  two\n---\nbody'),
+                         dict(name='q', description='one\ntwo'))
+        for raw in (b'---\nname: a\n', b'---\nname: a\nname: b\n---\n', b'---\n  orphan\n---\n', b'---\nbare\n---\n',
+                    b'---\nname: \xff\n---\n'):
+            with self.subTest(raw=raw), self.assertRaises(ValueError): commands.frontmatter(raw)
+        self.assertEqual(commands.parse('AGENTS.md', b'', CODEX), ('not_parsed', {}))
+
+
+if __name__ == '__main__':
+    unittest.main()

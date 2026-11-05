@@ -59,7 +59,9 @@ GOLDEN = (
     ('agents/hook/guard.md', C, C, 'agent', (H,), (H,)),
     ('.claude/agents/notes.txt', U, U, 'unsupported', (), (H,)),
     ('.claude/agents.md', U, U, 'unsupported', (), (H,)),
-    ('.claude/commands/ship.md', U, U, 'unsupported', (), (H,)),
+    ('.claude/commands/ship.md', U, U, 'command', (), (H,)),
+    ('.claude/commands/frontend/component.md', U, U, 'command', (), (H,)),
+    ('.claude/skills/demo/.claude/commands/x.md', A, A, 'skill', (S,), (S, H)),
     ('.claude/settings.json', C, C, 'hook', (H,), (H,)),
     ('.claude/settings.local.json', P, P, 'hook', (H,), (H,)),
     ('.codex/config.toml', C, C, 'hook', (H,), (H,)),
@@ -219,9 +221,9 @@ class CapabilityTableTests(unittest.TestCase):
         from agent_harness_lab.surfaces import CAPABILITIES
         unverified = [r for r in CAPABILITIES if r.status == 'unverified']
         self.assertEqual({(r.surface, r.runtime) for r in unverified}, self.UNVERIFIED)
-        self.assertEqual(len(unverified), 13)
+        self.assertEqual(len(unverified), 14)
         items = ' '.join(r.item for r in unverified)
-        for phrase in ('size limit', 'version gates', 'static validator', 'load timing', 'custom prompts',
+        for phrase in ('size limit', 'version gates', 'static validator', 'load timing', 'custom prompts', 'description limit',
                        'cache subpath', 'plugin agents', 'validate command', 'memories layout', 'managed settings',
                        'claudeMdExcludes', 'dotfile', 'between the root and the cwd'):
             self.assertIn(phrase, items)

@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Add `agent_harness_lab/sources/commands_inventory.py`, a read-only inventory of Claude Code slash commands, nested and ancestor skill roots, and Codex custom prompts. It builds on the harness inventory. Commands under `.claude/commands` get `a:b` ids and are flagged `shadowed_by_skill` when a skill has the same id. Their `name` and `paths` frontmatter keys are flagged as ignored. Nested `<subdir>/.claude/skills` are `on_demand` with a `/<subdir>:<name>` id. Codex `.agents/skills` from `task_cwd` up to the checkout root are all listed, and skills with the same name are flagged, never merged. Name, depth and unverified description limits are flagged, `agents/openai.yaml` presence is recorded, and `[[skills.config]]` disables are applied only from a caller-declared config. Codex prompts are read only from a caller-declared `CODEX_HOME` and are labelled `deprecated` and `loader_unverified_at_head`. Every entry keeps `observed_loading` and `effective` as `unknown`.
