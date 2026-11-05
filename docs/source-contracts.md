@@ -1760,7 +1760,8 @@ key/value length. Finished elements are emptied and detached as parsing proceeds
 so retained memory does not grow with element count. pytest JSON is screened
 before decoding: structural brackets outside strings are counted against
 `max_json_depth` and `max_json_containers`, because the decoder builds the whole
-tree first and empty containers amplify memory roughly 48-fold. It is then decoded
+tree first and empty containers amplify memory roughly 48-fold. The screen is a
+single linear pass; a string that never closes is refused. It is then decoded
 strictly as UTF-8 with duplicate-key rejection and no `NaN`/`Infinity`, and the
 `tests` schema is validated before any record is made. Each report's bytes are
 released after parsing; the change check re-reads by streaming hash.

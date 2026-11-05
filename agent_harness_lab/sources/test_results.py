@@ -34,8 +34,9 @@ PYTEST_KNOWN = ('passed', 'failed', 'error', 'skipped', 'xfailed', 'xpassed', 'r
 DECLARATION = re.compile(rb'\A(?:\xef\xbb\xbf)?<\?xml[ \t\r\n][^?>]*?encoding[ \t\r\n]*=[ \t\r\n]*["\']([^"\']*)["\']')
 # Any markup declaration (DOCTYPE, ENTITY, ELEMENT, ATTLIST, NOTATION, conditional sections) is refused.
 MARKUP_DECLARATION = re.compile(rb'<!(?!--|\[CDATA\[)')
-# JSON strings are skipped so only structural brackets are counted; the unrolled loop cannot backtrack.
-JSON_STRUCTURE = re.compile(rb'"[^"\\]*(?:\\.[^"\\]*)*"|[\[{\]}]', re.S)
+# JSON strings are skipped so only structural brackets are counted. Possessive quantifiers never backtrack, and a
+# quote the string branch cannot close matches the bare '"' and ends the scan: retrying from every later quote is quadratic.
+JSON_STRUCTURE = re.compile(rb'"[^"\\]*+(?:\\.[^"\\]*+)*+"|"|[\[{\]}]', re.S)
 
 
 class HostileReport(ValueError):
@@ -128,6 +129,8 @@ def screen_json(raw, bounds):
     depth = containers = 0
     for token in JSON_STRUCTURE.finditer(raw):
         mark = raw[token.start()]
+        if token.end() - token.start() == 1 and mark == ord('"'):
+            raise HostileReport('pytest JSON string is unterminated')
         if mark in b'[{':
             depth += 1; containers += 1
             if depth > bounds['max_json_depth']: raise HostileReport('pytest JSON depth bound exceeded')

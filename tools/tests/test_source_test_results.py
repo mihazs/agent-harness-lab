@@ -216,7 +216,9 @@ class TestResultSourceTests(unittest.TestCase):
 
     def test_pytest_json_containers_and_depth_are_bounded_before_decoding(self):
         for body, bound in (('{"tests": ['+','.join(['{}']*20)+']}', dict(max_json_containers=10)),
-                            ('{"tests": [], "x": '+'['*100000+']'*100000+'}', None),
+                            # Deeper than the default bound yet shallow enough that json.loads would decode it.
+                            ('{"tests": [], "x": '+'['*100+']'*100+'}', None),
+                            ('{"tests": [], "x": '+'['*10+']'*10+'}', dict(max_json_depth=5)),
                             ('{"tests": [], "s": "'+'['*200+'\\"'+'"}', dict(max_json_depth=2))):
             with self.subTest(body=body[:40]):
                 (self.root/'reports/pytest.json').write_text(body)
@@ -227,6 +229,20 @@ class TestResultSourceTests(unittest.TestCase):
                         with self.assertRaisesRegex(AssertionError, 'decoded'): self.connector.read(self.source)
                     else:
                         with self.assertRaises(HostileReport): self.connector.read(self.source)
+
+    def test_pytest_json_unterminated_string_is_refused_in_linear_time(self):
+        import time
+        for raw in (b'"'+b'\\"'*(512*1024), b'{"tests": [], "x": "'+b'\\"'*(512*1024)):
+            with self.subTest(prefix=raw[:12]):
+                started = time.monotonic()
+                with self.assertRaisesRegex(HostileReport, 'unterminated'):
+                    test_results.screen_json(raw, test_results.limits(None))
+                # A rescan from every quote took nearly a minute at 80 KB; a single pass over 1 MiB takes milliseconds.
+                self.assertLess(time.monotonic()-started, 2)
+        (self.root/'reports/pytest.json').write_bytes(b'{"tests": [], "x": "'+b'\\"'*(512*1024))
+        self.declare([dict(path='reports/pytest.json', format='pytest-json')])
+        with patch.object(test_results, 'unique_object', side_effect=AssertionError('decoded')):
+            with self.assertRaises(HostileReport): self.connector.read(self.source)
 
     def test_finished_elements_are_released_while_parsing(self):
         import tracemalloc
