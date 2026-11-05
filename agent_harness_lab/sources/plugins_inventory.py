@@ -23,7 +23,7 @@ from .schema import digest, fingerprint, label
 
 PROFILE = 'ahl-plugin-inventory-v1'
 MAX_DECLARATIONS = 256
-MAX_SETTINGS_BYTES = 1024 * 1024
+MAX_SETTINGS_BYTES = harness_inventory.MAX_CONFIG_BYTES
 MAX_REFS_BYTES = 1024 * 1024
 JSON_BOUNDS = dict(max_json_depth=32, max_json_containers=20000, max_json_values=100000)
 RESOLUTIONS = ('content_not_selected', 'external_repository', 'not_enabled', 'enablement_inherited')

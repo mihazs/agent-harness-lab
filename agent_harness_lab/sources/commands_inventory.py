@@ -32,7 +32,7 @@ FLAGS = ('config_conflict', 'description_missing', 'description_too_long', 'dept
 LABELS = ('deprecated', 'description_limit_unverified', 'loader_unverified_at_head')
 # Pinned in openai/codex@d786ff91 codex-rs/ext/skills/src/loader/mod.rs; the description bound is not found at the pin.
 CODEX_NAME_MAX, CODEX_SCAN_DEPTH, CODEX_DESCRIPTION_MAX = 64, 6, 1024
-MAX_CONFIG_BYTES = 1024 * 1024
+MAX_CONFIG_BYTES = harness_inventory.MAX_CONFIG_BYTES
 MAX_ID_CHARS = 4096
 _ROOTS = {'claude-code': ('.claude', 'skills'), 'codex': ('.agents', 'skills')}
 # Reader reasons that every YAML parser shares, so they are a definite 'parse_failed'. unsupported_yaml (valid YAML

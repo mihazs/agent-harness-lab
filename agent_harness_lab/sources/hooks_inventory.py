@@ -18,7 +18,7 @@ from . import harness_inventory
 from .hardened import bounded_depth, load_json
 from .schema import digest
 
-MAX_CONFIG_BYTES = 1024 * 1024
+MAX_CONFIG_BYTES = harness_inventory.MAX_CONFIG_BYTES
 MAX_HANDLERS = 512                     # per configuration file; more is parse_failed, never truncated
 BOUNDS = dict(max_json_depth=32, max_json_containers=20000, max_json_values=100000)
 CLAUDE_EVENTS = frozenset((

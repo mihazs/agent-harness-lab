@@ -23,6 +23,7 @@ MAX_BYTES = 10 * 1024 * 1024  # bytes read from candidate files, across every ro
 MAX_DEPTH = 32                # directory nesting below a root
 MAX_ENTRIES = 20000           # directory entries examined, candidates or not
 MAX_FACTS = 50000             # parser facts across every node, so many small files cannot amplify memory
+MAX_CONFIG_BYTES = 1024 * 1024  # one JSON or TOML runtime configuration, checked before any parser decodes it
 ORIGINS = ('checkout', 'caller_declared_external')
 TRUST = ('unknown', 'declared_trusted', 'declared_untrusted')
 DECLARED_STATES = ('present', 'present_content_not_read')
@@ -253,11 +254,14 @@ class _Walk:
         The primary kind's parser keeps parse_status and its plain facts, so kind consumers are unchanged. For a
         COMBINED file, each listed kind that is also a classifier facet, such as plugin and config for a settings
         file whose kind is hook, reads the same bytes independently into '<kind>.parse_status' and '<kind>.<fact>'.
-        Every other file is read by its primary parser only.
+        Every other file is read by its primary parser only. A COMBINED file over MAX_CONFIG_BYTES is refused once,
+        here, before any parser can decode it: the primary and every facet record parse_failed with no facts.
         """
-        status, facts = parse(reference, path, raw, self.profile)
         combined = COMBINED.get(self.profile['runtime'], {}).get(path, ())
         others = [kind for kind in surface.facets if kind in combined and kind != surface.kind and kind in self.parsers]
+        if combined and len(raw) > MAX_CONFIG_BYTES:
+            return 'parse_failed', tuple(sorted((kind + '.parse_status', 'parse_failed') for kind in others))
+        status, facts = parse(reference, path, raw, self.profile)
         if any(key.startswith(tuple(kind + '.' for kind in others)) for key, _ in facts):
             raise ValueError('primary parser facts collide with a facet namespace')
         extra = []

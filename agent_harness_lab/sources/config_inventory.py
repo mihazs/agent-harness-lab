@@ -381,6 +381,7 @@ def parse(path, raw, profile):
     reader = {'.mcp.json': 'claude_mcp', '.claude/settings.json': 'claude_settings',
               '.codex/config.toml': 'codex_config'}.get(path)
     if reader is not None:
+        if len(raw) > inventory.MAX_CONFIG_BYTES: raise ValueError('runtime configuration exceeds its byte bound')
         counts = {}
         for surface, item, _ in READERS[reader](_decode(reader, raw), 'project'):
             counts[f'{surface}_{item}'] = counts.get(f'{surface}_{item}', 0) + 1
