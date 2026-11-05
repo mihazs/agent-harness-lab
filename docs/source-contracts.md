@@ -1949,6 +1949,7 @@ commit `d0968e5d136abc34dcfe1b78acf3726fa84978d8`. Any other
 | Export envelope (`exportedAt`, `exportedAtEpoch`, `query`, optional `project`, four `total*` counts, `observations`, `sessions`, `summaries`, `prompts`) | [`scripts/export-memories.ts`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/scripts/export-memories.ts) |
 | Observation, summary and prompt rows, plus search `rank`/`score` | [`src/services/sqlite/types.ts`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/src/services/sqlite/types.ts) |
 | Session rows and the optional `agent_type`, `agent_id`, `platform_source`, `native_prompt_*` fields | `importSdkSession`, `importObservation`, `importSessionSummary` and `importUserPrompt` in [`src/services/sqlite/SessionStore.ts`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/src/services/sqlite/SessionStore.ts) |
+| Migration columns the export's `SELECT o.*`/`s.*`/`up.*` queries also return (`content_hash`, `occurrence_count`, `title_norm_key`, `generated_by_model`, `relevance_count`, `reinforcement_dates`, `last_reinforced`, `merged_into_project`, `metadata`, and the `synced_at`/`origin_device_id`/`origin_local_id`/`sync_rev` sync columns) | `ALTER TABLE ... ADD COLUMN` migrations in the same `SessionStore.ts`; known but not modelled as claims |
 | Required session identity per row kind | `importRowSchemas` in [`src/services/worker/http/routes/DataRoutes.ts`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/src/services/worker/http/routes/DataRoutes.ts) |
 | Platform labels | [`src/shared/platform-source.ts`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/src/shared/platform-source.ts) |
 | Export/import workflow | [`docs/public/usage/export-import.mdx`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/docs/public/usage/export-import.mdx) |
@@ -2035,6 +2036,8 @@ preview` reports per-type claim counts, plus these counts and warnings:
 | --- | --- |
 | Row without a positive integer `id`, or without its session ID string | row skipped, counted in `rows_rejected`, `row_without_native_identity` |
 | Row field outside the pinned field set | counted in `rows_with_unknown_fields`, `unknown_row_fields`; field names are not printed |
+| Unrecognized session `status`, non-integer `prompt_number`, out-of-range timestamp offset | `unrecognized_session_status`, `invalid_prompt_number`, `invalid_timestamp` |
+| Change only to an unmodelled field | the snapshot digest includes the export's SHA-256, so the checkpoint still moves |
 | Extra top-level key | `unknown_envelope_fields` |
 | Missing, naive or unparseable timestamp, or ISO and epoch values more than 1 s apart | `timestamps` count of `missing`, `invalid` or `conflicting`, matching warning, `original_at` null |
 | Repeated `id` within one array | kept as a further `occurrence`, `duplicate_native_id` |

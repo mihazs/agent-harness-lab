@@ -189,6 +189,31 @@ class ClaudeMemSourceTests(unittest.TestCase):
         self.assertEqual([c.original_at for c in self.claims('observation')], ['2031-04-05T06:07:08+00:00', None])
         self.assertNotIn(SECRET, json.dumps(summary))
 
+    def test_pinned_migration_columns_are_known_and_any_export_change_is_a_new_capture(self):
+        from agent_harness_lab.sources import claude_mem
+        columns = dict(content_hash='h', occurrence_count=1, title_norm_key='k', generated_by_model='m', relevance_count=0,
+            reinforcement_dates='[]', last_reinforced=None, merged_into_project=None, metadata=None, synced_at=None,
+            origin_device_id=None, origin_local_id=None, sync_rev='1')
+        value = self.edited('observations', **columns)
+        value['summaries'][0].update({k: columns[k] for k in ('merged_into_project', *claude_mem.SYNC)})
+        value['prompts'][0].update({k: columns[k] for k in claude_mem.SYNC})
+        self.read(value)
+        self.assertNotIn('unknown_row_fields', self.connector.summary['warnings'])
+        first = self.read(value)
+        self.assertEqual(self.read(value).sha256, first.sha256)
+        changed = copy.deepcopy(value); changed['observations'][0]['relevance_count'] = 5
+        changed['sessions'][0]['completed_at'] = AT
+        # Only unmodelled fields changed: the claims are identical, yet the checkpoint must move.
+        self.assertNotEqual(self.read(changed).sha256, first.sha256)
+
+    def test_unrecognized_status_prompt_number_and_overflowing_offsets_warn(self):
+        value = self.edited('sessions', status='paused')
+        value['observations'][0].update(prompt_number='one', created_at='0001-01-01T00:00:00+14:00', created_at_epoch=None)
+        self.read(value)
+        warnings = self.connector.summary['warnings']
+        for warning in ('unrecognized_session_status', 'invalid_prompt_number', 'invalid_timestamp'):
+            self.assertIn(warning, warnings)
+
     def test_scope_platform_and_orphan_warnings(self):
         value = copy.deepcopy(EXPORT)
         value.pop('project')

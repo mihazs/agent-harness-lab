@@ -27,16 +27,20 @@ OBSERVATION_TYPES = ('decision', 'bugfix', 'feature', 'refactor', 'discovery', '
 PLATFORMS = ('claude', 'codex', 'cursor', 'kimi', 'pi', 'antigravity-cli')
 SESSION_STATUSES = ('active', 'completed', 'failed')
 SEARCH = ('rank', 'score')
-# Row fields from src/services/sqlite/types.ts, SessionStore.import* and the /api/import validators at the pin.
+# Columns added by SessionStore migrations at the pin; export queries select o.*, s.* and up.*, so rows carry them.
+SYNC = ('synced_at', 'origin_device_id', 'origin_local_id', 'sync_rev')
+OBSERVATION_COLUMNS = ('content_hash', 'occurrence_count', 'title_norm_key', 'generated_by_model', 'relevance_count',
+    'reinforcement_dates', 'last_reinforced', 'merged_into_project', 'metadata')
+# Row fields from src/services/sqlite/types.ts, SessionStore.import*, its migrations and the /api/import validators at the pin.
 FIELDS = dict(
     observations=('id', 'memory_session_id', 'project', 'text', 'type', 'title', 'subtitle', 'facts', 'narrative', 'concepts',
         'files_read', 'files_modified', 'prompt_number', 'discovery_tokens', 'created_at', 'created_at_epoch', 'agent_type',
-        'agent_id', 'platform_source', *SEARCH),
+        'agent_id', 'platform_source', *OBSERVATION_COLUMNS, *SYNC, *SEARCH),
     summaries=('id', 'memory_session_id', 'project', 'request', 'investigated', 'learned', 'completed', 'next_steps',
         'files_read', 'files_edited', 'notes', 'prompt_number', 'discovery_tokens', 'created_at', 'created_at_epoch',
-        'platform_source', *SEARCH),
+        'platform_source', 'merged_into_project', *SYNC, *SEARCH),
     prompts=('id', 'session_db_id', 'content_session_id', 'memory_session_id', 'project', 'platform_source', 'prompt_number',
-        'prompt_text', 'created_at', 'created_at_epoch', 'native_prompt_id', 'native_prompt_hash', *SEARCH),
+        'prompt_text', 'created_at', 'created_at_epoch', 'native_prompt_id', 'native_prompt_hash', *SYNC, *SEARCH),
     sessions=('id', 'content_session_id', 'memory_session_id', 'project', 'platform_source', 'user_prompt', 'custom_title',
         'started_at', 'started_at_epoch', 'completed_at', 'completed_at_epoch', 'status'))
 # Text bodies are fingerprinted together and never stored.
@@ -113,8 +117,11 @@ def instant(text, epoch):
         if type(epoch) is not int or not 0 <= epoch <= 10**14: return None, 'invalid'
         parsed.append(datetime.fromtimestamp(epoch/1000, timezone.utc))
     if not parsed: return None, 'missing'
-    if len(parsed) == 2 and abs((parsed[0]-parsed[1]).total_seconds()) > 1: return None, 'conflicting'
-    return parsed[0].astimezone(timezone.utc).isoformat(), 'native'
+    try:
+        if len(parsed) == 2 and abs((parsed[0]-parsed[1]).total_seconds()) > 1: return None, 'conflicting'
+        return parsed[0].astimezone(timezone.utc).isoformat(), 'native'
+    except OverflowError:
+        return None, 'invalid'
 
 
 def text(value):
@@ -152,7 +159,9 @@ class ClaudeMemExport(LocalExport):
                           c.original_at) for c in self.claims]
         records.append(record('claude_mem_export', digest(('claude_mem_export', selection['instance'], selection['export'])),
                               export_sha256, 'native_field'))
-        return Snapshot(digest(dict(self.summary, claims=[asdict(c) for c in self.claims])), tuple(records))
+        # The export hash is part of the checkpoint: a change to any unmodelled field is still a new capture.
+        return Snapshot(digest(dict(self.summary, export_sha256=export_sha256, claims=[asdict(c) for c in self.claims])),
+                        tuple(records))
 
 
 def parse(value, instance, version, bounds):
@@ -204,6 +213,7 @@ def parse(value, instance, version, bounds):
                 if content in platforms and platforms[content] != platform: warnings.add('content_session_shared_across_platforms')
                 platforms[content] = platform
                 detail = row.get('status') if row.get('status') in SESSION_STATUSES else 'other'
+                if detail == 'other': warnings.add('unrecognized_session_status')
             elif kind == 'observations':
                 detail = row.get('type') if row.get('type') in OBSERVATION_TYPES else 'unrecognized'
                 if detail == 'unrecognized': warnings.add('unrecognized_observation_type')
@@ -211,6 +221,7 @@ def parse(value, instance, version, bounds):
                 detail = None
             if kind in ('observations', 'summaries') and memory not in sessions: warnings.add('memory_session_not_exported')
             number = row.get('prompt_number')
+            if number is not None and (type(number) is not int or number < 0): warnings.add('invalid_prompt_number')
             native = scoped(claim_type, identity, occurrence)
             claim = MemoryClaim(claim_type, native, occurrence, DERIVATION[claim_type],
                 digest({f: row[f] for f in BODIES[kind] if f in row}) if any(f in row for f in BODIES[kind]) else None,
