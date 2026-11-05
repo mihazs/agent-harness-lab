@@ -138,6 +138,35 @@ class ConfigRecommendationTests(unittest.TestCase):
             with self.subTest(settings=settings):
                 self.assertEqual((shadowed['compatibility'], dict(shadowed['facts'])['winner_approval']), expected)
 
+    def test_unreadable_user_settings_leave_approval_unknown(self):
+        # A linked (dotfile-managed) or unparsable settings file carries no facts but may approve or reject a server.
+        target = self.home / 'dotfiles-settings.json'; target.write_text(json.dumps({'disabledMcpjsonServers': ['shared-tool']}))
+        linked = self.claude_home / 'settings.json'
+        for state, prepare in (('refused', lambda: (linked.unlink(), linked.symlink_to(target))),
+                               ('parse_failed', lambda: (linked.unlink(), linked.write_text('{"disabledMcpjsonServers": [],}')))):
+            prepare()
+            report = self.claude()
+            unapproved = self.codes(report, 'mcp_project_server_unapproved')
+            shadowed, = self.codes(report, 'mcp_server_shadowed')
+            with self.subTest(state=state):
+                self.assertEqual(len(unapproved), 4)
+                for row in unapproved:
+                    facts = dict(row['facts'])
+                    self.assertEqual((row['compatibility'], facts['approval'], facts['user_settings_declared']),
+                                     ('unverified', 'unknown', False))
+                self.assertEqual((shadowed['compatibility'], dict(shadowed['facts'])['winner_approval']),
+                                 ('unverified', 'unknown'))
+
+    def test_project_settings_rejections_and_enable_all(self):
+        project = self.checkout / '.claude/settings.json'
+        project.write_text(json.dumps({'disabledMcpjsonServers': ['project-only']}))
+        names = {dict(row['facts'])['server_sha256'] for row in self.codes(self.claude(), 'mcp_project_server_unapproved')}
+        self.assertEqual(names, {config.server_sha256('shared-tool')})  # a project-layer rejection wins
+        project.write_text(json.dumps({'enableAllProjectMcpServers': True}))
+        approvals = {dict(row['facts'])['server_sha256']: dict(row['facts'])['approval']
+                     for row in self.codes(self.claude(), 'mcp_project_server_unapproved')}
+        self.assertEqual(approvals, {config.server_sha256(name): 'trust_dependent' for name in ('shared-tool', 'project-only')})
+
     def test_codex_duplicates_untrusted_servers_and_exec_policy_text(self):
         with patch('subprocess.Popen', denied), patch('os.system', denied), patch('os.execv', denied):
             report = self.codex()
@@ -164,6 +193,27 @@ class ConfigRecommendationTests(unittest.TestCase):
         self.assertEqual(rows[config.style_sha256('deep')]['compatibility'], 'unverified')  # subdirectory loading
         nearest = self.codes(self.claude(), 'output_style_drops_coding_instructions')
         self.assertEqual(len([row for row in nearest if dict(row['facts'])['name_sha256'] == config.style_sha256('dup')]), 1)
+
+    def test_style_name_shared_across_user_and_project_is_unverified(self):
+        # The inventory records no user-versus-project precedence, so neither same-named style is known to load.
+        (self.claude_home / 'output-styles').mkdir()
+        (self.claude_home / 'output-styles/b.md').write_text(style('keeper'))
+        (self.claude_home / 'output-styles/c.md').write_text(style('plain-coder', 'true'))
+        rows = {(row['layer'], dict(row['facts'])['name_sha256']): row
+                for row in self.codes(self.claude(), 'output_style_drops_coding_instructions')}
+        for key in (('user', config.style_sha256('keeper')), ('project', config.style_sha256('plain-coder'))):
+            with self.subTest(layer=key[0]):
+                self.assertEqual((rows[key]['compatibility'], dict(rows[key]['facts'])['precedence']),
+                                 ('unverified', 'not_recorded'))
+        self.assertEqual(rows[('project', config.style_sha256('dup'))]['compatibility'], 'verified')
+
+    def test_unrecognized_keep_coding_instructions_value_is_unverified(self):
+        for value in ('True', 'true # keep'):
+            (self.checkout / '.claude/output-styles/odd.md').write_text(style('odd', value))
+            row, = [row for row in self.codes(self.claude(), 'output_style_drops_coding_instructions')
+                    if dict(row['facts'])['name_sha256'] == config.style_sha256('odd')]
+            with self.subTest(value=value):
+                self.assertEqual((row['compatibility'], dict(row['facts'])['keep_coding_instructions']), ('unverified', None))
 
     def test_memory_is_present_excluded_and_never_opened(self):
         memory = {_identity(os.stat(path)) for path in (self.checkout / '.claude/agent-memory', self.codex_home / 'memories')}
@@ -199,6 +249,16 @@ class ConfigRecommendationTests(unittest.TestCase):
         codex = inventory.capture(self.checkout, CODEX).document()
         for bad, harness in ((forged, None), (stale, None), (dict(document, profile='other'), None), (document, codex)):
             with self.subTest(harness=harness is not None), self.assertRaises(ValueError): advice.recommend(bad, harness)
+        # A Codex harness document edited or shortened under its original digest is refused.
+        codex_config = config.capture(self.checkout, CODEX, declared_roots=dict(codex_home=str(self.codex_home)))
+        walked = json.loads(json.dumps(codex))
+        policy = next(index for index, node in enumerate(walked['nodes']) if node['kind'] == 'exec_policy')
+        edited = json.loads(json.dumps(walked)); edited['nodes'][policy]['trust'] = 'declared_trusted'
+        dropped = json.loads(json.dumps(walked)); del dropped['nodes'][policy]
+        self.assertTrue(self.codes(advice.recommend(codex_config, walked), 'exec_policy_check_suggested'))
+        for name, harness in (('edited', edited), ('dropped', dropped)):
+            with self.subTest(harness=name), self.assertRaisesRegex(ValueError, 'digest differs'):
+                advice.recommend(codex_config, harness)
         blocked = dict(document, status='blocked', blocked_reason='row_bound_exceeded', rows=[])
         self.assertEqual((advice.recommend(blocked)['status'], advice.recommend(blocked)['rows']), ('blocked', []))
         # No digest covers version or the digest fields themselves, so neither may carry an unchecked value.

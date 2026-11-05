@@ -62,7 +62,7 @@ CODES = {
         'A memory location is present. It is private_excluded: never opened, listed or analyzed, and never a '
         'recommendation target.', writability='private_excluded'),
 }
-APPROVALS = ('not_required', 'approved', 'rejected', 'trust_dependent', 'none')
+APPROVALS = ('not_required', 'approved', 'rejected', 'trust_dependent', 'none', 'unknown')
 VOCABULARY = frozenset((*config.LAYERS, *inventory.TRUST, *APPROVALS, 'present_excluded', 'refused_excluded',
                         'not_recorded'))
 # What the inventories cannot show; a recommendation never claims these were checked.
@@ -152,15 +152,21 @@ def _row(code, row, compatibility='verified', evidence=(), **facts):
 
 
 def _approvals(rows):
-    """Approval label of a Claude .mcp.json server name from inventoried settings; a rejection always wins."""
-    settings = [(row, dict(row.facts)) for row in rows if row.surface == 'settings']
+    """Approval label of a Claude .mcp.json server name from inventoried settings; a rejection always wins.
+
+    A refused (linked) or unparsable settings file carries no approval facts but may approve or reject the server,
+    so any name a readable layer does not reject is 'unknown' while one exists.
+    """
+    readable = lambda row: row.declared_state == 'present' and dict(row.facts).get('parse_failed') is not True
+    settings = [(row, dict(row.facts)) for row in rows if row.surface == 'settings' and readable(row)]
+    unread = any(row.surface == 'settings' and not readable(row) for row in rows)
     listed = lambda fact, layers: {name for row, facts in settings if row.layer in layers for name in facts.get(fact, ())}
     rejected = listed('disabled_mcpjson_server_sha256s', config.LAYERS)
     user = listed('enabled_mcpjson_server_sha256s', ('user',))
     user_all = any(facts.get('enable_all_project_mcp_servers') is True for row, facts in settings if row.layer == 'user')
     scoped = listed('enabled_mcpjson_server_sha256s', ('project', 'local'))
     scoped_all = any(facts.get('enable_all_project_mcp_servers') is True for row, facts in settings if row.layer != 'user')
-    return (lambda name: 'rejected' if name in rejected else 'approved' if name in user or user_all
+    return (lambda name: 'rejected' if name in rejected else 'unknown' if unread else 'approved' if name in user or user_all
             else 'trust_dependent' if name in scoped or scoped_all else 'none'), any(row.layer == 'user' for row, _ in settings)
 
 
@@ -192,18 +198,25 @@ def _mcp(rows, runtime):
     for row, facts in servers:
         name = facts['server_sha256']
         if row.layer != 'project' or approval(name) in ('rejected', 'approved'): continue
-        yield _row('mcp_project_server_unapproved', row, server_sha256=name, approval=approval(name),
+        yield _row('mcp_project_server_unapproved', row, 'unverified' if approval(name) == 'unknown' else 'verified',
+                   server_sha256=name, approval=approval(name),
                    user_settings_declared=user_declared, interactive_choice='unknown')
 
 
 def _styles(rows):
     selected = {dict(row.facts).get('output_style_sha256') for row in rows if row.surface == 'settings'}
-    for row in rows:
-        facts = dict(row.facts)
-        if (row.surface != 'output_styles' or row.declared_state != 'present' or 'name_sha256' not in facts
-                or facts.get('keep_coding_instructions') is True or facts.get('shadowed') is True): continue
-        yield _row('output_style_drops_coding_instructions', row, 'unverified' if facts.get('subdirectory') else 'verified',
+    named = [(row, dict(row.facts)) for row in rows if row.surface == 'output_styles' and 'name_sha256' in dict(row.facts)]
+    for row, facts in named:
+        if (row.declared_state != 'present' or facts.get('keep_coding_instructions') is True
+                or facts.get('shadowed') is True): continue
+        # The inventory leaves user-versus-project precedence unrecorded (shadowed None), so a name another style
+        # shares has an unknown winner; an unrecognized keep-coding-instructions value (None) is not a known false.
+        rivals = [other for peer, other in named if peer is not row and other['name_sha256'] == facts['name_sha256']]
+        unresolved = bool(rivals) and (facts.get('shadowed') is None or any(other.get('shadowed') is None for other in rivals))
+        unverified = facts.get('subdirectory') or unresolved or facts.get('keep_coding_instructions') is None
+        yield _row('output_style_drops_coding_instructions', row, 'unverified' if unverified else 'verified',
                    name_sha256=facts['name_sha256'], keep_coding_instructions=facts.get('keep_coding_instructions'),
+                   precedence='not_recorded' if unresolved else None,
                    selected_in_inventoried_settings=facts['name_sha256'] in selected, system_prompt_variant='unknown')
 
 
