@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Add `agent_harness_lab.diagnostics.mechanisms.from_proposal`, which admits untrusted proposer `mechanisms`/`falsifiers` JSON as unverified `MechanismRecord`s. It is pure and total over the proposal and returns a private `proposer-mechanism-admission-v1` receipt with each admitted entry (`proposed_unverified`, falsifier attached per mechanism) and every rejected location with a reason: malformed or unknown fields, authority claims, components or severities outside the router vocabulary, citations outside the controller's evidence allowlist, duplicate or contradictory mechanisms, several distinct falsifiers, and explicit, reported count/text bounds (`None` means unlimited; oversized input is rejected, never truncated). Admitted records keep disposition `proposed` and the unreviewed `insufficient_evidence` component. Add `agent_harness_lab.optimization.router.dispositions`, a deterministic plan of queue dispositions from separately reviewed routes that neither evaluates nor charges the budget and never yields validated or recommended. Both profiles are rejected by public export. `ahl improve` behavior is unchanged.
