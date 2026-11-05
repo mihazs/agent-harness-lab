@@ -54,6 +54,14 @@ def _audit(event, args):
 
 
 sys.addaudithook(_audit)
+_OS_OPEN = os.open
+
+
+def _recording_open(path, flags, mode=0o777, *, dir_fd=None):
+    """os.open that records what it opened: the audit event of a dir_fd open carries only a bare relative name."""
+    opened = _OS_OPEN(path, flags, mode, dir_fd=dir_fd)
+    if AUDIT: AUDIT[-1].append(_identity(os.fstat(opened)))
+    return opened
 
 
 def _identity(info): return info.st_dev, info.st_ino
@@ -109,7 +117,8 @@ class ConfigRecommendationTests(unittest.TestCase):
         facts = dict(shadowed['facts'])
         self.assertEqual((shadowed['layer'], facts['winner_layer'], facts['server_sha256']),
                          ('user', 'project', config.server_sha256('shared-tool')))
-        self.assertEqual(shadowed['compatibility'], 'verified')
+        # The winning .mcp.json entry is unapproved, so whether it displaces the user entry is unverified.
+        self.assertEqual((shadowed['compatibility'], facts['winner_approval']), ('unverified', 'none'))
         unapproved = {dict(row['facts'])['server_sha256']: dict(row['facts'])
                       for row in self.codes(report, 'mcp_project_server_unapproved')}
         self.assertEqual(set(unapproved), {config.server_sha256('shared-tool'), config.server_sha256('project-only')})
@@ -117,6 +126,17 @@ class ConfigRecommendationTests(unittest.TestCase):
         self.assertEqual(unapproved[config.server_sha256('shared-tool')]['approval'], 'none')
         self.assertEqual({facts['interactive_choice'] for facts in unapproved.values()}, {'unknown'})
         self.assertIn('claude_interactive_approval_choices', report['not_inventoried'])
+
+    def test_shadowing_by_a_project_server_is_verified_only_once_user_settings_approve_it(self):
+        for settings, expected in (({'enabledMcpjsonServers': ['shared-tool']}, ('verified', 'approved')),
+                                   ({'enableAllProjectMcpServers': True}, ('verified', 'approved')),
+                                   ({'disabledMcpjsonServers': ['shared-tool']}, ('unverified', 'rejected')),
+                                   ({'enabledMcpjsonServers': ['shared-tool'], 'disabledMcpjsonServers': ['shared-tool']},
+                                    ('unverified', 'rejected'))):
+            (self.claude_home / 'settings.json').write_text(json.dumps(settings))
+            shadowed, = self.codes(self.claude(), 'mcp_server_shadowed')
+            with self.subTest(settings=settings):
+                self.assertEqual((shadowed['compatibility'], dict(shadowed['facts'])['winner_approval']), expected)
 
     def test_codex_duplicates_untrusted_servers_and_exec_policy_text(self):
         with patch('subprocess.Popen', denied), patch('os.system', denied), patch('os.execv', denied):
@@ -147,12 +167,16 @@ class ConfigRecommendationTests(unittest.TestCase):
 
     def test_memory_is_present_excluded_and_never_opened(self):
         memory = {_identity(os.stat(path)) for path in (self.checkout / '.claude/agent-memory', self.codex_home / 'memories')}
+        parent = _identity(os.stat(self.checkout / '.claude'))  # opened only through dir_fd, never scanned
         AUDIT.append([])
         try:
-            claude = self.claude()
-            codex = advice.recommend(config.capture(self.checkout, CODEX, declared_roots=dict(codex_home=str(self.codex_home))))
+            with patch('os.open', _recording_open):
+                claude = self.claude()
+                codex = advice.recommend(config.capture(self.checkout, CODEX, declared_roots=dict(codex_home=str(self.codex_home))))
         finally: opened = AUDIT.pop()
-        self.assertTrue(opened)  # the audit saw the capture's opens, so an absent memory inode is meaningful
+        # Positive control: the memory directory's parent is reached by the same dir_fd open the memory directory
+        # would be, so its recorded identity shows an absent memory identity is meaningful.
+        self.assertIn(parent, opened)
         self.assertFalse(memory & set(opened))
         rows = self.codes(claude, 'memory_present_excluded') + self.codes(codex, 'memory_present_excluded')
         self.assertEqual(len(rows), 2)
@@ -177,6 +201,14 @@ class ConfigRecommendationTests(unittest.TestCase):
             with self.subTest(harness=harness is not None), self.assertRaises(ValueError): advice.recommend(bad, harness)
         blocked = dict(document, status='blocked', blocked_reason='row_bound_exceeded', rows=[])
         self.assertEqual((advice.recommend(blocked)['status'], advice.recommend(blocked)['rows']), ('blocked', []))
+        # No digest covers version or the digest fields themselves, so neither may carry an unchecked value.
+        for bad in (dict(document, version='sk-synthetic-secret-7731'), dict(document, version='9.9.9'),
+                    dict(document, version={'x': 'sk-leak'}), dict(blocked, version={'x': 'sk-leak'}),
+                    dict(blocked, config_inventory_sha256='sk-synthetic-secret-7731')):
+            with self.subTest(version=bad['version']), self.assertRaises(ValueError): advice.recommend(bad)
+        harness = inventory.capture(self.checkout, CLAUDE).document()
+        with self.assertRaises(ValueError):
+            advice.recommend(document, dict(harness, status='blocked', harness_inventory_sha256='sk-synthetic-secret-7731'))
         row = advice.recommend(document)['rows'][0]
         for change in (dict(adoption_authority=True), dict(text='Write the file.'), dict(user_command='rm -rf .')):
             with self.subTest(change=change), self.assertRaises(ValueError):

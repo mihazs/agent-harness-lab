@@ -2028,7 +2028,10 @@ rows. A Codex harness surface inventory document can also be passed to cover
 `.rules` exec policy. The function reads only these two documents. It opens no
 file or directory, starts no process and writes nothing. Each document must
 carry its pinned profile and a digest that matches its rows, and both must
-name the same runtime and version. Every row is rebuilt through `ConfigRow` or
+name the same runtime and version. The digest does not cover `version` or the
+digest fields, so each is checked before it reaches the report: `version` must
+be a label, a `declared` inventory must carry the `surfaces.PINS` version, and
+a recorded digest must be a SHA-256 value. Every row is rebuilt through `ConfigRow` or
 `InventoryNode`, so a forged string is refused and a JSON round trip gives the
 same report. A `blocked` or `unsupported` inventory gives no rows.
 
@@ -2041,7 +2044,7 @@ the row, is unverified, the row's `compatibility` is `unverified`.
 
 | Code | Emitted when |
 | :- | :- |
-| `mcp_server_shadowed` | A Claude Code server name is also declared at a higher-precedence scope (local 1, project 2, user 3). The whole entry from that scope is used. |
+| `mcp_server_shadowed` | A Claude Code server name is also declared at a higher-precedence scope (local 1, project 2, user 3). The whole entry from that scope is used. When the winner is a `.mcp.json` server, `winner_approval` records whether inventoried settings approve it, and the row is `verified` only when user settings approve it without any rejection. A rejected, unapproved or only trust-dependent winner makes the row `unverified`. |
 | `mcp_server_duplicate` | Two Codex config layers declare the same server id. Which one wins is not recorded, so the row is `unverified`. |
 | `mcp_project_server_unapproved` | No inventoried settings layer rejects a `.mcp.json` server, and no user settings approve it by name or with `enableAllProjectMcpServers`. `approval` is `trust_dependent` when only project or local settings approve it, because those approvals apply only in a trusted folder. Otherwise it is `none`. |
 | `codex_server_untrusted_layer` | A server sits in the project `.codex` layer and the project is not declared trusted. |

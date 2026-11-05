@@ -12,7 +12,7 @@ from dataclasses import asdict, dataclass
 import re
 from agent_harness_lab import surfaces
 from agent_harness_lab.sources import config_inventory as config, harness_inventory as inventory
-from agent_harness_lab.sources.schema import digest, label
+from agent_harness_lab.sources.schema import digest, fingerprint, label
 
 PROFILE = 'ahl-config-recommendations-v1'
 _HEX = re.compile('[0-9a-f]{64}')
@@ -38,7 +38,8 @@ class Template:
 CODES = {
     'mcp_server_shadowed': Template('mcp', 'claude-code', _MCP,
         'A higher-precedence scope declares an MCP server with the same name, so Claude Code uses that whole entry '
-        'and this one is unused; fields are not merged across scopes. Remove or rename one of the declarations.'),
+        'and this one is unused; fields are not merged across scopes. When the winning entry is a .mcp.json server '
+        'that user settings do not approve, which entry loads is unverified. Remove or rename one of the declarations.'),
     'mcp_server_duplicate': Template('mcp', 'codex', _CODEX_MCP,
         'More than one Codex config layer declares an MCP server with the same id, and which declaration wins is '
         'unverified. Keep a single declaration.'),
@@ -61,8 +62,9 @@ CODES = {
         'A memory location is present. It is private_excluded: never opened, listed or analyzed, and never a '
         'recommendation target.', writability='private_excluded'),
 }
-VOCABULARY = frozenset((*config.LAYERS, *inventory.TRUST, 'none', 'trust_dependent', 'present_excluded',
-                        'refused_excluded', 'not_recorded'))
+APPROVALS = ('not_required', 'approved', 'rejected', 'trust_dependent', 'none')
+VOCABULARY = frozenset((*config.LAYERS, *inventory.TRUST, *APPROVALS, 'present_excluded', 'refused_excluded',
+                        'not_recorded'))
 # What the inventories cannot show; a recommendation never claims these were checked.
 NOT_INVENTORIED = ('claude_local_scope_servers', 'claude_interactive_approval_choices', 'claude_folder_trust',
                    'claude_plugin_and_connector_servers', 'claude_system_prompt_variant', 'codex_mcp_layer_precedence')
@@ -149,40 +151,48 @@ def _row(code, row, compatibility='verified', evidence=(), **facts):
         compatibility, tuple(sorted(facts.items())))
 
 
-def _mcp(rows, runtime):
-    servers = [(row, dict(row.facts)) for row in rows if row.surface == 'mcp' and 'server_sha256' in dict(row.facts)]
-    by_name = {}
-    for row, facts in servers: by_name.setdefault(facts['server_sha256'], []).append((row, facts))
-    for name, declared in by_name.items():
-        if len(declared) < 2: continue
-        if runtime == 'codex':
-            paths = {row.path_sha256 for row, _ in declared}
-            for row, _ in declared:
-                yield _row('mcp_server_duplicate', row, 'unverified', paths, server_sha256=name, precedence='not_recorded')
-            continue
-        winner, best = min(declared, key=lambda pair: pair[1]['precedence'])
-        for row, facts in declared:
-            if facts['precedence'] > best['precedence']:  # a lower number is a higher-precedence scope
-                yield _row('mcp_server_shadowed', row, evidence=(winner.path_sha256,), server_sha256=name,
-                           winner_layer=winner.layer, winner_path_sha256=winner.path_sha256)
-    if runtime == 'codex':
-        for row, facts in servers:
-            if row.root == 'checkout' and row.trust != 'declared_trusted':
-                yield _row('codex_server_untrusted_layer', row, server_sha256=facts['server_sha256'], trust=row.trust)
-        return
+def _approvals(rows):
+    """Approval label of a Claude .mcp.json server name from inventoried settings; a rejection always wins."""
     settings = [(row, dict(row.facts)) for row in rows if row.surface == 'settings']
     listed = lambda fact, layers: {name for row, facts in settings if row.layer in layers for name in facts.get(fact, ())}
     rejected = listed('disabled_mcpjson_server_sha256s', config.LAYERS)
     user = listed('enabled_mcpjson_server_sha256s', ('user',))
     user_all = any(facts.get('enable_all_project_mcp_servers') is True for row, facts in settings if row.layer == 'user')
-    scoped = listed('enabled_mcpjson_server_sha256s', ('project', 'local')) | ({'*'} if any(
-        facts.get('enable_all_project_mcp_servers') is True for row, facts in settings if row.layer != 'user') else set())
-    user_declared = any(row.layer == 'user' for row, _ in settings)
+    scoped = listed('enabled_mcpjson_server_sha256s', ('project', 'local'))
+    scoped_all = any(facts.get('enable_all_project_mcp_servers') is True for row, facts in settings if row.layer != 'user')
+    return (lambda name: 'rejected' if name in rejected else 'approved' if name in user or user_all
+            else 'trust_dependent' if name in scoped or scoped_all else 'none'), any(row.layer == 'user' for row, _ in settings)
+
+
+def _mcp(rows, runtime):
+    servers = [(row, dict(row.facts)) for row in rows if row.surface == 'mcp' and 'server_sha256' in dict(row.facts)]
+    by_name = {}
+    for row, facts in servers: by_name.setdefault(facts['server_sha256'], []).append((row, facts))
+    if runtime == 'codex':
+        for name, declared in by_name.items():
+            if len(declared) < 2: continue
+            paths = {row.path_sha256 for row, _ in declared}
+            for row, _ in declared:
+                yield _row('mcp_server_duplicate', row, 'unverified', paths, server_sha256=name, precedence='not_recorded')
+        for row, facts in servers:
+            if row.root == 'checkout' and row.trust != 'declared_trusted':
+                yield _row('codex_server_untrusted_layer', row, server_sha256=facts['server_sha256'], trust=row.trust)
+        return
+    approval, user_declared = _approvals(rows)
+    for name, declared in by_name.items():
+        if len(declared) < 2: continue
+        winner, best = min(declared, key=lambda pair: pair[1]['precedence'])
+        # A project winner loads only once approved; while it is rejected or unapproved the shadowing is unverified.
+        won = approval(name) if winner.layer == 'project' else 'not_required'
+        for row, facts in declared:
+            if facts['precedence'] > best['precedence']:  # a lower number is a higher-precedence scope
+                yield _row('mcp_server_shadowed', row, 'verified' if won in ('approved', 'not_required') else 'unverified',
+                           (winner.path_sha256,), server_sha256=name, winner_layer=winner.layer,
+                           winner_path_sha256=winner.path_sha256, winner_approval=won)
     for row, facts in servers:
         name = facts['server_sha256']
-        if row.layer != 'project' or name in rejected or name in user or user_all: continue
-        yield _row('mcp_project_server_unapproved', row, server_sha256=name,
-                   approval='trust_dependent' if name in scoped or '*' in scoped else 'none',
+        if row.layer != 'project' or approval(name) in ('rejected', 'approved'): continue
+        yield _row('mcp_project_server_unapproved', row, server_sha256=name, approval=approval(name),
                    user_settings_declared=user_declared, interactive_choice='unknown')
 
 
@@ -218,6 +228,7 @@ def recommend(config_document, harness_document=None):
                  config_document.get('rows') if isinstance(config_document, dict) else None)
     runtime, version = config_document.get('runtime'), config_document.get('version')
     if runtime not in surfaces.RUNTIMES: raise ValueError('unknown recommendation runtime')
+    label(version)  # no digest covers version or the digest fields, so each is checked before it reaches the report
     documents = [config_document]
     if harness_document is not None:
         added = ('profile', 'harness_inventory_sha256', 'publication_allowed', 'adoption_authority', 'loading_evidence')
@@ -227,6 +238,8 @@ def recommend(config_document, harness_document=None):
         if (harness_document.get('runtime'), harness_document.get('version')) != (runtime, version):
             raise ValueError('inventory documents describe different runtimes')
         documents.append(harness_document)
+    for document, field in zip(documents, ('config_inventory_sha256', 'harness_inventory_sha256')):
+        if document.get(field) is not None: fingerprint(document[field])
     report = dict(profile=PROFILE, schema_version=1, runtime=runtime, version=version, status='declared',
         blocked_reason=None, config_inventory_sha256=config_document.get('config_inventory_sha256'),
         harness_inventory_sha256=None if harness_document is None else harness_document.get('harness_inventory_sha256'),
@@ -239,6 +252,7 @@ def recommend(config_document, harness_document=None):
             label(reason)
             return dict(report, status='blocked' if document.get('status') == 'blocked' else 'unsupported',
                         blocked_reason=reason)
+    if version != surfaces.PINS[runtime]: raise ValueError('a declared inventory must carry the pinned runtime version')
     parsed = [_rebuild(config.ConfigRow, row) for row in rows]
     if any(row.runtime != runtime for row in parsed): raise ValueError('config rows describe another runtime')
     found = [*_mcp(parsed, runtime), *_styles(parsed), *_memory(parsed)]
