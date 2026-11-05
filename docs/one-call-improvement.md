@@ -202,7 +202,12 @@ runs the instruction resolver (`sources/instructions.py`) and the rule resolver
 (`sources/claude_rules.py`) again on a baseline closure and a candidate closure.
 Each closure holds the project's in-checkout instruction and rule files, read
 through the read-only harness inventory, with the staged copy laid over them.
-`CLAUDE.local.md` stays out. Nothing is executed, and every result keeps
+For Claude Code it also holds the regular in-checkout files that those files
+import with `@path`, read without crossing a link or a nested repository, so a
+missing import means the target is really missing. `CLAUDE.local.md` and other
+private files stay out. Operations compare the two closures, so an edit to a
+project file that the baseline does not stage carries that file's real
+baseline hash. Nothing is executed, and every result keeps
 `observed_loading` and `effective` at `unknown`.
 
 A proposal that changes a nested instruction file or any rule file must add an
@@ -247,7 +252,11 @@ candidate in these cases:
 `one_call.check_scope(args, proposed, original)` enforces the same scope. It
 rejects a changed instruction or rule file outside the validated scope. Without a
 validated scope it rejects any changed nested file the frozen baseline does not
-already hold, so a candidate cannot edit an unrelated same-named file.
+already hold. The validated scope comes from the plan's `task_cwd` and
+`task_paths`, which the proposer declares, and nothing yet binds them to the
+evaluated tasks. The report marks this as `scope.source:
+"proposer_declared_plan"`. The scope keeps an edit consistent with the declared
+task; it does not prove that the task is the one evaluated.
 
 A shorter file is not automatically better. The report gives active-context bytes
 (`utf8-bytes-v1`) for both versions as a secondary measurement only. A reduction
@@ -261,7 +270,11 @@ when a candidate regression control fails. It returns `inconclusive` when
 regression controls are missing, a baseline control fails, or the
 `workspace_surfaces` of a trial workspace do not hold each version's changed
 files exactly, including the absence of a removed file. It returns `recommended`
-only when all of those hold, and `certification` stays `required`. Before
+only when all of those hold, and `certification` stays `required`. When a
+candidate removes active guidance and the disposition is not `recommended`, the
+workflow records no recommendation and no change plan. Its reason is
+`instruction_removal_<disposition>`. Controlled runs record no
+`workspace_surfaces`, so a removal there stays `inconclusive`. Before
 recording a recommendation, the workflow runs the validation again. A changed
 project instruction file or a modified evaluated candidate invalidates the
 recommendation, and the project is left untouched. The validator never reads

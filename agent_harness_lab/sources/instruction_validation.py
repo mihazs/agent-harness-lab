@@ -17,6 +17,7 @@ recommended only when the I13 behavioral controls, run in surface-faithful trial
 import hashlib
 import os
 from pathlib import Path, PurePosixPath
+import stat
 import tempfile
 import time
 
@@ -141,6 +142,38 @@ def _project_files(project, profile):
         if hashlib.sha256(raw).hexdigest() != node.content_sha256: raise ValueError('instruction source changed during reading')
         files[node.path] = raw
     return files
+
+
+def _checkout_read(project, target, budget):
+    """A regular in-checkout file reached without crossing a link or a nested repository; None otherwise."""
+    current, parts = os.path.abspath(project), PurePosixPath(target).parts
+    try:
+        for part in parts[:-1]:
+            current = os.path.join(current, part)
+            if not stat.S_ISDIR(os.lstat(current).st_mode) or os.path.lexists(os.path.join(current, '.git')): return None
+        return read_regular(os.path.join(current, parts[-1]), budget)
+    except (OSError, ValueError): return None
+
+
+def _imported(project, sources, known, cwd):
+    """In-checkout targets of @path imports reachable from (path, bytes) sources, read-only and bounded; private files stay out.
+
+    Imported project documents belong to the closure, so a missing import means the target is missing. Targets one
+    hop past the resolver's limit are read too, so the resolver can label them rather than call them missing."""
+    found, queue, budget = {}, [(name, raw, 0) for name, raw in sources], harness_inventory.MAX_BYTES
+    seen = {name for name, _ in sources} | set(known)
+    while queue:
+        source, raw, hops = queue.pop()
+        if hops > claude_instructions.IMPORT_HOPS: continue
+        for token, _ in claude_instructions.imports(raw.decode('utf-8', 'replace')):
+            target = claude_instructions.resolve(source, token, cwd)[0]
+            if target is None or target in seen: continue
+            seen.add(target)
+            if surfaces.classify(target).writability == 'private_excluded': continue
+            data = _checkout_read(project, target, budget)
+            if data is None: continue
+            budget -= len(data); found[target] = data; queue.append((target, data, hops + 1))
+    return found
 
 
 def _stale(project, staged):
@@ -281,6 +314,9 @@ def validate(baseline, candidate, plan, *, runtime=None, project=None, deadline=
     staged_before, staged_after = _files(baseline), _files(candidate)
     try: ambient = _project_files(project, profile) if project is not None else {}
     except _Blocked as error: return _document('blocked', [str(error)], scope=None, **identity)
+    if project is not None and pair[0] == 'claude-code':
+        sources = [*ambient.items(), *staged_before.items(), *staged_after.items()]
+        ambient.update(_imported(project, sources, staged_before, profile['task_cwd']))
     reasons = ['stale_baseline'] if project is not None and _stale(project, staged_before) else []
     ambient = {name: raw for name, raw in ambient.items() if name not in staged_before}
     with tempfile.TemporaryDirectory(prefix='ahl-instruction-validation-') as scratch:
@@ -302,8 +338,11 @@ def _evaluate(before, after, plan, staged_before, staged_after, fallback, reason
     runtime = plan['profile']['runtime']
     dirs, rules = _governing(before, plan)
     rules |= _governing(after, plan)[1]
-    scope = dict(runtime=runtime, fallback_filenames=list(fallback), instruction_dirs=sorted(dirs), rules=sorted(rules))
-    operations = _operations(_states(staged_before), _states(staged_after), runtime, fallback)
+    # The scope derives from the proposer's plan (task_cwd, task_paths); nothing binds it to the evaluated tasks.
+    scope = dict(runtime=runtime, fallback_filenames=list(fallback), instruction_dirs=sorted(dirs), rules=sorted(rules),
+                 source='proposer_declared_plan')
+    # Operations compare the closures, so an edit to an unstaged project file carries its real baseline hash.
+    operations = _operations(_states(before.files), _states(after.files), runtime, fallback)
     findings = []
     def find(reason, path=None):
         reasons.append(reason); findings.append(dict(reason=reason, path=path))

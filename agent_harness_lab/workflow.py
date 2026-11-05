@@ -819,6 +819,12 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             if instruction is not None and instruction_validation.current(instruction, proposal.get('instruction_plan'),
                     baseline, frozen, project=args.project, deadline=started+args.timeout):
                 raise ValueError('Instruction context changed during evaluation; recommendation is stale')
+            removal = result.get('instruction_removal') if instruction is not None else None
+            if removal is not None and removal.get('required') and removal['disposition'] != 'recommended':
+                # Removed active guidance is recommended only under faithful passing behavioral controls.
+                result.update(status='blocked' if removal['disposition'] == 'rejected' else 'inconclusive',
+                              reason='instruction_removal_'+removal['disposition'], instruction_removal_reason=removal['reason'])
+                break
             from .harness_change_plan import produce,attach
             common_plan=produce(args,original,proposed,analysis=data,evidence=evaluated,
                 diagnosis=proposal.get('mechanisms',[]),falsifiers=proposal.get('falsifiers',[]),

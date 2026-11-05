@@ -68,6 +68,7 @@ class InstructionImprovementTests(unittest.TestCase):
         self.assertEqual((document['status'], document['reasons']), ('valid', []))
         self.assertEqual(document['scope']['instruction_dirs'], ['src'])
         self.assertEqual(document['scope']['rules'], ['.claude/rules/ts.md'])
+        self.assertEqual(document['scope']['source'], 'proposer_declared_plan')  # not bound to the evaluated tasks
         self.assertEqual([(o['path'], o['operation']) for o in document['operations']], [('src/CLAUDE.md', 'update')])
         self.assertEqual((document['observed_loading'], document['effective'], document['adoption_authority']),
                          ('unknown', 'unknown', False))
@@ -96,6 +97,38 @@ class InstructionImprovementTests(unittest.TestCase):
         for trial in trials:
             if trial['version'] == 'candidate': trial['workspace_surfaces'] = trials[0]['workspace_surfaces']
         self.assertEqual(iv.removal_disposition(document, trials)['reason'], 'workspace_surfaces_unverified')
+
+    def test_an_unstaged_project_rule_edit_carries_its_baseline_hash(self):
+        # Only root and source instructions are staged; the rule the candidate guts lives only in the project.
+        for root in (self.baseline, self.candidate): shutil.rmtree(root / '.claude')
+        self.write(self.candidate, '.claude/rules/ts.md', '---\npaths:\n  - "src/**/*.ts"\n---\n')
+        document = self.validate()
+        self.assertEqual(document['status'], 'valid')
+        baseline_hash = hashlib.sha256(FILES['.claude/rules/ts.md'].encode()).hexdigest()
+        self.assertEqual([(o['path'], o['operation'], o['before_sha256']) for o in document['operations']],
+                         [('.claude/rules/ts.md', 'update', baseline_hash)])
+        self.assertTrue(document['removal']['required'])
+        # The baseline trial workspace lacked the rule, so its controls never compared the guidance removed.
+        removal = iv.removal_disposition(document, self.trials())
+        self.assertEqual((removal['disposition'], removal['reason']), ('inconclusive', 'workspace_surfaces_unverified'))
+
+    def test_imported_project_documents_belong_to_the_closure(self):
+        self.write(self.project, 'src/guide.md', 'Always run the synthetic tests.\n')
+        self.write(self.project, 'src/style.md', 'Synthetic style notes.\n')
+        for root in (self.project, self.baseline, self.candidate): self.write(root, 'src/CLAUDE.md', 'Synthetic source guidance.\n@guide.md\n')
+        document = self.validate()
+        self.assertEqual((document['status'], document['reasons']), ('valid', []))
+        self.assertEqual(document['required'][0]['baseline_active'], True)
+        self.write(self.candidate, 'src/CLAUDE.md', 'Synthetic source guidance.\n@guide.md\n@style.md\n')
+        added = self.validate()
+        self.assertEqual((added['status'], added['reasons']), ('valid', []))
+        self.assertGreater(added['measurements']['candidate_active_bytes'], added['measurements']['baseline_active_bytes'])
+        self.write(self.candidate, 'src/CLAUDE.md', 'Synthetic source guidance.\n@guide.md\n@absent.md\n')
+        self.assertEqual(self.validate()['reasons'], ['missing_import'])
+        # A personal file is never read into the closure, even when imported.
+        self.write(self.project, 'src/CLAUDE.local.md', 'Synthetic personal notes.\n')
+        self.write(self.candidate, 'src/CLAUDE.md', 'Synthetic source guidance.\n@guide.md\n@CLAUDE.local.md\n')
+        self.assertNotIn('Synthetic personal notes', json.dumps(self.validate()))
 
     def test_consolidation_preserves_scope(self):
         self.write(self.candidate, 'src/CLAUDE.md', FILES['src/CLAUDE.md'] + 'Use synthetic strict types.\n')

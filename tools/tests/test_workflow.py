@@ -23,9 +23,9 @@ if p('context.json').exists():
   if mode=='no_change':
    (evaluation/'proposal.json').write_text(json.dumps({'status':'no_change','reason':'No supported defect'}))
   else:
-   if mode!='identical': (candidate/'AGENTS.md').write_text('worse' if mode=='refine' and c['attempt']==0 else 'good\n')
+   if mode not in ('identical','ambient'): (candidate/'AGENTS.md').write_text('worse' if mode=='refine' and c['attempt']==0 else 'good\n')
    escaped=('settings.json','.claude/settings.json','.claude/hooks/pre.sh','CLAUDE.local.md') if mode=='escape' else ()
-   nested={'nested':('app/AGENTS.md',),'unplanned':('app/AGENTS.md',),'unrelated':('other/AGENTS.md',),'unrequired':('app/AGENTS.md',)}.get(mode,())
+   nested={'nested':('app/AGENTS.md',),'unplanned':('app/AGENTS.md',),'unrelated':('other/AGENTS.md',),'unrequired':('app/AGENTS.md',),'ambient':('app/AGENTS.md',),'drift':('app/AGENTS.md',)}.get(mode,())
    if nested: p('proposer-prompt.txt').write_text(prompt)
    for name in escaped+nested: (candidate/name).parent.mkdir(parents=True,exist_ok=True); (candidate/name).write_text('forbidden' if escaped else 'good\n')
    if mode=='concurrent': (project/'AGENTS.md').write_text('concurrent')
@@ -36,6 +36,7 @@ if p('context.json').exists():
    (evaluation/'proposal.json').write_text(json.dumps(proposal))
  else:
   assert 'candidate' not in c
+  if (project/'mode').exists() and (project/'mode').read_text()=='drift': (project/'app/AGENTS.md').write_text('drifted\n')
   grader=evaluation/'grade.py'
   grader.write_text("from pathlib import Path; import sys; w=Path(sys.argv[1]); assert (w/'artifact').read_text()=='done'; assert (w/'original').read_text()=='preserve'\n")
   tasks=[]; controls=[]
@@ -51,7 +52,7 @@ if p('context.json').exists():
   (evaluation/'manifest.json').write_text(json.dumps(dict(harness_paths=c['harness_paths'],skills=[],tasks=tasks,grader_self_tests=controls)))
 else:
  phase=p('phase').read_text()
- good=p('AGENTS.md').read_text().strip()=='good'
+ good='good' in (p('AGENTS.md').read_text().strip(),p('app/AGENTS.md').read_text().strip() if p('app/AGENTS.md').exists() else None)
  p('artifact').write_text('done' if good or phase.endswith('regression') else 'wrong')
 print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
 '''
@@ -148,6 +149,25 @@ class WorkflowTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError,'outside its governing scope'): improve(self.args())
                 self.assertFalse((self.project/'app/AGENTS.md').exists())
                 self.assertFalse((self.project/'other').exists())
+
+    def test_unfaithful_removal_controls_withhold_the_recommendation(self):
+        # The project's app/AGENTS.md is not staged, so the baseline trial workspace never held the guidance removed.
+        (self.project/'app').mkdir(); (self.project/'app/AGENTS.md').write_text('Synthetic app guidance.\n')
+        (self.project/'mode').write_text('ambient')
+        result=improve(self.args())
+        self.assertEqual(result['instruction_removal']['disposition'],'inconclusive')
+        self.assertEqual((result['status'],result['reason'],result['instruction_removal_reason']),
+                         ('inconclusive','instruction_removal_inconclusive','workspace_surfaces_unverified'))
+        self.assertNotIn('recommendation',result)
+        self.assertFalse((Path(result['output'])/'change-plan.json').exists())
+        self.assertEqual((self.project/'app/AGENTS.md').read_text(),'Synthetic app guidance.\n')
+
+    def test_instruction_context_drift_during_evaluation_invalidates_the_recommendation(self):
+        (self.project/'app').mkdir(); (self.project/'mode').write_text('drift')
+        with self.assertRaisesRegex(ValueError,'Instruction context changed during evaluation'): improve(self.args())
+        self.assertEqual((self.project/'AGENTS.md').read_text(),'bad')
+        self.assertEqual((self.project/'app/AGENTS.md').read_text(),'drifted\n')
+        self.assertFalse(list((self.root/'state').rglob('change-plan.json')))
 
     def test_instruction_validation_failure_blocks_before_evaluation(self):
         (self.project/'app').mkdir(); (self.project/'mode').write_text('unrequired')
