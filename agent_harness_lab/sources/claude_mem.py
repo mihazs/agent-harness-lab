@@ -1,11 +1,11 @@
 """Offline, version-pinned Claude-Mem JSON exports as separate hash-only memory claims; never task outcomes."""
 from collections import Counter
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import string
 from agent_harness_lab.evaluation.integrity import contained, read_regular, regular_sha256, relative
-from .schema import Contract, EvidenceRecord, digest, fingerprint, label
-from .snapshot import LocalExport, Snapshot
+from .schema import Contract, digest, fingerprint, label
+from .snapshot import LocalExport, claim_snapshot
 from .hardened import HostileReport, limits, load_json
 
 PROVIDER = 'claude-mem-export'
@@ -159,17 +159,8 @@ class ClaudeMemExport(LocalExport):
             bounds['max_export_bytes'], consume, 'Claude-Mem export changed during capture', read_regular, regular_sha256)
         # The export's bytes are released before rows are mapped; the decoded tree is all that parse holds.
         self.claims, self.summary = parse(decoded.pop(), selection['instance'], version, bounds)
-        now = datetime.now(timezone.utc).isoformat()
-        def record(kind, native, revision, provenance, original=None):
-            return EvidenceRecord(source.source_key, native, revision, revision, 'contextual_assertion', kind, now,
-                original_at=original, provenance=provenance, capture_completeness='partial')
-        records = [record('claude_mem_'+c.claim_type, c.native_id_sha256, digest(asdict(c)), RECORD_PROVENANCE[c.claim_type],
-                          c.original_at) for c in self.claims]
-        records.append(record('claude_mem_export', digest(('claude_mem_export', selection['instance'], selection['export'])),
-                              export_sha256, 'native_field'))
-        # The export hash is part of the checkpoint: a change to any unmodelled field is still a new capture.
-        return Snapshot(digest(dict(self.summary, export_sha256=export_sha256, claims=[asdict(c) for c in self.claims])),
-                        tuple(records))
+        return claim_snapshot(source, 'claude_mem_', self.claims, lambda c: RECORD_PROVENANCE[c.claim_type],
+            digest(('claude_mem_export', selection['instance'], selection['export'])), export_sha256, self.summary)
 
 
 def parse(value, instance, version, bounds):

@@ -590,6 +590,10 @@ tasks:
     desc: Run offline Hindsight v1.1.0 bank archive controls with synthetic invented banks
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_hindsight.py" -v'
+  test:sources:cognee:
+    desc: Run offline Cognee v1.6.5 graph export controls with synthetic invented datasets
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_cognee.py" -v'
   test:sources:memory-provenance:
     desc: Run declared ai-memory handoff/workstream provenance cases with synthetic OKF bundles
     cmds:

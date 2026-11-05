@@ -1,5 +1,6 @@
 """Explicit local normalized exports; metadata permission checks precede data reads."""
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -40,6 +41,20 @@ class Snapshot:
             if key in seen and seen[key] != value:
                 raise ValueError('conflicting snapshot record identity')
             seen[key] = value
+
+
+def claim_snapshot(source, prefix, claims, provenance, export_native, export_sha256, summary):
+    """Partial contextual-assertion records, one per claim plus the export file's own, and their snapshot.
+
+    The export hash is part of the checkpoint: a change to any unmodelled field is still a new capture.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    def record(kind, native, revision, provenance, original=None):
+        return EvidenceRecord(source.source_key, native, revision, revision, 'contextual_assertion', kind, now,
+            original_at=original, provenance=provenance, capture_completeness='partial')
+    records = [record(prefix+c.claim_type, c.native_id_sha256, digest(asdict(c)), provenance(c), c.original_at) for c in claims]
+    records.append(record(prefix+'export', export_native, export_sha256, 'native_field'))
+    return Snapshot(digest(dict(summary, export_sha256=export_sha256, claims=[asdict(c) for c in claims])), tuple(records))
 
 
 class LocalExport:
