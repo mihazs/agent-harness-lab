@@ -142,10 +142,33 @@ class PluginInventoryTests(unittest.TestCase):
             with self.subTest(path=node.path):
                 self.assertEqual(plugins.writability(value, node.root, node.path), 'recommendation_only')
                 with self.assertRaises(ValueError): journal.owned(str(self.plugin / node.path))
+        root = checkout.inventory.external_roots[0]
+        # Unwalked files and paths the project allowlist would adopt are still only recommendations.
+        for path in (*COMPONENTS, 'scripts/run.sh', 'README.md', 'AGENTS.md', '.claude/skills/ship/SKILL.md', 'skills/new/x.md'):
+            with self.subTest(external=path):
+                self.assertEqual(surfaces.classify(path, origin='external_repository').writability, 'recommendation_only')
+                self.assertEqual(plugins.writability(value, root, path), 'recommendation_only')
+                with self.assertRaises(ValueError): journal.owned(str(self.plugin / path))
+        self.assertEqual(plugins.writability(value, root, '.git/HEAD'), 'private_excluded')
+        self.assertEqual(surfaces.classify('AGENTS.md').writability, 'adoptable')
         self.assertEqual(surfaces.classify('.claude-plugin/plugin.json').writability, 'unsupported')
+        for bad in (dict(origin='plugin'), dict(origin=None)):
+            with self.subTest(origin=bad), self.assertRaises(ValueError): surfaces.classify('AGENTS.md', **bad)
+        for bad in ('/abs/run.sh', '../escape.sh'):
+            with self.subTest(path=bad), self.assertRaises(ValueError): plugins.writability(value, root, bad)
         for field, text in (('writability', 'adoptable'), ('origin', 'checkout')):
             with self.subTest(field=field), self.assertRaises(ValueError): replace(checkout, **{field: text})
         with self.assertRaises(ValueError): plugins.writability(value, 'checkout', 'AGENTS.md')
+
+    def test_hostile_codex_config_is_refused_within_the_value_error_contract(self):
+        config_file = self.project / '.codex/config.toml'
+        for name, text in (('array', 'a = ' + '[' * 5000 + ']' * 5000), ('inline', 'a = ' + '{b = ' * 3000 + '1' + '}' * 3000),
+                           ('shallow-array', 'a = ' + '[' * 40 + ']' * 40), ('dotted', '.'.join(['k'] * 40) + ' = 1'),
+                           ('json-bound', 'a = ' + '[' * 32 + ']' * 32)):
+            config_file.write_text(text + '\n' + CONFIG_TOML)
+            with self.subTest(name), self.assertRaisesRegex(ValueError, 'Codex config depth bound exceeded'): self.capture(CODEX)
+        config_file.write_text('a = ' + '[' * 31 + ']' * 31 + '\n' + CONFIG_TOML)
+        self.assertEqual(self.capture(CODEX).status, 'declared')
 
     def test_no_process_network_or_undeclared_cache_read(self):
         cache = self.base / 'home'

@@ -65,10 +65,15 @@ def load_json(raw, bounds, name, pairs=None, spent=None):
         raise HostileReport(name+' depth bound exceeded') from None
     except UnicodeDecodeError:
         raise ValueError(name+' is not valid UTF-8') from None
+    return bounded_depth(value, bounds['max_json_depth'], name)
+
+
+def bounded_depth(value, max_depth, name):
+    """Return a decoded dict/list tree unchanged, or refuse it when it nests deeper than max_depth."""
     pending = [(value, 1)]
     while pending:
         item, depth = pending.pop()
-        if depth > bounds['max_json_depth']: raise HostileReport(name+' depth bound exceeded')
+        if depth > max_depth: raise HostileReport(name+' depth bound exceeded')
         children = item.values() if isinstance(item, dict) else item if isinstance(item, list) else ()
         pending.extend((child, depth+1) for child in children if isinstance(child, (dict, list)))
     return value

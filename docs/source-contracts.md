@@ -1713,7 +1713,9 @@ the caller passes `include_local=True`. Codex declarations come from
 `[plugins."name@marketplace"]` and `[marketplaces.<name>]` in
 `.codex/config.toml`; the `_default` table is skipped. Settings are read as
 bounded, link-free files with the strict `hardened.load_json` decoder (or
-`tomllib`), and nothing else in the checkout is opened.
+`tomllib`), and nothing else in the checkout is opened. `tomllib` has no
+nesting bound, so a Codex config that exhausts its recursion or nests deeper
+than the JSON depth bound of 32 raises `ValueError` (`HostileReport`).
 
 Each declaration records the plugin id, its settings file, the declared
 `enabled` value and a resolution. An enabled plugin is `content_not_selected`,
@@ -1759,9 +1761,12 @@ Each checkout records the HEAD digest and its own `HarnessSnapshot` of the
 walked components (committed blobs are not read, so they stay unset), plus an
 inventory bound to that snapshot. It is marked `origin: external_repository`
 and `writability: recommendation_only`, and construction rejects any other
-value. `plugins_inventory.writability` returns `recommendation_only` for every
-path in a selected checkout. `surfaces.classify` stays a lexical classifier of
-project-relative paths and is not consulted for those paths. `Journal.owned`
+value. `surfaces.classify(path, origin="external_repository")` returns
+`recommendation_only` for every path, walked or not, including paths the
+project allowlist would adopt. Only a `.git` or `__pycache__` path stays
+`private_excluded`, which is stricter. `plugins_inventory.writability(inventory,
+root, path)` returns that verdict for any path below a selected checkout root
+and raises `ValueError` for a root that was not selected. `Journal.owned`
 rejects their absolute paths. A bound overflow returns `blocked` with no
 declarations or checkouts, and the document is marked
 `publication_allowed: false` and `loading_evidence: false`. The selected

@@ -18,7 +18,7 @@ from agent_harness_lab import config, surfaces
 from agent_harness_lab.evaluation.integrity import contained, read_regular
 from . import harness_inventory
 from .git import OID, HarnessFile, HarnessSnapshot, reference
-from .hardened import load_json
+from .hardened import HostileReport, bounded_depth, load_json
 from .schema import digest, fingerprint, label
 
 PROFILE = 'ahl-plugin-inventory-v1'
@@ -225,8 +225,11 @@ def _claude(checkout, include_local):
 def _codex(checkout, include_local):
     raw = _read(checkout, CODEX_CONFIG)
     if raw is None: return [], [], 'absent'
+    # tomllib has no nesting bound, so recursion is refused here and the tree gets the JSON depth bound.
     try: value = tomllib.loads(raw.decode('utf-8'))
     except UnicodeDecodeError: raise ValueError('Codex config is not valid UTF-8') from None
+    except RecursionError: raise HostileReport('Codex config depth bound exceeded') from None
+    bounded_depth(value, JSON_BOUNDS['max_json_depth'], 'Codex config')
     declared, known = value.get('plugins', {}), value.get('marketplaces', {})
     if not isinstance(declared, dict) or not isinstance(known, dict): raise ValueError('invalid Codex plugin config')
     plugins, marketplaces = [], []
@@ -309,8 +312,11 @@ def capture(checkout, profile, *, plugin_checkouts=None, include_local=False):
 
 
 def writability(inventory, root, path):
-    """Adoption verdict for a node: every path in a selected plugin checkout is recommendation_only."""
-    for checkout in inventory.checkouts:
-        if root in checkout.inventory.external_roots and path in {n.path for n in checkout.inventory.nodes}:
-            return checkout.writability
-    raise ValueError('path is not in a selected plugin checkout; classify project paths with surfaces.classify')
+    """Adoption verdict for any checkout-relative path below a selected plugin root, walked or not.
+
+    surfaces.classify owns the answer: an external_repository path is recommendation_only, except a .git or
+    cache path, which stays private_excluded because that verdict is stricter.
+    """
+    if not any(root in checkout.inventory.external_roots for checkout in inventory.checkouts):
+        raise ValueError('root is not a selected plugin checkout; classify project paths with surfaces.classify')
+    return surfaces.classify(path, inventory.runtime, origin='external_repository').writability
