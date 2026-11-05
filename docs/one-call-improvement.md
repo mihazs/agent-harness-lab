@@ -78,6 +78,9 @@ commands, workflows, other settings and plugin files.
 Executable suffixes and execute bits still add the `hook_contract_required` facet,
 which keeps such a plan unresolved. The classifier reads no file contents and runs
 nothing. A verdict does not show that any runtime loads the file.
+`origin="external_repository"` classifies a path in another repository, such as a
+selected plugin checkout: every such path is `recommendation_only` unless it is
+`private_excluded`.
 
 Each classifier row stands alone. When several rows match a path, the strongest
 writability wins, in the order `private_excluded`, `adoptable`,

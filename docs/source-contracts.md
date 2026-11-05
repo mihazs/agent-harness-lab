@@ -1702,6 +1702,76 @@ fingerprint. Codex prompts and the skills config require the `codex` runtime.
 User and system skill roots, plugin skills and loading attribution remain open
 in later increments.
 
+### Plugin enablement and selected plugin checkouts
+
+`agent_harness_lab.sources.plugins_inventory.capture(CHECKOUT, PROFILE)` reads
+the plugin declarations of one checkout for the profile's runtime. It takes the
+same profile as the harness inventory. Claude Code declarations come from
+`enabledPlugins` and `extraKnownMarketplaces` in `.claude/settings.json`.
+`.claude/settings.local.json` is reported as `present_content_not_read` unless
+the caller passes `include_local=True`. Codex declarations come from
+`[plugins."name@marketplace"]` and `[marketplaces.<name>]` in
+`.codex/config.toml`; the `_default` table is skipped. Settings are read as
+bounded, link-free files with the strict `hardened.load_json` decoder (or
+`tomllib`), and nothing else in the checkout is opened. `tomllib` has no
+nesting bound, so a Codex config that exhausts its recursion or nests deeper
+than the JSON depth bound of 32 raises `ValueError` (`HostileReport`).
+
+Each declaration records the plugin id, its settings file, the declared
+`enabled` value and a resolution. An enabled plugin is `content_not_selected`,
+a disabled one is `not_enabled`, and a Codex entry without `enabled` is
+`enablement_inherited`. Marketplaces keep only the source kind and a digest of
+the declared location, never the location itself. A marketplace from
+`.claude/settings.json` applies `after_project_trust`, as the pinned settings
+documentation states. A local or Codex project-layer marketplace is
+`unverified`, because the pinned Codex source documents `[marketplaces]` as
+user-level entries. `observed_loading` and `effective` stay `unknown`.
+
+Plugin content is never looked up. Plugin caches such as `~/.claude/plugins`
+and `$CODEX_HOME/plugins/cache` are not discovered, and no `claude plugin`,
+`codex plugin` or `git` process and no network is used. The caller can select
+a checkout with `plugin_checkouts={"name@marketplace": "/absolute/path"}`. The
+same mapping is an optional `plugin_checkouts` key in `ahl.json`, validated by
+`config.plugin_checkouts`: at most 32 entries, ids of the form
+`name@marketplace`, distinct absolute paths without `..`. A selected id must be
+declared enabled. The path must not overlap the analyzed checkout or another
+selection, and it must hold a `.git` directory whose `HEAD` resolves, through
+a loose ref or `packed-refs`, to a commit. A linked worktree whose `.git` is a
+file is rejected.
+
+A selected checkout is walked with the harness inventory walk, refusals and
+bounds, which are shared across all selected checkouts. The plugin-root layout
+replaces the project classifier: `plugin.json` manifests,
+`.claude-plugin/marketplace.json` and `.agents/plugins/marketplace.json`,
+`skills/<name>/...`, `commands/`, `agents/`, `hooks/hooks.json`, `.mcp.json`,
+`output-styles/` and `workflows/`. Other files are not opened. Each component
+uses the parser registered for its kind in `PARSERS`. This increment registers
+`plugin` (`parse_manifest`, which records counts and flags only), and a kind
+without a parser stays `no_parser` until its parser lands. A plugin-root
+`CLAUDE.md` carries `plugin_runtime_loading: not_loaded_by_runtime`, and
+`hooks/hooks.json` records `plugin_hooks_wrapper` as `present`, `missing` or
+`malformed`, because a plugin hooks file needs a top-level `hooks` key. The
+manifest follows the runtime's pinned search order. Claude Code uses
+`.claude-plugin/plugin.json`. Codex (`openai/codex@d786ff91`) uses a root
+`plugin.json` only when its `$schema` is an agent-plugins schema, then
+`.codex-plugin/`, `.claude-plugin/` and `.cursor-plugin/`. A refused candidate
+ends the search unresolved.
+
+Each checkout records the HEAD digest and its own `HarnessSnapshot` of the
+walked components (committed blobs are not read, so they stay unset), plus an
+inventory bound to that snapshot. It is marked `origin: external_repository`
+and `writability: recommendation_only`, and construction rejects any other
+value. `surfaces.classify(path, origin="external_repository")` returns
+`recommendation_only` for every path, walked or not, including paths the
+project allowlist would adopt. Only a `.git` or `__pycache__` path stays
+`private_excluded`, which is stricter. `plugins_inventory.writability(inventory,
+root, path)` returns that verdict for any path below a selected checkout root
+and raises `ValueError` for a root that was not selected. `Journal.owned`
+rejects their absolute paths. A bound overflow returns `blocked` with no
+declarations or checkouts, and the document is marked
+`publication_allowed: false` and `loading_evidence: false`. The selected
+checkout is never edited, executed or imported.
+
 ## ai-memory OKF project exports
 
 Select `local_file/ai-memory-okf/0.2` in the existing source declaration, with

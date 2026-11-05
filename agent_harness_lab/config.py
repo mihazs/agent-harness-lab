@@ -4,6 +4,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import sys
 import uuid
 import stat
@@ -12,6 +13,20 @@ from .evaluation.integrity import contained, open_directory_nofollow, relative, 
 RESPONSE_PATHS=('inference_settings','cgroup_root','image_root')
 RESPONSE_OPTIONS=(*RESPONSE_PATHS,'image_sha256','disk_bytes','permission_audit')
 INVOCATION_OPTIONS=('agent','codex','claude','timeout',*RESPONSE_OPTIONS,'sandbox_graders')
+PLUGIN_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}@[A-Za-z0-9][A-Za-z0-9._-]{0,127}')
+MAX_PLUGIN_CHECKOUTS = 32
+
+
+def plugin_checkouts(value):
+    """Optional caller selection {"name@marketplace": absolute Git checkout}; validating it reads nothing."""
+    if value is None: return {}
+    if not isinstance(value, dict) or len(value) > MAX_PLUGIN_CHECKOUTS: raise ValueError('invalid plugin checkout selection')
+    for key, path in value.items():
+        if (not isinstance(key, str) or PLUGIN_ID.fullmatch(key) is None or not isinstance(path, str) or len(path) > 4096
+                or any(ord(c) < 32 for c in path) or not Path(path).is_absolute() or '..' in Path(path).parts):
+            raise ValueError('plugin checkouts map name@marketplace to an absolute path')
+    if len({os.path.normpath(path) for path in value.values()}) != len(value): raise ValueError('plugin checkouts must be distinct')
+    return dict(value)
 
 
 def reference_path(project,value):
@@ -33,8 +48,9 @@ def defaults():
 
 def validate(value):
     fields = {'schema_version', 'profile', 'runtime', 'bank', 'harness_paths', 'limits', 'recommendation_only'}
-    if not isinstance(value, dict) or set(value) != fields or type(value['schema_version']) is not int or value['schema_version'] != 1:
+    if not isinstance(value, dict) or set(value) - {'plugin_checkouts'} != fields or type(value['schema_version']) is not int or value['schema_version'] != 1:
         raise ValueError('unsupported project configuration schema')
+    if 'plugin_checkouts' in value: plugin_checkouts(value['plugin_checkouts'])
     if value['profile'] not in ('offline', 'cooperative', 'isolated') or value['recommendation_only'] is not True:
         raise ValueError('invalid profile or recommendation policy')
     runtime = value['runtime']

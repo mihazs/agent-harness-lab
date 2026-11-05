@@ -16,6 +16,9 @@ WRITABILITY = ('private_excluded', 'adoptable', 'contract_required', 'recommenda
 ROOT_INSTRUCTIONS = ('AGENTS.md', 'CLAUDE.md')
 EXECUTABLE_SUFFIXES = ('.py', '.sh', '.js', '.ts')
 HOOK_FACET = 'hook_contract_required'
+# Where a path lives. Another repository is never edited in place, so every external_repository path is at most
+# recommendation_only; a private_excluded verdict still wins because it is stricter.
+ORIGINS = ('project', 'external_repository')
 
 
 @dataclass(frozen=True)
@@ -159,8 +162,8 @@ def skill_prefixes():
     return tuple(row.root for row in RULES if row.kind == 'skill' and row.root and row.writability == 'adoptable')
 
 
-def classify(relative_path, runtime=None, mode=None, *, root_skills=False, external_root=False):
-    """Classify a project-relative POSIX path; runtime None means either runtime, mode is optional st_mode bits.
+def classify(relative_path, runtime=None, mode=None, *, root_skills=False, external_root=False, origin='project'):
+    """Classify a root-relative POSIX path; runtime None means either runtime, mode is optional st_mode bits.
 
     external_root is True only for a path relative to a caller-declared root outside the checkout."""
     if not isinstance(relative_path, str) or not relative_path: raise ValueError('invalid surface path')
@@ -168,6 +171,7 @@ def classify(relative_path, runtime=None, mode=None, *, root_skills=False, exter
     if path.is_absolute() or '..' in path.parts: raise ValueError('unsafe surface path')
     if runtime is not None and runtime not in RUNTIMES: raise ValueError('unknown surface runtime')
     if mode is not None and (type(mode) is not int or mode < 0): raise ValueError('invalid surface mode')
+    if origin not in ORIGINS: raise ValueError('unknown surface origin')
     parts, context = path.parts, _Context(root_skills, external_root)
     matched = [row for row in RULES if (runtime is None or runtime in row.runtimes)
                and row.match(relative_path, parts, context)]
@@ -179,6 +183,7 @@ def classify(relative_path, runtime=None, mode=None, *, root_skills=False, exter
     if named and named[0].root: scope = PurePosixPath(*parts[:len(PurePosixPath(named[0].root).parts) + 1])
     else: scope = path.parent
     writability = min((row.writability for row in matched), key=WRITABILITY.index, default='unsupported')
+    if origin == 'external_repository' and writability != 'private_excluded': writability = 'recommendation_only'
     return SurfaceClass(kinds[0] if kinds else 'unsupported', str(scope), executable, writability, facets)
 
 
@@ -279,6 +284,10 @@ CAPABILITIES = (
     _row('plugins', 'codex', 'plugin manifest search and [plugins] enablement', _CODEX + 'plugins'),
     _row('plugins', 'codex', 'plugin agents (absence not proven)', _CODEX + 'plugins', 'unverified'),
     _row('plugins', 'codex', 'plugin validate command', _CODEX + 'plugins', 'unverified'),
+    _row('plugins', 'claude-code', 'plugin hooks/hooks.json needs a top-level hooks wrapper; a plugin-root CLAUDE.md is not loaded', _CLAUDE + 'plugins-reference'),
+    _row('plugins', 'claude-code', 'project extraKnownMarketplaces apply only after folder trust', _CLAUDE + 'settings'),
+    _row('plugins', 'codex', 'manifest search: root plugin.json with an agent-plugins $schema, then .codex-plugin, .claude-plugin, .cursor-plugin', _CODEX_SOURCE),
+    _row('plugins', 'codex', 'marketplace files .agents/plugins/marketplace.json, api_marketplace.json, .claude-plugin, .cursor-plugin', _CODEX_SOURCE),
     _row('mcp', 'claude-code', '.mcp.json and user, local, plugin and managed servers', _CLAUDE + 'mcp'),
     _row('mcp', 'claude-code', 'managedMcpServers setting', _CLAUDE + 'mcp', gate='>=2.1.259'),
     _row('mcp', 'codex', '[mcp_servers.<id>] in config layers, project only when trusted', _CODEX + 'mcp'),
