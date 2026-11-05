@@ -525,6 +525,14 @@ def _evaluate(args):
                   if isinstance(raw_config.get(k), str)}
     except (OSError, ValueError):
         pass
+    authentication = None
+    if agent == 'codex' and not blocked:
+        application_modules()
+        from agent_harness_lab.evaluation import trial_surfaces
+        authentication = trial_surfaces.codex_authentication(
+            version_info['stdout'] if version_info['exit_code'] == 0 else '', os.environ)
+        if authentication == 'unavailable':
+            blocked = 'codex_credentials_unavailable'
     output.mkdir(parents=True, exist_ok=False)
     output.chmod(0o700)
     results = dict(manifest_sha256=manifest_hash,
@@ -533,6 +541,8 @@ def _evaluate(args):
                    runtime={'agent': agent, agent + '_version': version_info['stdout'].strip()[:200] if version_info['exit_code'] == 0 else 'unavailable',
                             'user_config_defaults': config, 'effective_settings_verified': False},
                    isolation=dict(status='not_executed', full_certification=False))
+    if authentication is not None:
+        results['runtime']['codex_authentication'] = authentication
     if agent in ('codex', 'claude'):
         application_modules()
         from agent_harness_lab.evaluation import trial_surfaces
@@ -828,7 +838,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='Requires a JSON task manifest and separate existing baseline/candidate harness directories.\n'
         'Creates a NEW private directory with trial workspaces, artifact grades and results.json; checks input digests afterward.\n'
-        'Claude inherits authentication and permissions; Codex gets a credential-free temporary CODEX_HOME (results: inherited_unverified);\n'
+        'Claude keeps authentication but loads only project and managed settings, so put trial permissions in the fixture .claude/settings.json;\n'
+        'Codex gets a credential-free temporary CODEX_HOME and blocks without CODEX_API_KEY (results: inherited_unverified);\n'
         'offline/Responses require supported Linux isolation.\n'
         'Read results.json for machine output; passing trials never authorize promotion. Exit 0: passing trials or supported/rejected sequential decision;\n'
         '1: failed/incomplete execution; 2: setup/input error; 3: blocked/inconclusive sequential analysis.\n'

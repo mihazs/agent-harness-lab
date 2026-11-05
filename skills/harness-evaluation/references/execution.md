@@ -52,14 +52,17 @@ acceptance assertion from a grader bug. The runner does not sandbox grader comma
 
 Codex uses `workspace-write` and approval `never`. Claude Code uses `--print`,
 `--output-format stream-json`, `--verbose`, and `--no-session-persistence`, with
-prompts on stdin. It inherits permissions and sandbox settings; it does not enable
-`acceptEdits` or bypass permission checks. Each trial requests project-only
-settings, no user MCP servers and no hooks for Claude Code, and a temporary
-`CODEX_HOME` for Codex. `results.json` records these as `inherited_unverified`
-until a native run confirms them. Claude Code keeps inherited authentication
-and managed layers; the Codex home holds no credentials, so Codex authenticates
-from its environment. Configure permissions needed for your trusted fixtures
-before running; do not loosen them to make a candidate pass. This is not network isolation or a hostile-agent security
+prompts on stdin. It does not enable `acceptEdits` or bypass permission checks.
+Each trial requests project-only settings, no user MCP servers and no hooks for
+Claude Code, and a temporary `CODEX_HOME` for Codex. `results.json` records these
+as `inherited_unverified` until a native run confirms them. Claude Code keeps
+authentication stored outside settings files and managed layers, but user and
+local settings, with their permission rules, sandbox settings, `env` and
+`apiKeyHelper`, are not loaded. Put the permissions your trusted fixtures need in
+the fixture's `.claude/settings.json` or in managed settings. The Codex home holds
+no saved login, so a Codex run needs `CODEX_API_KEY`; without it the Codex CLI
+run blocks as `codex_credentials_unavailable` before any trial. Do not loosen
+permissions to make a candidate pass. This is not network isolation or a hostile-agent security
 boundary. Do not provide tasks requiring live external mutations. A candidate must
 not change graders. Keep fixtures free of reference solutions; the parent manages
 held-out feedback. The runner records split labels but does not enforce secrecy.
@@ -183,7 +186,8 @@ files and a complete `grader_bundles` entry with relative `path` and frozen
 controller selects the namespace command; arbitrary interpreter paths and missing
 program/reference files are rejected before agent execution. Grading never falls
 back to the host. This mode permits harness/skill injection into the cooperative
-agent workspace; that agent retains inherited configuration and authentication.
+agent workspace; that agent keeps the trial surface requests and credential rules
+described above.
 
 `ahl improve --sandbox-graders` and `ahl watch --sandbox-graders` also isolate
 evaluator-authored controls. Their authors declare bundle paths; the controller

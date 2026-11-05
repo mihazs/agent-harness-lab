@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import tomllib
 
@@ -27,6 +28,10 @@ CODEX_REQUESTS = (('settings', 'temporary CODEX_HOME with model, effort and one 
 CLAUDE_STAGED = {'mcp': ('claude-mcp.json', {'mcpServers': {}}),
                  'settings': ('claude-settings.json', {'disableAllHooks': True})}
 CODEX_KEYS = ('model', 'model_reasoning_effort')
+# The documented codex exec credential override; OPENAI_API_KEY is not documented for codex exec.
+CODEX_CREDENTIAL = 'CODEX_API_KEY'
+# The Codex CLI's own version banner; only that runtime's credential behaviour is judged.
+CODEX_BANNER = re.compile(r'codex-cli \d')
 
 
 def _row(runtime, surface, item):
@@ -55,10 +60,13 @@ def descriptor(runtime, copied_keys=()):
                  included='fixture plus selected harness_paths at their relative paths',
                  security_isolation=False, network_isolation=False, full_certification=False)
     if runtime == CLAUDE:
-        value.update(excluded_requested=['user settings', 'local settings', 'user, project and plugin MCP servers',
-                                         'settings hooks'],
-                     inherited=['authentication', 'permissions and sandbox', 'managed settings and managed hooks',
-                                'environment variables'],
+        value.update(excluded_requested=['user settings', 'local settings',
+                                         'user and local permission rules and sandbox settings',
+                                         'user and local settings env and apiKeyHelper',
+                                         'user, project and plugin MCP servers', 'settings hooks'],
+                     inherited=['authentication stored outside settings files',
+                                'project and managed permission rules and sandbox settings',
+                                'managed settings and managed hooks', 'environment variables'],
                      unknown=['user CLAUDE.md and auto memory', 'user plugins and skills'])
     else:
         value.update(excluded_requested=['user config.toml beyond the copied keys',
@@ -69,6 +77,19 @@ def descriptor(runtime, copied_keys=()):
                      sandbox='workspace-write', copied_config_keys=sorted(copied_keys),
                      trusted_projects='trial workspace only', credentials='not_staged')
     return value
+
+
+def codex_authentication(version, environ):
+    """How a trial can authenticate once its temporary CODEX_HOME holds no saved login; 'unavailable' blocks the run.
+
+    Saved `codex login` credentials live in the real CODEX_HOME, which a trial never names, so only the documented
+    CODEX_API_KEY override can reach it. A runtime whose --version is not the Codex CLI banner stays 'unknown'.
+    """
+    if not requests(CODEX)[0]['requested']:
+        return 'inherited'
+    if environ.get(CODEX_CREDENTIAL):
+        return 'environment_variable_unobserved'
+    return 'unavailable' if CODEX_BANNER.match(version.strip()) else 'unknown'
 
 
 def _private_json(path, value):

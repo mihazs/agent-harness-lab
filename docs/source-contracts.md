@@ -1883,16 +1883,35 @@ The Claude files and the temporary `CODEX_HOME` are private and sit beside the
 workspace, never inside it. The Codex home holds only one `config.toml`, with the
 `model` and `model_reasoning_effort` copied from the user configuration and one
 `trust_level = "trusted"` entry for the trial workspace. With that trust entry,
-staged project `.codex` surfaces can load. The home holds no `auth.json`, so a
-Codex trial has to authenticate from its environment. Which variables the
-pinned version accepts is unverified. Neither the argv nor the environment of a
-trial names the real `CODEX_HOME` or `~/.claude`. Claude trials drop
+staged project `.codex` surfaces can load. Neither the argv nor the environment
+of a trial names the real `CODEX_HOME` or `~/.claude`. Claude trials drop
 `CODEX_HOME` from their environment.
+
+The temporary Codex home holds no `auth.json`, so a saved `codex login` never
+reaches a trial. At Codex 0.166.0, `codex login status` under such a home
+reports `Not logged in` even with `CODEX_API_KEY` set, because it reads only
+saved credentials. `CODEX_API_KEY` is the documented credential override for
+`codex exec`; `OPENAI_API_KEY` is not documented for it. Before any trial,
+`trial_surfaces.codex_authentication` records `runtime.codex_authentication`:
+
+| Value | When | Effect |
+| --- | --- | --- |
+| `environment_variable_unobserved` | `CODEX_API_KEY` is set | Trials run; acceptance of the key is not observed |
+| `unavailable` | No key, and `--version` prints the `codex-cli` banner | The run blocks as `codex_credentials_unavailable` |
+| `unknown` | No key, and the binary is not recognised as the Codex CLI | Trials run; nothing is claimed |
+| `inherited` | No temporary home is requested | Trials use the inherited home |
+
+`--setting-sources project` also drops the permission rules, sandbox settings,
+`env` and `apiKeyHelper` of the user and local settings files. The descriptor
+lists them under `excluded_requested`. Only project and managed permission rules
+are inherited, so put the rules a trusted fixture needs in its
+`.claude/settings.json`. Authentication stored outside settings files is kept.
 
 `results.json` records the `isolation` descriptor (`ahl-trial-surfaces-v1`) in
 place of the former free-text admission. It lists each request with its row
-status, plus the layers that are requested excluded, inherited (authentication,
-permissions, managed settings, environment, `HOME/.agents/skills`) or unknown.
+status, plus the layers that are requested excluded, inherited (Claude
+authentication stored outside settings files, project and managed permissions,
+managed settings, environment, `HOME/.agents/skills`) or unknown.
 All four rows are `unverified` at the pins in `surfaces.PINS`, so the status is
 `inherited_unverified`. Rows marked verified give
 `requested_documented_unobserved`. No descriptor says `isolated`, and
@@ -1912,8 +1931,9 @@ Other executors reject `cwd`. The closed project input profile still signs only
 the root `AGENTS.md`.
 
 Sources: [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference),
-[Claude Code settings](https://code.claude.com/docs/en/settings) and
-[Codex configuration reference](https://developers.openai.com/codex/config-reference),
+[Claude Code settings](https://code.claude.com/docs/en/settings),
+[Codex configuration reference](https://developers.openai.com/codex/config-reference) and
+[Codex non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode),
 retrieved 2026-11-05 for Claude Code 2.1.317 and Codex 0.166.0.
 
 ## ai-memory OKF project exports
