@@ -1649,7 +1649,8 @@ file.
   flagged `duplicate_name`, never merged. A `SKILL.md` without a frontmatter
   block is `parse_failed`, and one with an empty or missing `description` is
   `description_missing`; Codex rejects both, so they have no id and join no
-  duplicate or name-selected config check. Entries are also flagged
+  duplicate or name-selected config check. Frontmatter the shared reader cannot
+  model is `frontmatter_unsupported` (see below), which claims no rejection. Entries are also flagged
   `name_too_long` (more than 64 characters) and `depth_exceeded`
   (a `SKILL.md` more than 6 directories below the root), following
   `openai/codex@d786ff91` `codex-rs/ext/skills/src/loader/mod.rs`.
@@ -1683,8 +1684,19 @@ from its directory name keeps that name in the private shadowing, duplicate and
 id. An id is at most 4096 characters and holds no control characters.
 Frontmatter goes through the shared `sources.frontmatter` reader (at most 64 KiB
 and 512 lines), so trailing `# comments` are dropped from values. It is never
-loaded as YAML, and an unterminated block, a duplicate key, an unclosed quote or
-a list or mapping where a `name` or `description` belongs gives `parse_failed`. The document has `publication_allowed: false`
+loaded as YAML. Only failures every YAML parser shares give `parse_failed`: an
+unterminated block, a file that is not UTF-8, syntax the reader classes
+`bad_yaml` (a duplicate key, an unclosed quote, tab indentation), or a list or
+mapping where a `name` or `description` belongs. Valid YAML the reader does not
+model (flow mappings such as `metadata: {short-description: s}`, anchors, tags,
+an unquoted `argument-hint: [a] [b]`), frontmatter over 64 KiB or 512 lines, and
+a `---` fence line with trailing blanks are flagged `frontmatter_unsupported`
+instead, because a runtime's own parser may accept them. That flag is an unknown,
+not a rejection: a command keeps its path-derived id, while a skill's name and
+description were not read, so it has no id, is not flagged `description_missing`
+or `name_too_long`, and joins no shadowing, qualification, duplicate or
+name-selected config check. A path-selected `[[skills.config]]` entry still
+applies to it. The document has `publication_allowed: false`
 and `loading_evidence: false`. Its summary carries only counts and the
 fingerprint. Codex prompts and the skills config require the `codex` runtime.
 User and system skill roots, plugin skills and loading attribution remain open

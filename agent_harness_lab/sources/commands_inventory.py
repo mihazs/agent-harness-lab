@@ -6,8 +6,10 @@ load 'on_demand', qualified as /<subdir>:<dir> only on a directory-name clash; C
 all listed, and same-name skills are flagged, never merged. Codex prompts are read only from a caller-declared
 CODEX_HOME and stay 'deprecated' and 'loader_unverified_at_head'; they and the SKILL.md re-reads share the inventory's
 entry, byte and file bounds. Frontmatter goes through the shared bounded reader (sources.frontmatter), never a
-YAML load. An emitted id is derived from the path only: a frontmatter name that differs from its directory resolves
-shadowing internally and is withheld ('id_withheld'). Nodes the inventory left unread (private_excluded) are skipped.
+YAML load; a block the reader cannot model (unsupported_yaml, too_large, a space-padded fence) is the unknown
+'frontmatter_unsupported', never 'parse_failed', and such a skill has no id. An emitted id is derived from the path
+only: a frontmatter name that differs from its directory resolves shadowing internally and is withheld
+('id_withheld'). Nodes the inventory left unread (private_excluded) are skipped.
 A row is a declaration: observed_loading and effective are always 'unknown'.
 """
 from dataclasses import asdict, dataclass
@@ -26,21 +28,36 @@ KINDS = ('command', 'prompt', 'skill')
 LOADS = ('startup', 'on_demand', 'outside_scan', 'unknown')
 FLAGS = ('config_conflict', 'description_missing', 'description_too_long', 'depth_exceeded',
          'disabled_by_declared_config', 'duplicate_name', 'frontmatter_name_ignored', 'frontmatter_paths_ignored',
-         'id_withheld', 'name_too_long', 'parse_failed', 'shadowed_by_skill')
+         'frontmatter_unsupported', 'id_withheld', 'name_too_long', 'parse_failed', 'shadowed_by_skill')
 LABELS = ('deprecated', 'description_limit_unverified', 'loader_unverified_at_head')
 # Pinned in openai/codex@d786ff91 codex-rs/ext/skills/src/loader/mod.rs; the description bound is not found at the pin.
 CODEX_NAME_MAX, CODEX_SCAN_DEPTH, CODEX_DESCRIPTION_MAX = 64, 6, 1024
 MAX_CONFIG_BYTES = 1024 * 1024
 MAX_ID_CHARS = 4096
 _ROOTS = {'claude-code': ('.claude', 'skills'), 'codex': ('.agents', 'skills')}
+# Reader reasons that every YAML parser shares, so they are a definite 'parse_failed'. unsupported_yaml (valid YAML
+# outside the subset: flow mappings, anchors, tags) and too_large stay unknown: 'frontmatter_unsupported'.
+DEFINITE = ('bad_yaml', 'not_utf8', 'unterminated')
+
+
+def _padded_fence(raw):
+    """Whether the opening fence, or a fence line before the closing one, carries trailing blanks. The shared reader
+    needs an exact '---'; whether a runtime trims the line is not verified, so such a block is never judged."""
+    for number, line in enumerate(raw.split(b'\n', shared.MAX_LINES + 2)[:shared.MAX_LINES + 2]):
+        line = line.rstrip(b'\r')
+        if line != b'---' and line.rstrip(b' \t') == b'---': return True
+        if (line == b'---') == bool(number): return False  # no opening fence, or the block closed
+    return False
 
 
 def frontmatter(raw):
     """Top-level keys of a leading '---' block via sources.frontmatter.read, or None without one.
 
     A scalar stays text ('' when empty); a list or nested mapping stays an opaque non-text value. A malformed or
-    out-of-subset block raises FrontmatterError, a ValueError."""
-    try: fields = shared.read(raw.removeprefix(b'\xef\xbb\xbf'))
+    out-of-subset block raises FrontmatterError, a ValueError; a space-padded fence is 'unsupported_yaml'."""
+    raw = raw.removeprefix(b'\xef\xbb\xbf')
+    if _padded_fence(raw): raise shared.FrontmatterError('unsupported_yaml')
+    try: fields = shared.read(raw)
     except shared.FrontmatterError as error:
         if error.reason == 'no_leading_fence': return None
         raise
@@ -50,7 +67,10 @@ def frontmatter(raw):
 def parse(path, raw, profile):
     """harness_inventory parser for command files: flat facts only, so raw text never reaches a node."""
     if surfaces.classify(path, profile['runtime']).kind != 'command': return 'not_parsed', {}
-    fields = frontmatter(raw)
+    try: fields = frontmatter(raw)
+    except shared.FrontmatterError as error:  # a definite reason still raises, so the node is parse_failed
+        if error.reason in DEFINITE: raise
+        return 'parsed', dict(frontmatter='unsupported')
     keys = fields or {}
     description = keys.get('description')
     return 'parsed', dict(frontmatter=fields is not None, name_key='name' in keys, paths_key='paths' in keys,
@@ -153,7 +173,8 @@ class _Resolve:
 
     def skill_fields(self, node):
         """Re-read one SKILL.md no-follow within the remaining byte budget, bound to its inventory hash so a
-        swapped file is refused, not parsed. Codex rejects a SKILL.md without a frontmatter block."""
+        swapped file is refused, not parsed. Codex rejects a SKILL.md without a frontmatter block. Only a DEFINITE
+        reader reason is parse_failed; any other is frontmatter_unsupported, an unknown name and description."""
         path, remaining = os.path.join(self.checkout, node.path), harness_inventory.MAX_BYTES - self.walk.bytes
         if os.lstat(path).st_size > remaining: raise harness_inventory._Blocked('byte_bound_exceeded')
         raw = read_regular(path, remaining)
@@ -161,7 +182,8 @@ class _Resolve:
         if hashlib.sha256(raw).hexdigest() != node.content_sha256:
             raise ValueError('commands inventory input changed during reading')
         try: fields = frontmatter(raw)
-        except ValueError: return {}, {'parse_failed'}
+        except shared.FrontmatterError as error:
+            return {}, {'parse_failed' if error.reason in DEFINITE else 'frontmatter_unsupported'}
         if fields is None: return {}, {'parse_failed'} if self.runtime == 'codex' else set()
         if not all(isinstance(fields.get(key, ''), str) for key in ('name', 'description')): return {}, {'parse_failed'}
         return fields, set()
@@ -174,16 +196,16 @@ class _Resolve:
             if node.kind != 'skill' or index is None or parts[-1] != 'SKILL.md' or len(parts) < index + 4: continue
             if self.runtime == 'claude-code' and len(parts) != index + 4: continue
             (fields, flags), labels, folder = self.skill_fields(node), set(), parts[-2]
-            declared = fields.get('name')
+            declared, unknown = fields.get('name'), 'frontmatter_unsupported' in flags  # unknown: name not read
             if self.runtime == 'claude-code':  # frontmatter name, else the directory name
                 name, load = declared or folder, _load(owner, self.cwd, 'on_demand')
-                key = None if load == 'unknown' else '/' + name
+                key = None if load == 'unknown' or unknown else '/' + name
             else:  # pinned parser.rs: a missing name defaults to the directory; a missing description is rejected
                 name = declared or folder
                 load = 'startup' if _load(owner, self.cwd, 'outside_scan') == 'startup' else 'outside_scan'
                 if not flags and not fields.get('description'): flags.add('description_missing')
                 key = '$' + name if not flags and len(name) <= CODEX_NAME_MAX else None
-                if len(name) > CODEX_NAME_MAX: flags.add('name_too_long')
+                if len(name) > CODEX_NAME_MAX and not unknown: flags.add('name_too_long')
                 if len(fields.get('description', '')) > CODEX_DESCRIPTION_MAX:
                     flags.add('description_too_long'); labels.add('description_limit_unverified')
                 if len(parts) - index - 3 > CODEX_SCAN_DEPTH: flags.add('depth_exceeded')
@@ -201,6 +223,7 @@ class _Resolve:
             name = ':'.join((*parts[index + 2:-1], PurePosixPath(parts[-1]).stem))
             facts, flags = dict(node.facts), set()
             if node.parse_status != 'parsed': flags.add('parse_failed')
+            if facts.get('frontmatter') == 'unsupported': flags.add('frontmatter_unsupported')
             if facts.get('name_key'): flags.add('frontmatter_name_ignored')
             if facts.get('paths_key'): flags.add('frontmatter_paths_ignored')
             self.add('command', '/' + name, name, node, _load(owner, self.cwd, 'unknown'), flags, set())
@@ -214,7 +237,7 @@ class _Resolve:
         """Claude Code: a nested skill whose directory name clashes with another skill is /<subdir>:<dir>."""
         skills = [row for row in self.entries if row['kind'] == 'skill']
         for row in skills:
-            if row['load'] != 'on_demand': continue
+            if row['load'] != 'on_demand' or 'frontmatter_unsupported' in row['flags']: continue
             taken = {name for other in skills if other is not row and other['load'] != 'unknown'
                      for name in (other['name'], other['folder'])}
             if row['folder'] in taken: row.update(key=f"/{row['prefix']}:{row['folder']}", derived=True)

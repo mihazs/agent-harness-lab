@@ -249,6 +249,44 @@ class CommandsInventoryTests(unittest.TestCase):
         for raw in (b'---\ndescription: "unclosed\n---\n', b'---\nname: a\n...\n', b'---\n' + b''.join(b'k%d: v\n' % i for i in range(600)) + b'---\n'):
             with self.subTest(raw=raw[:20]), self.assertRaises(ValueError): commands.frontmatter(raw)
 
+    def test_frontmatter_the_reader_cannot_model_is_unknown_never_parse_failed(self):
+        # Valid YAML outside the reader's subset, an oversized block and a space-padded fence are unknowns: no
+        # Codex rejection is claimed, so no description_missing, and no id, duplicate or name-selected config check.
+        unsupported = {'flow': '---\nname: flow\ndescription: d\nmetadata: {short-description: s}\n---\n',
+                       'anchor': '---\nname: anchor\ndescription: &d text\n---\n',
+                       'tag': '---\nname: tag\ndescription: !!str text\n---\n',
+                       'big': '---\nname: big\ndescription: ' + 'x' * 70000 + '\n---\n',
+                       'spaced': '--- \nname: spaced\ndescription: d\n---\n'}
+        files = {f'.agents/skills/{folder}/SKILL.md': text for folder, text in unsupported.items()}
+        files.update({'src/task/.agents/skills/flow/SKILL.md': skill('flow'),
+                      '.agents/skills/broken/SKILL.md': '---\nname: broken\nname: again\ndescription: d\n---\n'})
+        checkout = self.build(files)
+        config = self.base / 'config.toml'
+        config.write_text(f'[[skills.config]]\nname = "anchor"\nenabled = false\n'
+                          f'[[skills.config]]\npath = "{checkout}/.agents/skills/tag/SKILL.md"\nenabled = false\n')
+        found = self.entries(commands.capture(checkout, CODEX, codex_config=str(config)), 'skill')
+        for folder in ('flow', 'anchor', 'big', 'spaced'):
+            with self.subTest(folder=folder):
+                row = found[f'.agents/skills/{folder}/SKILL.md']
+                self.assertEqual((row.id, row.load, row.flags, row.labels), (None, 'startup', ('frontmatter_unsupported',), ()))
+        self.assertEqual(found['.agents/skills/tag/SKILL.md'].flags, ('disabled_by_declared_config', 'frontmatter_unsupported'))
+        self.assertEqual((found['src/task/.agents/skills/flow/SKILL.md'].id, found['src/task/.agents/skills/flow/SKILL.md'].flags),
+                         ('$flow', ()))
+        self.assertEqual(found['.agents/skills/broken/SKILL.md'].flags, ('parse_failed',))  # a duplicate key is definite
+        claude = self.build({'.claude/commands/a.md': '---\nargument-hint: [pr-number] [priority]\n---\nbody\n',
+                             '.claude/commands/flow.md': f'{SECRET}\n',
+                             '.claude/skills/flow/SKILL.md': unsupported['flow']}, name='claude')
+        rows = {p: (e.id, e.flags) for p, e in self.entries(commands.capture(claude, CLAUDE)).items()}
+        self.assertEqual(rows['.claude/commands/a.md'], ('/a', ('frontmatter_unsupported',)))
+        self.assertEqual(rows['.claude/commands/flow.md'], ('/flow', ()))  # an unread skill name shadows nothing
+        self.assertEqual(rows['.claude/skills/flow/SKILL.md'], (None, ('frontmatter_unsupported',)))
+        node = next(n for n in inventory.capture(claude, CLAUDE).nodes if n.path == '.claude/commands/a.md')
+        self.assertEqual((node.parse_status, dict(node.facts)), ('parsed', dict(frontmatter='unsupported')))
+        for raw in (b'--- \nname: a\n---\n', b'---\nname: a\n---\t\n'):
+            with self.subTest(raw=raw), self.assertRaises(ValueError) as caught: commands.frontmatter(raw)
+            self.assertEqual(caught.exception.reason, 'unsupported_yaml')
+        self.assertEqual(commands.frontmatter(b'---\nname: a\n---\n--- \n'), dict(name='a'))  # a body line is not a fence
+
     def test_codex_prompts_are_read_only_from_a_declared_codex_home_and_stay_labelled(self):
         checkout = self.build({'prompts/review.md': f'{SECRET}\n'})
         home = self.base / 'codex-home'
