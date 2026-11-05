@@ -11,7 +11,7 @@ from .graph import EvidenceGraph, JoinReceipt
 class NativeCapture(LocalExport):
     def select(self, source, fields):
         descriptor, selected = self.selection(source)
-        optional = {'max_records', 'max_files', 'max_scan_files'}
+        optional = {'max_records', 'max_files', 'max_scan_files', 'max_walk_entries'}
         if (not isinstance(selected, dict) or not fields-optional <= set(selected) <= fields
                 or type(selected['schema_version']) is not int or selected['schema_version'] != 1):
             raise ValueError('invalid native capture selection')

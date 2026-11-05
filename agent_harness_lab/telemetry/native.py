@@ -4,7 +4,8 @@ from contextlib import closing
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import stat
 from .adapters import correlate
 from .schema import event
 from ..evaluation.integrity import unique_object
@@ -53,6 +54,43 @@ def lines(folder, name, *, max_bytes=None, max_line_bytes=None):
                 if part.endswith(b'\n'):
                     yield bytes(line)
                     line.clear()
+
+
+class WalkLimit(Exception):
+    """A bounded directory walk stopped at a depth or visited-entry bound."""
+    def __init__(self, reason, name):
+        super().__init__(reason); self.reason, self.name = reason, name
+
+
+def listing(folder, name, budget=None):
+    """List one directory without following links; a budget counts every visited entry."""
+    descriptor = folder.directory(name)
+    try:
+        folder.observe(name, os.fstat(descriptor)); found = []
+        with os.scandir(descriptor) as entries:
+            for entry in entries:
+                folder.entries += 1; folder.check()
+                if budget is not None:
+                    budget[0] -= 1
+                    if budget[0] < 0: raise WalkLimit('entries', name)
+                found.append((entry.name, entry.stat(follow_symlinks=False)))
+        return sorted(found, key=lambda item: item[0])
+    finally: os.close(descriptor)
+
+
+def bounded_walk(folder, name, max_depth, max_entries):
+    """Iterative depth-first walk of regular single-link files; links and special files are skipped and counted."""
+    budget, stack = [max_entries], [(name, 0)]
+    while stack:
+        current, depth = stack.pop()
+        if depth > max_depth: raise WalkLimit('depth', current)
+        directories = []
+        for entry, info in listing(folder, current, budget):
+            path = str(PurePosixPath(current, entry))
+            if stat.S_ISDIR(info.st_mode): directories.append((path, depth+1))
+            elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1: yield path
+            else: folder.unsafe_entries += 1
+        stack.extend(reversed(directories))
 
 
 def jsonl(folder, name, max_records, consume, **limits):

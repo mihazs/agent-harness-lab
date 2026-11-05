@@ -418,7 +418,8 @@ JSON uses exactly these fields:
 ```
 
 Use `session: null` for the declared project's accepted threads, or an exact native
-thread ID in this private descriptor. Both paths remain normalized relative paths
+thread ID in this private descriptor. An optional `"max_walk_entries"` field may be
+added to change the root walk's visited-entry bound, as described below. Both paths remain normalized relative paths
 under the declaration directory; `scope_sha256` is `digest(selection)`. No home or
 account discovery runs. The existing guarded root scanner selects only uncompressed
 `rollout-*.jsonl` files, including active/archive child directories, and checks
@@ -439,8 +440,23 @@ counts each response once; journal admission additionally checks raw fingerprint
 
 The entire root scan, correlation, record conversion, identity/graph validation,
 selection revalidation and final selected-file/directory verification share one
-stable-input lifecycle. There are no implicit byte, line, filesystem-entry,
-directory-depth, time or collection-count ceilings. Optional descriptor fields
+stable-input lifecycle. The root walk is iterative and has two bounds: 128
+directory levels below `source_root` and, by default, 250,000 visited filesystem
+entries of any kind (files, directories, links and special files, related to
+rollouts or not). The bounds target pathological trees, not ordinary large stores.
+The optional descriptor field `max_walk_entries`, a positive integer of at most
+5,000,000, replaces the entry default; `0`, negatives, booleans, `null`, other
+types or larger values reject the operation (exit 2) before scanning. When the
+field is absent the selection, its `scope_sha256` and all record identities are
+byte-identical to selections written before it existed; when present it is part
+of the selection digest and is echoed as `discovery.max_walk_entries`. The depth
+bound is fixed. Reaching either bound stops the walk, adds `scan_depth` or `scan_entries` to
+`reached_limits` and records a fingerprinted `discovery.walk_limits` receipt with
+status `unknown` and reason `scan_depth_limit` or `scan_entries_limit`; the unread
+remainder is unknown coverage, never an empty or successful scan, and the
+checkpoint is blocked. Trees within both bounds produce unchanged summaries,
+records and fingerprints. There are no implicit byte, line, time or
+collection-count ceilings. Optional descriptor fields
 `max_files`, `max_scan_files` and `max_records` preserve caller-selected limits;
 omission or `null` means unlimited. Coverage declares the selected record/file
 limits and actual counts; `native_summary.bytes_read` reports cumulative reads
@@ -448,7 +464,7 @@ without declaring an aggregate byte bound. The root mapping version is
 `codex-native-root-journal-v1`.
 
 Preview exposes `checkpoint_ready: false` for any selected partial tail, reached
-file/scan cutoff, unsupported header, skipped unsafe entry or empty accepted scan.
+file/scan/walk cutoff, unsupported header, skipped unsafe entry or empty accepted scan.
 Those previews can neither import nor recheck relationships. Hard resource errors,
 conflicting claims or concurrent selected-input/descriptor changes reject the
 operation. No incomplete batch can create or advance a checkpoint, and successful

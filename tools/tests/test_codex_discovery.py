@@ -159,7 +159,7 @@ class CodexDiscoveryTests(unittest.TestCase):
             self.assertTrue(self.collect()['analysis']['events'])
             with Folder(self.root, None) as folder, self.assertRaises(ValueError): list(folder.walk('captures'))
 
-    def test_discovery_has_no_default_file_scan_or_depth_ceiling(self):
+    def test_discovery_has_no_default_file_scan_ceiling_and_ordinary_depth_is_in_bound(self):
         from agent_harness_lab.telemetry.codex_discovery import scan
         for index in range(2001): self.write(f'rollout-{index}.jsonl')
         records, summary, _ = scan(self.captures, self.project)
@@ -172,6 +172,46 @@ class CodexDiscoveryTests(unittest.TestCase):
         self.assertEqual(limited['reached_limits'], ['accepted_files'])
         self.write('nested/'*70+'rollout-deep.jsonl')
         self.assertEqual(scan(self.captures, self.project)[1]['discovery']['accepted_files'], 2002)
+
+    def chain(self, levels):
+        descriptor = os.open(self.captures, os.O_RDONLY|os.O_DIRECTORY)
+        try:
+            for _ in range(levels):
+                os.mkdir('d', dir_fd=descriptor); nested = os.open('d', os.O_RDONLY|os.O_DIRECTORY, dir_fd=descriptor)
+                os.close(descriptor); descriptor = nested
+            os.close(os.open('rollout-deep.jsonl', os.O_WRONLY|os.O_CREAT, 0o600, dir_fd=descriptor))
+        finally: os.close(descriptor)
+
+    def test_wide_unrelated_tree_reaches_a_labelled_entry_limit(self):
+        from agent_harness_lab.telemetry.codex_discovery import MAX_WALK_ENTRIES, scan
+        self.write('a/rollout-2026-a.jsonl'); wide = self.captures/'wide'; wide.mkdir()
+        for index in range(20000): (wide/f'n{index}.txt').write_bytes(b'')
+        self.assertEqual(MAX_WALK_ENTRIES, 250000)
+        ordinary = scan(self.captures, self.project)[1]['discovery']
+        self.assertEqual(ordinary['reached_limits'], []); self.assertNotIn('walk_limits', ordinary)
+        records, summary, _ = scan(self.captures, self.project, max_walk_entries=10000); discovery = summary['discovery']
+        self.assertTrue(records); self.assertEqual(discovery['reached_limits'], ['scan_entries'])
+        self.assertEqual([r['status']+':'+r['reason'] for r in discovery['walk_limits']], ['unknown:scan_entries_limit'])
+        self.assertEqual(discovery['filesystem_entries'], 10001); self.assertEqual(discovery['max_walk_entries'], 10000)
+        with patch('agent_harness_lab.telemetry.codex_discovery.MAX_WALK_ENTRIES', 10000):
+            caveats = self.collect()['caveats']
+        self.assertTrue(any('reached limits' in c for c in caveats))
+
+    def test_deep_chain_reaches_a_labelled_depth_limit_without_recursion_error(self):
+        from agent_harness_lab.telemetry.codex_discovery import scan
+        self.write('rollout-2026-a.jsonl'); self.chain(1100)
+        records, summary, _ = scan(self.captures, self.project); discovery = summary['discovery']
+        self.assertTrue(records); self.assertEqual(discovery['reached_limits'], ['scan_depth'])
+        self.assertEqual([r['reason'] for r in discovery['walk_limits']], ['scan_depth_limit'])
+        self.assertEqual(discovery['unsupported_headers'], 0)
+
+    def test_tree_at_the_walk_bounds_is_unchanged_and_unlabelled(self):
+        from agent_harness_lab.telemetry.codex_discovery import MAX_WALK_DEPTH, scan
+        self.write('rollout-2026-a.jsonl'); baseline = scan(self.captures, self.project)
+        self.chain(MAX_WALK_DEPTH); (self.captures/('d/'*MAX_WALK_DEPTH)/'rollout-deep.jsonl').unlink()
+        records, summary, sha256 = scan(self.captures, self.project)
+        self.assertEqual((records, sha256), baseline[::2]); self.assertEqual(summary['discovery']['reached_limits'], [])
+        self.assertNotIn('walk_limits', summary['discovery'])
 
     def test_explicit_file_line_and_record_limits_are_not_ignored(self):
         from agent_harness_lab.telemetry.codex_discovery import scan
