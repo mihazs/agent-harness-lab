@@ -79,12 +79,13 @@ def commit(value):
     return value
 
 
-def limits(value):
-    if value is None: return dict(LIMITS)
-    if not isinstance(value, dict) or set(value) - set(LIMITS): raise ValueError('unsupported test result limits')
-    result = dict(LIMITS)
+def limits(value, ceilings=LIMITS):
+    """Selection limits may only lower a source's hard ceilings."""
+    if value is None: return dict(ceilings)
+    if not isinstance(value, dict) or set(value) - set(ceilings): raise ValueError('unsupported source limits')
+    result = dict(ceilings)
     for key, bound in value.items():
-        if type(bound) is not int or not 1 <= bound <= LIMITS[key]: raise ValueError('test result limits may only lower ceilings')
+        if type(bound) is not int or not 1 <= bound <= ceilings[key]: raise ValueError('source limits may only lower ceilings')
         result[key] = bound
     return result
 
@@ -124,17 +125,17 @@ def tags(attributes):
         rb'(?:\s+[^\s=/>]+\s*=\s*(?:"[^"]*"|\'[^\']*\')){0,%d}\s*/?>|<' % attributes, re.S)
 
 
-def screen_json(raw, bounds):
+def screen_json(raw, bounds, name='pytest JSON'):
     """Bound nesting and container count before json.loads builds the tree (empty containers amplify ~48x)."""
     depth = containers = 0
     for token in JSON_STRUCTURE.finditer(raw):
         mark = raw[token.start()]
         if token.end() - token.start() == 1 and mark == ord('"'):
-            raise HostileReport('pytest JSON string is unterminated')
+            raise HostileReport(name+' string is unterminated')
         if mark in b'[{':
             depth += 1; containers += 1
-            if depth > bounds['max_json_depth']: raise HostileReport('pytest JSON depth bound exceeded')
-            if containers > bounds['max_json_containers']: raise HostileReport('pytest JSON container bound exceeded')
+            if depth > bounds['max_json_depth']: raise HostileReport(name+' depth bound exceeded')
+            if containers > bounds['max_json_containers']: raise HostileReport(name+' container bound exceeded')
         elif mark in b']}': depth -= 1
 
 
@@ -197,20 +198,26 @@ def _constant(value):
     raise ValueError('non-finite JSON numbers are unsupported')
 
 
-def parse_pytest(raw, bounds, warnings):
-    screen_json(raw, bounds)
+def load_json(raw, bounds, name):
+    """Screen, then strictly decode one bounded UTF-8 JSON document: no duplicate keys, NaN or deep nesting."""
+    screen_json(raw, bounds, name)
     try:
         value = json.loads(raw.decode('utf-8'), object_pairs_hook=unique_object, parse_constant=_constant)
     except RecursionError:
-        raise HostileReport('pytest JSON depth bound exceeded') from None
+        raise HostileReport(name+' depth bound exceeded') from None
     except UnicodeDecodeError:
-        raise ValueError('pytest JSON is not valid UTF-8') from None
+        raise ValueError(name+' is not valid UTF-8') from None
     pending = [(value, 1)]
     while pending:
         item, depth = pending.pop()
-        if depth > bounds['max_json_depth']: raise HostileReport('pytest JSON depth bound exceeded')
+        if depth > bounds['max_json_depth']: raise HostileReport(name+' depth bound exceeded')
         children = item.values() if isinstance(item, dict) else item if isinstance(item, list) else ()
         pending.extend((child, depth+1) for child in children if isinstance(child, (dict, list)))
+    return value
+
+
+def parse_pytest(raw, bounds, warnings):
+    value = load_json(raw, bounds, 'pytest JSON')
     if not isinstance(value, dict) or not isinstance(value.get('tests'), list):
         raise ValueError('pytest JSON report requires a tests list')
     if len(value['tests']) > bounds['max_cases']: raise HostileReport('pytest JSON case bound exceeded')
