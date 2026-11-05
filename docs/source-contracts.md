@@ -1735,9 +1735,10 @@ from its directory name keeps that name in the private shadowing, duplicate and
 `[[skills.config]]` checks, but its id is `null` and it is flagged `id_withheld`;
 `name_sha256` still identifies it. A Codex name longer than 64 characters has no
 id. An id is at most 4096 characters and holds no control characters.
-Frontmatter goes through the shared `sources.frontmatter` reader (at most 64 KiB
-and 512 lines), so trailing `# comments` are dropped from values. It is never
-loaded as YAML. Only failures every YAML parser shares give `parse_failed`: an
+Frontmatter goes through `texts()`, the text mode of the shared
+`sources.frontmatter` reader (at most 64 KiB and 512 lines), so trailing
+`# comments` are dropped from values, a leading BOM is ignored and the inventory
+has no parser of its own. It is never loaded as YAML. Only failures every YAML parser shares give `parse_failed`: an
 unterminated block, a file that is not UTF-8, syntax the reader classes
 `bad_yaml` (a duplicate key, an unclosed quote, tab indentation), or a list or
 mapping where a `name` or `description` belongs. Valid YAML the reader does not
