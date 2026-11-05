@@ -189,7 +189,9 @@ def parse(value, instance, version, bounds):
     if not isinstance(query, str): warnings.add('export_query_missing')
     project = project_key(value.get('project'))
     if project is None: warnings.add('export_not_project_scoped')
-    if sum(len(value[kind]) for kind in KINDS) > bounds['max_rows']: raise HostileReport('Claude-Mem row bound exceeded')
+    # The bound counts records, not rows: a hit-bearing row yields its claim and a search hit, plus the export record.
+    if 1 + sum(len(value[kind]) * (1 if kind == 'sessions' else 2) for kind in KINDS) > bounds['max_rows']:
+        raise HostileReport('Claude-Mem row bound exceeded')
     def scoped(*parts): return digest(['claude-mem', instance, *parts])
     claims, seen, sessions, platforms = [], Counter(), set(), {}
     for kind in ('sessions', 'observations', 'summaries', 'prompts'):
