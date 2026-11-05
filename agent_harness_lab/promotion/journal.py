@@ -114,8 +114,8 @@ class Journal:
         if not names or len(names)>1000: raise ValueError('invalid transaction size')
         for mapping in (before,after):
             for snapshot in mapping.values(): validate_snapshot(snapshot)
-        # Every transaction probes containment and checks what it writes, except the rollback of a promotion,
-        # which restores that promotion's admitted 'before' snapshot (restores, set only by _rollback).
+        # Every transaction probes containment and checks what it writes, except a rollback that restores a
+        # promotion's original 'before' snapshot (restores, set only by _rollback).
         for name in names:
             relative(name)
             self.owned(name,None if restores else after.get(name),probe=not restores)
@@ -272,7 +272,23 @@ class Journal:
                 return latest
         if self.preview_rollback(deployment)['status']!='rollback_eligible': raise ValueError('rollback conflict')
         record=self.load(deployment)
-        # Reverting a rollback re-applies a promotion's 'after', so it is admitted again like a new promotion.
+        # Reverting a record whose 'before' is a promotion's 'after' re-applies that content, so it is admitted
+        # again like a new promotion; one whose 'before' is the original content restores it without the probe.
         rollback=self._prepare(record['after'],record['before'],dict(reverts=deployment),'rollback',
-                               restores=record['kind']=='promotion')
+                               restores=self._before_is_original(record))
         return self._execute(rollback['deployment'])
+
+    def _before_is_original(self,record):
+        # Each rollback swaps 'before' and 'after', so the reverts chain's parity back to its promotion says
+        # which side holds the original content. An unresolvable chain is treated as re-applying (probed).
+        flips,seen=0,set()
+        while record['kind']=='rollback':
+            reverted=record['metadata'].get('reverts')
+            if reverted in seen or len(seen)>=1000: return False
+            seen.add(reverted)
+            try:
+                record=self.load(reverted)
+            except (ValueError,OSError,KeyError,TypeError):
+                return False
+            flips+=1
+        return flips%2==0

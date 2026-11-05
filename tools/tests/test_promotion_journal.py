@@ -329,6 +329,30 @@ class NestedSurfaceAdoptionTests(unittest.TestCase):
                             {'vendor/AGENTS.md':file_record(target)},None,'rollback')
         self.assertEqual((self.project/'vendor/AGENTS.md').read_text(),'before')
 
+    def test_every_rollback_that_restores_original_content_survives_nesting_and_hooks(self):
+        hooked='---\nname: a\ndescription: d\nhooks:\n  Stop: []\n---\nBody\n'
+        self.write(self.project/'.claude/agents/a.md',hooked)
+        cases={'app/CLAUDE.md':('after',lambda:(self.project/'app/.git').mkdir(),'before'),
+               '.claude/agents/a.md':('---\nname: a\ndescription: d\n---\nBody\n',lambda:None,hooked)}
+        for name,(after,later,before) in cases.items():
+            with self.subTest(name=name):
+                journal=Journal(self.project,self.root/'journals'/name.replace('/','_'))
+                target=self.root/'target'; target.write_text(after)
+                promotion=journal.prepare({name:file_record(self.project/name)},{name:file_record(target)})
+                journal.execute(promotion['deployment'])
+                first=journal.rollback(promotion['deployment'])
+                second=journal.rollback(first['deployment'])
+                self.assertEqual((self.project/name).read_text(),after)
+                later()
+                # The third rollback restores the original content again, so it is never stranded or content-checked.
+                third=journal.rollback(second['deployment'])
+                self.assertEqual((self.project/name).read_text(),before)
+                # Reverting it would re-apply the promotion's content, which is admitted (and refused) again.
+                if name=='app/CLAUDE.md':
+                    with self.assertRaisesRegex(ValueError,'outside owned harness surface'):
+                        journal.rollback(third['deployment'])
+                    self.assertEqual((self.project/name).read_text(),before)
+
     def test_rollback_survives_a_repository_created_below_the_project_after_adoption(self):
         original,proposed=self.stage_files({'AGENTS.md':'after','app/CLAUDE.md':'after'})
         self.assertEqual(self.adopt(original,proposed()),['AGENTS.md','app/CLAUDE.md'])

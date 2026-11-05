@@ -127,7 +127,9 @@ Loading a recorded transaction, previewing it and rolling it back take
 containment as observed when it was prepared, so a `.git` created later below
 the project cannot strand a rollback. A new promotion of that file is still
 refused, and so is rolling back that rollback, which re-applies the promotion's
-content and is therefore probed and checked like a new promotion.
+content and is therefore probed and checked like a new promotion. Along a chain
+of rollbacks, each one that restores the original content is taken as observed,
+and each one that re-applies the promotion's content is probed and checked.
 
 `CLAUDE.local.md`, `settings*.json`, `.codex/config.toml`, hooks, workflows,
 Codex `.rules`, `.mcp.json`, memory and plugin checkouts
