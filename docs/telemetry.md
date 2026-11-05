@@ -109,7 +109,9 @@ and the ledger against this page, so the output cannot drift unnoticed.
 - **A tool error is not a task failure.** `is_error: true` sets
   `execution_status: error` on the linked result, and nothing else. Every record,
   including the assistant line that says the task failed, keeps `outcome: unknown`
-  with `outcome_provenance: unknown` and `missing_reason: no_independent_outcome`.
+  with `outcome_provenance: unknown`. The four event records carry
+  `missing_reason: no_independent_outcome`, and the coverage record carries
+  `missing_reason: capture_ended_without_result`.
   Only an executable grader or a reviewed annotation can supply an outcome; see
   `verified_outcome` above. The failed command may have been an expected probe.
 - **A missing result is coverage, not an event.** The `Read` call gets a

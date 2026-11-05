@@ -180,3 +180,16 @@ class WalkthroughTests(unittest.TestCase):
         self.assertEqual(records[-1]['capture_status'], 'unmatched_call')
         for field in ('state_revision', 'input_fingerprint', 'result_fingerprint', 'tool_effect', 'mutation'):
             self.assertFalse(any(field in r for r in records), field)
+
+    def test_documented_missing_reasons_match_each_record(self):
+        _, shown = self.blocks()
+        records = [json.loads(line) for line in shown.splitlines()[:5]]
+        events = [r['missing_reason'] for r in records if r['activity'] != 'capture_coverage']
+        coverage = [r['missing_reason'] for r in records if r['activity'] == 'capture_coverage']
+        self.assertEqual(events, ['no_independent_outcome'] * 4)
+        self.assertEqual(coverage, ['capture_ended_without_result'])
+        text = (self.root / 'docs/telemetry.md').read_text()
+        prose = ' '.join(text.split(self.heading, 1)[1].split('\n## ', 1)[0].split())
+        self.assertIn('The four event records carry `missing_reason: no_independent_outcome`', prose)
+        self.assertIn('the coverage record carries `missing_reason: capture_ended_without_result`', prose)
+        self.assertNotIn('`outcome_provenance: unknown` and `missing_reason: no_independent_outcome`', prose)
