@@ -108,5 +108,7 @@ are all verified is reported as the actual committed result.
 This is the first deterministic application slice of #77, not completion of its
 behavioral controller. Effective instruction hierarchy (#79), skill lifecycle and
 routing utility (#78), native hooks (#80), pinned target-bank integration (#142),
-and full executable CLI/skill parity (#143) remain incomplete. The behavioral gate
+and full executable CLI/skill parity (#143) remain incomplete; the
+[receipt parity contract](../skills/harness-self-improvement/references/invocation.md#receipt-parity-with-ahl-improve)
+covers the cooperative receipt only. The behavioral gate
 has not been relaxed. No favorable smoke result or approval becomes certification.
