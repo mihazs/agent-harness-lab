@@ -1916,15 +1916,16 @@ Git configuration is data, and only allowlisted read-only commands run. A
 checkout that fails a condition gets a `refused` receipt with reason
 `unpinned_checkout`, `dirty_checkout`, `stale_inventory`,
 `unsupported_checkout` (symlinks, submodules, alternates) or
-`checkout_bound_exceeded`. Nothing is written then.
+`checkout_bound_exceeded`. Nothing is written then. A worktree over one of the
+bounds below also gets the `checkout_bound_exceeded` receipt, never an error.
 
 The bounds are checked before the input is read. The worktree holds at most
-5000 files and 64 MiB, and its walk at most 64 levels deep and 10000 entries.
-The committed tree is at most 64 levels deep and 10000 entries, counted per
-path, so a subtree named many times counts each time. In the Git directory,
-each configuration, `HEAD` and reference file is at most 4 MiB, everything read
-from it, the copied object store included, is at most 256 MiB, and its listing
-is at most 20000 entries. Each Git command's output is at most 4 MiB, 64 MiB in total,
+5000 files and 64 MiB, and its walk visits at most 10000 entries, directories
+included, at most 64 levels deep. The committed tree is at most 64 levels deep
+and 10000 entries, counted per path, so a subtree named many times counts each
+time. In the Git directory, each configuration, `HEAD` and reference file is at
+most 4 MiB, everything read from it, the copied object store included, is at
+most 256 MiB, and its listing is at most 20000 entries. Each Git command's output is at most 4 MiB, 64 MiB in total,
 under a 1 GiB address-space limit. The tree walk checks the capture deadline.
 The `state` folder is refused when it contains `..`, crosses a symlink, or
 overlaps the project or a selected checkout, before or after resolution.
@@ -1937,8 +1938,10 @@ the patch SHA-256, and for each file the operation, mode and before and after
 SHA-256. It also carries the caller's recommendations. `status(BUNDLE,
 CHECKOUT)` checks staleness without running Git. It returns `stale_patch` when
 HEAD moved, `dirty_checkout` when a touched file changed at the same HEAD,
-`unpinned_checkout`, or `current`, and it raises `ValueError` when the patch
-changed after bundling.
+`unpinned_checkout`, or `current`. A touched path that became a symlink,
+directory, hardlink or special file, or now sits below a symlink, is
+`dirty_checkout`. It raises `ValueError` when the patch changed after bundling
+or the manifest lacks the shape `bundle` writes.
 
 Enablement changes (`enabledPlugins`, `extraKnownMarketplaces`, Codex
 `[plugins.*]`) are recorded only as `recommendation_only` rows naming the
@@ -2056,7 +2059,12 @@ digest fields, so each is checked before it reaches the report: `version` must
 be a label, a `declared` inventory must carry the `surfaces.PINS` version, and
 a recorded digest must be a SHA-256 value. Every row is rebuilt through `ConfigRow` or
 `InventoryNode`, so a forged string is refused and a JSON round trip gives the
-same report. A `blocked` or `unsupported` inventory gives no rows.
+same report. Rows that are each valid but that no capture writes together are
+refused with `ValueError` too: two settings rows for one file, two rows for one
+server id in one file, a Claude server whose `precedence` is not its scope's, a
+settings digest list that is not a list, a style whose `shadowed` and
+`distance` facts disagree, or a fact named twice. A `blocked` or `unsupported`
+inventory gives no rows.
 
 Recommendation text and the suggested user command are fixed templates keyed
 by a code. No inventory value is interpolated into them. Row facts hold only
@@ -2071,7 +2079,7 @@ the row, is unverified, the row's `compatibility` is `unverified`.
 | `mcp_server_duplicate` | Two Codex config layers declare the same server id. Which one wins is not recorded, so the row is `unverified`. |
 | `mcp_project_server_unapproved` | No inventoried settings layer rejects a `.mcp.json` server, and no user settings approve it by name or with `enableAllProjectMcpServers`. `approval` is `trust_dependent` when only project or local settings approve it, because those approvals apply only in a trusted folder. Otherwise it is `none`. A refused (linked) or `parse_failed` settings file may approve or reject the server. While one exists, a name no readable layer rejects and no readable user settings approve has `approval: unknown` and the row is `unverified`. An unread file can only add a rejection to a server readable user settings approve, so that server gets no row, and as a shadowing winner it has `winner_approval: approved_unless_unread_rejects` and an `unverified` `mcp_server_shadowed` row. `user_settings_declared` counts only user settings that were read and parsed. |
 | `codex_server_untrusted_layer` | A server sits in the project `.codex` layer and the project is not declared trusted. |
-| `output_style_drops_coding_instructions` | A style is not shadowed and does not set `keep-coding-instructions: true`. On the full system prompt it leaves out the coding instructions. Styles in subdirectories are `unverified`. So is a style whose `keep-coding-instructions` value is neither `true` nor `false`, and a style whose name another style shares while user-versus-project precedence is unrecorded (`precedence: not_recorded`). |
+| `output_style_drops_coding_instructions` | A style is not shadowed and does not set `keep-coding-instructions: true`. On the full system prompt it leaves out the coding instructions. The row is `verified` only for a project style recorded as not shadowed (`shadowed: false`). Styles in subdirectories are `unverified`, and so are user-layer styles, whose precedence over a same-name project style is not recorded (`shadowed: null`). So is a style whose `keep-coding-instructions` value is neither `true` nor `false`, and a style whose name another style shares while user-versus-project precedence is unrecorded (`precedence: not_recorded`). |
 | `exec_policy_check_suggested` | A `.rules` file is present. The row suggests `codex execpolicy check --pretty --rules <rules file> -- <command to test>` for the user to run. AHL never runs or evaluates it. |
 | `memory_present_excluded` | A memory location is present (`refused_excluded` when it is a link). These rows are `private_excluded` and carry no content facts. |
 
@@ -2082,8 +2090,9 @@ The rules follow the public [Claude Code MCP](https://code.claude.com/docs/en/mc
 `adoption_authority: false` and `publication_allowed: false`. `observed_loading`
 and `effective` stay `unknown`. The report lists in `not_inventoried` what no
 inventory shows: Claude local-scope servers, interactive approval choices,
-folder trust, plugin and connector servers, the system prompt variant, and
-Codex layer precedence. Without a harness document, `exec_policy` is
+folder trust, plugin and connector servers, managed MCP servers and managed
+settings policies, the system prompt variant, Codex managed configuration and
+requirements, and Codex layer precedence. Without a harness document, `exec_policy` is
 `not_inventoried`. The harness surface walk still lists checkout memory
 directories, though it never reads their files. Use the config inventory alone
 when memory must stay unlisted. Adoption of these surfaces is out of scope.

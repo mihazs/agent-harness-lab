@@ -43,6 +43,7 @@ MAX_NOTES, MAX_NOTE_CHARS = 32, 2000
 MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 # Plain checkout-relative paths only, so the diff never needs Git path quoting.
 SAFE_PATH = re.compile(r'[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*')
+_HEX = re.compile('[0-9a-f]{64}')
 REFUSALS = ('unpinned_checkout', 'dirty_checkout', 'stale_inventory', 'unsupported_checkout',
             'checkout_bound_exceeded', 'inventory_blocked', 'inventory_unsupported')
 STATUSES = ('current', 'stale_patch', 'dirty_checkout', 'unpinned_checkout')
@@ -169,11 +170,17 @@ def _clean(path, deadline):
         return head.decode(), reader.algorithm, files
 
 
+def _plain(name):
+    """Whether name is a plain checkout-relative path outside .git."""
+    try: return isinstance(name, str) and SAFE_PATH.fullmatch(name) is not None and '.git' not in relative(name).split('/')
+    except ValueError: return False
+
+
 def _changes(changes):
     if not isinstance(changes, dict) or not changes or len(changes) > MAX_CHANGES:
         raise ValueError(f'a plugin patch names 1 to {MAX_CHANGES} checkout-relative paths')
     for name, text in changes.items():
-        if not isinstance(name, str) or SAFE_PATH.fullmatch(name) is None or '.git' in relative(name).split('/'):
+        if not _plain(name):
             raise ValueError('plugin patch paths are plain checkout-relative paths outside .git')
         if text is not None and (not isinstance(text, str) or '\0' in text or len(text.encode()) > MAX_FILE_BYTES):
             raise ValueError('plugin patch content is bounded UTF-8 text, or None to delete')
@@ -314,16 +321,30 @@ def bundle(project, profile, plugin_checkouts, plugin_id, changes, *, state, rec
                 files=[row['path'] for row in manifest['files']], **LABELS)
 
 
+def _sha256(value): return isinstance(value, str) and _HEX.fullmatch(value) is not None
+
+
+def _manifest(manifest):
+    """The manifest fields status() reads, refused with ValueError unless they have the shape bundle() writes."""
+    files = manifest.get('files') if isinstance(manifest, dict) else None
+    if (not isinstance(manifest, dict) or manifest.get('profile') != PROFILE or manifest.get('schema_version') != 1
+            or not _sha256(manifest.get('patch_sha256')) or not isinstance(manifest.get('head'), str)
+            or not isinstance(files, list) or not 0 < len(files) <= MAX_CHANGES
+            or not all(isinstance(row, dict) and _plain(row.get('path')) and 'before_sha256' in row
+                       and (row['before_sha256'] is None or _sha256(row['before_sha256'])) for row in files)):
+        raise ValueError('not a plugin patch bundle')
+    return manifest
+
+
 def status(folder, checkout):
     """Staleness of a bundle against a checkout: current, stale_patch (HEAD moved), dirty_checkout or unpinned_checkout.
 
-    Reads the bounded manifest, the patch and the touched files with no-follow reads; no Git process runs.
+    Reads the bounded manifest, the patch and the touched files with no-follow reads; no Git process runs. A touched
+    path that is now a symlink, directory, hardlink or special file, or sits below one, is dirty_checkout.
     """
     folder = Path(folder)
-    manifest = load_json(read_regular(contained(folder, 'manifest.json'), MAX_MANIFEST_BYTES),
-                         plugins_inventory.JSON_BOUNDS, 'plugin bundle manifest')
-    if not isinstance(manifest, dict) or manifest.get('profile') != PROFILE or manifest.get('schema_version') != 1:
-        raise ValueError('not a plugin patch bundle')
+    manifest = _manifest(load_json(read_regular(contained(folder, 'manifest.json'), MAX_MANIFEST_BYTES),
+                                   plugins_inventory.JSON_BOUNDS, 'plugin bundle manifest'))
     patch = read_regular(contained(folder, 'patch.diff'), None)
     if hashlib.sha256(patch).hexdigest() != manifest['patch_sha256']: raise ValueError('plugin patch changed after bundling')
     try: head = plugins_inventory.head(os.path.abspath(checkout))
@@ -332,5 +353,6 @@ def status(folder, checkout):
     for row in manifest['files']:
         try: current = hashlib.sha256(read_regular(contained(checkout, relative(row['path'])), MAX_TREE_BYTES)).hexdigest()
         except FileNotFoundError: current = None
+        except (OSError, ValueError): return 'dirty_checkout'  # no longer a bounded single-link regular file
         if current != row['before_sha256']: return 'dirty_checkout'
     return 'current'
