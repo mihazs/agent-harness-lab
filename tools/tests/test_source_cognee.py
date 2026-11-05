@@ -174,7 +174,7 @@ class CogneeSourceTests(unittest.TestCase):
     def test_structural_names_count_only_between_their_pinned_types(self):
         # A model-extracted relation that happens to reuse a structural name is still a model hypothesis.
         misnamed = [(ALICE, ACME, 'contains', {}), (ACME, ALICE, 'is_a', {}), (ALICE, DOC, 'is_part_of', {}),
-                    (CHUNK, PERSON, 'contains', {}), (CHUNK, 'node-missing', 'is_part_of', {})]
+                    (CHUNK, PERSON, 'contains', {})]
         result = self.read(snapshot(edges=EDGES+misnamed))
         provenance = {r.native_id_sha256: r.provenance for r in result.records}
         relations = self.claims('relation')
@@ -187,8 +187,31 @@ class CogneeSourceTests(unittest.TestCase):
         self.assertEqual(origins[ids[CHUNK]], ('traced', ids[DOC]))
         self.assertEqual([origins[ids[i]] for i in (ALICE, ACME, PERSON)], [('traced', ids[DOC])]*2 + [('untraced', None)])
         self.assertEqual([(c.origin_status, c.origin_document_sha256) for c in relations[len(EDGES):]],
-                         [('traced', ids[DOC])]*4 + [('missing', None)])
+                         [('traced', ids[DOC])]*4)
         self.assertFalse({'chunk_origin_conflicting', 'entity_origin_traced'} & set(self.connector.summary['warnings']))
+
+    def test_is_part_of_to_an_unexported_node_still_names_a_candidate_document(self):
+        # Beside a document_id naming an exported document, an is_part_of edge to an absent node is a disagreement.
+        self.read(snapshot(edges=EDGES+[(CHUNK, 'node-gone', 'is_part_of', {})]))
+        chunk_claim, = self.claims('chunk')
+        self.assertEqual((chunk_claim.origin_status, chunk_claim.origin_document_sha256), ('conflicting', None))
+        self.assertEqual([c.origin_status for c in self.claims('entity')], ['untraced']*3)
+        self.assertIn('chunk_origin_conflicting', self.connector.summary['warnings'])
+        self.assertNotIn('entity_origin_traced', self.connector.summary['warnings'])
+        # Its name is still not structural, as the target's type is not exported.
+        self.assertEqual(self.claims('relation')[-1].detail, 'other')
+        # The mirror case: a document_id naming an absent node beside an is_part_of edge to the exported document.
+        nodes = [NODES[0], dict(NODES[1], document_id='node-gone'), *NODES[2:]]
+        self.read(snapshot(nodes=nodes))
+        chunk_claim, = self.claims('chunk')
+        self.assertEqual((chunk_claim.origin_status, chunk_claim.origin_document_sha256), ('conflicting', None))
+        # A chunk whose only is_part_of edge names an absent node names a document that is not exported.
+        nodes = [NODES[0], {k: v for k, v in NODES[1].items() if k != 'document_id'}, *NODES[2:]]
+        self.read(snapshot(nodes=nodes, edges=[(CHUNK, 'node-gone', 'is_part_of', {})]+EDGES[1:]))
+        chunk_claim, = self.claims('chunk')
+        self.assertEqual(chunk_claim.origin_status, 'not_exported')
+        self.assertNotIn(chunk_claim.origin_document_sha256, {c.native_id_sha256 for c in self.connector.claims})
+        self.assertIn('chunk_origin_not_exported', self.connector.summary['warnings'])
 
     def test_origins_never_name_an_exported_non_document(self):
         ids = lambda: {n['id']: c.native_id_sha256 for n, c in zip(nodes, self.connector.claims)}

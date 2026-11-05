@@ -193,12 +193,15 @@ def parse(value, selection, bounds):
         return types.get(source) in sources and types.get(target) in targets
     documents = {identity for identity, kind in kinds.items() if kind == 'document'}
     # A chunk names its document by a structural is_part_of edge and its flat document_id; both must agree.
-    # Only edges between their pinned types trace origins, as only they are native structure.
+    # Only edges between their pinned types trace origins, as only they are native structure. A chunk's
+    # is_part_of edge to an unexported node still names a candidate, like a document_id does, so a
+    # disagreement with it stays conflicting; only an exported non-document target is excluded.
     parents = defaultdict(set)
     for identity, occurrence, row in nodes:
         if kinds[identity] == 'chunk' and text(row.get('document_id')): parents[identity].add(row['document_id'])
     for source, target, name, occurrence, properties in edges:
-        if name == 'is_part_of' and structural(source, target, name): parents[source].add(target)
+        if name == 'is_part_of' and kinds.get(source) == 'chunk' and (target not in kinds or structural(source, target, name)):
+            parents[source].add(target)
     def chunk_origin(identity):
         found = parents.get(identity, set())
         if len(found) != 1: return 'missing' if not found else 'conflicting', None

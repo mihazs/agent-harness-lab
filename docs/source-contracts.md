@@ -2643,7 +2643,10 @@ Edges and entities are derived evidence. Each claim keeps an `origin_status` and
 when it can be traced, the hashed ID of its origin document. That hash is the
 document claim's `native_id_sha256`, never that of another node type. Only a
 chunk's `document_id` and structural `is_part_of` and `contains` edges between
-their pinned types trace an origin; a misnamed edge never does. A relation's
+their pinned types trace an origin; a misnamed edge never does. A chunk's
+`is_part_of` edge to a node absent from the export still names a candidate
+document, exactly as a `document_id` does, so it can make a chunk `not_exported`
+or `conflicting` but never `traced`. A relation's
 `source_node_sha256` and `target_node_sha256` are the `native_id_sha256` of its
 endpoint node claims. A repeated node ID resolves to its first occurrence:
 
