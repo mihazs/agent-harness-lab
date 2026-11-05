@@ -1918,6 +1918,167 @@ SARIF, coverage and lint reports; joins from a result to a Git/GitHub commit or
 PR-head record; correlated rerun replicates; expired-artifact coverage warnings;
 and cross-source reporting.
 
+## Offline Claude-Mem exports
+
+Select `local_file/claude-mem-export/v1` in the existing local source declaration,
+with `data` naming a selection descriptor next to the manifest:
+
+```json
+{"schema_version": 1, "claude_mem_version": "15.9.0", "instance": "laptop-a",
+ "export": "exports/claude-mem.json", "limits": {"max_rows": 5000}}
+```
+
+The scope fingerprint must equal `digest(selection)`, so the declared release,
+instance label, export path and limits are all part of the scope. The export is
+one regular file contained in the manifest folder; symlinks, hard links and
+special files are refused. `ClaudeMemExport` reads only that file. It never
+starts or contacts the Claude-Mem worker, calls its MCP tools, opens its SQLite
+database or Chroma store, or reads `~/.claude-mem`. The file is re-hashed after
+parsing and the selection is rechecked, so a change during capture rejects the
+whole capture.
+
+### Pinned upstream shape
+
+The adapter models one release:
+[thedotmack/claude-mem `v15.9.0`](https://github.com/thedotmack/claude-mem/tree/v15.9.0),
+commit `d0968e5d136abc34dcfe1b78acf3726fa84978d8`. Any other
+`claude_mem_version` is refused. The shapes come from these files at that commit:
+
+| Shape | Upstream file at the pin |
+| --- | --- |
+| Export envelope (`exportedAt`, `exportedAtEpoch`, `query`, optional `project`, four `total*` counts, `observations`, `sessions`, `summaries`, `prompts`) | [`scripts/export-memories.ts`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/scripts/export-memories.ts) |
+| Observation, summary and prompt rows, plus search `rank`/`score` | [`src/services/sqlite/types.ts`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/src/services/sqlite/types.ts) |
+| Session rows and the optional `agent_type`, `agent_id`, `platform_source`, `native_prompt_*` fields | `importSdkSession`, `importObservation`, `importSessionSummary` and `importUserPrompt` in [`src/services/sqlite/SessionStore.ts`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/src/services/sqlite/SessionStore.ts) |
+| Required session identity per row kind | `importRowSchemas` in [`src/services/worker/http/routes/DataRoutes.ts`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/src/services/worker/http/routes/DataRoutes.ts) |
+| Platform labels | [`src/shared/platform-source.ts`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/src/shared/platform-source.ts) |
+| Export/import workflow | [`docs/public/usage/export-import.mdx`](https://github.com/thedotmack/claude-mem/blob/d0968e5d136abc34dcfe1b78acf3726fa84978d8/docs/public/usage/export-import.mdx) |
+
+The shape is pinned only partly, and the profile says so: `upstream_shape:
+source_inferred` and `compatibility: unverified`. Three gaps remain:
+
+- `export-memories.ts` imports its `ExportData` type from `scripts/types/export.ts`,
+  which is not in the tree at the pin. The envelope is therefore inferred from the
+  object the script builds, not from a type definition.
+- The export writes no version field, so the release is caller-declared
+  (`version_attestation: caller_declared`, warning `export_version_unstated`).
+  If an export does carry `version`, `claudeMemVersion`, `claude_mem_version`,
+  `schemaVersion`, `schema_version` or `exportVersion`, a value other than the
+  declared release is refused; a match records `export_declared`.
+- The table listings in `docs/public/architecture/database.mdx` still use the
+  older `sdk_session_id`/`claude_session_id` names. The adapter follows the code
+  (`memory_session_id`/`content_session_id`), not that page.
+
+No real export has been read; the tests use invented fixtures only.
+
+### Capability matrix (v15.9.0)
+
+| Upstream surface | This slice |
+| --- | --- |
+| `export-memories.ts` JSON file, selected explicitly | supported, read-only |
+| Observations, summaries, prompts, sessions in that file | separate claim types |
+| Search `query` and per-row `rank`/`score` | separate `search_hit` claims |
+| `tool_uses` rows, advisor calls, pending queue | not in the export; not read |
+| Worker HTTP API (`/api/search`, `/api/sdk-sessions/batch`) | not contacted |
+| MCP `search`, `timeline`, `get_observations` | not called |
+| SQLite `~/.claude-mem/claude-mem.db` (WAL) | not opened |
+| Chroma vector projection | not read; never authoritative |
+| Other Claude-Mem releases | refused |
+
+### Claims
+
+Each row becomes one `MemoryClaim` and one `contextual_assertion` record. The
+claim types stay separate:
+
+| Export array | Claim type (`record_type`) | Derivation | Record provenance |
+| --- | --- | --- | --- |
+| `observations` | `observation` (`claude_mem_observation`) | `observer_generated` | `model_hypothesis` |
+| `summaries` | `generated_summary` (`claude_mem_generated_summary`) | `session_synthesis` | `model_hypothesis` |
+| `prompts` | `user_prompt` (`claude_mem_user_prompt`) | `captured_prompt` | `native_field` |
+| `sessions` | `memory_session` (`claude_mem_memory_session`) | `parent_session_lookup` | `native_field` |
+| each observation, summary and prompt row | `search_hit` (`claude_mem_search_hit`) | `query_projection` | `native_field` |
+
+The export file itself adds one `claude_mem_export` record whose revision is the
+file's SHA-256. Claude-Mem builds observations and summaries with a model, so
+their text is a model claim, not an observed event. A generated summary has
+`synthesizes_multiple_origins: true`. It is never recorded as an observation and
+is never a further independent case. The exporter selects rows with a search
+query, so every selected row also gets a `search_hit` claim. The hit names its
+target claim, its position in the export array, and whether a rank or score was
+reported. A hit, or memory injected into context, is not evidence that an agent
+used the memory. Every claim carries `independent_case`, `evidence_of_use`,
+`task_outcome_verified` and `native_session_verified` set to `false`, and
+`MemoryClaim` refuses any other value. A session `status` of `completed`, or
+summary text such as "all tests pass", is not a task outcome.
+
+Identity is hash-only and namespaced by the declared `instance` label. The native
+ID is `digest(['claude-mem', instance, claim_type, id, occurrence])`; a search hit
+also binds the query fingerprint. Projects, memory session IDs and content
+session IDs are fingerprinted under the same namespace, so a prompt and its
+session share a `content_session_sha256`, and observations and summaries share a
+`memory_session_sha256`. These are Claude-Mem's own IDs. They are not verified
+against any Claude Code or Codex transcript (`native_session_correlation:
+not_attempted`). No correlation uses timestamps or content. Bodies (observation
+`text`/`title`/`subtitle`/`facts`/`narrative`/`concepts`/`files_*`, summary
+`request`/`investigated`/`learned`/`completed`/`next_steps`/`files_*`/`notes`,
+`prompt_text`, session `user_prompt`/`custom_title`) are fingerprinted together
+as `body_sha256` and never stored or printed. `platform_source`, observation
+`type` and session `status` are kept only when they match the pinned label sets;
+anything else becomes `other` or `unrecognized`. An edited body is a new revision
+of the same native claim.
+
+### Coverage and warnings
+
+Nothing is dropped silently. The `claude_mem_summary` printed by `ahl sources
+preview` reports per-type claim counts, plus these counts and warnings:
+
+| Condition | Result |
+| --- | --- |
+| Row without a positive integer `id`, or without its session ID string | row skipped, counted in `rows_rejected`, `row_without_native_identity` |
+| Row field outside the pinned field set | counted in `rows_with_unknown_fields`, `unknown_row_fields`; field names are not printed |
+| Extra top-level key | `unknown_envelope_fields` |
+| Missing, naive or unparseable timestamp, or ISO and epoch values more than 1 s apart | `timestamps` count of `missing`, `invalid` or `conflicting`, matching warning, `original_at` null |
+| Repeated `id` within one array | kept as a further `occurrence`, `duplicate_native_id` |
+| `total*` count absent or not equal to its array length | `declared_total_missing` or `declared_total_mismatch` |
+| No `project` filter in the export | `project_scope: all_projects`, `export_not_project_scoped` |
+| Row project differs from the export filter | `row_outside_export_project` |
+| Observation or summary whose memory session is not exported | `memory_session_not_exported` |
+| One content session ID under two platforms | `content_session_shared_across_platforms` |
+
+`summaries_not_independent`, `hits_not_evidence_of_use` and
+`query_selected_projection` are always present. Capture stays `partial`: an export
+is a query projection, not the whole store. The summary also reports
+`task_outcomes_verified`, `evidence_of_use`, `publication_allowed`,
+`network_used`, `worker_contacted`, `database_opened` and `bodies_stored`, all
+`false`. It carries profile `claude-mem-export-v1`, which `public_export_allowed`
+rejects.
+
+Malformed input rejects the whole capture: non-UTF-8 bytes, a byte-order mark,
+duplicate JSON keys, `NaN`/`Infinity`, a non-object envelope, a missing or
+non-list array, or a non-object row. Decoding reuses the hardened
+`load_json` from the test-result source: brackets are counted against
+`max_json_depth` and `max_json_containers` before the decoder runs, and
+refusals raise `HostileReport`. A refused export imports nothing and leaves the
+previous checkpoint unchanged.
+
+| Limit | Ceiling |
+| --- | --- |
+| `max_export_bytes` | 32 MiB |
+| `max_rows` (all arrays) | 100,000 |
+| `max_fields` (per row) | 128 |
+| `max_json_depth` | 16 |
+| `max_json_containers` | 1,000,000 |
+
+`limits` may only lower these ceilings. `task test:sources:claude-mem` runs the
+synthetic controls: each claim type, summary/observation separation, search-hit
+targets, unknown and mismatched versions, duplicate IDs, unknown fields, missing
+and conflicting timestamps, malformed JSON, bounds, path containment, capture
+changes, repeat import, edits and CLI output with no body, ID or path. Still open
+in #48: a capability-checked read of a configured worker or MCP server (tool
+schema and version, bounded `search`/`timeline`, batched `get_observations`), an
+authorized read-only SQLite snapshot mode with a verified schema, `tool_uses`
+rows, multi-agent duplication checks against native Claude/Codex journals on
+verified IDs, verifying the shape against a real export, and further releases.
+
 No source is enabled by installation. Tests use synthetic metadata; they establish
 contract validation, checkpoint behavior and a side-effect-free registry, not
 real-source compatibility, containment, diagnostic usefulness or certification.
