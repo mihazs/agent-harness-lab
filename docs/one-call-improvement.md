@@ -88,18 +88,26 @@ would treat them as project folders. A path with a directory component in
 `surfaces.VENDORED_DIRECTORIES` (`node_modules`, `.venv`, `venv`, `vendor`,
 `bower_components`, `jspm_packages`, `site-packages`, `__pypackages__`, `.tox`,
 `.nox`) keeps its kind but is at most `unsupported`, for every caller and origin,
-and carries the `vendored` facet. `private_excluded` still wins. Generated output
-is found through the project's ignore rules instead: `classify(...,
-ignored=...)` takes the caller's observed fact that those rules exclude the
-folder holding the path, and evaluates it only for a nested path that would
-otherwise be `adoptable`. `Journal.owned` passes
-`promotion.journal.ignored`, which runs a read-only `git check-ignore
---no-index` on that folder, with fsmonitor disabled, no index read and no
-inherited `GIT_*` variables, so a hook's `GIT_DIR` cannot answer for it. A project
-with no `.git` at or above it has no ignore rules, so git is never started for
-it. A missing git binary, a timeout or any answer other than "not ignored" fails
-closed. An ignored folder's `CLAUDE.md`, `.claude/rules` or skill bundle therefore
-stages but never adopts. A root file has no enclosing folder and is not probed.
+and carries the `vendored` facet. `private_excluded` still wins. The folder
+right below a `skills/` or `agents/` directory of a skill or agent path is a name
+the project chose, so a skill bundle called `vendor` or `venv` keeps its verdict,
+while that bundle's own `node_modules` or `.venv` stays vendored. Skill discovery
+skips those dependency trees, so they are never staged as candidate files.
+Generated output is found through the project's ignore rules instead:
+`classify(..., ignored=...)` takes the caller's observed fact that those rules
+exclude the path, and evaluates it only for a nested path that would otherwise
+be `adoptable`. Root harness folders (`.claude/`, `.agents/`, `.codex/` and a
+root `skills/` tree) are never probed, so a project that keeps `.claude/` local
+through ignore rules still adopts its root rules and skills. `Journal.owned`
+passes `promotion.journal.ignored`, which runs a read-only `git check-ignore`
+on the path, with fsmonitor disabled, the user's global excludes file unset and
+no inherited `GIT_*` variables, so a hook's `GIT_DIR` cannot answer for it. It
+reads the index only so that a tracked, force-added file is not reported as
+ignored. A project with no `.git` at or above it has no ignore rules, so git is
+never started for it. A missing git binary, a timeout or any answer other than
+"not ignored" fails closed. An ignored folder's `CLAUDE.md`, `.claude/rules` or
+skill bundle therefore stages but never adopts. A root file has no enclosing
+folder and is not probed.
 
 Each classifier row stands alone. When several rows match a path, the strongest
 writability wins, in the order `private_excluded`, `adoptable`,

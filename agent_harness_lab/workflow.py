@@ -172,7 +172,9 @@ def harness_files(project, allowed_paths=None):
     if allowed_paths is None:
         files = [project / name for name in surfaces.ROOT_INSTRUCTIONS if (project / name).exists()]
         for skill in skill_roots(project):
-            files += [p for p in skill.rglob('*') if p.is_file() and '__pycache__' not in p.parts]
+            # A bundle's installed dependencies (node_modules, .venv) are vendored, never candidate files.
+            files += [p for p in skill.rglob('*') if p.is_file() and '__pycache__' not in p.parts
+                      and not surfaces.vendored(p.relative_to(skill).parts)]
     else:
         # Select before opening content, including otherwise unreadable files.
         files = [project / name for name in allowed_paths if os.path.lexists(project / name)]

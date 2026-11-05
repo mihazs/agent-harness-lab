@@ -35,19 +35,21 @@ def in_checkout(project,name):
 
 
 def ignored(project,name):
-    """The project's ignore rules exclude the folder holding name, so it is generated or vendored, not owned.
+    """The repository's ignore rules exclude untracked name, directly or through its folder, so it is generated or
+    vendored, not owned.
 
-    A read-only `git check-ignore --no-index` on that folder: it opens no index and runs no hook or fsmonitor.
-    A project with no .git at or above it has no ignore rules. Any other git answer, a missing git binary or a
-    timeout is unknown and fails closed as ignored."""
-    folder=PurePosixPath(name).parent
-    if not folder.parts: return False
+    A read-only `git check-ignore` that runs no hook or fsmonitor and writes nothing; it reads the index only so a
+    tracked (force-added) file is never reported. The user's global excludes file is not consulted: it is a personal
+    preference, not the project's. A project with no .git at or above it has no ignore rules. Any other git answer,
+    a missing git binary or a timeout is unknown and fails closed as ignored."""
+    if not PurePosixPath(name).parent.parts: return False
     root=Path(project).absolute()
     if not any(os.path.lexists(parent/'.git') for parent in (root,*root.parents)): return False
     # Inherited GIT_DIR or GIT_WORK_TREE (a git hook sets them) would answer for another repository.
     env={key:value for key,value in os.environ.items() if not key.startswith('GIT_')}
     try:
-        result=subprocess.run(['git','-c','core.fsmonitor=false','check-ignore','-q','--no-index','--',f'{folder}/'],
+        result=subprocess.run(['git','-c','core.fsmonitor=false','-c','core.excludesFile=','check-ignore','-q','--',
+                               name],
                               cwd=root,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
                               env={**env,'GIT_OPTIONAL_LOCKS':'0'},timeout=10,check=False)
     except (OSError,subprocess.SubprocessError): return True

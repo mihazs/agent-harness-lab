@@ -30,6 +30,9 @@ PLUGIN_ROOT_PREFIX = 'plugin:'
 VENDORED_DIRECTORIES = frozenset({'node_modules', '.venv', 'venv', 'vendor', 'bower_components', 'jspm_packages',
                                   'site-packages', '__pypackages__', '.tox', '.nox'})
 VENDORED_FACET = 'vendored'
+# Root harness folders hold the project's own surfaces even when ignore rules keep them local, so only a path nested
+# in another project folder probes those rules.
+ROOT_HARNESS_FOLDERS = ('.claude', '.agents', '.codex')
 
 
 @dataclass(frozen=True)
@@ -274,9 +277,13 @@ def _verdict(row, kinds, executable, context):
     return 'contract_required' if executable else row.writability
 
 
-def vendored(parts):
-    """Whether a directory of the path is a well-known vendored package or environment tree."""
-    return any(part in VENDORED_DIRECTORIES for part in parts[:-1])
+def vendored(parts, bundles=False):
+    """Whether a directory of the path is a well-known vendored package or environment tree.
+
+    With bundles, the folder right below a skills/ or agents/ directory is a bundle or group name the project chose,
+    so a skill named vendor or venv is never mistaken for a vendored tree."""
+    return any(part in VENDORED_DIRECTORIES and not (bundles and index and parts[index - 1] in ('skills', 'agents'))
+               for index, part in enumerate(parts[:-1]))
 
 
 def classify(relative_path, runtime=None, mode=None, *, root_skills=False, external_root=False, origin='project',
@@ -286,9 +293,9 @@ def classify(relative_path, runtime=None, mode=None, *, root_skills=False, exter
     external_root is True only for a path relative to a caller-declared root outside the checkout;
     declared_root is that root's label and implies external_root; None means the checkout. in_checkout is the
     caller's observed fact that no nested repository encloses the path; unknown stays False.
-    ignored is the caller's observed fact that the project's ignore rules exclude a directory enclosing the path;
-    it is evaluated only for a path that would otherwise be adoptable. A vendored or ignored path is never more
-    than unsupported and carries the vendored facet.
+    ignored is the caller's observed fact that the project's ignore rules exclude the path; it is evaluated only for
+    a path that would otherwise be adoptable and is nested outside the root harness folders. A vendored or ignored
+    path is never more than unsupported and carries the vendored facet.
     """
     if not isinstance(relative_path, str) or not relative_path: raise ValueError('invalid surface path')
     path = PurePosixPath(relative_path)
@@ -316,8 +323,11 @@ def classify(relative_path, runtime=None, mode=None, *, root_skills=False, exter
                                           if row.unconfirmed is not None)), key=rank)
     if parts[0].startswith(PLUGIN_ROOT_PREFIX): origin = 'external_repository'
     if origin == 'external_repository' and writability != 'private_excluded': writability = 'recommendation_only'
-    # Last, so no other cap raises a vendored path above unsupported; only an adoptable verdict probes ignore rules.
-    if vendored(parts) or writability == 'adoptable' and len(parts) > 1 and context.ignored:
+    # Last, so no other cap raises a vendored path above unsupported; only an adoptable verdict probes ignore rules,
+    # and only for a path nested in a project folder rather than a root harness folder or root skill tree.
+    nested = len(parts) > 1 and parts[0] not in ROOT_HARNESS_FOLDERS and not (named and named[0].root)
+    if (vendored(parts, bool(kinds) and kinds[0] in ('skill', 'agent'))
+            or writability == 'adoptable' and nested and context.ignored):
         facets += (VENDORED_FACET,)
         if writability != 'private_excluded': writability = 'unsupported'
     return SurfaceClass(kinds[0] if kinds else 'unsupported', str(scope), executable, writability, facets)

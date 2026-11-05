@@ -158,6 +158,9 @@ class NestedSurfaceAdoptionTests(unittest.TestCase):
         for name in self.NAMES: self.write(self.project/name,'before')
         self.state=patch('agent_harness_lab.workflow.state_root',return_value=self.root/'state')
         self.state.start(); self.addCleanup(self.state.stop)
+        # Hermetic: a git work tree enclosing the host's TMPDIR must not lend this project its ignore rules.
+        ignored=patch('agent_harness_lab.promotion.journal.ignored',return_value=False)
+        ignored.start(); self.addCleanup(ignored.stop)
 
     @staticmethod
     def write(path,text):
@@ -434,7 +437,46 @@ class VendoredTreeOwnershipTests(unittest.TestCase):
         with patch.dict(module.os.environ,{'GIT_DIR':str(other/'.git')}):
             self.assertFalse(module.ignored(self.project,'app/CLAUDE.md'))
             self.assertTrue(module.ignored(self.project,'generated/CLAUDE.md'))
-        # A project outside any repository has no ignore rules, so git is never started for it.
-        plain=self.root/'plain'; plain.mkdir()
-        with patch.object(module.subprocess,'run',side_effect=AssertionError('git must not run')):
+        # A project outside any repository has no ignore rules, so git is never started for it. The host's own
+        # ancestors are hidden, so a git work tree enclosing TMPDIR cannot decide this control.
+        plain=self.root/'plain'; plain.mkdir(); lexists=module.os.path.lexists
+        with patch.object(module.os.path,'lexists',lambda path:Path(path).is_relative_to(self.root) and lexists(path)), \
+             patch.object(module.subprocess,'run',side_effect=AssertionError('git must not run')):
             self.assertFalse(module.ignored(plain,'app/CLAUDE.md'))
+
+    def git(self,*args):
+        import subprocess
+        subprocess.run(['git',*args],cwd=self.project,check=True,stdout=subprocess.DEVNULL)
+
+    def test_ignored_root_harness_folders_and_tracked_files_still_adopt(self):
+        # Keeping .claude/ local through ignore rules does not make the root harness folders foreign.
+        (self.project/'.gitignore').write_text('generated/\n.claude/\n')
+        NestedSurfaceAdoptionTests.write(self.project/'.claude/skills/demo/SKILL.md','before')
+        # A force-added file is tracked, so the ignore rules no longer apply to it.
+        self.git('add','-f','--','generated/CLAUDE.md')
+        for name in ('.claude/rules/x.md','.claude/skills/demo/SKILL.md','generated/CLAUDE.md'):
+            with self.subTest(name=name):
+                journal,prepare=self.prepare(name)
+                self.assertEqual(journal.execute(prepare()['deployment'])['status'],'committed')
+                self.assertEqual((self.project/name).read_text(),'after')
+
+    def test_a_personal_global_excludes_file_never_decides_ownership(self):
+        home=self.root/'home'; home.mkdir(); (home/'ignore').write_text('app/\n')
+        (home/'.gitconfig').write_text(f'[core]\n\texcludesFile = {home/"ignore"}\n')
+        with patch.dict('os.environ',{'HOME':str(home),'XDG_CONFIG_HOME':str(home/'xdg')}):
+            journal,prepare=self.prepare('app/CLAUDE.md')
+            self.assertEqual(journal.execute(prepare()['deployment'])['status'],'committed')
+        self.assertEqual((self.project/'app/CLAUDE.md').read_text(),'after')
+
+    def test_rollback_survives_ignore_rules_written_after_adoption(self):
+        journal,prepare=self.prepare('app/CLAUDE.md')
+        deployment=prepare()['deployment']
+        self.assertEqual(journal.execute(deployment)['status'],'committed')
+        (self.project/'.gitignore').write_text('generated/\napp/\n')
+        journal=Journal(self.project,journal.folder)
+        self.assertEqual(journal.load(deployment)['status'],'committed')
+        self.assertEqual(journal.preview_rollback(deployment)['status'],'rollback_eligible')
+        journal.rollback(deployment)
+        self.assertEqual((self.project/'app/CLAUDE.md').read_text(),'before')
+        # A new promotion probes the ignore rules again, so the now-ignored file is no longer adoptable.
+        with self.assertRaisesRegex(ValueError,'outside owned harness surface'): self.prepare('app/CLAUDE.md')[1]()
