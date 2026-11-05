@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.108.0
+
+### Minor Changes
+
+- 08e9bd3: Add `agent_harness_lab/sources/hooks_inventory.py`, a static hook inventory. It parses the hooks key of `.claude/settings.json`, plugin `hooks/hooks.json`, Codex `.codex/hooks.json` and the `[hooks]` table of `.codex/config.toml` as data only. Each handler records its event against the pinned event lists, its matcher kind (`exact`, `pipe_list`, `regex` or `all`), its handler type, timeout and `onFailure`. A command resolves to a hashed `referenced_script` node or to `external_or_dynamic_command`. Codex `prompt` and `agent` handlers are `parsed_but_skipped`. Unknown events and fields, a missing plugin wrapper, and both Codex representations in one layer are flagged. `.claude/settings.local.json` is `private_excluded` and never read. Other settings keys, env and header values are never recorded, only digests. Native runtime, Git developer and ordinary-script hooks are distinguished. No hook command or script is executed or imported, and `observed_execution` is always `unknown`. The `surfaces` table classifies Claude settings and Codex hook config as `contract_required` hook surfaces, and Git hook managers as `recommendation_only`.
+
 ## 0.107.0
 
 ### Minor Changes
