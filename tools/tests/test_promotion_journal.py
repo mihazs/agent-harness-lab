@@ -146,3 +146,92 @@ class ReviewJournalTests(unittest.TestCase):
                     self.assertEqual((project/'AGENTS.md').read_text(),'after')
                     self.assertEqual(main(['promotion',str(project),'--deployment',deployment,'--action','rollback']),0)
                 self.assertEqual((project/'AGENTS.md').read_text(),'before')
+
+
+class NestedSurfaceAdoptionTests(unittest.TestCase):
+    """Nested instructions and rules adopt through the one journal; every other surface is still refused."""
+    NAMES=('AGENTS.md','app/CLAUDE.md','.claude/rules/x.md')
+
+    def setUp(self):
+        temp=tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
+        self.root=Path(temp.name); self.project=self.root/'project'
+        for name in self.NAMES: self.write(self.project/name,'before')
+        self.state=patch('agent_harness_lab.workflow.state_root',return_value=self.root/'state')
+        self.state.start(); self.addCleanup(self.state.stop)
+
+    @staticmethod
+    def write(path,text):
+        path.parent.mkdir(parents=True,exist_ok=True); path.write_text(text)
+
+    def stage(self):
+        import shutil
+        from agent_harness_lab.workflow import snapshot,candidate_states
+        original=snapshot(self.project,self.root/'baseline',allowed_paths=list(self.NAMES))
+        shutil.copytree(self.root/'baseline',self.root/'candidate')
+        for name in self.NAMES[1:]: (self.root/'candidate'/name).write_text('after')
+        return original,candidate_states(self.root/'candidate',original)
+
+    def adopt(self,original,proposed):
+        from agent_harness_lab.workflow import adopt
+        return adopt(self.project,self.root/'baseline',self.root/'candidate',original,proposed)
+
+    def test_nested_instruction_and_rule_adopt_and_roll_back(self):
+        self.assertEqual(self.adopt(*self.stage()),['.claude/rules/x.md','app/CLAUDE.md'])
+        self.assertEqual([(self.project/n).read_text() for n in self.NAMES],['before','after','after'])
+        journal=Journal(self.project,next((self.root/'state/promotions').iterdir()))
+        self.assertEqual(journal.load(journal.active)['metadata'],{'source':'directly_authorized_adopt_api'})
+        journal.rollback(journal.active)
+        self.assertEqual([(self.project/n).read_text() for n in self.NAMES],['before']*3)
+
+    def test_stale_baseline_or_concurrent_edit_invalidates_adoption(self):
+        original,proposed=self.stage()
+        (self.project/'app/CLAUDE.md').write_text('user edit')
+        with self.assertRaisesRegex(ValueError,'changed before adoption'): self.adopt(original,proposed)
+        self.assertEqual((self.project/'.claude/rules/x.md').read_text(),'before')
+        journal=Journal(self.project,self.root/'journal'); target=self.root/'target'; target.write_text('after')
+        name='.claude/rules/x.md'
+        record=journal.prepare({name:file_record(self.project/name)},{name:file_record(target)})
+        (self.project/name).write_text('concurrent')
+        with self.assertRaisesRegex(ValueError,'intervening'): journal.execute(record['deployment'])
+        self.assertEqual([(self.project/n).read_text() for n in self.NAMES[1:]],['user edit','concurrent'])
+
+    def test_settings_hooks_workflows_policy_links_and_plugin_checkouts_stay_refused(self):
+        from agent_harness_lab.surfaces import classify
+        from agent_harness_lab.workflow import candidate_states
+        outside=self.root/'outside.md'; outside.write_text('foreign')
+        (self.project/'.claude/rules/linked.md').symlink_to(outside)
+        self.write(self.project/'plugins/demo/.git/HEAD','ref: refs/heads/main')  # a nested plugin checkout
+        target=self.root/'target'; target.write_text('after')
+        cases=('CLAUDE.local.md','.claude/settings.json','.claude/hooks/x.sh','.claude/workflows/x.js','.mcp.json',
+               '.codex/config.toml','.codex/rules/default.rules','.claude/rules/linked.md',
+               'plugins/demo/.claude/rules/x.md','plugins/demo/CLAUDE.md')
+        for name in cases:
+            with self.subTest(name=name):
+                journal=Journal(self.project,self.root/'journals'/name.replace('/','_'))
+                with self.assertRaises(ValueError): journal.prepare({name:None},{name:file_record(target)})
+                self.assertFalse(list(journal.folder.iterdir()))
+                if name.startswith('plugins/'):
+                    # A staged copy holds no .git, so only the journal can see the nested checkout.
+                    self.assertEqual(classify(name,origin='external_repository',in_checkout=True).writability,
+                                     'recommendation_only')
+                    continue
+                folder=Path(tempfile.mkdtemp(dir=self.root))
+                if name.endswith('linked.md'): self.write(folder/'.claude/rules/real.md','x'); (folder/name).symlink_to(outside)
+                else: self.write(folder/name,'candidate')
+                with self.assertRaisesRegex(ValueError,'outside project harness scope|symlink'): candidate_states(folder,{})
+        self.assertFalse((self.project/'plugins/demo/CLAUDE.md').exists())
+
+    def test_same_named_files_in_unrelated_scopes_never_become_writable_by_discovery(self):
+        from agent_harness_lab.workflow import harness_files,snapshot,candidate_states
+        for name in ('vendor/.git/HEAD','vendor/AGENTS.md','vendor/.claude/rules/x.md','plugin/skills/demo/SKILL.md',
+                     'my-skills/demo/CLAUDE.local.md'):
+            self.write(self.project/name,'foreign')
+        self.assertEqual([str(p.relative_to(self.project)) for p in harness_files(self.project)],['AGENTS.md'])
+        # Even an explicit selection of a nested repository's file stages but never adopts.
+        names=['vendor/AGENTS.md','vendor/.claude/rules/x.md']
+        original=snapshot(self.project,self.root/'baseline',allowed_paths=names)
+        import shutil; shutil.copytree(self.root/'baseline',self.root/'candidate')
+        for name in names: (self.root/'candidate'/name).write_text('after')
+        with self.assertRaisesRegex(ValueError,'outside owned harness surface'):
+            self.adopt(original,candidate_states(self.root/'candidate',original))
+        self.assertEqual([(self.project/n).read_text() for n in names],['foreign','foreign'])

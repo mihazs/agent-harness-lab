@@ -4,7 +4,9 @@ classify() answers what a project-relative path is and whether AHL may adopt cha
 re-derive that answer. A later surface is one more self-contained row in RULES or CAPABILITIES; rows are
 matched independently, so rows added on parallel branches merge as pure additions and their order is
 irrelevant. A verdict is lexical: it never reads, executes or activates the path, and it is not evidence
-that a runtime loads the file.
+that a runtime loads the file. Rows that need checkout containment carry their pre-containment verdict in
+`unconfirmed`; only a caller that has observed the containment fact (in_checkout) receives `adoptable`, and
+only for a path the row itself names.
 """
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -32,18 +34,26 @@ class SurfaceClass:
 
 class _Context:
     """Caller facts a row may need; a callable is evaluated only by the row that asks for it."""
-    def __init__(self, root_skills, external_root=False, declared_root=None):
-        self._root_skills, self.declared_root = root_skills, declared_root
+    def __init__(self, root_skills, external_root=False, declared_root=None, in_checkout=False):
+        self._root_skills, self.declared_root, self._in_checkout = root_skills, declared_root, in_checkout
         self.external_root = bool(external_root) or declared_root is not None
 
     @property
     def root_skills(self):
         return bool(self._root_skills() if callable(self._root_skills) else self._root_skills)
 
+    @property
+    def in_checkout(self):
+        if callable(self._in_checkout): self._in_checkout = bool(self._in_checkout())
+        return bool(self._in_checkout)
+
 
 @dataclass(frozen=True)
 class Rule:
-    """One classifier row. kind None contributes only writability; the lowest priority names the kind."""
+    """One classifier row. kind None contributes only writability; the lowest priority names the kind.
+
+    An adoptable row names itself in label, which the proposer prompts list. unconfirmed is the row's verdict
+    until the caller confirms no nested repository encloses the path."""
     name: str
     kind: str | None
     priority: int
@@ -51,9 +61,14 @@ class Rule:
     match: object
     root: str | None = None
     runtimes: frozenset = frozenset(RUNTIMES)
+    label: str | None = None
+    unconfirmed: str | None = None
 
     def __post_init__(self):
         if self.writability not in WRITABILITY: raise ValueError('unknown surface writability')
+        if (self.writability == 'adoptable') != bool(self.label): raise ValueError('an adoptable row needs a label')
+        if self.unconfirmed is not None and (self.writability != 'adoptable' or self.unconfirmed not in WRITABILITY[2:]):
+            raise ValueError('invalid unconfirmed writability')
         if not self.runtimes or not set(self.runtimes) <= set(RUNTIMES): raise ValueError('unknown surface runtime')
         if not callable(self.match) or not self.name: raise ValueError('invalid surface row')
 
@@ -72,6 +87,15 @@ def _declared_memory(parts, root):
     checkout path (root None) never matches them."""
     return root is not None and (parts[0] == 'memories'
                                  or len(parts) > 3 and parts[0] == 'projects' and parts[2] == 'memory')
+
+
+def _nested_bundle(layer):
+    """Files inside a skill bundle below <dir>/<layer>/skills at depth, outside any skills/ tree."""
+    head = PurePosixPath(layer).parts + ('skills',)
+    def match(path, parts, context):
+        return any(parts[index:index + len(head)] == head and len(parts) >= index + len(head) + 2
+                   and 'skills' not in parts[:index] for index in range(1, len(parts) - len(head)))
+    return match
 
 
 def _agent_file(layer, suffix):
@@ -96,26 +120,41 @@ def _command_file(path, parts, context):
 
 
 RULES = (
-    Rule('root-instruction', 'instruction', 10, 'adoptable', lambda path, parts, context: path in ROOT_INSTRUCTIONS),
-    # Nested and override instruction files rank after skills and hooks, so existing kinds never change;
-    # they are recommendation-only until a staging contract admits them. CLAUDE.local.md is personal.
-    Rule('nested-claude-instruction', 'instruction', 35, 'recommendation_only',
-         lambda path, parts, context: parts[-1] in ROOT_INSTRUCTIONS, runtimes=frozenset({'claude-code'})),
-    Rule('nested-codex-instruction', 'instruction', 35, 'recommendation_only',
-         lambda path, parts, context: parts[-1] in ('AGENTS.md', 'AGENTS.override.md'), runtimes=frozenset({'codex'})),
+    Rule('root-instruction', 'instruction', 10, 'adoptable', lambda path, parts, context: path in ROOT_INSTRUCTIONS,
+         label='root AGENTS.md or CLAUDE.md'),
+    # Nested and override instruction files rank after skills and hooks, so existing kinds never change. They are
+    # adoptable only inside the checkout itself; a nested repository keeps them recommendation-only.
+    # CLAUDE.local.md is personal.
+    Rule('nested-claude-instruction', 'instruction', 35, 'adoptable',
+         lambda path, parts, context: parts[-1] in ROOT_INSTRUCTIONS, runtimes=frozenset({'claude-code'}),
+         label='a nested CLAUDE.md, including .claude/CLAUDE.md', unconfirmed='recommendation_only'),
+    Rule('nested-codex-instruction', 'instruction', 35, 'adoptable',
+         lambda path, parts, context: parts[-1] in ('AGENTS.md', 'AGENTS.override.md'), runtimes=frozenset({'codex'}),
+         label='a nested AGENTS.md or an AGENTS.override.md', unconfirmed='recommendation_only'),
     Rule('claude-local-instruction', 'instruction', 35, 'private_excluded',
          lambda path, parts, context: parts[-1] == 'CLAUDE.local.md', runtimes=frozenset({'claude-code'})),
-    Rule('agents-skill-bundle', 'skill', 20, 'adoptable', _bundle('.agents/skills'), root='.agents/skills'),
-    Rule('claude-skill-bundle', 'skill', 20, 'adoptable', _bundle('.claude/skills'), root='.claude/skills'),
+    Rule('agents-skill-bundle', 'skill', 20, 'adoptable', _bundle('.agents/skills'), root='.agents/skills',
+         label='files in an existing .agents/skills/<name>/ bundle'),
+    Rule('claude-skill-bundle', 'skill', 20, 'adoptable', _bundle('.claude/skills'), root='.claude/skills',
+         label='files in an existing .claude/skills/<name>/ bundle'),
     # A top-level skills/ tree is project-owned only when the caller already owns one.
-    Rule('root-skill-bundle', 'skill', 20, 'adoptable', _bundle('skills', needs_root_skills=True), root='skills'),
+    Rule('root-skill-bundle', 'skill', 20, 'adoptable', _bundle('skills', needs_root_skills=True), root='skills',
+         label='files in an existing skills/<name>/ bundle'),
+    # Nested skill bundles below a subdirectory, outside any skills/ tree; scope stays the file's folder.
+    Rule('nested-agents-skill-bundle', 'skill', 20, 'adoptable', _nested_bundle('.agents'),
+         runtimes=frozenset({'codex'}), label='files in a nested <dir>/.agents/skills/<name>/ bundle',
+         unconfirmed='unsupported'),
+    Rule('nested-claude-skill-bundle', 'skill', 20, 'adoptable', _nested_bundle('.claude'),
+         runtimes=frozenset({'claude-code'}), label='files in a nested <dir>/.claude/skills/<name>/ bundle',
+         unconfirmed='unsupported'),
     Rule('skill-segment', 'skill', 21, 'unsupported', lambda path, parts, context: '/skills/' in '/' + path),
     Rule('hook-segment', 'hook', 30, 'contract_required',
          lambda path, parts, context: 'hook' in parts or 'hooks' in parts),
     # Claude path-scoped rules: Markdown below any .claude/rules, ranked above every skill row so a rules tree
-    # below a skills/ directory is still a rule; not writable until the adoption increment.
-    Rule('claude-path-rule', 'path_rule', 15, 'unsupported', lambda path, parts, context: path.endswith('.md') and any(
-         parts[i:i + 2] == ('.claude', 'rules') for i in range(len(parts) - 2)), runtimes=frozenset({'claude-code'})),
+    # below a skills/ directory is still a rule; adoptable inside the checkout.
+    Rule('claude-path-rule', 'path_rule', 15, 'adoptable', lambda path, parts, context: path.endswith('.md') and any(
+         parts[i:i + 2] == ('.claude', 'rules') for i in range(len(parts) - 2)), runtimes=frozenset({'claude-code'}),
+         label='.claude/rules/**/*.md path rules', unconfirmed='unsupported'),
     # Codex exec policy: <layer>/rules/*.rules, that is .codex/rules or rules/ at the top of a caller-declared
     # external root (a $CODEX_HOME); a checkout's own top-level rules/ is ordinary project content. Never run.
     Rule('codex-exec-policy', 'exec_policy', 25, 'recommendation_only', lambda path, parts, context: path.endswith(
@@ -126,8 +165,9 @@ RULES = (
     Rule('claude-workflow-script', 'workflow', 15, 'contract_required',
          lambda path, parts, context: parts[-3:-1] == ('.claude', 'workflows') and PurePosixPath(path).suffix == '.js',
          runtimes=frozenset({'claude-code'})),
-    # Claude Code command Markdown below a .claude/commands folder no skill bundle encloses; adoption stays closed.
-    Rule('claude-command', 'command', 15, 'unsupported', _command_file, runtimes=frozenset({'claude-code'})),
+    # Claude Code command Markdown below a .claude/commands folder no skill bundle encloses; adoptable in the checkout.
+    Rule('claude-command', 'command', 15, 'adoptable', _command_file, runtimes=frozenset({'claude-code'}),
+         label='.claude/commands/**/*.md commands', unconfirmed='unsupported'),
     Rule('vcs-and-cache', None, 0, 'private_excluded',
          lambda path, parts, context: any(part in ('.git', '__pycache__') for part in parts)),
     # Hook registrations live in settings and config files that also hold permissions and env; the hook
@@ -148,15 +188,17 @@ RULES = (
     # CODEX_HOME root. Claude frontmatter and Codex role files (a config layer) can both carry hooks, so each
     # runtime's hook row adds the hook contract facet and an agent edit can never evade hook review. The agent
     # rows outrank the skill and hook segment rows, so agents/hooks/x.md stays an agent that has the hook facet.
-    Rule('claude-agent-definition', 'agent', 15, 'recommendation_only', _agent_file('.claude', '.md'),
-         runtimes=frozenset({'claude-code'})),
+    # Checkout agent files are adoptable, yet the hook facet keeps every agent edit unresolved in change plans.
+    Rule('claude-agent-definition', 'agent', 15, 'adoptable', _agent_file('.claude', '.md'),
+         runtimes=frozenset({'claude-code'}), label='.claude/agents/**/*.md agent definitions',
+         unconfirmed='recommendation_only'),
     Rule('claude-layer-agent-definition', 'agent', 16, 'unsupported', _agent_file(None, '.md'),
          runtimes=frozenset({'claude-code'})),
     Rule('claude-agent-hooks', 'hook', 45, 'contract_required', lambda path, parts, context:
          _agent_file('.claude', '.md')(path, parts, context) or _agent_file(None, '.md')(path, parts, context),
          runtimes=frozenset({'claude-code'})),
-    Rule('codex-agent-definition', 'agent', 15, 'recommendation_only', _agent_file('.codex', '.toml'),
-         runtimes=frozenset({'codex'})),
+    Rule('codex-agent-definition', 'agent', 15, 'adoptable', _agent_file('.codex', '.toml'),
+         runtimes=frozenset({'codex'}), label='.codex/agents/**/*.toml agent roles', unconfirmed='recommendation_only'),
     Rule('codex-layer-agent-definition', 'agent', 16, 'unsupported', _agent_file(None, '.toml'),
          runtimes=frozenset({'codex'})),
     Rule('codex-agent-hooks', 'hook', 45, 'contract_required', lambda path, parts, context:
@@ -197,12 +239,31 @@ def skill_prefixes():
     return tuple(row.root for row in RULES if row.kind == 'skill' and row.root and row.writability == 'adoptable')
 
 
+def adoptable_surfaces():
+    """Labels of every adoptable row in table order: the one text proposer prompts cite."""
+    return '; '.join(dict.fromkeys(row.label for row in RULES if row.writability == 'adoptable'))
+
+
+def unresolved_kinds():
+    """Kinds no row can adopt (contract-required, recommendation-only or unsupported), plus 'unsupported'."""
+    adoptable = {row.kind for row in RULES if row.writability == 'adoptable'}
+    return tuple(sorted({row.kind for row in RULES if row.kind and row.kind not in adoptable} | {'unsupported'}))
+
+
+def _verdict(row, kinds, executable, context):
+    """A containment-gated row adopts only a non-executable path it names inside the checkout, so hooks/CLAUDE.md
+    stays a contract-required hook and a nested bundle's script needs the hook contract."""
+    if row.kind != kinds[0] or not context.in_checkout: return row.unconfirmed
+    return 'contract_required' if executable else row.writability
+
+
 def classify(relative_path, runtime=None, mode=None, *, root_skills=False, external_root=False, origin='project',
-             declared_root=None):
+             declared_root=None, in_checkout=False):
     """Classify a root-relative POSIX path; runtime None means either runtime, mode is optional st_mode bits.
 
     external_root is True only for a path relative to a caller-declared root outside the checkout;
-    declared_root is that root's label and implies external_root; None means the checkout.
+    declared_root is that root's label and implies external_root; None means the checkout. in_checkout is the
+    caller's observed fact that no nested repository encloses the path; unknown stays False.
     """
     if not isinstance(relative_path, str) or not relative_path: raise ValueError('invalid surface path')
     path = PurePosixPath(relative_path)
@@ -212,7 +273,7 @@ def classify(relative_path, runtime=None, mode=None, *, root_skills=False, exter
     if origin not in ORIGINS: raise ValueError('unknown surface origin')
     if declared_root is not None and (not isinstance(declared_root, str) or not declared_root):
         raise ValueError('invalid declared surface root')
-    parts, context = path.parts, _Context(root_skills, external_root, declared_root)
+    parts, context = path.parts, _Context(root_skills, external_root, declared_root, in_checkout)
     matched = [row for row in RULES if (runtime is None or runtime in row.runtimes)
                and row.match(relative_path, parts, context)]
     # Priority, then kind and name, so the answer never depends on where a row sits in the table.
@@ -222,7 +283,12 @@ def classify(relative_path, runtime=None, mode=None, *, root_skills=False, exter
     facets = kinds + ((HOOK_FACET,) if 'hook' in kinds or executable else ())
     if named and named[0].root: scope = PurePosixPath(*parts[:len(PurePosixPath(named[0].root).parts) + 1])
     else: scope = path.parent
-    writability = min((row.writability for row in matched), key=WRITABILITY.index, default='unsupported')
+    rank = WRITABILITY.index
+    writability = min((row.writability for row in matched if row.unconfirmed is None), key=rank, default='unsupported')
+    # A gated row can only lower a verdict to adoptable, so it is consulted (and containment probed) only above that.
+    if rank(writability) > rank('adoptable'):
+        writability = min((writability, *(_verdict(row, kinds, executable, context) for row in matched
+                                          if row.unconfirmed is not None)), key=rank)
     if origin == 'external_repository' and writability != 'private_excluded': writability = 'recommendation_only'
     return SurfaceClass(kinds[0] if kinds else 'unsupported', str(scope), executable, writability, facets)
 

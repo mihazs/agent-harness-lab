@@ -84,6 +84,16 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertNotIn('SECRET_CANARY', output + error)
 
+    def test_harness_paths_select_classified_surfaces_but_never_private_files(self):
+        surfaces = ['AGENTS.md', 'app/CLAUDE.md', '.claude/CLAUDE.md', 'app/AGENTS.override.md', '.claude/rules/x.md',
+                    '.claude/agents/r.md', '.codex/agents/r.toml', '.claude/commands/c.md', 'pkg/.claude/skills/d/SKILL.md',
+                    '.claude/skills/d/SKILL.md', 'solve.py']
+        self.assertEqual(config.prepare(dict(harness_paths=surfaces))['harness_paths'], surfaces)
+        for private in ('CLAUDE.local.md', 'app/CLAUDE.local.md', '.claude/settings.local.json',
+                        '.claude/agent-memory/r/MEMORY.md', 'skills/d/__pycache__/m.pyc'):
+            with self.subTest(path=private), self.assertRaisesRegex(ValueError, 'unsafe configured path'):
+                config.prepare(dict(harness_paths=['AGENTS.md', private]))
+
     def test_symlink_hardlink_and_project_alias_are_rejected(self):
         source = self.root/'settings.json'; source.write_text('{}')
         link = self.root/'link.json'; link.symlink_to(source)

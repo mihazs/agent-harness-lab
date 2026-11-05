@@ -3,7 +3,7 @@ import base64
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import stat
 import uuid
 from agent_harness_lab.evaluation.integrity import contained, relative
@@ -22,6 +22,15 @@ def file_record(path):
     raw=path.read_bytes()
     return dict(sha256=hashlib.sha256(raw).hexdigest(),mode=stat.S_IMODE(info.st_mode),
                 content=base64.b64encode(raw).decode())
+
+
+def in_checkout(project,name):
+    """No directory between the project root and name holds a .git entry, so no nested repository owns it."""
+    folder=Path(project)
+    for part in PurePosixPath(name).parts[:-1]:
+        folder=folder/part
+        if os.path.lexists(folder/'.git'): return False
+    return True
 
 
 def validate_snapshot(record):
@@ -83,8 +92,9 @@ class Journal:
 
     def owned(self,name):
         relative(name)
-        # The root skills/ probe runs only for a path that needs it, as before.
-        if classify(name,None,None,root_skills=lambda:(self.project/'skills').is_dir()).writability!='adoptable':
+        # The root skills/ and containment probes run only for a path whose row needs them.
+        if classify(name,None,None,root_skills=lambda:(self.project/'skills').is_dir(),
+                    in_checkout=lambda:in_checkout(self.project,name)).writability!='adoptable':
             raise ValueError('transaction outside owned harness surface')
         return contained(self.project,name)
 

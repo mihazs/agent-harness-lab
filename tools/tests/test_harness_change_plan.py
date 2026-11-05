@@ -37,14 +37,22 @@ class HarnessChangePlanTests(unittest.TestCase):
         detached=plan.document();detached['after'].clear()
         self.assertEqual(len(plan.after),2)
 
-    def test_command_and_agent_files_stay_unresolved_once_classified(self):
-        # A classifier row that names a kind for a non-adoptable path must not open the plan gate.
+    def test_agent_hook_workflow_and_policy_files_stay_unresolved_once_classified(self):
+        # Agent files carry the hook facet; kinds no classifier row adopts never open the plan gate.
         options=dict(references={name:None for name in REFERENCE_NAMES},diagnosis=[],falsifiers=[],dependencies=[],controls=[],deferred=[])
-        paths=('.claude/agents/reviewer.md','.claude/commands/frontend/component.md','.claude/commands/ship.md')
+        unresolved=('.claude/agents/reviewer.md','.claude/hooks/CLAUDE.md','.claude/workflows/x.js','.codex/agents/r.toml',
+                    '.codex/rules/default.rules','.mcp.json','notes/x.txt')
+        resolved=('.claude/CLAUDE.md','.claude/commands/frontend/component.md','.claude/commands/ship.md',
+                  '.claude/rules/style.md','app/AGENTS.override.md','pkg/.claude/skills/demo/SKILL.md')
         plan=HarnessChangePlan.create({'.claude/commands/ship.md':('a'*64,0o644)},
-            {path:('b'*64,0o644) for path in paths},**options)
-        self.assertEqual(plan.unresolved_operations,paths)
+            {path:('b'*64,0o644) for path in unresolved+resolved},**options)
+        self.assertEqual(plan.unresolved_operations,tuple(sorted(unresolved)))
+        self.assertEqual({o.path:o.surface for o in plan.operations if o.path in resolved},
+                         dict(zip(resolved,('instruction','command','command','path_rule','instruction','skill'))))
         self.assertEqual(HarnessChangePlan.create({},{'AGENTS.md':('a'*64,0o644)},**options).unresolved_operations,())
+        # An executable mode on a newly adoptable Markdown surface still needs the hook contract.
+        executable=HarnessChangePlan.create({},{'.claude/rules/style.md':('a'*64,0o755)},**options)
+        self.assertEqual(executable.unresolved_operations,('.claude/rules/style.md',))
 
     def test_publication_rejects_contract_and_identity_even_with_forged_provenance(self):
         from agent_harness_lab.evaluation.benchmark import public_export_allowed

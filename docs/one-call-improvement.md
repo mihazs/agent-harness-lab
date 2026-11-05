@@ -63,18 +63,19 @@ configuration; it never silently widens an active run's scope.
 `unsupported`. Candidate scope checks, journal ownership, skill-bundle discovery,
 root instruction snapshots and change-plan facets all ask this classifier.
 
-The allowlist itself is unchanged. Only these paths are `adoptable`: the root
-`AGENTS.md` and `CLAUDE.md`, files inside an immediate `.agents/skills/<name>/` or
+These paths are `adoptable` for every caller: the root `AGENTS.md` and
+`CLAUDE.md`, files inside an immediate `.agents/skills/<name>/` or
 `.claude/skills/<name>/` bundle, and files under `skills/<name>/` when the project
-already owns a top-level `skills/` tree. Any `.git` or `__pycache__` component is
+already owns a top-level `skills/` tree. Nested instruction, rule, agent, command
+and nested skill-bundle files are `adoptable` only when the caller has confirmed
+checkout containment (see the next section). Any `.git` or `__pycache__` component is
 `private_excluded`. A `hook` or `hooks` component outside those bundles is
 `contract_required`. Hook registration files are classified as `hook` too:
 `.claude/settings.json` (Claude Code) and `.codex/hooks.json` and
 `.codex/config.toml` (Codex) are `contract_required`, `.claude/settings.local.json`
 is `private_excluded`, and the Git hook managers `lefthook.yml`, `.lefthook.yml`,
-`.pre-commit-config.yaml` and `.husky/<file>` are `recommendation_only`. Every
-other path is `unsupported`, including nested instruction files, rules, agents,
-commands, workflows, other settings and plugin files.
+`.pre-commit-config.yaml` and `.husky/<file>` are `recommendation_only`.
+Workflows, other settings, MCP and plugin manifests are never `adoptable`.
 Executable suffixes and execute bits still add the `hook_contract_required` facet,
 which keeps such a plan unresolved. The classifier reads no file contents and runs
 nothing. A verdict does not show that any runtime loads the file.
@@ -87,6 +88,51 @@ writability wins, in the order `private_excluded`, `adoptable`,
 `contract_required`, `recommendation_only`, `unsupported`. The matching row with
 the lowest priority names the kind. A new surface therefore adds a row and
 leaves existing rows untouched.
+
+## Staging nested instruction, rule, agent and command files
+
+Containment-gated rows in `surfaces.RULES` make these project files `adoptable`:
+nested `CLAUDE.md` (including `.claude/CLAUDE.md`), `AGENTS.md` and
+`AGENTS.override.md` at any depth; `.claude/rules/**/*.md`;
+`.claude/agents/**/*.md`; `.codex/agents/**/*.toml`; `.claude/commands/**/*.md`;
+and files in a nested `<dir>/.claude/skills/<name>/` or
+`<dir>/.agents/skills/<name>/` bundle that no `skills/` tree encloses. Each such
+row also records `unconfirmed`, its verdict without containment. That is the old
+`recommendation_only`, `unsupported` or `contract_required` value, so inventories
+and other lexical callers report what they reported before.
+
+`classify(..., in_checkout=...)` takes the caller's observed fact that no
+directory between the project root and the path holds a `.git` entry. Only
+`candidate_states` and `Journal.owned` pass it. `candidate_states` checks a
+staged copy, which holds no foreign repository, so the journal, the only writer,
+probes the project again with `promotion.journal.in_checkout`. A file inside a
+nested repository or submodule therefore stages but never adopts. A gated row
+adopts only a path it names itself and only a non-executable one, so
+`.claude/hooks/CLAUDE.md` stays a `contract_required` hook and a script in a
+nested bundle stays `contract_required`. Root instructions and root skill
+bundles do not depend on this fact, so their verdicts are unchanged.
+
+`CLAUDE.local.md`, `settings*.json`, `.codex/config.toml`, hooks, workflows,
+Codex `.rules`, `.mcp.json`, memory and plugin checkouts
+(`origin="external_repository"`) stay non-adoptable. Default discovery is also
+unchanged: a snapshot without configured `harness_paths` still stages only root
+instructions and root skill bundles, so a same-named file elsewhere never becomes
+writable through discovery. A nested file reaches the baseline only when
+`ahl.json` `harness_paths` selects it. A candidate can still create a new one. The
+configuration accepts any classified path there, but not a `private_excluded` one.
+
+Both proposer prompts (the preparation stage in `workflow.py` and the controlled
+proposer in `evaluation/construction.py`) list the allowed kinds from
+`surfaces.adoptable_surfaces()`, which joins the `label` every adoptable row must
+carry. The prompts still forbid settings, permissions, hooks and credentials. A
+change plan marks an operation unresolved when its kind has no adoptable row
+(`surfaces.unresolved_kinds()`: hook, workflow, exec policy, config, unsupported)
+or when it carries the hook facet. Agent definitions always carry that facet, so
+an agent edit stays in `unresolved_operations`. Command and rule edits no longer
+do. Staging confers no authority: a behavioral candidate remains inconclusive or
+needs certification exactly as before, and only `directly_authorized_adopt_api`
+applies a staged nested file, with the journal's stale-baseline, concurrent-edit
+and rollback checks.
 
 The module also holds the frozen `CAPABILITIES` table. It has one row per surface,
 runtime and documented item, pinned to Claude Code 2.1.317 and Codex 0.166.0

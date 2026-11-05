@@ -207,7 +207,8 @@ def candidate_states(folder, original):
         if not path.is_file():
             continue
         relative = str(path.relative_to(folder))
-        if surfaces.classify(relative, None, None, root_skills=root_skills).writability != 'adoptable':
+        # A staged copy holds no foreign repository; the journal, the only writer, re-checks containment.
+        if surfaces.classify(relative, None, None, root_skills=root_skills, in_checkout=True).writability != 'adoptable':
             raise ValueError(f'Candidate path outside project harness scope: {relative}')
         total += path.stat().st_size
         if len(states) >= MAX_FILES or total > MAX_BYTES:
@@ -577,7 +578,7 @@ previous attempts, global skills, model settings, permissions, hooks or credenti
 publishing, external messages, deployment, or production mutations. Do not launch child agents.
 Identify distinct mechanisms, successful controls and counterexamples before selecting repairs.
 If none is supported, write {proposal_path} as {{"status":"no_change","reason":"evidence-based explanation"}}.
-Otherwise modify only project instructions AGENTS.md/CLAUDE.md or project-owned skill files in candidate.
+Otherwise modify only these project-owned surfaces in candidate: {surfaces.adoptable_surfaces()}.
 Do not build evaluation tests, launch model trials, or inspect previous held-out inputs.
 The parent freezes the patch; {'the configured task bank supplies the evaluation' if bank is not None else 'a separate fresh session constructs evaluation without seeing it'}.
 Shared ceiling is {getattr(args, 'trial_limit', 24)} preparation/task roles and {args.timeout} seconds;
