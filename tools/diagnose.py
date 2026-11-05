@@ -159,8 +159,11 @@ def recurring_sequences(cases, roots, maximum=None):
     return sorted(result, key=lambda row: (-row['reported_roots'], row['activities']))
 
 
-def analyze(rows, max_events=None, *, observation_per_case=None, observation_total=None, observation_max_age=None, sequence_length=None, select_methods=False):
+def analyze(rows, max_events=None, *, observation_per_case=None, observation_total=None, observation_max_age=None, sequence_length=None, select_methods=False,
+            source_order_declared_by='caller'):
     from agent_harness_lab.diagnostics.process_mining import ProcessMiner
+    # Versioned producer subordinals that may break capture-order ties as declared capture order.
+    from agent_harness_lab.telemetry.schema import SOURCE_ORDER_PROFILES
     if any(value is not None and (type(value) is not int or value <= 0) for value in (max_events,sequence_length)):
         raise ValueError('analysis limits must be positive integers')
     counts, cases = Counter(), defaultdict(list)
@@ -169,6 +172,7 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
     process = ProcessMiner()
     fields = Counter()
     ordering, observation_cases, observation_candidates, observation_events = {}, set(), set(), defaultdict(list)
+    declared_events, declared_profiles = 0, set()
     for number, event in enumerate(rows, 1):
         if max_events is not None and number > max_events:
             raise ValueError('event limit exceeded; select a bounded corpus explicitly')
@@ -189,11 +193,30 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
             raise ValueError('duplicate event id')
         seen.add(identity)
         process.observe(event)
-        order = ordering.setdefault(case, dict(events=0, capture=True, timestamp=True, last_order=-1, last_time=None))
+        order = ordering.setdefault(case, dict(events=0, capture=True, timestamp=True, last_order=-1, last_time=None,
+                                               source=True, last_source=None, tied=False, crossed=False))
         ordinal = event.get('capture_order')
         order['capture'] &= type(ordinal) is int and ordinal >= 0 and ordinal > order['last_order']
+        order['tied'] |= type(ordinal) is int and ordinal == order['last_order']
         if type(ordinal) is int:
             order['last_order'] = ordinal
+        profile = event.get('source_order_profile')
+        supported = isinstance(profile, str) and profile in SOURCE_ORDER_PROFILES
+        if profile is not None:
+            declared_events += 1
+            if supported: declared_profiles.add(profile)
+        source = (profile, event.get('source_order_segment'), ordinal, event.get('source_suborder'))
+        if not supported or not all(type(value) is int and value >= 0 for value in source[1:]):
+            order['source'] = False
+        else:
+            last = order['last_source']
+            if last is not None and source[:2] != last[:2]:
+                # Records of another file (or profile) have no established capture order; strict timestamps
+                # remain an independent route and are reported separately.
+                order['crossed'] = True; order['source'] = order['capture'] = False
+            elif last is not None and source[2:] <= last[2:]:
+                order['source'] = False
+            order['last_source'] = source
         try:
             stamp = process.instant(event.get('timestamp'))
         except (ValueError, TypeError, AttributeError, OverflowError):
@@ -219,7 +242,7 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
             finding = observations.observe(event, number)
             if finding:
                 findings.append(finding)
-        elif order['capture'] or order['timestamp']:
+        elif order['capture'] or order['timestamp'] or order['source']:
             cases[case].append((activity,number,ref))
             observation_events[case].append((number, *(event.get(name) for name in OBSERVED)))
         else:  # Order flags never recover, so the case can no longer be selected.
@@ -229,7 +252,7 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
                 evidence=[ref], contract_ref=event['contract_ref'],
                 explanation='Caller supplied contract evidence; verify against the applicable contract.'))
     n = sum(counts.values())
-    ordered = {case for case, state in ordering.items() if state['capture'] or state['timestamp']}
+    ordered = {case for case, state in ordering.items() if state['capture'] or state['timestamp'] or state['source']}
     sequence_cases = {case for case, state in ordering.items() if state['events'] > 1}
     selected_sequences = sequence_cases & ordered
     sequence_inputs = {case: cases[case] for case in cases if case in selected_sequences}
@@ -246,9 +269,7 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
         repeated = recurring_sequences(sequence_inputs, roots, sequence_length) if sequence_roots >= 3 else []
     else:
         repeated = recurring_sequences(cases, roots, sequence_length)
-    return dict(schema_version=1, profile='ahl-private-diagnosis-v1',
-                events=n, cases=len(roots), reported_roots=len(set(roots.values())),
-                method_inputs=dict(profile='ahl-analysis-execution-v1', structured_events=fields['structured_events'],
+    inputs = dict(profile='ahl-analysis-execution-v1', structured_events=fields['structured_events'],
                     sequence_roots=sequence_roots, sequence_cases=len(sequence_cases),
                     sequence_events=sum(len(entries) for entries in sequence_inputs.values()),
                     selected_sequence_cases=len(sequence_inputs), observation_cases=len(observation_cases),
@@ -258,7 +279,31 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
                     unordered_sequence_cases=len(sequence_cases - ordered),
                     unordered_observation_cases=len(observation_cases - ordered),
                     capture_order_cases=sum(state['capture'] for state in ordering.values()),
-                    timestamp_order_cases=sum(state['timestamp'] for state in ordering.values())),
+                    timestamp_order_cases=sum(state['timestamp'] for state in ordering.values()))
+    limitations = ['Reported roots are not proven independent.',
+                   'Capture order does not establish concurrency or causation.',
+                   'Stops are not success; duplicate observations are not proven waste.',
+                   'No automatic staleness, skill utility, or model correctness inference.']
+    if declared_events:
+        # Present only when a producer declared a subordinal, so other inputs keep their exact receipts.
+        declared = {case for case, state in ordering.items() if state['source'] and not (state['capture'] or state['timestamp'])}
+        inputs['source_order'] = dict(profile='ahl-declared-source-order-v1', source_profiles=sorted(declared_profiles),
+            declared_events=declared_events, declared_by=source_order_declared_by,
+            basis='declared_capture_order', execution_order='unknown',
+            cross_segment_order='unknown', declared_order_cases=sum(state['source'] for state in ordering.values()),
+            declared_order_only_cases=len(declared),
+            selected_sequence_cases=len(declared & set(sequence_inputs)),
+            selected_observation_cases=len(declared & selected_observations),
+            tied_capture_order_cases=sum(state['tied'] for state in ordering.values()),
+            unresolved_tied_cases=sum(state['tied'] and case not in ordered for case, state in ordering.items()),
+            cross_segment_cases=sum(state['crossed'] for state in ordering.values()),
+            cross_segment_unordered_cases=sum(state['crossed'] and case not in ordered for case, state in ordering.items()),
+            cross_segment_timestamp_ordered_cases=sum(state['crossed'] and case in ordered for case, state in ordering.items()))
+        limitations.append('Declared source subordinals order records within one native line of one file only; '
+                           'they are not execution, causal or cross-file order.')
+    return dict(schema_version=1, profile='ahl-private-diagnosis-v1',
+                events=n, cases=len(roots), reported_roots=len(set(roots.values())),
+                method_inputs=inputs,
                 method_execution=dict(profile='ahl-analysis-execution-v1',
                     policy='structural_prerequisites_v1' if select_methods else 'legacy_raw_analysis',
                     directly_follows='completed' if n else 'not_run',
@@ -279,10 +324,7 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
                     'instruction_staleness': 'Needs applicable instruction and versioned source contradiction.',
                     'corrections_and_context_loss': 'Needs reviewed unmet requirements, not changed intent.',
                     'severe_failures': 'Needs reproducible acceptance boundary; frequency is not required.'},
-                limitations=['Reported roots are not proven independent.',
-                    'Capture order does not establish concurrency or causation.',
-                    'Stops are not success; duplicate observations are not proven waste.',
-                    'No automatic staleness, skill utility, or model correctness inference.'])
+                limitations=limitations)
 
 
 def report(result, *, source_context=None):

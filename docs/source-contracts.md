@@ -616,7 +616,13 @@ replayed through one v1 projection per group, so identical copies and overlappin
 prefixes deduplicate by native UUID, response usage/stop facets are computed once
 over the merged group, and incompatible approved metadata or raw revisions for one
 UUID reject the entire batch. Moving a file between roots or directories preserves
-native record identity and history. Main and subagent writers remain distinct
+native record identity and history. Merged files keep offset `capture_order` values
+but each file is a separate `source_order_segment`; the order between files,
+including an archive and its active copy, is not established. Analysis treats the
+capture order of a case whose records span segments as unknown; only valid strictly
+increasing timestamps can still order it, and the receipt counts those cases
+separately. Segments and subordinals are
+excluded from record identities, revisions and duplicate-UUID comparison. Main and subagent writers remain distinct
 cases; sidechain owners, parent sessions, task roots and independence stay
 unknown exactly as in the file profile, and parent pointers are never traversed.
 

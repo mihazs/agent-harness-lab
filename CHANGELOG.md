@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.92.1
+
+### Patch Changes
+
+- 6056c90: Correct how declared Claude source order is reported and attributed. A case whose records span files has unknown capture order, but valid strictly increasing timestamps can still order it, so the receipt now separates `cross_segment_unordered_cases` from `cross_segment_timestamp_ordered_cases`. Recurrence and matching coverage report `cross_file_capture_order_unknown_cases` and `cross_file_unordered_cases` instead of `cross_file_cases`, and the Markdown report states both counts. The `claude-native-order-v1` profile is accepted only on pinned `claude-jsonl-2.1.316` Claude records. The `source_order` summary records `declared_by: native_adapter` for the pinned adapter and `declared_by: caller` for normalized ledgers such as exported `events.v2.jsonl` files. The collection fingerprint now leaves out the source-order fields only for the pinned adapter; for caller-supplied ledgers it includes them, so a ledger that changes only its subordinals changes the fingerprint. Selection and output are unchanged for inputs without these fields.
+
+## 0.92.0
+
+### Minor Changes
+
+- 629beaf: Add a versioned within-line source order to pinned Claude Code 2.1.316 captures. Several events from one native line (content blocks plus response usage/stop facets) used to share one `capture_order`, so method selection excluded those cases. Each event now also records `source_order_profile: "claude-native-order-v1"`, `source_suborder` (the content-array position, with usage and stop facets after the line's blocks) and `source_order_segment` (the physical file). Within one file and profile, method selection treats a strictly increasing `(capture_order, source_suborder)` as declared capture order. It reports these cases in `method_selection.inputs.source_order` and in the recurrence and matching coverage, and lists ties without a usable subordinal and cases that span files as still unordered. Records spanning files of a project-root journal stay unordered even when their offset ordinals increase. The subordinal is not execution or causal order and adds no outcome or independence label. Event IDs, journal record identities and revisions, collection fingerprints and duplicate-UUID checks ignore the new fields, so existing values are unchanged. Inputs without the fields keep identical analysis output and receipts. The schema rejects partial declarations and unknown profiles.
+
 ## 0.91.1
 
 ### Patch Changes

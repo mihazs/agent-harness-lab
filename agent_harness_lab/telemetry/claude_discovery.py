@@ -167,8 +167,10 @@ def capture(roots, project, *, session=None, revisions=None, deadline=None,
         records, files, sessions, consumed, conflicts, unattributed = [], [], {}, 0, 0, 0
         for members in groups.values():
             projection, offset = Projection(project, max_records, folder.check, revisions), 0
-            for name, root, entry in members:
+            for segment, (name, root, entry) in enumerate(members):
                 if max_records is not None and consumed >= max_records: raise ValueError('native discovery record budget exceeded')
+                # Offsets keep ordinals unique; the order between these files is not established.
+                projection.segment = segment
                 before = projection.duplicates, projection.unsupported
                 def add(row, position, start=offset): projection.add(row, start+position)
                 sha256, partial, count = jsonl(folder, name, None if max_records is None else max_records-consumed, add, **limits)

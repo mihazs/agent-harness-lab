@@ -3,10 +3,15 @@ from collections import deque
 from datetime import datetime, timezone
 from ..evaluation.integrity import contained
 from ..telemetry.native import correlated, optional_limit
+from ..telemetry.schema import SOURCE_ORDER
 from .execution import CoverageManifest, ExecutionIdentity, ExecutionMetadata, IDENTITY_FIELDS, IdentityField, MissingField, RecordRef, ScanBound
 from .schema import EvidenceRecord, digest
 from .snapshot import LocalExport, Snapshot
 from .graph import EvidenceGraph, JoinReceipt
+
+
+# Capture position and declared source order describe where a record was read, not its revision.
+POSITIONAL = frozenset(('event_id', 'capture_order', *SOURCE_ORDER))
 
 
 class NativeCapture(LocalExport):
@@ -55,7 +60,7 @@ class NativeCapture(LocalExport):
             folder.check()
             key = (event['case_id'], event['event_id'])
             native = key in revisions
-            revision = revisions[key] if native else digest({k: v for k, v in event.items() if k not in ('event_id', 'capture_order')})
+            revision = revisions[key] if native else digest({k: v for k, v in event.items() if k not in POSITIONAL})
             if native: ident = digest((self.format+'-event-v1', *key))
             elif self.format == 'codex' or event['capture_status'] == 'unmatched_call':
                 ident = digest((self.format+'-derived-coverage-v1', event['case_id'],
