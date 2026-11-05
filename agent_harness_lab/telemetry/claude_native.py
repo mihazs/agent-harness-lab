@@ -1,5 +1,5 @@
 """Content-free Claude Code 2.1.316 records; native claims are not execution proofs."""
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from .native import guarded, jsonl, number, text, timestamp
 from .schema import SOURCE_ORDER, event
 from ..sources.schema import digest
@@ -12,6 +12,36 @@ UPSTREAM_COMMIT = '2146f9d8985513053e904b13200c8f744b36785a'
 ENTRY_TYPES = ('user', 'assistant', 'system', 'progress', 'attachment')
 KNOWN_TOOLS = ('Bash', 'Read', 'Write', 'Edit', 'MultiEdit', 'Glob', 'Grep', 'Agent', 'Task', 'Skill',
     'WebFetch', 'WebSearch', 'NotebookEdit', 'TodoWrite', 'AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode')
+# Project-owned bundle layout of workflow.skill_roots; only an exact entry-point path under the project qualifies.
+SKILL_BUNDLE_PREFIXES = (('.agents', 'skills'), ('.claude', 'skills'), ('skills',))
+# Assumed native inputs (not pinned by the SDK wire reference): Skill `skill` names a skill; Read `file_path` is
+# absolute and `offset`/`limit`/`pages` select a window. Signals are declared requests, never observed activation.
+CAPABILITY = dict(version=VERSION, call_ids=True, outcome=False, skill_activation=False, skill_signal='observed_declared')
+
+
+def skill_fingerprint(name):
+    """Pseudonymous label shared by a declared Skill name and a bundle directory name; not anonymization."""
+    return digest(('claude-skill-name-v1', name))
+
+
+def skill_signal(project, tool, arguments):
+    """Content-free metadata for a Skill name or an exact project SKILL.md read request; otherwise None."""
+    if not isinstance(arguments, dict): return None
+    if tool == 'Skill':
+        name = arguments.get('skill')
+        if not isinstance(name, str) or not name: return None
+        return dict(skill_signal='declared_invocation', skill_id=skill_fingerprint(name), skill_signal_confidence='declared_name')
+    path = arguments.get('file_path') if tool == 'Read' else None
+    if not isinstance(path, str) or not path: return None
+    candidate = PurePosixPath(path)
+    # No normalization: an equivalent spelling, a parent step or a relative path is not an exact bundle path.
+    if str(candidate) != path or not candidate.is_absolute() or '..' in candidate.parts: return None
+    try: parts = candidate.relative_to(PurePosixPath(str(project))).parts
+    except ValueError: return None
+    if len(parts) < 3 or parts[-1] != 'SKILL.md' or parts[:-2] not in SKILL_BUNDLE_PREFIXES: return None
+    partial = any(arguments.get(key) is not None for key in ('offset', 'limit', 'pages'))
+    return dict(skill_signal='file_read', skill_id=skill_fingerprint(parts[-2]),
+        skill_signal_confidence='partial_read_request' if partial else 'full_read_request')
 
 
 class Projection:
@@ -98,6 +128,7 @@ class Projection:
                 elif block_type in ('thinking', 'redacted_thinking') and kind == 'assistant': emit('reasoning', index)
                 elif block_type == 'tool_use' and kind == 'assistant':
                     name = text(block.get('name')); metadata = dict(tool_name=name if name in KNOWN_TOOLS else 'tool:'+digest(name))
+                    metadata.update(skill_signal(self.project, name, block.get('input')) or {})
                     if block.get('id') is not None: metadata['call_id'] = self.scoped(self.session, writer, text(block['id']))
                     else: metadata['missing_reason'] = 'native_call_id_unavailable'
                     emit('tool_call', index, **metadata)

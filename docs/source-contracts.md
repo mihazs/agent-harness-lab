@@ -342,7 +342,11 @@ The adapter preserves exact native-record fingerprints and approved type/timesta
 metadata as behavioral evidence. Bodies, arguments, results, native IDs, paths and
 credentials are not copied to the journal. A body-only edit versions its native
 record and source snapshot without changing the ordinary metadata-only monitor
-fingerprint. Collection time remains separate from reported native time.
+fingerprint.
+Pinned Claude events may carry [declared skill signals](telemetry.md#declared-skill-signals):
+an edit that makes a `Read` path match or stop matching an exact project
+`SKILL.md` bundle path, or changes a `Skill` name, changes that derived metadata.
+Journal record identities and revisions are unchanged. Collection time remains separate from reported native time.
 Derived unmatched-call coverage has a stable call-based identity and unknown
 provenance; resolving another pending call cannot relabel its history.
 

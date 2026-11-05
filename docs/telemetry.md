@@ -28,7 +28,7 @@ outcome. Later certification must independently audit those graders.
 | --- | --- | --- | --- |
 | `codex-jsonl-v1` | Native call IDs; explicit structured exit errors | Unknown | Unknown |
 | `claude-jsonl-v1` | Tool blocks and `tool_use_id`; `is_error` | Unknown | Unknown |
-| `claude-jsonl-2.1.316` | Explicit native file, writer/UUID scope, parallel tool blocks, compaction and unambiguous response usage | Unknown | Unknown |
+| `claude-jsonl-2.1.316` | Explicit native file, writer/UUID scope, parallel tool blocks, compaction and unambiguous response usage | Unknown | Unknown; declared `Skill` names and exact project `SKILL.md` read requests only (`observed_declared`) |
 | Normalized v1/v2 | Supplied metadata | Provenance-dependent | Supplied signal only |
 
 These names identify the tested JSONL contracts, not verified CLI release versions.
@@ -100,10 +100,54 @@ Tool-use/result IDs, `is_error`, text/reasoning block kinds, native compaction f
 and reported response-stop markers map to metadata. Arguments, output, thinking,
 message text, paths and credentials are omitted. Known built-in tool names remain
 labels; other names are fingerprinted. Text such as "ERROR" does not supply a
-missing structured error flag. A `Skill` call does not prove skill activation.
+missing structured error flag. A `Skill` call does not prove skill activation;
+see [declared skill signals](#declared-skill-signals).
 `isMeta` and `isCompactSummary` records cannot replay embedded tool blocks as new
 executions. Unsupported blocks/entry types and missing call IDs remain explicit.
 No textual cancellation or task-success label is inferred.
+
+### Declared skill signals
+
+The pinned profile's capability is `skill_activation: False` with
+`skill_signal: observed_declared` (`claude_native.CAPABILITY`). Two tool-call
+shapes add `skill_signal`, `skill_id` and `skill_signal_confidence` to their
+`tool_call` event; nothing else changes:
+
+| Native call | `skill_signal` | `skill_signal_confidence` |
+| --- | --- | --- |
+| `Skill` with a nonempty string `input.skill` | `declared_invocation` | `declared_name` |
+| `Read` whose `input.file_path` is exactly `PROJECT/<prefix>/<name>/SKILL.md` | `file_read` | `full_read_request`, or `partial_read_request` when `offset`, `limit` or `pages` is present |
+
+`<prefix>` is `.agents/skills`, `.claude/skills` or `skills`, the project-owned
+bundle layout of [workflow adoption](workflows.md), and `<name>` is one path
+component. The path must be absolute, already in canonical form and under the
+selected project; equivalent spellings, parent steps, nested or other-root
+`SKILL.md` files, relative paths and global skill directories yield no signal. No
+filesystem is consulted, so a match records the layout, not that a bundle existed.
+`skill_id` is `digest(('claude-skill-name-v1', name))` for the declared name or
+the bundle directory name, so a declared name and its project directory can share
+a label; it is a pseudonym in the private ledger, not anonymization. Skill
+arguments, paths, file content and results are never copied, and `skill_hash`
+stays absent because no content is read.
+
+**Assumption.** The pinned SDK reference establishes the `Skill` and `Read` tool
+names and the `tool_use` envelope, not their input fields. The `skill` and
+`file_path`/`offset`/`limit`/`pages` names follow Claude Code's public tool
+interface and are not verified against a live 2.1.316 session. A `Skill` call
+without a usable name, a non-object input or a missing path stays an ordinary
+call with no signal.
+
+**Not established.** Both signals are model requests. The result may fail, a read
+may be partial, a file may be read to edit it rather than to follow it, and the
+runtime may load skill text implicitly without any call. Effective scope,
+namespace resolution and shadowing between project and global copies are unknown,
+and Bash or other tools that read a skill file are not mapped. These values are not
+`read`/`invocation` evidence under `evaluation.skills.activation`, so they never
+set `activated`, an outcome or utility. Row- or block-level labels supplied in a
+capture are ignored. Captures without these calls keep their pre-change events,
+identities, collection fingerprints and summaries; summaries gain no keys. The
+`codex-jsonl-v1`, `claude-jsonl-v1` and pinned Codex rollout adapters are
+unchanged.
 
 `native_message_fingerprint` identifies the containing native UUID, while
 `native_parent_message_fingerprint` records its optional parent UUID in that same
