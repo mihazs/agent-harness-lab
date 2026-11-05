@@ -7,7 +7,7 @@ from pathlib import Path
 import sys
 import uuid
 import stat
-from .evaluation.integrity import contained, relative, read_regular, unique_object
+from .evaluation.integrity import contained, open_directory_nofollow, relative, read_regular, unique_object
 
 RESPONSE_PATHS=('inference_settings','cgroup_root','image_root')
 RESPONSE_OPTIONS=(*RESPONSE_PATHS,'image_sha256','disk_bytes','permission_audit')
@@ -264,7 +264,7 @@ def create(project, config):
     project = Path(project).absolute()
     if any(p.is_symlink() for p in (project, *project.parents)):
         raise ValueError('project path crosses a symlink')
-    directory = os.open(project, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    directory = open_directory_nofollow(project)
     temporary = '.ahl-init-'+uuid.uuid4().hex
     try:
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)

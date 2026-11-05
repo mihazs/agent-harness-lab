@@ -6,7 +6,7 @@ from pathlib import Path
 import stat
 import tempfile
 import time
-from .integrity import contained, relative, tree
+from .integrity import contained, open_directory_nofollow, relative, tree
 from .workspace import directory, names, write_file
 
 
@@ -110,7 +110,7 @@ def analysis_snapshot(workspace,deadline):
     check_deadline(deadline);workspace=Path(workspace)
     if any(path.is_symlink() for path in (workspace,*workspace.absolute().parents)) or not workspace.is_dir():
         raise ValueError('analysis input must be a regular directory without symlink ancestors')
-    descriptor=os.open(workspace,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+    descriptor=open_directory_nofollow(workspace)
     try:
         return Snapshot.capture(descriptor,deadline,max_files=None,max_directories=None,max_bytes=None,max_metadata=None,max_depth=None)
     finally:os.close(descriptor)
@@ -120,7 +120,7 @@ class WorkingState:
     def __init__(self, workspace, deadline):
         check_deadline(deadline)
         tree(workspace,max_files=100,max_bytes=1024*1024)
-        descriptor = os.open(workspace,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+        descriptor = open_directory_nofollow(workspace)
         try: self.snapshot = Snapshot.capture(descriptor,deadline)
         finally: os.close(descriptor)
 
@@ -134,7 +134,7 @@ class WorkingState:
 
     def publish(self, destination, deadline):
         with publication(destination,deadline) as staged:
-            descriptor = os.open(staged,os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW)
+            descriptor = open_directory_nofollow(staged)
             try: self.snapshot.seed(descriptor,deadline)
             finally: os.close(descriptor)
         return Path(destination)

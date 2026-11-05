@@ -8,7 +8,8 @@ import os
 from pathlib import Path
 import re
 import stat
-from .evaluation.integrity import contained, invalid_constant, open_directory_nofollow, read_regular, unique_object
+from .evaluation.integrity import (contained, invalid_constant, open_beneath, open_directory_nofollow, read_regular,
+                                   unique_object)
 from .monitoring.state import atomic_json
 
 MAX_EVENTS = 64
@@ -38,7 +39,7 @@ def sync_directory(path):
 
 
 def write_bytes(path, raw):
-    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    descriptor = open_beneath(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, 'wb') as stream:
         stream.write(raw); stream.flush(); os.fsync(stream.fileno())
 
@@ -71,7 +72,7 @@ class PrivateJournal:
         if marker.exists() or marker.is_symlink(): validate_marker()
         elif not create or any(p.name != '.lock' for p in self.root.iterdir()):
             raise ValueError('case store is uninitialized or contains unrelated files')
-        descriptor = os.open(self.root/'.lock', os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        descriptor = open_beneath(self.root/'.lock', os.O_RDWR | os.O_CREAT, 0o600)
         try:
             info = os.fstat(descriptor)
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.geteuid() or info.st_mode & 0o077:
