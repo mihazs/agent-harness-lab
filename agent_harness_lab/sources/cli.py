@@ -9,6 +9,7 @@ from .snapshot import LocalExport
 from .okf import MissingOKFDependency, OKFExport
 from .store import SourceStore
 from .git import GitExport
+from .test_results import PROVIDER as TEST_RESULTS, SOURCE_VERSION as TEST_RESULTS_VERSION, TestResultsExport
 from .execution import capture_snapshot
 from .github_config import GitHubConfigured
 from .native import NativeCapture
@@ -54,6 +55,8 @@ def main(argv):
                 connector = OKFExport(args.manifest)
             elif source.provider == 'git':
                 connector = GitExport(args.manifest)
+            elif source.provider == TEST_RESULTS:
+                connector = TestResultsExport(args.manifest)
             elif source.provider == 'claude-jsonl':
                 connector = ClaudeCapture(args.manifest)
             elif source.provider == 'codex-rollout':
@@ -65,6 +68,7 @@ def main(argv):
             registry.register(Capability('local_file', 'ai-memory-okf', '0.2', ('contextual_assertion',)), connector)
             registry.register(Capability('local_git', 'git', 'v1', ('development_artifact',)), connector)
             registry.register(Capability('local_git', 'git', 'v2', ('development_artifact',)), connector)
+            registry.register(Capability('local_file', TEST_RESULTS, TEST_RESULTS_VERSION, ('development_artifact',)), connector)
             for version in (CODEX_VERSION, CODEX_ROOT_VERSION):
                 registry.register(Capability('local_file', 'codex-rollout', version, ('behavioral_event',)), connector)
             for version in (CLAUDE_VERSION, CLAUDE_ROOT_VERSION):
@@ -87,6 +91,8 @@ def main(argv):
                     result['context_summary'] = connector.summary
                 elif isinstance(connector, GitExport):
                     result['git_summary'] = connector.summary
+                elif isinstance(connector, TestResultsExport):
+                    result['test_results_summary'] = connector.summary
                 elif isinstance(connector, NativeCapture):
                     result['native_summary'] = connector.summary
                     result['checkpoint_ready'] = snapshot.checkpoint_ready

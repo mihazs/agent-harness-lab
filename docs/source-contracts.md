@@ -1677,6 +1677,130 @@ controls. `task test:sources:github:recheck:live` runs an explicitly selected pu
 PR import/recheck with no credentials; it uses private temporary metadata, checks
 that the candidate journal is unchanged, and is skipped in ordinary test runs.
 
+## Offline CI test result reports
+
+Select `local_file/test-results/v1` in the existing local source declaration, with
+`data` naming a selection descriptor next to the manifest:
+
+```json
+{"schema_version": 1, "commit_sha": "<full 40- or 64-hex SHA>",
+ "reports": [{"path": "reports/junit.xml", "format": "junit-xml"},
+             {"path": "reports/pytest.json", "format": "pytest-json"}],
+ "limits": {"max_cases": 5000}}
+```
+
+The scope fingerprint must equal `digest(selection)`, so the declared commit, report
+paths, formats and limits are all part of the scope. The commit SHA must be a full
+lowercase 40- or 64-hex string; abbreviated, uppercase and padded values are
+rejected. Report paths are relative, unique and contained in the manifest folder;
+symlinks, hard links and special files are refused. `TestResultsExport` reads only
+the selected files with no discovery, network, test execution, report-embedded
+scripts or URL fetches. Each report is re-read after parsing, and the selection is
+rechecked, so a report changed during capture rejects the whole capture.
+
+Each test case becomes one `test_case_result` development-artifact record and each
+report one `test_report` record. The record identity binds the declared commit, the
+report path fingerprint, the case identity and an occurrence index. The case identity
+is the report's own declaration: JUnit's nested `testsuite` names plus `classname`
+and `name`, or pytest's `nodeid`. Journals and preview output keep only
+fingerprints. Raw suite and case names stay in memory as `declared_cases` for
+in-process callers. The same test at another commit or in another report is a
+different record. A repeated identity within one report is kept as a further
+occurrence with a `duplicate_case_identity` warning; neither occurrence is
+dropped or merged.
+
+`TestResult.status` is one of `passed`, `failed`, `error`, `skipped` or `unknown`,
+and `reported_outcome` keeps the native label:
+
+| Input | Status |
+| --- | --- |
+| JUnit case with no `failure`/`error`/`skipped` child | `passed` (`no_status_element`) |
+| JUnit case with no status child but a status-like attribute (`status`, `result`, `outcome`, `skipped`, `failed`, ...) | `unknown` (`status_attribute`) |
+| JUnit `failure`, `error` or `skipped` child | `failed`, `error` or `skipped` |
+| JUnit case with two different status children | `unknown` (`conflicting`) |
+| JUnit case with an unrecognized child such as `flakyFailure` or `rerunFailure` | `unknown` (`unrecognized`) |
+| pytest `passed`, `failed`, `error`, `skipped` | the same status |
+| pytest `passed` with a setup, call or teardown phase whose outcome is not `passed` | `unknown` (`conflicting`) |
+| pytest `xfailed`, `xpassed`, `rerun` | `unknown` with that label |
+| any other pytest outcome | `unknown` (`unrecognized`) |
+
+Suite-level JUnit `failure`/`error` elements name no case; they are never
+attributed to one and add `suite_level_status_unattributed`. `duration_seconds`
+is JUnit's `time` attribute, or the sum of pytest's setup/call/teardown durations.
+It is `null` when absent, and also when a value is malformed, negative or
+non-finite (with `invalid_duration`). pytest collector failures add
+`collection_failures_reported`; they create no case.
+
+These results are CI evidence about the declared commit only. Every result carries
+`commit_binding: caller_declared`, `commit_verified: false` and
+`outcome_scope: declared_commit_ci_evidence`. Records keep causal status and
+independence `unknown`. This slice does not establish that the commit is in any
+journal, that the reports came from that commit's CI run, or that a rerun or
+matrix entry is an independent trial (`reruns_not_independent`). A passing test is
+not a verified task outcome of an agent run, and a failing one does not mean a
+model caused it. The preview `test_results_summary` reports per-status counts,
+warnings and `task_outcomes_verified`, `verification_authorized`,
+`execution_authorized`, `scripts_executed`, `publication_allowed` and
+`network_used`, all `false`. It carries profile `ci-test-results-v1`, which
+`public_export_allowed` rejects.
+
+Hostile-input handling uses only the standard library. Each report is read with a
+byte bound before parsing. JUnit XML must be UTF-8 or US-ASCII with no NUL bytes
+and no UTF-16/32 byte-order mark. Any `<!` markup declaration other than a comment
+or CDATA section is refused before a parser is constructed: `DOCTYPE`, `ENTITY`,
+`ELEMENT`, `ATTLIST` and conditional sections. Without a DTD there is no entity
+expansion and no external entity; an undefined entity reference is a parse error.
+Expat materializes a whole start tag and its attributes before reporting it, so
+the same pre-parse screen also requires every start tag to be well delimited with at
+most `max_attributes` quoted attributes (comments, CDATA and processing
+instructions are skipped; an unterminated one is refused).
+`xml.etree.ElementTree.XMLPullParser` then receives 64 KiB chunks and aborts on the
+first bound exceeded: element count, depth, attributes per element and attribute
+key/value length. Finished elements are emptied and detached as parsing proceeds,
+so retained memory does not grow with element count. pytest JSON is screened
+before decoding: structural brackets outside strings are counted against
+`max_json_depth` and `max_json_containers`, because the decoder builds the whole
+tree first and empty containers amplify memory roughly 48-fold. The screen is a
+single linear pass; a string that never closes is refused. It is then decoded
+strictly as UTF-8 with duplicate-key rejection and no `NaN`/`Infinity`, and the
+`tests` schema is validated before any record is made. Each report's bytes are
+released after parsing; the change check re-reads by streaming hash.
+The case count is bounded across all reports. A refused report imports nothing and
+leaves the previous checkpoint unchanged; `HostileReport` marks refusals from
+these bounds.
+
+| Limit | Ceiling |
+| --- | --- |
+| `max_reports` | 64 |
+| `max_report_bytes` | 16 MiB |
+| `max_cases` | 100,000 |
+| `max_elements` | 500,000 |
+| `max_depth` (XML) | 32 |
+| `max_attributes` | 64 |
+| `max_attribute_length` | 4,096 characters |
+| `max_json_depth` | 64 |
+| `max_json_containers` | 1,000,000 |
+
+`limits` may only lower these ceilings. Limitation: Python's `xml.etree` and
+`pyexpat` do not offer a supported switch that disables DTD processing. The
+defense is therefore the byte screen run before parsing, plus the encoding
+restriction that keeps the screen meaningful. Expat's own amplification limits
+are not relied on. The screen is deliberately conservative: a comment or CDATA
+section containing `<!` followed by anything other than `--` or `[CDATA[` is
+refused too. Messages, stack traces, `system-out`/`system-err` text and report
+properties are neither stored nor summarized. Element text still counts toward the
+byte bound.
+
+`task test:sources:test-results` runs the synthetic controls: status mapping,
+billion-laughs and external-entity documents, hidden encodings, element/depth/
+attribute/case/byte bounds with early abort, duplicate JSON keys, non-finite
+numbers, deep nesting, duplicate case names, commit-identity validation and CLI
+journals that hold hashes only. Still open in #53: GitHub Actions workflow-run/job/
+attempt ingestion and job-step linkage; artifact download or zip handling; TAP,
+SARIF, coverage and lint reports; joins from a result to a Git/GitHub commit or
+PR-head record; correlated rerun replicates; expired-artifact coverage warnings;
+and cross-source reporting.
+
 No source is enabled by installation. Tests use synthetic metadata; they establish
 contract validation, checkpoint behavior and a side-effect-free registry, not
 real-source compatibility, containment, diagnostic usefulness or certification.

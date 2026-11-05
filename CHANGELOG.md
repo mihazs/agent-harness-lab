@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.97.0
+
+### Minor Changes
+
+- 969aab6: Add an offline `local_file/test-results/v1` source that imports selected JUnit XML and pytest JSON reports bound to a caller-declared full commit SHA (40 or 64 hex). Each test case becomes a hash-only `test_case_result` development-artifact record with status `passed`, `failed`, `error`, `skipped` or `unknown`, plus the native outcome label and duration when present. Conflicting, rerun, expected-failure and unrecognized outcomes stay `unknown`, and duplicate case names stay as flagged occurrences. Results are CI evidence about the declared commit only: `commit_verified` is false, causal status and independence stay unknown, no task outcome is verified, and profile `ci-test-results-v1` is rejected by public export. Hostile-input handling uses only the standard library. DOCTYPE/ENTITY and other markup declarations, non-UTF-8 encodings and NUL bytes are refused before parsing. Bounded `XMLPullParser` chunks abort early on element, depth, attribute and case limits, and pytest JSON rejects duplicate keys, non-finite numbers, deep nesting and invalid schemas. `ahl sources preview` reports a `test_results_summary`. GitHub Actions run ingestion, artifact downloads and commit joins remain open.
+- Bound pre-decode memory for hostile test reports: pytest JSON nesting and container counts are screened before decoding (new `max_json_containers` limit), JUnit start tags are checked against the attribute bound before expat builds them, finished XML elements are released while parsing, and report bytes are no longer retained for the change check. Status-like JUnit testcase attributes and pytest passes with a non-passing phase now map to `unknown` instead of `passed`.
+
 ## 0.96.0
 
 ### Minor Changes
