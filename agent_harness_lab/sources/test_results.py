@@ -131,7 +131,7 @@ def screen_json(raw, bounds, name='pytest JSON'):
     for token in JSON_STRUCTURE.finditer(raw):
         mark = raw[token.start()]
         if token.end() - token.start() == 1 and mark == ord('"'):
-            raise HostileReport('pytest JSON string is unterminated')
+            raise HostileReport(name+' string is unterminated')
         if mark in b'[{':
             depth += 1; containers += 1
             if depth > bounds['max_json_depth']: raise HostileReport(name+' depth bound exceeded')

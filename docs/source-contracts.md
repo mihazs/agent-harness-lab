@@ -1878,7 +1878,8 @@ so retained memory does not grow with element count. pytest JSON is screened
 before decoding: structural brackets outside strings are counted against
 `max_json_depth` and `max_json_containers`, because the decoder builds the whole
 tree first and empty containers amplify memory roughly 48-fold. The screen is a
-single linear pass; a string that never closes is refused. It is then decoded
+single linear pass with possessive quantifiers; a string that never closes is refused as
+`HostileReport` instead of being rescanned from every later quote. It is then decoded
 strictly as UTF-8 with duplicate-key rejection and no `NaN`/`Infinity`, and the
 `tests` schema is validated before any record is made. Each report's bytes are
 released after parsing; the change check re-reads by streaming hash.
@@ -2043,7 +2044,7 @@ preview` reports per-type claim counts, plus these counts and warnings:
 | Repeated `id` within one array | kept as a further `occurrence`, `duplicate_native_id` |
 | `total*` count absent or not equal to its array length | `declared_total_missing` or `declared_total_mismatch` |
 | No `project` filter in the export | `project_scope: all_projects`, `export_not_project_scoped` |
-| Row project differs from the export filter | `row_outside_export_project` |
+| Observation, summary or prompt whose `project` and `merged_into_project` both differ from the export filter, compared as the pinned search does (trimmed, ASCII case-insensitive, like SQLite `NOCASE`) | `row_outside_export_project`; session rows are not checked, because the exporter fetches them as parents by session ID rather than by project |
 | Observation or summary whose memory session is not exported | `memory_session_not_exported` |
 | One content session ID under two platforms | `content_session_shared_across_platforms` |
 
@@ -2059,8 +2060,8 @@ Malformed input rejects the whole capture: non-UTF-8 bytes, a byte-order mark,
 duplicate JSON keys, `NaN`/`Infinity`, a non-object envelope, a missing or
 non-list array, or a non-object row. Decoding reuses the hardened
 `load_json` from the test-result source: brackets are counted against
-`max_json_depth` and `max_json_containers` before the decoder runs, and
-refusals raise `HostileReport`. A refused export imports nothing and leaves the
+`max_json_depth` and `max_json_containers` in one linear pass before the decoder
+runs, an unterminated string is refused there, and refusals raise `HostileReport`. A refused export imports nothing and leaves the
 previous checkpoint unchanged.
 
 | Limit | Ceiling |

@@ -3,8 +3,10 @@ import contextlib
 import copy
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -13,7 +15,7 @@ from agent_harness_lab.evaluation.benchmark import public_export_allowed
 from agent_harness_lab.sources import claude_mem
 from agent_harness_lab.sources.claude_mem import ClaudeMemExport, MemoryClaim
 from agent_harness_lab.sources.schema import SourceSpec, digest
-from agent_harness_lab.sources.test_results import HostileReport
+from agent_harness_lab.sources.test_results import HostileReport, LIMITS, screen_json
 
 SECRET = 'SYNTHETIC_SECRET_TOKEN'
 AT, EPOCH = '2031-04-05T06:07:08.000Z', 1933135628000
@@ -55,6 +57,13 @@ class ClaudeMemSourceTests(unittest.TestCase):
         self.manifest.write_text(json.dumps(dict(schema_version=1, source=self.source.to_dict(), data='selection.json')))
         self.connector = ClaudeMemExport(self.manifest)
 
+    def select(self, **changes):
+        """Rewrite the selection and re-derive its scope, so a read gets past the scope check."""
+        self.selection.update(changes)
+        (self.root/'selection.json').write_text(json.dumps(self.selection))
+        self.source = SourceSpec(**dict(self.source.to_dict(), scope_sha256=digest(self.selection)))
+        self.manifest.write_text(json.dumps(dict(schema_version=1, source=self.source.to_dict(), data='selection.json')))
+
     def edited(self, kind, index=0, **fields):
         value = copy.deepcopy(EXPORT)
         value[kind][index].update(fields)
@@ -90,6 +99,9 @@ class ClaudeMemSourceTests(unittest.TestCase):
         self.assertEqual({c.memory_session_sha256 for c in self.connector.claims if c.claim_type != 'search_hit'},
                          {session.memory_session_sha256})
         self.assertEqual((session.detail, session.platform_source, session.original_at), ('completed', 'claude', '2031-04-05T06:07:08+00:00'))
+        # The clean fixture is the baseline every warning test is compared against.
+        self.assertEqual(summary['warnings'], ['export_version_unstated', 'hits_not_evidence_of_use', 'query_selected_projection',
+                                               'row_project_missing', 'summaries_not_independent'])
         for record in snapshot.records:
             self.assertEqual((record.plane, record.causal_status, record.independence, record.capture_completeness),
                              ('contextual_assertion', 'unknown', 'unknown', 'partial'))
@@ -226,6 +238,20 @@ class ClaudeMemSourceTests(unittest.TestCase):
         self.assertEqual((self.claims('observation')[0].platform_source, self.claims('observation')[0].detail), ('other', 'unrecognized'))
         self.read(self.edited('observations', project='other-project'))
         self.assertIn('row_outside_export_project', self.connector.summary['warnings'])
+        self.read(self.edited('summaries', project='other-project', merged_into_project='another-project'))
+        self.assertIn('row_outside_export_project', self.connector.summary['warnings'])
+
+    def test_rows_in_scope_the_way_upstream_matches_projects_do_not_warn(self):
+        # Upstream matches project or merged_into_project COLLATE NOCASE against a trimmed key, and fetches sessions
+        # as parents by session ID rather than by project.
+        merged = self.edited('observations', project='worktree-x', merged_into_project='fixture-project')
+        merged['summaries'][0].update(project='worktree-y', merged_into_project='Fixture-Project')
+        cases = dict(merged=merged, cased=self.edited('observations', project='Fixture-Project'),
+                     padded=dict(EXPORT, project=' fixture-project '), session=self.edited('sessions', project='other-project'))
+        for name, value in cases.items():
+            with self.subTest(name):
+                self.read(value)
+                self.assertNotIn('row_outside_export_project', self.connector.summary['warnings'])
 
     def test_malformed_exports_are_rejected(self):
         bodies = ('', 'not json', '[]', '{"observations": []}', json.dumps(dict(EXPORT, sessions={})),
@@ -255,17 +281,30 @@ class ClaudeMemSourceTests(unittest.TestCase):
             with self.subTest(bound=bound):
                 with self.assertRaises(ValueError): self.read(EXPORT, limits=bound)
 
+    def test_unterminated_escaped_strings_are_screened_in_linear_time(self):
+        raw = b'{"query":"'+b'\\"'*(512*1024)
+        started = time.perf_counter()
+        with self.assertRaisesRegex(HostileReport, 'string is unterminated'): screen_json(raw, LIMITS, 'Claude-Mem export')
+        self.assertLess(time.perf_counter()-started, 2)
+        self.write(None, raw=raw.decode())
+        with patch.object(claude_mem, 'parse', side_effect=AssertionError('decoded')):
+            with self.assertRaisesRegex(HostileReport, 'unterminated'): self.connector.read(self.source)
+        # Escaped quotes and brackets inside a terminated string are still skipped, not counted.
+        screen_json(b'{"a": "x\\"[[[{{{\\\\", "b": [1, {"c": "]"}]}', dict(LIMITS, max_json_depth=3), 'Claude-Mem export')
+
     def test_selection_paths_and_capture_changes_are_checked(self):
-        for path in ('../x.json', '/etc/passwd', 'exports/missing.json'):
-            with self.subTest(path=path):
-                self.write(EXPORT); self.selection['export'] = path
-                (self.root/'selection.json').write_text(json.dumps(self.selection))
-                with self.assertRaises(ValueError): self.connector.read(self.source)
         (self.root/'exports/link.json').symlink_to(self.root/'exports/claude-mem.json')
-        self.write(EXPORT)
-        self.selection['export'] = 'exports/link.json'
-        (self.root/'selection.json').write_text(json.dumps(self.selection))
-        with self.assertRaises(ValueError): self.connector.read(self.source)
+        (self.root/'exports/original.json').write_text(json.dumps(EXPORT))
+        os.link(self.root/'exports/original.json', self.root/'exports/hard.json')
+        os.mkfifo(self.root/'exports/fifo.json')
+        cases = (('../x.json', ValueError, 'unsafe relative path'), ('/etc/passwd', ValueError, 'unsafe relative path'),
+                 ('exports/link.json', ValueError, 'symlink'), ('exports/hard.json', ValueError, 'single-link regular file'),
+                 ('exports/fifo.json', ValueError, 'single-link regular file'), ('exports/missing.json', FileNotFoundError, ''))
+        for path, error, message in cases:
+            with self.subTest(path=path):
+                # The scope is re-derived so the read reaches the path checks, not the scope check.
+                self.write(EXPORT); self.select(export=path)
+                with self.assertRaisesRegex(error, message): self.connector.read(self.source)
         self.write(EXPORT)
         with patch.object(claude_mem, 'regular_sha256', lambda path, limit: '0'*64):
             with self.assertRaisesRegex(ValueError, 'changed during capture'): self.connector.read(self.source)

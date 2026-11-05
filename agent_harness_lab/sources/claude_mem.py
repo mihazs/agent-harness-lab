@@ -3,6 +3,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
+import string
 from agent_harness_lab.evaluation.integrity import contained, read_regular, regular_sha256, relative
 from .schema import Contract, EvidenceRecord, digest, fingerprint, label
 from .snapshot import LocalExport, Snapshot
@@ -128,6 +129,16 @@ def text(value):
     return value if isinstance(value, str) and value.strip() else None
 
 
+# SQLite NOCASE folds ASCII letters only.
+ASCII_FOLD = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
+
+
+def project_key(value):
+    """The pinned search's project match: trimmed and compared COLLATE NOCASE; None when absent."""
+    value = text(value)
+    return None if value is None else value.strip().translate(ASCII_FOLD)
+
+
 class ClaudeMemExport(LocalExport):
     """Reads one selected export file; never contacts a worker, opens a database or runs Claude-Mem."""
 
@@ -179,7 +190,7 @@ def parse(value, instance, version, bounds):
     if instant(value.get('exportedAt'), value.get('exportedAtEpoch'))[1] != 'native': warnings.add('export_time_unverified')
     query = value.get('query')
     if not isinstance(query, str): warnings.add('export_query_missing')
-    project = text(value.get('project'))
+    project = project_key(value.get('project'))
     if project is None: warnings.add('export_not_project_scoped')
     if sum(len(value[kind]) for kind in KINDS) > bounds['max_rows']: raise HostileReport('Claude-Mem row bound exceeded')
     def scoped(*parts): return digest(['claude-mem', instance, *parts])
@@ -205,7 +216,11 @@ def parse(value, instance, version, bounds):
             if platform == 'other': warnings.add('unrecognized_platform_source')
             row_project = text(row.get('project'))
             if row_project is None: warnings.add('row_project_missing')
-            elif project is not None and row_project != project: warnings.add('row_outside_export_project')
+            # Upstream filters rows on project or merged_into_project (an adopted worktree); sessions are fetched as
+            # parents by session ID, never by project, so they are not checked against the filter.
+            elif project is not None and kind != 'sessions' and project not in (
+                    project_key(row_project), project_key(row.get('merged_into_project'))):
+                warnings.add('row_outside_export_project')
             memory = text(row.get('memory_session_id'))
             content = text(row.get('content_session_id'))
             if kind == 'sessions':
