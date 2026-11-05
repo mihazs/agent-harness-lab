@@ -28,6 +28,9 @@ evaluation sessions, freezes inputs, executes paired tasks and writes a local
 `workflow.json`. A favorable behavioral comparison now also writes a versioned
 `change-plan.json` listing exact changed paths, hashes/modes and evaluation location.
 It remains inconclusive until the applicable certification prerequisites are met.
+After any exactly covered evaluation, `workflow.json` also carries a `decision`
+block explaining that outcome; see
+[single-run dispositions](decision-receipts.md#default-improve-single-run-dispositions).
 
 No manual analyze/manifest/evaluate sequence is required. Select `--agent codex`
 or `--agent claude` if both runtimes are available. Authentication remains the

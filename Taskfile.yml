@@ -368,6 +368,7 @@ tasks:
       PYTHONPATH: ''
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_preservation_receipt*.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_workflow_decision_disposition.py" -v'
   test:history-report:
     desc: Verify private reports from actual current receipt references
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'

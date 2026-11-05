@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Default `ahl improve` runs now add a private `decision` block (profile `ahl-single-run-decision-disposition-v1`) to `workflow.json` after any exactly covered single-run evaluation. It explains why that evidence cannot support a recommendation: `disposition` is `insufficient_evidence` (or `invalid_evidence` when frozen inputs changed), and `next_evidence` is `requires_repeated_paired_experiment`. It reports observed per-split pair counts, keeping non-pass/fail outcomes unknown, and labels the observed pattern without diagnosing it. It also lists the unmet reasons: one repeat per task and arm, no frozen plan, a descriptive profile, unverified roots, isolation qualification from the live prerequisite scope and unverified mandatory certification prerequisites. It binds the latest attempt's evaluation, manifest, baseline and candidate hashes. Statuses, exit codes, the `recommendation` string, `application_eligible`, `automatic_promotion` and every existing gate are unchanged, all authority fields stay false, and public benchmark export rejects the profile.
