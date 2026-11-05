@@ -7,6 +7,7 @@ from .schema import Contract, EvidenceRecord, digest, fingerprint, label
 from .snapshot import LocalExport, Snapshot
 from .hardened import HostileReport, limits, load_json
 from .temporal import declared_time
+from .claude_mem import text
 
 PROVIDER = 'hindsight-bank-archive'
 SOURCE_VERSION = 'v1'
@@ -22,7 +23,8 @@ DERIVATION = dict(retained_document='retained_input', extracted_fact='retain_ext
 PROVENANCE = dict(retained_document='native_field', extracted_fact='model_hypothesis', fact_relation='model_hypothesis',
                   consolidated_observation='model_hypothesis', invalidated_fact='model_hypothesis')
 # Assertion status at the archive's exported_at: a validity end at or before it is historical, a curated-out fact is
-# invalidated, and without a trustworthy export time or validity window nothing is guessed.
+# invalidated, and without a trustworthy export time nothing is guessed. A live row with no ended or future window
+# is read as current only because it is still in the live table.
 ASSERTIONS = ('current', 'historical', 'not_yet_valid', 'invalidated', 'undetermined', 'not_applicable')
 TIMES = ('recorded_at', 'mentioned_at', 'valid_from', 'valid_until', 'invalidated_at')
 TIME_STATUSES = ('native', 'missing', 'invalid', 'placeholder')
@@ -107,10 +109,6 @@ class BankClaim(Contract):
         if (self.independent_case, self.evidence_of_use, self.task_outcome_verified, self.agent_defect_verified,
                 self.native_session_verified) != (False,)*5:
             raise ValueError('memory claims never establish independence, use, outcomes, defects or native sessions')
-
-
-def text(value):
-    return value if isinstance(value, str) and value.strip() else None
 
 
 class HindsightArchive(LocalExport):
@@ -261,7 +259,8 @@ def parse(parts, selection, version, bounds):
                 document_sha256=owner, detail=fact_type(fact), assertion_status=status, **stamps))
             located.setdefault((identity, index), natives[-1])
         for index, fact in enumerate(facts):
-            links = fact.get('causal_relations') or []
+            links = fact.get('causal_relations')
+            if links is None: links = []
             if not isinstance(links, list): raise ValueError('Hindsight causal relations must be a list')
             for position, relation in enumerate(links):
                 target = relation.get('target_fact_index') if isinstance(relation, dict) else None
@@ -275,9 +274,13 @@ def parse(parts, selection, version, bounds):
     for position, observation in enumerate(observations):
         body = row('observation', observation)
         sources = observation.get('sources') if isinstance(observation.get('sources'), list) else []
-        resolved = {located.get((s.get('document_id'), s.get('fact_index'))) for s in sources
-                    if isinstance(s, dict) and isinstance(s.get('document_id'), str) and type(s.get('fact_index')) is int} - {None}
-        if len(resolved) < len(sources): warnings.add('observation_source_unresolved')
+        found = [located.get((s.get('document_id'), s.get('fact_index')))
+                 if isinstance(s, dict) and isinstance(s.get('document_id'), str) and type(s.get('fact_index')) is int else None
+                 for s in sources]
+        # A repeated source is not an unresolved one; only an entry that names no captured fact is.
+        if None in found: warnings.add('observation_source_unresolved')
+        resolved = set(found) - {None}
+        if text(observation.get('source_id')) is None: warnings.add('observation_without_source_id')
         stamps, status = temporal(observation)
         add('consolidated_observation', text(observation.get('source_id')) or ('position', position), body_sha256=body,
             document_sha256=None, detail=None, assertion_status=status, source_count=len(resolved), **stamps)

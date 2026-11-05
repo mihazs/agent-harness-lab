@@ -212,11 +212,23 @@ class HindsightSourceTests(unittest.TestCase):
         self.assertEqual([c.occurrence for c in self.claims('retained_document')], [0, 1])
         self.assertNotIn(SECRET, json.dumps(summary))
 
+    def test_repeated_sources_and_missing_observation_ids_are_warned_precisely(self):
+        base = OBSERVATIONS[0]['sources'][0]
+        self.read({'observations.json': [dict(OBSERVATIONS[0], sources=[base, dict(base)])]})
+        self.assertNotIn('observation_source_unresolved', self.connector.summary['warnings'])
+        observation = dict(OBSERVATIONS[0]); observation.pop('source_id')
+        self.read({'observations.json': [observation]})
+        self.assertIn('observation_without_source_id', self.connector.summary['warnings'])
+        self.read({'observations.json': OBSERVATIONS})
+        self.assertNotIn('observation_without_source_id', self.connector.summary['warnings'])
+
     def test_malformed_and_oversized_archives_are_rejected(self):
         for name, raw in (('manifest.json', 'not json'), ('documents/000000.json', '[]'), ('observations.json', '{}'),
                           ('documents/000001.json', json.dumps(dict(BETA, facts=['row']))),
                           ('documents/000001.json', '{"id": "a", "id": "b"}'),
-                          ('documents/000000.json', json.dumps(dict(ALPHA, facts=[dict(text='x', causal_relations=3)])))):
+                          ('documents/000000.json', json.dumps(dict(ALPHA, facts=[dict(text='x', causal_relations=3)]))),
+                          *(('documents/000000.json', json.dumps(dict(ALPHA, facts=[dict(text='x', causal_relations=bad)])))
+                            for bad in ({}, '', 0, False))):
             with self.subTest(name=name, raw=raw[:30]):
                 with self.assertRaises(ValueError): self.read({name: raw})
         for bound in (dict(max_rows=8), dict(max_documents=1), dict(max_archive_bytes=1000), dict(max_fields=7),

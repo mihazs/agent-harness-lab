@@ -2494,7 +2494,8 @@ wrong.
 
 Identity is hash-only and namespaced by `instance` and `bank_id`. A fact uses its
 `source_id`, or its document and position when the ID is absent
-(`fact_without_source_id`). Bodies, chunks, `retain_params`, tags, metadata,
+(`fact_without_source_id`); an observation without one uses its archive position
+(`observation_without_source_id`). Bodies, chunks, `retain_params`, tags, metadata,
 entity names and invalidation reasons are fingerprinted as `body_sha256` and
 never stored or printed. Bank names, tags and metadata are never matched against
 Claude Code or Codex sessions (`native_session_correlation: not_attempted`).
@@ -2508,7 +2509,8 @@ and warnings. `facts_are_model_extractions`, `observations_not_independent`,
 present. Other warnings: `duplicate_native_id` (kept as a further occurrence),
 `row_without_native_identity`, `relation_target_unresolved` (the target index is
 not an earlier fact in the same document), `unrecognized_relation_type`,
-`unrecognized_fact_type`, `observation_source_unresolved`,
+`unrecognized_fact_type`, `observation_source_unresolved` (a source naming no
+captured fact; a repeated source is not unresolved),
 `invalidated_fact_still_live`, `declared_total_mismatch`,
 `unknown_manifest_fields`, `unknown_row_fields`, and `history_not_read` or
 `<part>_not_read` when the manifest counts mental models, knowledge pages,
