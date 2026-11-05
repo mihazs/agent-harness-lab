@@ -12,8 +12,7 @@ from agent_harness_lab.promotion.journal import Journal
 from agent_harness_lab.workflow import candidate_states, harness_files, skill_roots
 
 I, S, H = 'instruction', 'skill', 'hook_contract_required'
-A, P, C, U = 'adoptable', 'private_excluded', 'contract_required', 'unsupported'
-R = 'recommendation_only'
+A, P, C, R, U = 'adoptable', 'private_excluded', 'contract_required', 'recommendation_only', 'unsupported'
 # path, writability without/with a root skills/ folder, plan surface, facets at 0o644, facets once 0o755.
 GOLDEN = (
     ('AGENTS.md', A, A, 'instruction', (I,), (I, H)),
@@ -43,14 +42,17 @@ GOLDEN = (
     ('.claude/hooks/pre.sh', C, C, 'hook', (H,), (H,)),
     ('hooks/hooks.json', C, C, 'hook', (H,), (H,)),
     ('src/hook', C, C, 'hook', (H,), (H,)),
-    ('.codex/hooks.json', U, U, 'unsupported', (), (H,)),
+    ('.codex/hooks.json', C, C, 'hook', (H,), (H,)),
     ('.claude/workflows/release.js', U, U, 'unsupported', (H,), (H,)),
     ('.claude/agents/reviewer.md', U, U, 'unsupported', (), (H,)),
     ('.codex/agents/reviewer.toml', U, U, 'unsupported', (), (H,)),
     ('.claude/commands/ship.md', U, U, 'unsupported', (), (H,)),
-    ('.claude/settings.json', U, U, 'unsupported', (), (H,)),
-    ('.claude/settings.local.json', U, U, 'unsupported', (), (H,)),
-    ('.codex/config.toml', U, U, 'unsupported', (), (H,)),
+    ('.claude/settings.json', C, C, 'hook', (H,), (H,)),
+    ('.claude/settings.local.json', P, P, 'hook', (H,), (H,)),
+    ('.codex/config.toml', C, C, 'hook', (H,), (H,)),
+    ('src/.codex/config.toml', C, C, 'hook', (H,), (H,)),
+    ('lefthook.yml', R, R, 'hook', (H,), (H,)),
+    ('.husky/pre-commit', R, R, 'hook', (H,), (H,)),
     ('.claude-plugin/plugin.json', U, U, 'unsupported', (), (H,)),
     ('.claude/output-styles/terse.md', U, U, 'unsupported', (), (H,)),
     ('.mcp.json', U, U, 'unsupported', (), (H,)),

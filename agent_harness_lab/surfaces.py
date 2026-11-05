@@ -91,6 +91,20 @@ RULES = (
          and context.external_root), runtimes=frozenset({'codex'})),
     Rule('vcs-and-cache', None, 0, 'private_excluded',
          lambda path, parts, context: any(part in ('.git', '__pycache__') for part in parts)),
+    # Hook registrations live in settings and config files that also hold permissions and env; the hook
+    # inventory projects only their hooks key. The local settings file is listed but never read.
+    Rule('claude-settings-hooks', 'hook', 30, 'contract_required',
+         lambda path, parts, context: path in ('.claude/settings.json', '.claude/settings.local.json'),
+         runtimes=frozenset({'claude-code'})),
+    Rule('claude-local-settings', None, 0, 'private_excluded',
+         lambda path, parts, context: path == '.claude/settings.local.json', runtimes=frozenset({'claude-code'})),
+    Rule('codex-hooks-config', 'hook', 30, 'contract_required',
+         lambda path, parts, context: parts[-2:] in (('.codex', 'hooks.json'), ('.codex', 'config.toml')),
+         runtimes=frozenset({'codex'})),
+    # Git developer hook managers are listed so they are never mistaken for native runtime hooks.
+    Rule('git-developer-hooks', 'hook', 31, 'recommendation_only',
+         lambda path, parts, context: path in ('lefthook.yml', '.lefthook.yml', '.pre-commit-config.yaml')
+         or (len(parts) == 2 and parts[0] == '.husky')),
 )
 
 
@@ -183,6 +197,9 @@ CAPABILITIES = (
     _row('hooks', 'claude-code', 'hook handler onFailure field', _CLAUDE + 'hooks', gate='>=2.1.295'),
     _row('hooks', 'codex', 'hooks.json or [hooks] per config layer with per-hash trust', _CODEX + 'hooks'),
     _row('hooks', 'codex', 'hook feature version gates', _CODEX + 'hooks', 'unverified'),
+    _row('hooks', 'claude-code', '33 hook events; exact, pipe-list and regex matchers', _CLAUDE + 'hooks'),
+    _row('hooks', 'codex', '14 hook events, regex matchers, prompt and agent handlers skipped',
+         _CODEX_SOURCE + '/hooks/src/engine/discovery.rs'),
     _row('workflows', 'claude-code', '.claude/workflows/*.js with a literal meta export', _CLAUDE + 'workflows'),
     _row('workflows', 'claude-code', 'no static validator; syntax errors surface at run time', _CLAUDE + 'workflows', 'unverified'),
     _row('workflows', 'codex', 'no workflow script loader in the pinned source', _CODEX_SOURCE),
