@@ -12,8 +12,11 @@ from .instructions import capture as capture_instructions, validate as validate_
 from .schema import EvidenceRecord, digest, fingerprint
 from .snapshot import LocalExport, Snapshot
 from .git_evidence import capture as capture_evidence
+from . import harness_binding
 
 OID = re.compile(rb'(?:[0-9a-f]{40}|[0-9a-f]{64})')
+_ISSUER = harness_binding._register_issuer()
+MAX_LISTING_ENTRIES = 10000
 
 
 def reference(name):
@@ -90,6 +93,7 @@ class GitExport(LocalExport):
         if 'instruction_profile' in selection: validate_instruction_profile(profile)
         deadline = None
         self.warnings, self.trees, self.algorithm = set(), {}, 'sha1'
+        self.harness_capture = None
         with Folder(self.manifest.parent, deadline, limit_total_bytes=False, limit_tree=False) as folder, GitView(deadline, limit_output=False) as view:
             self.folder, self.view = folder, view
             checkout, git_dir, common = (selection[k] for k in ('checkout', 'git_dir', 'common_dir'))
@@ -148,7 +152,7 @@ class GitExport(LocalExport):
             for name, target, kind in valid_refs:
                 value = (digest(target.decode()), kind)
                 rows.append(record('git_ref', name, digest(value), digest(value)))
-            files = []
+            files, facts = [], []
             for path in sorted(paths):
                 committed, mode = self.harness_file(head, checkout, path)
                 name = str(Path(checkout)/path)
@@ -157,7 +161,9 @@ class GitExport(LocalExport):
                 files.append(HarnessFile(digest(path), hashlib.sha256(data).hexdigest() if data is not None else None,
                     stat.S_IMODE(info.st_mode) if info else None,
                     hashlib.sha256(committed).hexdigest() if committed is not None else None, mode))
+                facts.append((path, *(getattr(files[-1], key) for key in ('content_sha256', 'mode', 'committed_sha256', 'committed_mode'))))
             harness = HarnessSnapshot(digest(head.decode()), tuple(files))
+            roots = self.roots(checkout, paths)
             for file in files:
                 value = asdict(file)
                 rows.append(record('harness_file', file.path_sha256, digest(value), digest(value)))
@@ -170,6 +176,8 @@ class GitExport(LocalExport):
             if Folder.stamp(view.binary.stat()) != view.binary_stamp: raise ValueError('trusted Git binary changed')
             self.verify_selection(source, descriptor, selection)
             self.harness = harness
+            # Only this exact reader issues in-process capture handles; journals and subclasses cannot.
+            self.harness_capture = harness_binding._issue(_ISSUER, source, harness, roots, facts) if type(self) is GitExport else None
             self.instructions = instructions
             self.summary = dict(head_sha256=harness.head_sha256, branch_sha256=digest(branch) if branch else None,
                 commits=graph, refs=[dict(name_sha256=digest(n), target_sha256=digest(t.decode()), object_type=k) for n, t, k in valid_refs],
@@ -183,6 +191,41 @@ class GitExport(LocalExport):
             if source.version == 'v2':
                 return capture_evidence(source, rows, self.summary, record, count, folder.bytes)
             return Snapshot(digest(self.summary), tuple(rows))
+
+    def roots(self, checkout, paths):
+        """Location fingerprints plus hashed bounded file listings for the checkout and selected ancestors."""
+        from agent_harness_lab.evaluation.integrity import location
+        result = {}
+        for root in sorted({'.'} | {str(a) for p in paths for a in Path(p).parents if str(a) != '.'}):
+            name = checkout if root == '.' else str(Path(checkout)/root)
+            # No-follow descriptor reads; directory timestamps are not snapshot inputs.
+            try: descriptor = self.folder.directory(name)
+            except OSError: continue
+            try:
+                info = os.fstat(descriptor)
+                listing = set()
+                try: complete = self.listing(descriptor, '', listing)
+                except OSError: complete = False
+            finally: os.close(descriptor)
+            value = location(self.manifest.parent/name, info)
+            if value is not None: result[value] = (root, frozenset(listing) if complete else None)
+        return result
+
+    @staticmethod
+    def listing(descriptor, prefix, result, depth=0):
+        """Every non-directory entry's hashed relative path; overflow leaves coverage unknown."""
+        if depth > 64: return False
+        with os.scandir(descriptor) as entries:
+            for entry in entries:
+                if len(result) >= MAX_LISTING_ENTRIES: return False
+                name = prefix+entry.name
+                if entry.is_dir(follow_symlinks=False):
+                    nested = os.open(entry.name, os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW, dir_fd=descriptor)
+                    try:
+                        if not GitExport.listing(nested, name+'/', result, depth+1): return False
+                    finally: os.close(nested)
+                else: result.add(harness_binding.path_sha256(name))
+        return True
 
     def harness_file(self, head, checkout, path):
         for ancestor in Path(path).parents:

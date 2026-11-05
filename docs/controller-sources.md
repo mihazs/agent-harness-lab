@@ -109,6 +109,62 @@ not an atomic snapshot, worker instruction consumption or effective configuratio
 `effective_loading` remains `unverified`. No raw paths or input contents are added.
 This private projection does not add a verified identity field or a journal schema.
 
+## Owned Git harness snapshot binding
+
+`sources.harness_binding.bind(attempt, harness_capture)` compares one closed live
+controller attempt with one local-Git harness capture made earlier in the same
+process. It returns a private `ahl-harness-snapshot-binding-v1` receipt whose
+`status` is `verified`, `mismatch` or `unknown`. There is no CLI exposure.
+
+Each input must be owned. The attempt must be the exact live `_Attempt` returned by
+`SourceSink.begin`, closed by `finish` and still readable within its session and
+deadline. The capture must be the opaque `GitExport.harness_capture` handle that the
+built-in reader (not a subclass) issues after its source readback. There is no
+public issuance function: issuance requires a one-shot issuer object that the
+built-in Git module claims when it is imported, and a second claim fails. That
+handle's facts stay in a private registry inside the issuing process. Serialized
+`HarnessSnapshot` values, `git_summary`, journal metadata or graphs, handles
+constructed by callers, dictionaries and handles in a forked process all return
+`unknown` with every fingerprint set to `null`. As with the controller issuer, the
+trusted boundary is the host process: code that reads or mutates private module
+registries, or monkeypatches the reader or controller, is outside this protection.
+
+On the sandbox's private-workspace path, the controller now also records a private
+location fingerprint for the executor's `harness` input directory. The fingerprint
+covers the normalized absolute path and the device and inode numbers. It is recorded
+at launch and again after the input checks, and it is kept only when both readings
+agree. It is kept in the attempt's private state, outside the hashed kernel event
+data, so receipt revisions, journal records and their sizes are unchanged. The Git
+capture records the same fingerprint for the checkout and for every ancestor
+directory of its selected paths. For each such directory it also keeps a bounded
+listing of the hashed relative path of every non-directory entry. The listing
+holds at most 10,000 entries and 64 nesting levels; on overflow the directory's
+coverage is unknown. Neither fingerprint nor the listing enters a report or
+journal. The receipt is:
+
+| Status | Condition |
+| --- | --- |
+| `verified` | The capture finished before the attempt began. The executor's harness location equals a captured checkout directory. Every selected file under that directory was clean at capture (worktree content equals the HEAD blob, executable bit matches the Git mode, nothing untracked, deleted or a symlink). No selected path lies outside it, and the directory held no file outside the selection at capture. The controller's before/after input-tree digest equals the tree digest of those files' relative paths, contents and permission bits |
+| `mismatch` | The same ownership, timing, location, cleanliness and coverage conditions hold, but the digests differ: a covered file changed content or mode, or a file was added (including an untracked file) or removed after capture |
+| `unknown` | Any other case: a missing or non-owned input, a capture taken after the attempt began, no observed harness input or location, a renamed, relocated, copied or different checkout (even with identical content), a selection dirty at capture, a selection outside the executed directory, a directory that held unselected, untracked, ignored or `.git` files at capture (`snapshot_does_not_cover_input_tree`, a coverage gap rather than a difference), or differing declared project fingerprints |
+
+`reason` names the deciding condition. A verified or mismatched receipt carries the
+controller attempt, the controller harness-input digest, the `HarnessSnapshot`
+fingerprint, its captured HEAD fingerprint and the Git source key.
+
+Only one thing is established: the tree the controller checked before and after the
+executor equals the selected files of one captured snapshot. Those files' content
+equals the committed blobs at the captured HEAD of that checkout location. The
+binding does not show that the worker read or applied any instruction.
+`effective_loading` stays `unverified`. It does not establish the effective
+configuration, memory, served model, a native identity, the hosted repository, an
+atomic filesystem snapshot, independence or task outcomes. It adds no
+`IdentityField`, journal field, verified import label or execution, grading,
+adoption or permission authority. A `mismatch` is a coverage fact, not a task
+failure, and `unknown` is neither success nor failure. The receipt is private:
+`publication_allowed` is false, and public benchmark export rejects both its
+profile and a nested `harness_snapshot_binding` key.
+
 Every journal entry retains **declared fields and candidate joins**. Verified
 projections exist only in the immediate live recheck report and expire with its
 controller session/deadline. Future journal-only reads remain descriptive; hashes
@@ -131,11 +187,14 @@ also included by installed layouts' `test_source_*.py` selection; native kernel
 qualification remains explicitly opt-in. Run
 `task test:sources:permission-composition:kernel` for the actual audited
 worker/fresh-grader handoff and private-wire, argv and artifact controls.
+Run `task test:sources:harness-binding` for the synthetic Git harness binding,
+ownership, dirty/untracked, late-capture and location controls. The kernel task
+above also runs the binding through actual pinned executors and fresh graders.
 Synthetic transport supplies the model
 responses in these controls; no real inference or native agent is launched.
 
 The full #42/#58 chain still requires supported effective configuration/memory/code
-receipts, authenticated cross-source native identity, protected corpus lineage
+receipts (the harness snapshot binding covers only the checked input tree), authenticated cross-source native identity, protected corpus lineage
 integration and a reviewed diagnostic-utility study. This slice does not complete
 those issues.
 

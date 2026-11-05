@@ -483,6 +483,14 @@ tasks:
       AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
     cmds:
       - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tools/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n 4 --dist worksteal -k ControllerSourceTests'
+  test:sources:harness-binding:
+    desc: Run synthetic Git harness snapshot binding, ownership and location controls
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+      AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_harness_binding.py" -v'
   test:sources:permission-composition:kernel:
     desc: Verify native owned permission-wire and source receipt composition
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'

@@ -76,6 +76,11 @@ production and verified cross-source joins remain separate work in
 #44/#45/#46/#53/#58. The optional [live controller source](controller-sources.md)
 path observes actual pinned workers and fresh graders; its immediate verification
 expires with the live capability, and its journal still stores declarations.
+Its separate in-process [harness snapshot binding](controller-sources.md#owned-git-harness-snapshot-binding)
+can report that the executor's checked harness input tree equals one clean
+local-Git `HarnessSnapshot` captured earlier from the same checkout location.
+That receipt is not an `IdentityField`, cannot be imported and leaves
+`effective_harness` unknown.
 No receipt authorizes execution or grading.
 
 Identity names, scan dimensions and missing/gap reasons remain enumerated and
@@ -718,6 +723,16 @@ nonregular files, alternate object stores, bare repositories, reftable repositor
 and selected submodule/nested-repository contents are blocked without fallback.
 All observed source metadata are rechecked before returning; failed reads leave
 the committed journal untouched. Private copies are removed after success or error.
+
+Each successful built-in read also exposes `GitExport.harness_capture`, an opaque
+handle valid only in the reading process. It privately keeps the selected paths'
+content/mode facts and location fingerprints (normalized absolute path plus
+device/inode) for the checkout and the selected paths' ancestor directories, plus a
+bounded listing of hashed relative file paths in each of those directories. The
+snapshot, summary, records and journal are unchanged; a subclass reader gets
+`None`, and there is no public issuance function. Only the [controller harness binding](controller-sources.md#owned-git-harness-snapshot-binding)
+consumes the handle. A renamed or copied checkout, a journal checkpoint or a
+serialized snapshot cannot stand in for it.
 
 Synthetic native tests cover ordinary/linked/detached/shallow repositories, packed
 and SHA-256 objects, corrupt blobs, private ref namespaces, dirty/untracked/missing

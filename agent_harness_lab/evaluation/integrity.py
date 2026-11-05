@@ -96,6 +96,19 @@ def digest(root, **limits):
     return tree_digest(tree(root,**limits))
 
 
+def location(path, info=None):
+    """Process-local directory location: normalized absolute path plus device/inode, never content."""
+    path = Path(os.path.abspath(path))
+    try:
+        if any(p.is_symlink() for p in (path, *path.parents)): return None
+        info = os.lstat(path) if info is None else info
+    except OSError: return None
+    if not stat.S_ISDIR(info.st_mode): return None
+    import json
+    return hashlib.sha256(json.dumps(['ahl.directory-location-v1', os.fsencode(path).hex(),
+        info.st_dev, info.st_ino]).encode()).hexdigest()
+
+
 def copy_frozen(source, destination, expected, **limits):
     import shutil
     source, destination = Path(source).absolute(), Path(destination).absolute()
