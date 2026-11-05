@@ -20,6 +20,7 @@ PROFILE = 'ahl-claude-rules-v1'
 RUNTIME = 'claude-code'
 MAX_EXPANSIONS = 256   # expanded patterns from brace groups, per rule; the documented runtime budget is 1000
 MAX_PATTERN_CHARS = 4096
+MAX_PATTERN_SEGMENTS = 64  # path segments per pattern; brace expansion never adds a '/'
 MAX_TASK_PATHS = 1000
 SETTING_SOURCES = ('user', 'project', 'local')
 PARSE_STATUSES = ('parsed', 'frontmatter_unsupported', 'blocked', 'not_utf8')
@@ -41,21 +42,18 @@ def base_dir(path):
     return str(PurePosixPath(*parts[:found[-1]])) if found and found[-1] else '.' if found else None
 
 
-def _group(text, start=0):
-    """(open, close, alternatives) of the first brace group with a top-level comma at or after start."""
-    while (open_ := text.find('{', start)) >= 0:
-        depth, cuts = 0, [open_]
-        for index in range(open_, len(text)):
-            if text[index] == '{': depth += 1
-            elif text[index] == '}': depth -= 1
-            elif text[index] == ',' and depth == 1: cuts.append(index)
-            if depth == 0:
-                if len(cuts) > 1:
-                    cuts.append(index)
-                    return open_, index, [text[a + 1:b] for a, b in zip(cuts, cuts[1:])]
-                break
-        start = open_ + 1
-    return None
+def _group(text):
+    """(open, close, alternatives) of the first brace group with a top-level comma, in one linear scan."""
+    stack, found = [], None
+    for index, char in enumerate(text):
+        if char == '{': stack.append((index, [index]))
+        elif char == ',' and stack: stack[-1][1].append(index)
+        elif char == '}' and stack:
+            open_, cuts = stack.pop()
+            if len(cuts) > 1 and (found is None or open_ < found[0]): found = open_, index, cuts + [index]
+    if found is None: return None
+    open_, close, cuts = found
+    return open_, close, [text[a + 1:b] for a, b in zip(cuts, cuts[1:])]
 
 
 def expand(patterns, budget=MAX_EXPANSIONS):
@@ -63,6 +61,7 @@ def expand(patterns, budget=MAX_EXPANSIONS):
     result, used = [], 0
     for pattern in patterns:
         if len(pattern) > MAX_PATTERN_CHARS: raise _Blocked('pattern exceeds the length bound')
+        if pattern.count('/') >= MAX_PATTERN_SEGMENTS: raise _Blocked('pattern exceeds the segment bound')
         if _group(pattern) is None: result.append(pattern); continue
         pending = [pattern]
         while pending:
@@ -88,15 +87,13 @@ def matches(pattern, path):
     anchored = pattern.startswith('/')
     pattern = pattern.lstrip('/')
     wanted = tuple(pattern.split('/')) if anchored or '/' in pattern else ('**', pattern)
-    parts, memo = tuple(path.split('/')), {}
-
-    def walk(i, j):
-        if (i, j) not in memo:
-            if i == len(wanted): memo[i, j] = j == len(parts)
-            elif wanted[i] == '**': memo[i, j] = any(walk(i + 1, k) for k in range(j, len(parts) + 1))
-            else: memo[i, j] = j < len(parts) and fnmatch.fnmatchcase(parts[j], wanted[i]) and walk(i + 1, j + 1)
-        return memo[i, j]
-    return walk(0, 0)
+    parts = tuple(path.split('/'))
+    reachable = {0}  # path positions reachable after the pattern segments consumed so far; iterative, no recursion
+    for segment in wanted:
+        if segment == '**': reachable = set(range(min(reachable), len(parts) + 1))
+        else: reachable = {j + 1 for j in reachable if j < len(parts) and fnmatch.fnmatchcase(parts[j], segment)}
+        if not reachable: return False
+    return len(parts) in reachable
 
 
 def declaration(raw):

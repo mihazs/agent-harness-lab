@@ -36,6 +36,8 @@ GOLDEN = (
     ('plugin/skills/demo/SKILL.md', U, U, 'skill', (S,), (S, H)),
     ('my-skills/demo/SKILL.md', U, U, 'unsupported', (), (H,)),
     ('.claude/rules/style.md', U, U, 'path_rule', (), (H,)),
+    ('.claude/rules/skills/style.md', U, U, 'path_rule', (S,), (S, H)),  # path_rule outranks a skills/ segment
+    ('plugin/skills/demo/.claude/rules/style.md', U, U, 'path_rule', (S,), (S, H)),
     ('.codex/rules/default.rules', 'recommendation_only', 'recommendation_only', 'exec_policy', (), (H,)),
     ('.claude/hooks/pre.sh', C, C, 'hook', (H,), (H,)),
     ('hooks/hooks.json', C, C, 'hook', (H,), (H,)),

@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -165,6 +166,26 @@ class ClaudeRulesTests(unittest.TestCase):
         self.assertTrue(any('dotfile' in item and 'case-sensitivity' in item for item in unverified))
 
 
+    def test_hostile_rules_stay_bounded_and_rules_below_a_skills_directory_are_kept(self):
+        hostile = self.base / 'hostile'
+        fixture.build(hostile, {
+            '.claude/rules/deep.md': '---\npaths: ["' + '**/' * 1200 + 'x"]\n---\n',
+            '.claude/rules/braces.md': '---\npaths:\n' + ''.join(f'  - "{i}' + '{' * 4000 + '"\n' for i in range(3)) + '---\n',
+            '.claude/rules/skills/s.md': '---\npaths: ["src/*.ts"]\n---\n',
+            'plugin/skills/p/.claude/rules/p.md': f'{fixture.SECRET} nested\n',
+        }, hostile=False)
+        receipt = rules.capture(hostile, CLAUDE, task_paths=['x', 'src/a.ts'])  # never a RecursionError
+        self.assertEqual(self.states(receipt), {
+            '.claude/rules/deep.md': ('blocked', 'unknown'),  # past the segment bound, so never evaluated
+            '.claude/rules/braces.md': ('parsed', 'conditional_unmatched'),
+            '.claude/rules/skills/s.md': ('parsed', 'conditional_matched'),
+            'plugin/skills/p/.claude/rules/p.md': ('parsed', 'on_demand_subdirectory'),
+        })
+        kinds = {n.path: n.kind for n in inventory.capture(hostile, CLAUDE).nodes}
+        self.assertEqual(kinds['.claude/rules/skills/s.md'], 'path_rule')
+        self.assertEqual(kinds['plugin/skills/p/.claude/rules/p.md'], 'path_rule')
+
+
 class GlobAndFrontmatterTests(unittest.TestCase):
     def test_brace_expansion_is_bounded_and_counts_only_braced_patterns(self):
         self.assertEqual(rules.expand(['src/*.{ts,tsx}', 'lib/**']), ['src/*.ts', 'src/*.tsx', 'lib/**'])
@@ -173,6 +194,25 @@ class GlobAndFrontmatterTests(unittest.TestCase):
         self.assertEqual(len(rules.expand(['{a,b}' * 8])), 256)
         for patterns in (['{a,b}' * 9], ['{' + ','.join(map(str, range(300))) + '}'], ['x' * 5000]):
             with self.subTest(size=len(patterns[0])), self.assertRaises(rules._Blocked): rules.expand(patterns)
+
+    def test_brace_scan_is_linear_and_keeps_the_first_comma_group(self):
+        self.assertEqual(rules._group('{a{b,c}'), (2, 6, ['b', 'c']))  # an unclosed brace is skipped
+        self.assertEqual(rules._group('}{a,b}'), (1, 5, ['a', 'b']))
+        self.assertEqual(rules._group('{x}{a,{b,c}}'), (3, 11, ['a', '{b,c}']))  # outermost group first
+        self.assertIsNone(rules._group('{a}{b}'))
+        started = time.perf_counter()
+        self.assertIsNone(rules._group('a' + '{' * 100_000))  # quadratic rescans took minutes here
+        self.assertLess(time.perf_counter() - started, 5)
+
+    def test_segment_bound_blocks_deep_patterns_and_matching_never_recurses(self):
+        bound = rules.MAX_PATTERN_SEGMENTS
+        self.assertEqual(len(rules.expand(['**/' * (bound - 1) + 'x'])), 1)
+        for pattern in ('**/' * bound + 'x', '{a,' + 'b/' * bound + 'c}'):
+            with self.subTest(pattern=pattern[:12]), self.assertRaises(rules._Blocked): rules.expand([pattern])
+        self.assertTrue(rules.matches('**/' * 1200 + 'x', 'x'))
+        self.assertTrue(rules.matches('**/' * 900 + 'zz', 'a/b/c/d/e/f/g/zz'))
+        self.assertTrue(rules.matches('a/' * 1100 + 'b', 'a/' * 1100 + 'b'))
+        self.assertFalse(rules.matches('**/' * 900 + 'zz', 'a/b/c/d/e/f/g/h'))
 
     def test_segment_aware_double_star_and_documented_anchoring(self):
         cases = (('**/*.ts', 'a.ts', True), ('**/*.ts', 'a/b/c.ts', True), ('src/**/*', 'src/a/b', True),

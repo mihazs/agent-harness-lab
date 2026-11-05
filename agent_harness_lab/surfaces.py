@@ -80,8 +80,9 @@ RULES = (
     Rule('skill-segment', 'skill', 21, 'unsupported', lambda path, parts, context: '/skills/' in '/' + path),
     Rule('hook-segment', 'hook', 30, 'contract_required',
          lambda path, parts, context: 'hook' in parts or 'hooks' in parts),
-    # Claude path-scoped rules: Markdown below any .claude/rules; not writable until the adoption increment.
-    Rule('claude-path-rule', 'path_rule', 25, 'unsupported', lambda path, parts, context: path.endswith('.md') and any(
+    # Claude path-scoped rules: Markdown below any .claude/rules, ranked above every skill row so a rules tree
+    # below a skills/ directory is still a rule; not writable until the adoption increment.
+    Rule('claude-path-rule', 'path_rule', 15, 'unsupported', lambda path, parts, context: path.endswith('.md') and any(
          parts[i:i + 2] == ('.claude', 'rules') for i in range(len(parts) - 2)), runtimes=frozenset({'claude-code'})),
     # Codex exec policy: <layer>/rules/*.rules (.codex or a declared $CODEX_HOME root); permission policy, never run.
     Rule('codex-exec-policy', 'exec_policy', 25, 'recommendation_only', lambda path, parts, context: path.endswith(

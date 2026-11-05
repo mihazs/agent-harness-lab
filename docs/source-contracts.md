@@ -1229,7 +1229,10 @@ and loading attribution remain open in #275 to #282.
 
 `surfaces.classify` names two rule kinds that never mix. For `claude-code`,
 every `.md` file below a `.claude/rules/` directory, including a nested one such
-as `pkg/.claude/rules/`, is kind `path_rule`. For `codex`, `.codex/rules/*.rules`
+as `pkg/.claude/rules/`, is kind `path_rule`. The row outranks every skill row, so
+`.claude/rules/skills/x.md` or a rules tree below a `skills/` directory is still a
+rule and carries the `skill` facet. Inside an adoptable skill bundle the file
+keeps the bundle's writability. For `codex`, `.codex/rules/*.rules`
 and `rules/*.rules` at the top of a declared `$CODEX_HOME` root are kind
 `exec_policy`. Neither kind carries the `instruction` facet, and neither runtime
 classifies the other's files. `path_rule` stays non-writable until adoption is
@@ -1258,7 +1261,9 @@ unsupported subset, so such a rule stays `unknown`. Non-UTF-8 rules are
 
 Brace groups expand up to 256 patterns per rule, and patterns without braces do
 not count. A rule past that bound, or with a pattern longer than 4096
-characters, is `blocked`. The documented runtime budget is 1000 patterns, so
+characters or of more than 64 path segments, is `blocked`. Brace groups are found
+in one linear scan, and matching walks the pattern segments iteratively, so a
+hostile rule costs bounded time and never exhausts the stack. The documented runtime budget is 1000 patterns, so
 `blocked` means AHL did not evaluate the rule. It does not mean the runtime
 skips it. Matching follows the documented examples. Patterns are relative to the
 directory that contains the rule's `.claude` folder. A leading `/` anchors a
