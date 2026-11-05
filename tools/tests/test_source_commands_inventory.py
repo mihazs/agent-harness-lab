@@ -83,6 +83,64 @@ class CommandsInventoryTests(unittest.TestCase):
         self.assertEqual((inside['apps/web/.claude/skills/deploy/SKILL.md'].id,
                           inside['apps/web/.claude/skills/deploy/SKILL.md'].load), ('/deploy', 'startup'))
 
+    def test_nested_skills_are_qualified_only_on_a_directory_clash_relative_to_task_cwd(self):
+        # code.claude.com/docs/en/skills (2.1.317): a nested skill is qualified only when its directory name
+        # clashes, as the subdirectory path relative to the working directory, then the skill directory name.
+        checkout = self.build({'.claude/skills/deploy/SKILL.md': skill('deploy'),
+                               'apps/web/.claude/skills/deploy/SKILL.md': skill('renamed'),
+                               'apps/web/.claude/skills/unique/SKILL.md': f'{SECRET}\n',
+                               'apps/.claude/commands/unique.md': f'{SECRET}\n',
+                               'lib/.claude/skills/sibling/SKILL.md': f'{SECRET}\n'})
+        found = self.entries(commands.capture(checkout, dict(CLAUDE, task_cwd='apps')))
+        rows = {p: (e.id, e.load, e.flags) for p, e in found.items()}
+        self.assertEqual(rows['apps/web/.claude/skills/deploy/SKILL.md'], ('/web:deploy', 'on_demand', ()))
+        self.assertEqual(rows['apps/web/.claude/skills/unique/SKILL.md'], ('/unique', 'on_demand', ()))
+        self.assertEqual(rows['apps/.claude/commands/unique.md'], ('/unique', 'startup', ('shadowed_by_skill',)))
+        self.assertEqual(rows['lib/.claude/skills/sibling/SKILL.md'], (None, 'unknown', ()))
+        self.assertEqual(self.entries(commands.capture(checkout, CLAUDE))['apps/web/.claude/skills/deploy/SKILL.md'].id,
+                         '/apps/web:deploy')
+
+    def test_frontmatter_names_never_reach_the_document_and_ids_are_bounded(self):
+        block = '---\nname: |\n  line1\n  line2 PRIVATE_BLOCK\n---\n'
+        checkout = self.build({'.claude/skills/renamed/SKILL.md': skill('PRIVATE_NAME_TEXT'),
+                               '.claude/skills/block/SKILL.md': block,
+                               '.claude/commands/PRIVATE_NAME_TEXT.md': f'{SECRET}\n',
+                               '.agents/skills/huge/SKILL.md': skill('N' * 200000),
+                               '.agents/skills/other/SKILL.md': skill('PRIVATE_CODEX_NAME'),
+                               '.agents/skills/other2/SKILL.md': skill('PRIVATE_CODEX_NAME')})
+        claude = commands.capture(checkout, CLAUDE)
+        found = self.entries(claude)
+        self.assertEqual((found['.claude/skills/renamed/SKILL.md'].id, found['.claude/skills/renamed/SKILL.md'].flags),
+                         (None, ('id_withheld',)))
+        self.assertEqual(found['.claude/skills/block/SKILL.md'].id, None)
+        # The shadowing check still resolves on the private name; only the emitted id is withheld.
+        self.assertEqual(found['.claude/commands/PRIVATE_NAME_TEXT.md'].flags, ('shadowed_by_skill',))
+        document = json.dumps(claude.document())
+        for text in ('PRIVATE_BLOCK', 'line1'): self.assertNotIn(text, document)
+        self.assertEqual(document.count('PRIVATE_NAME_TEXT'), 2)  # only the command's path and path-derived id
+        codex = commands.capture(checkout, dict(CODEX, task_cwd='.'))
+        rows = {p: (e.id, e.flags) for p, e in self.entries(codex, 'skill').items()}
+        self.assertEqual(rows['.agents/skills/huge/SKILL.md'], (None, ('name_too_long',)))
+        self.assertEqual(rows['.agents/skills/other/SKILL.md'], (None, ('duplicate_name', 'id_withheld')))
+        document = json.dumps(codex.document())
+        for text in ('N' * 65, 'PRIVATE_CODEX_NAME'): self.assertNotIn(text, document)
+        entry = codex.entries[0]
+        for bad in ('/a\nb', '/' + 'x' * 5000):
+            with self.subTest(bad=bad[:8]), self.assertRaises(ValueError): replace(entry, id=bad)
+
+    def test_private_excluded_command_and_skill_nodes_are_skipped_unread(self):
+        files = {'.claude/commands/__pycache__/x.md': f'{SECRET}\n', '.claude/skills/__pycache__/SKILL.md': skill('p'),
+                 '.agents/skills/__pycache__/SKILL.md': skill('q')}
+        checkout = self.build(files)
+        for profile in (CLAUDE, dict(CODEX, task_cwd='.')):
+            with self.subTest(runtime=profile['runtime']):
+                self.assertEqual(inventory.capture(checkout, profile).status, 'declared')
+                OPENED.append([])
+                try: value = commands.capture(checkout, profile)
+                finally: opened = OPENED.pop()
+                self.assertFalse(any(path.endswith(os.path.join('__pycache__', 'SKILL.md')) for path in opened))
+                self.assertFalse(set(files) & set(self.entries(value)))
+
     def test_codex_ancestor_skill_roots_are_all_listed_and_bounds_are_flagged(self):
         checkout = self.build({'src/task/.agents/skills/beta/SKILL.md': skill('beta'),
             'src/.agents/skills/long/SKILL.md': skill('n' * 65, 'd' * 1025),

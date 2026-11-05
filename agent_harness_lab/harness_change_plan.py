@@ -9,6 +9,7 @@ from .surfaces import HOOK_FACET, classify
 
 PROFILE = 'ahl-harness-change-plan-v1'
 REFERENCE_NAMES=frozenset(('project','configuration','analysis','evidence','runtime','policy','authorization'))
+UNRESOLVED_KINDS=('unsupported','command')
 
 
 def digest(value):
@@ -95,7 +96,8 @@ class HarnessChangePlan:
 
     @property
     def unresolved_operations(self):
-        return tuple(row.path for row in self.operations if row.surface=='unsupported' or 'hook_contract_required' in row.facets)
+        # A command file has its own kind but no adoption contract, so it stays unresolved like an unsupported path.
+        return tuple(row.path for row in self.operations if row.surface in UNRESOLVED_KINDS or 'hook_contract_required' in row.facets)
 
     def document(self):
         value=asdict(self)

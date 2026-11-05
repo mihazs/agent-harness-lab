@@ -1621,7 +1621,9 @@ file.
 
 - Claude Code commands are Markdown files below `.claude/commands`, classified by
   the `claude-command` row in `surfaces.RULES`. Their writability stays
-  `unsupported`. A subdirectory becomes part of the id, so
+  `unsupported`, and a harness change plan lists a created, edited or removed
+  command file under `unresolved_operations`, as it did before the row existed.
+  A subdirectory becomes part of the id, so
   `.claude/commands/frontend/component.md` is `/frontend:component`. A command
   whose id matches a skill's id is flagged `shadowed_by_skill`, because the skill
   wins. The registered `command` parser records only flat facts: whether
@@ -1629,8 +1631,13 @@ file.
   keys appear. Those keys are flagged `frontmatter_name_ignored` and
   `frontmatter_paths_ignored`, since commands do not accept them.
 - Claude Code skills in `.claude/skills` in `task_cwd` or any of its ancestors are
-  `startup`. Nested `<subdir>/.claude/skills` below `task_cwd` are `on_demand`
-  with the id `/<subdir>:<name>`.
+  `startup`, named by the frontmatter `name` or else the directory name. Nested
+  `<subdir>/.claude/skills` below `task_cwd` are `on_demand` with the same name.
+  Only when the skill's directory name clashes with another listed skill is the
+  id qualified, as the subdirectory path relative to `task_cwd` and then the
+  directory name: with `task_cwd` `apps`, `apps/web/.claude/skills/deploy` next to
+  a root `deploy` skill is `/web:deploy`. A skill tree neither above nor below
+  `task_cwd` loads `unknown` and has no id.
 - Codex skills are read from `.agents/skills` in every directory from `task_cwd`
   up to the checkout root. These entries are `startup`; other roots in the
   checkout are `outside_scan`. Skills with the same name are all listed and
@@ -1656,7 +1663,14 @@ file.
 
 `SKILL.md` frontmatter is read again without following links and must match the
 inventory node's content hash. A file that changed after the inventory is
-refused. Frontmatter is a bounded subset of YAML: top-level keys, quoted values
+refused. Nodes the inventory classes `private_excluded` (for example below
+`__pycache__`) were never read, so they are skipped rather than opened.
+
+Emitted ids are derived from paths only. A skill whose frontmatter `name` differs
+from its directory name keeps that name in the private shadowing, duplicate and
+`[[skills.config]]` checks, but its id is `null` and it is flagged `id_withheld`;
+`name_sha256` still identifies it. A Codex name longer than 64 characters has no
+id. An id is at most 4096 characters and holds no control characters. Frontmatter is a bounded subset of YAML: top-level keys, quoted values
 and block scalars. It is never loaded as YAML, and an unterminated block or a
 duplicate key gives `parse_failed`. The document has `publication_allowed: false`
 and `loading_evidence: false`. Its summary carries only counts and the

@@ -2,10 +2,12 @@
 
 capture() runs harness_inventory.capture and resolves names across its nodes: Claude Code commands under
 .claude/commands get a:b ids and are 'shadowed_by_skill' when a skill has the same id; nested <subdir>/.claude/skills
-load 'on_demand' as /<subdir>:<name>; Codex .agents/skills in every directory from task_cwd to the checkout root are
+load 'on_demand', qualified as /<subdir>:<dir> only on a directory-name clash; Codex .agents/skills in every directory from task_cwd to the checkout root are
 all listed, and same-name skills are flagged, never merged. Codex prompts are read only from a caller-declared
 CODEX_HOME and stay 'deprecated' and 'loader_unverified_at_head'. Frontmatter is a bounded YAML subset, never a
-YAML load. A row is a declaration: observed_loading and effective are always 'unknown'.
+YAML load. An emitted id is derived from the path only: a frontmatter name that differs from its directory resolves
+shadowing internally and is withheld ('id_withheld'). Nodes the inventory left unread (private_excluded) are skipped.
+A row is a declaration: observed_loading and effective are always 'unknown'.
 """
 from dataclasses import asdict, dataclass
 import hashlib
@@ -22,12 +24,13 @@ PROFILE = 'ahl-commands-inventory-v1'
 KINDS = ('command', 'prompt', 'skill')
 LOADS = ('startup', 'on_demand', 'outside_scan', 'unknown')
 FLAGS = ('config_conflict', 'description_too_long', 'depth_exceeded', 'disabled_by_declared_config', 'duplicate_name',
-         'frontmatter_name_ignored', 'frontmatter_paths_ignored', 'name_missing', 'name_too_long', 'parse_failed',
-         'shadowed_by_skill')
+         'frontmatter_name_ignored', 'frontmatter_paths_ignored', 'id_withheld', 'name_missing', 'name_too_long',
+         'parse_failed', 'shadowed_by_skill')
 LABELS = ('deprecated', 'description_limit_unverified', 'loader_unverified_at_head')
 # Pinned in openai/codex@d786ff91 codex-rs/ext/skills/src/loader/mod.rs; the description bound is not found at the pin.
 CODEX_NAME_MAX, CODEX_SCAN_DEPTH, CODEX_DESCRIPTION_MAX = 64, 6, 1024
 MAX_CONFIG_BYTES = 1024 * 1024
+MAX_ID_CHARS = 4096
 _ROOTS = {'claude-code': ('.claude', 'skills'), 'codex': ('.agents', 'skills')}
 _BLOCK = ('|', '>', '|-', '>-', '|+', '>+')
 
@@ -78,7 +81,7 @@ class Entry:
 
     def __post_init__(self):
         relative(self.path); label(self.root); fingerprint(self.name_sha256); fingerprint(self.content_sha256)
-        if self.id is not None and (not isinstance(self.id, str) or self.id[:1] not in '/$' or not self.id[1:]):
+        if self.id is not None and not _bounded(self.id):
             raise ValueError('invalid command entry id')
         if (self.kind not in KINDS or self.load not in LOADS or type(self.flags) is not tuple
                 or type(self.labels) is not tuple or not set(self.flags) <= set(FLAGS)
@@ -128,6 +131,12 @@ class CommandsInventory:
             adoption_authority=False, loading_evidence=False)
 
 
+def _bounded(ident):
+    """An id is '/' or '$' plus a non-empty name of at most MAX_ID_CHARS characters without control characters."""
+    return (isinstance(ident, str) and ident[:1] in ('/', '$') and 1 < len(ident) <= MAX_ID_CHARS
+            and not any(ord(char) < 32 or ord(char) == 127 for char in ident))
+
+
 def _owner(parts, pair):
     """(index of the pair, owning directory) for the first .claude/commands-style pair in parts, else (None, None)."""
     index = next((i for i in range(len(parts) - 1) if parts[i:i + 2] == pair), None)
@@ -141,10 +150,12 @@ def _load(owner, cwd, nested):
 
 
 class _Resolve:
+    """Rows keep the private key a runtime would resolve; the emitted id is that key only when path-derived."""
     def __init__(self, inventory, profile, checkout):
         self.runtime, self.cwd, self.checkout = profile['runtime'], profile['task_cwd'], os.path.abspath(checkout)
-        self.nodes, self.entries = [n for n in inventory.nodes if n.origin == 'checkout'], []
-        self.paths = {n.path for n in self.nodes}
+        # Unread nodes (private_excluded) carry no content hash and must stay unopened, so they are not entries.
+        self.nodes = [n for n in inventory.nodes if n.origin == 'checkout' and n.content_sha256 is not None]
+        self.entries, self.paths = [], {n.path for n in self.nodes}
 
     def skill_fields(self, node):
         """Re-read one SKILL.md no-follow, bound to its inventory hash so a swapped file is refused, not parsed."""
@@ -161,14 +172,15 @@ class _Resolve:
             index, owner = _owner(parts, pair)
             if node.kind != 'skill' or index is None or parts[-1] != 'SKILL.md' or len(parts) < index + 4: continue
             if self.runtime == 'claude-code' and len(parts) != index + 4: continue
-            (fields, flags), labels = self.skill_fields(node), set()
-            name = fields.get('name') or (parts[-2] if self.runtime == 'claude-code' else None)
-            if self.runtime == 'claude-code':
-                load = _load(owner, self.cwd, 'on_demand')
-                ident = '/' + (name if load == 'startup' else f'{owner}:{name}')
+            (fields, flags), labels, folder = self.skill_fields(node), set(), parts[-2]
+            declared = fields.get('name')
+            if self.runtime == 'claude-code':  # frontmatter name, else the directory name
+                name, load = declared or folder, _load(owner, self.cwd, 'on_demand')
+                key = None if load == 'unknown' else '/' + name
             else:
+                name = declared
                 load = 'startup' if _load(owner, self.cwd, 'outside_scan') == 'startup' else 'outside_scan'
-                ident = '$' + name if name else None
+                key = '$' + name if name and len(name) <= CODEX_NAME_MAX else None
                 if not name: flags.add('name_missing')
                 elif len(name) > CODEX_NAME_MAX: flags.add('name_too_long')
                 if len(fields.get('description', '')) > CODEX_DESCRIPTION_MAX:
@@ -176,8 +188,9 @@ class _Resolve:
                 if len(parts) - index - 3 > CODEX_SCAN_DEPTH: flags.add('depth_exceeded')
             bundle = PurePosixPath(node.path).parent
             metadata = str(bundle / 'agents/openai.yaml') in self.paths if self.runtime == 'codex' else None
-            self.add('skill', ident, name or '', node.path, 'checkout', load, node.content_sha256, flags, labels,
-                     os.path.join(self.checkout, node.path), metadata)
+            prefix = owner if self.cwd == '.' else owner[len(self.cwd) + 1:]
+            self.add('skill', key, name or '', node, load, flags, labels, derived=name == folder, folder=folder,
+                     prefix=prefix, location=os.path.join(self.checkout, node.path), metadata=metadata)
 
     def commands(self):
         for node in self.nodes:
@@ -189,28 +202,44 @@ class _Resolve:
             if node.parse_status != 'parsed': flags.add('parse_failed')
             if facts.get('name_key'): flags.add('frontmatter_name_ignored')
             if facts.get('paths_key'): flags.add('frontmatter_paths_ignored')
-            self.add('command', '/' + name, name, node.path, 'checkout', _load(owner, self.cwd, 'unknown'),
-                     node.content_sha256, flags, set())
+            self.add('command', '/' + name, name, node, _load(owner, self.cwd, 'unknown'), flags, set())
 
-    def add(self, kind, ident, name, path, root, load, content, flags, labels, location=None, metadata=None):
-        self.entries.append([kind, ident, digest(name), path, root, load, content, flags, labels, location, metadata])
+    def add(self, kind, key, name, node, load, flags, labels, *, path=None, root='checkout', content=None,
+            derived=True, **extra):
+        self.entries.append(dict(kind=kind, key=key, name=name, path=path or node.path, root=root, load=load,
+            content=content or node.content_sha256, flags=flags, labels=labels, derived=derived, **extra))
+
+    def qualify(self):
+        """Claude Code: a nested skill whose directory name clashes with another skill is /<subdir>:<dir>."""
+        skills = [row for row in self.entries if row['kind'] == 'skill']
+        for row in skills:
+            if row['load'] != 'on_demand': continue
+            taken = {name for other in skills if other is not row and other['load'] != 'unknown'
+                     for name in (other['name'], other['folder'])}
+            if row['folder'] in taken: row.update(key=f"/{row['prefix']}:{row['folder']}", derived=True)
 
     def resolve(self, config):
-        skills = [row for row in self.entries if row[0] == 'skill']
+        if self.runtime == 'claude-code': self.qualify()
+        skills = [row for row in self.entries if row['kind'] == 'skill']
         for row in self.entries:  # Claude: a skill and a command with the same id resolve to the skill
-            if row[0] == 'command' and any(skill[1] == row[1] for skill in skills): row[7].add('shadowed_by_skill')
+            if row['kind'] == 'command' and any(skill['key'] == row['key'] for skill in skills):
+                row['flags'].add('shadowed_by_skill')
         if self.runtime == 'codex':  # Codex lists same-name skills side by side instead of merging them
-            scanned = [row for row in skills if row[5] == 'startup' and row[1]]
+            scanned = [row for row in skills if row['load'] == 'startup' and row['key']]
             for row in scanned:
-                if sum(other[2] == row[2] for other in scanned) > 1: row[7].add('duplicate_name')
+                if sum(other['key'] == row['key'] for other in scanned) > 1: row['flags'].add('duplicate_name')
             for row in skills:
-                states = {entry['enabled'] for entry in config if os.path.normpath(entry.get('path', '')) == row[9]
-                          or row[1] is not None and entry.get('name') == row[1][1:]}
-                if len(states) > 1: row[7].add('config_conflict')
-                elif states == {False}: row[7].add('disabled_by_declared_config')
-        rows = sorted(self.entries, key=lambda row: (row[0], row[4], row[3]))
-        return tuple(Entry(kind, ident, name, path, root, load, content, tuple(sorted(flags)), tuple(sorted(labels)),
-                           metadata) for kind, ident, name, path, root, load, content, flags, labels, _, metadata in rows)
+                states = {entry['enabled'] for entry in config if os.path.normpath(entry.get('path', '')) == row['location']
+                          or row['key'] is not None and entry.get('name') == row['key'][1:]}
+                if len(states) > 1: row['flags'].add('config_conflict')
+                elif states == {False}: row['flags'].add('disabled_by_declared_config')
+        for row in self.entries:  # frontmatter text and unbounded names never reach the document
+            row['id'] = row['key'] if row['key'] and row['derived'] and _bounded(row['key']) else None
+            if row['key'] and row['id'] is None: row['flags'].add('id_withheld')
+        rows = sorted(self.entries, key=lambda row: (row['kind'], row['root'], row['path']))
+        return tuple(Entry(row['kind'], row['id'], digest(row['name']), row['path'], row['root'], row['load'],
+                           row['content'], tuple(sorted(row['flags'])), tuple(sorted(row['labels'])), row.get('metadata'))
+                     for row in rows)
 
 
 def skills_config(path):
@@ -242,8 +271,8 @@ def _prompts(resolver, walk, codex_home):
                 try: frontmatter(raw)
                 except ValueError: flags.add('parse_failed')
                 stem = PurePosixPath(name).stem
-                resolver.add('prompt', '/prompts:' + stem, stem, path, root, 'unknown', hashlib.sha256(raw).hexdigest(),
-                    flags, {'deprecated', 'loader_unverified_at_head'})
+                resolver.add('prompt', '/prompts:' + stem, stem, None, 'unknown', flags,
+                    {'deprecated', 'loader_unverified_at_head'}, path=path, root=root, content=hashlib.sha256(raw).hexdigest())
     finally: os.close(descriptor)
 
 

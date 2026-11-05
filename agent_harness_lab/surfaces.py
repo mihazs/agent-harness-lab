@@ -260,7 +260,7 @@ CAPABILITIES = (
     _row('commands_skills', 'codex', '.agents/skills from the cwd to the root plus user and system roots', _CODEX + 'skills'),
     _row('commands_skills', 'codex', 'deprecated custom prompts may be removed after 0.166.0', _CODEX + 'custom-prompts', 'unverified'),
     _row('commands_skills', 'claude-code', 'command frontmatter excludes name and paths; a same-name skill wins', _CLAUDE + 'skills'),
-    _row('commands_skills', 'claude-code', 'nested skills load on first file access, named /<subdir>:<name> on a clash', _CLAUDE + 'skills'),
+    _row('commands_skills', 'claude-code', 'nested skills load on first file access, named /<subdir>:<dir> on a directory clash', _CLAUDE + 'skills'),
     _row('commands_skills', 'codex', 'skill name at most 64 characters, scan depth 6, agents/openai.yaml metadata', _CODEX_SOURCE + '/ext/skills/src/loader/mod.rs'),
     _row('commands_skills', 'codex', '[[skills.config]] path or name selector with enabled', _CODEX + 'skills'),
     _row('commands_skills', 'codex', 'skill description limit of 1024 characters', _CODEX + 'skills', 'unverified'),
