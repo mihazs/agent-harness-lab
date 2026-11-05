@@ -476,6 +476,13 @@ tasks:
       AHL_TEST_GITHUB_LIVE: '0'
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_github*.py" -v'
+  test:sources:gitea:
+    desc: Verify Gitea issue, PR, comment and review intake with synthetic responses only
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_gitea.py" -v'
   test:sources:controller:
     desc: Run live controller source admission and untrusted receipt controls
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'

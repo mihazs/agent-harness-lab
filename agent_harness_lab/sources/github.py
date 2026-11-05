@@ -9,7 +9,7 @@ from .execution import CoverageManifest, ExecutionMetadata, RecordRef, ScanBound
 from .graph import EvidenceGraph, JoinReceipt
 from .schema import Contract, EvidenceRecord, SourceSpec, digest, timestamp
 from .snapshot import Snapshot
-from .transport import JsonAPI, TransportError, _json_exchange, endpoint
+from .transport import JsonAPI, TransportError, _json_exchange, endpoint, next_link
 
 API_VERSION = '2026-03-10'
 SOURCE_VERSION = API_VERSION+'-v1'
@@ -306,24 +306,17 @@ class GitHubAPI:
         return threads, links
 
     def _next(self, link, suffix, current):
-        if link is None: return None
-        if not isinstance(link, str): raise ValueError('invalid GitHub pagination header')
-        following = None
-        for part in link.split(','):
-            match = re.fullmatch(r'\s*<([^<>]+)>;\s*rel="(next|prev|first|last)"\s*', part)
-            if match is None: raise ValueError('unsupported GitHub pagination')
-            if match[2] != 'next': continue
-            if following is not None: raise ValueError('duplicate GitHub next page')
-            parsed, path = endpoint(match[1])
-            if (parsed.hostname, parsed.port or 443) != self.transport.origin or path.casefold() != (self.transport.path+suffix).casefold():
-                raise ValueError('GitHub pagination escaped its collection')
-            pairs = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
-            values = dict(pairs)
-            if (len(pairs) != 2 or set(values) != {'page', 'per_page'} or values['per_page'] != '100'
-                    or re.fullmatch(r'[1-9][0-9]*', values['page']) is None or int(values['page']) != current+1):
-                raise ValueError('GitHub pagination skipped or repeated a page')
-            following = int(values['page'])
-        return following
+        target = next_link(link)
+        if target is None: return None
+        parsed, path = endpoint(target)
+        if (parsed.hostname, parsed.port or 443) != self.transport.origin or path.casefold() != (self.transport.path+suffix).casefold():
+            raise ValueError('GitHub pagination escaped its collection')
+        pairs = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
+        values = dict(pairs)
+        if (len(pairs) != 2 or set(values) != {'page', 'per_page'} or values['per_page'] != '100'
+                or re.fullmatch(r'[1-9][0-9]*', values['page']) is None or int(values['page']) != current+1):
+            raise ValueError('GitHub pagination skipped or repeated a page')
+        return int(values['page'])
 
     def _list(self, suffix, state, key='id', *, envelope=None):
         page, result, seen, total = 1, [], set(), None
