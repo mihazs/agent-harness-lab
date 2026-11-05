@@ -11,6 +11,7 @@ from .store import SourceStore
 from .git import GitExport
 from .test_results import PROVIDER as TEST_RESULTS, SOURCE_VERSION as TEST_RESULTS_VERSION, TestResultsExport
 from .claude_mem import PROVIDER as CLAUDE_MEM, SOURCE_VERSION as CLAUDE_MEM_VERSION, ClaudeMemExport
+from .mem0 import PROVIDER as MEM0, SOURCE_VERSION as MEM0_VERSION, Mem0Export
 from .execution import capture_snapshot
 from .github_config import GitHubConfigured
 from .gitea import PROVIDER as GITEA, GiteaConfigured
@@ -37,7 +38,8 @@ def main(argv):
         'recheck compares the selected source with its cache. Preview/import/recheck can contact a provider when the manifest selects an API source. '
         'All operations print JSON metadata. Exit 0: completed; 2: invalid/rejected input; 3: unsupported or blocked capability/access. '
         'Local providers include ahl-metadata, ai-memory-okf, git, test-results, claude-jsonl, codex-rollout and '
-        'claude-mem-export (one selected Claude-Mem v15.9.0 JSON export; no worker, database or network). '
+        'claude-mem-export (one selected Claude-Mem v15.9.0 JSON export; no worker, database or network), '
+        'mem0-oss-export (one selected Mem0 OSS v2.2.1 get_all/history JSON export; no server, Platform or network). '
         'API configurations select github, gitea or gitlab (api/gitlab/v4: named issue and merge request IIDs of one '
         'project on an explicit HTTPS instance, GET only, no enumeration). '
         'Example: ahl sources preview --manifest export.json --project-sha256 PROJECT_HASH --scope-sha256 SCOPE_HASH. '
@@ -75,6 +77,8 @@ def main(argv):
                 connector = TestResultsExport(args.manifest)
             elif source.provider == CLAUDE_MEM:
                 connector = ClaudeMemExport(args.manifest)
+            elif source.provider == MEM0:
+                connector = Mem0Export(args.manifest)
             elif source.provider == 'claude-jsonl':
                 connector = ClaudeCapture(args.manifest)
             elif source.provider == 'codex-rollout':
@@ -88,6 +92,7 @@ def main(argv):
             registry.register(Capability('local_git', 'git', 'v2', ('development_artifact',)), connector)
             registry.register(Capability('local_file', TEST_RESULTS, TEST_RESULTS_VERSION, ('development_artifact',)), connector)
             registry.register(Capability('local_file', CLAUDE_MEM, CLAUDE_MEM_VERSION, ('contextual_assertion',)), connector)
+            registry.register(Capability('local_file', MEM0, MEM0_VERSION, ('contextual_assertion',)), connector)
             for version in (CODEX_VERSION, CODEX_ROOT_VERSION):
                 registry.register(Capability('local_file', 'codex-rollout', version, ('behavioral_event',)), connector)
             for version in (CLAUDE_VERSION, CLAUDE_ROOT_VERSION):
@@ -114,6 +119,8 @@ def main(argv):
                     result['test_results_summary'] = connector.summary
                 elif isinstance(connector, ClaudeMemExport):
                     result['claude_mem_summary'] = connector.summary
+                elif isinstance(connector, Mem0Export):
+                    result['mem0_summary'] = connector.summary
                 elif forge is not None:
                     result[forge[1]] = connector.summary
                     result['checkpoint_ready'] = snapshot.checkpoint_ready
