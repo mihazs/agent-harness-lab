@@ -351,9 +351,10 @@ def join_loading(inventory, events=None):
     counts only on the definition the declared precedence selects. Evidence for a path the inventory lacks,
     or for a name with no selected definition, is counted as unattributed and never becomes a node. A pinned
     loading record repeating an earlier (case_id, event_id) is counted once and reported under duplicate_events;
-    when the copies disagree the identity is counted under conflicting_events and nowhere else.
-    loading_evidence is 'observed_pattern' only when some node has an exact attachment, and 'none' otherwise.
-    The caller pairs the capture with this checkout; that pairing, independence and every outcome stay unknown.
+    when the copies disagree beyond capture placement (claude_native.UNORDERED) the identity is counted under
+    conflicting_events and nowhere else. loading_evidence is 'observed_pattern' only when some node has an
+    exact attachment, and 'none' otherwise. The caller pairs the capture with this checkout; that pairing,
+    independence and every outcome stay unknown.
     """
     from agent_harness_lab.telemetry import claude_native, codex_rollout
     from agent_harness_lab.telemetry.schema import event
@@ -362,6 +363,7 @@ def join_loading(inventory, events=None):
         exact_attachments=0, path_only_attachments=0, declared_invocations=0) for node in inventory.nodes]
     unattributed, ignored = dict.fromkeys(('attachment', 'hook_output', 'agent', 'mcp'), 0), 0
     seen, duplicates, contested = {}, 0, set()
+    unplaced = lambda record: {key: value for key, value in record.items() if key not in claude_native.UNORDERED}
     status = (inventory.status if inventory.status != 'declared' else codex_rollout.LOADING_SIGNAL if inventory.runtime == 'codex'
               else 'no_capture' if events is None
               else 'task_cwd_not_checkout_root' if inventory.task_cwd_sha256 != digest('.') else 'joined')
@@ -381,7 +383,7 @@ def join_loading(inventory, events=None):
             identity = (record['case_id'], record['event_id'])
             if identity in seen:  # one capture read twice: count the event once
                 duplicates += 1
-                if seen[identity] != record: contested.add(identity)
+                if unplaced(seen[identity]) != unplaced(record): contested.add(identity)  # placement alone never conflicts
                 continue
             seen[identity] = record
         for identity, record in seen.items():

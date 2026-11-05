@@ -129,6 +129,18 @@ class LoadingJoinTests(unittest.TestCase):
         self.assertEqual((joined['ignored_records'], joined['loading_evidence'], joined['duplicate_events'],
             joined['warnings']), (1, 'observed_pattern', 0, []))
 
+    def test_one_attachment_at_different_lines_of_two_reads_is_one_exact_attachment(self):
+        self.attach('m', 'CLAUDE.md', fixture.FILES['CLAUDE.md'])
+        first = self.read()
+        self.rows.insert(0, self.row('u0', type='user', message=dict(role='user', content='SYNTHETIC_PROMPT')))
+        second = self.read()
+        pick = lambda rows: next(row for row in rows if 'loading_signal' in row)
+        self.assertEqual(sorted(key for key in pick(first) if pick(first)[key] != pick(second).get(key)), ['capture_order'])
+        captured, joined = self.join(events=first + second)
+        self.assertEqual(self.node(captured, joined, 'CLAUDE.md')['exact_attachments'], 1)
+        self.assertEqual((joined['loading_evidence'], joined['conflicting_events'], joined['duplicate_events'],
+            joined['warnings']), ('observed_pattern', 0, 1, ['duplicate_event_identity']))
+
     def test_distinct_events_of_one_file_are_each_counted(self):
         self.attach('m1', 'CLAUDE.md', fixture.FILES['CLAUDE.md'])
         self.attach('m2', 'CLAUDE.md', fixture.FILES['CLAUDE.md'])
