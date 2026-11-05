@@ -35,17 +35,32 @@ def _ordered(mechanisms):
     return ordered, duplicates
 
 
-def run_queue(mechanisms, evaluate, budget):
-    """One evaluated mechanism cannot erase the rest; callback uses development only."""
+def _held(mechanism, target, reviewed_component):
+    """The disposition for a route that may not be evaluated, or None when eligible."""
+    if target == 'no_change':
+        return 'already_covered', 'expected_or_required_behavior'
+    if not mechanism.actionable:
+        return 'deferred', 'missing_reviewed_boundary_evidence_or_falsifier'
+    if target == 'insufficient_evidence':
+        return 'deferred', ('adapter_route_not_authorized'
+            if reviewed_component == 'tool_adapter' else 'route_requires_review')
+    return None
+
+
+def run_queue(mechanisms, evaluate, budget, *, authorized_adapters=False):
+    """One evaluated mechanism cannot erase the rest; callback uses development only.
+
+    A record's component is its reviewed route, checked through ``route`` like
+    ``dispositions``: an adapter route needs explicit ``authorized_adapters``.
+    """
     ordered, _ = _ordered(mechanisms)
     for mechanism in ordered:
         if mechanism.disposition != 'proposed':
             continue
-        if not mechanism.actionable:
-            mechanism.transition('deferred','missing_reviewed_boundary_evidence_or_falsifier'); continue
-        if mechanism.component in ('insufficient_evidence','no_change'):
-            mechanism.transition('deferred' if mechanism.component == 'insufficient_evidence' else 'already_covered',
-                                 'route_requires_review' if mechanism.component == 'insufficient_evidence' else 'expected_or_required_behavior'); continue
+        held = _held(mechanism, route(mechanism, reviewed_component=mechanism.component,
+                                      authorized_adapters=authorized_adapters), mechanism.component)
+        if held:
+            mechanism.transition(*held); continue
         if not budget.consume('mechanism_evaluation',1,mechanism.key):
             mechanism.transition('deferred','parent_budget_or_final_reserve_exhausted'); continue
         mechanism.transition('evaluating','development_evaluation_started')
@@ -87,13 +102,9 @@ def dispositions(mechanisms, budget, *, reviewed=None, expected_negative=(), aut
         target = route(mechanism, reviewed_component=entry['reviewed_component'],
                        expected_negative=mechanism.mechanism_id in expected_negative,
                        authorized_adapters=authorized_adapters)
-        if target == 'no_change':
-            disposition, reason = 'already_covered', 'expected_or_required_behavior'
-        elif not mechanism.actionable:
-            disposition, reason = 'deferred', 'missing_reviewed_boundary_evidence_or_falsifier'
-        elif target == 'insufficient_evidence':
-            disposition, reason = 'deferred', ('adapter_route_not_authorized'
-                if entry['reviewed_component'] == 'tool_adapter' else 'route_requires_review')
+        held = _held(mechanism, target, entry['reviewed_component'])
+        if held:
+            disposition, reason = held
         elif plan.consume('mechanism_evaluation', 1, mechanism.key):
             disposition, reason = 'proposed', 'eligible_for_development_evaluation'
         else:

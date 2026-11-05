@@ -55,6 +55,12 @@ adapter routes defer. Order, deduplication and budget charges match
 profiles rejected by public export. Neither is attached to the `ahl improve`
 receipt yet; that integration remains open in #10.
 
+`run_queue` treats a record's component as its reviewed route and checks it
+through `route()` with the same held dispositions as `dispositions`. A
+`tool_adapter` record is deferred as `adapter_route_not_authorized` without
+invoking the callback or charging the budget unless the caller passes
+`authorized_adapters=True`.
+
 Search persists charges and stages before callbacks. Restart returns recorded
 state without repeating charged work. An interrupted stage requires explicit
 recovery; it does not rerun inference automatically. Certification is a separate
