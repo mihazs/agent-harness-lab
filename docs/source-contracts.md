@@ -2144,8 +2144,9 @@ No real export has been read; the tests use invented fixtures only.
 
 ### Claims
 
-Each row becomes one `MemoryClaim` and one `contextual_assertion` record. The
-claim types stay separate:
+Each session row becomes one `MemoryClaim` and record; each observation, summary or
+prompt row becomes two (its own claim plus a `search_hit` claim), and both count
+toward `max_rows`. The claim types stay separate:
 
 | Export array | Claim type (`record_type`) | Derivation | Record provenance |
 | --- | --- | --- | --- |
