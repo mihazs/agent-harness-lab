@@ -27,8 +27,9 @@ def limits(value, ceilings):
 def screen_json(raw, bounds, name='JSON'):
     """Bound nesting, containers and scalar values before json.loads builds the tree.
 
-    Empty containers amplify about 48x and scalars about 9-11x, so both counts are capped here. Object keys are not
-    counted: the decoder cannot keep a key without reaching its value. Malformed input is left to the decoder, except
+    Empty containers amplify about 48x and scalars up to about 15x, so both counts are capped here. Object keys are not
+    counted, since each key has a counted value; an object of unique keys still reaches about 23x its size, bounded
+    only by the caller's byte ceiling. Malformed input is left to the decoder, except
     an unterminated string, which is refused so that no later quote rescans the rest of the input.
     """
     depth = containers = values = 0

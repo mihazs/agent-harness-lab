@@ -279,11 +279,28 @@ class TestResultSourceTests(unittest.TestCase):
                 hardened.load_json(b'{"tests": ["'+b'\\"'*40000, bounds, 'probe')
             self.assertLess(time.perf_counter()-started, 2)
 
+    def test_long_escaped_string_is_screened_in_constant_memory(self):
+        import tracemalloc
+        bounds = dict(max_json_depth=8, max_json_containers=8, max_json_values=8)
+        # One string is one value, so no count stops it; a greedy loop kept a backtrack frame per escape (about 60x).
+        for escape in (b'\\\\', b'\\"', b'\\n'):
+            for closing in (b'"}', b''):
+                with self.subTest(escape=escape, closing=closing):
+                    raw = b'{"tests": [], "x": "'+escape*1000000+closing
+                    tracemalloc.start()
+                    try:
+                        try: hardened.screen_json(raw, bounds)
+                        except ValueError: self.assertFalse(closing)
+                        else: self.assertTrue(closing)
+                        used = tracemalloc.get_traced_memory()[1]
+                    finally:
+                        tracemalloc.stop()
+                    self.assertLess(used, len(raw)//100)
+
     def test_scalar_heavy_json_peak_stays_a_bounded_multiple_of_input(self):
         import tracemalloc
-        bound = 100000
-        bounds = dict(max_json_depth=8, max_json_containers=8, max_json_values=bound)
-        def peak(raw):
+        bound, containers = 100000, 40000
+        def peak(raw, bounds):
             tracemalloc.start()
             try:
                 try: hardened.load_json(raw, bounds, 'probe')
@@ -292,18 +309,33 @@ class TestResultSourceTests(unittest.TestCase):
                 return refused, tracemalloc.get_traced_memory()[1]
             finally:
                 tracemalloc.stop()
-        for item in (b'"ab"', b'1.5'):
+        scalars = dict(max_json_depth=8, max_json_containers=8, max_json_values=bound)
+        # Measured: "ab" 11.2x, a non-Latin-1 character 15.2x (about 76 B a value, the worst per input byte), an astral
+        # character 12.6x (about 88 B, the worst per value) and 1.5 9.0x. The documented bounds are 16x and 90 B a value.
+        for item in (b'"ab"', '"\u0100"'.encode(), '"\U0001F600"'.encode(), b'1.5'):
             with self.subTest(item=item):
-                # Measured about 11.3x for two-character strings and 9.2x for floats; the stated bound is 12x.
                 raw = b'['+b','.join([item]*bound)+b']'
-                refused, used = peak(raw)
+                refused, used = peak(raw, scalars)
                 self.assertFalse(refused)
-                self.assertLess(used, 12*len(raw))
+                self.assertLess(used, 16*len(raw))
+                self.assertLess(used, 90*bound)
                 # Twice the bound is refused by the screen, which holds one match at a time.
                 raw = b'['+b','.join([item]*2*bound)+b']'
-                refused, used = peak(raw)
+                refused, used = peak(raw, scalars)
                 self.assertTrue(refused)
                 self.assertLess(used, len(raw)//100)
+        # Both budgets fill in one document, so the documented peak is their sum: about 90 B a value, 150 B a container.
+        raw = b'{"tests": ['+b','.join(['"\u0100"'.encode()]*bound+[b'[]']*(containers-2))+b']}'
+        refused, used = peak(raw, dict(max_json_depth=8, max_json_containers=containers, max_json_values=bound))
+        self.assertFalse(refused)
+        self.assertLess(used, 90*bound+150*containers)
+        # Residual: keys are not counted, so an object of unique keys passes the value bound with each key and value
+        # costing well over 90 B; only the byte ceiling bounds it, at about 20 to 24 times the input.
+        raw = b'{"tests": [], "x": {'+b','.join(b'"%x": 0' % i for i in range(bound-1))+b'}}'
+        refused, used = peak(raw, scalars)
+        self.assertFalse(refused)
+        self.assertGreater(used, 150*bound)
+        self.assertLess(used, 25*len(raw))
 
     def test_finished_elements_are_released_while_parsing(self):
         import tracemalloc

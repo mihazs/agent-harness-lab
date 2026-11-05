@@ -2014,14 +2014,21 @@ One streaming pass skips each string whole, so commas, colons and brackets
 inside strings never count. Brackets are counted against `max_json_depth` and
 `max_json_containers`, and scalar values (strings, numbers, `true`, `false` and
 `null`, but not object keys) against `max_json_values`. The decoder builds the
-whole tree first. Empty containers amplify memory roughly 48-fold, and scalars
-amplify it too: measured with `tracemalloc`, an admitted array of two-character
-strings peaks at about 11.3 times its size and an array of `1.5` floats at about
-9.2 times. That is about 135 MiB for a 12.5 MB document at the 2,500,000-value
-ceiling; by the same ratio, an unbounded 16 MiB string array reaches about 181 MiB.
-The screen is a single linear pass with possessive quantifiers; a string that
-never closes is refused there as `HostileReport` instead of being rescanned from
-every later quote. The document is then decoded
+whole tree first. Measured with `tracemalloc`, an empty container costs up to
+about 150 bytes (roughly 48 times its input) and a scalar up to about 90 bytes.
+Per input byte the worst scalar is a one-character string outside Latin-1, such
+as `"Ā"`, at about 15 times its size; two-character ASCII strings reach about
+11 times and `1.5` floats about 9 times. Both budgets can fill in one document,
+so the bound is their sum: about 90 B × `max_json_values` plus 150 B ×
+`max_json_containers`, under about 360 MiB at these ceilings. A 15 MB document
+of `"Ā"` values and empty arrays that fills both budgets peaks at about 295 MiB.
+Residual: object keys are not counted, because each key has a counted value, so
+an object with many unique short keys passes every count. It peaks at about 20
+to 24 times its size, bounded only by `max_report_bytes`: about 350 MiB for a
+16 MiB report. The screen is a single linear pass whose string skip is
+possessive, so it holds one match at a time even for one long string of escapes;
+a string that never closes is refused there as `HostileReport` instead of being
+rescanned from every later quote. The document is then decoded
 strictly as UTF-8 with duplicate-key rejection and no `NaN`/`Infinity`, and the
 `tests` schema is validated before any record is made. Each report's bytes are
 released after parsing; the change check re-reads by streaming hash.
@@ -2207,9 +2214,12 @@ Before the decoder runs, one linear pass counts brackets against
 `max_json_depth` and `max_json_containers`, and scalar values outside strings
 (object keys excluded) against `max_json_values`; an unterminated string is
 refused there. Refusals raise `HostileReport`. The same measured
-peaks apply: about 11.3 times the input for two-character strings and 9.2 times
-for floats. That is about 216 MiB at the 4,000,000-value ceiling; without the
-bound, a 32 MiB string array reaches about 362 MiB by the same ratio. The export's bytes are released
+costs apply: up to about 90 bytes a value and 150 bytes a container, so a
+document that fills both budgets stays under about 490 MiB at these ceilings; a
+23 MB export of `"Ā"` values and empty arrays peaks at about 395 MiB. Object
+keys are not counted, so an export with many unique short keys peaks at about
+20 to 24 times its size, bounded only by `max_export_bytes`: about 700 MiB for
+a 32 MiB export. The export's bytes are released
 before rows are mapped. A refused export imports nothing and leaves the previous
 checkpoint unchanged.
 
