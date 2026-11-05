@@ -14,6 +14,7 @@ import time
 import uuid
 
 from agent_harness_lab import surfaces
+from agent_harness_lab.sources import agents_validation
 from agent_harness_lab.evidence import collect
 from tools.diagnose import report
 from agent_harness_lab.monitoring.state import atomic_json, exit_code
@@ -387,6 +388,9 @@ def adopt(project, baseline, candidate, original, proposed):
     with project_lock(project):
         if candidate_states(candidate, original) != proposed:
             raise ValueError('Evaluated candidate changed before adoption')
+        verdict = agents_validation.review_tree(baseline, candidate, original, proposed).verdict
+        if verdict != 'adoptable':
+            raise ValueError(f'Candidate agent or command definition is {verdict}; nothing was applied')
         names = sorted(original.keys() | proposed.keys())
         before, after = {}, {}
         for name in names:
@@ -648,6 +652,10 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                 result.update(status='blocked', reason='instruction_validation_'+instruction['status'],
                               instruction_reasons=instruction['reasons'])
                 break
+        stopped = agents_validation.review_tree(baseline, candidate, original, proposed).outcome()
+        if stopped is not None:
+            result.update(stopped)
+            break
         paths = [] if controlled else original.keys() | proposed.keys()
         frozen = output / f'candidate-{attempt}'
         if access is None:shutil.copytree(candidate, frozen)

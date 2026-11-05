@@ -1731,6 +1731,9 @@ with a SHA-256 for duplicate detection. Prompts, descriptions and hook
 commands never reach a node. Still open: `[agents.<role>] config_file`
 references in `.codex/config.toml`, emission into the hook inventory once it
 lands (#276) and loading attribution (#282).
+Staged agent and command candidates are validated with these parsers before
+evaluation; see [validating staged agent and command
+definitions](one-call-improvement.md#validating-staged-agent-and-command-definitions).
 
 ### Commands, skill roots and Codex custom prompts
 

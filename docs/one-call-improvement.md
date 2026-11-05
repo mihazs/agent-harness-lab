@@ -283,6 +283,57 @@ again. A changed project instruction file or a modified evaluated candidate
 invalidates the recommendation, and the project is left untouched. The validator
 never reads evaluation manifests, graders or held-out inputs.
 
+## Validating staged agent and command definitions
+
+`sources/agents_validation.py` checks every created, updated or removed Claude
+`.claude/agents/**/*.md`, Codex `.codex/agents/**/*.toml` and Claude
+`.claude/commands/**/*.md` file in a candidate before any evaluation. It parses
+the staged bytes again with the agent and command inventory parsers (see
+[declared custom agent definitions](source-contracts.md#declared-custom-agent-definitions)
+and [commands](source-contracts.md#commands-skill-roots-and-codex-custom-prompts)),
+loads nothing and gives each file one verdict:
+
+- `blocked`: the runtime would skip, reject or ignore part of the file. Claude
+  agents need a leading `---` fence on line 1 (a leading blank line or BOM
+  blocks), a valid `name` and a `description`, valid YAML in the reader's
+  subset, only documented fields and no field gated above the pinned version.
+  Codex roles need `name`, `description` and `developer_instructions`, valid
+  TOML and only fields in the pinned `deny_unknown_fields` set. A role without a
+  `description` is blocked, although Codex can fill it from a lower layer. A
+  command must not use frontmatter the runtime ignores (`name`, `paths`) and its
+  frontmatter must parse. Two staged agents with the same name in one
+  `.claude/agents` or `.codex/agents` tree, or two commands with the same id,
+  are `duplicate_name`. Any `hooks` key in an agent or command
+  (`hooks_need_hook_contract`) is routed to the hook contract.
+- `recommendation_only`: the change adds, removes or alters a permission
+  field, namely Claude `tools`, `disallowedTools`, `permissionMode` or
+  `mcpServers`, command `allowed-tools`, or a Codex `tools`, `permissions`,
+  `default_permissions`, `sandbox_workspace_write`, `shell_environment_policy`,
+  `allow_login_shell`, `approvals_reviewer` or `auto_review` field. A new agent
+  that declares one counts as a change. No plan declaration authorizes such a
+  change yet. A field value the reader reduces, such as a nested `mcpServers`
+  mapping, counts as changed whenever the file bytes differ.
+- `no_effect`: the change cannot alter runtime behaviour, so it is never counted
+  as an improvement. A Codex role that adds or changes `sandbox_mode`,
+  `approval_policy`, `model_provider` or `mcp_servers` gets
+  `no_override_effect`. A command whose id matches a staged
+  `.claude/skills/<dir>/` skill gets `shadowed_by_skill` and the recommendation
+  `migrate_to_skill` (#78). An unchanged no-override field only keeps the
+  `no_override_effect` flag.
+- `adoptable`: none of the above. Removing a definition is always adoptable.
+
+The candidate takes the strictest file verdict. `ahl improve` stops before
+freezing or evaluating a non-adoptable candidate: `blocked` gives status
+`blocked` with reason `definition_validation_failed`, `recommendation_only`
+gives `inconclusive` with `definition_change_recommendation_only`, and
+`no_effect` gives `no_change` with `definition_change_has_no_effect`. The result
+carries a `definition_review` document with fixed labels and paths only, never
+file text, and `adoption_authority: false`. `workflow.adopt` runs the same
+review and refuses anything but `adoptable`. Duplicate and skill-name checks see
+only the staged tree, so a same-name file outside the configured `harness_paths`
+is not checked. Behavioral evaluation is unchanged and does not yet use native
+subagent loading attribution.
+
 ## Independently verified format repair
 
 ```sh
