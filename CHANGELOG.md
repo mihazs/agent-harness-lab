@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.100.0
+
+### Minor Changes
+
+- 77b9abd: Add a read-only `api/gitlab/v4` source for selected issues and merge requests of one explicitly named project on GitLab.com or a self-managed instance. The selection names a canonical HTTPS instance root (sub-paths allowed), a numeric project ID or a literal `group/subgroup/project` path (sent once URL-encoded as the `:id`; `..`, percent-encodings and other escapes are refused), the issue and merge request IIDs and what to capture (`approvals`, `issues`, `merge_requests`, `notes`). Requests are GET only and nothing is enumerated. Records key on the host, the numeric project ID returned by `/projects/:id`, the object kind and the IID, so issue 7 and merge request 7, and the same IID in another project or on another host, stay distinct; the global `id` is kept separately, and a fork's `source_project_id` keeps its own project identity. The server version comes from `/version` or is `unknown`. Issues, merge requests (source and target project and branch, `sha`, `merge_commit_sha`, `squash_commit_sha`, state, `merged_at`, `draft`), user notes, system notes (a separate `gitlab_system_note` record) and approvals are hash-only records, and a merged, closed or approved merge request never becomes a verified task outcome. Note listings use offset `page`/`per_page` with `X-Next-Page`, `X-Total` and `Link`; incomplete pages, 401/403/404/429 and spent budgets block the checkpoint, while a missing approvals endpoint is an `unsupported_endpoint` gap. `ahl sources` accepts the GitLab configuration with `--authorization-env NAME` or `--authorization-file`, prints a `gitlab_summary` on preview and exits 3 when an import is blocked. The Gitea reader now runs on a shared capture ledger and shared transport helpers for budgets, headers and `Link` pagination checks, which the GitHub reader also uses. Threaded discussions, MR commits and changes, linked issues and pipeline evidence remain open.
+
 ## 0.99.0
 
 ### Minor Changes

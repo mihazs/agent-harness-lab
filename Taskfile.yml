@@ -483,6 +483,13 @@ tasks:
       PYTHONPATH: ''
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_gitea.py" -v'
+  test:sources:gitlab:
+    desc: Verify GitLab issue, merge request, note and approval intake with synthetic responses only
+    dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
+    env:
+      PYTHONPATH: ''
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p "test_source_gitlab.py" -v'
   test:sources:controller:
     desc: Run live controller source admission and untrusted receipt controls
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'

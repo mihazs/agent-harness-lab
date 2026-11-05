@@ -1794,6 +1794,140 @@ Still open in #170: inline review comments (`/pulls/N/reviews/ID/comments`),
 PR commits and files, timelines, issue/PR enumeration by state or time window,
 absence tombstones, a relationship graph and native recheck, and CI/job evidence.
 
+## Explicit GitLab REST v4 captures
+
+`sources.gitlab.GitLabAPI` is a standard-library, GET-only reader for selected
+issues and merge requests of one explicitly named project on GitLab.com or a
+self-managed GitLab instance. Construct:
+
+```python
+GitLabSelection(base_url="https://gitlab.example.test",
+    project="synthetic-group/synthetic-subgroup/synthetic-project",
+    capture=("approvals", "issues", "merge_requests", "notes"),
+    issues=(7,), merge_requests=(7,))
+```
+
+`base_url` follows the Gitea rules: a canonical HTTPS instance root, with a
+sub-path such as `https://gitlab.example.test/gitlab` allowed and no `/api/v4`
+suffix. `project` is either a numeric project ID (an integer) or a literal
+`namespace/.../project` path of 2 to 21 segments. Each segment uses letters,
+digits, `_`, `-` and `.`, cannot start with `-` or `.`, cannot end with `.`,
+`.git` or `.atom`, and cannot contain `..`. Percent-encodings, empty or dot
+segments, backslashes and queries are refused, so an encoded slash or a `..`
+cannot leave the selected project. The path is sent once, URL-encoded as the
+`:id` of `/api/v4/projects/:id`; every later request uses the numeric ID that read
+returned. `capture` is an ascending subset of `approvals`, `issues`,
+`merge_requests` and `notes`. `issues` and `merge_requests` must appear exactly
+when IIDs are selected, `approvals` requires merge requests, and a selection
+with no IID at all (for example `capture=("notes",)`) is refused. Issues and merge
+requests have separate IID sequences, so one IID may be selected as both. Nothing
+is listed, searched or enumerated: there is no group, project, issue or merge
+request listing.
+
+Use `SourceSpec(kind="api", provider="gitlab", version="v4", root_sha256=digest(base_url),
+project_sha256=selection.project_sha256, scope_sha256=selection.sha256,
+identity_provenance="source_declared_id", enabled=True)` and register
+`Capability("api", "gitlab", "v4", ("contextual_assertion", "development_artifact"))`.
+
+`selection.project_sha256` is the declared scope: the instance plus the numeric ID
+or case-insensitive path, known before any request. Records key on the instance
+(host, port and root path), the numeric project ID returned by `/projects/:id`,
+the object kind and the IID, or the note ID for notes. Selecting the same project
+by path or by ID therefore yields the same native identities under different
+scopes. The same IID in another project, on another host or under another
+sub-path is a different record, and so are issue 7 and merge request 7 of one
+project. Each issue and merge request keeps its global `id` as a separate
+`id_sha256`; it never replaces the IID identity. A note must name its parent's
+`noteable_type` and global `noteable_id` (and, when sent, its `noteable_iid` and
+`project_id`). A merge request whose `target_project_id` is another project
+fails the capture. Its `source_project_id` keeps its own project identity, and a
+fork source is `source_project_state: "other_project"`. A project path that
+differs from the selection, a project or object that changes between its read
+and its readback, or a non-public project read without authorization fails the
+whole capture.
+
+Requests go to `/api/v4/version`, `/api/v4/projects/:id`,
+`.../issues/IID`, `.../merge_requests/IID`, their `/notes` and
+`.../merge_requests/IID/approvals`. The server version is recorded when
+`/version` reports one. Otherwise it is `server_version: "unknown"` with the
+observed state; GitLab usually answers `unauthorized` without a token. Records
+are `gitlab_instance`, `gitlab_project`, `gitlab_issue`, `gitlab_merge_request`,
+`gitlab_note`, `gitlab_system_note` and `gitlab_approvals`. Titles, descriptions,
+note bodies, labels, branch names, project paths and users are SHA-256
+fingerprints, and IIDs are hashed. Merge requests keep source and target project
+and branch hashes, `sha`, `diff_refs.base_sha`, `merge_commit_sha`,
+`squash_commit_sha`, state (`opened`, `closed`, `locked`, `merged`), `merged_at`
+and `draft` (or `unknown`). These SHAs record what the server reported; they
+create no ancestry (warning `merge_and_squash_shas_not_ancestry`). Issues keep
+state and `confidential`. Notes with `system: true` become `gitlab_system_note`
+records linked by `system_event_on`; user notes are `gitlab_note` linked by
+`conversation_on`, with `internal` (or an older server's `confidential`), `resolvable` and `resolved` flags. The ordinary
+Notes API is not guaranteed to return every system event, so the summary warns
+`system_note_coverage_unverified`. Approvals keep `approved`, the required and
+remaining counts and hashed approvers, plus `approvers_unidentified` for approvers
+without a user ID. Global IDs are hashed with their resource type (issue, merge
+request, milestone), because GitLab numbers each type separately; a boolean is
+never accepted where a native integer is expected. A merged or closed merge request, a
+closed issue, a resolved note or an approval is a native claim only:
+`task_outcomes_verified` is false and records keep causal status and independence
+`unknown`.
+
+Note listings send `page`, `per_page=100`, `order_by=created_at` and `sort=asc`.
+`X-Next-Page` must be empty or exactly the next page, `X-Page` and `X-Per-Page`
+must match the request when sent, and a `Link` `rel="next"` must name the same
+collection, query and next page and agree with `X-Next-Page`. The link may
+repeat the route parameters `id` and `noteable_id`, but only with the selected
+values. `X-Total` must stay constant and match the rows received. An empty
+`X-Next-Page` marks the last page even when GitLab omits `X-Total` for large
+listings. A changed or mismatched total, a full last page with neither a total
+nor an empty `X-Next-Page`, a user-note count that differs from the parent's
+`user_notes_count`, and a budget spent mid-listing each leave
+`pagination_incomplete` coverage with the reason in `basis`. Keyset pagination
+is not used. Response size and default budgets match the Gitea reader: one
+unpaged first page of at most 1,000 rows, and 1,000 requests, 256 MiB and
+900 seconds when unset.
+
+HTTP 401, 403, 404 and 429 become `unauthorized`, `forbidden`, `not_found` and
+`rate_limited` coverage on the resource that returned them, and a 429 stops every
+later request. There is no automatic retry. Any blocked or incomplete coverage
+makes the snapshot `checkpoint_ready: false` and the registry refuses to commit
+it. A 404 from the approvals endpoint of an already read merge request is the one
+exception: it is `unsupported_endpoint` with basis `approvals_not_found`, gap
+`unsupported_version` and warning `approvals_endpoint_unsupported`. Other
+statuses, malformed JSON and non-JSON content fail closed without a snapshot.
+Repeat imports follow the Gitea semantics: an unchanged capture imports nothing,
+and an edited note, moved head or changed approval adds a native revision. The
+reader does not reconcile absences.
+
+The CLI manifest has the Gitea shape with `selection` set to
+`GitLabSelection.to_dict()`. For `auth_mode: "configured"`, pass
+`--authorization-file PRIVATE_FILE` or `--authorization-env NAME` holding the
+complete Authorization header value (for example `Bearer ...`). Only that file
+or variable is read; there is no lookup of GitLab CLI settings, Git credentials,
+netrc files or other variables. Preview prints `gitlab_summary` and
+`checkpoint_ready`. A blocked import prints `status: "blocked"`, commits nothing
+and exits 3.
+
+`task test:sources:gitlab` runs the synthetic controls against a fake HTTPS API
+on `gitlab.example.test`: issues, merge requests, user and system notes,
+approvals and a missing approvals endpoint; offset pagination and each
+incomplete-page case; unsafe or disagreeing pagination headers; IID versus
+global ID; cross-project, cross-host and sub-path IID collisions; fork source
+identity; nested path encoding and `..` or encoded-slash refusal; 401/403/404/429
+coverage; non-HTTPS refusal; GET-only requests; and repeat import and update.
+Live GitLab compatibility, including the exact route parameters GitLab repeats
+in `Link` headers, is not established by these fixtures.
+Still open in #54: threaded discussions and `DiscussionNote` resolution, MR
+commits, changes and versions, state events, linked issues, pipelines, jobs and
+test reports, confidential-visibility checks per note, absence tombstones and a
+relationship graph.
+
+The Gitea and GitLab readers share `sources.forge.CaptureLedger` (records,
+coverage, offset listing, version and snapshot manifest) and the transport
+helpers `guarded_get`, `metered_exchange`, `budget_spent` and `next_page`. The
+GitHub reader uses `metered_exchange`, `budget_spent` and `next_page` for its
+REST requests and pagination checks.
+
 ## Offline CI test result reports
 
 Select `local_file/test-results/v1` in the existing local source declaration, with

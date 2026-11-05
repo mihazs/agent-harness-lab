@@ -1,41 +1,22 @@
 """Explicit read-only Gitea REST captures; closure, merges and approvals are never task grades."""
 from dataclasses import dataclass
-from datetime import datetime, timezone
 import re
-import time
-from urllib.parse import parse_qsl
-from .execution import CoverageManifest, ExecutionMetadata, ScanBound
+from .forge import CaptureLedger
 from .github import commit_hash, integer, moment, text_hash
 from .remote_config import ConfiguredAPI
-from .schema import Contract, EvidenceRecord, SourceSpec, digest
-from .snapshot import Snapshot
-from .transport import BudgetError, HTTPStatusError, JsonAPI, TransportError, _json_exchange, endpoint, next_link
+from .schema import Contract, SourceSpec, digest
+# DEFAULT_LIMITS, MAX_RESPONSE_BYTES and MAX_UNPAGED_ROWS are the shared forge bounds this profile applies.
+from .transport import (DEFAULT_LIMITS, MAX_RESPONSE_BYTES, MAX_UNPAGED_ROWS, TransportError, bounded_api,  # noqa: F401
+    endpoint, instance_root, next_page)
 
 PROVIDER = 'gitea'
 SOURCE_VERSION = 'v1'
 API_PREFIX = '/api/v1'
 PAGE_SIZE = 50
-# A server that ignores page/limit may answer with one longer first page, never an unbounded one.
-MAX_UNPAGED_ROWS = 1000
-# One response is read and parsed whole, so each has its own ceiling below the cumulative byte budget.
-MAX_RESPONSE_BYTES = 8*1024*1024
-# Budgets that apply when the configuration leaves one unset; a configured value always takes precedence.
-DEFAULT_LIMITS = dict(max_pages=1000, max_bytes=256*1024*1024, seconds=900)
 CAPTURE = ('comments', 'issues', 'pulls', 'reviews')
 REVIEW_STATES = ('APPROVED', 'COMMENT', 'PENDING', 'REQUEST_CHANGES', 'REQUEST_REVIEW')
-DENIED = {401: 'unauthorized', 403: 'forbidden', 404: 'not_found', 429: 'rate_limited'}
-# Reviews absent from a server (404 on an already-read PR) are a declared capability gap, not a block.
-CHECKPOINTABLE = ('captured', 'unsupported_endpoint')
 CONTEXTUAL = ('gitea_issue', 'gitea_comment', 'gitea_review')
 NAME = re.compile(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}')
-
-
-class Unavailable(Exception):
-    """A native read that produced an explicit coverage state instead of data."""
-
-    def __init__(self, state):
-        super().__init__(state)
-        self.state = state
 
 
 @dataclass(frozen=True)
@@ -50,12 +31,7 @@ class GiteaSelection(Contract):
 
     def __post_init__(self):
         if type(self.schema_version) is not int or self.schema_version != 1: raise ValueError('unsupported Gitea selection version')
-        parsed, path = endpoint(self.base_url)
-        host = f'[{parsed.hostname}]' if ':' in parsed.hostname else parsed.hostname
-        port = '' if parsed.port in (None, 443) else f':{parsed.port}'
-        if (parsed.query or self.base_url != f'https://{host}{port}{path}' or path.endswith('/')
-                or path.casefold().endswith(API_PREFIX)):
-            raise ValueError('Gitea base URL must be a canonical HTTPS instance root')
+        instance_root(self.base_url, API_PREFIX)
         for name in (self.owner, self.repo):
             if not isinstance(name, str) or NAME.fullmatch(name) is None: raise ValueError('invalid Gitea owner or repository name')
         if (type(self.capture) is not tuple or tuple(sorted(set(self.capture))) != self.capture
@@ -78,9 +54,7 @@ class GiteaSelection(Contract):
         return cls(**{**value, **{k: tuple(value[k]) for k in ('capture', 'issues', 'pulls')}})
 
     @property
-    def instance(self):
-        parsed, path = endpoint(self.base_url)
-        return parsed.hostname, parsed.port or 443, path
+    def instance(self): return instance_root(self.base_url, API_PREFIX)
 
     @property
     def full_name(self): return f'{self.owner}/{self.repo}'
@@ -112,7 +86,7 @@ class GiteaAPI:
         if not isinstance(selection, GiteaSelection): raise TransportError('explicit Gitea selection required')
         self.selection = GiteaSelection.parse(selection.to_dict())
         if base_url != self.selection.base_url: raise TransportError('Gitea endpoint must equal the selected instance root')
-        self.transport = JsonAPI(base_url, **{**DEFAULT_LIMITS, **{k: v for k, v in limits.items() if v is not None}})
+        self.transport = bounded_api(base_url, limits)
         self.authorization = authorization
         self.repo_path = f'{API_PREFIX}/repos/{self.selection.owner}/{self.selection.repo}'
 
@@ -127,97 +101,12 @@ class GiteaAPI:
         except Exception:
             raise TransportError('Gitea capture failed an integrity check; no automatic retry or checkpoint commit') from None
 
-    def _fetch(self, target, state):
-        """One GET; denials, rate limits and spent budgets become coverage states without retries."""
-        api = self.transport
-        if state['halted'] is not None: raise Unavailable(state['halted'])
-        spent = (api.max_pages is not None and state['requests'] >= api.max_pages
-            or api.max_bytes is not None and state['used'] >= api.max_bytes
-            or state['deadline'] is not None and time.monotonic() >= state['deadline'])
-        if spent:
-            state['halted'] = 'budget_exhausted'
-            raise Unavailable('budget_exhausted')
-        headers = {'Accept': 'application/json', 'Accept-Encoding': 'identity', 'User-Agent': 'agent-harness-lab-reader'}
-        if self.authorization is not None: headers['Authorization'] = self.authorization
-        state['requests'] += 1
-        remaining = None if api.max_bytes is None else api.max_bytes-state['used']
-        try:
-            value, metadata, size = _json_exchange(api.origin, api.path+target, headers, timeout=api.timeout,
-                deadline=state['deadline'], max_bytes=MAX_RESPONSE_BYTES if remaining is None else min(MAX_RESPONSE_BYTES, remaining))
-        except HTTPStatusError as error:
-            if error.status not in DENIED: raise
-            if error.status == 429: state['halted'] = 'rate_limited'
-            raise Unavailable(DENIED[error.status]) from None
-        except BudgetError as spent:
-            # A response over the per-response ceiling fails closed; only a spent remaining budget is coverage.
-            if spent.reason == 'bytes' and (remaining is None or remaining > MAX_RESPONSE_BYTES):
-                raise ValueError('Gitea response exceeds the per-response byte limit') from None
-            state['used'] += spent.size if remaining is None else min(spent.size, remaining)
-            state['halted'] = 'budget_exhausted'
-            raise Unavailable('budget_exhausted') from None
-        state['used'] += size
-        metadata = {k.lower(): v for k, v in metadata.items()}
-        if metadata.get('content-type', '').split(';')[0].strip() != 'application/json':
-            raise ValueError('Gitea JSON content capability is unavailable')
-        return value, metadata
-
-    def _following(self, link, collection, page):
-        target = next_link(link)
-        if target is None: return None
-        parsed, path = endpoint(target)
-        pairs = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
-        if ((parsed.hostname, parsed.port or 443) != self.transport.origin
-                or path.casefold() != (self.transport.path+collection).casefold()
-                or len(pairs) != 2 or dict(pairs) != dict(page=str(page+1), limit=str(PAGE_SIZE))):
-            raise ValueError('Gitea pagination escaped its collection or skipped a page')
-        return page+1
-
-    def _list(self, collection, state, project):
-        """Forward page/limit listing; returns (native id, projected node) pairs and an explicit coverage state.
-
-        Each page is projected to its digest node before the next request, so raw rows never accumulate
-        across pages and a malformed row fails the capture on the page that carries it.
-        """
-        rows, seen, total, page = [], set(), None, 1
-        while True:
-            try:
-                value, headers = self._fetch(f'{collection}?page={page}&limit={PAGE_SIZE}', state)
-            except Unavailable as blocked:
-                return rows, (blocked.state, None) if page == 1 else ('pagination_incomplete', blocked.state)
-            if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
-                raise ValueError('malformed Gitea listing')
-            if len(value) > PAGE_SIZE and (page != 1 or len(value) > MAX_UNPAGED_ROWS):
-                raise ValueError('Gitea page exceeds the requested limit')
-            count = headers.get('x-total-count')
-            if count is not None:
-                if not isinstance(count, str) or re.fullmatch(r'0|[1-9][0-9]{0,18}', count) is None:
-                    raise ValueError('invalid Gitea total count')
-                if total is not None and int(count) != total: return rows, ('pagination_incomplete', 'total_count_changed')
-                total = int(count)
-            for item in value:
-                native = integer(item.get('id'), minimum=1)
-                if native in seen: raise ValueError('duplicate Gitea listing identity')
-                seen.add(native)
-            rows.extend((item['id'], project(item)) for item in value)
-            size = len(value); del value
-            following = self._following(headers.get('link'), collection, page)
-            if following is None: break
-            if size != PAGE_SIZE: raise ValueError('Gitea page size changed before the last page')
-            page = following
-        # A full last page needs a total to show nothing follows it.
-        if total is not None and len(rows) != total: return rows, ('pagination_incomplete', 'total_count_mismatch')
-        if total is None and size >= PAGE_SIZE: return rows, ('pagination_incomplete', 'page_size_unverified')
-        return rows, ('captured', None)
-
-    def _version(self, state):
-        try:
-            value, _ = self._fetch(API_PREFIX+'/version', state)
-        except Unavailable as blocked:
-            return None, blocked.state
-        version = value.get('version') if isinstance(value, dict) else None
-        if not isinstance(version, str) or re.fullmatch(r'[0-9A-Za-z][0-9A-Za-z.+_~-]{0,63}', version) is None:
-            return None, 'unrecognized'
-        return version, 'reported'
+    def _list(self, collection, ledger, project):
+        """Forward page/limit listing of projected rows; a full last page needs X-Total-Count to show nothing follows."""
+        def following(headers, page):
+            return next_page(self.transport, headers.get('link'), collection, page, dict(limit=str(PAGE_SIZE))), False
+        return ledger.listing(collection, dict(limit=PAGE_SIZE), PAGE_SIZE, total_header='x-total-count', following=following,
+            project=project)
 
     def _native(self, value):
         return digest((self.selection.instance_sha256, integer(value, minimum=1)))
@@ -307,103 +196,74 @@ class GiteaAPI:
             actor_sha256=self._actor(value.get('user')))
 
     def _capture(self, source):
-        selection, api = self.selection, self.transport
-        state = dict(requests=0, used=0, halted=None,
-            deadline=time.monotonic()+api.seconds if api.seconds is not None else None)
-        records, nodes, relations, coverage = {}, {}, set(), []
-        collected = datetime.now(timezone.utc).isoformat()
+        selection = self.selection
+        ledger = CaptureLedger(source, self.transport, self.authorization, CONTEXTUAL)
+        relations, coverage = ledger.relations, ledger.coverage
 
         def key(kind, native): return digest((kind, selection.project_sha256, native))
 
-        def emit(kind, native, node, original=None):
-            identity = key(kind, native)
-            value = dict(kind=kind, native_id_sha256=identity, **node)
-            revision = digest(value)
-            if identity in records and records[identity].revision_sha256 != revision: raise ValueError('conflicting Gitea native revision')
-            records[identity] = EvidenceRecord(source.source_key, identity, revision, revision,
-                'contextual_assertion' if kind in CONTEXTUAL else 'development_artifact', kind, collected,
-                original_at=original, provenance='native_field', capture_completeness='partial')
-            nodes[identity] = value
-            return identity
+        def emit(kind, native, node, original=None): return ledger.emit(key(kind, native), kind, node, original)
 
-        def note(resource, outcome, parent=None):
-            coverage.append(dict(resource=resource, parent_sha256=parent, state=outcome[0], basis=outcome[1]))
-
-        def read(resource, target, parse, parent=None):
-            try:
-                value = parse(self._fetch(target, state)[0])
-            except Unavailable as blocked:
-                note(resource, (blocked.state, None), parent); return None
-            note(resource, ('captured', None), parent)
-            return value
-
-        version, version_state = self._version(state)
+        version, version_state = ledger.version(API_PREFIX+'/version')
         emit('gitea_instance', 'instance', dict(instance_sha256=selection.instance_sha256,
             server_version=version or 'unknown', server_version_state=version_state))
-        repository = read('repository', self.repo_path, self._repository)
+        repository = ledger.read('repository', self.repo_path, self._repository)
         issues, pulls, unrecognized = {}, {}, False
         if repository is not None:
             emit('gitea_repository', 'repository', repository)
             for number in sorted(selection.issues+selection.pulls):
                 parent = key('gitea_issue', number)
-                node = read('issue', f'{self.repo_path}/issues/{number}', lambda raw, n=number: self._issue(raw, n), parent)
+                node = ledger.read('issue', f'{self.repo_path}/issues/{number}', lambda raw, n=number: self._issue(raw, n), parent)
                 if node is None: continue
                 if number in selection.pulls and not node['is_pull']: raise ValueError('selected Gitea PR is a plain issue')
                 issues[number] = node; emit('gitea_issue', number, node, node['created_at'])
                 if 'comments' not in selection.capture: continue
-                rows, outcome = self._list(f'{self.repo_path}/issues/{number}/comments', state,
+                rows, outcome = self._list(f'{self.repo_path}/issues/{number}/comments', ledger,
                     lambda row, n=number, p=parent: self._comment(row, n, p))
                 if outcome[0] == 'captured' and len(rows) != node['comments']: outcome = ('pagination_incomplete', 'declared_count_mismatch')
-                note('comments', outcome, parent)
+                ledger.note('comments', outcome, parent)
                 for native, comment in rows:
                     child = emit('gitea_comment', native, comment, comment['created_at'])
                     relations.add(('conversation_on', child, parent))
             for number in selection.pulls:
                 if number not in issues: continue
                 parent = key('gitea_pull', number)
-                node = read('pull', f'{self.repo_path}/pulls/{number}', lambda raw, n=number: self._pull(raw, n), parent)
+                node = ledger.read('pull', f'{self.repo_path}/pulls/{number}', lambda raw, n=number: self._pull(raw, n), parent)
                 if node is None: continue
                 pulls[number] = node; emit('gitea_pull', number, node, node['created_at'])
                 relations.add(('pull_issue', parent, key('gitea_issue', number)))
                 if 'reviews' not in selection.capture: continue
-                rows, outcome = self._list(f'{self.repo_path}/pulls/{number}/reviews', state,
+                rows, outcome = self._list(f'{self.repo_path}/pulls/{number}/reviews', ledger,
                     lambda row, n=number, p=parent, head=node['head']['sha256']: self._review(row, n, p, head))
+                # Reviews absent from a server (404 on an already-read PR) are a declared capability gap, not a block.
                 if outcome == ('not_found', None): outcome = ('unsupported_endpoint', 'review_listing_not_found')
-                note('reviews', outcome, parent)
+                ledger.note('reviews', outcome, parent)
                 for native, review in rows:
                     unrecognized |= review['state'] == 'unknown'
                     child = emit('gitea_review', native, review, review['submitted_at'])
                     relations.add(('review_on', child, parent))
             # Readbacks narrow, but cannot remove, the window for a change between non-atomic reads.
             for number, before in issues.items():
-                after = read('readback', f'{self.repo_path}/issues/{number}', lambda raw, n=number: self._issue(raw, n), key('gitea_issue', number))
+                after = ledger.read('readback', f'{self.repo_path}/issues/{number}', lambda raw, n=number: self._issue(raw, n), key('gitea_issue', number))
                 if after not in (None, before): raise ValueError('Gitea issue changed during capture')
             for number, before in pulls.items():
-                after = read('readback', f'{self.repo_path}/pulls/{number}', lambda raw, n=number: self._pull(raw, n), key('gitea_pull', number))
+                after = ledger.read('readback', f'{self.repo_path}/pulls/{number}', lambda raw, n=number: self._pull(raw, n), key('gitea_pull', number))
                 if after not in (None, before): raise ValueError('Gitea PR changed during capture')
-            if read('readback', self.repo_path, self._repository) not in (None, repository): raise ValueError('Gitea repository changed during capture')
-        ready = all(entry['state'] in CHECKPOINTABLE for entry in coverage)
-        unsupported = any(entry['state'] == 'unsupported_endpoint' for entry in coverage)
+            if ledger.read('readback', self.repo_path, self._repository) not in (None, repository): raise ValueError('Gitea repository changed during capture')
+        ready = ledger.ready
         warnings = ['selected_resources_only', 'closure_merge_approval_not_task_outcome', 'readbacks_non_atomic',
             'inline_review_comments_not_captured', 'execution_binding_unknown']
         if version is None: warnings.append('server_version_unknown')
-        if unsupported: warnings.append('review_endpoint_unsupported')
+        if ledger.unsupported: warnings.append('review_endpoint_unsupported')
         if unrecognized: warnings.append('review_state_unrecognized')
         if not ready: warnings.append('capture_blocked_or_incomplete')
         summary = dict(schema_version=1, provider=PROVIDER, source_version=SOURCE_VERSION, api_prefix=API_PREFIX,
             server_version=version or 'unknown', server_version_state=version_state, source_identity='instance_repository_name_checked',
             instance_sha256=selection.instance_sha256, repository_sha256=selection.project_sha256, capture=list(selection.capture),
-            nodes=[nodes[k] for k in sorted(nodes)], relations=sorted(relations), coverage=coverage,
+            nodes=[ledger.nodes[k] for k in sorted(ledger.nodes)], relations=sorted(relations), coverage=coverage,
             capture_completeness='partial', checkpoint_ready=ready, task_outcomes_verified=False, warnings=warnings)
-        gaps = ('not_captured',) + (('unsupported_version',) if unsupported else ()) + (() if ready else ('not_observed',))
-        manifest = CoverageManifest(source.source_key, source.scope_sha256, source.scope_sha256, SOURCE_VERSION, 'gitea-rest-v1',
-            (ScanBound('records', None, len(records)), ScanBound('pages', api.max_pages, state['requests']),
-            ScanBound('bytes', api.max_bytes, state['used'])), gaps=gaps, reported_completeness='partial',
-            limit_reached=state['halted'] == 'budget_exhausted',
-            truncated=any(entry['state'] == 'pagination_incomplete' for entry in coverage))
         self.summary = summary
-        return Snapshot(digest(summary), tuple(records[k] for k in sorted(records)), ExecutionMetadata((), manifest),
-            checkpoint_ready=ready)
+        return ledger.snapshot(summary, SOURCE_VERSION, 'gitea-rest-v1')
 
 
 class GiteaConfigured(ConfiguredAPI):
