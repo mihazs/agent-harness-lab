@@ -59,15 +59,9 @@ tool/input/result/state signatures and then checks call/effect eligibility.
 Unordered cases do not suppress supported cases; per-method excluded coverage is
 reported explicitly. Structured checks require explicit execution status or a
 referenced contract flag. Tied, absent or reversed timestamps cannot establish
-order; a valid capture ordinal does not establish elapsed time or causality.
-
-The pinned Claude profile can emit several normalized facets at one physical
-record ordinal. Its current normalized contract does not retain a separate total
-order for those facets; hashed block identities and parallel content-array
-positions cannot supply execution chronology. Such cases remain explicitly
-excluded from recurrence/stateful matching while the descriptive graph retains
-them. The source-ordering follow-up is tracked in
-[#190](https://github.com/mihazs/agent-harness-lab/issues/190).
+order; a valid capture ordinal does not establish elapsed time or causality. A
+versioned within-line subordinal can break capture-ordinal ties as declared capture
+order; see [declared source order](#declared-source-order).
 
 The all-case descriptive graph remains available when prerequisites fail. The
 receipt records actual method dispatch as `completed` or `not_run` and distinguishes
@@ -103,6 +97,49 @@ using only aggregate counts and elapsed time. Improvement also reports candidate
 preparation and evaluation stages. Progress does not print capture paths, session
 identities or bodies. These artifacts remain private even if they contain only
 metadata; the tool's publication policy still applies.
+
+### Declared source order
+
+The pinned Claude profile can emit several normalized facets at one physical
+record ordinal: content blocks of one line and the response usage/stop facets it
+supports. Profile `claude-native-order-v1` records a separate subordinal for them
+in `source_order_profile`, `source_order_segment` and `source_suborder`:
+
+| Field | What it records | What it does not establish |
+| --- | --- | --- |
+| `capture_order` | Zero-based line position, offset by earlier files in a project-root journal (unchanged) | Execution time, concurrency or causation |
+| `source_suborder` | Content-array position within that line; usage and stop facets follow the line's blocks, in that order | That blocks ran in array order; facet placement is a profile declaration, not an observed write |
+| `source_order_segment` | The physical file within one projection: `0` for a single file, one per file in a project-root journal | Any order between files |
+
+When capture ordinals tie, method selection may treat the strictly increasing
+key `(capture_order, source_suborder)` within one segment and profile as
+*declared capture order*. Cases ordered only this way are reported in
+`method_selection.inputs.source_order` (`declared_order_only_cases`, and per-method
+`declared_capture_order_cases` in the receipt coverage). Remaining limitations stay
+explicit: a tie whose records lack a usable subordinal, a repeated or reversed key,
+and an unrecognized profile leave the case unordered (`unresolved_tied_cases`).
+When one case's records come from different segments, the case is unordered even
+if offset ordinals increase (`cross_segment_cases`); the order of copies or
+archives of one session is not established. Valid strictly increasing timestamps
+remain a separate route. Hashed block identities and response IDs never supply
+order, and no timestamp is synthesized.
+
+The subordinal changes only which cases qualify as ordered inputs. It adds no
+outcome, success/failure or independence label, and recurrence and matching
+outputs keep their descriptive authority. One file holds one writer and therefore
+one reported root, so recurrence over pinned Claude captures still needs three
+roots, for example a normalized file combining exported ledgers of separate
+sessions. Claude records carry no input/result/state signatures, so state-aware
+matching stays unselected for them.
+
+The new fields stay outside event IDs, journal record identities and revisions,
+the collection fingerprint and duplicate-UUID comparison; they derive from
+`capture_order`, the hashed block index and the file being read. Inputs without
+these fields keep their previous receipts byte for byte, and the `source_order`
+summary appears only when a record declares one. Normalized inputs may carry the
+fields as caller declarations, as with `capture_order`; partial declarations and
+unknown profiles are rejected. Broader cross-file ordering remains open in
+[#190](https://github.com/mihazs/agent-harness-lab/issues/190).
 
 ## Optional algorithms and remaining integration
 

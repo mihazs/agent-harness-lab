@@ -91,6 +91,11 @@ Claude never falls back to a home scan when this explicit version is selected.
 
 Replay approved observations in physical file order, including branches, parallel
 tool results and pre-compaction history; do not reconstruct a preferred resume leaf.
+Each event keeps its line's `capture_order` and adds the declared
+`claude-native-order-v1` subordinal: its content-array position, with response
+usage/stop facets after the line's blocks, plus the file segment. This is
+serialization order within one line, not execution order, and it never orders
+files; see [declared source order](analysis.md#declared-source-order).
 Tool-use/result IDs, `is_error`, text/reasoning block kinds, native compaction flags
 and reported response-stop markers map to metadata. Arguments, output, thinking,
 message text, paths and credentials are omitted. Known built-in tool names remain

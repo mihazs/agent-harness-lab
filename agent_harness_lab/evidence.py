@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 
 from tools.diagnose import analyze, normalize
-from agent_harness_lab.telemetry.schema import FIELDS, event as telemetry_event
+from agent_harness_lab.telemetry.schema import FIELDS, SOURCE_ORDER, event as telemetry_event
 
 EVENT_FIELDS = FIELDS
 FAILURES = {'failed', 'execution_error', 'invalid_trace', 'incomplete', 'grader_error', 'budget_exhausted'}
@@ -278,7 +278,9 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                     root = event.get('root_case_id', case)
                     event['root_case_id'] = hashlib.sha256((fmt + ':' + root).encode()).hexdigest()
                 tool_error = event.get('execution_status') == 'error'
-                fingerprint.update(json.dumps(dict(event=event, tool_error=tool_error), sort_keys=True).encode() + b'\n')
+                # Declared source order derives from capture_order and event identity; it stays out of the fingerprint.
+                hashed = {k: v for k, v in event.items() if k not in SOURCE_ORDER} if 'source_order_profile' in event else event
+                fingerprint.update(json.dumps(dict(event=hashed, tool_error=tool_error), sort_keys=True).encode() + b'\n')
                 source['events'] += 1
                 total_events += 1
                 notify('collection', captures=index - 1, events=total_events)

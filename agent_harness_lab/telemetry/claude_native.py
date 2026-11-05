@@ -1,10 +1,13 @@
 """Content-free Claude Code 2.1.316 records; native claims are not execution proofs."""
 from pathlib import Path
 from .native import guarded, jsonl, number, text, timestamp
-from .schema import event
+from .schema import SOURCE_ORDER, event
 from ..sources.schema import digest
 
 VERSION = 'claude-jsonl-2.1.316'
+# Declared subordinal within one native line of one file (segment); never execution or cross-file order.
+ORDER_PROFILE = 'claude-native-order-v1'
+UNORDERED = frozenset(('capture_order', *SOURCE_ORDER))
 UPSTREAM_COMMIT = '2146f9d8985513053e904b13200c8f744b36785a'
 ENTRY_TYPES = ('user', 'assistant', 'system', 'progress', 'attachment')
 KNOWN_TOOLS = ('Bash', 'Read', 'Write', 'Edit', 'MultiEdit', 'Glob', 'Grep', 'Agent', 'Task', 'Skill',
@@ -18,6 +21,7 @@ class Projection:
         self.revisions, self.raw_revisions = revisions, {}
         self.rows, self.seen, self.responses = [], {}, {}
         self.unsupported, self.duplicates, self.unattributed = 0, 0, 0
+        self.segment = 0  # physical file within this projection; segments have no established order
 
     def scoped(self, *values): return digest(('claude-native-id-v1', str(self.project), *values))
 
@@ -47,6 +51,7 @@ class Projection:
         base = dict(case_id=case, root_case_id=case, lineage_verified=False, timestamp=stamp,
             capture_complete=False, source_format='claude', source_version=VERSION,
             runtime_fingerprint=digest(('claude-code', '2.1.316')), capture_order=position,
+            source_order_profile=ORDER_PROFILE, source_order_segment=self.segment,
             native_message_fingerprint=self.scoped(self.session, writer, ident))
         if row.get('parentUuid') is not None:
             base['native_parent_message_fingerprint'] = self.scoped(self.session, writer, text(row['parentUuid']))
@@ -61,7 +66,8 @@ class Projection:
         def emit(activity, index=0, **metadata):
             self.check()
             if quota is not None and len(observations) >= quota: raise ValueError('native Claude normalized event budget exceeded')
-            observations.append(event(dict(base, event_id=self.scoped(self.session, writer, ident, index), activity=activity, **metadata)))
+            observations.append(event(dict(base, event_id=self.scoped(self.session, writer, ident, index), activity=activity,
+                source_suborder=index, **metadata)))
         if row.get('isCompactSummary') or kind == 'system' and row.get('subtype') == 'compact_boundary':
             emit('compaction')
         elif row.get('isMeta'):
@@ -108,7 +114,7 @@ class Projection:
             if not content: emit('capture_coverage', missing_reason='empty_native_message')
         else:
             self.unsupported += 1; emit('capture_coverage', missing_reason='unsupported_native_entry')
-        signature = digest(dict(events=[{k: v for k, v in e.items() if k != 'capture_order'} for e in observations], usage=usage, stop=stop))
+        signature = digest(dict(events=[{k: v for k, v in e.items() if k not in UNORDERED} for e in observations], usage=usage, stop=stop))
         if previous is not None:
             if previous[0] != signature: raise ValueError('conflicting native Claude UUID metadata')
             self.duplicates += 1; return
@@ -118,6 +124,8 @@ class Projection:
             for observation in observations:
                 self.revisions[(observation['case_id'], observation['event_id'])] = raw_revision
         self.rows.extend(observations)
+        # Declared placement: response facets follow the content blocks of the line that supports them.
+        base['source_suborder'] = len(observations)
         if response is not None:
             receipt = self.responses.setdefault(response, dict(base=dict(base), usage={}, stops={}, models=set()))
             if base.get('reported_model_fingerprint') is not None: receipt['models'].add(base['reported_model_fingerprint'])
@@ -151,6 +159,7 @@ class Projection:
                     input_tokens, output_tokens, _ = supporting[0]
                     record.update(activity='response_usage', input_tokens=input_tokens, output_tokens=output_tokens)
                 else: record.update(activity='response_stop', native_stop_reason_fingerprint=supporting[0])
+                if facet == 'stop': record['source_suborder'] += 1
                 self.rows.append(event(record))
         self.rows.sort(key=lambda r: r['capture_order'])  # stable, like sorted(), without a second list
         return tuple(self.rows), conflicts
