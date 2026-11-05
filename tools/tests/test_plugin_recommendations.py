@@ -129,6 +129,41 @@ class PluginRecommendationTests(unittest.TestCase):
         self.assertEqual(self.bundle()['reason'], 'unpinned_checkout')
         self.assertFalse(self.state.exists())
 
+    def plumbing(self, *arguments, data=None):
+        return subprocess.run(['/usr/bin/git', *arguments], cwd=self.plugin, env=ENV, input=data,
+                              capture_output=True, check=True).stdout.strip().decode()
+
+    def recommit(self, tree, message=b'synthetic'):
+        self.plumbing('update-ref', 'refs/heads/main', self.plumbing('commit-tree', tree, data=message))
+
+    def test_a_shared_subtree_dag_is_refused_within_the_tree_entry_bound(self):
+        # Each level names the same empty child twice: 2^16 path visits, no checked-out file, a clean worktree.
+        child = self.plumbing('mktree', data=b'')
+        for _ in range(16): child = self.plumbing('mktree', data=f'040000 tree {child}\ta\n040000 tree {child}\tb\n'.encode())
+        top = self.plumbing('ls-tree', self.plumbing('write-tree')) + f'\n040000 tree {child}\tzz\n'
+        self.recommit(self.plumbing('mktree', data=top.encode()))
+        self.assertEqual(self.plumbing('status', '--porcelain'), '')
+        receipt = self.bundle()
+        self.assertEqual((receipt['status'], receipt['reason']), ('refused', 'checkout_bound_exceeded'))
+        self.assertFalse(self.state.exists())
+
+    def test_oversized_git_metadata_objects_and_stores_are_refused_before_reading(self):
+        config, refs = self.plugin / '.git/config', self.plugin / '.git/packed-refs'
+        original, filler = config.read_bytes(), b'#' + b'x' * (5 * 1024 * 1024) + b'\n'
+        cases = [('config', lambda: config.write_bytes(original + filler)), ('packed-refs', lambda: refs.write_bytes(filler)),
+                 ('commit message', lambda: self.recommit(self.plumbing('write-tree'), b'x' * (5 * 1024 * 1024)))]
+        for name, mutate in cases:
+            with self.subTest(case=name):
+                config.write_bytes(original); refs.unlink(missing_ok=True)
+                mutate()
+                receipt = self.bundle()
+                self.assertEqual((receipt['status'], receipt['reason']), ('refused', 'checkout_bound_exceeded'))
+        config.write_bytes(original); refs.unlink(missing_ok=True)
+        for bound, value in (('MAX_GIT_BYTES', 1024), ('MAX_GIT_ENTRIES', 5)):
+            with self.subTest(bound=bound), patch.object(recommend, bound, value, create=True):
+                self.assertEqual(self.bundle()['reason'], 'checkout_bound_exceeded')
+        self.assertFalse(self.state.exists())
+
     def test_external_paths_never_reach_journal_adopt_or_repair_contracts(self):
         journal = Journal(self.project, self.base / 'journal')
         label = 'plugin:deploy:synthetic-market'
@@ -155,7 +190,8 @@ class PluginRecommendationTests(unittest.TestCase):
         for bad in ({'.git/config': 'x'}, {'/abs.md': 'x'}, {'../escape.md': 'x'}, {'a b.md': 'x'}, {'missing.md': None},
                     {'scripts/run.sh/x': 'x'}, {'commands/status.md': PLUGIN['commands/status.md']}, {}, {'bin.md': 'a\0b'}):
             with self.subTest(changes=bad), self.assertRaises(ValueError): self.bundle(bad)
-        for overlap in (self.project / 'state', self.plugin / 'state', self.base):
+        detour = self.base / 'elsewhere' / '..'
+        for overlap in (self.project / 'state', self.plugin / 'state', self.base, detour / 'project/state', detour / 'deploy/state'):
             with self.subTest(state=overlap), self.assertRaises(ValueError):
                 recommend.bundle(self.project, CLAUDE, self.selection, PLUGIN_ID, CHANGES, state=overlap)
         with self.assertRaises(ValueError):

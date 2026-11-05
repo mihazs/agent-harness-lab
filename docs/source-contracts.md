@@ -1893,7 +1893,17 @@ Git configuration is data, and only allowlisted read-only commands run. A
 checkout that fails a condition gets a `refused` receipt with reason
 `unpinned_checkout`, `dirty_checkout`, `stale_inventory`,
 `unsupported_checkout` (symlinks, submodules, alternates) or
-`checkout_bound_exceeded` (5000 files, 64 MiB). Nothing is written then.
+`checkout_bound_exceeded`. Nothing is written then.
+
+The bounds are checked before the input is read. The worktree holds at most
+5000 files and 64 MiB. The committed tree is at most 64 levels deep and 10000
+entries, counted per path, so a subtree named many times counts each time. In
+the Git directory, each configuration, `HEAD` and reference file is at most
+4 MiB, the copied object store is at most 256 MiB, and its listing is at most
+20000 entries. Each Git command's output is at most 4 MiB, 64 MiB in total,
+under a 1 GiB address-space limit. The tree walk checks the capture deadline.
+The `state` folder is refused when it contains `..`, crosses a symlink, or
+overlaps the project or a selected checkout, before or after resolution.
 
 A bundle is a new `0o700` folder holding `patch.diff` and `manifest.json`, both
 `0o600`. `patch.diff` is a git-format unified diff computed against the

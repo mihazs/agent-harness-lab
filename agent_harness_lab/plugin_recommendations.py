@@ -22,7 +22,7 @@ from agent_harness_lab.evaluation.integrity import contained, read_regular, rela
 from agent_harness_lab.monitoring.state import atomic_json
 from agent_harness_lab.sources import harness_inventory, plugins_inventory
 from agent_harness_lab.sources.git import OID, GitExport
-from agent_harness_lab.sources.git_view import Folder, GitView
+from agent_harness_lab.sources.git_view import MAX_OUTPUT, Folder, GitView
 from agent_harness_lab.sources.hardened import load_json
 from agent_harness_lab.sources.schema import digest
 
@@ -32,6 +32,13 @@ MAX_FILE_BYTES = 1024 * 1024
 MAX_TREE_FILES = 5000
 MAX_TREE_BYTES = 64 * 1024 * 1024
 MAX_TREE_DEPTH = 64
+# Committed tree entries visited per path, directories included, so a subtree named twice counts twice.
+MAX_TREE_ENTRIES = 10000
+# The Git directory: each metadata file, the whole copied object store, its listing, and all Git command output.
+MAX_GIT_FILE_BYTES = MAX_OUTPUT
+MAX_GIT_BYTES = 256 * 1024 * 1024
+MAX_GIT_ENTRIES = 20000
+MAX_GIT_OUTPUT = 64 * 1024 * 1024
 MAX_NOTES, MAX_NOTE_CHARS = 32, 2000
 MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 # Plain checkout-relative paths only, so the diff never needs Git path quoting.
@@ -49,6 +56,45 @@ class _Refused(Exception):
     """A checkout state that yields a refusal receipt instead of a bundle."""
 
 
+class _GitFolder(Folder):
+    """The checkout's Git directory with its own bounds; an input over a bound is a refusal, checked before reading."""
+
+    def bound(self, name, size):
+        info = self.inspect(name)
+        if info is not None and info.st_size > size: raise _Refused('checkout_bound_exceeded')
+
+    def read(self, name, maximum=65536, *, prefix=False):
+        self.bound(name, MAX_GIT_FILE_BYTES)
+        return super().read(name, MAX_GIT_FILE_BYTES if maximum is None else min(maximum, MAX_GIT_FILE_BYTES), prefix=prefix)
+
+    def copy(self, name, destination, maximum=None):
+        self.bound(name, MAX_GIT_BYTES - self.bytes)
+        return super().copy(name, destination, maximum)
+
+    def walk(self, name, depth=0, **options):
+        """Folder.walk recurses through this override, so the depth and entry bounds hold at every directory."""
+        self.within(depth)
+        for path in super().walk(name, depth, **options):
+            self.within(depth)
+            yield path
+
+    def within(self, depth):
+        if depth > MAX_TREE_DEPTH or self.entries > MAX_GIT_ENTRIES: raise _Refused('checkout_bound_exceeded')
+
+
+class _GitView(GitView):
+    """GitView under its output and address-space limits; output over a bound is a refusal."""
+
+    def stream(self, arguments, data, sink):
+        received = 0
+        def bounded(chunk):
+            nonlocal received
+            received += len(chunk)
+            if received > MAX_OUTPUT or self.output_bytes + len(chunk) > MAX_GIT_OUTPUT: raise _Refused('checkout_bound_exceeded')
+            sink(chunk)
+        super().stream(arguments, data, bounded)
+
+
 class _Checkout(GitExport):
     """GitExport's checked layout, reference and object reads over one checkout; it never issues capture handles."""
 
@@ -61,18 +107,28 @@ def _blob(raw, algorithm):
     return hashlib.new(algorithm, b'blob %d\0' % len(raw) + raw).hexdigest()
 
 
-def _tree(reader, tree, prefix='', depth=0, result=None):
-    """Every file of a committed tree as {path: (mode, oid)}; links, submodules and odd modes are unsupported."""
-    result = {} if result is None else result
-    if depth > MAX_TREE_DEPTH: raise _Refused('checkout_bound_exceeded')
-    for raw, (mode, oid) in sorted(reader.entries(tree).items()):
-        try: name = prefix + raw.decode()
-        except UnicodeDecodeError: raise _Refused('unsupported_checkout') from None
-        if raw == b'.git': raise _Refused('unsupported_checkout')
-        if mode == 0o40000: _tree(reader, oid, name + '/', depth + 1, result)
-        elif mode in FILE_MODES: result[name] = (mode, oid.decode())
-        else: raise _Refused('unsupported_checkout')
-        if len(result) > MAX_TREE_FILES: raise _Refused('checkout_bound_exceeded')
+def _tree(reader, root):
+    """Every file of a committed tree as {path: (mode, oid)}; links, submodules and odd modes are unsupported.
+
+    Tree objects are parsed once, but every path is visited, so the entry bound also stops a tree DAG that names
+    one subtree many times. The capture deadline is checked at every tree.
+    """
+    result, visited = {}, 0
+    def walk(tree, prefix, depth):
+        nonlocal visited
+        reader.folder.check()
+        if depth > MAX_TREE_DEPTH: raise _Refused('checkout_bound_exceeded')
+        for raw, (mode, oid) in sorted(reader.entries(tree).items()):
+            visited += 1
+            if visited > MAX_TREE_ENTRIES: raise _Refused('checkout_bound_exceeded')
+            try: name = prefix + raw.decode()
+            except UnicodeDecodeError: raise _Refused('unsupported_checkout') from None
+            if raw == b'.git': raise _Refused('unsupported_checkout')
+            if mode == 0o40000: walk(oid, name + '/', depth + 1)
+            elif mode in FILE_MODES: result[name] = (mode, oid.decode())
+            else: raise _Refused('unsupported_checkout')
+            if len(result) > MAX_TREE_FILES: raise _Refused('checkout_bound_exceeded')
+    walk(root, '', 0)
     return result
 
 
@@ -80,7 +136,8 @@ def _clean(path, deadline):
     """(HEAD, object format, {path: (mode, bytes)}) of a checkout whose worktree equals its HEAD tree exactly."""
     parent, name = os.path.split(path)
     git = name + '/.git'
-    with (Folder(parent, deadline, limit_total_bytes=False, limit_tree=False) as folder, GitView(deadline, limit_output=False) as view,
+    # _GitFolder applies this module's Git directory bounds in place of Folder's generic ones.
+    with (_GitFolder(parent, deadline, limit_total_bytes=False, limit_tree=False) as folder, _GitView(deadline) as view,
           Folder(parent, deadline) as tree):
         reader = _Checkout(path, folder, view)
         try:
@@ -141,12 +198,16 @@ def _enablement(enablement, runtime):
 
 
 def _private(state, roots):
-    """The private bundle parent, refused when it overlaps the project or a checkout or crosses a symlink."""
+    """The private bundle parent, refused when it overlaps the project or a checkout, crosses a symlink or names '..'.
+
+    '..' is refused rather than collapsed: after a symlinked component the kernel and a lexical normalization disagree.
+    """
+    if '..' in Path(state).parts: raise ValueError("plugin bundle state must not contain '..'")
     state = Path(state).absolute()
     if any(p.is_symlink() for p in (state, *state.parents)): raise ValueError('plugin bundle state crosses a symlink')
     for root in roots:
         root = Path(root).resolve()
-        if state.is_relative_to(root) or root.is_relative_to(state):
+        if any(path.is_relative_to(root) or root.is_relative_to(path) for path in (state, state.resolve())):
             raise ValueError('plugin bundle state must not overlap the project or a plugin checkout')
     return state
 
