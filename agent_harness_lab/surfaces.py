@@ -80,6 +80,12 @@ RULES = (
     Rule('skill-segment', 'skill', 21, 'unsupported', lambda path, parts, context: '/skills/' in '/' + path),
     Rule('hook-segment', 'hook', 30, 'contract_required',
          lambda path, parts, context: 'hook' in parts or 'hooks' in parts),
+    # Claude path-scoped rules: Markdown below any .claude/rules; not writable until the adoption increment.
+    Rule('claude-path-rule', 'path_rule', 25, 'unsupported', lambda path, parts, context: path.endswith('.md') and any(
+         parts[i:i + 2] == ('.claude', 'rules') for i in range(len(parts) - 2)), runtimes=frozenset({'claude-code'})),
+    # Codex exec policy: <layer>/rules/*.rules (.codex or a declared $CODEX_HOME root); permission policy, never run.
+    Rule('codex-exec-policy', 'exec_policy', 25, 'recommendation_only', lambda path, parts, context: path.endswith(
+         '.rules') and parts[-2:-1] == ('rules',) and parts[:-2] in ((), ('.codex',)), runtimes=frozenset({'codex'})),
     Rule('vcs-and-cache', None, 0, 'private_excluded',
          lambda path, parts, context: any(part in ('.git', '__pycache__') for part in parts)),
 )
@@ -163,6 +169,11 @@ CAPABILITIES = (
     _row('path_rules', 'claude-code', '.claude/rules/**/*.md with optional paths globs', _CLAUDE + 'memory'),
     _row('path_rules', 'claude-code', 'project rules skipped without the project setting source', _CLAUDE + 'memory', gate='>=2.1.211'),
     _row('path_rules', 'codex', 'no path-scoped instruction rules; .rules files are exec policy', _CODEX + 'rules'),
+    _row('path_rules', 'claude-code', 'paths globs relative to the directory containing .claude, brace budget of 1000 patterns', _CLAUDE + 'memory'),
+    _row('path_rules', 'claude-code', 'nested .claude/rules directories load on demand', _CLAUDE + 'memory'),
+    _row('path_rules', 'claude-code', 'rules without paths in .claude/rules between the root and the cwd load at launch', _CLAUDE + 'memory', 'unverified'),
+    _row('path_rules', 'claude-code', 'paths glob dotfile, case-sensitivity, bracket and negation semantics', _CLAUDE + 'memory', 'unverified'),
+    _row('path_rules', 'codex', '<layer>/rules/*.rules Starlark prefix_rule policy, project layer only when trusted; codex execpolicy check is the native validator', _CODEX + 'rules'),
     _row('hooks', 'claude-code', 'hooks key in settings layers, plugin hooks/hooks.json, skill and agent frontmatter', _CLAUDE + 'hooks'),
     _row('hooks', 'claude-code', 'hook handler onFailure field', _CLAUDE + 'hooks', gate='>=2.1.295'),
     _row('hooks', 'codex', 'hooks.json or [hooks] per config layer with per-hash trust', _CODEX + 'hooks'),

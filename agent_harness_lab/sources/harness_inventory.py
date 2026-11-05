@@ -38,6 +38,7 @@ _FILE = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 PARSERS = (
     ('hook', 'hooks', STUB),
     ('instruction', 'instructions', 'agent_harness_lab.sources.instructions:parse_surface'),
+    ('path_rule', 'path_rules', 'agent_harness_lab.sources.claude_rules:parse'),
     ('skill', 'commands_skills', STUB),
 )
 

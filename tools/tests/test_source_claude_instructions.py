@@ -140,7 +140,7 @@ class ClaudeInstructionInventoryTests(unittest.TestCase):
         self.write('other/CLAUDE.md', 'SYNTHETIC_OTHER_SCOPE')
         receipt = self.read(['AGENTS.override.md', '.claude/rules/testing.md', 'src/task/deep/CLAUDE.md', 'other/CLAUDE.md'])
         self.assertEqual(self.state(receipt, 'AGENTS.override.md'), ('unsupported', 'unrecognized_filename'))
-        self.assertEqual(self.state(receipt, '.claude/rules/testing.md'), ('unknown', 'rules_not_modeled'))
+        self.assertEqual(self.state(receipt, '.claude/rules/testing.md'), ('unknown', 'rule_conditional_paths'))
         self.assertEqual(self.state(receipt, 'src/task/deep/CLAUDE.md'), ('unknown', 'on_demand_subdirectory'))
         self.assertEqual(self.state(receipt, 'other/CLAUDE.md'), ('out_of_scope', 'outside_task_scope'))
 

@@ -11,6 +11,7 @@ import re
 import stat
 from pathlib import Path, PurePosixPath
 from agent_harness_lab.evaluation.integrity import relative
+from .claude_rules import base_dir, instruction_reason
 from .instructions import InstructionEdge, InstructionNode
 from .schema import digest
 
@@ -375,8 +376,12 @@ def capture(profile, scopes, selected, folder, checkout):
             nodes[key] = replace(nodes[key], applicability='shadowed', reason=agents_mode)
             edges.append(InstructionEdge('shadows', claude_files[0], key))
     for path in sorted(set(selected)-set(path_of.values())):
-        scope, parts = scope_of(path), Path(path).parts
-        if any(parts[i:i+2] == ('.claude', 'rules') for i in range(len(parts)-1)): read(path, 'unknown', 'rules_not_modeled')
+        scope = scope_of(path)
+        if base_dir(path) is not None:  # rules are classified by claude_rules.capture; here they stay unknown
+            value, info = read(path, 'unknown', 'missing')
+            if info is not None:  # the streamed scan already knows UTF-8 validity; only valid text is re-read
+                text = load(value.path_sha256) if info[1] else None
+                nodes[value.path_sha256] = replace(value, reason=instruction_reason(path, text))
         elif scope is not None and scope not in scopes and (cwd == '.' or scope.startswith(cwd+'/')):
             read(path, 'unknown', ON_DEMAND)
         elif str(Path(path).parent) in scopes: read(path, 'unsupported', 'unrecognized_filename')
