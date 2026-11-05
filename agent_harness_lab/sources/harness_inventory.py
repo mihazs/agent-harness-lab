@@ -41,6 +41,7 @@ PARSERS = (
     ('instruction', 'instructions', 'agent_harness_lab.sources.instructions:parse_surface'),
     ('path_rule', 'path_rules', 'agent_harness_lab.sources.claude_rules:parse'),
     ('skill', 'commands_skills', STUB),
+    ('workflow', 'workflows', 'agent_harness_lab.sources.workflows_inventory:parse'),
 )
 
 
