@@ -15,7 +15,7 @@ import shlex
 import tomllib
 from agent_harness_lab.evaluation.integrity import relative
 from . import harness_inventory
-from .hardened import load_json
+from .hardened import bounded_depth, load_json
 from .schema import digest
 
 MAX_CONFIG_BYTES = 1024 * 1024
@@ -81,6 +81,7 @@ def parse(path, raw, profile):
     if form == 'codex_config_toml':
         try: document = tomllib.loads(raw.decode('utf-8'))
         except (tomllib.TOMLDecodeError, UnicodeDecodeError, RecursionError): raise ValueError('invalid TOML') from None
+        bounded_depth(document, BOUNDS['max_json_depth'], 'hook configuration')  # the JSON depth bound applies to TOML too
         events = document.get('hooks', {})
         if not isinstance(events, dict): raise ValueError('[hooks] must be a table')
         state = events.get('state', {})

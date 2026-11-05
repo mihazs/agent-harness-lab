@@ -1354,8 +1354,9 @@ the Claude settings file and the two Codex files are `hook` surfaces with
 `recommendation_only`. Only the `hooks` key is
 projected. All other settings keys, such as permissions, env and MCP servers,
 appear only as a count and a digest of their key names. JSON is decoded with
-`hardened.load_json`. A file over 1 MiB or with more than 512 handlers, a
-malformed file or invalid TOML is `parse_failed`, never truncated. Each handler
+`hardened.load_json`, and decoded TOML passes through the same depth bound. A
+file over 1 MiB or with more than 512 handlers, a malformed file, invalid TOML
+or a file nested past the depth bound is `parse_failed`, never truncated. Each handler
 adds 15 facts to the harness inventory, so the inventory-wide 50000-fact bound
 also limits the handlers summed across files. Many small plugin `hooks/hooks.json`
 files that exceed it make the whole inventory `blocked` with `fact_bound_exceeded`.
@@ -1832,10 +1833,12 @@ because Codex loads project config only for trusted projects.
 one digest function, so telemetry tool names can be compared with inventory
 servers. Plugin and ambiguous names give `null`, and no match means `unknown`,
 not absence. AHL's own derivation snapshot, `derivations/<id>/settings.json`,
-classifies as `private_excluded`. A declared `settings.json` with that profile
-yields no row, so it is never taken for runtime settings. In the surface walk,
-these files are `config` nodes whose parser reports path-free row counts.
-Undecodable files become a `parse_failed` presence row. A CLI, the surface
+classifies as `private_excluded` by its path. Content never hides a file at a
+runtime settings path: a `settings.json` there is inventoried whatever keys it
+holds. In the surface walk, these files are `config` nodes whose parser reports
+path-free row counts. Undecodable files become a `parse_failed` presence row.
+JSON and TOML share one nesting bound of 64, so a deeply nested
+`.codex/config.toml` is also `parse_failed`, never a crash. A CLI, the surface
 walk's pruning of memory directories under declared roots, and profile-scoped
 Codex keys remain open in #281.
 

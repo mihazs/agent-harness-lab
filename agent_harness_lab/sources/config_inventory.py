@@ -16,12 +16,10 @@ import tomllib
 from agent_harness_lab import surfaces
 from agent_harness_lab.evaluation.integrity import open_directory_nofollow
 from . import harness_inventory as inventory
-from .hardened import load_json
+from .hardened import HostileReport, bounded_depth, load_json
 from .schema import digest, label
 
 PROFILE = 'ahl-config-inventory-v1'
-# AHL's own derivation snapshot (evaluation/derivations.py writes derivations/<id>/settings.json); never runtime config.
-AHL_SETTINGS_PROFILE = 'controlled-development-derivation-v1'
 JSON_BOUNDS = dict(max_json_depth=64, max_json_containers=100000, max_json_values=1000000)
 CLAUDE_MCP_FIELDS = ('alwaysLoad', 'args', 'command', 'env', 'headers', 'headersHelper', 'oauth', 'timeout', 'type', 'url')
 CODEX_MCP_FIELDS = ('args', 'auth', 'bearer_token_env_var', 'command', 'cwd', 'default_tools_approval_mode', 'disabled_tools',
@@ -151,7 +149,6 @@ def _claude_user_servers(data, layer):
 
 def _claude_settings(data, layer):
     if not isinstance(data, dict): raise ValueError('settings must be an object')
-    if data.get('profile') == AHL_SETTINGS_PROFILE: return  # AHL's own derivation artifact, not runtime config
     facts = {'has_' + key: True for key in CLAUDE_SETTINGS if key in data}
     facts['other_keys'] = sum(key not in CLAUDE_SETTINGS for key in data)
     if isinstance(data.get('outputStyle'), str): facts['output_style_sha256'] = style_sha256(data['outputStyle'])
@@ -207,8 +204,11 @@ READERS = {'claude_mcp': _claude_servers, 'claude_user_servers': _claude_user_se
 
 
 def _decode(reader, raw):
-    if reader == 'codex_config': return tomllib.loads(raw.decode('utf-8'))
-    return load_json(raw, JSON_BOUNDS, 'runtime configuration')
+    """JSON or TOML under one depth bound; deep nesting is a ValueError (parse_failed), never a RecursionError."""
+    if reader != 'codex_config': return load_json(raw, JSON_BOUNDS, 'runtime configuration')
+    try: value = tomllib.loads(raw.decode('utf-8'))
+    except RecursionError: raise HostileReport('runtime configuration depth bound exceeded') from None
+    return bounded_depth(value, JSON_BOUNDS['max_json_depth'], 'runtime configuration')
 
 
 class _Capture:

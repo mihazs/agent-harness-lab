@@ -54,8 +54,10 @@ AUDIT = []
 
 
 def _audit(event, args):
-    if AUDIT and event in ('open', 'os.scandir', 'os.listdir') and isinstance(args[0], int):
-        AUDIT[-1].append(_identity(os.fstat(args[0])))
+    """Record what an open or listing reached, by descriptor or by path string (builtin open, listdir, scandir, walk)."""
+    if not AUDIT or event not in ('open', 'os.scandir', 'os.listdir'): return
+    try: AUDIT[-1].append(_identity(os.fstat(args[0]) if isinstance(args[0], int) else os.stat(args[0])))
+    except (OSError, TypeError, ValueError): pass  # a relative dir_fd name: the patched os.open records it
 
 
 sys.addaudithook(_audit)
@@ -132,12 +134,14 @@ class ConfigInventoryTests(unittest.TestCase):
         settings = dict(self.rows(self.capture(CODEX), surface='settings')[0]['facts'])
         self.assertEqual(settings['memories_feature'], 'default_off')
 
-    def test_memory_directories_are_reported_present_but_never_opened_even_when_declared(self):
+    def memory(self):
+        return [self.checkout / '.claude/agent-memory', self.checkout / '.claude/agent-memory/reviewer',
+                self.checkout / '.claude/agent-memory/reviewer/MEMORY.md', self.state / 'memory',
+                self.state / 'memory/MEMORY.md', self.codex_home / 'memories', self.codex_home / 'memories/note.md']
+
+    def touched(self):
+        """Both captures under the open audit; returns (documents, identities opened via os.open, identities audited)."""
         self.capture(CLAUDE)  # warm imports so the audit records only this capture
-        memory = [self.checkout / '.claude/agent-memory', self.checkout / '.claude/agent-memory/reviewer',
-                  self.checkout / '.claude/agent-memory/reviewer/MEMORY.md', self.state / 'memory',
-                  self.state / 'memory/MEMORY.md', self.codex_home / 'memories', self.codex_home / 'memories/note.md']
-        forbidden = {_identity(path.lstat()) for path in memory}
         real, opened = os.open, []
 
         def recording(path, flags, mode=0o777, *, dir_fd=None):
@@ -149,8 +153,28 @@ class ConfigInventoryTests(unittest.TestCase):
             try: documents = (self.capture(claude_project_state=self.state), self.capture(CODEX, codex_home=self.codex_home))
             finally: listed = AUDIT.pop()
         self.assertTrue(opened and listed)
-        self.assertFalse(forbidden & set(opened), 'a memory location was opened')
-        self.assertFalse(forbidden & set(listed), 'a memory location was listed')
+        return documents, set(opened), set(listed)
+
+    def test_memory_audit_detects_reads_by_path_string(self):
+        forbidden = {_identity(path.lstat()) for path in self.memory()}
+        real = config._Capture.root
+        reads = {'open': lambda p: [open(f, 'rb').close() for f in p.rglob('*') if f.is_file()],
+                 'listdir': lambda p: os.listdir(str(p)), 'scandir': lambda p: list(os.scandir(str(p))),
+                 'walk': lambda p: list(os.walk(str(p)))}
+        for kind, read in reads.items():
+            def regressed(walk, path, *args, **kwargs):
+                for location in (self.checkout / '.claude/agent-memory', self.state / 'memory', self.codex_home / 'memories'):
+                    read(location)
+                return real(walk, path, *args, **kwargs)
+            with self.subTest(read=kind), patch.object(config._Capture, 'root', regressed):
+                _, opened, listed = self.touched()
+                self.assertTrue(forbidden & (opened | listed), 'a path-string memory read went undetected')
+
+    def test_memory_directories_are_reported_present_but_never_opened_even_when_declared(self):
+        forbidden = {_identity(path.lstat()) for path in self.memory()}
+        documents, opened, listed = self.touched()
+        self.assertFalse(forbidden & opened, 'a memory location was opened')
+        self.assertFalse(forbidden & listed, 'a memory location was opened or listed')
         rows = [r for d in documents for r in self.rows(d, surface='memory')]
         self.assertEqual({(r['root'], r['layer']) for r in rows},
                          {('checkout', 'project'), ('claude_project_state', 'user'), ('codex_home', 'user')})
@@ -204,14 +228,32 @@ class ConfigInventoryTests(unittest.TestCase):
         self.assertEqual(len(added), 6)
         self.assertTrue({r.writability for r in added} <= {'recommendation_only', 'private_excluded'})
 
-    def test_ahl_derivation_settings_is_not_runtime_config(self):
+    def test_ahl_derivation_settings_is_excluded_by_path_and_runtime_paths_are_never_hidden_by_content(self):
         from agent_harness_lab.evaluation import derivations
-        self.assertEqual(config.AHL_SETTINGS_PROFILE, derivations.PROFILE)
         verdict = surfaces.classify(f'derivations/{"b" * 64}/settings.json')
         self.assertEqual((verdict.kind, verdict.writability), ('unsupported', 'private_excluded'))
+        disguised = json.dumps(dict(profile=derivations.PROFILE, hooks={'PreToolUse': []}, permissions={'allow': ['Bash']}))
         claude_home = self.base / 'claude'; claude_home.mkdir()
-        (claude_home / 'settings.json').write_text(json.dumps(dict(profile=derivations.PROFILE, settings={'model': 'x'})))
-        self.assertEqual(self.rows(self.capture(claude_home=claude_home), root='claude_home'), [])
+        (claude_home / 'settings.json').write_text(disguised)
+        (self.checkout / '.claude/settings.json').write_text(disguised)
+        document = self.capture(claude_home=claude_home)
+        for root in ('checkout', 'claude_home'):
+            facts = [dict(r['facts']) for r in self.rows(document, surface='settings', root=root)]
+            with self.subTest(root=root):
+                self.assertEqual([(f['has_hooks'], f['has_permissions'], f['other_keys']) for f in facts], [(True, True, 1)])
+        self.assertEqual(config.parse('.claude/settings.json', disguised.encode(), CLAUDE), ('parsed', {'settings_file': 1}))
+
+    def test_deeply_nested_toml_is_parse_failed_never_a_recursion_error(self):
+        for name, text in (('array', 'a = ' + '[' * 5000 + ']' * 5000), ('inline', 'a = ' + '{b = ' * 3000 + '1' + '}' * 3000),
+                           ('shallow', 'a = ' + '[' * 70 + ']' * 70), ('dotted', '[' + '.'.join(['t'] * 2000) + ']\nk = 1')):
+            (self.checkout / '.codex/config.toml').write_text(text + '\n')
+            (self.codex_home / 'config.toml').write_text(text + '\n')
+            with self.subTest(nesting=name):
+                document = self.capture(CODEX, codex_home=self.codex_home)
+                self.assertEqual({r['root']: r['facts'] for r in self.rows(document, surface='settings')},
+                                 {'checkout': (('parse_failed', True),), 'codex_home': (('parse_failed', True),)})
+                nodes = {n.path: n for n in inventory.capture(self.checkout, dict(CODEX, task_cwd='.')).nodes}
+                self.assertEqual(nodes['.codex/config.toml'].parse_status, 'parse_failed')
 
     def test_undecodable_files_are_presence_only_and_bounds_block(self):
         (self.checkout / '.mcp.json').write_text('{"mcpServers": {"canary-server-id": ')
