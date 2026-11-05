@@ -1841,7 +1841,11 @@ project. Each issue and merge request keeps its global `id` as a separate
 `noteable_type` and global `noteable_id` (and, when sent, its `noteable_iid` and
 `project_id`). A merge request whose `target_project_id` is another project
 fails the capture. Its `source_project_id` keeps its own project identity, and a
-fork source is `source_project_state: "other_project"`. A project path that
+fork source is `source_project_state: "other_project"`. GitLab sets
+`source_project_id` to null when the source fork is deleted; that merge request
+is still recorded with `source_project_state: "unknown"` and no source project
+hash, and the capture continues. A response that omits `source_project_id`
+entirely is malformed and fails the capture. A project path that
 differs from the selection, a project or object that changes between its read
 and its readback, or a non-public project read without authorization fails the
 whole capture.
@@ -1865,7 +1869,8 @@ records linked by `system_event_on`; user notes are `gitlab_note` linked by
 Notes API is not guaranteed to return every system event, so the summary warns
 `system_note_coverage_unverified`. Approvals keep `approved`, the required and
 remaining counts and hashed approvers, plus `approvers_unidentified` for approvers
-without a user ID. Global IDs are hashed with their resource type (issue, merge
+whose `user` is missing or has no `id`; such an approver is counted, not fatal,
+while a `user` that is not an object still fails the capture. Global IDs are hashed with their resource type (issue, merge
 request, milestone), because GitLab numbers each type separately; a boolean is
 never accepted where a native integer is expected. A merged or closed merge request, a
 closed issue, a resolved note or an approval is a native claim only:
