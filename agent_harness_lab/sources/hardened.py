@@ -25,7 +25,7 @@ def limits(value, ceilings):
 
 
 def screen_json(raw, bounds, name='JSON'):
-    """Bound nesting, containers and scalar values before json.loads builds the tree.
+    """Bound nesting, containers and scalar values before json.loads builds the tree; returns (containers, values).
 
     Empty containers amplify about 48x and scalars up to about 15x, so both counts are capped here. Object keys are not
     counted, since each key has a counted value; an object of unique keys still reaches about 23x its size, bounded
@@ -44,18 +44,21 @@ def screen_json(raw, bounds, name='JSON'):
         elif mark != 0x22 or token[1] is None:
             values += 1
             if values > bounds['max_json_values']: raise HostileReport(name+' value bound exceeded')
+    return containers, values
 
 
 def _constant(value):
     raise ValueError('non-finite JSON numbers are unsupported')
 
 
-def load_json(raw, bounds, name, pairs=None):
+def load_json(raw, bounds, name, pairs=None, spent=None):
     """Screen, then strictly decode one bounded UTF-8 JSON document: no duplicate keys, NaN or deep nesting.
 
     pairs replaces the duplicate-key hook; a caller passes its own name for it so its module stays the decoding seam.
+    spent, a list, receives the screened (containers, values), so a multi-file caller can bound its whole input.
     """
-    screen_json(raw, bounds, name)
+    counts = screen_json(raw, bounds, name)
+    if spent is not None: spent.append(counts)
     try:
         value = json.loads(raw.decode('utf-8'), object_pairs_hook=pairs or unique_object, parse_constant=_constant)
     except RecursionError:

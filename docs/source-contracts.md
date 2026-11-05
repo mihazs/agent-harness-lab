@@ -2395,3 +2395,153 @@ fields, and verifying the envelope against a real OSS capture.
 No source is enabled by installation. Tests use synthetic metadata; they establish
 contract validation, checkpoint behavior and a side-effect-free registry, not
 real-source compatibility, containment, diagnostic usefulness or certification.
+## Offline Hindsight bank archives
+
+Select `local_file/hindsight-bank-archive/v1` in the existing local source
+declaration, with `data` naming a selection descriptor next to the manifest:
+
+```json
+{"schema_version": 1, "hindsight_version": "1.1.0", "instance": "laptop-a",
+ "bank_id": "team-notes", "archive": "exports/team-notes", "limits": {"max_rows": 5000}}
+```
+
+`archive` is a folder holding one transfer archive, already extracted from its ZIP.
+The scope fingerprint is `digest(selection)`, so the declared release, instance,
+bank and limits are all part of the scope. `HindsightArchive` reads
+`manifest.json` first. If the manifest's `source_bank_id` differs from the
+selected `bank_id`, the read stops with `PermissionError` before any document is
+opened, and `ahl sources` exits 3 (blocked). A curation-archive row whose
+`bank_id` names another bank also blocks the whole capture. No other bank is
+discovered or read. The adapter then reads only the files the manifest names:
+`documents/000000.json` through `document_count - 1`, `observations.json` when
+`observation_count` is positive, and `data/invalidated_memory_units.json` when
+`invalidated_memory_count` is positive. It never lists the folder. A named file
+that is missing rejects the capture. Each file must be a contained, single-link
+regular file. Every hash is rechecked after parsing, so a change during capture
+rejects the capture.
+
+The adapter never starts or contacts a Hindsight server, SDK, MCP tool or
+database. It never calls `retain` (a write), `recall` (it can use inference),
+`reflect` (a generated answer) or the asynchronous `transfer/export` operation.
+The summary's `operations` field records these refusals.
+
+### Pinned upstream shape
+
+The adapter models one release:
+[vectorize-io/hindsight `v1.1.0`](https://github.com/vectorize-io/hindsight/tree/v1.1.0),
+commit `a5a619b5ca59c5c39e0f96be6f7a31fabd136bd5`, HTTP API version `1.1.0`. Any
+other `hindsight_version`, and any archive `schema_version` other than 1, is
+refused.
+
+| Shape | Upstream file at the pin |
+| --- | --- |
+| `TransferManifest`, `TransferDocument`, `TransferFact`, `TransferChunk`, `TransferCausalRelation`, `TransferObservation` | [`hindsight-api-slim/hindsight_api/engine/transfer/schema.py`](https://github.com/vectorize-io/hindsight/blob/a5a619b5ca59c5c39e0f96be6f7a31fabd136bd5/hindsight-api-slim/hindsight_api/engine/transfer/schema.py) |
+| Archive entries (`manifest.json`, `documents/NNNNNN.json`, `observations.json`, `data/invalidated_memory_units.json`) | [`hindsight-api-slim/hindsight_api/engine/transfer/export.py`](https://github.com/vectorize-io/hindsight/blob/a5a619b5ca59c5c39e0f96be6f7a31fabd136bd5/hindsight-api-slim/hindsight_api/engine/transfer/export.py) |
+| Curation archive columns (`invalidated_at`, `invalidation_reason`, `entity_ids`, `edited_at`) | [`alembic/versions/c9a1b2d3e4f5_add_invalidated_memory_units.py`](https://github.com/vectorize-io/hindsight/blob/a5a619b5ca59c5c39e0f96be6f7a31fabd136bd5/hindsight-api-slim/hindsight_api/alembic/versions/c9a1b2d3e4f5_add_invalidated_memory_units.py) |
+| `transfer/export`, `memories/list`, `recall` and `reflect` endpoints | [`hindsight-docs/static/openapi.json`](https://github.com/vectorize-io/hindsight/blob/a5a619b5ca59c5c39e0f96be6f7a31fabd136bd5/hindsight-docs/static/openapi.json) |
+
+The profile says the shape is pinned only partly: `upstream_shape:
+source_inferred`, `compatibility: unverified`, `version_attestation:
+caller_declared`, and the warning `archive_version_unstated`. An archive carries
+its layout `schema_version` but not the Hindsight release that wrote it. The
+curation-archive rows mirror the `memory_units` table column for column, and only
+the columns listed above, plus `id`, `bank_id`, `document_id`, `text`,
+`fact_type`, `context`, the four date columns and `created_at`/`updated_at`, are
+modelled. Any other column counts in `rows_with_unknown_fields`. No real archive
+has been read; the tests use invented fixtures only.
+
+### Claims and temporal status
+
+| Archive part | Claim type (`record_type`) | Derivation | Record provenance |
+| --- | --- | --- | --- |
+| document | `retained_document` (`hindsight_retained_document`) | `retained_input` | `native_field` |
+| document `facts[]` | `extracted_fact` (`hindsight_extracted_fact`) | `retain_extraction` | `model_hypothesis` |
+| fact `causal_relations[]` | `fact_relation` (`hindsight_fact_relation`), naming its target fact | `retain_extraction` | `model_hypothesis` |
+| `observations.json` | `consolidated_observation` (`hindsight_consolidated_observation`) | `consolidation_synthesis` | `model_hypothesis` |
+| `data/invalidated_memory_units.json` | `invalidated_fact` (`hindsight_invalidated_fact`) | `curation_archive` | `model_hypothesis` |
+
+One further `hindsight_archive` record carries the digest of every file's SHA-256
+as its revision. A consolidated observation has `synthesizes_multiple_origins:
+true` and a `source_count` of the facts it resolves to within the archive; it is
+never a further independent case. Retrieved hits and reflections are not in an
+archive and are not produced, so no recall or relevance score exists to map onto
+a grader result, skill activation or session completion
+(`retrieval_scores_used: false`). Every claim carries `independent_case`,
+`evidence_of_use`, `task_outcome_verified`, `agent_defect_verified` and
+`native_session_verified` set to `false`, and `BankClaim` refuses any other value.
+
+Times stay in separate fields: `recorded_at` (the row's `created_at`, when the
+memory was recorded), `mentioned_at`, `valid_from`/`valid_until` (the fact's
+`occurred_start`/`occurred_end`) and, for curated facts, `invalidated_at`. A
+naive or unparseable time is `invalid`. Upstream stores an open bound as year 1
+or 9999, so those dates are `placeholder`, not instants. The `assertion_status`
+of a fact or observation is judged at the manifest's `exported_at`:
+
+| Condition | `assertion_status` |
+| --- | --- |
+| Row in the curation archive (a user invalidated it) | `invalidated` |
+| `valid_until` at or before `exported_at` | `historical` |
+| `valid_from` after `exported_at` | `not_yet_valid` |
+| Live row with no ended or future window | `current` |
+| `exported_at` missing or naive, an invalid validity time, or `valid_until` before `valid_from` | `undetermined` (`export_time_unverified`, `invalid_timestamp` or `inverted_validity`) |
+| Document or relation | `not_applicable` |
+
+A correction is therefore a separate claim: the retired fact becomes an
+`invalidated_fact` with its own native ID, and any replacement fact is a new
+`extracted_fact`. Historical and invalidated assertions have `review_candidate:
+true`. That marks them for review. It is not evidence that an agent did anything
+wrong.
+
+Identity is hash-only and namespaced by `instance` and `bank_id`. A fact uses its
+`source_id`, or its document and position when the ID is absent
+(`fact_without_source_id`); an observation without one uses its archive position
+(`observation_without_source_id`). Bodies, chunks, `retain_params`, tags, metadata,
+entity names and invalidation reasons are fingerprinted as `body_sha256` and
+never stored or printed. Bank names, tags and metadata are never matched against
+Claude Code or Codex sessions (`native_session_correlation: not_attempted`).
+
+### Coverage, bounds and warnings
+
+The `hindsight_summary` printed by `ahl sources preview` reports claim and
+assertion counts, rejected rows, rows with unknown fields, per-time status counts
+and warnings. `facts_are_model_extractions`, `observations_not_independent`,
+`invalidations_are_review_candidates` and `archive_version_unstated` are always
+present. Other warnings: `duplicate_native_id` (kept as a further occurrence),
+`row_without_native_identity`, `relation_target_unresolved` (the target index is
+not an earlier fact in the same document), `unrecognized_relation_type`,
+`unrecognized_fact_type`, `observation_source_unresolved` (a source naming no
+captured fact; a repeated source is not unresolved),
+`invalidated_fact_still_live`, `declared_total_mismatch`,
+`unknown_manifest_fields`, `unknown_row_fields`, and `history_not_read` or
+`<part>_not_read` when the manifest counts mental models, knowledge pages,
+directives, webhooks, attachments or operations, none of which this slice reads.
+Capture stays `partial`. The profile `hindsight-bank-archive-v1` is rejected by
+`public_export_allowed`.
+
+Decoding reuses the hardened `load_json` from `sources/hardened.py`, one file at a
+time. Malformed JSON, duplicate keys, a non-object document or row, or a
+non-list row file rejects the whole capture and leaves the previous checkpoint
+unchanged. Every decoded file is held until mapping, so the JSON container and
+value caps are one budget for the whole archive, and records are counted as each
+file is decoded: a capture stops at the file that crosses a bound, before any
+later file is decoded.
+
+| Limit | Ceiling |
+| --- | --- |
+| `max_file_bytes` | 16 MiB |
+| `max_archive_bytes` (all files) | 32 MiB |
+| `max_documents` | 10,000 |
+| `max_rows` (records admitted, counted per decoded file) | 100,000 |
+| `max_fields` (per row) | 64 |
+| `max_json_depth` (per file) | 16 |
+| `max_json_containers`, `max_json_values` (all files) | 1,000,000, 4,000,000 |
+
+`limits` may only lower these ceilings. `task test:sources:hindsight` runs the
+synthetic controls. Still open in #51: reading the ZIP archive directly, an
+optional bank-specific read mode over a verified read-only API with an explicit
+URL and least-privilege token, mental models and knowledge pages as synthesized
+claims, verifying the shape against a real archive, and further releases.
+
+No source is enabled by installation. Tests use synthetic metadata; they establish
+contract validation, checkpoint behavior and a side-effect-free registry, not
+real-source compatibility, containment, diagnostic usefulness or certification.
