@@ -12,14 +12,48 @@ def unique_object(pairs):
     return value
 
 
+# Evaluated once: platform support is fixed, and callers may wrap os.open afterwards.
+_DIR_FD_OPEN = os.open in os.supports_dir_fd
+
+
+def _beneath_api():
+    names = ('O_DIRECTORY', 'O_NOFOLLOW', 'O_NONBLOCK', 'O_CLOEXEC')
+    if not _DIR_FD_OPEN or not all(hasattr(os, name) for name in names):
+        raise NotImplementedError('safe file reads require POSIX filesystem APIs')
+    # O_PATH (Linux) needs only search permission, as ordinary path resolution does.
+    return (getattr(os, 'O_PATH', os.O_RDONLY) | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
+            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+
+
+def _open_step(name, flags, parent):
+    try: return os.open(name, flags, dir_fd=parent)
+    except OSError as error:
+        try: link = stat.S_ISLNK(os.stat(name, dir_fd=parent, follow_symlinks=False).st_mode)
+        except (OSError, NotImplementedError): link = False
+        if link: raise ValueError('input crosses a symlink') from error
+        raise
+
+
+def open_nofollow(path):
+    """Open an existing file from / one component at a time, following no symlink anywhere.
+
+    Each directory is opened by name relative to its already opened parent, so a parent
+    swapped for a symlink after any earlier check is refused rather than followed."""
+    directory_flags, leaf_flags = _beneath_api()
+    parts = Path(path).absolute().parts
+    current = os.open(parts[0], directory_flags)
+    try:
+        for name in parts[1:-1]:
+            previous, current = current, _open_step(name, directory_flags, current)
+            os.close(previous)
+        return _open_step(parts[-1], leaf_flags, current)
+    finally:
+        os.close(current)
+
+
 def _regular_chunks(path, max_bytes):
     """Stream one safely opened file, retaining optional byte admission checks."""
-    path = Path(path)
-    if not all(hasattr(os, name) for name in ('O_NOFOLLOW', 'O_NONBLOCK')):
-        raise NotImplementedError('safe file reads require POSIX filesystem APIs')
-    if any(p.is_symlink() for p in (path, *path.absolute().parents)):
-        raise ValueError('input crosses a symlink')
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    descriptor = open_nofollow(path)
     try:
         info = os.fstat(descriptor)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or max_bytes is not None and info.st_size > max_bytes:
@@ -72,6 +106,7 @@ def relative(value):
 
 
 def contained(root, value):
+    """Lexically contained, link-free path; read it only through open_nofollow, which re-refuses links."""
     root = Path(root).absolute()
     path = root / relative(value)
     if any(p.is_symlink() for p in (path, *path.parents)):
@@ -146,22 +181,21 @@ def artifacts(root, allowlist, max_bytes=1024 * 1024):
         raise ValueError('invalid artifact allowlist')
     result, total = {}, 0
     for name in allowlist:
-        path = contained(root, name)
-        info = path.lstat()
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-            raise ValueError('artifact must be a regular single-link file')
-        total += info.st_size
-        if total > max_bytes:
-            raise ValueError('artifact byte bound exceeded')
-        # No following links at the final open; isolated worker has already stopped.
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-        with os.fdopen(fd, 'rb') as stream:
-            if os.fstat(stream.fileno()).st_ino != info.st_ino:
-                raise ValueError('artifact changed during extraction')
-            data = stream.read(max_bytes + 1)
+        descriptor = open_nofollow(contained(root, name))
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise ValueError('artifact must be a regular single-link file')
+            total += info.st_size
+            if total > max_bytes:
+                raise ValueError('artifact byte bound exceeded')
+            with os.fdopen(descriptor, 'rb', closefd=False) as stream:
+                data = stream.read(max_bytes + 1)
             if len(data) != info.st_size:
                 raise ValueError('artifact changed during extraction')
             result[name] = data
+        finally:
+            os.close(descriptor)
     return result
 
 
