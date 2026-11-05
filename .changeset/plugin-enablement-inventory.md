@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Add `agent_harness_lab/sources/plugins_inventory.py`, a read-only inventory of plugin and marketplace enablement. It reads Claude Code `enabledPlugins` and `extraKnownMarketplaces` from `.claude/settings.json`, and reads `.claude/settings.local.json` only on opt-in. For Codex it reads `[plugins."name@marketplace"]` and `[marketplaces.<name>]` from `.codex/config.toml`. An enabled plugin stays `content_not_selected` unless the caller selects a separate Git checkout for it through `plugin_checkouts`. That mapping is also an optional `ahl.json` key, capped at 32 absolute paths. A selected checkout gets the harness inventory walk with the plugin-root layout and its own `HarnessSnapshot` at the recorded HEAD. It is marked `external_repository` and `recommendation_only`. Its components use the registered parsers; this release adds the `plugin` manifest parser. A plugin-root `CLAUDE.md` is marked `not_loaded_by_runtime`, a hooks file missing its `hooks` wrapper is flagged, and the manifest follows each runtime's pinned search order. No plugin cache, plugin or git command, or network is used.
