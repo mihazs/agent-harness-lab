@@ -307,6 +307,55 @@ class BeneathTests(unittest.TestCase):
         self.assert_create_refused((private_journal, 'encoded'), self.root/'deep', append)
         self.assertEqual(list((store/'case'/'events').iterdir()), [])
 
+    def replaced(self, store):
+        """Rename an ancestor aside (no link anywhere) and build an empty owner-only replacement store."""
+        moved = self.root/'deep.orig'
+        def replace():
+            (self.root/'deep').rename(moved); store.mkdir(mode=0o700, parents=True)
+        return moved/store.relative_to(self.root/'deep'), replace
+
+    def test_journal_marker_refuses_ancestor_replaced_by_a_directory_after_the_lock(self):
+        store = self.root/'deep'/'sub'/'store'
+        journal = private_journal.PrivateJournal(store, 'synthetic-v1', lambda *args: None)
+        locked, replace = self.replaced(store)
+        real = private_journal.fcntl.flock
+        def flock(*args):
+            real(*args); replace()
+        with self.unleaked(), patch.object(private_journal.fcntl, 'flock', flock):
+            with self.assertRaises(ValueError) as caught:
+                with journal.locked(create=True): pass
+        self.assertEqual(str(caught.exception), 'case store changed while locked')
+        self.assertEqual(sorted(os.listdir(store)), [])
+        self.assertFalse((locked/'.store.json').exists())
+
+    def test_journal_event_refuses_ancestor_replaced_by_a_directory_after_the_lock(self):
+        store = self.root/'deep'/'sub'/'store'
+        journal = private_journal.PrivateJournal(store, 'synthetic-v1', lambda *args: True)
+        with journal.locked(create=True): pass
+        locked, replace = self.replaced(store)
+        real = private_journal.encoded
+        def encoded(value):
+            raw = real(value); replace(); return raw
+        with self.unleaked(), patch.object(private_journal, 'encoded', encoded):
+            with self.assertRaises(ValueError) as caught:
+                with journal.locked(): journal.append(store/'case', [], 'opened', 'open', {})
+        self.assertEqual(str(caught.exception), 'case store changed while locked')
+        self.assertEqual(sorted(os.listdir(store)), [])
+        self.assertFalse((locked/'case').exists())
+
+    def test_journal_event_lands_in_the_locked_store_when_replaced_during_publication(self):
+        # The swap runs after the store check, so only the held descriptor keeps the event in the locked store.
+        store, events = self.root/'deep'/'sub'/'store', []
+        journal = private_journal.PrivateJournal(store, 'synthetic-v1', lambda *args: True)
+        with journal.locked(create=True): pass
+        locked, replace = self.replaced(store)
+        with self.unleaked():
+            with journal.locked(): journal.append(store/'case', events, 'opened', 'open', {}, before_publish=replace)
+        self.assertEqual(sorted(os.listdir(store)), [])
+        raw = (locked/'case'/'events'/'0000.json').read_bytes()
+        self.assertEqual(events[0][1], private_journal.hashlib.sha256(raw).hexdigest())
+        self.assertEqual(private_journal.record_bytes(raw)[0], events[0][0])
+
     def test_journal_publication_keeps_atomic_json_bytes(self):
         store, events = self.root/'deep'/'sub'/'store', []
         journal = private_journal.PrivateJournal(store, 'synthetic-v1', lambda *args: True)

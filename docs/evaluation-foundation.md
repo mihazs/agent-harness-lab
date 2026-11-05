@@ -70,6 +70,13 @@ oracle correction/invalidation and protected certification remain separate work.
   lineage snapshot fsyncs, and private journal directory fsyncs, open their
   targets through the same walk. Platforms whose `os.open` lacks `dir_fd`
   support refuse these reads and fsyncs.
+- A private journal opens its store once through that walk, creates its lock
+  in the open store and publishes the store marker and events from that
+  descriptor. Before each publication it walks the store path again and
+  refuses unless the path still names the locked directory: a link raises
+  `input crosses a symlink`, and a replaced directory raises `case store
+  changed while locked`. A swap after that check cannot move the file out of
+  the locked store.
 
 ## Offline sandbox and threat model
 

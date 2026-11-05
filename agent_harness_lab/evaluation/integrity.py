@@ -78,21 +78,36 @@ def create_directory_nofollow(path, mode=0o700):
     directory_flags, leaf_flags = _beneath_api()
     parts = Path(path).absolute().parts
     if len(parts) == 1: return os.open(parts[0], leaf_flags['directory'])
-    current = os.open(parts[0], directory_flags)
+    start = os.open(parts[0], directory_flags)
+    try: return create_directory_at(start, parts[1:], mode)
+    finally: os.close(start)
+
+
+def create_directory_at(directory, names, mode=0o700):
+    """create_directory_nofollow's steps from the caller's open directory, which stays open.
+
+    Each name is opened (or made, then opened) relative to the one before it, following no link,
+    so the result stays inside directory whatever happens to the path that once named it.
+    No names opens directory itself readable."""
+    directory_flags, leaf_flags = _beneath_api()
+    names = tuple(names)
+    if any(name in ('', '.', '..') or '/' in name for name in names): raise ValueError('unsafe relative path')
+    if not names: return os.open('.', leaf_flags['directory'], dir_fd=directory)
+    current = directory
     try:
-        for index, name in enumerate(parts[1:], 1):
-            flags = leaf_flags['directory'] if index == len(parts) - 1 else directory_flags
+        for index, name in enumerate(names, 1):
+            flags = leaf_flags['directory'] if index == len(names) else directory_flags
             try: step = _open_step(name, flags, current)
             except FileNotFoundError:
-                try: os.mkdir(name, mode if index == len(parts) - 1 else 0o777, dir_fd=current)
+                try: os.mkdir(name, mode if index == len(names) else 0o777, dir_fd=current)
                 except FileExistsError: pass
                 step = _open_step(name, flags, current)
-            previous, current = current, step
-            os.close(previous)
-        result, current = current, None
+            if current != directory: os.close(current)
+            current = step
+        result, current = current, directory
         return result
     finally:
-        if current is not None: os.close(current)
+        if current != directory: os.close(current)
 
 
 def open_beneath(path, flags, mode=0o600):
