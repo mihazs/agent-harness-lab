@@ -77,6 +77,27 @@ class InstructionInventoryTests(unittest.TestCase):
                 self.assertFalse(any(e.kind == 'parent' for e in receipt.edges))
                 self.assertEqual(self.nodes(receipt)[digest('AGENTS.override.md')].presence, 'present')
 
+    def test_information_separator_only_selection_is_loaded_content_not_empty(self):
+        # Rust str::trim (Unicode White_Space) keeps U+001C..U+001F, which Python's str.strip() removes, so
+        # read_agents_md loads such a file and charges its bytes against project_doc_max_bytes.
+        for separator in ('\x1c', '\x1d', '\x1e', '\x1f'):
+            with self.subTest(separator=hex(ord(separator))):
+                self.write('AGENTS.override.md', separator)
+                self.write('AGENTS.md', 'X'); self.write('src/task/AGENTS.md', 'LEAF')
+                self.profile['project_doc_max_bytes'] = len('LEAF')
+                receipt = self.read()
+                self.assertEqual(self.state(receipt, 'AGENTS.override.md'), ('declared_applicable', 'directory_precedence'))
+                self.assertEqual(self.state(receipt, 'src/task/AGENTS.md'), ('unknown', 'byte_limit_requires_native_resolution'))
+                self.assertEqual(receipt.resolution_status, 'blocked')
+        self.write('AGENTS.override.md', '　 \x85\xa0 \t')  # Rust White_Space only: still empty
+        self.assertEqual(self.state(self.read(), 'AGENTS.override.md'), ('unknown', 'selected_empty'))
+
+    def test_codex_home_treats_an_information_separator_as_content(self):
+        self.home('AGENTS.override.md', '\x1f'); self.home('AGENTS.md', 'SYNTHETIC_GLOBAL')
+        nodes = self.nodes(self.read(codex_home='home'))
+        self.assertEqual(nodes[digest(['codex_home', 'AGENTS.override.md'])].reason, 'codex_home_first_non_empty')
+        self.assertEqual(nodes[digest(['codex_home', 'AGENTS.md'])].reason, 'codex_home_precedence')
+
     def test_empty_agents_md_shadows_a_present_fallback(self):
         self.write('src/AGENTS.md', '\n'); self.write('src/TEAM.md', 'SYNTHETIC_FALLBACK')
         receipt = self.read()
