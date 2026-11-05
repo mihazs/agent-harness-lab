@@ -336,12 +336,25 @@ def classify(relative_path, runtime=None, mode=None, *, root_skills=False, exter
 # Claude frontmatter keys that register hooks, grant tools or permissions, or start MCP server processes.
 CLAUDE_GRANT_KEYS = ('hooks', 'permissionMode', 'mcpServers', 'allowed-tools')
 _CLAUDE_GRANTS = re.compile('|'.join(map(re.escape, CLAUDE_GRANT_KEYS)), re.IGNORECASE)
+# A root SKILL.md key that can be, or can hide, a CLAUDE_GRANT_KEYS key: the key itself (bare or quoted), a merge key,
+# an explicit complex key, a flow mapping, or a key behind an anchor, tag or alias. A description that mentions hooks
+# is not a key.
+_SKILL_GRANT_KEY = r'(?:["\']?(?:%s)["\']?[ \t]*:|<<|[?{[&!*])' % '|'.join(map(re.escape, CLAUDE_GRANT_KEYS))
+
+
+def _skill_grant_key(front):
+    """Whether SKILL.md frontmatter has a root key that can register hooks or grant execution, at the root mapping's
+    indentation."""
+    content = [line for line in front.splitlines() if line.strip() and not line.lstrip().startswith('#')]
+    if not content: return False
+    indent = len(content[0]) - len(content[0].lstrip(' '))
+    return any(re.match(' {%d}%s' % (indent, _SKILL_GRANT_KEY), line, re.IGNORECASE) for line in content)
 
 
 def embeds_hooks(relative_path, raw):
-    """Whether harness bytes can register hooks or grant execution: a CLAUDE_GRANT_KEYS word in Claude frontmatter,
-    or a `hooks` key at any depth of a Codex role file. Fails closed: undecodable bytes, a YAML escape or unparsable
-    TOML count as hooks."""
+    """Whether harness bytes can register hooks or grant execution: a CLAUDE_GRANT_KEYS word in Claude frontmatter
+    (a root CLAUDE_GRANT_KEYS key for a SKILL.md, whose description may discuss hooks), or a `hooks` key at any depth
+    of a Codex role file. Fails closed: undecodable bytes, a YAML escape or unparsable TOML count as hooks."""
     try: text = raw.decode('utf-8')
     except UnicodeDecodeError: return True
     if relative_path.endswith('.toml'):
@@ -355,7 +368,9 @@ def embeds_hooks(relative_path, raw):
     if not lines or lines[0].rstrip() != '---': return False  # Claude skips a file without a leading fence.
     end = next((index for index, line in enumerate(lines[1:], 1) if line.rstrip() in ('---', '...')), len(lines))
     front = '\n'.join(lines[1:end])
-    return bool(_CLAUDE_GRANTS.search(front)) or '\\' in front
+    if '\\' in front: return True
+    if PurePosixPath(relative_path).name == 'SKILL.md': return _skill_grant_key(front)
+    return bool(_CLAUDE_GRANTS.search(front))
 
 
 def _reads_frontmatter(relative_path, facets):

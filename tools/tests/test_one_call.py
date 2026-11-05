@@ -59,6 +59,13 @@ class OneCallTests(unittest.TestCase):
         self.invoke('--repair-contracts')
         self.assertEqual(self.invoke('--repair-contracts')[1]['status'],'no_change')
 
+    def test_skill_whose_description_mentions_hooks_is_still_repaired(self):
+        valid=self.valid.replace(b'Use for synthetic checks.',b'Use to review git hooks and React hooks in synthetic checks.')
+        self.skill.write_bytes(b'\xef\xbb\xbf'+valid)
+        code,result=self.invoke('--repair-contracts')
+        self.assertEqual((code,result['status']),(0,'applied'))
+        self.assertEqual(self.skill.read_bytes(),valid)
+
     def test_two_operations_share_one_plan_and_preserve_unrelated_changes(self):
         second=self.project/'.agents/skills/second/SKILL.md';second.parent.mkdir()
         second.write_bytes(b'\xef\xbb\xbf'+self.valid.replace(b'name: example',b'name: second'))

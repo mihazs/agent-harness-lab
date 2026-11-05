@@ -70,7 +70,8 @@ class HarnessChangePlan:
     dependencies_sha256: str
     affected_controls_sha256: str
     deferred_surfaces: tuple
-    # (sha256, status, members) of each hook_contract_v1 verdict; a passed one resolves its members' operations.
+    # (sha256, status, members, trust_review) of each hook_contract_v1 verdict; a passed one resolves its members'
+    # operations, and trust_review names the user review a Codex unit still requires.
     hook_contracts: tuple = ()
 
     def __post_init__(self):
@@ -86,17 +87,18 @@ class HarnessChangePlan:
             if value is not None:_sha(value)
         for value in (self.diagnosis_sha256,self.falsifiers_sha256,self.dependencies_sha256,self.affected_controls_sha256):_sha(value)
         if type(self.deferred_surfaces) is not tuple or any(not isinstance(v,str) or not v or len(v)>128 for v in self.deferred_surfaces):raise ValueError('invalid deferred surfaces')
-        from .hooks_contract import STATUSES
+        from .hooks_contract import STATUSES,TRUST_REVIEWS
         if type(self.hook_contracts) is not tuple or self.hook_contracts!=tuple(sorted(set(self.hook_contracts))) or any(
-                type(row) is not tuple or len(row)!=3 or _sha(row[0]) is None or row[1] not in STATUSES or type(row[2]) is not tuple
-                or not row[2] or row[2]!=tuple(sorted(set(row[2]))) or any(not isinstance(v,str) for v in row[2]) for row in self.hook_contracts):
+                type(row) is not tuple or len(row)!=4 or _sha(row[0]) is None or row[1] not in STATUSES or type(row[2]) is not tuple
+                or not row[2] or row[2]!=tuple(sorted(set(row[2]))) or any(not isinstance(v,str) for v in row[2])
+                or row[3] not in TRUST_REVIEWS for row in self.hook_contracts):
             raise ValueError('invalid hook contract references')
 
     @classmethod
     def create(cls,before,after,*,references,diagnosis,falsifiers,dependencies,controls,deferred,contracts=()):
         return cls(inventory(before),inventory(after),tuple(sorted(references.items())),
                    *(digest(value) for value in (diagnosis,falsifiers,dependencies,controls)),tuple(deferred),
-                   tuple(sorted({(row.sha256,row.status,tuple(row.members)) for row in contracts})))
+                   tuple(sorted({(row.sha256,row.status,tuple(row.members),row.trust_review) for row in contracts})))
 
     @property
     def operations(self):
@@ -107,7 +109,7 @@ class HarnessChangePlan:
     def unresolved_operations(self):
         # A kind no classifier row adopts, or any hook facet (agent definitions, executables), stays unresolved unless
         # a passed hook contract names it: contract_required resolves only through hook_contract_v1.
-        resolved={path for _,status,members in self.hook_contracts if status=='passed' for path in members}
+        resolved={path for _,status,members,_ in self.hook_contracts if status=='passed' for path in members}
         return tuple(row.path for row in self.operations if row.path not in resolved
                      and (row.surface in UNRESOLVED_KINDS or 'hook_contract_required' in row.facets))
 
@@ -120,6 +122,7 @@ class HarnessChangePlan:
             disposition='no_change' if not self.operations else 'review_required',
             before_inventory_sha256=digest(value['before']),after_inventory_sha256=digest(value['after']))
         if not self.hook_contracts:value.pop('hook_contracts')  # plans without a contract keep their identity
+        else:value['required_reviews']=sorted({row[3] for row in self.hook_contracts if row[3]!='not_applicable'})
         # JSON-compatible values only, detached from the immutable object.
         import json
         return json.loads(encoded(value))
@@ -132,7 +135,7 @@ class HarnessChangePlan:
         try:
             plan=cls(tuple(FileRevision(**row) for row in value['before']),tuple(FileRevision(**row) for row in value['after']),
                 tuple(tuple(row) for row in value['references']),*(value[name] for name in ('diagnosis_sha256','falsifiers_sha256','dependencies_sha256','affected_controls_sha256')),tuple(value['deferred_surfaces']),
-                tuple((row[0],row[1],tuple(row[2])) for row in value.get('hook_contracts',())))
+                tuple((row[0],row[1],tuple(row[2]),*row[3:]) for row in value.get('hook_contracts',())))
             if plan.document()!=value:raise ValueError('plan derived fields changed')
             return plan
         except (KeyError,TypeError,AttributeError):raise ValueError('invalid harness change plan') from None

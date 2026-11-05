@@ -5,13 +5,14 @@ A hook operation is one deployment unit: the `hooks` key delta of exactly one pr
 its command handlers reference. evaluate() reads only journal snapshots and the lstat facts of referenced scripts
 already in the checkout. Every check is static: the event is in the pinned list (sources.hooks_inventory, at
 surfaces.PINS); a regex matcher compiles with Python re, a proxy for the runtimes' JavaScript and Rust engines
-(labelled unverified); each handler is a command naming a regular, non-symlink checkout script whose mode is
-recorded; a timeout is set within TIMEOUT_BOUNDS; and a network or credential word in the command line is a
-heuristic recommendation finding. The config bytes must equal promotion.journal.key_edit() of the before bytes,
+(labelled unverified); each handler is a command naming, through the project-root anchor, a regular, non-symlink
+checkout script that is not group- or world-writable, with no Windows command or shell override; a timeout is set
+within TIMEOUT_BOUNDS; and a network or credential word in the command line is a heuristic recommendation finding. The config bytes must equal promotion.journal.key_edit() of the before bytes,
 so every other settings key survives byte-identically. settings.local.json and managed layers are never written,
 and Codex trust state is never written: a Codex unit reports requires_user_trust_review. A passed verdict admits
-the unit to the journal only when a caller passes it explicitly; it is not behavioral evidence, which stays
-inconclusive until a hook behavior evaluation exists.
+the unit to the journal only when a caller passes it explicitly, and its digest binds the sha256 and mode of every
+member snapshot and referenced checkout script; it is not behavioral evidence, which stays inconclusive until a hook
+behavior evaluation exists.
 """
 import base64
 from dataclasses import asdict, dataclass
@@ -32,6 +33,7 @@ PROFILE = 'hook_contract_v1'
 CONFIGS = {'.claude/settings.json': ('claude-code', 'json'), '.codex/hooks.json': ('codex', 'json'),
            '.codex/config.toml': ('codex', 'toml')}
 STATUSES = ('passed', 'recommendation_only', 'blocked')
+TRUST_REVIEWS = ('requires_user_trust_review', 'not_applicable')
 TIMEOUT_BOUNDS = (1, 600)  # seconds; a handler without an explicit bounded timeout is blocked
 MATCHER_CHECK = 'python_re_proxy_runtime_regex_unverified'
 # Heuristic only: a hit makes the unit recommendation_only, and no hit is not evidence of safety.
@@ -53,10 +55,11 @@ class HookContract:
     config: str | None
     runtime: str | None
     members: tuple
-    scripts: tuple            # (path, mode, 'staged' or 'checkout')
+    scripts: tuple            # (path, mode, 'staged' or 'checkout', sha256)
     findings: tuple           # (severity, code, subject)
     status: str
     trust_review: str
+    snapshots: tuple          # (path, before sha256, before mode, after sha256, after mode) of every member
     matcher_check: str = MATCHER_CHECK
     executed: bool = False
     behavioral: str = 'inconclusive'
@@ -64,7 +67,7 @@ class HookContract:
     profile: str = PROFILE
 
     def __post_init__(self):
-        if self.status not in STATUSES or self.executed is not False or self.adoption_authority is not False:
+        if self.status not in STATUSES or self.trust_review not in TRUST_REVIEWS or self.executed is not False or self.adoption_authority is not False:
             raise ValueError('a static hook contract never executes or authorizes')
 
     def document(self):
@@ -76,7 +79,14 @@ class HookContract:
 
     def admission(self):
         """The journal's record of what this verdict admitted; it is not application authority by itself."""
-        return dict(profile=PROFILE, status=self.status, members=list(self.members), sha256=self.sha256)
+        return dict(profile=PROFILE, status=self.status, members=list(self.members), sha256=self.sha256,
+                    snapshots=[list(row) for row in self.snapshots])
+
+
+def unit_snapshots(before, after):
+    """The (path, before sha256, before mode, after sha256, after mode) rows an admission binds."""
+    row = lambda snapshot: (None, None) if snapshot is None else (snapshot['sha256'], snapshot['mode'])
+    return tuple((name, *row(before.get(name)), *row(after.get(name))) for name in sorted(before.keys() | after.keys()))
 
 
 def read_hooks(raw, form):
@@ -118,13 +128,19 @@ def _handlers(hooks, runtime, finding):
                 if not isinstance(handler, dict) or handler.get('type') != 'command':
                     finding('blocked', 'handler_type_outside_contract', event); continue
                 if set(handler) - allowed: finding('blocked', 'unknown_handler_field', event)
+                # A Windows command line or a shell override is a second program the script check never resolves.
+                if handler.keys() & {'commandWindows', 'command_windows', 'shell'}:
+                    finding('blocked', 'command_override_outside_contract', event)
                 timeout = handler.get('timeout')
                 if type(timeout) is not int or not TIMEOUT_BOUNDS[0] <= timeout <= TIMEOUT_BOUNDS[1]:
                     finding('blocked', 'timeout_bounds_unset', event)
                 command, args = handler.get('command'), handler.get('args') if runtime == 'claude-code' else None
-                resolution, script, _ = resolve(command, args, runtime)
+                resolution, script, anchor = resolve(command, args, runtime)
                 if resolution != 'referenced_script': finding('blocked', 'command_not_a_checkout_script', event)
-                else: referenced.add(script)
+                else:
+                    referenced.add(script)
+                    # A cwd-relative path resolves against the session directory, which may be a nested tree.
+                    if anchor != 'project_dir': finding('blocked', 'script_anchor_unverified', event)
                 words = [value for value in (command, handler.get('commandWindows'), handler.get('command_windows'),
                                              *(args if isinstance(args, list) else ())) if isinstance(value, str)]
                 if any(NETWORK_OR_CREDENTIAL.search(word) for word in words):
@@ -133,14 +149,15 @@ def _handlers(hooks, runtime, finding):
 
 
 def _checkout_script(project, name):
-    """Mode of an existing regular, non-symlink script inside the checkout itself, or None."""
+    """(mode, sha256) of an existing regular, non-symlink script inside the checkout itself, or None."""
     try:
         path = contained(project, name)
         info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or not in_checkout(project, name): return None
+        record = file_record(path)
     except (ValueError, OSError):
         return None
-    if not stat.S_ISREG(info.st_mode) or not in_checkout(project, name): return None
-    return stat.S_IMODE(info.st_mode)
+    return None if record is None else (record['mode'], record['sha256'])
 
 
 def _raw(snapshot):
@@ -182,15 +199,19 @@ def evaluate(project, before, after):
             if verdict.writability != 'contract_required' or 'hook' not in verdict.facets:
                 finding('blocked', 'script_outside_hook_surface', name)
             if not in_checkout(project, name): finding('blocked', 'script_outside_checkout', name)
-            scripts[name] = (name, target['mode'], 'staged')
+            scripts[name] = (name, target['mode'], 'staged', target['sha256'])
     for name in sorted(referenced - set(names)):
-        mode = _checkout_script(project, name)
-        if mode is None: finding('blocked', 'referenced_script_missing', name)
-        else: scripts[name] = (name, mode, 'checkout')
+        script = _checkout_script(project, name)
+        if script is None: finding('blocked', 'referenced_script_missing', name)
+        else: scripts[name] = (name, script[0], 'checkout', script[1])
+    for name, mode, *_ in scripts.values():
+        # A hook script runs on every matching agent event, so another local user must not be able to rewrite it.
+        if mode & 0o022: finding('blocked', 'script_group_or_world_writable', name)
     severities = {row[0] for row in rows}
     status = 'blocked' if 'blocked' in severities else 'recommendation_only' if severities else 'passed'
     return HookContract(config, runtime, tuple(names), tuple(scripts[name] for name in sorted(scripts)),
-                        tuple(sorted(rows)), status, 'requires_user_trust_review' if runtime == 'codex' else 'not_applicable')
+                        tuple(sorted(rows)), status, 'requires_user_trust_review' if runtime == 'codex' else 'not_applicable',
+                        unit_snapshots(before, after))
 
 
 def stage(project, config, hooks, scripts=None):

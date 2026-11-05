@@ -286,16 +286,27 @@ class Journal:
                            probe=False,admitted=admitted)
         return record
 
-    @staticmethod
-    def _admitted(record):
-        """Paths a passed hook contract admitted: exactly the record's whole deployment unit, or none."""
-        contract=(record.get('metadata') or {}).get('hook_contract')
+    def _admitted(self,record,*,prepare=False):
+        """Paths a passed hook contract admitted: exactly the record's whole deployment unit, or none. A promotion's
+        admission binds the sha256 and mode of every member snapshot; a rollback's is its reverted deployment's, and
+        only the exact reversal of that deployment's snapshots carries it."""
+        metadata=record.get('metadata') or {}
+        contract=metadata.get('hook_contract')
         if contract is None: return frozenset()
-        from agent_harness_lab.hooks_contract import PROFILE
+        from agent_harness_lab.hooks_contract import PROFILE,unit_snapshots
         names=sorted(record['before'].keys()|record['after'].keys())
         if not isinstance(contract,dict) or contract.get('profile')!=PROFILE or contract.get('status')!='passed' \
                 or contract.get('members')!=names:
             raise ValueError('invalid hook contract admission')
+        if record.get('kind')=='rollback':
+            try: reverted=self.load(metadata.get('reverts'))
+            except OSError: raise ValueError('rollback admission differs from the reverted deployment') from None
+            if (prepare and reverted['status']!='committed') or reverted['metadata'].get('hook_contract')!=contract \
+                    or record['before']!=reverted['after'] or record['after']!=reverted['before']:
+                raise ValueError('rollback admission differs from the reverted deployment')
+        elif record.get('kind')!='promotion' or contract.get('snapshots')!=[
+                list(row) for row in unit_snapshots(record['before'],record['after'])]:
+            raise ValueError('hook contract admission does not bind this deployment unit')
         return frozenset(names)
 
     def owned(self,name,target=None,*,probe=True,admitted=frozenset()):
@@ -317,7 +328,8 @@ class Journal:
 
     def prepare(self,before,after,metadata=None,kind='promotion',*,hook_contract=None):
         """hook_contract is the caller's explicit hook_contract_v1 verdict; the journal re-evaluates it and admits
-        the unit only when both agree and it passed. A rollback admits exactly what its reverted record admitted."""
+        the unit only when both agree and it passed. A rollback admits exactly what its reverted record admitted, and
+        only for the exact reversal of that record's snapshots."""
         return self._prepare(before,after,metadata,kind,restores=False,hook_contract=hook_contract)
 
     def _prepare(self,before,after,metadata,kind,*,restores,hook_contract=None):
@@ -330,16 +342,14 @@ class Journal:
         # only as its reverted record did.
         promotion=kind=='promotion'
         metadata=dict(metadata or {})
-        if promotion and 'hook_contract' in metadata: raise ValueError('hook contract admission is never declared')
+        if kind!='rollback' and 'hook_contract' in metadata: raise ValueError('hook contract admission is never declared')
         if hook_contract is not None:
             from agent_harness_lab.hooks_contract import evaluate
             verdict=evaluate(self.project,before,after) if promotion else None
             if verdict is None or verdict!=hook_contract or verdict.status!='passed':
                 raise ValueError('hook contract did not pass for this deployment unit')
             metadata['hook_contract']=verdict.admission()
-        admitted=self._admitted(dict(before=before,after=after,metadata=metadata))
-        if admitted and not promotion and self._admitted(self.load(metadata.get('reverts')))!=admitted:
-            raise ValueError('rollback admission differs from the reverted deployment')
+        admitted=self._admitted(dict(kind=kind,before=before,after=after,metadata=metadata),prepare=True)
         for name in names:
             relative(name)
             self.owned(name,None if restores else after.get(name),probe=not restores,admitted=admitted)
@@ -442,6 +452,11 @@ class Journal:
             raise ValueError('guarded transaction requires its original commit checks')
         self._check(record)
         admitted=self._admitted(record)
+        if admitted and record['kind']=='promotion':
+            from agent_harness_lab.hooks_contract import evaluate
+            # The recorded bytes and the checkout scripts as they are now must still give the admitted verdict.
+            if evaluate(self.project,record['before'],record['after']).admission()!=record['metadata']['hook_contract']:
+                raise ValueError('hook contract did not pass for this deployment unit')
         owned=lambda name:self.owned(name,probe=False,admitted=admitted)
         try:
             if pre_write: pre_write()
