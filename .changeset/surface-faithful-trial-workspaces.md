@@ -1,5 +1,0 @@
----
-"agent-harness-lab": minor
----
-
-Cooperative Claude Code and Codex trials now copy each `harness_paths` file at its relative path at any depth and record `workspace_surfaces` (included paths with kind and SHA-256, absent paths, `observed_loading: "unknown"`). Each trial requests exclusion of user, local and global layers, gated on new `surfaces.CAPABILITIES` rows: Claude Code gets `--setting-sources project`, `--strict-mcp-config` with an empty staged MCP config and `--settings` with `disableAllHooks`, and Codex gets a temporary `CODEX_HOME` holding only the copied `model` and `model_reasoning_effort` and one trust entry for the trial workspace. The Codex home holds no credentials. Neither the argv nor the environment names the real `CODEX_HOME` or `~/.claude`. `results.json` replaces the free-text isolation admission with an `ahl-trial-surfaces-v1` descriptor. Its status is `inherited_unverified` while the rows are unverified, and it never says `isolated`. The controlled Responses executor accepts an optional task `cwd` and loads the root-to-`cwd` `AGENTS.md` chain in order. A chain over 32 KiB blocks instead of being truncated.
