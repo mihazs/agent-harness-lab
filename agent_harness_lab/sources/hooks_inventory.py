@@ -50,6 +50,7 @@ INTERPRETERS = frozenset(('sh', 'bash', 'zsh', 'dash', 'python', 'python3', 'nod
 PROJECT_DIR = ('${CLAUDE_PROJECT_DIR}', '$CLAUDE_PROJECT_DIR')
 _SHELL = re.compile(r'[|&;<>()`$\n*?\[\]{}~]')
 _SPACE = re.compile(r'[\s\x01-\x1f\x7f]')   # a quoted argument string is never a script path
+_PREFIX = re.compile(r'[A-Za-z_][A-Za-z0-9_]*=|#')  # an env assignment or a comment is never the program run
 HANDLER_FACTS = ('event', 'event_known', 'matcher_kind', 'matcher_sha256', 'type', 'status', 'timeout', 'on_failure',
                  'resolution', 'script', 'anchor', 'command_sha256', 'header_keys_sha256', 'env_keys_sha256',
                  'unknown_fields')
@@ -97,6 +98,7 @@ def parse(path, raw, profile):
             if unknown: warnings.add('unknown_field'); facts['unknown_fields'] = len(unknown)
         if form == 'claude_settings' and isinstance(document.get('disableAllHooks'), bool):
             facts['disable_all_hooks'] = document['disableAllHooks']
+            if document['disableAllHooks']: warnings.add('all_hooks_disabled')
         if not isinstance(events, dict): raise ValueError('hooks must be an object')
     others = sorted(set(document) - {'hooks'})
     facts.update(other_keys=len(others), other_keys_sha256=digest(others))
@@ -176,12 +178,13 @@ def resolve(command, args, runtime):
         try: tokens = shlex.split(text)
         except ValueError: return external
     else: tokens = [text, *args]
+    if tokens and _PREFIX.match(tokens[0]): return external  # NAME=value may hold a secret; '#' runs nothing
     if tokens and PurePosixPath(tokens[0]).name in INTERPRETERS:
         # Any interpreter option (-c, -lc, -ec, --eval, -m, ...) may make the next token inline code, never a path.
         tokens = tokens[1:] if len(tokens) > 1 and not tokens[1].startswith('-') else []
     if not tokens: return external
     target, anchor = tokens[0], 'cwd_relative_unverified'
-    if '/' not in target or _SPACE.search(target): return external  # a bare name is a PATH lookup
+    if _PREFIX.match(target) or '/' not in target or _SPACE.search(target): return external  # a bare name is a PATH lookup
     if target.startswith('\0/'): target, anchor = target[2:], 'project_dir'
     target = target[2:] if target.startswith('./') else target
     if '\0' in target or _SHELL.search(target): return external

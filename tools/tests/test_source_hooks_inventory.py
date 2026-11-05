@@ -3,6 +3,7 @@ from dataclasses import replace
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -184,6 +185,48 @@ class HookInventoryTests(unittest.TestCase):
         documents = json.dumps([value.document(), harness_inventory.capture(self.checkout, CLAUDE).document()])
         self.assertNotIn(SECRET, documents)
         self.assertNotIn('tools/deploy', documents)
+
+    def test_env_assignment_or_comment_prefix_is_never_a_script_path(self):
+        for command, args in (('PYTHONPATH=tools/lib python3 tools/x.py', None), ('LD_PRELOAD=./evil.so ./ok.sh', None),
+                              ('X=a/b ./real.sh', None), ('#!x/y', None), ('FOO=${CLAUDE_PROJECT_DIR}/x ./y.sh', None),
+                              ('bash X=a/b', None), ('A=b/c', ['tools/x.sh'])):
+            with self.subTest(command=command, args=args):
+                self.assertEqual(hooks.resolve(command, args, 'claude-code'), ('external_or_dynamic_command', None, None))
+        command = 'API_TOKEN=SYNTH/SECRET+abc ./.claude/hooks/x.sh'
+        settings = {'hooks': {'Stop': [group(None, {'type': 'command', 'command': command},
+                                             {'type': 'command', 'command': 'LD_PRELOAD=scripts/evil.so scripts/ok.sh'})]}}
+        (self.checkout / '.claude/settings.json').write_text(json.dumps(settings))
+        value = self.capture()
+        self.assertEqual({row.resolution for row in value.handlers if row.source == '.claude/settings.json'},
+                         {'external_or_dynamic_command'})
+        self.assertFalse([node for node in value.scripts if '=' in node.path])
+        documents = json.dumps([value.document(), harness_inventory.capture(self.checkout, CLAUDE).document()])
+        for text in ('SYNTH/SECRET', 'API_TOKEN', 'evil.so'): self.assertNotIn(text, documents)
+
+    def test_disable_all_hooks_is_surfaced_as_a_warning(self):
+        settings = {'disableAllHooks': True,
+                    'hooks': {'Stop': [group(None, {'type': 'command', 'command': './.claude/hooks/x.sh'})]}}
+        (self.checkout / '.claude/settings.json').write_text(json.dumps(settings))
+        self.assertIn(('.claude/settings.json', 'all_hooks_disabled'), self.capture().warnings)
+        settings['disableAllHooks'] = False
+        (self.checkout / '.claude/settings.json').write_text(json.dumps(settings))
+        self.assertNotIn(('.claude/settings.json', 'all_hooks_disabled'), self.capture().warnings)
+
+    def test_surface_classification_doc_names_every_hook_registration_row(self):
+        from agent_harness_lab import surfaces
+        root = Path(__file__).resolve().parents[2]
+        text = ' '.join((root / 'docs/one-call-improvement.md').read_text().split())
+        start = text.index('## Harness surface classification')
+        section = text[start:text.index('## ', start + 3)]
+        for path, runtime in (('.claude/settings.json', 'claude-code'), ('.claude/settings.local.json', 'claude-code'),
+                              ('.codex/hooks.json', 'codex'), ('.codex/config.toml', 'codex'), ('lefthook.yml', 'claude-code'),
+                              ('.lefthook.yml', 'claude-code'), ('.pre-commit-config.yaml', 'claude-code')):
+            with self.subTest(path=path):
+                writability = surfaces.classify(path, runtime).writability
+                self.assertNotEqual(writability, 'unsupported')
+                after = section[section.index(f'`{path}`'):]
+                named = re.search(r'`(adoptable|contract_required|recommendation_only|private_excluded|unsupported)`', after)
+                self.assertEqual(named.group(1), writability)
 
     def test_many_small_plugin_files_are_blocked_by_the_inventory_wide_fact_bound(self):
         handlers = json.dumps({'hooks': {'Stop': [{'hooks': [{}] * hooks.MAX_HANDLERS}]}})

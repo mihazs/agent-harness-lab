@@ -1322,7 +1322,10 @@ The parser reads these files: Claude `.claude/settings.json` and plugin
 `hooks/hooks.json`, plus Codex `.codex/hooks.json` and the `[hooks]` table of
 `.codex/config.toml`, which is decoded with `tomllib`. `.claude/settings.local.json`
 is `private_excluded`. It is listed as `present_content_not_read` and is never read or
-hashed; reading it on an explicit opt-in remains open. Only the `hooks` key is
+hashed; reading it on an explicit opt-in remains open. In `surfaces.classify`,
+the Claude settings file and the two Codex files are `hook` surfaces with
+`contract_required` writability, and the Git hook managers are
+`recommendation_only`. Only the `hooks` key is
 projected. All other settings keys, such as permissions, env and MCP servers,
 appear only as a count and a digest of their key names. JSON is decoded with
 `hardened.load_json`. A file over 1 MiB or with more than 512 handlers, a
@@ -1348,8 +1351,11 @@ only a digest of their key names.
 Warnings cover `unknown_event`, `unknown_field` (including a Codex
 `hooks.json` top-level key, which `deny_unknown_fields` rejects),
 `plugin_hooks_wrapper_missing`, `unknown_handler_type`, `parse_failed`,
-`private_excluded_not_read` and `hooks_json_and_toml_in_one_layer`. The last
-one is raised when one Codex layer has handlers in both representations.
+`private_excluded_not_read`, `all_hooks_disabled` and
+`hooks_json_and_toml_in_one_layer`. `all_hooks_disabled` is raised when a Claude
+settings file sets `disableAllHooks: true`; its handlers are still listed as
+declared, not active. The last one is raised when one Codex layer has handlers in
+both representations.
 Handler trust is always `unknown`. `[hooks.state]` `trusted_hash` entries are
 counted, but mapping one to a handler is unverified at the pin.
 
@@ -1361,7 +1367,10 @@ skipped only when the next token is not an option. Any interpreter option, such 
 `-c`, `-lc`, `-ec`, `-m` or `--eval`, can turn the next token into inline code, so
 the command is `external_or_dynamic_command` and the code string is never
 recorded. A target containing whitespace or a control character is a quoted
-argument string, not a path, and is also external. A safe repo-relative
+argument string, not a path, and is also external. A leading `NAME=value`
+environment assignment or a `#` comment is never taken as the program, so the
+command is external and the assignment value, which may be a secret, is never
+recorded. A safe repo-relative
 path containing `/` becomes a `referenced_script` node with the content hash from
 the inventory, or `inventoried: false` when the walk did not list it. A pipe, a
 substitution, a bare `PATH` name, an absolute or parent path, or any other variable

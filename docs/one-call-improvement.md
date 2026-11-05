@@ -68,8 +68,13 @@ The allowlist itself is unchanged. Only these paths are `adoptable`: the root
 `.claude/skills/<name>/` bundle, and files under `skills/<name>/` when the project
 already owns a top-level `skills/` tree. Any `.git` or `__pycache__` component is
 `private_excluded`. A `hook` or `hooks` component outside those bundles is
-`contract_required`. Every other path is `unsupported`, including nested
-instruction files, rules, agents, commands, workflows, settings and plugin files.
+`contract_required`. Hook registration files are classified as `hook` too:
+`.claude/settings.json` (Claude Code) and `.codex/hooks.json` and
+`.codex/config.toml` (Codex) are `contract_required`, `.claude/settings.local.json`
+is `private_excluded`, and the Git hook managers `lefthook.yml`, `.lefthook.yml`,
+`.pre-commit-config.yaml` and `.husky/<file>` are `recommendation_only`. Every
+other path is `unsupported`, including nested instruction files, rules, agents,
+commands, workflows, other settings and plugin files.
 Executable suffixes and execute bits still add the `hook_contract_required` facet,
 which keeps such a plan unresolved. The classifier reads no file contents and runs
 nothing. A verdict does not show that any runtime loads the file.
