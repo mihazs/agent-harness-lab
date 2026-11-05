@@ -191,15 +191,19 @@ class GitLabAPI:
 
     def _merge_request(self, value, iid):
         node, selection = self._common(value, iid, MERGE_STATES, 'MergeRequest'), self.selection
-        source, target = integer(value.get('source_project_id'), minimum=1), integer(value.get('target_project_id'), minimum=1)
+        # GitLab nulls `source_project_id` when the source fork is deleted; the merge request is still recorded.
+        raw_source = value.get('source_project_id')
+        source = None if raw_source is None else integer(raw_source, minimum=1)
+        target = integer(value.get('target_project_id'), minimum=1)
         if target != self.project_id: raise ValueError('GitLab merge request targets another project')
         draft = value.get('draft', value.get('work_in_progress'))
         refs = value.get('diff_refs')
         if refs is not None and not isinstance(refs, dict): raise ValueError('invalid GitLab diff refs')
         # A fork's source project keeps its own identity even when branch names and commits match.
         return dict(node, draft=draft if type(draft) is bool else 'unknown',
-            source_project_sha256=selection.project_identity(source), target_project_sha256=selection.project_identity(target),
-            source_project_state='same_project' if source == target else 'other_project',
+            source_project_sha256=None if source is None else selection.project_identity(source),
+            target_project_sha256=selection.project_identity(target),
+            source_project_state='unknown' if source is None else 'same_project' if source == target else 'other_project',
             source_branch_sha256=text_hash(value.get('source_branch'), required=True),
             target_branch_sha256=text_hash(value.get('target_branch'), required=True),
             head_sha256=commit_hash(value.get('sha') or None),
@@ -231,7 +235,10 @@ class GitLabAPI:
             raise ValueError('invalid GitLab approvers')
         approved = value.get('approved')
         counts = {name: integer(value[name]) if value.get(name) is not None else None for name in ('approvals_required', 'approvals_left')}
-        actors = [self._actor(a.get('user')) for a in approvers]
+        # An approver whose user object is missing or carries no ID is counted as unidentified, never fatal.
+        # A user that is not an object still fails the capture.
+        actors = [None if a.get('user') is None or isinstance(a['user'], dict) and a['user'].get('id') is None
+            else self._actor(a['user']) for a in approvers]
         return dict(parent_sha256=parent, approved=approved if type(approved) is bool else 'unknown', **counts,
             approvers_sha256=sorted(a for a in actors if a is not None), approvers_unidentified=actors.count(None))
 

@@ -366,6 +366,31 @@ class GitLabSourceTests(GitLabFixture, unittest.TestCase):
         self.project['forked_from_project'] = dict(id=5)
         self.assertEqual(self.nodes(self.read()[0], 'gitlab_project')[0]['forked_from_sha256'], self.selection.project_identity(5))
 
+    def test_deleted_source_fork_is_unknown_and_the_capture_continues(self):
+        # GitLab sets source_project_id to null once the source fork is deleted (#260).
+        self.mr['source_project_id'] = None
+        client, _ = self.read()
+        mr = self.nodes(client, 'gitlab_merge_request')[0]
+        self.assertEqual((mr['source_project_state'], mr['source_project_sha256']), ('unknown', None))
+        self.assertEqual(mr['target_project_sha256'], client.summary['project_sha256'])
+        self.assertEqual(len(self.nodes(client, 'gitlab_issue')), 1)
+        self.assertEqual(len(self.nodes(client, 'gitlab_approvals')), 1)
+        for invalid in (0, True, '77'):
+            with self.subTest(source=invalid), patch.dict(self.mr, source_project_id=invalid), self.assertRaises(TransportError):
+                self.read()
+
+    def test_approver_without_a_user_id_is_counted_unidentified(self):
+        self.approvals['approved_by'] = [dict(user=dict(username='synthetic-ghost')), dict(user=dict(id=None)),
+            dict(user=dict(id=55))]
+        client, _ = self.read()
+        approvals = self.nodes(client, 'gitlab_approvals')[0]
+        self.assertEqual((len(approvals['approvers_sha256']), approvals['approvers_unidentified']), (1, 2))
+        self.assertEqual(len(self.nodes(client, 'gitlab_merge_request')), 1)
+        for invalid in ('synthetic-user', dict(id=0), dict(id=True)):
+            with self.subTest(user=invalid), patch.dict(self.approvals, approved_by=[dict(user=invalid)]), \
+                    self.assertRaises(TransportError):
+                self.read()
+
     def test_nested_group_paths_encode_once_and_escapes_are_refused(self):
         self.assertEqual(self.selection.selector, ENCODED)
         for path in ('synthetic-group/../other', 'synthetic-group/%2E%2E/other', 'synthetic-group%2Fother',
