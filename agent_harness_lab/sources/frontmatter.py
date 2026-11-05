@@ -108,11 +108,11 @@ def _entry(line, seen):
 
 
 def _value(value, block, strict):
+    value = _strip_comment(value or '', strict)
+    if re.fullmatch(r'[|>](?:[1-9]?[+-]?|[+-][1-9])', value):  # '#' is content inside a block scalar
+        return ('\n' if value[0] == '|' else ' ').join(line.strip() for line in _block_scalar(block))
     block = [line for line in block if not _blank(line)]
     if any(line[0] == '\t' for line in block): raise FrontmatterError('bad_yaml')
-    value = _strip_comment(value or '', strict)
-    if re.fullmatch(r'[|>](?:[1-9]?[+-]?|[+-][1-9])', value):
-        return ('\n' if value[0] == '|' else ' ').join(line.strip() for line in block)
     if any(line.lstrip(' ')[:1] == '\t' for line in block): raise FrontmatterError('unsupported_yaml')
     if value: return _scalar(' '.join([value] + [line.strip() for line in block]), strict=strict)  # folded continuation
     if not block: return None
@@ -154,9 +154,21 @@ def _scalar(value, flow=False, strict=False):
     return value
 
 
-def _closing(value):
-    """Index of the quote that closes value[0], honouring backslash escapes and doubled single quotes."""
-    quote, index = value[0], 1
+def _block_scalar(block):
+    """Content lines of a | or > scalar: lines at the first content line's indent or deeper, up to a shallower one."""
+    lines = [line for line in block if line.strip()]
+    if any(line[0] == '\t' for line in lines): raise FrontmatterError('bad_yaml')
+    indent = _width(lines[0]) if lines else 0
+    content = []
+    for line in lines:
+        if _width(line) < indent: break  # a shallower line can only be a comment ending the scalar
+        content.append(line)
+    return content
+
+
+def _closing(value, start=0):
+    """Index of the quote that closes value[start], honouring backslash escapes and doubled single quotes."""
+    quote, index = value[start], start + 1
     while index < len(value):
         if quote == '"' and value[index] == '\\': index += 2; continue
         if value[index] == quote:
@@ -172,9 +184,9 @@ def _flow(inner):
     while index < len(inner):
         char = inner[index]
         if char in '"\'':
-            end = _closing(inner[index:])
+            end = _closing(inner, index)
             if end is None: raise FrontmatterError('bad_yaml')
-            index += end
+            index = end
         elif char in '[]{}': raise FrontmatterError('unsupported_yaml')
         elif char == ',': items.append(inner[start:index]); start = index + 1
         index += 1
@@ -185,9 +197,25 @@ def _strip_comment(value, strict=False):
     """The value without a trailing comment; in strict mode a comment after a key or value is unsupported."""
     value = value.strip()
     if value[:1] in ('"', "'"): return value  # _scalar finds the closing quote before any comment
-    stripped = re.split(r'\s+#', value, maxsplit=1)[0].strip() if not value.startswith('#') else ''
+    stripped = value[:_comment(value)].strip()
     if strict and stripped != value: raise FrontmatterError('unsupported_yaml')
     return stripped
+
+
+def _comment(value):
+    """Index of the '#' that starts a comment: at the start or after whitespace, outside a flow item's quotes.
+    One linear scan, so a long run of whitespace cannot make it backtrack."""
+    flow, index, previous = value[:1] == '[', 0, ''
+    while index < len(value):
+        char = value[index]
+        if flow and char in '"\'' and previous in ('[', ','):  # a quoted flow item; _scalar reports an unclosed one
+            end = _closing(value, index)
+            if end is None: return len(value)
+            index, previous = end + 1, char; continue
+        if char == '#' and (index == 0 or value[index - 1] in ' \t'): return index
+        if char not in ' \t': previous = char
+        index += 1
+    return len(value)
 
 
 def _item(line): return line == '-' or line.startswith('- ')

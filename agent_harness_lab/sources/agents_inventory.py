@@ -42,11 +42,32 @@ CODEX_FIELDS = frozenset(('name', 'description', 'nickname_candidates', *'''
     analytics feedback apps desktop otel windows notice experimental_compact_prompt_file
     experimental_use_unified_exec_tool oss_provider'''.split()))
 NO_OVERRIDE = ('approval_policy', 'mcp_servers', 'model_provider', 'sandbox_mode')
+# ConfigToml fields of a primitive Rust type, checked as serde would; every other field is an enum, struct or map
+# whose contents are not modelled, so only a string or table value is accepted as possibly valid.
+_CODEX_STR = frozenset('''model review_model model_provider default_permissions instructions developer_instructions
+    model_instructions_file compact_prompt mcp_oauth_callback_url js_repl_node_path profile sqlite_home log_dir
+    model_catalog_json service_tier chatgpt_base_url apps_mcp_product_sku openai_base_url
+    experimental_realtime_ws_base_url experimental_realtime_webrtc_call_base_url experimental_realtime_ws_model
+    experimental_realtime_ws_backend_prompt experimental_realtime_ws_startup_context
+    experimental_realtime_start_instructions experimental_thread_store_endpoint experimental_compact_prompt_file
+    oss_provider name description'''.split())
+_CODEX_BOOL = frozenset('''daybreak allow_login_shell allow_symlinked_codex_home include_permissions_instructions
+    include_apps_instructions include_collaboration_mode_instructions include_environment_context
+    include_environment_context_time hide_agent_reasoning show_raw_agent_reasoning suppress_unstable_features_warning
+    check_for_update_on_startup disable_paste_burst experimental_use_unified_exec_tool'''.split())
+_CODEX_INT = {'model_context_window': (-2 ** 63, 2 ** 63 - 1), 'model_auto_compact_token_limit': (-2 ** 63, 2 ** 63 - 1),
+              'model_post_turn_compact_threshold_percent': (0, 2 ** 8 - 1), 'mcp_oauth_callback_port': (0, 2 ** 16 - 1),
+              **{key: (0, 2 ** 64 - 1) for key in ('mcp_optional_startup_grace_ms', 'project_doc_max_bytes',
+                 'tool_output_token_limit', 'background_terminal_max_timeout', 'thread_unload_delay_secs')}}
+_CODEX_STR_LIST = frozenset(('nickname_candidates', 'notify', 'project_doc_fallback_filenames',
+                             'js_repl_node_module_dirs', 'project_root_markers'))
+_CODEX_STR_MAP = frozenset(('responses_api_metadata',))
 ROLES = {'claude_user': ('claude-code', 'user'), 'claude_plugin': ('claude-code', 'plugin'), 'codex_home': ('codex', 'user')}
 DISPOSITIONS = ('declared', 'skipped_silently', 'rejected_with_warning', 'unknown')
 PRECEDENCE = ('selected_by_declared_precedence', 'shadowed_by_declared_precedence', 'ambiguous_read_order',
               'ambiguous_plugin_order', 'duplicate_in_layer_warned', 'outside_task_cwd_ancestry', 'trust_gated',
-              'not_a_definition', 'not_a_runtime_location', 'undeclared_root_role', 'depends_on_project_trust')
+              'not_a_definition', 'not_a_runtime_location', 'undeclared_root_role', 'depends_on_project_trust',
+              'unknown_definition', 'depends_on_unparsed_definition')
 UNPARSED_HOOKS = 'unparsed_hooks'  # the event label of a hooks key in a file whose fields could not be read
 _HOOK_KEY = re.compile(rb'''\bhooks["']?[ \t]*[:=.\]]''')
 _LAYERS = {'claude-code': '.claude', 'codex': '.codex'}
@@ -83,8 +104,10 @@ def _hooks(facts, value):
 
 
 def _unparsed(facts, raw):
-    """A file that cannot be read field by field still reaches hook classification when it mentions hooks."""
-    if _HOOK_KEY.search(raw):
+    """A file that cannot be read field by field still reaches hook classification. One the runtime may still
+    load (disposition unknown) always does, since a valid key form can evade the regex; another does when it
+    mentions hooks."""
+    if facts['disposition'] == 'unknown' or _HOOK_KEY.search(raw):
         facts.update(hooks_declared='unknown', hook_classification=surfaces.HOOK_FACET)
     return facts
 
@@ -130,22 +153,49 @@ def _codex(raw):
         return _unparsed(dict(facts, disposition='unknown', reason='toml_nesting_unsupported'), raw)
     unknown = set(data) - CODEX_FIELDS
     name, description, instructions = (data.get(key) for key in ('name', 'description', 'developer_instructions'))
-    strings = all(value is None or isinstance(value, str) for value in (name, description, instructions))
-    # The pinned loader's order: deserialize, description, developer_instructions, then name.
-    reason = ('unknown_field_rejected' if unknown else 'invalid_field_type' if not strings
+    typed, unverified = _codex_types(data)
+    nicknames = data.get('nickname_candidates')
+    # The pinned loader's order: deserialize, description, developer_instructions, name, then nickname_candidates.
+    reason = ('unknown_field_rejected' if unknown else 'invalid_field_type' if not typed
               else 'blank_description' if description is not None and not description.strip()
               else 'missing_developer_instructions' if instructions is None
               else 'blank_developer_instructions' if not instructions.strip()
-              else 'missing_name' if name is None or not name.strip() else None)
-    # A missing description may still be filled from a same-name role in a lower layer, so it stays unknown.
-    disposition = ('rejected_with_warning' if reason else 'unknown' if description is None else 'declared')
-    facts.update(disposition=disposition, reason=reason or ('description_needs_lower_layer' if description is None else None))
+              else 'missing_name' if name is None or not name.strip()
+              else 'invalid_nickname_candidates' if nicknames is not None and not _nicknames(nicknames) else None)
+    # An unmodelled field may still fail deserialization, and a missing description may still be filled from a
+    # same-name role in a lower layer, so both stay unknown.
+    pending = 'config_field_type_unverified' if unverified else 'description_needs_lower_layer' if description is None else None
+    facts.update(disposition='rejected_with_warning' if reason else 'unknown' if pending else 'declared', reason=reason or pending)
     if unknown: facts['unknown_fields'], facts['unknown_field_count'] = _labels(unknown)
-    if strings and name and name.strip(): _name(facts, name.strip())
+    if isinstance(name, str) and name.strip(): _name(facts, name.strip())
     override = [field for field in NO_OVERRIDE if field in data]
     if override: facts['no_override_fields'] = ','.join(override)
     _hooks(facts, data.get('hooks') if isinstance(data.get('hooks'), dict) else None)
     return facts
+
+
+def _codex_types(data):
+    """(primitive fields all deserialize, some unmodelled field holds a value that is neither a string nor a table)."""
+    def fits(key, value):
+        if key in _CODEX_STR: return isinstance(value, str)
+        if key in _CODEX_BOOL: return isinstance(value, bool)
+        if key in _CODEX_INT:
+            low, high = _CODEX_INT[key]
+            return type(value) is int and low <= value <= high
+        if key in _CODEX_STR_LIST: return isinstance(value, list) and all(isinstance(item, str) for item in value)
+        if key in _CODEX_STR_MAP: return isinstance(value, dict) and all(isinstance(item, str) for item in value.values())
+        return True
+    modelled = _CODEX_STR | _CODEX_BOOL | set(_CODEX_INT) | _CODEX_STR_LIST | _CODEX_STR_MAP
+    known = {key: value for key, value in data.items() if key in CODEX_FIELDS}
+    return (all(fits(key, value) for key, value in known.items()),
+            any(not isinstance(value, (str, dict)) for key, value in known.items() if key not in modelled))
+
+
+def _nicknames(values):
+    """normalize_agent_role_nickname_candidates: non-empty, trimmed names unique and of [A-Za-z0-9 _-] only."""
+    names = [value.strip() for value in values]
+    return bool(names) and all(names) and len(set(names)) == len(names) and all(
+        re.fullmatch(r'[A-Za-z0-9 _-]+', name) for name in names)
 
 
 @dataclass(frozen=True)
@@ -251,37 +301,46 @@ def definitions(inventory, task_cwd, roles=None):
         rows.append(dict(runtime=runtime, root=node.root, path=node.path, path_sha256=node.path_sha256, layer=layer,
             layer_dir=layer_dir, name=name, name_sha256=name_sha256, disposition=disposition, reason=reason,
             trust=trust, warnings=_warnings(runtime, layer, facts, node.trust), hook_events=hooks))
-    _precedence(rows, runtime, task_cwd)
+    _precedence(rows, runtime, task_cwd, 'codex_home' in roles.values())
     return tuple(AgentDefinition(**row) for row in sorted(rows, key=lambda row: (row['root'], row['path'])))
 
 
-def _precedence(rows, runtime, task_cwd):
+def _precedence(rows, runtime, task_cwd, home_inventoried=False):
     """Declared precedence labels. Codex loads a project layer only when the project is trusted, so with unknown
     trust each row is resolved twice and a label that differs between the two passes is depends_on_project_trust."""
     cwd = PurePosixPath(task_cwd).parts if task_cwd != '.' else ()
     open_trust = runtime == 'codex' and any(row['layer'] == 'project' and row['trust'] == 'unknown' for row in rows)
-    passes = [_resolve(rows, runtime, cwd, trusted) for trusted in ((True, False) if open_trust else (True,))]
+    passes = [_resolve(rows, runtime, cwd, trusted, home_inventoried)
+              for trusted in ((True, False) if open_trust else (True,))]
     for index, row in enumerate(rows):
         found = {labels[index] for labels, _ in passes}
-        if found == {'not_a_definition', 'trust_gated'}: found = {'not_a_definition'}  # never loaded either way
+        for never in ('not_a_definition', 'unknown_definition'):  # gating adds nothing to either label
+            if found == {never, 'trust_gated'}: found = {never}
         row['precedence'] = found.pop() if len(found) == 1 else 'depends_on_project_trust'
         if all(index in filled for _, filled in passes):  # the pinned loader merges a lower role's description
             row['disposition'], row['reason'] = 'declared', 'description_from_lower_layer'
 
 
-def _resolve(rows, runtime, cwd, trusted):
-    """One pass of the declared loader order: labels by row index and the rows whose description is inherited."""
-    labels, keys, filled = {}, {}, set()
+def _resolve(rows, runtime, cwd, trusted, home_inventoried):
+    """One pass of the declared loader order: labels by row index and the rows whose description is inherited.
+    A row whose disposition is unknown is unknown_definition; when it is in reach, it may shadow any same-name (or,
+    without a name, any) selection it ranks equal to or above, so that selection is depends_on_unparsed_definition."""
+    labels, keys, filled, unparsed = {}, {}, set(), []
     pending = lambda row: runtime == 'codex' and row['reason'] == 'description_needs_lower_layer'
     for index, row in enumerate(rows):
         layer_parts = PurePosixPath(row['layer_dir']).parts if row['layer_dir'] != '.' else ()
         gated = row['trust'] == 'gated' or (runtime == 'codex' and row['layer'] == 'project'
                                             and row['trust'] == 'unknown' and not trusted)
+        outside = row['layer'] == 'project' and cwd[:len(layer_parts)] != layer_parts
+        unknown = row['disposition'] == 'unknown' and not pending(row)
         labels[index] = (row['layer'] if row['layer'] in ('not_a_runtime_location', 'undeclared_root_role')
+            else 'unknown_definition' if unknown
             else 'not_a_definition' if (row['disposition'] != 'declared' and not pending(row)) or row['name_sha256'] is None
-            else 'outside_task_cwd_ancestry' if row['layer'] == 'project' and cwd[:len(layer_parts)] != layer_parts
+            else 'outside_task_cwd_ancestry' if outside
             else 'trust_gated' if gated else None)
-        if labels[index] is None: keys[index] = (_RANK[row['layer']], -len(layer_parts))
+        key = (_RANK.get(row['layer']), -len(layer_parts))
+        if labels[index] is None: keys[index] = key
+        elif labels[index] == 'unknown_definition' and not outside and not gated: unparsed.append((key, row['name_sha256']))
     groups = {}
     for index in keys: groups.setdefault(rows[index]['name_sha256'], []).append(index)
     for group in groups.values():
@@ -298,7 +357,8 @@ def _resolve(rows, runtime, cwd, trusted):
                 level = [index for index in live if keys[index] == key]
                 for index in (index for index in level if pending(rows[index])):
                     if accepted: filled.add(index)
-                    else: labels[index] = 'not_a_definition'; del keys[index]
+                    else:  # an uninventoried codex_home may still hold the lower role
+                        labels[index] = 'not_a_definition' if home_inventoried else 'unknown_definition'; del keys[index]
                 accepted = accepted or any(index in keys for index in level)
             live = [index for index in live if index in keys]
         if not live: continue
@@ -308,6 +368,9 @@ def _resolve(rows, runtime, cwd, trusted):
         for index in live:
             labels[index] = ('shadowed_by_declared_precedence' if keys[index] != best
                              else tied if len(winners) > 1 else 'selected_by_declared_precedence')
+            if labels[index] == 'selected_by_declared_precedence' and any(
+                    key <= keys[index] and name in (None, rows[index]['name_sha256']) for key, name in unparsed):
+                labels[index] = 'depends_on_unparsed_definition'
     return labels, filled
 
 

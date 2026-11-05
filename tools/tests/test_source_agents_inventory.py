@@ -3,6 +3,7 @@ from dataclasses import replace
 import json
 from pathlib import Path
 import tempfile
+import time
 import unittest
 
 from agent_harness_lab import surfaces
@@ -121,7 +122,8 @@ class AgentDefinitionTests(unittest.TestCase):
             row = rows['checkout', '.codex/agents/' + path]
             self.assertEqual((row.disposition, row.reason, row.precedence), ('rejected_with_warning', reason, 'not_a_definition'))
         nodesc = rows['checkout', '.codex/agents/nodesc.toml']
-        self.assertEqual((nodesc.disposition, nodesc.reason), ('unknown', 'description_needs_lower_layer'))
+        self.assertEqual((nodesc.disposition, nodesc.reason, nodesc.precedence),
+                         ('unknown', 'description_needs_lower_layer', 'not_a_definition'))
         self.assertEqual(rows['checkout', '.codex/agents/dup-a.toml'].precedence, 'selected_by_declared_precedence')
         self.assertEqual(rows['checkout', '.codex/agents/sub/dup-b.toml'].precedence, 'duplicate_in_layer_warned')
 
@@ -166,13 +168,107 @@ class AgentDefinitionTests(unittest.TestCase):
         self.assertIn(('.codex/agents/deep.toml', agents.UNPARSED_HOOKS, 'unknown'), {(h.path, h.event, h.status) for h in hooks})
         inventory, found, hooks = agents.capture(checkout, dict(CLAUDE, task_cwd='.'))
         rows = self.by_path(found)
-        self.assertEqual((rows['checkout', '.claude/agents/flow.md'].disposition, rows['checkout', '.claude/agents/flow.md'].reason),
-                         ('unknown', 'frontmatter_unsupported_yaml'))
-        self.assertEqual(rows['checkout', '.claude/agents/hooks/guard.md'].precedence, 'selected_by_declared_precedence')
+        flow_row = rows['checkout', '.claude/agents/flow.md']
+        self.assertEqual((flow_row.disposition, flow_row.reason, flow_row.precedence),
+                         ('unknown', 'frontmatter_unsupported_yaml', 'unknown_definition'))
+        # flow.md may be named guard, and it sits in the same tree, so guard is not definitively selected.
+        self.assertEqual(rows['checkout', '.claude/agents/hooks/guard.md'].precedence, 'depends_on_unparsed_definition')
         self.assertEqual({(h.path, h.event, h.status) for h in hooks},
                          {('.claude/agents/flow.md', agents.UNPARSED_HOOKS, 'unknown'),
                           ('.claude/agents/hooks/guard.md', 'Stop', 'declared')})
         self.assertNotIn(SECRET, json.dumps(inventory.document()))
+
+    def test_unknown_definitions_keep_competing_selections_unresolved(self):
+        files = {'src/task/.claude/agents/reviewer.md': md('name: reviewer', 'description: &a nearest'),
+                 '.claude/agents/reviewer.md': md('name: reviewer', 'description: root'),
+                 '.codex/agents/nodesc.toml': 'name = "nodesc"\ndeveloper_instructions = "x"\n',
+                 '.codex/agents/deep.toml': 'hooks = ' + '[' * 1000 + ']' * 1000 + '\n',
+                 '.codex/agents/role.toml': 'name = "role"\ndescription = "d"\ndeveloper_instructions = "x"\n'}
+        checkout = fixture.build(self.base / 'unknown', files, hostile=False)
+        (self.plugin / 'agents/nofence.md').write_text('no fence here\n')
+        _, found, _ = agents.capture(checkout, CLAUDE, external_roots=dict(plugin=str(self.plugin)),
+                                     roles=dict(plugin='claude_plugin'))
+        rows = self.by_path(found)
+        self.assertEqual(rows['checkout', 'src/task/.claude/agents/reviewer.md'].precedence, 'unknown_definition')
+        self.assertEqual(rows['checkout', '.claude/agents/reviewer.md'].precedence, 'depends_on_unparsed_definition')
+        self.assertEqual((rows['plugin', 'agents/nofence.md'].disposition, rows['plugin', 'agents/nofence.md'].precedence),
+                         ('unknown', 'unknown_definition'))
+        self.assertEqual(rows['plugin', 'agents/guard.md'].precedence, 'depends_on_unparsed_definition')
+        # An unknown file outside the task_cwd ancestry cannot shadow anything.
+        apart = fixture.build(self.base / 'apart', {'other/.claude/agents/far.md': md('name: &n root', 'description: d'),
+                                                    '.claude/agents/root.md': md('name: root', 'description: d')}, hostile=False)
+        rows = self.by_path(agents.capture(apart, CLAUDE)[1])
+        self.assertEqual((rows['checkout', 'other/.claude/agents/far.md'].precedence,
+                          rows['checkout', '.claude/agents/root.md'].precedence),
+                         ('unknown_definition', 'selected_by_declared_precedence'))
+        # Without an inventoried codex_home, a role without a description may still be completed, so it stays unknown.
+        for trust in ('declared_trusted', None):
+            with self.subTest(trust=trust):
+                _, found, _ = agents.capture(checkout, {**CODEX, **({'project_trust': trust} if trust else {})})
+                rows = self.by_path(found)
+                self.assertEqual(rows['checkout', '.codex/agents/nodesc.toml'].precedence, 'unknown_definition')
+                self.assertEqual(rows['checkout', '.codex/agents/deep.toml'].precedence, 'unknown_definition')
+                self.assertEqual(rows['checkout', '.codex/agents/role.toml'].precedence,
+                                 'depends_on_unparsed_definition' if trust else 'depends_on_project_trust')
+
+    def test_skip_and_reject_reasons_follow_the_loader_order(self):
+        long_name = 'n' * 257
+        for lines, reason in ((('name: -lead', 'description: d'), 'invalid_name'), (('name: a:b', 'description: d'), 'invalid_name'),
+                              ((f'name: {long_name}', 'description: d'), 'invalid_name'),
+                              (('name: r', 'description: "  "'), 'missing_description'), (('name: r',), 'missing_description'),
+                              (('name: -lead',), 'invalid_name'), (('description: "  "',), 'missing_name')):
+            with self.subTest(lines=lines):
+                _, facts = agents.parse('x.md', md(*lines).encode(), CLAUDE)
+                self.assertEqual((facts['disposition'], facts['reason']), ('skipped_silently', reason))
+        role = 'name = "r"\ndescription = "d"\ndeveloper_instructions = "x"\n'
+        for text, reason in (('name = "r"\ndescription = " "\ndeveloper_instructions = "x"\n', 'blank_description'),
+                             ('name = "r"\ndescription = "d"\n', 'missing_developer_instructions'),
+                             ('name = 3\ndescription = "d"\ndeveloper_instructions = "x"\n', 'invalid_field_type'),
+                             (role + 'model = 5\n', 'invalid_field_type'), (role + 'hide_agent_reasoning = "yes"\n', 'invalid_field_type'),
+                             (role + 'mcp_oauth_callback_port = 70000\n', 'invalid_field_type'),
+                             (role + 'nickname_candidates = 3\n', 'invalid_field_type'),
+                             ('name = \n', 'bad_toml'), ('description = "d"\ndeveloper_instructions = "x"\n', 'missing_name'),
+                             ('name = " "\ndescription = "d"\ndeveloper_instructions = "x"\n', 'missing_name'),
+                             *((role + f'nickname_candidates = {value}\n', 'invalid_nickname_candidates')
+                               for value in ('[]', '["a", " a "]', '[" "]', '["bad!"]')),
+                             # Two faults each: the loader's earlier check wins.
+                             ('name = "r"\ndescription = " "\n', 'blank_description'),
+                             ('description = "d"\ndeveloper_instructions = " "\n', 'blank_developer_instructions'),
+                             ('description = "d"\ndeveloper_instructions = "x"\nnickname_candidates = []\n', 'missing_name'),
+                             ('name = "r"\ndescription = " "\nfavorite = 1\n', 'unknown_field_rejected')):
+            with self.subTest(text=text):
+                _, facts = agents.parse('x.toml', text.encode(), CODEX)
+                self.assertEqual((facts['disposition'], facts['reason']), ('rejected_with_warning', reason))
+        _, facts = agents.parse('x.toml', (role + 'nickname_candidates = [" Ada ", "b_2-c"]\n').encode(), CODEX)
+        self.assertEqual((facts['disposition'], facts['reason']), ('declared', None))
+        # An enum or struct field whose value is neither a string nor a table is not modelled, so it is not declared.
+        _, facts = agents.parse('x.toml', (role + 'sandbox_mode = 5\n').encode(), CODEX)
+        self.assertEqual((facts['disposition'], facts['reason']), ('unknown', 'config_field_type_unverified'))
+
+    def test_same_name_agents_in_two_plugin_roots_are_ambiguous_plugin_order(self):
+        second = self.base / 'plugin-b'
+        (second / 'agents').mkdir(parents=True)
+        (second / 'agents/guard.md').write_text(md('name: guard', 'description: second plugin guard'))
+        _, found, _ = agents.capture(self.checkout, CLAUDE, external_roots=dict(plugin=str(self.plugin), second=str(second)),
+                                     roles=dict(plugin='claude_plugin', second='claude_plugin'))
+        rows = self.by_path(found)
+        self.assertEqual({rows[key].precedence for key in (('plugin', 'agents/guard.md'), ('second', 'agents/guard.md'))},
+                         {'ambiguous_plugin_order'})
+
+    def test_unreadable_files_the_runtime_may_load_always_reach_hook_classification(self):
+        escaped, explicit = '---\n"ho\\x6fks":\n  PreToolUse: []\n---\n', '---\n? hooks\n:\n  PreToolUse: []\n---\n'
+        for raw in (escaped.encode(), explicit.encode(), b'---\nname: \xff\n---\n', b'---\n' + b'k: v\n' * 600 + b'---\n'):
+            with self.subTest(raw=raw[:24]):
+                _, facts = agents.parse('x.md', raw, CLAUDE)
+                self.assertEqual((facts['disposition'], facts['hooks_declared']), ('unknown', 'unknown'))
+        checkout = fixture.build(self.base / 'evasive', {'.claude/agents/esc.md': escaped, '.claude/agents/expl.md': explicit},
+                                 hostile=False)
+        _, _, hooks = agents.capture(checkout, dict(CLAUDE, task_cwd='.'))
+        self.assertEqual({(h.path, h.event, h.status) for h in hooks},
+                         {(path, agents.UNPARSED_HOOKS, 'unknown') for path in ('.claude/agents/esc.md', '.claude/agents/expl.md')})
+        # A file the runtime skips keeps the regex trigger: no hooks mention, no hook row.
+        _, facts = agents.parse('x.md', b'---\nname: [a\n---\n', CLAUDE)
+        self.assertNotIn('hooks_declared', facts)
 
     def test_no_definition_claims_availability_or_loading(self):
         for _, found, _ in (self.claude(), self.codex()):
@@ -207,6 +303,24 @@ class FrontmatterReaderTests(unittest.TestCase):
                                  b'skills:\n  - one\n  - two\nnotes: |\n  a\n  b\nhooks:\n  Stop:\n    - x: 1\n  End: []\n---\nbody')
         self.assertEqual(value, {'name': 'demo', 'description': 'quoted: yes', 'tools': ['Read', 'Grep'],
                                  'skills': ['one', 'two'], 'notes': 'a\nb', 'hooks': frontmatter.Mapping(('Stop', 'End'))})
+
+    def test_hash_inside_quotes_or_block_scalars_is_content(self):
+        self.assertEqual(frontmatter.read(b'---\nname: r\ndescription: d\ntools: [Read, "a #b", \'c #d\'] # c\n---\n'),
+                         {'name': 'r', 'description': 'd', 'tools': ['Read', 'a #b', 'c #d']})
+        self.assertEqual(frontmatter.read(b'---\nd: |\n  # h\n  t\n# trailing comment\ne: >\n  # x\n  y\n---\n'),
+                         {'d': '# h\nt', 'e': '# x y'})
+        _, facts = agents.parse('x.md', b'---\nname: r\ndescription: |\n  # Reviewer\n---\n', CLAUDE)
+        self.assertEqual((facts['disposition'], facts['reason']), ('declared', None))
+        _, facts = agents.parse('x.md', b'---\nname: r\ndescription: d\ntools: [Read, "a #b"]\n---\n', CLAUDE)
+        self.assertEqual((facts['disposition'], facts['reason']), ('declared', None))
+        self.assertEqual(frontmatter.string_lists('---\npaths: ["a #b", c]\n---\n', ('paths',)), {'paths': ('a #b', 'c')})
+
+    def test_long_whitespace_runs_are_read_in_linear_time(self):
+        start = time.monotonic()
+        self.assertEqual(frontmatter.read(b'---\nname: a' + b' ' * 60000 + b'b\ndescription: d\n---\n')['description'], 'd')
+        self.assertEqual(frontmatter.string_lists('---\npaths: [a' + ' ' * 60000 + 'b]\n---\n', ('paths',)),
+                         {'paths': ('a' + ' ' * 60000 + 'b',)})
+        self.assertLess(time.monotonic() - start, 1.0)
 
     def test_valid_yaml_outside_the_old_subset_is_read_not_misreported(self):
         value = frontmatter.read(b'---\nname: r\ndescription: "d" # note\n"hooks":\n  Stop:\n  - hooks: []\n  End: []\n'
