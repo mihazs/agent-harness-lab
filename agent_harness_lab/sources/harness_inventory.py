@@ -36,7 +36,7 @@ _FILE = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 # a later parser replaces its kind's stub or appends its own line. parse(path, raw, profile) returns
 # (parse_status, facts), facts a flat mapping of label to str/int/bool/None, so raw text never reaches a node.
 PARSERS = (
-    ('hook', 'hooks', STUB),
+    ('hook', 'hooks', 'agent_harness_lab.sources.hooks_inventory:parse'),
     ('instruction', 'instructions', 'agent_harness_lab.sources.instructions:parse_surface'),
     ('path_rule', 'path_rules', 'agent_harness_lab.sources.claude_rules:parse'),
     ('skill', 'commands_skills', STUB),

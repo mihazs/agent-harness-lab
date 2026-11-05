@@ -1306,6 +1306,67 @@ is the native validator, recorded in the capability table. Synthetic tests count
 the opens of the policy file and deny process creation and `exec`, `eval` and
 `compile`. Rule rewrites and adoption remain open in #283 and #285.
 
+### Static hook inventory
+
+`sources.hooks_inventory.capture(CHECKOUT, PROFILE)` takes one harness
+inventory and returns the hook registrations it declares. It does not read
+any file a second time. Hook commands, scripts and configuration values are
+never executed, imported or spawned. Script bytes are only hashed by the walk.
+The schemas follow the `surfaces.PINS` pins: the
+[Claude Code hooks reference](https://code.claude.com/docs/en/hooks) at 2.1.317
+and [openai/codex@d786ff91](https://github.com/openai/codex/tree/d786ff91/codex-rs/hooks/src/engine/discovery.rs)
+at 0.166.0, both retrieved 2026-11-05.
+
+The parser reads these files: Claude `.claude/settings.json` and plugin
+`hooks/hooks.json`, plus Codex `.codex/hooks.json` and the `[hooks]` table of
+`.codex/config.toml`, which is decoded with `tomllib`. `.claude/settings.local.json`
+is `private_excluded`. It is listed as `present_content_not_read` and is never read or
+hashed; reading it on an explicit opt-in remains open. Only the `hooks` key is
+projected. All other settings keys, such as permissions, env and MCP servers,
+appear only as a count and a digest of their key names. JSON is decoded with
+`hardened.load_json`. A file over 1 MiB or with more than 512 handlers, a
+malformed file or invalid TOML is `parse_failed`, never truncated.
+
+For each handler the inventory records the event, checked against the 33
+pinned Claude events or the 14 Codex events; an unknown event name is flagged
+and not recorded. It also records the matcher kind, the handler type, the
+timeout and `onFailure` (Claude `command` and `http`, gated at 2.1.295). The
+matcher text is kept only as a digest. Claude matchers are classified with the
+documented rule: `*`, empty or omitted is `all`, a plain token is `exact`, a
+`|`- or `,`-separated list is `pipe_list`, and anything else is `regex`. Codex
+matchers are `regex`. Codex `prompt` and `agent` handlers are
+`parsed_but_skipped`, because the pinned discovery skips them. Fields outside
+the pinned handler schema are counted as unknown. Commands, env, headers, MCP
+input and prompt text are never recorded; commands are kept only as a digest,
+and header and env entries keep
+only a digest of their key names.
+
+Warnings cover `unknown_event`, `unknown_field` (including a Codex
+`hooks.json` top-level key, which `deny_unknown_fields` rejects),
+`plugin_hooks_wrapper_missing`, `unknown_handler_type`, `parse_failed`,
+`private_excluded_not_read` and `hooks_json_and_toml_in_one_layer`. The last
+one is raised when one Codex layer has handlers in both representations.
+Handler trust is always `unknown`. `[hooks.state]` `trusted_hash` entries are
+counted, but mapping one to a handler is unverified at the pin.
+
+Command resolution tokenizes the command with `shlex`, or uses the exec-form
+`args` as given. Only `${CLAUDE_PROJECT_DIR}` (Claude only) is substituted, with the
+checkout root, giving the `project_dir` anchor. Any other relative path is
+`cwd_relative_unverified`. A leading interpreter such as `bash` or `python3` is
+skipped, unless it runs inline code with `-c`, `-e` or `-m`. A safe repo-relative
+path containing `/` becomes a `referenced_script` node with the content hash from
+the inventory, or `inventoried: false` when the walk did not list it. A pipe, a
+substitution, a bare `PATH` name, an absolute or parent path, or any other variable
+gives `external_or_dynamic_command`. Script nodes are `native_runtime` when a
+parsed native handler references them. Git hook managers (`lefthook.yml`,
+`.pre-commit-config.yaml`, `.husky/*`, `.git/hooks`) are `git_developer`, and
+other hook-path files are `ordinary_script`.
+
+`observed_execution` is always `unknown` and `executed` is always `false`;
+construction rejects any other value. Configuration presence is not evidence
+that a hook ran. Skill and agent frontmatter hooks, a CLI, and loading or
+execution attribution remain open in #276, #278 and #282.
+
 ## ai-memory OKF project exports
 
 Select `local_file/ai-memory-okf/0.2` in the existing source declaration, with
