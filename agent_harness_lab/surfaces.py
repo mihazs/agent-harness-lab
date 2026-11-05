@@ -154,6 +154,25 @@ RULES = (
     Rule('codex-agent-hooks', 'hook', 45, 'contract_required', lambda path, parts, context:
          _agent_file('.codex', '.toml')(path, parts, context) or _agent_file(None, '.toml')(path, parts, context),
          runtimes=frozenset({'codex'})),
+    # Runtime configuration is inventoried presence-only (sources/config_inventory.py); AHL only recommends changes.
+    Rule('claude-mcp-config', 'config', 40, 'recommendation_only', lambda path, parts, context: path == '.mcp.json',
+         runtimes=frozenset({'claude-code'})),
+    Rule('claude-settings', 'config', 40, 'recommendation_only',
+         lambda path, parts, context: path in ('.claude/settings.json', '.claude/settings.local.json'),
+         runtimes=frozenset({'claude-code'})),
+    Rule('claude-output-style', 'config', 40, 'recommendation_only',
+         lambda path, parts, context: path.endswith('.md') and '/.claude/output-styles/' in '/' + path,
+         runtimes=frozenset({'claude-code'})),
+    Rule('codex-config', 'config', 40, 'recommendation_only', lambda path, parts, context: path == '.codex/config.toml',
+         runtimes=frozenset({'codex'})),
+    # Memory stores (project or declared-root layout) are never read, adopted or recommended against.
+    Rule('runtime-memory', None, 0, 'private_excluded', lambda path, parts, context: (
+        '/.claude/agent-memory/' in '/' + path or '/.claude/agent-memory-local/' in '/' + path
+        or parts[0] == 'memories' or len(parts) > 3 and parts[0] == 'projects' and parts[2] == 'memory')),
+    # AHL's own derivation snapshot (evaluation/derivations.py), never runtime settings.
+    Rule('ahl-derivation-settings', None, 0, 'private_excluded', lambda path, parts, context: (
+        len(parts) >= 3 and parts[-3:-2] == ('derivations',) and parts[-1] == 'settings.json'
+        and re.fullmatch('[0-9a-f]{64}', parts[-2]) is not None)),
 )
 
 
@@ -298,5 +317,9 @@ CAPABILITIES = (
     _row('memory', 'codex', 'memories layout', _CODEX + 'memories', 'unverified'),
     _row('settings', 'claude-code', 'settings.json, settings.local.json and managed settings layers', _CLAUDE + 'settings'),
     _row('settings', 'claude-code', 'managed settings OS paths', _CLAUDE + 'settings', 'unverified'),
-    _row('settings', 'codex', 'config.toml layers, requirements.toml and project trust', _CODEX + 'config-reference'),
+    _row('settings', 'codex', 'config.toml layers, requirements.toml and project trust', _CODEX + 'config-reference'),    _row('mcp', 'claude-code', 'MCP scope precedence local, project, user; project servers need approval', _CLAUDE + 'mcp'),
+    _row('mcp', 'codex', 'mcp_servers enabled and default_tools_approval_mode keys', _CODEX + 'config-reference'),
+    _row('output_styles', 'claude-code', 'nested output-styles closest wins; keep-coding-instructions, force-for-plugin', _CLAUDE + 'output-styles'),
+    _row('output_styles', 'codex', 'instructions, developer_instructions, model_instructions_file, personality, compact_prompt', _CODEX + 'config-reference'),
+    _row('memory', 'codex', 'features.memories is off by default', _CODEX + 'config-reference'),
 )

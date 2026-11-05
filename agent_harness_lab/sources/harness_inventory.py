@@ -39,6 +39,7 @@ _FILE = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 PARSERS = (
     ('agent', 'agents', 'agent_harness_lab.sources.agents_inventory:parse'),
     ('command', 'commands_skills', 'agent_harness_lab.sources.commands_inventory:parse'),
+    ('config', 'settings', 'agent_harness_lab.sources.config_inventory:parse'),
     ('hook', 'hooks', 'agent_harness_lab.sources.hooks_inventory:parse'),
     ('instruction', 'instructions', 'agent_harness_lab.sources.instructions:parse_surface'),
     ('path_rule', 'path_rules', 'agent_harness_lab.sources.claude_rules:parse'),
