@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.117.0
+
+### Minor Changes
+
+- 6ca3e83: Add `agent_harness_lab/plugin_recommendations.py`, which turns a proposed change to an explicitly selected external plugin checkout into a reviewable patch bundle. Nothing is applied. `workflow.recommend_plugin_change` routes the change to private `0o700` state, where the bundle holds a git-format `patch.diff` computed against the recorded HEAD and a `manifest.json` with the HEAD commit and per-file hashes. The checkout must be pinned to the HEAD the plugin inventory recorded, and its worktree must equal the HEAD tree; otherwise the call returns a `refused` receipt and writes nothing. Worktree, committed-tree, Git-directory and Git-output bounds are checked before reading, so a tree DAG, an oversized configuration or a compressed object bomb is refused as `checkout_bound_exceeded`, and a `state` path containing `..` is refused. Commit and tree objects are read through the hardened `GitView` copy. `status()` reports `stale_patch` once HEAD moves. Enablement changes stay `recommendation_only`. Changed components are re-parsed with the registered parsers in a temporary copy, while runtime loading and compatibility stay `unverified`. No `claude plugin` or `codex plugin` command runs, and nothing is pushed or published.
+
 ## 0.116.0
 
 ### Minor Changes
