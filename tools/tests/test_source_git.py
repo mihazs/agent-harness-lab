@@ -336,6 +336,19 @@ class GitSourceTests(unittest.TestCase):
             self.assertEqual(self.invoke('import', '--cache', str(cache))[0], 2)
         self.assertEqual(cache.read_bytes(), before)
 
+    def test_optional_surface_inventory_extends_the_captured_harness_snapshot(self):
+        self.selection['inventory_profile'] = dict(schema_version=1, runtime='codex', version='0.166.0', task_cwd='.')
+        self.declare()
+        collector, first = self.read()
+        inventory = collector.inventory
+        self.assertEqual(inventory.harness_sha256, collector.harness.sha256)
+        self.assertEqual({n.path_sha256 for n in inventory.nodes}, {f.path_sha256 for f in collector.harness.files})
+        self.assertEqual(collector.summary['harness_inventory']['harness_inventory_sha256'], inventory.sha256)
+        self.assertIn('harness_inventory', {r.record_type for r in first.records})
+        self.selection['inventory_profile']['task_cwd'] = '../outside'; self.declare()
+        with patch.object(GitView, 'run', side_effect=AssertionError('invalid profile must not run Git')):
+            self.assertEqual(self.invoke('preview')[0], 2)
+
     def test_invalid_instruction_profile_is_rejected_before_running_git(self):
         self.instruction_profile()
         self.selection['instruction_profile']['task_cwd'] = '../outside'; self.declare()

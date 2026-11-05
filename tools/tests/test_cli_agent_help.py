@@ -13,13 +13,13 @@ from unittest.mock import patch
 from agent_harness_lab import cli
 
 ROOT=Path(__file__).resolve().parents[2]
-ROUTES=((),('rollback',),('update',),('sources',),('sources','lineage'),
+ROUTES=((),('rollback',),('update',),('sources',),('sources','lineage'),('sources','inventory'),
     ('regression-review',),('bank-review',),('bank-interchange',),('experiment-history',),('grader-correction',),
     ('doctor',),('research-simulate',),('bank',),('mine',),('evaluate',),('diagnose',),('benchmark',),('skills',))
 SCRIPTS=('scripts/sync_project.py','scripts/build_release.py','scripts/check_commit_message.py','install.py')
 PARSER_FILES={
     'agent_harness_lab/'+name for name in ('cli.py','onboarding.py','one_call.py','updater.py','experiments/cli.py',
-        'sources/cli.py','sources/lineage.py','evaluation/cli.py','evaluation/regression_review.py',
+        'sources/cli.py','sources/lineage.py','sources/harness_inventory.py','evaluation/cli.py','evaluation/regression_review.py',
         'evaluation/bank_qualification.py','evaluation/oracle_history.py','evaluation/grader_correction.py',
         'evaluation/interchange.py','evaluation/image.py')}
 PARSER_FILES.update(('tools/diagnose.py','tools/benchmark_models.py','tools/link_skills.py',
