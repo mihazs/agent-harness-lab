@@ -1,5 +1,0 @@
----
-"agent-harness-lab": minor
----
-
-Add `agent_harness_lab.sources.temporal`, an offline view of which imported knowledge records were in force at a given instant, based on what each record declares. A `TemporalFacet` records a revision's knowledge time, declared validity interval, decision status and explicit supersessions. `resolve` reports `in_force`, `superseded`, `not_yet_valid`, `expired`, `not_adopted` or `unknown` with reasons, and `resolve_store` binds facets to one validated source journal and its revision edges. The default historical replay ignores corrections first recorded after the instant; `as_known_now` is an explicit retrospective view. Missing, unparseable or timezone-less times, supersession cycles, untied revisions and competing successors are reported as unknown instead of being resolved. Results are descriptive and private: they establish no truth or authority, and public export rejects the `knowledge-temporal-v1` profile. Existing record and journal fingerprints are unchanged.
