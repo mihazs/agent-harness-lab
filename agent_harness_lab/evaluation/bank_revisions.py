@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 from agent_harness_lab.private_journal import MAX_EVENTS, encoded, record, record_bytes, sync_directory, write_bytes
 from agent_harness_lab.sources.schema import digest as metadata_digest
-from .integrity import contained, copy_frozen, digest, read_regular, tree
+from .integrity import contained, copy_frozen, digest, read_regular, regular_sha256, regular_size, tree
 from .regression_controls import read_draft
 from .regressions import fields, load, sha256, text
 from .task_bank import TaskSpec
@@ -196,7 +196,7 @@ def _copy_assets(source_root, task, target, accounting):
     key = metadata_digest((task['task_id'],task['fixture_digest'],task['grader_digest']))
     for field, identity in (('fixture','fixture_digest'),('grader_bundle','grader_digest')):
         source = contained(source_root,task[field]); files = tree(source)
-        accounting[0] += len(files); accounting[1] += sum(len(read_regular(contained(source,name),MAX_REVISION_BYTES)) for name in files)
+        accounting[0] += len(files); accounting[1] += sum(regular_size(contained(source,name),MAX_REVISION_BYTES) for name in files)
         if accounting[0] > 3500 or accounting[1] > MAX_REVISION_BYTES:
             raise ValueError('bank revision resource limit exceeded')
         relative = 'assets/'+key+'/'+field
@@ -300,7 +300,7 @@ def accept(store, case_id, parent_path, request_path):
                 prior_content = fixture_content(contained(staged,prior['fixture']),prior['fixture_digest'],MAX_REVISION_BYTES)[0]
                 if new_content.normalized_sha256 == prior_content.normalized_sha256:
                     raise ValueError('normalized fixture duplicate requires explicit resolution')
-            bank_hash = hashlib.sha256(read_regular(staged/'bank.json',1024*1024)).hexdigest()
+            bank_hash = regular_sha256(staged/'bank.json',1024*1024)
             revision = dict(schema_version=1,profile=PROFILE,parent_revision_sha256=request['parent_revision_sha256'],
                 parent_bank_sha256=parent_hash,bank_manifest_sha256=bank_hash,tree_sha256=payload_tree(staged),
                 operation='accept',case_id=case_id,reviewed_event_sha256=events[-1][1],sealed_evidence_sha256=evidence,

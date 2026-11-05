@@ -17,7 +17,7 @@ from .bank_requalification_domain import parse,PROJECT_INPUT_PROFILE,PROJECT_INP
 from .comparison_custody import snapshot_pin
 from .construction_access import store_identity,current_store_identity
 from .decision_receipts import engine
-from .integrity import read_regular
+from .integrity import read_regular, regular_sha256
 from .working_state import WorkingState
 from .certification_access import check_deadline
 
@@ -83,8 +83,8 @@ def source_pin(source,deadline):
     if not stat.S_ISREG(info.st_mode) or info.st_nlink!=1 or info.st_mode&0o7000:
         raise ValueError('closed source requires a regular single-link input')
     _owned(info,'closed source')
-    raw=read_regular(path,32*1024*1024);check_deadline(deadline)
-    return pin(dict(mode=stat.S_IMODE(info.st_mode),sha256=hashlib.sha256(raw).hexdigest()))
+    identity=regular_sha256(path,32*1024*1024);check_deadline(deadline)
+    return pin(dict(mode=stat.S_IMODE(info.st_mode),sha256=identity))
 
 
 class ClosedDomain:

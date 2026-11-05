@@ -11,7 +11,7 @@ import time
 from agent_harness_lab.private_journal import MAX_EVENTS, PrivateJournal, encoded, record, sync_directory, write_bytes
 from .bank_revisions import sync_tree
 from .bank_tools import materialize_sources
-from .integrity import contained, copy_frozen, digest, read_regular, tree
+from .integrity import contained, copy_frozen, digest, read_regular, regular_size, tree
 from .regression_controls import STATES, audit_controls, containment
 from .regression_review import review_value
 from .regressions import fields, references, sha256, text
@@ -108,7 +108,7 @@ class CorrectionStore(PrivateJournal):
             copied_files = copied_bytes = 0
             for relative,(source,expected) in sources.items():
                 files = tree(source); copied_files += len(files)
-                copied_bytes += sum(len(read_regular(contained(source,name),64*1024*1024)) for name in files)
+                copied_bytes += sum(regular_size(contained(source,name),64*1024*1024) for name in files)
                 if copied_files > 3500 or copied_bytes > 60*1024*1024: raise ValueError('correction snapshot bound exceeded')
                 target = contained(staged,relative); target.parent.mkdir(mode=0o700,parents=True,exist_ok=True)
                 copy_frozen(source,target,expected)

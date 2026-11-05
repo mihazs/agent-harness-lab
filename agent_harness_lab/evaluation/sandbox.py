@@ -21,6 +21,11 @@ from .workspace import PrivateWorkspace, policy
 ROLES = {'proposer', 'evaluator_author', 'executor', 'grader'}
 
 
+def _file_sha256(path):
+    with Path(path).open('rb') as stream:
+        return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
 @dataclass(frozen=True)
 class Limits:
     seconds: float = 10
@@ -281,7 +286,7 @@ class SandboxBackend:
                     stderr=bytes(buffers[1][:limits.output_bytes]).decode('utf-8', 'replace'),
                     elapsed_seconds=time.monotonic() - start, inputs_unchanged=unchanged,
                     attestation=dict(backend='bubblewrap-offline-v1', role=role, network='none',
-                        binary_sha256=hashlib.sha256(Path(self.binary).read_bytes()).hexdigest(),
+                        binary_sha256=_file_sha256(self.binary),
                         input_digests=before, automatic_promotion=False,
                         resource_limits=asdict(limits),
                         cgroup_v2=cgroup,

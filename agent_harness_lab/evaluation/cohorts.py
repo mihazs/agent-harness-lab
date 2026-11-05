@@ -1,12 +1,11 @@
 """Private preservation membership bound to actual, currently valid prior executions."""
 from contextvars import ContextVar
-import hashlib
 import math
 import os
 from pathlib import Path
 
 from agent_harness_lab.private_journal import encoded, record, record_bytes
-from .integrity import read_regular
+from .integrity import regular_sha256
 from .regressions import fields, references, sha256, text
 
 PROFILE = 'preservation-cohorts-v1'
@@ -223,7 +222,7 @@ def capture(path, expected_sha256, planned_tasks, baseline_hash):
         fresh = _prior(dict(history_store=key[0], run_id=key[1]), {})[1]
         if fresh != checked:
             raise ValueError('qualification authority changed during capture')
-    if hashlib.sha256(read_regular(path, MAX_BYTES)).hexdigest() != manifest_hash:
+    if regular_sha256(path, MAX_BYTES) != manifest_hash:
         raise ValueError('preservation manifest changed during capture')
     binding = dict(manifest_path=str(path), manifest_sha256=manifest_hash, manifest=manifest,
                    qualification_bindings=qualifications)

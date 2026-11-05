@@ -11,7 +11,7 @@ import time
 from types import SimpleNamespace
 
 from agent_harness_lab.private_journal import PrivateJournal, encoded, record, sync_directory, write_bytes
-from .integrity import contained, copy_frozen, digest, read_regular, tree
+from .integrity import contained, copy_frozen, digest, read_regular, regular_size, tree
 from .oracle import capture, identity
 from .plan import ExperimentSpec, schedule
 from .regression_controls import containment
@@ -103,7 +103,7 @@ def bank_authority(source, *, export_root=None, expected=None):
             raise ValueError('selected task differs from authoritative bank policy')
         fixture = contained(path.parent,original['fixture']); entries = tree(fixture)
         files_total += len(entries)
-        bytes_total += sum(len(read_regular(contained(fixture,p),MAX_BYTES)) for p in entries)
+        bytes_total += sum(regular_size(contained(fixture,p),MAX_BYTES) for p in entries)
         if files_total>4096 or bytes_total>MAX_BYTES: raise ValueError('bank selection bound exceeded')
         with tempfile.TemporaryDirectory() as temporary:
             prepared = Path(temporary)/'fixture'; copy_frozen(fixture,prepared,original['fixture_digest'])
