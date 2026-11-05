@@ -41,7 +41,9 @@ The improvement examples require a trusted, supported, separately authenticated
 runtime and may spend model resources. JSON receipts and private artifacts carry
 the actual outcome; help text and declared configuration never grant authority or
 certify success. Behavioral candidates remain recommendations. Explicit
-`--repair-contracts` is a separate bounded structural application path.
+`--repair-contracts` is a separate bounded structural application path; `watch`
+has no such option and never edits harness files. `ahl improve --help` and
+`ahl watch --help` list what each command changes and never changes.
 
 Capture stdout and inspect the process exit status. Workflow exits distinguish
 completed work (0), execution/interruption/budget failures (1), invalid input (2)

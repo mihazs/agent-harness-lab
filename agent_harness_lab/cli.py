@@ -1,4 +1,4 @@
-"""One entrypoint for local analysis and controlled automatic improvement."""
+"""One entrypoint for local analysis and recommendation-only candidate evaluation."""
 import argparse
 import importlib.metadata
 import importlib.util
@@ -111,7 +111,7 @@ def main(argv=None):
         from tools.link_skills import main as install_skills
         install_skills(argv[1:], source=assets() / 'skills')
         return 0
-    parser = argparse.ArgumentParser(prog='ahl', description='Start with ahl analyze . for read-only analysis, or ahl improve . to analyze and evaluate candidates in one call.',
+    parser = argparse.ArgumentParser(prog='ahl', description='Start with ahl analyze . for read-only analysis, or ahl improve . to stage, evaluate and recommend\nharness candidates in one call. improve and watch never apply behavioral changes to the project.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='Everyday use:\n  ahl analyze .\n  ahl improve .\n\nOptional setup inspection:\n  ahl doctor . --json\n\nUse ahl COMMAND --help for required inputs, side effects and output contracts.\nAnalysis and improvement outputs are private; hashes do not authorize publication.\nWorkflow exits: 0 completed; 1 execution/interruption/budget; 2 invalid input;\n3 blocked or inconclusive. Setup and low-level tools document their own outcomes.')
     parser.add_argument('--version', action='version', version=version(),help='Print the installed AHL version and exit without running a command')
@@ -145,11 +145,19 @@ def main(argv=None):
         sub.add_parser(name,help=description+'; use ahl '+name+' --help',description=description)
     for name in ('analyze', 'improve', 'watch'):
         helps = {'analyze': 'Discover project evidence and failure candidates',
-            'improve': 'Discover, stage and evaluate harness candidates; --repair-contracts explicitly applies bounded structural repairs',
-            'watch': 'Recheck evidence and recommend improvements only when project evidence changes (recommendation-only)'}
+            'improve': 'Stage and evaluate harness candidates, then recommend; never applies behavioral changes (only --repair-contracts may apply bounded skill-header repairs)',
+            'watch': 'Recheck evidence; rerun recommendation-only staging and evaluation only when evidence or configuration changes; never edits harness files'}
+        boundary = {'analyze': '',
+            'improve': 'Changes: private state only: run artifacts (staged baseline/candidate copies, evaluation results, change plan) and a run lock.\n'
+                'Never changes: project instructions, skills or hooks; behavioral candidates stay recommendations.\n'
+                'Exception: explicit --repair-contracts may apply a bounded skill-header repair with a rollback journal;\n'
+                'a project ahl.json keeps that repair recommendation-only. No commit, publish, deploy or background service.\n',
+            'watch': 'Changes: private state only: run artifacts, a run lock and the watch checkpoint.\n'
+                'Never changes: project harness files; watch has no --repair-contracts and applies no candidate.\n'
+                'Reruns: on changed evidence or execution configuration, or a classified transient retry.\n'}
         command = sub.add_parser(name, aliases=['analysis'] if name == 'analyze' else [],
             help=helps[name], description=helps[name],formatter_class=argparse.RawDescriptionHelpFormatter,
-            epilog=('Output: private artifacts and a JSON receipt on stdout. No input bodies are public.\n'
+            epilog=(boundary[name]+'Output: private artifacts and a JSON receipt on stdout. No input bodies are public.\n'
                 'Progress: aggregate stages, counts and elapsed time on stderr.\n'
                 'Configuration constrains runtime, scope and budgets; it does not grant authority.\n'
                 +('An explicit nonstarter ahl.json bank is frozen for one cooperative comparison; its entire paired task set and preparation must fit the configured budget.\n' if name!='analyze' else '')+
