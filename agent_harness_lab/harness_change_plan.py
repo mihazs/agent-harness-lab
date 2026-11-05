@@ -5,6 +5,7 @@ from pathlib import Path, PurePosixPath
 import re
 
 from .private_journal import encoded
+from .surfaces import HOOK_FACET, classify
 
 PROFILE = 'ahl-harness-change-plan-v1'
 REFERENCE_NAMES=frozenset(('project','configuration','analysis','evidence','runtime','policy','authorization'))
@@ -49,13 +50,12 @@ class Operation:
 
 
 def _operation(path,before,after):
-    instruction=path in ('AGENTS.md','CLAUDE.md')
-    skill='/skills/' in '/'+path
-    hook='hook' in PurePosixPath(path).parts or 'hooks' in PurePosixPath(path).parts
-    executable=any(state and state[1]&0o111 for state in (before,after)) or PurePosixPath(path).suffix in ('.py','.sh','.js','.ts')
-    facets=tuple(name for name,enabled in (('instruction',instruction),('skill',skill),('hook_contract_required',hook or executable)) if enabled)
-    return Operation(path,'create' if before is None else 'remove' if after is None else 'update',
-                     'instruction' if instruction else 'skill' if skill else 'hook' if hook else 'unsupported',facets)
+    mode=0
+    for state in (before,after):
+        if state:mode|=state[1]
+    surface=classify(path,None,mode)
+    facets=tuple(name for name in ('instruction','skill',HOOK_FACET) if name in surface.facets)
+    return Operation(path,'create' if before is None else 'remove' if after is None else 'update',surface.kind,facets)
 
 
 @dataclass(frozen=True)

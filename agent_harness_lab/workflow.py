@@ -13,6 +13,7 @@ import tempfile
 import time
 import uuid
 
+from agent_harness_lab import surfaces
 from agent_harness_lab.evidence import collect
 from tools.diagnose import report
 from agent_harness_lab.monitoring.state import atomic_json, exit_code
@@ -156,7 +157,7 @@ def file_state(path):
 
 def skill_roots(project):
     """Discover immediate project-owned skill bundles without following links."""
-    for prefix in ('.agents/skills', '.claude/skills', 'skills'):
+    for prefix in surfaces.skill_prefixes():
         folder = project / prefix
         if not folder.is_dir() or any(p.is_symlink() for p in (folder, *folder.parents)
                                        if p.is_relative_to(project)):
@@ -169,7 +170,7 @@ def skill_roots(project):
 
 def harness_files(project, allowed_paths=None):
     if allowed_paths is None:
-        files = [project / name for name in ('AGENTS.md', 'CLAUDE.md') if (project / name).exists()]
+        files = [project / name for name in surfaces.ROOT_INSTRUCTIONS if (project / name).exists()]
         for skill in skill_roots(project):
             files += [p for p in skill.rglob('*') if p.is_file() and '__pycache__' not in p.parts]
     else:
@@ -206,11 +207,7 @@ def candidate_states(folder, original):
         if not path.is_file():
             continue
         relative = str(path.relative_to(folder))
-        parts = path.relative_to(folder).parts
-        permitted = relative in ('AGENTS.md', 'CLAUDE.md') or (
-            len(parts) >= 4 and parts[:2] in (('.agents', 'skills'), ('.claude', 'skills')))
-        permitted |= root_skills and len(parts) >= 3 and parts[0] == 'skills'
-        if not permitted or any(part in ('.git', '__pycache__') for part in parts):
+        if surfaces.classify(relative, None, None, root_skills=root_skills).writability != 'adoptable':
             raise ValueError(f'Candidate path outside project harness scope: {relative}')
         total += path.stat().st_size
         if len(states) >= MAX_FILES or total > MAX_BYTES:

@@ -54,6 +54,40 @@ scope are rejected before evaluation construction. Watch uses the same preflight
 and binds its checkpoint to the resolved configuration. Restart watch after changing
 configuration; it never silently widens an active run's scope.
 
+## Harness surface classification
+
+`agent_harness_lab/surfaces.py` is the only owner of the writable allowlist.
+`classify(relative_path, runtime, mode)` returns a `SurfaceClass` with `kind`,
+`scope_dir`, `executable`, `writability` and `facets`. `writability` is one of
+`adoptable`, `contract_required`, `recommendation_only`, `private_excluded` or
+`unsupported`. Candidate scope checks, journal ownership, skill-bundle discovery,
+root instruction snapshots and change-plan facets all ask this classifier.
+
+The allowlist itself is unchanged. Only these paths are `adoptable`: the root
+`AGENTS.md` and `CLAUDE.md`, files inside an immediate `.agents/skills/<name>/` or
+`.claude/skills/<name>/` bundle, and files under `skills/<name>/` when the project
+already owns a top-level `skills/` tree. Any `.git` or `__pycache__` component is
+`private_excluded`. A `hook` or `hooks` component outside those bundles is
+`contract_required`. Every other path is `unsupported`, including nested
+instruction files, rules, agents, commands, workflows, settings and plugin files.
+Executable suffixes and execute bits still add the `hook_contract_required` facet,
+which keeps such a plan unresolved. The classifier reads no file contents and runs
+nothing. A verdict does not show that any runtime loads the file.
+
+Each classifier row stands alone. When several rows match a path, the strongest
+writability wins, in the order `private_excluded`, `adoptable`,
+`contract_required`, `recommendation_only`, `unsupported`. The matching row with
+the lowest priority names the kind. A new surface therefore adds a row and
+leaves existing rows untouched.
+
+The module also holds the frozen `CAPABILITIES` table. It has one row per surface,
+runtime and documented item, pinned to Claude Code 2.1.317 and Codex 0.166.0
+(source `openai/codex@d786ff91`) and retrieved on 2026-11-05. Each row cites its
+public documentation URL. Items the research could not confirm are marked
+`unverified`, for example the Claude plugin cache subpath and the Codex memories
+layout. `verified` means only that the item is documented at the pin.
+Classification does not read the table yet.
+
 ## Independently verified format repair
 
 ```sh

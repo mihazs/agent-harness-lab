@@ -7,6 +7,7 @@ from pathlib import Path
 import stat
 import uuid
 from agent_harness_lab.evaluation.integrity import contained, relative
+from agent_harness_lab.surfaces import classify
 from agent_harness_lab.monitoring.state import atomic_json
 
 
@@ -82,10 +83,8 @@ class Journal:
 
     def owned(self,name):
         relative(name)
-        parts=Path(name).parts
-        allowed=name in ('AGENTS.md','CLAUDE.md') or (len(parts)>=4 and parts[:2] in (('.agents','skills'),('.claude','skills')))
-        allowed |= len(parts)>=3 and parts[0]=='skills' and (self.project/'skills').is_dir()
-        if not allowed or any(p in ('.git','__pycache__') for p in parts):
+        # The root skills/ probe runs only for a path that needs it, as before.
+        if classify(name,None,None,root_skills=lambda:(self.project/'skills').is_dir()).writability!='adoptable':
             raise ValueError('transaction outside owned harness surface')
         return contained(self.project,name)
 
