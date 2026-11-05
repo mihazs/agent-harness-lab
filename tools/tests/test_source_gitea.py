@@ -168,6 +168,24 @@ class GiteaSourceTests(GiteaFixture, unittest.TestCase):
         self.assertTrue(snapshot.checkpoint_ready)
         self.assertIn(self.repo_path+'/issues/7/comments?page=2&limit=50', self.targets)
 
+    def test_unpaged_responses_are_bounded_and_budgets_default_when_unset(self):
+        from agent_harness_lab.sources import gitea
+        page = self.repo_path+'/issues/7/comments?page=1&limit=50'
+        for rows, accepted in ((gitea.MAX_UNPAGED_ROWS, True), (gitea.MAX_UNPAGED_ROWS+1, False)):
+            with self.subTest(rows=rows):
+                self.routes[page] = [dict(self.comment, id=1000+index) for index in range(rows)]
+                self.issue['comments'] = rows
+                if accepted:
+                    client, snapshot = self.read()
+                    self.assertTrue(snapshot.checkpoint_ready)
+                else:
+                    with self.assertRaises(TransportError): self.read()
+        client = GiteaAPI(self.base, self.selection)
+        self.assertEqual((client.transport.max_pages, client.transport.max_bytes, client.transport.seconds),
+            (gitea.DEFAULT_LIMITS['max_pages'], gitea.DEFAULT_LIMITS['max_bytes'], gitea.DEFAULT_LIMITS['seconds']))
+        client = GiteaAPI(self.base, self.selection, max_pages=3, max_bytes=None)
+        self.assertEqual((client.transport.max_pages, client.transport.max_bytes), (3, gitea.DEFAULT_LIMITS['max_bytes']))
+
     def test_incomplete_pagination_is_visible_coverage_and_never_checkpoints(self):
         page = self.repo_path+'/issues/7/comments?page=1&limit=50'
         full = [dict(self.comment, id=1000+index) for index in range(50)]

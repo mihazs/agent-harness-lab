@@ -1739,6 +1739,11 @@ page, a changed or mismatched total, a full last page without a total, an issue
 comment count that differs from its listing, and a budget spent mid-listing each
 leave `pagination_incomplete` coverage with the reason in `basis`.
 
+A server that ignores `page`/`limit` may answer with one longer first page of at
+most 1,000 rows; a longer response, or any later page above the limit, fails the
+capture. Budgets left unset in the configuration default to 1,000 requests,
+256 MiB and 900 seconds; configured values take precedence.
+
 HTTP 401, 403, 404 and 429 become coverage states (`unauthorized`, `forbidden`,
 `not_found`, `rate_limited`) on the resource that returned them. A 429 stops every
 later request; there is no automatic retry. A spent page, byte or deadline budget

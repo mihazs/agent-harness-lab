@@ -15,6 +15,10 @@ PROVIDER = 'gitea'
 SOURCE_VERSION = 'v1'
 API_PREFIX = '/api/v1'
 PAGE_SIZE = 50
+# A server that ignores page/limit may answer with one longer first page, never an unbounded one.
+MAX_UNPAGED_ROWS = 1000
+# Budgets that apply when the configuration leaves one unset; a configured value always takes precedence.
+DEFAULT_LIMITS = dict(max_pages=1000, max_bytes=256*1024*1024, seconds=900)
 CAPTURE = ('comments', 'issues', 'pulls', 'reviews')
 REVIEW_STATES = ('APPROVED', 'COMMENT', 'PENDING', 'REQUEST_CHANGES', 'REQUEST_REVIEW')
 DENIED = {401: 'unauthorized', 403: 'forbidden', 404: 'not_found', 429: 'rate_limited'}
@@ -106,7 +110,7 @@ class GiteaAPI:
         if not isinstance(selection, GiteaSelection): raise TransportError('explicit Gitea selection required')
         self.selection = GiteaSelection.parse(selection.to_dict())
         if base_url != self.selection.base_url: raise TransportError('Gitea endpoint must equal the selected instance root')
-        self.transport = JsonAPI(base_url, **limits)
+        self.transport = JsonAPI(base_url, **{**DEFAULT_LIMITS, **{k: v for k, v in limits.items() if v is not None}})
         self.authorization = authorization
         self.repo_path = f'{API_PREFIX}/repos/{self.selection.owner}/{self.selection.repo}'
 
@@ -168,6 +172,8 @@ class GiteaAPI:
                 return rows, (blocked.state, None) if page == 1 else ('pagination_incomplete', blocked.state)
             if not isinstance(value, list) or any(not isinstance(item, dict) for item in value):
                 raise ValueError('malformed Gitea listing')
+            if len(value) > PAGE_SIZE and (page != 1 or len(value) > MAX_UNPAGED_ROWS):
+                raise ValueError('Gitea page exceeds the requested limit')
             count = headers.get('x-total-count')
             if count is not None:
                 if not isinstance(count, str) or re.fullmatch(r'0|[1-9][0-9]{0,18}', count) is None:
@@ -183,8 +189,7 @@ class GiteaAPI:
             if following is None: break
             if len(value) != PAGE_SIZE: raise ValueError('Gitea page size changed before the last page')
             page = following
-        # A server that ignores page/limit may return one longer first page; a full last page needs a total.
-        if len(value) > PAGE_SIZE and page != 1: raise ValueError('Gitea page exceeds the requested limit')
+        # A full last page needs a total to show nothing follows it.
         if total is not None and len(rows) != total: return rows, ('pagination_incomplete', 'total_count_mismatch')
         if total is None and len(value) >= PAGE_SIZE: return rows, ('pagination_incomplete', 'page_size_unverified')
         return rows, ('captured', None)
