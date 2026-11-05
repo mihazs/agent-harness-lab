@@ -1984,7 +1984,8 @@ Suite-level JUnit `failure`/`error` elements name no case; they are never
 attributed to one and add `suite_level_status_unattributed`. `duration_seconds`
 is JUnit's `time` attribute, or the sum of pytest's setup/call/teardown durations.
 It is `null` when absent, and also when a value is malformed, negative or
-non-finite (with `invalid_duration`). pytest collector failures add
+non-finite, or when finite pytest phases sum to a non-finite total (with
+`invalid_duration`). pytest collector failures add
 `collection_failures_reported`; they create no case.
 
 These results are CI evidence about the declared commit only. Every result carries

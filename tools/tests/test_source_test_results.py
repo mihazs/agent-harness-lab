@@ -90,6 +90,15 @@ class TestResultSourceTests(unittest.TestCase):
         self.assertTrue({'invalid_duration', 'unrecognized_case_element', 'unrecognized_outcome',
             'commit_binding_declared', 'reruns_not_independent'} <= set(summary['warnings']))
 
+    def test_overflowing_pytest_phase_sum_is_an_invalid_duration_not_a_refusal(self):
+        report = dict(PYTEST, tests=[dict(nodeid='tests/test_a.py::test_huge', outcome='passed',
+            setup=dict(duration=1e308, outcome='passed'), call=dict(duration=1e308, outcome='passed'))])
+        (self.root/'reports/pytest.json').write_text(json.dumps(report))
+        self.declare([dict(path='reports/pytest.json', format='pytest-json')])
+        self.connector.read(self.source)
+        self.assertEqual(self.statuses('pytest-json'), {'tests/test_a.py::test_huge': ('passed', 'passed', None)})
+        self.assertIn('invalid_duration', self.connector.summary['warnings'])
+
     def test_results_are_declared_commit_evidence_never_task_outcomes_or_public(self):
         snapshot = self.connector.read(self.source)
         summary = self.connector.summary
