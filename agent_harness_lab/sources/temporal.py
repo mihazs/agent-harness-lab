@@ -11,6 +11,7 @@ from collections import Counter, deque
 from dataclasses import dataclass
 from datetime import datetime
 import hashlib
+import json
 from .execution import RecordRef, frozen, objects, unpack
 from .schema import Contract, digest, fingerprint, timestamp
 
@@ -181,9 +182,11 @@ def resolve(facets, at, *, revisions=(), knowledge='historical'):
         conflicts.append(dict(kind='supersession_cycle', members=[ref(k) for k in members]))
         for key in members: structural.setdefault(key, set()).add('supersession_cycle')
     groups = {}
-    for key in index.keys()-future: groups.setdefault(key[:2], []).append(key)
-    for members in groups.values():
-        leaves = sorted(k for k in members if not adjacency.get(k))
+    for key in sorted(index.keys()-future): groups.setdefault(key[:2], []).append(key)
+    for _, members in sorted(groups.items()):
+        # A revision is a leaf of its record unless another revision of the same record is reachable from it;
+        # edges to other records do not order revisions of this record.
+        leaves = [k for k in members if not any(o != k and reaches(adjacency, k, o) for o in members)]
         if len(leaves) > 1:
             conflicts.append(dict(kind='ambiguous_revisions', members=[ref(k) for k in leaves]))
             for key in leaves: structural.setdefault(key, set()).add('ambiguous_revisions')
@@ -195,6 +198,7 @@ def resolve(facets, at, *, revisions=(), knowledge='historical'):
         if rivals:
             competing.update(rivals)
             conflicts.append(dict(kind='competing_successors', predecessor=ref(before), members=[ref(k) for k in rivals]))
+    conflicts.sort(key=lambda row: json.dumps(row, sort_keys=True))
     rows = []
     for key in sorted(index.keys()-future):
         successors = sorted(adjacency.get(key, ()))

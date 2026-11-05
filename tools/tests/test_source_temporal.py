@@ -36,6 +36,29 @@ def status(result, name, revision='r1'):
     return statuses(result)[rec(name, revision).key[1:]]
 
 
+class DeterminismAndTieTests(unittest.TestCase):
+    def test_edges_to_other_records_do_not_order_revisions_of_one_record(self):
+        facets = [facet('a', 'r1', superseded_by=(rec('x'),)), facet('a', 'r2'), facet('x')]
+        result = resolve(facets, '2026-02-01T00:00:00Z')
+        self.assertEqual(status(result, 'a', 'r1')[0], 'unknown')
+        self.assertEqual(status(result, 'a', 'r2'), ('unknown', ['ambiguous_revisions']))
+        self.assertIn('ambiguous_revisions', {row['kind'] for row in result['conflicts']})
+
+    def test_result_is_identical_across_input_order_and_hash_seeds(self):
+        import random, subprocess, sys
+        facets = [facet(name, revision) for name in 'xybcza' for revision in ('r1', 'r2')]
+        baseline = json.dumps(resolve(facets, '2026-02-01T00:00:00Z'), sort_keys=False)
+        for seed in range(20):
+            shuffled = facets[:]; random.Random(seed).shuffle(shuffled)
+            self.assertEqual(json.dumps(resolve(shuffled, '2026-02-01T00:00:00Z'), sort_keys=False), baseline)
+        script = ('import json,sys;sys.path.insert(0,%r);import test_source_temporal as t;'
+                  'f=[t.facet(n,r) for n in "xybcza" for r in ("r1","r2")];'
+                  'print(json.dumps(t.resolve(f,"2026-02-01T00:00:00Z")))') % str(Path(__file__).parent)
+        outputs = {subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, check=True,
+                                  env={'PYTHONHASHSEED': str(seed), 'PATH': '/usr/bin:/bin'}).stdout for seed in (1, 2, 3)}
+        self.assertEqual(len(outputs), 1)
+
+
 class IntervalTests(unittest.TestCase):
     def test_declared_interval_is_half_open_and_offsets_compare_as_instants(self):
         page = facet('page', valid_from='2026-02-01T03:00:00+03:00', valid_until='2026-03-01T00:00:00Z', open_ended=False)

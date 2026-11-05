@@ -1093,13 +1093,19 @@ A status stays `unknown` when the facts it needs are missing:
 - Records on a supersession cycle, including a self-loop, are `unknown` with
   `supersession_cycle` and listed under `conflicts`. The cycle is never broken arbitrarily.
 - Two revisions of one native record known at the instant without an ordering edge
-  are both `unknown` with `ambiguous_revisions`. Two successors of one record that
+  are both `unknown` with `ambiguous_revisions`. Only a path from one revision to
+  another revision of the same record orders them; edges to other records do not. Two successors of one record that
   do not supersede each other are both `unknown` with `competing_successors`.
   Arrival order, `recorded_at` order and collection time never choose a winner.
   Only explicit declarations do.
 - A predecessor is `unknown` when a successor is structurally unknown, has no facet
   (a deletion tombstone, for example), is not yet known at the instant, or has no
   usable `valid_from`. A proposed or rejected successor does not take effect.
+  An effective successor supersedes its predecessor once its `valid_from` has passed,
+  even when the successor's own end is unknown, and supersession is reported before
+  the predecessor's own decision status (a superseded `proposed` record reads
+  `superseded`, not `not_adopted`). Records and conflicts are emitted in a canonical
+  order independent of input order.
 - A self-declared `deprecated` or `superseded` status takes effect no later than the
   revision's `recorded_at`. When that time is unknown or after the instant, the status
   is unknown. A declared interval is half-open, so the `valid_until` instant is expired.
