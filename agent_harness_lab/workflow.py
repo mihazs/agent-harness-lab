@@ -393,6 +393,13 @@ def adopt(project, baseline, candidate, original, proposed):
         return sorted(before)
 
 
+def _bounded_sha256(path, limit=8*1024*1024):
+    """Explanatory binding only: unreadable, irregular or oversized evidence stays unknown."""
+    from .evaluation.integrity import regular_sha256
+    try: return regular_sha256(path, limit)
+    except (ValueError, OSError): return 'unknown'
+
+
 def _improve(args):
     from agent_harness_lab.cli import assets, evaluator, _progress_reporter
     from .one_call import invocation_context
@@ -513,8 +520,11 @@ def _improve(args):
                   analysis=data['execution'])
     protected = {}
     refinement_feedback = []
+    single_run = None
+    final_attempt = None
     trials_left = getattr(args, "trial_limit", 24)
     for attempt in range(1 if bank is not None else 2):
+        final_attempt = attempt
         check_configuration(args)
         if remaining() <= 0:
             result['status'] = 'budget_exhausted'
@@ -747,10 +757,16 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             result.update(status=evaluated['status'],reason=evaluated.get('reason'))
             break
         from agent_harness_lab.promotion.policy import legacy_coverage
-        if not legacy_coverage(json.loads(manifest_path.read_text()), trials):
+        manifest_raw = manifest_path.read_bytes()
+        if not legacy_coverage(json.loads(manifest_raw), trials):
             result['status'] = 'incomplete'
             result['reason'] = 'missing_or_duplicate_trials'
             break
+        # Latest exactly covered evaluation; explained after the loop, never an extra gate input.
+        single_run = dict(manifest=json.loads(manifest_raw), trials=trials, inputs_unchanged=evaluated['inputs_unchanged'],
+            bindings=dict(attempt=attempt, evaluation=str(options.output), manifest_sha256=hashlib.sha256(manifest_raw).hexdigest(),
+                results_sha256=_bounded_sha256(Path(options.output) / 'results.json'),
+                baseline_sha256=baseline_hash, candidate_sha256=frozen_hash))
         write_json(output / f'feedback-{attempt}.json', dict(inputs_unchanged=evaluated['inputs_unchanged'],
             trials=[t for t in trials if t['split'] != 'heldout']))
         refinement_feedback = [{key:trial.get(key) for key in ('task','version','split','status')}
@@ -802,6 +818,17 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if controlled and permission_audit is not None and result['implementation_prerequisites']['restricted_process_protocol']['status']!='qualified':
             result.pop('recommendation',None)
             result.update(status='blocked',reason='restricted_process_protocol_unqualified')
+    if single_run is not None:
+        from .promotion.policy import SINGLE_RUN_PROFILE,single_run_decision
+        bindings=dict(single_run['bindings'],final_attempt=final_attempt,
+            describes_final_attempt=single_run['bindings']['attempt']==final_attempt)
+        try:
+            result['decision']=single_run_decision(single_run['manifest'],single_run['trials'],
+                inputs_unchanged=single_run['inputs_unchanged'],prerequisites=result['implementation_prerequisites'],
+                prerequisite_scope=getattr(args,'_prerequisite_scope',None),bindings=bindings)
+        except Exception as exc:  # An explanation failure never changes the run result.
+            result['decision']=dict(profile=SINGLE_RUN_PROFILE,status='unavailable',reason=type(exc).__name__,
+                publication_allowed=False,automatic_promotion=False,adoption_authority=False)
     result['automatic_promotion']=False
     if access is not None:
         result['construction_access']=access.report()

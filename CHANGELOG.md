@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.94.1
+
+### Patch Changes
+
+- 54a2718: Fix the default `ahl improve` single-run `decision` block so it can never change a run's outcome. It no longer hashes the whole evaluation tree. That hash raised on routine trial-workspace symlinks (virtualenvs, `node_modules/.bin`) and turned `no_change` or `evaluation_failed` runs into `invalid_input`. The block now binds bounded `results.json` and manifest hashes, recording `unknown` when they cannot be read. A failure to build the explanation yields `{"status": "unavailable"}` and leaves the result unchanged. The block also reports `difference_outside_gate_splits` when only held-out or undeclared splits differ. It takes splits from the manifest, so a trial reporting another split counts as unknown with a `trial_split_mismatch` reason. It records `final_attempt` and `describes_final_attempt`.
+
+## 0.94.0
+
+### Minor Changes
+
+- 6f14c5f: Default `ahl improve` runs now add a private `decision` block (profile `ahl-single-run-decision-disposition-v1`) to `workflow.json` after any exactly covered single-run evaluation. It explains why that evidence cannot support a recommendation: `disposition` is `insufficient_evidence` (or `invalid_evidence` when frozen inputs changed), and `next_evidence` is `requires_repeated_paired_experiment`. It reports observed per-split pair counts, keeping non-pass/fail outcomes unknown, and labels the observed pattern without diagnosing it. It also lists the unmet reasons: one repeat per task and arm, no frozen plan, a descriptive profile, unverified roots, isolation qualification from the live prerequisite scope and unverified mandatory certification prerequisites. It binds the latest attempt's evaluation, manifest, baseline and candidate hashes. Statuses, exit codes, the `recommendation` string, `application_eligible`, `automatic_promotion` and every existing gate are unchanged, all authority fields stay false, and public benchmark export rejects the profile.
+
 ## 0.93.0
 
 ### Minor Changes

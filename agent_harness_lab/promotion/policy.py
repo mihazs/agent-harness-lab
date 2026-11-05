@@ -54,6 +54,70 @@ def legacy_coverage(manifest, trials):
     return len(observed) == len(trials) == len(expected) and set(observed) == expected
 
 
+SINGLE_RUN_PROFILE = 'ahl-single-run-decision-disposition-v1'
+PAIR_KINDS = ('candidate_only_passed', 'baseline_only_passed', 'both_passed', 'both_failed', 'unknown')
+
+
+def single_run_decision(manifest, trials, *, inputs_unchanged, prerequisites, prerequisite_scope=None, bindings=None):
+    """Explain why one legacy paired run cannot support a recommendation.
+
+    Counts are observed patterns only. The disposition never grants recommendation,
+    application, promotion or publication authority; outcomes other than an explicit
+    pass/fail remain unknown rather than becoming either label.
+    """
+    tasks = manifest['tasks']
+    if len({task['id'] for task in tasks}) != len(tasks) or not legacy_coverage(manifest, trials):
+        raise ValueError('single-run decision requires exact unique legacy trial coverage')
+    declared = {task['id']: task.get('split') for task in tasks}
+    # Splits come from the manifest; a trial reporting another split is unknown evidence.
+    mismatched = sum(trial.get('split') != declared[trial['task']] for trial in trials)
+    outcome = {(trial['version'], trial['task']): trial.get('status')
+               if trial.get('status') in ('passed', 'failed') and trial.get('split') == declared[trial['task']] else None
+               for trial in trials}
+    by_split = {}
+    for task in tasks:
+        base, cand = outcome['baseline', task['id']], outcome['candidate', task['id']]
+        kind = ('unknown' if None in (base, cand) else 'both_passed' if base == cand == 'passed'
+                else 'both_failed' if base == cand else 'candidate_only_passed' if cand == 'passed' else 'baseline_only_passed')
+        split = task.get('split') if isinstance(task.get('split'), str) else 'undeclared'
+        by_split.setdefault(split, dict.fromkeys(PAIR_KINDS, 0))[kind] += 1
+    pairs = {kind: sum(row[kind] for row in by_split.values()) for kind in PAIR_KINDS}
+    roots = [task.get('root') for task in tasks]
+    declared_roots = len(set(roots)) if roots and all(isinstance(root, str) and root for root in roots) else None
+    def failed(version, split=None):
+        return any(outcome[version, task['id']] == 'failed' and (split is None or task.get('split') == split) for task in tasks)
+    if not inputs_unchanged: pattern = 'frozen_inputs_changed'
+    elif pairs['unknown']: pattern = 'unknown_trial_outcomes'
+    elif failed('candidate'): pattern = 'candidate_failures_observed'
+    elif failed('baseline', 'regression'): pattern = 'baseline_control_failures_observed'
+    elif failed('baseline', 'development'): pattern = 'candidate_passed_where_baseline_failed'
+    elif pairs['candidate_only_passed']: pattern = 'difference_outside_gate_splits'
+    else: pattern = 'no_observed_difference'
+    isolation = isolation_qualification(prerequisite_scope)
+    unmet = {name: value.get('reason') for name, value in prerequisites['mandatory_certification'].items()
+             if value.get('status') != 'verified'}
+    reasons = ['single_run_per_task_arm', 'no_frozen_experiment_plan', 'descriptive_smoke_cannot_certify',
+               'independent_roots_undeclared' if declared_roots is None else 'independent_roots_unverified']
+    if pairs['unknown']: reasons.append('unknown_trial_outcomes')
+    if mismatched: reasons.append('trial_split_mismatch')
+    if not inputs_unchanged: reasons.append('frozen_inputs_changed')
+    if isolation != 'qualified': reasons.append('isolation_qualification_unknown')
+    if unmet: reasons.append('certification_prerequisites_unverified')
+    promotion = (PromotionDecision('blocked', 'frozen_inputs_changed', isolation=isolation) if not inputs_unchanged
+                 else PromotionDecision('inconclusive', 'descriptive_smoke_cannot_certify', isolation=isolation))
+    return dict(schema_version=1, profile=SINGLE_RUN_PROFILE, evidence_scope='single_run_descriptive_only',
+        disposition='insufficient_evidence' if inputs_unchanged else 'invalid_evidence',
+        next_evidence='requires_repeated_paired_experiment', observed_pattern=pattern, reasons=reasons,
+        unmet_prerequisites=unmet,
+        observed=dict(tasks=len(tasks), trials=len(trials), repeats_per_task_arm=1, split_mismatched_trials=mismatched,
+                      declared_roots=declared_roots, pairs=pairs, by_split=by_split),
+        promotion=dict(status=promotion.status, reason=promotion.reason, automatic=promotion.automatic,
+                       isolation=promotion.isolation),
+        bindings=dict(bindings or {}), independence='unverified', native_identity='unverified',
+        recommendation_authority=False, application_eligible=False, publication_allowed=False,
+        automatic_promotion=False, adoption_authority=False)
+
+
 def implementation_prerequisites(scope=None, *, declarations=None):
     """Read live producer facts; legacy recommendation flags stay declarations."""
     from .prerequisites import _Scope,PROFILE,MAX_DISPATCHES,MAX_BYTES,RECEIPT_ENCODING
