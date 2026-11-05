@@ -1367,10 +1367,10 @@ skipped only when the next token is not an option. Any interpreter option, such 
 `-c`, `-lc`, `-ec`, `-m` or `--eval`, can turn the next token into inline code, so
 the command is `external_or_dynamic_command` and the code string is never
 recorded. A target containing whitespace or a control character is a quoted
-argument string, not a path, and is also external. A leading `NAME=value`
-environment assignment or a `#` comment is never taken as the program, so the
-command is external and the assignment value, which may be a secret, is never
-recorded. A safe repo-relative
+argument string, not a path, and is also external. A leading `NAME=value` or
+`NAME+=value` environment assignment or a `#` comment is never taken as the
+program, so the command is external and the assignment value, which may be a
+secret, is never recorded. A safe repo-relative
 path containing `/` becomes a `referenced_script` node with the content hash from
 the inventory, or `inventoried: false` when the walk did not list it. A pipe, a
 substitution, a bare `PATH` name, an absolute or parent path, or any other variable

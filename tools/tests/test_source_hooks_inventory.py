@@ -189,12 +189,15 @@ class HookInventoryTests(unittest.TestCase):
     def test_env_assignment_or_comment_prefix_is_never_a_script_path(self):
         for command, args in (('PYTHONPATH=tools/lib python3 tools/x.py', None), ('LD_PRELOAD=./evil.so ./ok.sh', None),
                               ('X=a/b ./real.sh', None), ('#!x/y', None), ('FOO=${CLAUDE_PROJECT_DIR}/x ./y.sh', None),
-                              ('bash X=a/b', None), ('A=b/c', ['tools/x.sh'])):
+                              ('bash X=a/b', None), ('A=b/c', ['tools/x.sh']),
+                              ('API_TOKEN+=SYNTH/SECRET ./.claude/hooks/x.sh', None), ('A+=b/c', ['tools/x.sh']),
+                              ('FOO+=a/b', ['x'])):
             with self.subTest(command=command, args=args):
                 self.assertEqual(hooks.resolve(command, args, 'claude-code'), ('external_or_dynamic_command', None, None))
         command = 'API_TOKEN=SYNTH/SECRET+abc ./.claude/hooks/x.sh'
         settings = {'hooks': {'Stop': [group(None, {'type': 'command', 'command': command},
-                                             {'type': 'command', 'command': 'LD_PRELOAD=scripts/evil.so scripts/ok.sh'})]}}
+                                             {'type': 'command', 'command': 'LD_PRELOAD=scripts/evil.so scripts/ok.sh'},
+                                             {'type': 'command', 'command': 'API_TOKEN+=SYNTH/SECRET ./.claude/hooks/x.sh'})]}}
         (self.checkout / '.claude/settings.json').write_text(json.dumps(settings))
         value = self.capture()
         self.assertEqual({row.resolution for row in value.handlers if row.source == '.claude/settings.json'},

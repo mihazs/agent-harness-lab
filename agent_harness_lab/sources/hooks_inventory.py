@@ -50,7 +50,7 @@ INTERPRETERS = frozenset(('sh', 'bash', 'zsh', 'dash', 'python', 'python3', 'nod
 PROJECT_DIR = ('${CLAUDE_PROJECT_DIR}', '$CLAUDE_PROJECT_DIR')
 _SHELL = re.compile(r'[|&;<>()`$\n*?\[\]{}~]')
 _SPACE = re.compile(r'[\s\x01-\x1f\x7f]')   # a quoted argument string is never a script path
-_PREFIX = re.compile(r'[A-Za-z_][A-Za-z0-9_]*=|#')  # an env assignment or a comment is never the program run
+_PREFIX = re.compile(r'[A-Za-z_][A-Za-z0-9_]*\+?=|#')  # an env assignment or a comment is never the program run
 HANDLER_FACTS = ('event', 'event_known', 'matcher_kind', 'matcher_sha256', 'type', 'status', 'timeout', 'on_failure',
                  'resolution', 'script', 'anchor', 'command_sha256', 'header_keys_sha256', 'env_keys_sha256',
                  'unknown_fields')
