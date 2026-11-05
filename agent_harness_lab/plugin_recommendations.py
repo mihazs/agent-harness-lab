@@ -22,7 +22,7 @@ from agent_harness_lab.evaluation.integrity import contained, read_regular, rela
 from agent_harness_lab.monitoring.state import atomic_json
 from agent_harness_lab.sources import harness_inventory, plugins_inventory
 from agent_harness_lab.sources.git import OID, GitExport
-from agent_harness_lab.sources.git_view import MAX_OUTPUT, Folder, GitView
+from agent_harness_lab.sources.git_view import MAX_OUTPUT, BoundExceeded, Folder, GitView
 from agent_harness_lab.sources.hardened import load_json
 from agent_harness_lab.sources.schema import digest
 
@@ -64,8 +64,10 @@ class _GitFolder(Folder):
         if info is not None and info.st_size > size: raise _Refused('checkout_bound_exceeded')
 
     def read(self, name, maximum=65536, *, prefix=False):
-        self.bound(name, MAX_GIT_FILE_BYTES)
-        return super().read(name, MAX_GIT_FILE_BYTES if maximum is None else min(maximum, MAX_GIT_FILE_BYTES), prefix=prefix)
+        """Each file within MAX_GIT_FILE_BYTES and every read so far within MAX_GIT_BYTES, checked before reading."""
+        limit = min(MAX_GIT_FILE_BYTES, MAX_GIT_BYTES - self.bytes)
+        self.bound(name, limit)
+        return super().read(name, limit if maximum is None else min(maximum, limit), prefix=prefix)
 
     def copy(self, name, destination, maximum=None):
         self.bound(name, MAX_GIT_BYTES - self.bytes)
@@ -153,13 +155,15 @@ def _clean(path, deadline):
         try: committed = _tree(reader, reader.commit_tree(head))
         except ValueError: raise _Refused('unpinned_checkout') from None
         files, total = {}, 0
-        for entry in tree.walk(name, excluded=(git,), skip_unsafe=True):
-            key, info = str(PurePosixPath(entry).relative_to(name)), tree.inspect(entry)
-            total += info.st_size
-            if len(files) >= MAX_TREE_FILES or total > MAX_TREE_BYTES: raise _Refused('checkout_bound_exceeded')
-            mode = 0o100755 if info.st_mode & 0o100 else 0o100644
-            files[key] = (mode, tree.read(entry, None))
-            if committed.get(key) != (mode, _blob(files[key][1], reader.algorithm)): raise _Refused('dirty_checkout')
+        try:
+            for entry in tree.walk(name, excluded=(git,), skip_unsafe=True):
+                key, info = str(PurePosixPath(entry).relative_to(name)), tree.inspect(entry)
+                total += info.st_size
+                if len(files) >= MAX_TREE_FILES or total > MAX_TREE_BYTES: raise _Refused('checkout_bound_exceeded')
+                mode = 0o100755 if info.st_mode & 0o100 else 0o100644
+                files[key] = (mode, tree.read(entry, None))
+                if committed.get(key) != (mode, _blob(files[key][1], reader.algorithm)): raise _Refused('dirty_checkout')
+        except BoundExceeded: raise _Refused('checkout_bound_exceeded') from None
         if tree.unsafe_entries or set(files) != set(committed): raise _Refused('dirty_checkout')
         folder.verify(); tree.verify()
         return head.decode(), reader.algorithm, files

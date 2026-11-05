@@ -21,6 +21,10 @@ MAX_BINARY = 64*1024*1024
 CHUNK = 1024*1024
 
 
+class BoundExceeded(ValueError):
+    """A Folder input over its depth, entry or byte bound, so callers can tell a bound from malformed input."""
+
+
 class Folder:
     def __init__(self, root, deadline, *, limit_total_bytes=True, limit_tree=True):
         if deadline is not None and (type(deadline) not in (int, float) or not math.isfinite(deadline)):
@@ -111,7 +115,7 @@ class Folder:
             if not block: break
             total += len(block); self.bytes += len(block)
             if maximum is not None and total > maximum or self.limit_total_bytes and self.bytes > MAX_BYTES:
-                raise ValueError('Git input byte budget exceeded')
+                raise BoundExceeded('Git input byte budget exceeded')
             yield block
         expected = min(info.st_size, maximum) if prefix and maximum is not None else info.st_size
         if total != expected or self.stamp(os.fstat(descriptor)) != self.stamp(info):
@@ -136,14 +140,14 @@ class Folder:
 
     def walk(self, name, depth=0, *, excluded=(), skip_unsafe=False):
         self.check()
-        if self.limit_tree and depth > 64: raise ValueError('Git directory depth exceeded')
+        if self.limit_tree and depth > 64: raise BoundExceeded('Git directory depth exceeded')
         descriptor = self.directory(name)
         try:
             self.observe(name, os.fstat(descriptor))
             with os.scandir(descriptor) as entries:
                 for entry in entries:
                     self.entries += 1; self.check()
-                    if self.limit_tree and self.entries > MAX_ENTRIES: raise ValueError('Git entry budget exceeded')
+                    if self.limit_tree and self.entries > MAX_ENTRIES: raise BoundExceeded('Git entry budget exceeded')
                     path = str(Path(name)/entry.name)
                     if path in excluded: continue
                     info = entry.stat(follow_symlinks=False)

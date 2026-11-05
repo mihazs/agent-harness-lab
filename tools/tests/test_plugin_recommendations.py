@@ -164,6 +164,31 @@ class PluginRecommendationTests(unittest.TestCase):
                 self.assertEqual(self.bundle()['reason'], 'checkout_bound_exceeded')
         self.assertFalse(self.state.exists())
 
+    def test_git_metadata_reads_share_one_byte_budget_checked_before_reading(self):
+        # Sparse reference files: each within the per-file bound, together over the Git directory budget.
+        for index in range(16):
+            with (self.plugin / f'.git/refs/tags/t{index}').open('wb') as stream: stream.truncate(64 * 1024)
+        read, original = [], recommend._GitFolder.read
+        def counted(folder, name, *args, **kwargs):
+            raw = original(folder, name, *args, **kwargs); read.append(len(raw or b'')); return raw
+        with patch.object(recommend, 'MAX_GIT_BYTES', 256 * 1024), patch.object(recommend._GitFolder, 'read', counted):
+            receipt = self.bundle()
+        self.assertEqual((receipt['status'], receipt['reason']), ('refused', 'checkout_bound_exceeded'))
+        self.assertLessEqual(sum(read), 256 * 1024)
+        self.assertFalse(self.state.exists())
+
+    def test_worktree_file_byte_and_entry_bounds_are_refusals(self):
+        for bound, value in (('MAX_TREE_FILES', 3), ('MAX_TREE_BYTES', 64)):
+            with self.subTest(bound=bound), patch.object(recommend, bound, value):
+                self.assertEqual(self.bundle()['reason'], 'checkout_bound_exceeded')
+        # Empty directories are invisible to Git, so the checkout stays clean while the walk exceeds its entry bound.
+        for index in range(60): (self.plugin / 'many' / str(index)).mkdir(parents=True)
+        self.assertEqual(self.plumbing('status', '--porcelain'), '')
+        with patch('agent_harness_lab.sources.git_view.MAX_ENTRIES', 50):
+            receipt = self.bundle()
+        self.assertEqual((receipt['status'], receipt['reason']), ('refused', 'checkout_bound_exceeded'))
+        self.assertFalse(self.state.exists())
+
     def test_external_paths_never_reach_journal_adopt_or_repair_contracts(self):
         journal = Journal(self.project, self.base / 'journal')
         label = 'plugin:deploy:synthetic-market'
@@ -190,6 +215,10 @@ class PluginRecommendationTests(unittest.TestCase):
         for bad in ({'.git/config': 'x'}, {'/abs.md': 'x'}, {'../escape.md': 'x'}, {'a b.md': 'x'}, {'missing.md': None},
                     {'scripts/run.sh/x': 'x'}, {'commands/status.md': PLUGIN['commands/status.md']}, {}, {'bin.md': 'a\0b'}):
             with self.subTest(changes=bad), self.assertRaises(ValueError): self.bundle(bad)
+        # Each path passes every earlier check, so only the writability gate refuses it.
+        for private in ('CLAUDE.local.md', '__pycache__/a.md', 'memories/a.md'):
+            with self.subTest(private=private), self.assertRaisesRegex(ValueError, 'path is excluded from plugin patches'):
+                self.bundle({private: 'x'})
         detour = self.base / 'elsewhere' / '..'
         for overlap in (self.project / 'state', self.plugin / 'state', self.base, detour / 'project/state', detour / 'deploy/state'):
             with self.subTest(state=overlap), self.assertRaises(ValueError):

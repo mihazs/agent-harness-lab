@@ -1896,11 +1896,12 @@ checkout that fails a condition gets a `refused` receipt with reason
 `checkout_bound_exceeded`. Nothing is written then.
 
 The bounds are checked before the input is read. The worktree holds at most
-5000 files and 64 MiB. The committed tree is at most 64 levels deep and 10000
-entries, counted per path, so a subtree named many times counts each time. In
-the Git directory, each configuration, `HEAD` and reference file is at most
-4 MiB, the copied object store is at most 256 MiB, and its listing is at most
-20000 entries. Each Git command's output is at most 4 MiB, 64 MiB in total,
+5000 files and 64 MiB, and its walk at most 64 levels deep and 10000 entries.
+The committed tree is at most 64 levels deep and 10000 entries, counted per
+path, so a subtree named many times counts each time. In the Git directory,
+each configuration, `HEAD` and reference file is at most 4 MiB, everything read
+from it, the copied object store included, is at most 256 MiB, and its listing
+is at most 20000 entries. Each Git command's output is at most 4 MiB, 64 MiB in total,
 under a 1 GiB address-space limit. The tree walk checks the capture deadline.
 The `state` folder is refused when it contains `..`, crosses a symlink, or
 overlaps the project or a selected checkout, before or after resolution.
