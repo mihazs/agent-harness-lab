@@ -6,7 +6,7 @@ import unittest
 from agent_harness_lab.sources import harness_inventory as inventory
 from agent_harness_lab.sources.schema import digest
 from agent_harness_lab.telemetry import claude_native
-from agent_harness_lab.telemetry.schema import verified_outcome
+from agent_harness_lab.telemetry.schema import SOURCE_ORDER, verified_outcome
 
 if __package__:
     from . import harness_surface_fixture as fixture
@@ -111,10 +111,23 @@ class LoadingJoinTests(unittest.TestCase):
         self.assertEqual((twice['duplicate_events'], twice['warnings']), (loading, ['duplicate_event_identity']))
         first = next(row for row in rows if row.get('loading_path_sha256') == digest('CLAUDE.md'))
         forged = dict(first, loading_content_sha256=digest('SYNTHETIC_OTHER'))
-        _, joined = self.join(events=[first, forged])
+        results = [self.join(events=order)[1] for order in ([first, forged], [forged, first], [first, forged, first])]
+        self.assertEqual(len({json.dumps(result, sort_keys=True, default=list) for result in results[:2]}), 1)
+        for joined in results:
+            row = self.node(captured, joined, 'CLAUDE.md')
+            self.assertEqual((row['observed_loading'], row['exact_attachments'], row['path_only_attachments']),
+                ('unknown', 0, 0))
+            self.assertEqual((joined['loading_evidence'], joined['attachment_shapes'], joined['conflicting_events']),
+                ('none', 'none', 1))
+            self.assertEqual(joined['warnings'], ['duplicate_event_conflict', 'duplicate_event_identity'])
+        self.assertEqual([joined['duplicate_events'] for joined in results], [1, 1, 2])
+        self.assertEqual(once['conflicting_events'], 0)
+        foreign = {key: value for key, value in first.items() if key not in ('capture_order', *SOURCE_ORDER)}
+        foreign['source_version'] = 'claude-jsonl-v1'
+        _, joined = self.join(events=[foreign, first])
         self.assertEqual(self.node(captured, joined, 'CLAUDE.md')['exact_attachments'], 1)
-        self.assertEqual((joined['duplicate_events'], joined['warnings']),
-            (1, ['duplicate_event_conflict', 'duplicate_event_identity']))
+        self.assertEqual((joined['ignored_records'], joined['loading_evidence'], joined['duplicate_events'],
+            joined['warnings']), (1, 'observed_pattern', 0, []))
 
     def test_distinct_events_of_one_file_are_each_counted(self):
         self.attach('m1', 'CLAUDE.md', fixture.FILES['CLAUDE.md'])
@@ -133,6 +146,13 @@ class LoadingJoinTests(unittest.TestCase):
         self.assertEqual((agent['declared_invocations'], agent['observed_loading']), (1, 'unknown'))
         self.assertEqual(joined['unattributed'], dict(attachment=0, hook_output=1, agent=1, mcp=1))
         self.assertFalse(any(row['observed_loading'] != 'unknown' for row in joined['nodes']))
+        self.assertEqual((joined['loading_evidence'], joined['attachment_shapes']), ('none', 'unverified_fixture_only'))
+
+    def test_an_attachment_for_an_absent_path_alone_is_an_unverified_shape(self):
+        self.attach('x', 'missing/CLAUDE.md', 'SYNTHETIC_ABSENT')
+        _, joined = self.join()
+        self.assertEqual(joined['unattributed']['attachment'], 1)
+        self.assertEqual((joined['loading_evidence'], joined['attachment_shapes']), ('none', 'unverified_fixture_only'))
 
     def test_contentless_attachment_of_an_unread_private_node_is_path_only(self):
         self.checkout = fixture.build(self.base / 'private', {'CLAUDE.local.md': 'SYNTHETIC_PRIVATE\n'}, hostile=False)

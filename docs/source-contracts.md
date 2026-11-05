@@ -1321,11 +1321,14 @@ nodes themselves are unchanged and still reject any loading claim.
 - Evidence for a path or name the inventory lacks is counted under
   `unattributed` and never adds a node. Records from another source version,
   or with an unknown `loading_signal`, count as `ignored_records`.
-- A loading record whose `(case_id, event_id)` repeats an earlier one, for
-  example from two concatenated reads of one transcript, is counted once. The
-  first copy is kept, the repeats count as `duplicate_events`, and `warnings`
-  lists `duplicate_event_identity`, plus `duplicate_event_conflict` when a
-  repeat differs from the kept copy.
+- A pinned loading record whose `(case_id, event_id)` repeats an earlier one,
+  for example from two concatenated reads of one transcript, is counted once.
+  The repeats count as `duplicate_events` and `warnings` lists
+  `duplicate_event_identity`. When copies of one identity disagree, the
+  identity is contested: it counts under `conflicting_events` and in no other
+  count, whatever the input order, and `warnings` adds
+  `duplicate_event_conflict`. An ignored record never claims an identity, so
+  it cannot hide a later pinned copy.
 
 `effective`, `outcome` and `independence` are always `unknown`, and
 `publication_allowed` is `false`. The caller pairs the capture with the
