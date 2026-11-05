@@ -20,9 +20,11 @@ def _beneath_api():
     names = ('O_DIRECTORY', 'O_NOFOLLOW', 'O_NONBLOCK', 'O_CLOEXEC')
     if not _DIR_FD_OPEN or not all(hasattr(os, name) for name in names):
         raise NotImplementedError('safe file reads require POSIX filesystem APIs')
-    # O_PATH (Linux) needs only search permission, as ordinary path resolution does.
-    return (getattr(os, 'O_PATH', os.O_RDONLY) | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-            os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
+    # Ancestors: O_PATH (Linux) needs only search permission, as ordinary path resolution does.
+    # Leaves: a readable file, or a readable directory, since O_PATH descriptors cannot be fsynced.
+    nofollow = os.O_NOFOLLOW | os.O_CLOEXEC
+    return (getattr(os, 'O_PATH', os.O_RDONLY) | os.O_DIRECTORY | nofollow,
+            dict(file=os.O_RDONLY | os.O_NONBLOCK | nofollow, directory=os.O_RDONLY | os.O_DIRECTORY | nofollow))
 
 
 def _open_step(name, flags, parent):
@@ -34,8 +36,8 @@ def _open_step(name, flags, parent):
         raise
 
 
-def open_nofollow(path):
-    """Open an existing file from / one component at a time, following no symlink anywhere.
+def _open_beneath(path, leaf):
+    """Walk from / one component at a time, following no symlink anywhere.
 
     Each directory is opened by name relative to its already opened parent, so a parent
     swapped for a symlink after any earlier check is refused rather than followed."""
@@ -46,9 +48,19 @@ def open_nofollow(path):
         for name in parts[1:-1]:
             previous, current = current, _open_step(name, directory_flags, current)
             os.close(previous)
-        return _open_step(parts[-1], leaf_flags, current)
+        return _open_step(parts[-1], leaf_flags[leaf], current)
     finally:
         os.close(current)
+
+
+def open_nofollow(path):
+    """Read-only descriptor for an existing file (fstat, read, fsync) reached by the no-follow walk."""
+    return _open_beneath(path, 'file')
+
+
+def open_directory_nofollow(path):
+    """Read-only descriptor for an existing directory, fsyncable unlike O_PATH, by the same walk."""
+    return _open_beneath(path, 'directory')
 
 
 def _regular_chunks(path, max_bytes):

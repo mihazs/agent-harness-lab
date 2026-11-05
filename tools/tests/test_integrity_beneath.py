@@ -5,12 +5,15 @@ from pathlib import Path
 import stat
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 
-from agent_harness_lab.evaluation import integrity
+from agent_harness_lab import private_journal
+from agent_harness_lab.evaluation import bank_revisions, integrity, regression_review
 from agent_harness_lab.evaluation.integrity import (artifacts, contained, read_regular, regular_equal,
                                                     regular_sha256, regular_size)
+from agent_harness_lab.sources import lineage
 
 INSIDE, OUTSIDE = b'inside payload', b'outside secret'
 PROC_FD = Path('/proc/self/fd')
@@ -156,6 +159,69 @@ class BeneathTests(unittest.TestCase):
                     read_regular(self.target, None)
                 with self.assertRaisesRegex(NotImplementedError, 'safe file reads require POSIX'):
                     artifacts(self.root, ['deep/sub/f'])
+
+    @contextmanager
+    def swapped_after(self, step, directory):
+        """Swap directory on the first os.open once (module, name) returns, or at once without a step."""
+        real_open, real_fsync = os.open, os.fsync
+        armed, fired, synced = [] if step else [True], [], []
+        def hooked(path, flags, *args, **kwargs):
+            if armed and not fired: fired.append(path); self.swap(directory)
+            return real_open(path, flags, *args, **kwargs)
+        def fsync(descriptor):
+            info = os.fstat(descriptor); synced.append((info.st_dev, info.st_ino)); return real_fsync(descriptor)
+        with patch.object(integrity.os, 'open', hooked), patch.object(integrity.os, 'fsync', fsync):
+            if step is None: yield fired, synced; return
+            module, name = step; real_step = getattr(module, name)
+            def stepped(*args, **kwargs):
+                value = real_step(*args, **kwargs); armed.append(True); return value
+            with patch.object(module, name, stepped): yield fired, synced
+
+    def assert_fsync_refused(self, step, directory, call):
+        """The swapped parent is refused before any fsync reaches outside content, leaking no descriptor."""
+        outside = {(info.st_dev, info.st_ino) for info in map(os.stat, (self.outside, *self.outside.rglob('*')))}
+        try:
+            with self.unleaked(), self.swapped_after(step, directory) as (fired, synced):
+                try: call(); error = None
+                except (ValueError, OSError) as caught: error = caught
+        finally: self.restore(directory)
+        self.assertTrue(fired, 'the swap hook never ran')
+        self.assertFalse(outside.intersection(synced), 'fsync reached outside content')
+        self.assertIsInstance(error, ValueError, error)
+        self.assertEqual(str(error), 'input crosses a symlink')
+
+    def test_bank_revision_tree_sync_refuses_parent_swapped_after_containment(self):
+        self.assert_fsync_refused((bank_revisions, 'contained'), self.root/'deep'/'sub',
+                                  lambda: bank_revisions.sync_tree(self.root))
+
+    def test_lineage_snapshot_sync_refuses_parent_swapped_after_write(self):
+        raw = b'{}\n'; identity = integrity.hashlib.sha256(raw).hexdigest()
+        (self.outside/(identity+'.json')).write_bytes(OUTSIDE); (self.root/'lineage').mkdir()
+        store = lineage.LineageStore(self.root/'lineage', project_sha256='a'*64, scope_sha256='b'*64)
+        self.assert_fsync_refused((lineage, 'write_bytes'), self.root/'lineage'/'snapshots',
+                                  lambda: store.snapshot(raw, identity))
+
+    def test_review_evidence_sync_refuses_parent_swapped_after_containment(self):
+        store = regression_review.ReviewStore(self.root/'store')
+        packet, task = dict(files=['sub/f'], trees=[], artifacts=[]), type('Task', (), dict(artifacts=()))
+        self.assert_fsync_refused((regression_review, 'contained'), self.root/'deep'/'sub',
+            lambda: store.sync_evidence(self.root, self.root/'deep', packet, task, time.monotonic()+60))
+
+    def test_directory_sync_refuses_ancestor_swapped_before_the_walk(self):
+        (self.outside/'sub').mkdir()
+        self.assert_fsync_refused(None, self.root/'deep', lambda: private_journal.sync_directory(self.root/'deep'/'sub'))
+
+    def test_sites_still_fsync_their_own_contained_files_and_directories(self):
+        real_fsync, synced = os.fsync, []
+        def fsync(descriptor):
+            info = os.fstat(descriptor); synced.append((info.st_dev, info.st_ino)); return real_fsync(descriptor)
+        expected = {(info.st_dev, info.st_ino) for info in map(os.stat, (self.target, self.root/'deep'/'sub', self.root/'deep'))}
+        with self.unleaked(), patch.object(integrity.os, 'fsync', fsync):
+            bank_revisions.sync_tree(self.root)
+            descriptor = integrity.open_directory_nofollow(self.root/'deep')
+            try: self.assertTrue(stat.S_ISDIR(os.fstat(descriptor).st_mode)); os.fsync(descriptor)
+            finally: os.close(descriptor)
+        self.assertTrue(expected.issubset(synced))
 
     def test_contained_still_refuses_links_and_escapes(self):
         (self.root/'parent').symlink_to(self.outside, target_is_directory=True)

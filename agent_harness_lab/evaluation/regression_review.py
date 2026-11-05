@@ -11,7 +11,7 @@ import time
 from agent_harness_lab.monitoring.state import atomic_json
 from agent_harness_lab.private_journal import MAX_EVENTS, MAX_METADATA, PrivateJournal, encoded, record, sync_directory, write_bytes
 from .bank_tools import materialize_sources
-from .integrity import artifacts_digest, contained, copy_frozen, digest, read_regular, regular_sha256, tree
+from .integrity import artifacts_digest, contained, copy_frozen, digest, open_nofollow, read_regular, regular_sha256, tree
 from .regression_controls import containment, read_draft
 from .regression_replay import outcome_rows, read_spec, replay
 from .regressions import fields, load, references, sha256, text
@@ -249,7 +249,7 @@ class ReviewStore(PrivateJournal):
             files.update(contained(workspace, name) for name in task.artifacts)
         for path in files:
             if time.monotonic() >= deadline: raise TimeoutError('case evidence sync budget exhausted')
-            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+            descriptor = open_nofollow(path)
             try: os.fsync(descriptor)
             finally: os.close(descriptor)
             folders.update(p for p in path.parents if p.is_relative_to(attempt))

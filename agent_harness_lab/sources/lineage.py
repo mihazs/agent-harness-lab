@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import stat
 import tempfile
-from agent_harness_lab.evaluation.integrity import contained, read_regular, regular_sha256
+from agent_harness_lab.evaluation.integrity import contained, open_nofollow, read_regular, regular_sha256
 from agent_harness_lab.private_journal import PrivateJournal, encoded, record, record_bytes, sync_directory, write_bytes
 from .execution import RecordRef, frozen, objects, unpack
 from .schema import Contract, EvidenceRecord, digest, fingerprint, label
@@ -151,7 +151,7 @@ class LineageStore(PrivateJournal):
                 raise ValueError('immutable lineage snapshot changed')
         else:
             write_bytes(path, raw)
-        descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        descriptor = open_nofollow(path)
         try: os.fsync(descriptor)
         finally: os.close(descriptor)
         sync_directory(folder); sync_directory(self.root)
