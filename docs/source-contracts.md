@@ -1504,7 +1504,8 @@ version gates recorded for this release are the `/workflow-authoring` skill
 runs the harness inventory and joins the `agent` nodes into declared
 definitions. It never loads, spawns or validates an agent with a runtime. The
 `surfaces` rows classify Claude `.claude/agents/**/*.md` and Codex
-`.codex/agents/**/*.toml` at any depth. They also classify the layer-relative
+`.codex/agents/**/*.toml` at any depth, including below a folder named
+`hooks` or `skills`. They also classify the layer-relative
 `agents/**` of a caller-declared root, which is labelled
 `not_a_runtime_location` inside the checkout. Agent files can embed hooks, so
 every agent row also carries the hook contract facet. An agent edit is
@@ -1522,9 +1523,15 @@ Claude frontmatter is read by `sources/frontmatter.py`, a bounded reader
 (64 KiB, 512 lines) for a small YAML subset. The opening fence must be on
 line 1. These Claude files are `skipped_silently` with a reason:
 `no_leading_fence`, `bad_yaml`, `missing_name`, `invalid_name` (a leading `-`,
-a `:` or more than 256 characters) and `missing_description`. YAML outside the
-subset, such as anchors, tags and flow mappings, gives the disposition
-`unknown` and is never guessed. Unknown fields give `ignored_by_runtime`.
+a `:` or more than 256 characters) and `missing_description`. The subset
+covers plain and quoted keys, quoted scalars with a trailing comment, flow
+lists and block lists indented or at the key's own indent. `bad_yaml` is kept
+for syntax every YAML parser rejects: a duplicate key, tab indentation, an
+unclosed quote or flow list, text after a closing quote, `: ` inside a plain
+scalar, and a bare word or stray list entry where a key belongs. Other YAML
+outside the subset, such as anchors, tags, flow mappings, nested flow
+collections and an indented root, gives the disposition `unknown` and is
+never guessed. Unknown fields give `ignored_by_runtime`.
 `omitClaudeMd` (2.1.271) and `autoCompactWindow` (2.1.296) are checked against
 the declared version, and the gates come from the capability rows. For a
 plugin agent, `hooks`, `mcpServers`, `permissionMode` and `initialPrompt` give
@@ -1540,20 +1547,33 @@ Codex role files are parsed with `tomllib`. A file is `rejected_with_warning`
 for `bad_toml`, `unknown_field_rejected` (any key outside the pinned
 `deny_unknown_fields` set), `invalid_field_type`, `blank_description`,
 `missing_developer_instructions`, `blank_developer_instructions` or
-`missing_name`. These follow the pinned loader's order. A missing description
-stays `unknown` (`description_needs_lower_layer`), because the loader can
-fill it from a same-name role in a lower layer. `sandbox_mode`,
+`missing_name`. These follow the pinned loader's order. Nesting deeper than
+`tomllib` can recurse gives `unknown` (`toml_nesting_unsupported`) instead of
+a crash, because the pinned Rust parser's limit is not modelled. A missing
+description stays `unknown` (`description_needs_lower_layer`). The pinned
+loader walks layers from low to high and fills it from an accepted same-name
+role in a lower layer (`merge_missing_role_fields` in
+`codex-rs/agent-roles/src/loader.rs`). When such a role is in the inventory,
+the file becomes `declared` (`description_from_lower_layer`), it wins and the
+lower role is shadowed. Without one it stays `not_a_definition`. `sandbox_mode`,
 `approval_policy`, `model_provider` and `mcp_servers` give
 `no_override_effect`. Within one layer the first sorted file wins and later
 same-name files are `duplicate_in_layer_warned`. A deeper project layer wins
 over a shallower one, and project layers win over `codex_home`. Project trust
 is the inventory declaration. It is `unknown` by default, and
-`declared_untrusted` gives trust `gated` and precedence `trust_gated`.
+`declared_untrusted` gives trust `gated` and precedence `trust_gated`. Codex
+loads a project layer only for a trusted project, so with unknown trust the
+labels are resolved once as trusted and once as untrusted. A row whose label
+differs between the two passes, such as a project role and the `codex_home`
+role it would shadow, is `depends_on_project_trust`.
 
 `embedded_hooks()` lists each hook event an agent file declares, with
 `classification: hook_contract_required` and `executed: false`. Plugin agent
 hooks are listed as `ignored_for_plugin_agents`, so a hook in agent
-frontmatter cannot evade hook classification (#80). Every definition has
+frontmatter cannot evade hook classification (#80). A file whose fields cannot
+be read (bad or unsupported YAML, oversized frontmatter, bad or too deeply
+nested TOML) but that mentions a `hooks` key gets one hook with the event
+`unparsed_hooks` and status `unknown`. Every definition has
 `declared_state: declared`, `available: unknown`, `loaded: unknown` and
 `load_timing: unverified`, and construction rejects any other value. Parser
 facts are flat label-safe scalars, and names are kept only when label-safe,

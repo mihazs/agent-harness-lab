@@ -122,17 +122,18 @@ RULES = (
          or (len(parts) == 2 and parts[0] == '.husky')),
     # Custom agent definitions; the agents/ rows are layer-relative paths of a caller-declared user, plugin or
     # CODEX_HOME root. Claude frontmatter and Codex role files (a config layer) can both carry hooks, so each
-    # runtime's hook row adds the hook contract facet and an agent edit can never evade hook review.
-    Rule('claude-agent-definition', 'agent', 40, 'recommendation_only', _agent_file('.claude', '.md'),
+    # runtime's hook row adds the hook contract facet and an agent edit can never evade hook review. The agent
+    # rows outrank the skill and hook segment rows, so agents/hooks/x.md stays an agent that has the hook facet.
+    Rule('claude-agent-definition', 'agent', 15, 'recommendation_only', _agent_file('.claude', '.md'),
          runtimes=frozenset({'claude-code'})),
-    Rule('claude-layer-agent-definition', 'agent', 41, 'unsupported', _agent_file(None, '.md'),
+    Rule('claude-layer-agent-definition', 'agent', 16, 'unsupported', _agent_file(None, '.md'),
          runtimes=frozenset({'claude-code'})),
     Rule('claude-agent-hooks', 'hook', 45, 'contract_required', lambda path, parts, context:
          _agent_file('.claude', '.md')(path, parts, context) or _agent_file(None, '.md')(path, parts, context),
          runtimes=frozenset({'claude-code'})),
-    Rule('codex-agent-definition', 'agent', 40, 'recommendation_only', _agent_file('.codex', '.toml'),
+    Rule('codex-agent-definition', 'agent', 15, 'recommendation_only', _agent_file('.codex', '.toml'),
          runtimes=frozenset({'codex'})),
-    Rule('codex-layer-agent-definition', 'agent', 41, 'unsupported', _agent_file(None, '.toml'),
+    Rule('codex-layer-agent-definition', 'agent', 16, 'unsupported', _agent_file(None, '.toml'),
          runtimes=frozenset({'codex'})),
     Rule('codex-agent-hooks', 'hook', 45, 'contract_required', lambda path, parts, context:
          _agent_file('.codex', '.toml')(path, parts, context) or _agent_file(None, '.toml')(path, parts, context),

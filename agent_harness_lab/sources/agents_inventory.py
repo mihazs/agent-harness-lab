@@ -46,7 +46,9 @@ ROLES = {'claude_user': ('claude-code', 'user'), 'claude_plugin': ('claude-code'
 DISPOSITIONS = ('declared', 'skipped_silently', 'rejected_with_warning', 'unknown')
 PRECEDENCE = ('selected_by_declared_precedence', 'shadowed_by_declared_precedence', 'ambiguous_read_order',
               'ambiguous_plugin_order', 'duplicate_in_layer_warned', 'outside_task_cwd_ancestry', 'trust_gated',
-              'not_a_definition', 'not_a_runtime_location', 'undeclared_root_role')
+              'not_a_definition', 'not_a_runtime_location', 'undeclared_root_role', 'depends_on_project_trust')
+UNPARSED_HOOKS = 'unparsed_hooks'  # the event label of a hooks key in a file whose fields could not be read
+_HOOK_KEY = re.compile(rb'''\bhooks["']?[ \t]*[:=.\]]''')
 _LAYERS = {'claude-code': '.claude', 'codex': '.codex'}
 _RANK = {'project': 0, 'user': 1, 'plugin': 2}
 
@@ -80,6 +82,13 @@ def _hooks(facts, value):
     facts['hook_events'], facts['hook_event_count'] = _labels(keys)
 
 
+def _unparsed(facts, raw):
+    """A file that cannot be read field by field still reaches hook classification when it mentions hooks."""
+    if _HOOK_KEY.search(raw):
+        facts.update(hooks_declared='unknown', hook_classification=surfaces.HOOK_FACET)
+    return facts
+
+
 def parse(path, raw, profile):
     """PARSERS entry for kind 'agent': flat facts of one definition file, read as data and never loaded."""
     facts = _claude(raw, profile['version']) if profile['runtime'] == 'claude-code' else _codex(raw)
@@ -92,8 +101,8 @@ def _claude(raw, version):
     except frontmatter.FrontmatterError as error:
         if error.reason in ('no_leading_fence', 'bad_yaml', 'unterminated'):
             reason = 'no_leading_fence' if error.reason == 'no_leading_fence' else 'bad_yaml'
-            return dict(facts, disposition='skipped_silently', reason=reason)
-        return dict(facts, disposition='unknown', reason='frontmatter_' + error.reason)
+            return _unparsed(dict(facts, disposition='skipped_silently', reason=reason), raw)
+        return _unparsed(dict(facts, disposition='unknown', reason='frontmatter_' + error.reason), raw)
     name, description = fields.get('name'), fields.get('description')
     reason = ('missing_name' if not isinstance(name, str) or not name.strip()
               else 'invalid_name' if name.startswith('-') or ':' in name or len(name) > 256
@@ -116,7 +125,9 @@ def _codex(raw):
     facts = {'format': 'codex_toml'}
     try: data = tomllib.loads(raw.decode('utf-8'))
     except (UnicodeDecodeError, tomllib.TOMLDecodeError):
-        return dict(facts, disposition='rejected_with_warning', reason='bad_toml')
+        return _unparsed(dict(facts, disposition='rejected_with_warning', reason='bad_toml'), raw)
+    except RecursionError:  # tomllib recurses per nesting level; the pinned Rust parser's limit is not modelled
+        return _unparsed(dict(facts, disposition='unknown', reason='toml_nesting_unsupported'), raw)
     unknown = set(data) - CODEX_FIELDS
     name, description, instructions = (data.get(key) for key in ('name', 'description', 'developer_instructions'))
     strings = all(value is None or isinstance(value, str) for value in (name, description, instructions))
@@ -184,7 +195,7 @@ class EmbeddedHook:
 
     def __post_init__(self):
         label(self.root); label(self.event)
-        if self.status not in ('declared', 'ignored_for_plugin_agents') or self.executed is not False:
+        if self.status not in ('declared', 'ignored_for_plugin_agents', 'unknown') or self.executed is not False:
             raise ValueError('invalid embedded agent hook')
 
 
@@ -236,6 +247,7 @@ def definitions(inventory, task_cwd, roles=None):
         if trust == 'declared_untrusted': trust = 'unknown'  # Claude folder trust is not modelled beyond hooks
         hooks = tuple(e for e in facts.get('hook_events', '').split(',') if e)
         if facts.get('hook_event_count', 0) > len(hooks): hooks += ('unlabelled_event',)
+        if facts.get('hooks_declared') == 'unknown': hooks += (UNPARSED_HOOKS,)
         rows.append(dict(runtime=runtime, root=node.root, path=node.path, path_sha256=node.path_sha256, layer=layer,
             layer_dir=layer_dir, name=name, name_sha256=name_sha256, disposition=disposition, reason=reason,
             trust=trust, warnings=_warnings(runtime, layer, facts, node.trust), hook_events=hooks))
@@ -244,38 +256,66 @@ def definitions(inventory, task_cwd, roles=None):
 
 
 def _precedence(rows, runtime, task_cwd):
+    """Declared precedence labels. Codex loads a project layer only when the project is trusted, so with unknown
+    trust each row is resolved twice and a label that differs between the two passes is depends_on_project_trust."""
     cwd = PurePosixPath(task_cwd).parts if task_cwd != '.' else ()
-    for row in rows:
+    open_trust = runtime == 'codex' and any(row['layer'] == 'project' and row['trust'] == 'unknown' for row in rows)
+    passes = [_resolve(rows, runtime, cwd, trusted) for trusted in ((True, False) if open_trust else (True,))]
+    for index, row in enumerate(rows):
+        found = {labels[index] for labels, _ in passes}
+        if found == {'not_a_definition', 'trust_gated'}: found = {'not_a_definition'}  # never loaded either way
+        row['precedence'] = found.pop() if len(found) == 1 else 'depends_on_project_trust'
+        if all(index in filled for _, filled in passes):  # the pinned loader merges a lower role's description
+            row['disposition'], row['reason'] = 'declared', 'description_from_lower_layer'
+
+
+def _resolve(rows, runtime, cwd, trusted):
+    """One pass of the declared loader order: labels by row index and the rows whose description is inherited."""
+    labels, keys, filled = {}, {}, set()
+    pending = lambda row: runtime == 'codex' and row['reason'] == 'description_needs_lower_layer'
+    for index, row in enumerate(rows):
         layer_parts = PurePosixPath(row['layer_dir']).parts if row['layer_dir'] != '.' else ()
-        row['precedence'] = (row['layer'] if row['layer'] in ('not_a_runtime_location', 'undeclared_root_role')
-            else 'not_a_definition' if row['disposition'] != 'declared' or row['name_sha256'] is None
+        gated = row['trust'] == 'gated' or (runtime == 'codex' and row['layer'] == 'project'
+                                            and row['trust'] == 'unknown' and not trusted)
+        labels[index] = (row['layer'] if row['layer'] in ('not_a_runtime_location', 'undeclared_root_role')
+            else 'not_a_definition' if (row['disposition'] != 'declared' and not pending(row)) or row['name_sha256'] is None
             else 'outside_task_cwd_ancestry' if row['layer'] == 'project' and cwd[:len(layer_parts)] != layer_parts
-            else 'trust_gated' if row['trust'] == 'gated' else None)
-        row['key'] = (_RANK[row['layer']], -len(layer_parts)) if row['precedence'] is None else None
+            else 'trust_gated' if gated else None)
+        if labels[index] is None: keys[index] = (_RANK[row['layer']], -len(layer_parts))
     groups = {}
-    for row in rows:
-        if row['key'] is not None: groups.setdefault(row['name_sha256'], []).append(row)
+    for index in keys: groups.setdefault(rows[index]['name_sha256'], []).append(index)
     for group in groups.values():
         trees = {}
-        for row in sorted(group, key=lambda row: PurePosixPath(row['path']).parts):
-            trees.setdefault((row['root'], row['layer_dir']), []).append(row)
+        for index in sorted(group, key=lambda index: PurePosixPath(rows[index]['path']).parts):
+            trees.setdefault((rows[index]['root'], rows[index]['layer_dir']), []).append(index)
         for tree in trees.values():
-            for row in tree[1:]:
-                if runtime == 'codex': row['precedence'], row['key'] = 'duplicate_in_layer_warned', None
-        live = [row for row in group if row['key'] is not None]
-        best = min(row['key'] for row in live)
-        winners = [row for row in live if row['key'] == best]
-        tied = 'ambiguous_plugin_order' if len({r['root'] for r in winners}) > 1 else 'ambiguous_read_order'
-        for row in live:
-            row['precedence'] = ('shadowed_by_declared_precedence' if row['key'] != best
-                                 else tied if len(winners) > 1 else 'selected_by_declared_precedence')
-    for row in rows: del row['key']
+            for index in tree[1:]:
+                if runtime == 'codex': labels[index] = 'duplicate_in_layer_warned'; del keys[index]
+        live = [index for index in group if index in keys]
+        if runtime == 'codex':  # layers low to high: a role without a description needs an accepted lower one
+            accepted = False
+            for key in sorted({keys[index] for index in live}, reverse=True):
+                level = [index for index in live if keys[index] == key]
+                for index in (index for index in level if pending(rows[index])):
+                    if accepted: filled.add(index)
+                    else: labels[index] = 'not_a_definition'; del keys[index]
+                accepted = accepted or any(index in keys for index in level)
+            live = [index for index in live if index in keys]
+        if not live: continue
+        best = min(keys[index] for index in live)
+        winners = [index for index in live if keys[index] == best]
+        tied = 'ambiguous_plugin_order' if len({rows[index]['root'] for index in winners}) > 1 else 'ambiguous_read_order'
+        for index in live:
+            labels[index] = ('shadowed_by_declared_precedence' if keys[index] != best
+                             else tied if len(winners) > 1 else 'selected_by_declared_precedence')
+    return labels, filled
 
 
 def embedded_hooks(agents):
     """Every hook event an agent file declares, labelled for hook classification and never run."""
     return tuple(EmbeddedHook(row.runtime, row.root, row.path, event,
-                              'ignored_for_plugin_agents' if row.layer == 'plugin' else 'declared')
+                              'ignored_for_plugin_agents' if row.layer == 'plugin'
+                              else 'unknown' if event == UNPARSED_HOOKS else 'declared')
                  for row in agents for event in row.hook_events)
 
 

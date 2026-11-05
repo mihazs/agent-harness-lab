@@ -126,15 +126,53 @@ class AgentDefinitionTests(unittest.TestCase):
         self.assertEqual(rows['checkout', '.codex/agents/sub/dup-b.toml'].precedence, 'duplicate_in_layer_warned')
 
     def test_codex_project_trust_is_unknown_or_gated_unless_declared(self):
-        for trust, label, precedence in ((None, 'unknown', 'selected_by_declared_precedence'),
-                                         ('declared_untrusted', 'gated', 'trust_gated')):
+        # Codex loads a project layer only when the project is trusted, so unknown trust selects nothing definite.
+        for trust, label, precedence, home_precedence in (
+                (None, 'unknown', 'depends_on_project_trust', 'depends_on_project_trust'),
+                ('declared_untrusted', 'gated', 'trust_gated', 'selected_by_declared_precedence')):
             with self.subTest(trust=trust):
                 _, found, _ = self.codex(**({'project_trust': trust} if trust else {}))
                 rows = self.by_path(found)
                 self.assertEqual((rows['checkout', '.codex/agents/valid.toml'].trust,
                                   rows['checkout', '.codex/agents/valid.toml'].precedence), (label, precedence))
-                home = rows['home', 'agents/explorer.toml']
-                self.assertEqual(home.precedence, 'selected_by_declared_precedence' if trust else 'shadowed_by_declared_precedence')
+                self.assertEqual(rows['home', 'agents/explorer.toml'].precedence, home_precedence)
+                self.assertEqual(rows['checkout', '.codex/agents/blank.toml'].precedence, 'not_a_definition')
+
+    def test_codex_role_without_description_inherits_from_a_lower_layer_and_wins(self):
+        (self.home / 'agents/nodesc.toml').write_text('name = "nodesc"\ndescription = "d"\ndeveloper_instructions = "y"\n')
+        _, found, _ = self.codex(project_trust='declared_trusted')
+        rows = self.by_path(found)
+        project, home = rows['checkout', '.codex/agents/nodesc.toml'], rows['home', 'agents/nodesc.toml']
+        self.assertEqual((project.disposition, project.reason, project.precedence),
+                         ('declared', 'description_from_lower_layer', 'selected_by_declared_precedence'))
+        self.assertEqual(home.precedence, 'shadowed_by_declared_precedence')
+        _, found, _ = self.codex()
+        rows = self.by_path(found)
+        self.assertEqual({rows[key].precedence for key in (('checkout', '.codex/agents/nodesc.toml'),
+                          ('home', 'agents/nodesc.toml'))}, {'depends_on_project_trust'})
+
+    def test_hostile_or_unreadable_agent_files_are_reported_and_keep_their_hooks(self):
+        deep = 'hooks = ' + '[' * 1000 + ']' * 1000 + '\n'
+        status, facts = agents.parse('deep.toml', deep.encode(), CODEX)
+        self.assertEqual((status, facts['disposition'], facts['reason'], facts['hooks_declared']),
+                         ('parsed', 'unknown', 'toml_nesting_unsupported', 'unknown'))
+        flow = md('name: flow', 'description: d', f'hooks: {{Stop: [{{hooks: [{{type: command, command: {SECRET}}}]}}]}}')
+        guard = md('name: guard', 'description: d', 'hooks:', '  Stop: []')
+        checkout = fixture.build(self.base / 'hostile', {'.codex/agents/deep.toml': deep, '.claude/agents/flow.md': flow,
+                                                         '.claude/agents/hooks/guard.md': guard}, hostile=False)
+        inventory, found, hooks = agents.capture(checkout, dict(CODEX, task_cwd='.'))
+        self.assertEqual((inventory.status, self.by_path(found)['checkout', '.codex/agents/deep.toml'].disposition),
+                         ('declared', 'unknown'))
+        self.assertIn(('.codex/agents/deep.toml', agents.UNPARSED_HOOKS, 'unknown'), {(h.path, h.event, h.status) for h in hooks})
+        inventory, found, hooks = agents.capture(checkout, dict(CLAUDE, task_cwd='.'))
+        rows = self.by_path(found)
+        self.assertEqual((rows['checkout', '.claude/agents/flow.md'].disposition, rows['checkout', '.claude/agents/flow.md'].reason),
+                         ('unknown', 'frontmatter_unsupported_yaml'))
+        self.assertEqual(rows['checkout', '.claude/agents/hooks/guard.md'].precedence, 'selected_by_declared_precedence')
+        self.assertEqual({(h.path, h.event, h.status) for h in hooks},
+                         {('.claude/agents/flow.md', agents.UNPARSED_HOOKS, 'unknown'),
+                          ('.claude/agents/hooks/guard.md', 'Stop', 'declared')})
+        self.assertNotIn(SECRET, json.dumps(inventory.document()))
 
     def test_no_definition_claims_availability_or_loading(self):
         for _, found, _ in (self.claude(), self.codex()):
@@ -170,9 +208,23 @@ class FrontmatterReaderTests(unittest.TestCase):
         self.assertEqual(value, {'name': 'demo', 'description': 'quoted: yes', 'tools': ['Read', 'Grep'],
                                  'skills': ['one', 'two'], 'notes': 'a\nb', 'hooks': frontmatter.Mapping(('Stop', 'End'))})
 
+    def test_valid_yaml_outside_the_old_subset_is_read_not_misreported(self):
+        value = frontmatter.read(b'---\nname: r\ndescription: "d" # note\n"hooks":\n  Stop:\n  - hooks: []\n  End: []\n'
+                                 b'tools:\n- Read\n- Grep # c\nskills: ["one", \'two\'] # c\nnotes:\n  folded\n  text\n'
+                                 b'quoted: "a \\" b"\n---\n')
+        self.assertEqual(value, {'name': 'r', 'description': 'd', 'hooks': frontmatter.Mapping(('Stop', 'End')),
+                                 'tools': ['Read', 'Grep'], 'skills': ['one', 'two'], 'notes': 'folded text',
+                                 'quoted': 'a \\" b'})
+        status, facts = agents.parse('x.md', b'---\nname: r\ndescription: d\ntools:\n- Read\n---\n', CLAUDE)
+        self.assertEqual((facts['disposition'], facts['reason']), ('declared', None))
+
     def test_reasons_cover_fences_bounds_and_unsupported_yaml(self):
         for raw, reason in ((b'\n---\nname: x\n---\n', 'no_leading_fence'), (b'---\nname: x\n', 'unterminated'),
-                            (b'---\nname: x\nname: y\n---\n', 'bad_yaml'), (b'---\n  name: x\n---\n', 'bad_yaml'),
+                            (b'---\nname: x\nname: y\n---\n', 'bad_yaml'), (b'---\n  name: x\n---\n', 'unsupported_yaml'),
+                            (b'---\nname: x\njust text\n---\n', 'bad_yaml'), (b'---\nname: x\n- y\n---\n', 'bad_yaml'),
+                            (b'---\ndescription: "a" b\n---\n', 'bad_yaml'), (b'---\ndescription: "a\n---\n', 'bad_yaml'),
+                            (b'---\ntools: [[a], b]\n---\n', 'unsupported_yaml'), (b'---\ntools: [a: b]\n---\n', 'unsupported_yaml'),
+                            (b'---\nhooks: {Stop: []}\n---\n', 'unsupported_yaml'),
                             (b'---\nhooks:\n\tStop: x\n---\n', 'bad_yaml'), (b'---\ndescription: Use when: x\n---\n', 'bad_yaml'), (b'---\nname: &a x\n---\n', 'unsupported_yaml'),
                             (b'---\nname: \xff\n---\n', 'not_utf8'), (b'---\n' + b'k: v\n' * 600 + b'---\n', 'too_large')):
             with self.subTest(raw=raw[:24]), self.assertRaises(frontmatter.FrontmatterError) as caught:

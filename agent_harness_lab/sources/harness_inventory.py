@@ -261,7 +261,7 @@ def _same(descriptor, info):
 def parse(reference, path, raw, profile):
     if reference is None: return 'no_parser', ()
     try: status, facts = _resolve(reference)(path, raw, profile)
-    except ValueError: return 'parse_failed', ()
+    except (ValueError, RecursionError): return 'parse_failed', ()
     if status not in PARSE_STATUSES or not isinstance(facts, dict): raise ValueError('invalid harness parser result')
     return status, tuple(sorted(facts.items()))
 

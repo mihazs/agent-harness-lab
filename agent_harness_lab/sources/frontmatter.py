@@ -6,7 +6,7 @@ quoted keys, plain or quoted scalars with trailing comments, block scalars (| an
 'bad_yaml' is kept for syntax every YAML parser rejects: a duplicate key, tab indentation, an unclosed quote or
 flow list, text after a closing quote, ': ' inside a block plain scalar, and a bare word or stray sequence entry
 where a mapping key belongs. Anything else outside the subset, such as anchors, aliases, tags, flow mappings,
-explicit keys, or an opening delimiter after a BOM, trailing blanks or blank lines, is
+explicit keys, an indented root, or an opening delimiter after a BOM, trailing blanks or blank lines, is
 'unsupported_yaml', so a caller can keep its verdict 'unknown' instead of
 guessing what a full YAML parser would decide.
 
@@ -86,7 +86,8 @@ def _mapping(lines, strict):
     while index < len(lines):
         line = lines[index]; index += 1
         if _blank(line): continue
-        if line[0] in ' \t': raise FrontmatterError('bad_yaml')
+        if line[0] == '\t': raise FrontmatterError('bad_yaml')
+        if line[0] == ' ': raise FrontmatterError('unsupported_yaml')  # an indented root mapping
         key, inline = _entry(line, result)
         if key in result: raise FrontmatterError('bad_yaml')
         following = next((later for later in lines[index:] if not _blank(later)), '')

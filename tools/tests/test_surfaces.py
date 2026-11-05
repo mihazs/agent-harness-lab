@@ -52,6 +52,11 @@ GOLDEN = (
     ('src/.claude/agents/team/reviewer.md', C, C, 'agent', (H,), (H,)),
     ('.codex/agents/reviewer.toml', C, C, 'agent', (H,), (H,)),
     ('agents/reviewer.md', C, C, 'agent', (H,), (H,)),
+    # A hooks/ or skills/ folder inside an agents tree still holds agent definitions.
+    ('.claude/agents/hooks/guard.md', C, C, 'agent', (H,), (H,)),
+    ('.claude/agents/skills/helper.md', C, C, 'agent', (S, H), (S, H)),
+    ('.codex/agents/hooks/guard.toml', C, C, 'agent', (H,), (H,)),
+    ('agents/hook/guard.md', C, C, 'agent', (H,), (H,)),
     ('.claude/agents/notes.txt', U, U, 'unsupported', (), (H,)),
     ('.claude/agents.md', U, U, 'unsupported', (), (H,)),
     ('.claude/commands/ship.md', U, U, 'unsupported', (), (H,)),
