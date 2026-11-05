@@ -173,6 +173,13 @@ RULES = (
          runtimes=frozenset({'claude-code'})),
     Rule('codex-config', 'config', 40, 'recommendation_only', lambda path, parts, context: path == '.codex/config.toml',
          runtimes=frozenset({'codex'})),
+    # Plugin enablement shares these files with hooks and config. The kind stays hook; the plugin facet only offers
+    # the file to the plugin parser as well (harness_inventory dispatches every facet kind with a parser).
+    Rule('claude-settings-plugins', 'plugin', 41, 'recommendation_only',
+         lambda path, parts, context: path in ('.claude/settings.json', '.claude/settings.local.json'),
+         runtimes=frozenset({'claude-code'})),
+    Rule('codex-config-plugins', 'plugin', 41, 'recommendation_only',
+         lambda path, parts, context: path == '.codex/config.toml', runtimes=frozenset({'codex'})),
     # Memory stores are never read, adopted or recommended against: the project layout anywhere, and the
     # memories/ and projects/<id>/memory/ layouts beneath any caller-declared root, never in the checkout.
     Rule('runtime-memory', None, 0, 'private_excluded', lambda path, parts, context: (

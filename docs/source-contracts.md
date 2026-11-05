@@ -1247,6 +1247,39 @@ carry no absolute path: every opened or listed descriptor must be the
 checkout, an entry beneath it or one of its ancestors. Other surface parsers
 and loading attribution remain open in #275 to #282.
 
+### Multi-surface file dispatch
+
+Some runtime files hold several surfaces at once. `.claude/settings.json` holds
+hooks, `enabledPlugins` and `extraKnownMarketplaces`, permissions and MCP
+settings. `.codex/config.toml` holds `[hooks]`, `[mcp_servers]` and
+`[plugins]`/`[marketplaces]`. `surfaces.classify` keeps one primary kind for
+these files (`hook`), and its `facets` list every matching kind in priority
+order: `hook`, `config`, then `plugin`. The `plugin` facet rows are
+`recommendation_only`, so the file's writability stays `contract_required`.
+
+The harness inventory offers a read file to the parser of every facet kind with
+a `PARSERS` entry. The primary kind's parser keeps the node's `parse_status`
+and its plain fact keys, so the hook, agent and other kind consumers read the
+same facts as before. Every other facet kind's parser reads the same bytes on
+its own and records `<kind>.parse_status` plus `<kind>.<fact>`, for example
+`config.settings_file` or `plugin.plugins_declared`. Each parser runs
+separately, so a `parse_failed` result from one leaves every other result in
+place. A primary fact key inside another kind's namespace is rejected as a
+parser error. The fact bound counts the namespaced facts too, and a
+`private_excluded` file such as `.claude/settings.local.json` is still not read
+by any parser.
+
+For a settings file the `plugin` parser records counts only: `plugin_file`
+(`claude_settings` or `codex_config`), `plugins_declared`,
+`marketplaces_declared`, and `plugins_content_not_selected`,
+`plugins_not_enabled` and `plugins_enablement_inherited`. It uses the same
+validation as plugin enablement below, under the same 1 MiB and
+256-declaration bounds. Plugin ids, marketplace locations, env values,
+instruction text and hook commands never reach a node. These facts are
+declarations, never evidence that a runtime enabled or loaded a plugin.
+Agent role tables in a Codex config are not dispatched, because the `agent`
+parser reads role files and no config row offers the `agent` facet.
+
 ### Declared Claude Code path-scoped rules and Codex exec policy
 
 `surfaces.classify` names two rule kinds that never mix. For `claude-code`,

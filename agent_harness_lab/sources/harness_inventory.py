@@ -228,7 +228,7 @@ class _Walk:
         else:
             raw = self.read(descriptor, name, info)
             content, state = hashlib.sha256(raw).hexdigest(), 'present'
-            status, facts = parse(reference, path, raw, self.profile)
+            status, facts = self.dispatch(surface, reference, path, raw)
             self.facts += len(facts)
             if self.facts > MAX_FACTS: raise _Blocked('fact_bound_exceeded')
         runtime = self.profile['runtime']
@@ -237,6 +237,23 @@ class _Walk:
         self.nodes.append(InventoryNode(path, digest(path), origin, root_name, surface.kind, surface.scope_dir, state,
             status, content, mode, f'{capability}:{runtime}' if pinned else None,
             self.profile.get('project_trust', 'unknown') if origin == 'checkout' else 'unknown', facts))
+
+    def dispatch(self, surface, reference, path, raw):
+        """Offer one file to the parser of every facet kind; one parser's failure never hides another's facts.
+
+        The primary kind's parser keeps parse_status and its plain facts, so kind consumers are unchanged. Each
+        other facet kind with a registered parser, such as plugin and config for a settings file whose kind is
+        hook, reads the same bytes independently into '<kind>.parse_status' and '<kind>.<fact>'.
+        """
+        status, facts = parse(reference, path, raw, self.profile)
+        others = [kind for kind in surface.facets if kind != surface.kind and kind in self.parsers]
+        if any(key.startswith(tuple(kind + '.' for kind in others)) for key, _ in facts):
+            raise ValueError('primary parser facts collide with a facet namespace')
+        extra = []
+        for kind in others:
+            other, rows = parse(self.parsers[kind][1], path, raw, self.profile)
+            extra += [(kind + '.parse_status', other), *((f'{kind}.{key}', value) for key, value in rows)]
+        return status, tuple(sorted(facts + tuple(extra)))
 
     def read(self, descriptor, name, info):
         remaining = MAX_BYTES - self.bytes
