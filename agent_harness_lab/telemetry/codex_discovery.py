@@ -1,5 +1,5 @@
 """Explicit bounded rollout discovery; headers filter scope before full reads."""
-from collections import defaultdict
+from collections import defaultdict, deque
 from contextlib import closing, contextmanager
 import json
 from pathlib import Path
@@ -111,14 +111,17 @@ def capture(root, project, *, session=None, max_files=None, max_scan_files=None,
                         if responses[key] != signature: raise ValueError('conflicting native response usage across captures')
                         suppressed_usage.add((case, ident)); duplicates += 1; continue
                     responses[key] = signature
+        # Conflict checks are complete; release every decoded row except its group entry before correlation.
+        admitted.clear(); responses.clear(); rows = claims = native = None
         records = []
         for case in sorted(groups):
             folder.check()
-            selected = sorted((row for ident, row in groups[case].items() if (case, ident) not in suppressed_usage),
-                key=lambda row: row['capture_order'])
+            selected = deque(sorted((row for ident, row in groups.pop(case).items() if (case, ident) not in suppressed_usage),
+                key=lambda row: row['capture_order']))
             for row in correlated(selected, folder.check):
                 if max_records is not None and len(records) >= max_records: raise ValueError('native discovery event budget exceeded')
                 records.append(row)
+        records = tuple(records)
         discovery = dict(scanned_files=len(names), headers_read=headers, accepted_files=len(files), foreign_files=foreign,
             other_sessions=other_session, unsupported_headers=unsupported, unsafe_entries_skipped=folder.unsafe_entries,
             filesystem_entries=folder.entries, bytes_read=folder.bytes, input_records=consumed,
@@ -130,5 +133,5 @@ def capture(root, project, *, session=None, max_files=None, max_scan_files=None,
         summary = dict(adapter_version=VERSION, upstream_commit=UPSTREAM_COMMIT, capture_completeness='partial',
             partial_tail=any(f['coverage']['partial_tail'] for f in files), files=files, discovery=discovery,
             served_model='unknown', effective_settings='unknown', independence='unknown', outcome='unknown', source_read=True, network_used=False, **totals)
-        yield tuple(records), summary, digest([(f['path_sha256'], f['sha256']) for f in files]), folder
+        yield records, summary, digest([(f['path_sha256'], f['sha256']) for f in files]), folder
         folder.verify()

@@ -1,4 +1,5 @@
 """Shared native snapshot admission, revision history and declared execution receipts."""
+from collections import deque
 from datetime import datetime, timezone
 from ..evaluation.integrity import contained
 from ..telemetry.native import correlated, optional_limit
@@ -29,6 +30,8 @@ class NativeCapture(LocalExport):
         revisions = {}
         with Folder(path.parent, None, limit_total_bytes=False, limit_tree=False) as folder:
             rows, summary, sha256 = decoder(folder, path.name, project, selected.get('max_records'), revisions=revisions)
+            # Draining releases decoder rows before snapshot() builds records, nodes and joins.
+            rows = deque(rows)
             events = tuple(correlated(rows, folder.check))
             snapshot = self.snapshot(source, descriptor, selected, project, events, summary, sha256, revisions, folder)
             folder.verify()

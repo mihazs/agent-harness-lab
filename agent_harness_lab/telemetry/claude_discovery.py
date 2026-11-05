@@ -3,6 +3,7 @@
 Directory naming follows the pinned SDK reader (``_sanitize_path``/``_find_project_dir``):
 ``<projects>/<sanitized-cwd>/<session>.jsonl`` and ``<session>/subagents/**/agent-*.jsonl``.
 """
+from collections import deque
 from contextlib import closing, contextmanager
 import json
 import os
@@ -178,6 +179,8 @@ def capture(roots, project, *, session=None, revisions=None, deadline=None,
             rows, found = projection.finish(folder.check)
             conflicts += found; unattributed += projection.unattributed
             sessions[rows[0]['case_id']] = projection.scoped('session', projection.session)
+            # The finished projection no longer needs its rows; draining releases each one once correlated.
+            projection.rows.clear(); rows = deque(rows)
             for row in correlated(rows, folder.check):
                 if max_records is not None and len(records) >= max_records: raise ValueError('native discovery event budget exceeded')
                 records.append(row)
@@ -194,5 +197,6 @@ def capture(roots, project, *, session=None, revisions=None, deadline=None,
             conflicting_response_facets=conflicts, unattributed_usage_records=unattributed, usage_semantics='observed_uncached_counts_only',
             served_model='unknown', effective_settings='unknown', independence='unknown', outcome='unknown', parent_session='unknown',
             source_read=True, network_used=False)
-        yield tuple(records), summary, digest([(f['path_sha256'], f['sha256']) for f in files]), folder, sessions
+        records = tuple(records)
+        yield records, summary, digest([(f['path_sha256'], f['sha256']) for f in files]), folder, sessions
         folder.verify()

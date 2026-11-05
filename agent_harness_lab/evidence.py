@@ -1,4 +1,5 @@
 """Collect bounded, project-scoped local evidence without exporting message bodies."""
+from collections import deque
 import hashlib
 import heapq
 import itertools
@@ -255,6 +256,9 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                         records, coverage, native_digest = scan(path, project, session=session, max_files=max_files,
                             max_scan_files=max_scan_files, max_records=max_events)
                 except OSError: raise ValueError('native capture is unavailable or unsafe') from None
+                # Analysis consumes events once; draining frees each native event when analysis no longer needs it.
+                from .telemetry.native import drained
+                records = drained(deque(records))
                 source.update(native_coverage=coverage)
                 if coverage['partial_tail']: _warn(caveats, 'Native capture has an uncommitted final line; only the complete prefix was projected.')
                 if coverage['unsupported_records'] or coverage['inherited_records_skipped']:

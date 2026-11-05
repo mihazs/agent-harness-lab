@@ -1,4 +1,5 @@
 """Bounded native JSONL I/O and content-free correlation shared by pinned profiles."""
+from collections import deque
 from datetime import datetime
 from contextlib import closing
 import hashlib
@@ -111,10 +112,17 @@ def jsonl(folder, name, max_records, consume, **limits):
     return sha256.hexdigest(), partial, count
 
 
+def drained(rows):
+    """Yield a deque front to back, dropping each row reference once it has been consumed."""
+    while rows: yield rows.popleft()
+
+
 def correlated(records, check):
+    """Correlate one decoded capture; a deque input is drained so consumed decoder rows are released."""
     common = {k: records[0][k] for k in ('case_id', 'root_case_id', 'lineage_verified', 'capture_complete',
         'source_format', 'source_version', 'runtime_fingerprint')}
-    for row in correlate(records, max_pending=len(records)):
+    pending = len(records)
+    for row in correlate(drained(records) if isinstance(records, deque) else records, max_pending=pending):
         check()
         yield event({**common, **row})
     check()
@@ -129,7 +137,8 @@ def guarded(path, project, decoder, max_records, *, deadline=None, **limits):
     path = Path(path).absolute()
     with Folder(path.parent, deadline, limit_total_bytes=False, limit_tree=False) as folder:
         rows, summary, sha256 = decoder(folder, path.name, project, max_records, **limits)
-        records = []
+        # Events stay unpublished until verify(); draining keeps one copy of each event alive, not two.
+        rows, records = deque(rows), []
         for record in correlated(rows, folder.check):
             if max_records is not None and len(records) >= max_records: raise ValueError('native normalized event budget exceeded')
             records.append(record)
