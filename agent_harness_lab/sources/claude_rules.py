@@ -22,17 +22,28 @@ MAX_EXPANSIONS = 256   # expanded patterns from brace groups, per rule; the docu
 MAX_PATTERN_CHARS = 4096
 MAX_PATTERN_SEGMENTS = 64  # path segments per pattern; brace expansion never adds a '/'
 MAX_TASK_PATHS = 1000
+MAX_MATCH_STEPS = 10_000_000  # segment comparisons across one receipt; past it the receipt is blocked, not truncated
 SETTING_SOURCES = ('user', 'project', 'local')
 PARSE_STATUSES = ('parsed', 'frontmatter_unsupported', 'blocked', 'not_utf8')
-CLASSIFICATIONS = ('launch', 'on_demand_subdirectory', 'conditional_matched', 'conditional_unmatched',
-                   'conditional_unknown', 'skipped_setting_sources', 'unknown')
+CLASSIFICATIONS = ('launch', 'on_demand_subdirectory', 'outside_task_scope', 'conditional_matched',
+                   'conditional_unmatched', 'conditional_unknown', 'skipped_setting_sources', 'unknown')
 # Inventory refusals inside a rules tree; the runtime follows rule symlinks, this reader never does.
 REFUSALS = {'symlink': 'symlink_not_followed', 'hardlink': 'hardlink_not_read', 'special_file': 'special_file_not_read'}
-_UNVERIFIED = '[]\\!'  # bracket expressions, escapes and negation are documented loosely or not at all
+# Bracket expressions, escapes, negation and braces left after expansion are documented loosely or not at all.
+_UNVERIFIED = '[]\\!{}'
 
 
 class _Blocked(Exception):
-    """Brace expansion exceeded MAX_EXPANSIONS."""
+    """Brace expansion exceeded MAX_EXPANSIONS, or matching exceeded the receipt's MAX_MATCH_STEPS."""
+
+
+class Budget:
+    """Segment comparisons left for one receipt; every rule draws from the same budget."""
+    def __init__(self, steps=None): self.steps = MAX_MATCH_STEPS if steps is None else steps
+
+    def spend(self, steps):
+        self.steps -= steps
+        if self.steps < 0: raise _Blocked('match_budget_exceeded')
 
 
 def base_dir(path):
@@ -77,23 +88,41 @@ def expand(patterns, budget=MAX_EXPANSIONS):
 
 
 def verified(pattern):
-    return bool(pattern) and not pattern.endswith('/') and not any(char in pattern for char in _UNVERIFIED)
+    return (bool(pattern) and not pattern.endswith('/') and not any(char in pattern for char in _UNVERIFIED)
+            and not any(segment in ('.', '..') for segment in pattern.lstrip('/').split('/')))
 
 
-def matches(pattern, path):
+def matches(pattern, path, *, dot=True, fold=False, budget=None):
     """Documented examples: a leading '/' anchors, a slash-free pattern matches at any depth, '**' spans segments.
 
-    Segments use case-sensitive fnmatch, so '*' also matches a leading dot; both details are unverified."""
+    Segments use fnmatch. dot=True lets '*', '?' and '**' consume a dot-leading segment and fold=True ignores
+    case; the runtime's choice for both is unverified, so outcome() asks both ways."""
+    if fold: pattern, path = pattern.lower(), path.lower()
     anchored = pattern.startswith('/')
     pattern = pattern.lstrip('/')
     wanted = tuple(pattern.split('/')) if anchored or '/' in pattern else ('**', pattern)
     parts = tuple(path.split('/'))
     reachable = {0}  # path positions reachable after the pattern segments consumed so far; iterative, no recursion
     for segment in wanted:
-        if segment == '**': reachable = set(range(min(reachable), len(parts) + 1))
-        else: reachable = {j + 1 for j in reachable if j < len(parts) and fnmatch.fnmatchcase(parts[j], segment)}
+        if budget is not None: budget.spend(len(parts) + 1 - min(reachable) if segment == '**' else len(reachable))
+        if segment == '**':
+            spanned, active = set(), False
+            for k in range(min(reachable), len(parts) + 1):
+                active = k in reachable or active and (dot or not parts[k - 1].startswith('.'))
+                if active: spanned.add(k)
+            reachable = spanned
+        else: reachable = {j + 1 for j in reachable if j < len(parts) and fnmatch.fnmatchcase(parts[j], segment)
+                           and (dot or segment.startswith('.') or not parts[j].startswith('.'))}
         if not reachable: return False
     return len(parts) in reachable
+
+
+def outcome(pattern, path, budget=None):
+    """True or False when every reading of the unverified dot and case semantics agrees; otherwise None."""
+    if not verified(pattern): return None
+    if matches(pattern, path, dot=False, budget=budget): return True
+    if not matches(pattern, path, fold=True, budget=budget): return False
+    return None
 
 
 def declaration(raw):
@@ -112,16 +141,25 @@ def chain(task_cwd):
     return ('.',) + tuple(str(PurePosixPath(*parts[:i])) for i in range(1, len(parts) + 1))
 
 
-def classify(base, status, patterns, scopes, task_paths, setting_sources):
-    """Documented loading condition of one rule; a declaration, never evidence that it loaded."""
+def classify(base, status, patterns, scopes, task_paths, setting_sources, budget=None):
+    """Documented loading condition of one rule; a declaration, never evidence that it loaded.
+
+    scopes is chain(task_cwd), so scopes[-1] is the cwd. budget bounds matching across the whole receipt."""
     if setting_sources is not None and 'project' not in setting_sources: return 'skipped_setting_sources'
     if status != 'parsed': return 'unknown'
-    if patterns is None: return 'launch' if base in scopes else 'on_demand_subdirectory'
+    if patterns is None:
+        if base in scopes: return 'launch'
+        cwd = scopes[-1]
+        return 'on_demand_subdirectory' if cwd == '.' or base.startswith(cwd + '/') else 'outside_task_scope'
     if task_paths is None: return 'conditional_unknown'
     under = [p if base == '.' else p[len(base) + 1:] for p in task_paths if base == '.' or p.startswith(base + '/')]
-    if any(verified(g) and matches(g, p) for g in patterns for p in under): return 'conditional_matched'
-    if under and not all(verified(g) for g in patterns): return 'conditional_unknown'
-    return 'conditional_unmatched'
+    unknown = False
+    for pattern in patterns:
+        for path in under:
+            result = outcome(pattern, path, budget)
+            if result: return 'conditional_matched'
+            unknown = unknown or result is None
+    return 'conditional_unknown' if unknown else 'conditional_unmatched'
 
 
 def parse(path, raw, profile):
@@ -234,16 +272,18 @@ def capture(checkout, profile, *, task_paths=None, setting_sources=None, harness
         task_paths_sha256=digest(list(task_paths) if task_paths is not None else None), setting_sources=setting_sources)
     if inventory.status != 'declared':
         return RulesReceipt(**identity, status=inventory.status, nodes=(), refusals=(), blocked_reason=inventory.blocked_reason)
-    nodes, scopes = [], chain(profile['task_cwd'])
+    nodes, scopes, budget = [], chain(profile['task_cwd']), Budget()
     for node in inventory.nodes:
         if node.kind != 'path_rule' or node.origin != 'checkout': continue
         raw = read_regular(os.path.join(os.path.abspath(checkout), node.path), harness_inventory.MAX_BYTES)
         if hashlib.sha256(raw).hexdigest() != node.content_sha256: raise ValueError('rule changed during reading')
         status, patterns = declaration(raw)
         base = base_dir(node.path)
+        try: loading = classify(base, status, patterns, scopes, task_paths, setting_sources, budget)
+        except _Blocked as error:  # a whole-receipt bound: no partial receipt, as for an inventory bound
+            return RulesReceipt(**identity, status='blocked', nodes=(), refusals=(), blocked_reason=str(error))
         nodes.append(RuleNode(node.path, node.path_sha256, base, node.content_sha256, status,
-            None if patterns is None else len(patterns),
-            classify(base, status, patterns, scopes, task_paths, setting_sources)))
+            None if patterns is None else len(patterns), loading))
     refusals = tuple(RuleRefusal(r.path, REFUSALS[r.reason]) for r in inventory.refusals
                      if r.root == 'checkout' and r.reason in REFUSALS and _in_rules(r.path))
     return RulesReceipt(**identity, status='declared', nodes=tuple(nodes), refusals=refusals)

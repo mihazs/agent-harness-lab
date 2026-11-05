@@ -29,8 +29,8 @@ class SurfaceClass:
 
 class _Context:
     """Caller facts a row may need; a callable is evaluated only by the row that asks for it."""
-    def __init__(self, root_skills):
-        self._root_skills = root_skills
+    def __init__(self, root_skills, external_root=False):
+        self._root_skills, self.external_root = root_skills, bool(external_root)
 
     @property
     def root_skills(self):
@@ -84,9 +84,11 @@ RULES = (
     # below a skills/ directory is still a rule; not writable until the adoption increment.
     Rule('claude-path-rule', 'path_rule', 15, 'unsupported', lambda path, parts, context: path.endswith('.md') and any(
          parts[i:i + 2] == ('.claude', 'rules') for i in range(len(parts) - 2)), runtimes=frozenset({'claude-code'})),
-    # Codex exec policy: <layer>/rules/*.rules (.codex or a declared $CODEX_HOME root); permission policy, never run.
+    # Codex exec policy: <layer>/rules/*.rules, that is .codex/rules or rules/ at the top of a caller-declared
+    # external root (a $CODEX_HOME); a checkout's own top-level rules/ is ordinary project content. Never run.
     Rule('codex-exec-policy', 'exec_policy', 25, 'recommendation_only', lambda path, parts, context: path.endswith(
-         '.rules') and parts[-2:-1] == ('rules',) and parts[:-2] in ((), ('.codex',)), runtimes=frozenset({'codex'})),
+         '.rules') and parts[-2:-1] == ('rules',) and (parts[:-2] == ('.codex',) or not parts[:-2]
+         and context.external_root), runtimes=frozenset({'codex'})),
     Rule('vcs-and-cache', None, 0, 'private_excluded',
          lambda path, parts, context: any(part in ('.git', '__pycache__') for part in parts)),
 )
@@ -97,14 +99,16 @@ def skill_prefixes():
     return tuple(row.root for row in RULES if row.kind == 'skill' and row.root and row.writability == 'adoptable')
 
 
-def classify(relative_path, runtime=None, mode=None, *, root_skills=False):
-    """Classify a project-relative POSIX path; runtime None means either runtime, mode is optional st_mode bits."""
+def classify(relative_path, runtime=None, mode=None, *, root_skills=False, external_root=False):
+    """Classify a project-relative POSIX path; runtime None means either runtime, mode is optional st_mode bits.
+
+    external_root is True only for a path relative to a caller-declared root outside the checkout."""
     if not isinstance(relative_path, str) or not relative_path: raise ValueError('invalid surface path')
     path = PurePosixPath(relative_path)
     if path.is_absolute() or '..' in path.parts: raise ValueError('unsafe surface path')
     if runtime is not None and runtime not in RUNTIMES: raise ValueError('unknown surface runtime')
     if mode is not None and (type(mode) is not int or mode < 0): raise ValueError('invalid surface mode')
-    parts, context = path.parts, _Context(root_skills)
+    parts, context = path.parts, _Context(root_skills, external_root)
     matched = [row for row in RULES if (runtime is None or runtime in row.runtimes)
                and row.match(relative_path, parts, context)]
     # Priority, then kind and name, so the answer never depends on where a row sits in the table.

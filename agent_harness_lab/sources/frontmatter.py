@@ -3,7 +3,8 @@
 string_lists() accepts a deliberately small subset: every top-level entry is one of the caller's keys, and each
 holds a YAML block list or a one-line flow sequence of plain, single-quoted or double-quoted strings. Anything
 else (another key, a scalar, a mapping, anchors, escapes, tabs, comments after a value, an unterminated or
-oversized block) raises Unsupported, so a construct a real YAML parser might read differently is never guessed.
+oversized block, an opening delimiter after a BOM, trailing blanks or blank lines) raises Unsupported, so a
+construct a real YAML parser might read differently is never guessed.
 """
 import re
 
@@ -22,7 +23,11 @@ class Unsupported(ValueError):
 def block(text, max_lines=MAX_LINES):
     """Lines between a leading '---' line and the next '---' line; None when the text has no leading block."""
     lines = text.split('\n', max_lines + 2)
-    if lines[0].rstrip('\r') != '---': return None
+    if lines[0].rstrip('\r') != '---':
+        # A BOM, trailing blanks or leading blank lines before a delimiter may still open a block for the runtime.
+        first = next((line for line in lines[:max_lines + 1] if line.strip()), '')
+        if first.lstrip('\ufeff').strip() == '---': raise Unsupported('frontmatter delimiter is not exactly ---')
+        return None
     for index, line in enumerate(lines[1:max_lines + 2], 1):
         if line.rstrip('\r') == '---': return [row.rstrip('\r') for row in lines[1:index]]
     raise Unsupported('frontmatter block is unterminated or longer than the bound')

@@ -211,7 +211,8 @@ class _Walk:
     def file(self, descriptor, name, path, info, root):
         origin, root_name, skills = root
         mode = stat.S_IMODE(info.st_mode)
-        surface = surfaces.classify(path, self.profile['runtime'], mode, root_skills=skills)
+        surface = surfaces.classify(path, self.profile['runtime'], mode, root_skills=skills,
+                                   external_root=origin != 'checkout')
         if surface.kind == 'unsupported': return
         if surface.writability != 'private_excluded' and info.st_nlink != 1: return self.refuse(root, path, 'hardlink')
         if len(self.nodes) >= MAX_FILES: raise _Blocked('file_bound_exceeded')

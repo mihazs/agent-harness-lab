@@ -152,7 +152,8 @@ class ClaudeRulesTests(unittest.TestCase):
         policy, rule = '.codex/rules/default.rules', '.claude/rules/style.md'
         self.assertEqual(surfaces.classify(policy, 'codex').kind, 'exec_policy')
         self.assertEqual(surfaces.classify(policy, 'codex').writability, 'recommendation_only')
-        self.assertEqual(surfaces.classify('rules/default.rules', 'codex').kind, 'exec_policy')  # a declared $CODEX_HOME root
+        self.assertEqual(surfaces.classify('rules/default.rules', 'codex', external_root=True).kind, 'exec_policy')
+        self.assertEqual(surfaces.classify('rules/default.rules', 'codex').kind, 'unsupported')  # a checkout's own rules/
         self.assertEqual(surfaces.classify(policy, 'claude-code').kind, 'unsupported')
         self.assertEqual(surfaces.classify(rule, 'codex').kind, 'unsupported')
         self.assertEqual((surfaces.classify(rule, 'claude-code').kind, surfaces.classify(rule, 'claude-code').writability),
@@ -165,6 +166,37 @@ class ClaudeRulesTests(unittest.TestCase):
         unverified = [row.item for row in surfaces.CAPABILITIES if row.surface == 'path_rules' and row.status == 'unverified']
         self.assertTrue(any('dotfile' in item and 'case-sensitivity' in item for item in unverified))
 
+    def test_only_a_declared_root_turns_a_top_level_rules_directory_into_codex_policy(self):
+        home = fixture.build(self.base / 'codex-home', {'rules/default.rules': POLICY}, hostile=False)
+        (self.checkout / 'rules').mkdir(); (self.checkout / 'rules/notes.rules').write_text('not codex\n')
+        value = inventory.capture(self.checkout, dict(CODEX, project_trust='declared_trusted'),
+                                  external_roots={'codex_home': str(home)})
+        kinds = {(n.root, n.path): (n.kind, n.origin) for n in value.nodes}
+        self.assertNotIn(('checkout', 'rules/notes.rules'), kinds)  # ordinary project content, not policy
+        self.assertEqual(kinds[('codex_home', 'rules/default.rules')], ('exec_policy', 'caller_declared_external'))
+        self.assertEqual(kinds[('checkout', '.codex/rules/default.rules')], ('exec_policy', 'checkout'))
+
+    def test_a_rule_without_paths_in_a_sibling_of_the_task_cwd_is_outside_task_scope(self):
+        fixture.build(self.checkout, {'other/.claude/rules/a.md': 'synthetic\n', 'pkg/sub/.claude/rules/b.md': 'x\n'},
+                      hostile=False)
+        states = self.states(self.capture(dict(CLAUDE, task_cwd='pkg')))
+        self.assertEqual(states['other/.claude/rules/a.md'], ('parsed', 'outside_task_scope'))
+        self.assertEqual(states['pkg/sub/.claude/rules/b.md'], ('parsed', 'on_demand_subdirectory'))
+        self.assertEqual(states['pkg/.claude/rules/always.md'], ('parsed', 'launch'))
+        self.assertEqual(states['.claude/rules/style.md'], ('parsed', 'launch'))
+
+    def test_matching_work_is_bounded_across_the_whole_receipt(self):
+        # Each rule stays inside the per-rule expansion bound; together they would cost unbounded time.
+        bomb = '---\npaths: ["' + '**/*/' * 4 + 'n' + '{a,b}' * 8 + '"]\n---\n'
+        hostile = fixture.build(self.base / 'many', {f'.claude/rules/r{i}.md': bomb for i in range(8)}, hostile=False)
+        paths = [f'a/b/c/d/e/f/g/h/x{i}.py' for i in range(10)]
+        with patch.object(rules, 'MAX_MATCH_STEPS', 1_000_000):
+            receipt = rules.capture(hostile, CLAUDE, task_paths=paths)
+            self.assertEqual((receipt.status, receipt.blocked_reason, receipt.nodes), ('blocked', 'match_budget_exceeded', ()))
+            single = fixture.build(self.base / 'one', {'.claude/rules/r.md': bomb}, hostile=False)
+            self.assertEqual(self.states(rules.capture(single, CLAUDE, task_paths=paths)),
+                             {'.claude/rules/r.md': ('parsed', 'conditional_unmatched')})
+        self.assertEqual(rules.capture(hostile, CLAUDE).status, 'declared')  # no task paths, nothing to match
 
     def test_hostile_rules_stay_bounded_and_rules_below_a_skills_directory_are_kept(self):
         hostile = self.base / 'hostile'
@@ -177,7 +209,7 @@ class ClaudeRulesTests(unittest.TestCase):
         receipt = rules.capture(hostile, CLAUDE, task_paths=['x', 'src/a.ts'])  # never a RecursionError
         self.assertEqual(self.states(receipt), {
             '.claude/rules/deep.md': ('blocked', 'unknown'),  # past the segment bound, so never evaluated
-            '.claude/rules/braces.md': ('parsed', 'conditional_unmatched'),
+            '.claude/rules/braces.md': ('parsed', 'conditional_unknown'),  # unclosed braces stay unverified
             '.claude/rules/skills/s.md': ('parsed', 'conditional_matched'),
             'plugin/skills/p/.claude/rules/p.md': ('parsed', 'on_demand_subdirectory'),
         })
@@ -223,6 +255,20 @@ class GlobAndFrontmatterTests(unittest.TestCase):
             with self.subTest(pattern=pattern, path=path): self.assertEqual(rules.matches(pattern, path), expected)
         self.assertFalse(rules.verified('docs/[ab].md') or rules.verified('a\\[b') or rules.verified('!x') or rules.verified('src/'))
 
+    def test_unverified_dot_case_and_brace_semantics_are_never_a_definite_label(self):
+        decide = lambda pattern, path: rules.classify('.', 'parsed', (pattern,), ('.',), (path,), None)
+        for pattern, path in (('**/*.ts', '.github/x.ts'), ('src/*', 'src/.env'), ('*.env', 'a/.env'),
+                              ('*.TS', 'a.ts'), ('src/*.ts', 'SRC/a.TS'), ('f{1..3}.ts', 'f2.ts'), ('{a}', 'a'),
+                              ('./src/*.ts', 'src/a.ts'), ('src/../a.ts', 'a.ts')):
+            with self.subTest(pattern=pattern, path=path): self.assertEqual(decide(pattern, path), 'conditional_unknown')
+        for pattern, path, expected in (('.github/*.ts', '.github/x.ts', 'conditional_matched'),
+                                        ('src/.env', 'src/.env', 'conditional_matched'),
+                                        ('**/*.ts', 'src/a.ts', 'conditional_matched'),
+                                        ('src/*.ts', 'lib/a.js', 'conditional_unmatched'),
+                                        ('src/*.ts', 'lib/.a.ts', 'conditional_unmatched')):
+            with self.subTest(pattern=pattern, path=path): self.assertEqual(decide(pattern, path), expected)
+        self.assertEqual((rules.outcome('**/*.ts', '.github/x.ts'), rules.outcome('**/*.ts', 'a/x.ts')), (None, True))
+
     def test_frontmatter_reader_accepts_only_string_lists(self):
         read = lambda text: frontmatter.string_lists(text, ('paths',))
         self.assertIsNone(read('# no block\n---\npaths: [a]\n---\n'))
@@ -235,7 +281,11 @@ class GlobAndFrontmatterTests(unittest.TestCase):
                      '---\npaths:\n\t- a\n---\n', '---\npaths:\n  - *anchor\n---\n', '---\npaths:\n  - "a" # c\n---\n',
                      '---\npaths:\n  - "a\\"b"\n---\n', '---\npaths:\n  - key: value\n---\n', '---\npaths: [a\n---\n',
                      '---\npaths: ["a]\n---\n', '---\npaths: [a, [b]]\n---\n', '---\npaths:\n  - a\npaths: [b]\n---\n',
-                     '---\n  paths: [a]\n---\n', '---\npaths:\n  - a\n', '---\n' + 'x\n' * 300 + '---\n'):
+                     '---\n  paths: [a]\n---\n', '---\npaths:\n  - a\n', '---\n' + 'x\n' * 300 + '---\n',
+                     '\ufeff---\npaths:\n  - "src/**"\n---\n', '--- \npaths: [a]\n---\n', '\n---\npaths: [a]\n---\n',
+                     '\r\n  \n---\t\npaths: [a]\n---\n'):
             with self.subTest(text=text), self.assertRaises(frontmatter.Unsupported): read(text)
         with self.assertRaises(frontmatter.Unsupported):
             read('---\npaths:\n' + '  - a\n' * (frontmatter.MAX_ITEMS + 1) + '---\n')
+        self.assertIsNone(read('\ufeff# title\n\n---\n'))  # a later rule line is body text, not a delimiter
+        self.assertEqual(rules.declaration(b'\xef\xbb\xbf---\npaths:\n  - "src/**"\n---\n'), ('frontmatter_unsupported', None))

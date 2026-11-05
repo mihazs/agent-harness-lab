@@ -1232,11 +1232,14 @@ every `.md` file below a `.claude/rules/` directory, including a nested one such
 as `pkg/.claude/rules/`, is kind `path_rule`. The row outranks every skill row, so
 `.claude/rules/skills/x.md` or a rules tree below a `skills/` directory is still a
 rule and carries the `skill` facet. Inside an adoptable skill bundle the file
-keeps the bundle's writability. For `codex`, `.codex/rules/*.rules`
-and `rules/*.rules` at the top of a declared `$CODEX_HOME` root are kind
-`exec_policy`. Neither kind carries the `instruction` facet, and neither runtime
-classifies the other's files. `path_rule` stays non-writable until adoption is
-extended; `exec_policy` is `recommendation_only`, because it is permission policy.
+keeps the bundle's writability. For `codex`, `.codex/rules/*.rules` is kind
+`exec_policy`, and so is `rules/*.rules` at the top of a caller-declared
+external root such as `$CODEX_HOME`. The inventory passes
+`external_root=True` only for those roots, so a checkout's own top-level
+`rules/` directory stays `unsupported`. Neither kind carries the `instruction`
+facet, and neither runtime classifies the other's files. `path_rule` stays
+non-writable until adoption is extended; `exec_policy` is `recommendation_only`,
+because it is permission policy.
 
 The rules follow the public [Claude Code memory documentation](https://code.claude.com/docs/en/memory)
 and [Codex rules page](https://developers.openai.com/codex/rules), retrieved
@@ -1254,24 +1257,32 @@ key, `paths`, holds a YAML block list or a one-line flow sequence of plain,
 single-quoted or double-quoted strings, up to 256 items. Any other construct is
 `frontmatter_unsupported` and is never guessed. That includes other keys, the
 documented comma-separated string form, escapes, anchors, tabs, trailing
-comments and an unterminated block. Claude Code loads a rule whose YAML does not
-parse as if it had no `paths`. This reader cannot tell that case from its own
-unsupported subset, so such a rule stays `unknown`. Non-UTF-8 rules are
-`not_utf8`.
+comments, an unterminated block and an opening delimiter that is not exactly
+`---`: one after a byte-order mark, with trailing blanks, or after blank lines.
+Claude Code loads a rule whose YAML does not parse as if it had no `paths`.
+This reader cannot tell that case from its own unsupported subset, so such a
+rule stays `unknown`. Non-UTF-8 rules are `not_utf8`.
 
 Brace groups expand up to 256 patterns per rule, and patterns without braces do
 not count. A rule past that bound, or with a pattern longer than 4096
 characters or of more than 64 path segments, is `blocked`. Brace groups are found
-in one linear scan, and matching walks the pattern segments iteratively, so a
-hostile rule costs bounded time and never exhausts the stack. The documented runtime budget is 1000 patterns, so
-`blocked` means AHL did not evaluate the rule. It does not mean the runtime
-skips it. Matching follows the documented examples. Patterns are relative to the
-directory that contains the rule's `.claude` folder. A leading `/` anchors a
-pattern, a pattern without a slash matches at any depth, and `**` spans whole
-path segments. Other segments use case-sensitive `fnmatch`, so `*` also matches a
-leading dot. The capability table marks dotfile, case, bracket and negation
-semantics `unverified`. A pattern with `[`, `]`, `\`, `!` or a trailing `/` is
-never treated as a match.
+in one linear scan, and matching walks the pattern segments iteratively, so it
+never exhausts the stack. Matching draws on one budget of 10,000,000 segment
+comparisons for the whole receipt, shared by every rule. When the budget runs
+out, the receipt is `blocked` with `match_budget_exceeded` and lists no rules,
+so many small hostile rules cannot add up to unbounded time. The documented
+runtime budget is 1000 patterns, so `blocked` means AHL did not evaluate the
+rule. It does not mean the runtime skips it. Matching follows the documented
+examples. Patterns are relative to the directory that contains the rule's
+`.claude` folder. A leading `/` anchors a pattern, a pattern without a slash
+matches at any depth, and `**` spans whole path segments. Other segments use
+`fnmatch`. The capability table marks
+dotfile, case, bracket and negation semantics `unverified`, so each pair is
+matched twice. A match counts only if it holds when wildcards never consume a
+dot-leading segment, and a miss counts only if it holds when `*` may consume
+one and case is ignored. Any other pair is unknown. A pattern with `[`, `]`,
+`\`, `!`, a brace left after expansion, a `.` or `..` segment, or a trailing
+`/` is never treated as a match or a miss.
 
 Each `RuleNode` gets one classification:
 
@@ -1280,11 +1291,14 @@ Each `RuleNode` gets one classification:
 - `launch`: no `paths`, and the base directory is the checkout root or a
   directory between it and `task_cwd`. Ancestors other than the root are
   assumed by analogy with `CLAUDE.md` and are `unverified`.
-- `on_demand_subdirectory`: no `paths`, and the base directory is elsewhere.
+- `on_demand_subdirectory`: no `paths`, and the base directory is below
+  `task_cwd`.
+- `outside_task_scope`: no `paths`, and the base directory is neither an
+  ancestor of `task_cwd` nor below it, such as a sibling directory.
 - `conditional_matched` or `conditional_unmatched`: a declared task path below
   the base directory matches, or none does.
-- `conditional_unknown`: no task paths were declared, or only an unverified
-  pattern could have matched.
+- `conditional_unknown`: no task paths were declared, or no match is certain
+  and the outcome of some pair rests on unverified pattern or glob semantics.
 - `unknown`: the frontmatter is unsupported, blocked or not UTF-8.
 
 Symbolic links in a rules tree, including a linked `.claude` or `rules`
