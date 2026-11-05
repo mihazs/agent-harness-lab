@@ -460,6 +460,18 @@ class VendoredTreeOwnershipTests(unittest.TestCase):
                 self.assertEqual(journal.execute(prepare()['deployment'])['status'],'committed')
                 self.assertEqual((self.project/name).read_text(),'after')
 
+    def test_file_name_ignore_patterns_never_make_a_folder_foreign(self):
+        # Keeping instruction files local with a file pattern leaves nested and root files equally adoptable.
+        (self.project/'.gitignore').write_text('generated/\nCLAUDE.md\nAGENTS.md\n')
+        for name in ('CLAUDE.md','app/AGENTS.md'): NestedSurfaceAdoptionTests.write(self.project/name,'before')
+        for name in ('CLAUDE.md','app/CLAUDE.md','app/AGENTS.md'):
+            with self.subTest(name=name):
+                journal,prepare=self.prepare(name)
+                self.assertEqual(journal.execute(prepare()['deployment'])['status'],'committed')
+                self.assertEqual((self.project/name).read_text(),'after')
+        # A directory rule still refuses the same file names inside an ignored folder.
+        with self.assertRaisesRegex(ValueError,'outside owned harness surface'): self.prepare('generated/CLAUDE.md')[1]()
+
     def test_a_personal_global_excludes_file_never_decides_ownership(self):
         home=self.root/'home'; home.mkdir(); (home/'ignore').write_text('app/\n')
         (home/'.gitconfig').write_text(f'[core]\n\texcludesFile = {home/"ignore"}\n')

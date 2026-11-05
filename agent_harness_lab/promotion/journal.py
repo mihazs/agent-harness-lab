@@ -35,25 +35,32 @@ def in_checkout(project,name):
 
 
 def ignored(project,name):
-    """The repository's ignore rules exclude untracked name, directly or through its folder, so it is generated or
-    vendored, not owned.
+    """The repository's ignore rules exclude the folder holding untracked name, so it is generated or vendored, not
+    owned.
 
-    A read-only `git check-ignore` that runs no hook or fsmonitor and writes nothing; it reads the index only so a
-    tracked (force-added) file is never reported. The user's global excludes file is not consulted: it is a personal
+    Only directory-level rules decide: a file-name pattern such as `CLAUDE.md` keeps instruction files local, it does
+    not make their folder foreign. Read-only git calls that run no hook or fsmonitor and write nothing: `check-ignore
+    --no-index` on the folder, then, only for an ignored folder, `ls-files --error-unmatch` so a tracked
+    (force-added) file is never reported. The user's global excludes file is not consulted: it is a personal
     preference, not the project's. A project with no .git at or above it has no ignore rules. Any other git answer,
     a missing git binary or a timeout is unknown and fails closed as ignored."""
-    if not PurePosixPath(name).parent.parts: return False
+    folder=PurePosixPath(name).parent
+    if not folder.parts: return False
     root=Path(project).absolute()
     if not any(os.path.lexists(parent/'.git') for parent in (root,*root.parents)): return False
     # Inherited GIT_DIR or GIT_WORK_TREE (a git hook sets them) would answer for another repository.
     env={key:value for key,value in os.environ.items() if not key.startswith('GIT_')}
+    def git(*args):
+        return subprocess.run(['git','-c','core.fsmonitor=false','-c','core.excludesFile=',*args],cwd=root,
+                              stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
+                              env={**env,'GIT_OPTIONAL_LOCKS':'0'},timeout=10,check=False).returncode
     try:
-        result=subprocess.run(['git','-c','core.fsmonitor=false','-c','core.excludesFile=','check-ignore','-q','--',
-                               name],
-                              cwd=root,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,
-                              env={**env,'GIT_OPTIONAL_LOCKS':'0'},timeout=10,check=False)
+        verdict=git('check-ignore','-q','--no-index','--',f'{folder}/')
+        if verdict==1: return False
+        if verdict!=0: return True
+        # A literal pathspec, so a glob character in name never matches another tracked file.
+        return git('--literal-pathspecs','ls-files','--error-unmatch','--',name)!=0
     except (OSError,subprocess.SubprocessError): return True
-    return result.returncode!=1
 
 
 def validate_snapshot(record):

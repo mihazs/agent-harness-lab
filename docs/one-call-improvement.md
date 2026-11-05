@@ -99,13 +99,16 @@ exclude the path, and evaluates it only for a nested path that would otherwise
 be `adoptable`. Root harness folders (`.claude/`, `.agents/`, `.codex/` and a
 root `skills/` tree) are never probed, so a project that keeps `.claude/` local
 through ignore rules still adopts its root rules and skills. `Journal.owned`
-passes `promotion.journal.ignored`, which runs a read-only `git check-ignore`
-on the path, with fsmonitor disabled, the user's global excludes file unset and
-no inherited `GIT_*` variables, so a hook's `GIT_DIR` cannot answer for it. It
-reads the index only so that a tracked, force-added file is not reported as
-ignored. A project with no `.git` at or above it has no ignore rules, so git is
-never started for it. A missing git binary, a timeout or any answer other than
-"not ignored" fails closed. An ignored folder's `CLAUDE.md`, `.claude/rules` or
+passes `promotion.journal.ignored`, which runs a read-only
+`git check-ignore --no-index` on the path's folder, with fsmonitor disabled,
+the user's global excludes file unset and no inherited `GIT_*` variables, so a
+hook's `GIT_DIR` cannot answer for it. Only directory-level rules decide: a
+file-name pattern such as `CLAUDE.md` or `AGENTS.md` keeps instruction files
+local and does not make `app/CLAUDE.md` foreign. For an ignored folder it then
+runs a read-only `git ls-files --error-unmatch` on the path, so a tracked,
+force-added file is not reported as ignored. A project with no `.git` at or
+above it has no ignore rules, so git is never started for it. A missing git
+binary, a timeout or any answer other than "not ignored" fails closed. An ignored folder's `CLAUDE.md`, `.claude/rules` or
 skill bundle therefore stages but never adopts. A root file has no enclosing
 folder and is not probed.
 
