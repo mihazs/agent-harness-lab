@@ -211,6 +211,12 @@ class BeneathTests(unittest.TestCase):
         (self.outside/'sub').mkdir()
         self.assert_fsync_refused(None, self.root/'deep', lambda: private_journal.sync_directory(self.root/'deep'/'sub'))
 
+    def test_directory_leaf_is_opened_without_following_and_only_as_a_directory(self):
+        self.assert_fsync_refused(None, self.root/'deep'/'sub',
+                                  lambda: private_journal.sync_directory(self.root/'deep'/'sub'))
+        with self.unleaked(), self.assertRaises(NotADirectoryError):
+            integrity.open_directory_nofollow(self.target)
+
     def test_sites_still_fsync_their_own_contained_files_and_directories(self):
         real_fsync, synced = os.fsync, []
         def fsync(descriptor):
