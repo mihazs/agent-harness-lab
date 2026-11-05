@@ -42,6 +42,20 @@ def atomic_json(path, value, *, before_replace=None):
         Path(temporary).unlink(missing_ok=True)
 
 
+def atomic_json_size(value, limit=None):
+    """Byte length of what atomic_json writes, counted without materializing it.
+
+    Uses json.dump's encoder options there plus its trailing newline. Once the
+    count exceeds limit it stops early and returns that partial count, so a
+    limited result is only meaningful compared with limit."""
+    size = 1
+    for chunk in json.JSONEncoder(indent=2, allow_nan=False).iterencode(value):
+        size += len(chunk.encode())
+        if limit is not None and size > limit:
+            break
+    return size
+
+
 def load(path):
     if not path.exists():
         return None
