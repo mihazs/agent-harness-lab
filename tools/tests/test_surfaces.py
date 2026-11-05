@@ -13,15 +13,16 @@ from agent_harness_lab.workflow import candidate_states, harness_files, skill_ro
 
 I, S, H = 'instruction', 'skill', 'hook_contract_required'
 A, P, C, U = 'adoptable', 'private_excluded', 'contract_required', 'unsupported'
+R = 'recommendation_only'
 # path, writability without/with a root skills/ folder, plan surface, facets at 0o644, facets once 0o755.
 GOLDEN = (
     ('AGENTS.md', A, A, 'instruction', (I,), (I, H)),
     ('CLAUDE.md', A, A, 'instruction', (I,), (I, H)),
-    ('sub/AGENTS.md', U, U, 'unsupported', (), (H,)),
-    ('sub/CLAUDE.md', U, U, 'unsupported', (), (H,)),
-    ('.claude/CLAUDE.md', U, U, 'unsupported', (), (H,)),
-    ('CLAUDE.local.md', U, U, 'unsupported', (), (H,)),
-    ('AGENTS.override.md', U, U, 'unsupported', (), (H,)),
+    ('sub/AGENTS.md', R, R, 'instruction', (I,), (I, H)),
+    ('sub/CLAUDE.md', R, R, 'instruction', (I,), (I, H)),
+    ('.claude/CLAUDE.md', R, R, 'instruction', (I,), (I, H)),
+    ('CLAUDE.local.md', P, P, 'instruction', (I,), (I, H)),
+    ('AGENTS.override.md', R, R, 'instruction', (I,), (I, H)),
     ('.agents/skills/demo/SKILL.md', A, A, 'skill', (S,), (S, H)),
     ('.claude/skills/demo/SKILL.md', A, A, 'skill', (S,), (S, H)),
     ('.claude/skills/demo/scripts/run.py', A, A, 'skill', (S, H), (S, H)),
@@ -198,10 +199,11 @@ class CapabilityTableTests(unittest.TestCase):
         from agent_harness_lab.surfaces import CAPABILITIES
         unverified = [r for r in CAPABILITIES if r.status == 'unverified']
         self.assertEqual({(r.surface, r.runtime) for r in unverified}, self.UNVERIFIED)
-        self.assertEqual(len(unverified), 10)
+        self.assertEqual(len(unverified), 11)
         items = ' '.join(r.item for r in unverified)
         for phrase in ('size limit', 'version gates', 'static validator', 'load timing', 'custom prompts',
-                       'cache subpath', 'plugin agents', 'validate command', 'memories layout', 'managed settings'):
+                       'cache subpath', 'plugin agents', 'validate command', 'memories layout', 'managed settings',
+                       'claudeMdExcludes'):
             self.assertIn(phrase, items)
 
     def test_a_row_without_doc_url_pin_or_status_is_rejected(self):

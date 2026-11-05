@@ -962,9 +962,10 @@ documentation-derived resolver; they are not native loading evidence.
 What the receipt declares, never verifies:
 
 - **Launch files.** In each directory from the checkout root through `task_cwd`,
-  a non-empty UTF-8 `CLAUDE.md`, `.claude/CLAUDE.md` and `CLAUDE.local.md` are
+  a non-empty UTF-8 `CLAUDE.md` and `.claude/CLAUDE.md` are
   `declared_applicable` with reason `directory_concatenation`. They are
-  concatenated, not shadowed. A whitespace-only launch file is hashed but stays
+  concatenated, not shadowed. `CLAUDE.local.md` is always `private_excluded`
+  (see the whole-tree section below). A whitespace-only launch file is hashed but stays
   `unknown` with reason `empty`. `parent` edges link consecutive directory
   levels; order within one directory is not encoded. Directories above the
   checkout are not read; their influence stays in `ambient_state: unknown`.
@@ -1008,9 +1009,9 @@ What the receipt declares, never verifies:
   that import.
 - **Explicitly unknown.** Selected `.claude/rules/` files (`rules_not_modeled`)
   and launch filenames below `task_cwd` (`on_demand_subdirectory`) stay unknown.
-  Files below `task_cwd` are not discovered unless the caller selects them.
-  Managed and user files, `claudeMdExcludes`, approval decisions, on-demand
-  truncation and path-scoped rule matching are not captured. A selected
+  Files below `task_cwd` are discovered by the whole-tree walk described below.
+  Managed and user files, approval decisions, on-demand truncation and
+  path-scoped rule matching are not captured. A selected
   `AGENTS.override.md` or other unrecognized file in the chain is `unsupported`.
 
 An import whose path crosses a symbolic link, a non-directory component or a
@@ -1024,6 +1025,103 @@ record. Observed loading stays `unknown`, and the receipt grants no edit authori
 Content, import, cwd and profile changes invalidate it. Native
 `InstructionsLoaded` evidence, managed and global capture, rules and on-demand
 modeling, and execution binding remain open in #46.
+
+### Whole-tree instruction inventory and declared instruction settings
+
+The Claude Code profile walks the whole checkout, not only the caller's selected
+files. Each directory is opened by name beneath an opened directory with
+`O_NOFOLLOW`; `.git` and nested repositories (a directory holding `.git`) are
+skipped. Every `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`
+and `.claude/AGENTS.md` becomes a node, classified against `task_cwd`:
+
+- **Launch ancestors** keep the labels above.
+- **Below `task_cwd`**, `CLAUDE.md` and `.claude/CLAUDE.md` are `unknown` with
+  reason `on_demand_subdirectory`. The documented trigger is a read, write or
+  edit of another file in that subtree. A subdirectory `AGENTS.md` is on demand
+  only when that directory has none of the three `CLAUDE.md` files. Otherwise it
+  is `shadowed` by the first of them, with the same assumed or declared reason as
+  a launch `AGENTS.md`. The existing `@path` resolver also expands every
+  on-demand file. Files reached only that way stay `unknown`
+  (`on_demand_import`); missing, cyclic and unsafe imports get the usual labels.
+  The per-file size limit for subdirectory files is unverified, so it is never
+  applied.
+- **Anywhere else** (the same filename in an unrelated scope), files are
+  `out_of_scope` with reason `outside_task_scope`.
+- **`CLAUDE.local.md`** is personal and usually gitignored. Every copy, wherever
+  it sits, is `private_excluded`: it is hashed, never admitted, expanded, staged
+  or imported, and its bytes never reach output. A present copy still counts as
+  a `CLAUDE.md` when deciding whether an `AGENTS.md` is shadowed, as documented.
+- A linked or hard-linked instruction file outside the launch chain is
+  `unsupported` (`instruction_link_not_followed`) and is never opened. Links in
+  the launch chain still fail the capture.
+
+Two optional profile fields declare settings that live only in user or managed
+configuration:
+
+- `instruction_files`, the **Project instructions** value. With
+  `claude-md-or-agents-md`, a launch `AGENTS.md` is `declared_applicable`
+  (`declared_instruction_files_setting`) when no launch `CLAUDE.md` file exists.
+  Otherwise it is `shadowed` with that reason. With `claude-md-and-agents-md`
+  it is applicable next to them. With `claude-md` every `AGENTS.md` is
+  `out_of_scope` (`excluded_by_declared_instruction_files`). `managed-only`
+  also excludes the launch `CLAUDE.md` files and leaves subdirectory files on
+  demand. Any other label is an unknown mode: no project node is applicable
+  or shadowed, and each one stays `unknown` with reason
+  `instruction_files_setting_unknown`. Without the field the assumed-default
+  labels above apply.
+- `claude_md_excludes`, a list of up to 256 glob patterns. The runtime matches
+  them against absolute paths. Here they are matched against the
+  checkout-relative path, with and without a leading `/`. A matching file
+  stays `unknown` with reason `claude_md_excludes_match_unverified`.
+
+The walk is bounded at 100000 entries and depth 64. Going past either bound
+gives a `blocked` receipt with a `tree_enumeration_bound_exceeded` node. It is
+never reported as a complete enumeration.
+
+The Codex profile keeps its directory precedence and adds three declarations,
+pinned to the public `openai/codex@d786ff91` source
+(`codex-rs/core/src/agents_md.rs` and
+`codex-rs/codex-home/src/instructions/mod.rs`):
+
+- `capture(..., codex_home='home')` names a folder-relative `CODEX_HOME` that
+  does not overlap the checkout. It is never discovered, defaulted or read from
+  the environment. Its `AGENTS.override.md`, then `AGENTS.md`, are hashed with
+  origin `codex_home`. The first non-empty one is `declared_applicable`
+  (`codex_home_first_non_empty`), so an empty override falls through. A later
+  non-empty file is `shadowed` (`codex_home_precedence`). A `parent` edge links
+  it to the first applicable project file. It is not counted against
+  `project_doc_max_bytes`.
+- `project_root_markers` (default `['.git']` in Codex; undeclared here keeps
+  the checkout root as the project root). Discovery starts at the nearest
+  directory from `task_cwd` upward that holds a marker. Directories above it
+  are `out_of_scope` (`outside_project_root`). An empty list limits discovery to
+  `task_cwd`. A declared marker found nowhere in the checkout leaves the
+  ancestors `unknown` (`project_root_marker_not_found_in_checkout`), because a
+  marker above the checkout is not read.
+- `project_trust: declared_untrusted` drops every non-empty project file to
+  `out_of_scope` (`explicitly_untrusted`), as Codex loads no project docs for an
+  untrusted project. The `CODEX_HOME` files still apply. Trust is never read
+  from configuration.
+
+The documented 32 KiB `project_doc_max_bytes` default is reported as a fact. It
+is not applied as an implicit bound: native partial truncation is still not
+modelled, and a declared bound that is exceeded still blocks. Unsupported
+runtime/version pairs return `unsupported` before anything, `CODEX_HOME`
+included, is read.
+
+The surface inventory registers `instructions.parse_surface` for the
+`instruction` kind, and `surfaces.RULES` classifies nested `CLAUDE.md`,
+`AGENTS.md` and `AGENTS.override.md` files as `recommendation_only`
+instructions, so nothing can adopt them yet. Under Claude Code,
+`CLAUDE.local.md` is `private_excluded` and its content is not read. Parser facts are
+labels and counts only: `checkout_relation` (`launch_ancestor`,
+`on_demand_subdirectory` or `outside_task_scope` for Claude Code;
+`directory_chain`, `below_task_cwd_not_loaded` or `outside_task_scope` for
+Codex), import token counts, `loading_trigger`, `subdirectory_size_limit:
+unverified`, `instruction_files_setting: instruction_files_setting_unknown` and
+`exceeds_default_project_doc_max_bytes`. `checkout_relation` assumes a
+checkout path; the node's origin and root mark a declared external root. None
+of these facts is loading evidence or a task outcome.
 
 ### Read-only harness surface inventory
 
@@ -1064,7 +1162,7 @@ any other value, because a listed file is not evidence that a runtime loaded it.
 
 Parsers are registered in `PARSERS`, a tuple sorted by surface kind with one
 self-contained `(kind, capability surface, 'module:function')` line per kind.
-Every parser in this release is a stub that returns `not_parsed`. A kind with
+Parsers not described in this document are stubs that return `not_parsed`. A kind with
 no entry is `no_parser`, and a parser that raises `ValueError` gives
 `parse_failed`. Parser facts are flat scalar mappings, so raw text never
 reaches a node.
@@ -1089,9 +1187,8 @@ blocked or unsupported. Synthetic tests check the walk, the refusals, the
 bounds, unchanged trees and the absence of processes and network use. An
 open() audit compares inodes, because opens beneath a directory descriptor
 carry no absolute path: every opened or listed descriptor must be the
-checkout, an entry beneath it or one of its ancestors. Surface parsers,
-nested-instruction discovery and loading attribution remain open in #274 to
-#282.
+checkout, an entry beneath it or one of its ancestors. Other surface parsers
+and loading attribution remain open in #275 to #282.
 
 ## ai-memory OKF project exports
 

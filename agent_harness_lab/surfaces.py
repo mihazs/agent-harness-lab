@@ -65,6 +65,14 @@ def _bundle(root, *, needs_root_skills=False):
 
 RULES = (
     Rule('root-instruction', 'instruction', 10, 'adoptable', lambda path, parts, context: path in ROOT_INSTRUCTIONS),
+    # Nested and override instruction files rank after skills and hooks, so existing kinds never change;
+    # they are recommendation-only until a staging contract admits them. CLAUDE.local.md is personal.
+    Rule('nested-claude-instruction', 'instruction', 35, 'recommendation_only',
+         lambda path, parts, context: parts[-1] in ROOT_INSTRUCTIONS, runtimes=frozenset({'claude-code'})),
+    Rule('nested-codex-instruction', 'instruction', 35, 'recommendation_only',
+         lambda path, parts, context: parts[-1] in ('AGENTS.md', 'AGENTS.override.md'), runtimes=frozenset({'codex'})),
+    Rule('claude-local-instruction', 'instruction', 35, 'private_excluded',
+         lambda path, parts, context: parts[-1] == 'CLAUDE.local.md', runtimes=frozenset({'claude-code'})),
     Rule('agents-skill-bundle', 'skill', 20, 'adoptable', _bundle('.agents/skills'), root='.agents/skills'),
     Rule('claude-skill-bundle', 'skill', 20, 'adoptable', _bundle('.claude/skills'), root='.claude/skills'),
     # A top-level skills/ tree is project-owned only when the caller already owns one.
@@ -148,6 +156,10 @@ CAPABILITIES = (
     _row('instructions', 'claude-code', 'AGENTS.md read only without a CLAUDE.md at or above the cwd', _CLAUDE + 'memory', gate='>=2.1.277'),
     _row('instructions', 'claude-code', 'subdirectory and rule file size limit', _CLAUDE + 'memory', 'unverified'),
     _row('instructions', 'codex', 'AGENTS.override.md, AGENTS.md and fallback names, one file per directory, startup only', _CODEX + 'guides/agents-md'),
+    _row('instructions', 'claude-code', 'Project instructions modes claude-md-or-agents-md, claude-md-and-agents-md, claude-md, managed-only', _CLAUDE + 'memory'),
+    _row('instructions', 'claude-code', 'claudeMdExcludes absolute-path globs matched against checkout-relative paths', _CLAUDE + 'memory', 'unverified'),
+    _row('instructions', 'codex', 'CODEX_HOME AGENTS.override.md then AGENTS.md, first non-empty, outside the project budget', _CODEX_SOURCE + '/codex-home/src/instructions/mod.rs'),
+    _row('instructions', 'codex', 'project_root_markers default .git, [] or no marker means the cwd only; untrusted projects load no project docs', _CODEX_SOURCE + '/core/src/agents_md.rs'),
     _row('path_rules', 'claude-code', '.claude/rules/**/*.md with optional paths globs', _CLAUDE + 'memory'),
     _row('path_rules', 'claude-code', 'project rules skipped without the project setting source', _CLAUDE + 'memory', gate='>=2.1.211'),
     _row('path_rules', 'codex', 'no path-scoped instruction rules; .rules files are exec policy', _CODEX + 'rules'),

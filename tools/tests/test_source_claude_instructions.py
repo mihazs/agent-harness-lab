@@ -47,15 +47,16 @@ class ClaudeInstructionInventoryTests(unittest.TestCase):
     def unresolved(self, receipt, importer, reason):
         return self.nodes(receipt)[digest(['unresolved_imports', importer, reason])]
 
-    def test_root_nested_dot_claude_and_local_files_are_concatenated_not_shadowed(self):
+    def test_root_nested_dot_claude_files_are_concatenated_and_local_files_stay_private(self):
         for name in ('CLAUDE.md', '.claude/CLAUDE.md', 'src/CLAUDE.local.md', 'src/task/CLAUDE.md'):
             self.write(name, 'SYNTHETIC_MEMORY')
         receipt = self.read()
         active = {n.path_sha256 for n in receipt.nodes if n.applicability == 'declared_applicable'}
         self.assertEqual(receipt.resolution_status, 'declared')
-        self.assertEqual(active, {digest(p) for p in ('CLAUDE.md', '.claude/CLAUDE.md', 'src/CLAUDE.local.md', 'src/task/CLAUDE.md')})
-        self.assertIn(('parent', digest('.claude/CLAUDE.md'), digest('src/CLAUDE.local.md')), self.edges(receipt))
-        self.assertIn(('parent', digest('src/CLAUDE.local.md'), digest('src/task/CLAUDE.md')), self.edges(receipt))
+        self.assertEqual(active, {digest(p) for p in ('CLAUDE.md', '.claude/CLAUDE.md', 'src/task/CLAUDE.md')})
+        self.assertEqual(self.state(receipt, 'src/CLAUDE.local.md'), ('private_excluded', 'private_excluded'))
+        self.assertIn(('parent', digest('.claude/CLAUDE.md'), digest('src/task/CLAUDE.md')), self.edges(receipt))
+        self.assertFalse(any(digest('src/CLAUDE.local.md') in (s, t) for _, s, t in self.edges(receipt)))
         self.assertFalse(any(e.kind == 'shadows' for e in receipt.edges))
         self.assertEqual(self.state(receipt, 'src/CLAUDE.md'), ('unknown', 'missing'))
 
@@ -141,6 +142,100 @@ class ClaudeInstructionInventoryTests(unittest.TestCase):
         self.assertEqual(self.state(receipt, '.claude/rules/testing.md'), ('unknown', 'rules_not_modeled'))
         self.assertEqual(self.state(receipt, 'src/task/deep/CLAUDE.md'), ('unknown', 'on_demand_subdirectory'))
         self.assertEqual(self.state(receipt, 'other/CLAUDE.md'), ('out_of_scope', 'outside_task_scope'))
+
+    def test_whole_tree_classifies_nested_unrelated_and_shadowed_files_without_selection(self):
+        self.write('CLAUDE.md', 'SYNTHETIC_ROOT'); self.write('AGENTS.md', 'SYNTHETIC_ROOT_AGENTS')
+        self.write('src/task/deep/CLAUDE.md', '@notes.md @absent.md @loop.md')
+        self.write('src/task/deep/notes.md', 'SYNTHETIC_NOTES'); self.write('src/task/deep/loop.md', '@CLAUDE.md')
+        self.write('src/task/deep/.claude/CLAUDE.md', 'SYNTHETIC_DOT'); self.write('src/task/deep/AGENTS.md', 'SYNTHETIC_SHADOW')
+        self.write('src/task/lone/AGENTS.md', 'SYNTHETIC_LONE')
+        self.write('other/CLAUDE.md', 'SYNTHETIC_OTHER'); self.write('other/AGENTS.md', 'SYNTHETIC_OTHER_AGENTS')
+        self.write('vendor/x/CLAUDE.md', 'SYNTHETIC_VENDOR'); (self.root/'project/vendor/x/.git').mkdir()
+        (self.root/'project/src/task/linked').mkdir(); (self.root/'project/src/task/linked/CLAUDE.md').symlink_to('../deep/CLAUDE.md')
+        receipt = self.read(); edges = self.edges(receipt)
+        self.assertEqual(self.state(receipt, 'AGENTS.md'), ('shadowed', 'assumed_default_instruction_files_setting'))
+        for path in ('src/task/deep/CLAUDE.md', 'src/task/deep/.claude/CLAUDE.md', 'src/task/lone/AGENTS.md'):
+            self.assertEqual(self.state(receipt, path), ('unknown', 'on_demand_subdirectory'))
+        self.assertEqual(self.state(receipt, 'src/task/deep/AGENTS.md'), ('shadowed', 'assumed_default_instruction_files_setting'))
+        self.assertIn(('shadows', digest('src/task/deep/CLAUDE.md'), digest('src/task/deep/AGENTS.md')), edges)
+        self.assertEqual(self.state(receipt, 'other/CLAUDE.md'), ('out_of_scope', 'outside_task_scope'))
+        self.assertEqual(self.state(receipt, 'other/AGENTS.md'), ('out_of_scope', 'outside_task_scope'))
+        self.assertEqual(self.state(receipt, 'src/task/deep/notes.md'), ('unknown', 'on_demand_import'))
+        self.assertEqual(self.unresolved(receipt, 'src/task/deep/CLAUDE.md', 'import_missing').presence, 'missing')
+        self.assertIn(('import_cycle', digest('src/task/deep/loop.md'), digest('src/task/deep/CLAUDE.md')), edges)
+        self.assertEqual(self.state(receipt, 'src/task/linked/CLAUDE.md'), ('unsupported', 'instruction_link_not_followed'))
+        self.assertNotIn(digest('vendor/x/CLAUDE.md'), self.nodes(receipt))
+        self.assertFalse(any(n.applicability == 'declared_applicable' for n in receipt.nodes if n.reason != 'directory_concatenation'))
+        self.profile['task_cwd'] = 'src/task/deep'
+        moved = self.read()
+        self.assertEqual(self.state(moved, 'src/task/deep/CLAUDE.md'), ('declared_applicable', 'directory_concatenation'))
+        self.assertEqual(self.state(moved, 'src/task/deep/notes.md'), ('declared_applicable', 'import'))
+        self.assertEqual(self.state(moved, 'src/task/lone/AGENTS.md'), ('out_of_scope', 'outside_task_scope'))
+        self.assertNotEqual(moved.sha256, receipt.sha256)
+
+    def test_local_files_are_digested_never_admitted_expanded_or_output(self):
+        self.profile['task_cwd'] = '.'
+        for name in ('CLAUDE.local.md', 'sub/CLAUDE.local.md', 'sub/.claude/CLAUDE.local.md'):
+            self.write(name, 'SYNTHETIC_PRIVATE @private-import.md')
+        self.write('private-import.md', 'SYNTHETIC_PRIVATE_IMPORT'); self.write('AGENTS.md', 'SYNTHETIC_AGENTS')
+        self.write('CLAUDE.md', '@CLAUDE.local.md @sub/CLAUDE.local.md')
+        (self.root/'project/other').mkdir(); (self.root/'project/other/CLAUDE.local.md').symlink_to('../CLAUDE.local.md')
+        receipt = self.read()
+        local = [n for n in receipt.nodes if n.path_sha256 in {digest(p) for p in (
+            'CLAUDE.local.md', 'sub/CLAUDE.local.md', 'sub/.claude/CLAUDE.local.md', 'other/CLAUDE.local.md')}]
+        self.assertEqual(len(local), 4)
+        self.assertEqual({n.applicability for n in local}, {'private_excluded'})
+        self.assertEqual(self.nodes(receipt)[digest('CLAUDE.local.md')].content_sha256,
+                         hashlib.sha256(b'SYNTHETIC_PRIVATE @private-import.md').hexdigest())
+        self.assertNotIn(digest('private-import.md'), self.nodes(receipt))
+        self.assertEqual(self.state(receipt, 'AGENTS.md'), ('shadowed', 'assumed_default_instruction_files_setting'))
+        for mode in ('claude-md-and-agents-md', 'surprise-mode'):
+            self.profile['instruction_files'] = mode
+            self.assertEqual({n.applicability for n in self.read().nodes if n.path_sha256 in {x.path_sha256 for x in local}},
+                             {'private_excluded'})
+
+    def test_declared_instruction_file_modes_and_unknown_modes(self):
+        self.profile['task_cwd'] = '.'
+        self.write('AGENTS.md', '@agents-note.md'); self.write('agents-note.md', 'SYNTHETIC_NOTE')
+        self.write('sub/AGENTS.md', 'SYNTHETIC_SUB_AGENTS'); self.write('sub/CLAUDE.md', 'SYNTHETIC_SUB')
+        self.profile['instruction_files'] = 'claude-md-or-agents-md'
+        receipt = self.read()
+        self.assertEqual(self.state(receipt, 'AGENTS.md'), ('declared_applicable', 'declared_instruction_files_setting'))
+        self.assertEqual(self.state(receipt, 'agents-note.md'), ('declared_applicable', 'import'))
+        self.assertEqual(self.state(receipt, 'sub/AGENTS.md'), ('shadowed', 'declared_instruction_files_setting'))
+        self.write('CLAUDE.md', 'SYNTHETIC_ROOT')
+        self.assertEqual(self.state(self.read(), 'AGENTS.md'), ('shadowed', 'declared_instruction_files_setting'))
+        self.profile['instruction_files'] = 'claude-md-and-agents-md'
+        both = self.read()
+        self.assertEqual(self.state(both, 'AGENTS.md'), ('declared_applicable', 'declared_instruction_files_setting'))
+        self.assertEqual(self.state(both, 'sub/AGENTS.md'), ('unknown', 'on_demand_subdirectory'))
+        self.profile['instruction_files'] = 'claude-md'
+        self.assertEqual(self.state(self.read(), 'AGENTS.md'), ('out_of_scope', 'excluded_by_declared_instruction_files'))
+        self.profile['instruction_files'] = 'managed-only'
+        managed = self.read()
+        self.assertEqual(self.state(managed, 'CLAUDE.md'), ('out_of_scope', 'excluded_by_declared_instruction_files'))
+        self.assertEqual(self.state(managed, 'sub/CLAUDE.md'), ('unknown', 'on_demand_subdirectory'))
+        self.profile['instruction_files'] = 'surprise-mode'
+        unknown = self.read()
+        for path in ('CLAUDE.md', 'AGENTS.md', 'sub/CLAUDE.md', 'sub/AGENTS.md'):
+            self.assertEqual(self.state(unknown, path), ('unknown', 'instruction_files_setting_unknown'))
+        self.assertFalse(any(n.applicability in ('declared_applicable', 'shadowed') for n in unknown.nodes))
+        self.profile.pop('instruction_files'); self.profile['claude_md_excludes'] = ['**/sub/CLAUDE.md', 'CLAUDE.md']
+        excluded = self.read()
+        self.assertEqual(self.state(excluded, 'sub/CLAUDE.md'), ('unknown', 'claude_md_excludes_match_unverified'))
+        self.assertEqual(self.state(excluded, 'CLAUDE.md'), ('unknown', 'claude_md_excludes_match_unverified'))
+        for invalid in (dict(self.profile, instruction_files='bad mode'), dict(self.profile, claude_md_excludes='x'),
+                        dict(self.profile, claude_md_excludes=['']), dict(self.profile, project_trust='declared_trusted')):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError): validate(invalid)
+
+    def test_tree_enumeration_bounds_block_instead_of_truncating(self):
+        from agent_harness_lab.sources import claude_instructions as module
+        self.write('CLAUDE.md', 'SYNTHETIC_ROOT'); self.write('a/b/c/CLAUDE.md', 'SYNTHETIC_DEEP')
+        for name, bound in (('TREE_ENTRIES', 3), ('TREE_DEPTH', 1)):
+            with self.subTest(bound=name), patch.object(module, name, bound):
+                receipt = self.read()
+                self.assertEqual(receipt.resolution_status, 'blocked')
+                self.assertIn('tree_enumeration_bound_exceeded', {n.reason for n in receipt.nodes})
 
     def test_unsafe_targets_fail_closed_without_reading_them(self):
         self.profile['task_cwd'] = '.'
