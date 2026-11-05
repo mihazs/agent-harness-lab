@@ -15,7 +15,10 @@ from unittest.mock import patch
 from agent_harness_lab.cli import main
 from agent_harness_lab.sources import harness_inventory as inventory
 from agent_harness_lab.sources.schema import digest
-from tools.tests import harness_surface_fixture as fixture
+if __package__:
+    from . import harness_surface_fixture as fixture
+else:
+    import harness_surface_fixture as fixture
 
 CODEX = dict(schema_version=1, runtime='codex', version='0.166.0', task_cwd='src/task')
 SURFACES = {'AGENTS.md': 'instruction', 'CLAUDE.md': 'instruction', '.agents/skills/beta/SKILL.md': 'skill',
