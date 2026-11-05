@@ -1301,8 +1301,11 @@ nodes themselves are unchanged and still reject any loading claim.
   `loading_content_sha256` equals the node's `content_sha256`. A path match
   without equal content, for example text the runtime changed before
   attaching it, counts as `path_only_attachments` and stays `unknown`.
-- An `Agent` or `Task` invocation counts on the one agent node whose
-  `name_sha256` matches. No match or several matches is unattributed.
+- An `Agent` or `Task` invocation counts on the one agent definition whose
+  `name_sha256` matches and whose precedence is
+  `selected_by_declared_precedence` for the checkout root. A name with no such
+  definition, for example a file skipped as not a definition, a shadowed file
+  or an ambiguous read order, is unattributed.
 - Hook outputs carry no path and MCP server digests match no inventory node, so
   both are always unattributed. A caller can match `mcp_server_sha256` against
   config inventory rows.

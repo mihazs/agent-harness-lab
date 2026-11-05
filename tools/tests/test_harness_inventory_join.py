@@ -86,6 +86,36 @@ class LoadingJoinTests(unittest.TestCase):
         self.assertEqual(joined['unattributed'], dict(attachment=0, hook_output=1, agent=1, mcp=1))
         self.assertFalse(any(row['observed_loading'] != 'unknown' for row in joined['nodes']))
 
+    def test_contentless_attachment_of_an_unread_private_node_is_path_only(self):
+        self.checkout = fixture.build(self.base / 'private', {'CLAUDE.local.md': 'SYNTHETIC_PRIVATE\n'}, hostile=False)
+        self.attach('p', 'CLAUDE.local.md')
+        captured, joined = self.join()
+        self.assertIsNone(next(node for node in captured.nodes if node.path == 'CLAUDE.local.md').content_sha256)
+        row = self.node(captured, joined, 'CLAUDE.local.md')
+        self.assertEqual((row['observed_loading'], row['exact_attachments'], row['path_only_attachments']),
+            ('unknown', 0, 1))
+
+    def agent_case(self, case, files):
+        self.checkout = fixture.build(self.base / f'agents-{case}', files, hostile=False)
+        self.call('a', 'Agent', dict(subagent_type='reviewer', prompt='SYNTHETIC'))
+        captured, joined = self.join()
+        self.rows.clear()
+        counts = {node.path: joined['nodes'][i]['declared_invocations']
+                  for i, node in enumerate(captured.nodes) if node.kind == 'agent'}
+        return counts, joined['unattributed']['agent']
+
+    def test_agent_invocation_counts_only_on_the_definition_precedence_selects(self):
+        skipped = '---\nname: reviewer\n---\nSYNTHETIC_NO_DESCRIPTION\n'
+        main = '.claude/agents/reviewer.md'
+        cases = (  # (files, invocations per agent path, unattributed agent count)
+            ({main: skipped}, {main: 0}, 1),
+            ({main: AGENT, 'pkg/.claude/agents/reviewer.md': AGENT}, {main: 1, 'pkg/.claude/agents/reviewer.md': 0}, 0),
+            ({main: AGENT, '.claude/agents/old.md': skipped}, {main: 1, '.claude/agents/old.md': 0}, 0),
+            ({main: AGENT, '.claude/agents/copy.md': AGENT}, {main: 0, '.claude/agents/copy.md': 0}, 1))
+        for case, (files, expected, unattributed) in enumerate(cases):
+            with self.subTest(files=sorted(files)):
+                self.assertEqual(self.agent_case(case, files), (expected, unattributed))
+
     def test_missing_capture_codex_and_foreign_events_leave_every_node_unknown(self):
         captured, joined = self.join(events=None)
         self.assertEqual(joined['status'], 'no_capture')

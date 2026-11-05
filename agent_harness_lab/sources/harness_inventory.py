@@ -343,9 +343,10 @@ def join_loading(inventory, events=None):
 
     A node's observed_loading becomes 'observed_pattern' only when a pinned Claude attachment names its
     path_sha256 and the attached text hashes to its content_sha256. A path-only match, an agent invocation,
-    a hook output or an MCP request never sets it, and effective is always 'unknown'. Evidence for a path or
-    name the inventory lacks is counted as unattributed and never becomes a node. The caller pairs the
-    capture with this checkout; that pairing, independence and every outcome stay unknown.
+    a hook output or an MCP request never sets it, and effective is always 'unknown'. An agent invocation
+    counts only on the definition the declared precedence selects. Evidence for a path the inventory lacks,
+    or for a name with no selected definition, is counted as unattributed and never becomes a node. The
+    caller pairs the capture with this checkout; that pairing, independence and every outcome stay unknown.
     """
     from agent_harness_lab.telemetry import claude_native, codex_rollout
     from agent_harness_lab.telemetry.schema import event
@@ -358,10 +359,12 @@ def join_loading(inventory, events=None):
               else 'task_cwd_not_checkout_root' if inventory.task_cwd_sha256 != digest('.') else 'joined')
     if status == 'joined':
         paths = {node.path_sha256: index for index, node in enumerate(inventory.nodes) if node.origin == 'checkout'}
-        agents = {}
-        for index, node in enumerate(inventory.nodes):
-            name = dict(node.facts).get('name_sha256') if node.kind == 'agent' else None
-            if name is not None: agents.setdefault(name, []).append(index)
+        from agent_harness_lab.sources import agents_inventory
+        nodes = {(node.root, node.path_sha256): index for index, node in enumerate(inventory.nodes)}
+        agents = {}  # only the definition the declared precedence selects; shadowed or skipped files never count
+        for row in agents_inventory.definitions(inventory, '.'):
+            if row.precedence == 'selected_by_declared_precedence':  # implies a declared definition
+                agents[row.name_sha256] = nodes[(row.root, row.path_sha256)]  # at most one per name
         for record in map(event, events):
             signal = record.get('loading_signal')
             if signal is None: continue
@@ -372,9 +375,9 @@ def join_loading(inventory, events=None):
                 exact = content is not None and record.get('loading_content_sha256') == content
                 row['exact_attachments' if exact else 'path_only_attachments'] += 1
                 if exact: row['observed_loading'] = 'observed_pattern'
-            elif signal == 'declared_agent_invocation' and len(agents.get(record.get('agent_name_sha256'), ())) == 1:
-                rows[agents[record['agent_name_sha256']][0]]['declared_invocations'] += 1
-            else: unattributed[_UNATTRIBUTED[signal]] += 1  # absent path or name, ambiguous agent, or no path at all
+            elif signal == 'declared_agent_invocation' and record.get('agent_name_sha256') in agents:
+                rows[agents[record['agent_name_sha256']]]['declared_invocations'] += 1
+            else: unattributed[_UNATTRIBUTED[signal]] += 1  # absent path, no selected agent, or no path at all
     joined = status == 'joined'
     return dict(profile=LOADING_PROFILE, status=status, harness_inventory_sha256=inventory.sha256, runtime=inventory.runtime,
         inventory_version=inventory.version, capture_version=claude_native.VERSION if joined else None,
