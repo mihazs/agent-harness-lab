@@ -15,6 +15,7 @@ from agent_harness_lab import config, private_journal
 from agent_harness_lab.evaluation import bank_revisions, cgroup, image, integrity, regression_review, working_state
 from agent_harness_lab.evaluation.integrity import (artifacts, contained, read_regular, regular_equal,
                                                     regular_sha256, regular_size)
+from agent_harness_lab.monitoring import state as state_module
 from agent_harness_lab.sources import lineage
 
 INSIDE, OUTSIDE = b'inside payload', b'outside secret'
@@ -286,6 +287,36 @@ class BeneathTests(unittest.TestCase):
         def lock():
             with journal.locked(create=True): pass
         self.assert_create_refused(None, self.root/'deep', lock)
+
+    def test_journal_marker_refuses_parent_swapped_after_the_lock(self):
+        # The outside tree mirrors the store, so a followed link would land the marker there.
+        store = self.root/'deep'/'sub'/'store'; (self.outside/'sub'/'store').mkdir(parents=True, mode=0o700)
+        journal = private_journal.PrivateJournal(store, 'synthetic-v1', lambda *args: None)
+        def lock():
+            with journal.locked(create=True): pass
+        self.assert_create_refused((private_journal.fcntl, 'flock'), self.root/'deep', lock)
+        self.assertFalse((store/'.store.json').exists())
+
+    def test_journal_event_refuses_parent_swapped_after_the_lock(self):
+        store = self.root/'deep'/'sub'/'store'; (self.outside/'sub'/'store'/'case'/'events').mkdir(parents=True, mode=0o700)
+        journal = private_journal.PrivateJournal(store, 'synthetic-v1', lambda *args: True)
+        with journal.locked(create=True): (store/'case'/'events').mkdir(parents=True)
+        def append():
+            with journal.locked(): journal.append(store/'case', [], 'opened', 'open', {})
+        # encoded() is the event's bound check, the last step before publication.
+        self.assert_create_refused((private_journal, 'encoded'), self.root/'deep', append)
+        self.assertEqual(list((store/'case'/'events').iterdir()), [])
+
+    def test_journal_publication_keeps_atomic_json_bytes(self):
+        store, events = self.root/'deep'/'sub'/'store', []
+        journal = private_journal.PrivateJournal(store, 'synthetic-v1', lambda *args: True)
+        with self.unleaked():
+            with journal.locked(create=True): journal.append(store/'case', events, 'opened', 'open', {})
+        target = self.root/'state.json'; state_module.atomic_json(target, events[0][0])
+        self.assertEqual((store/'case'/'events'/'0000.json').read_bytes(), target.read_bytes())
+        self.assertEqual(stat.S_IMODE((store/'case'/'events').stat().st_mode) & 0o077, 0)
+        self.assertEqual(sorted(path.name for path in (store/'case'/'events').iterdir()), ['0000.json'])
+        self.assertEqual(private_journal.record(store/'.store.json')[0], dict(schema_version=1, format='synthetic-v1'))
 
     def test_project_configuration_create_refuses_parent_swapped_before_the_walk(self):
         (self.outside/'sub').mkdir(); value, supported = config.defaults(), config.supported()

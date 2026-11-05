@@ -7,10 +7,11 @@ import json
 import os
 from pathlib import Path
 import re
+import secrets
 import stat
-from .evaluation.integrity import (contained, invalid_constant, open_beneath, open_directory_nofollow, read_regular,
-                                   unique_object)
-from .monitoring.state import atomic_json
+import tempfile
+from .evaluation.integrity import (contained, create_directory_nofollow, invalid_constant, open_beneath,
+                                   open_directory_nofollow, read_regular, unique_object)
 
 MAX_EVENTS = 64
 MAX_METADATA = 256*1024
@@ -42,6 +43,37 @@ def write_bytes(path, raw):
     descriptor = open_beneath(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, 'wb') as stream:
         stream.write(raw); stream.flush(); os.fsync(stream.fileno())
+
+
+def atomic_json(path, value, *, before_replace=None):
+    """monitoring.state.atomic_json's bytes and steps, all relative to one parent fd from the no-follow walk.
+
+    The parent is made and opened once; the temporary, the replace and the fsync use that descriptor, so an
+    ancestor swapped for a symlink after the journal lock cannot move the marker or an event out of the store."""
+    if before_replace is not None and not callable(before_replace):
+        raise ValueError('atomic publication guard must be callable')
+    path = Path(path)
+    parent = create_directory_nofollow(path.parent)
+    try:
+        for _ in range(tempfile.TMP_MAX):
+            temporary = '.' + path.name + secrets.token_hex(4)
+            try:
+                descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+                                     0o600, dir_fd=parent)
+                break
+            except FileExistsError: continue
+        else: raise FileExistsError('no usable temporary journal name')
+        try:
+            with os.fdopen(descriptor, 'w') as stream:
+                json.dump(value, stream, indent=2, allow_nan=False)
+                stream.write('\n'); stream.flush(); os.fsync(stream.fileno())
+            if before_replace is not None: before_replace()
+            os.replace(temporary, path.name, src_dir_fd=parent, dst_dir_fd=parent)
+            os.fsync(parent)
+        finally:
+            try: os.unlink(temporary, dir_fd=parent)
+            except FileNotFoundError: pass
+    finally: os.close(parent)
 
 
 class PrivateJournal:

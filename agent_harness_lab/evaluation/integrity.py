@@ -70,6 +70,31 @@ def open_directory_nofollow(path):
     return _open_beneath(path, 'directory')
 
 
+def create_directory_nofollow(path, mode=0o700):
+    """Readable descriptor for a directory reached by the walk, making missing components on the way.
+
+    Like Path.mkdir(mode, parents=True, exist_ok=True): missing ancestors get the default mode and
+    the final directory gets mode, each made by name relative to its already opened parent."""
+    directory_flags, leaf_flags = _beneath_api()
+    parts = Path(path).absolute().parts
+    if len(parts) == 1: return os.open(parts[0], leaf_flags['directory'])
+    current = os.open(parts[0], directory_flags)
+    try:
+        for index, name in enumerate(parts[1:], 1):
+            flags = leaf_flags['directory'] if index == len(parts) - 1 else directory_flags
+            try: step = _open_step(name, flags, current)
+            except FileNotFoundError:
+                try: os.mkdir(name, mode if index == len(parts) - 1 else 0o777, dir_fd=current)
+                except FileExistsError: pass
+                step = _open_step(name, flags, current)
+            previous, current = current, step
+            os.close(previous)
+        result, current = current, None
+        return result
+    finally:
+        if current is not None: os.close(current)
+
+
 def open_beneath(path, flags, mode=0o600):
     """Open the final name with the caller's flags and mode (create, exclusive, lock) beneath the walk.
 
