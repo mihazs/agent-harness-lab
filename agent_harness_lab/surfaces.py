@@ -73,6 +73,17 @@ def _agent_file(layer, suffix):
     return match
 
 
+def _command_file(path, parts, context):
+    """Markdown below .claude/commands unless a skill bundle encloses it: <dir> below a .claude/skills or
+    .agents/skills folder at any depth, or below a root skills/ folder the caller owns. An ordinary skills/
+    directory, such as packages/skills, does not enclose anything."""
+    if not path.endswith('.md'): return False
+    index = next((i for i in range(len(parts) - 2) if parts[i:i + 2] == ('.claude', 'commands')), None)
+    if index is None: return False
+    bundled = any(parts[j:j + 2] in (('.claude', 'skills'), ('.agents', 'skills')) for j in range(index - 1))
+    return not bundled and not (parts[0] == 'skills' and context.root_skills)
+
+
 RULES = (
     Rule('root-instruction', 'instruction', 10, 'adoptable', lambda path, parts, context: path in ROOT_INSTRUCTIONS),
     # Nested and override instruction files rank after skills and hooks, so existing kinds never change;
@@ -104,10 +115,8 @@ RULES = (
     Rule('claude-workflow-script', 'workflow', 15, 'contract_required',
          lambda path, parts, context: parts[-3:-1] == ('.claude', 'workflows') and PurePosixPath(path).suffix == '.js',
          runtimes=frozenset({'claude-code'})),
-    # Claude Code command Markdown below a .claude/commands folder no skill tree encloses; adoption stays closed.
-    Rule('claude-command', 'command', 15, 'unsupported', lambda path, parts, context: path.endswith('.md') and any(
-        parts[i:i + 2] == ('.claude', 'commands') and len(parts) > i + 2 and 'skills' not in parts[:i]
-        for i in range(len(parts) - 1)), runtimes=frozenset({'claude-code'})),
+    # Claude Code command Markdown below a .claude/commands folder no skill bundle encloses; adoption stays closed.
+    Rule('claude-command', 'command', 15, 'unsupported', _command_file, runtimes=frozenset({'claude-code'})),
     Rule('vcs-and-cache', None, 0, 'private_excluded',
          lambda path, parts, context: any(part in ('.git', '__pycache__') for part in parts)),
     # Hook registrations live in settings and config files that also hold permissions and env; the hook

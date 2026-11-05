@@ -1620,7 +1620,10 @@ where the pinned documentation says a file would be discovered: `startup`,
 file.
 
 - Claude Code commands are Markdown files below `.claude/commands`, classified by
-  the `claude-command` row in `surfaces.RULES`. Their writability stays
+  the `claude-command` row in `surfaces.RULES`, unless a skill bundle encloses the
+  folder: a `<dir>` below `.claude/skills` or `.agents/skills`, or below a root
+  `skills/` tree the caller owns. A `.claude/commands` folder below an ordinary
+  `skills/` directory, such as `packages/skills`, is still a command folder. Their writability stays
   `unsupported`, and a harness change plan lists a created, edited or removed
   command file under `unresolved_operations`, as it did before the row existed.
   A subdirectory becomes part of the id, so
@@ -1640,9 +1643,14 @@ file.
   `task_cwd` loads `unknown` and has no id.
 - Codex skills are read from `.agents/skills` in every directory from `task_cwd`
   up to the checkout root. These entries are `startup`; other roots in the
-  checkout are `outside_scan`. Skills with the same name are all listed and
-  flagged `duplicate_name`, never merged. Entries are also flagged
-  `name_missing`, `name_too_long` (more than 64 characters) and `depth_exceeded`
+  checkout are `outside_scan`. A skill without a frontmatter `name` is named
+  after its directory, as `codex-rs/skills/src/parser.rs` does at the pin, so
+  `.agents/skills/beta` is `$beta`. Skills with the same name are all listed and
+  flagged `duplicate_name`, never merged. A `SKILL.md` without a frontmatter
+  block is `parse_failed`, and one with an empty or missing `description` is
+  `description_missing`; Codex rejects both, so they have no id and join no
+  duplicate or name-selected config check. Entries are also flagged
+  `name_too_long` (more than 64 characters) and `depth_exceeded`
   (a `SKILL.md` more than 6 directories below the root), following
   `openai/codex@d786ff91` `codex-rs/ext/skills/src/loader/mod.rs`.
   `description_too_long` (more than 1024 characters) carries the
@@ -1656,13 +1664,15 @@ file.
   `config_conflict` instead of having a precedence applied to it.
 - Codex custom prompts are read only from a caller-declared `codex_home`, which
   must not overlap the checkout. Only top-level `prompts/*.md` regular files are
-  read, using the inventory's no-follow reads, bounds and refusals. Each prompt
+  read, using the inventory's no-follow reads and refusals. They continue the
+  inventory's own walk, so its entry and byte counts carry on and `MAX_FILES`
+  covers the inventory nodes plus every prompt. Each prompt
   has the id `/prompts:<name>`, the load `unknown`, and the labels `deprecated`
   and `loader_unverified_at_head`. Without a declared root, nothing outside the
   checkout is opened, and a checkout `prompts/` folder is not a surface.
 
-`SKILL.md` frontmatter is read again without following links and must match the
-inventory node's content hash. A file that changed after the inventory is
+`SKILL.md` frontmatter is read again without following links, within the same
+byte budget, and must match the inventory node's content hash. A file that changed after the inventory is
 refused. Nodes the inventory classes `private_excluded` (for example below
 `__pycache__`) were never read, so they are skipped rather than opened.
 
@@ -1670,9 +1680,11 @@ Emitted ids are derived from paths only. A skill whose frontmatter `name` differ
 from its directory name keeps that name in the private shadowing, duplicate and
 `[[skills.config]]` checks, but its id is `null` and it is flagged `id_withheld`;
 `name_sha256` still identifies it. A Codex name longer than 64 characters has no
-id. An id is at most 4096 characters and holds no control characters. Frontmatter is a bounded subset of YAML: top-level keys, quoted values
-and block scalars. It is never loaded as YAML, and an unterminated block or a
-duplicate key gives `parse_failed`. The document has `publication_allowed: false`
+id. An id is at most 4096 characters and holds no control characters.
+Frontmatter goes through the shared `sources.frontmatter` reader (at most 64 KiB
+and 512 lines), so trailing `# comments` are dropped from values. It is never
+loaded as YAML, and an unterminated block, a duplicate key, an unclosed quote or
+a list or mapping where a `name` or `description` belongs gives `parse_failed`. The document has `publication_allowed: false`
 and `loading_evidence: false`. Its summary carries only counts and the
 fingerprint. Codex prompts and the skills config require the `codex` runtime.
 User and system skill roots, plugin skills and loading attribution remain open

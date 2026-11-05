@@ -62,6 +62,8 @@ GOLDEN = (
     ('.claude/commands/ship.md', U, U, 'command', (), (H,)),
     ('.claude/commands/frontend/component.md', U, U, 'command', (), (H,)),
     ('.claude/skills/demo/.claude/commands/x.md', A, A, 'skill', (S,), (S, H)),
+    ('packages/skills/.claude/commands/ship.md', U, U, 'command', (S,), (S, H)),
+    ('apps/.claude/skills/demo/.claude/commands/x.md', U, U, 'skill', (S,), (S, H)),
     ('.claude/settings.json', C, C, 'hook', (H,), (H,)),
     ('.claude/settings.local.json', P, P, 'hook', (H,), (H,)),
     ('.codex/config.toml', C, C, 'hook', (H,), (H,)),

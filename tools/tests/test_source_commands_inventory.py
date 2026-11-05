@@ -105,7 +105,7 @@ class CommandsInventoryTests(unittest.TestCase):
         checkout = self.build({'.claude/skills/renamed/SKILL.md': skill('PRIVATE_NAME_TEXT'),
                                '.claude/skills/block/SKILL.md': block,
                                '.claude/commands/PRIVATE_NAME_TEXT.md': f'{SECRET}\n',
-                               '.agents/skills/huge/SKILL.md': skill('N' * 200000),
+                               '.agents/skills/huge/SKILL.md': skill('N' * 5000),
                                '.agents/skills/other/SKILL.md': skill('PRIVATE_CODEX_NAME'),
                                '.agents/skills/other2/SKILL.md': skill('PRIVATE_CODEX_NAME')})
         claude = commands.capture(checkout, CLAUDE)
@@ -143,11 +143,15 @@ class CommandsInventoryTests(unittest.TestCase):
 
     def test_codex_ancestor_skill_roots_are_all_listed_and_bounds_are_flagged(self):
         checkout = self.build({'src/task/.agents/skills/beta/SKILL.md': skill('beta'),
+            '.agents/skills/beta/SKILL.md': skill('beta'),
             'src/.agents/skills/long/SKILL.md': skill('n' * 65, 'd' * 1025),
             'src/.agents/skills/long/agents/openai.yaml': 'interface: {}\n',
             'lib/.agents/skills/beta/SKILL.md': skill('beta'),
             '.agents/skills/a/b/c/d/e/f/deep/SKILL.md': skill('deep'),
-            '.agents/skills/nameless/SKILL.md': f'---\ndescription: x\n---\n{SECRET}\n'})
+            '.agents/skills/nameless/SKILL.md': f'---\ndescription: x\n---\n{SECRET}\n',
+            '.agents/skills/nofm/SKILL.md': f'{SECRET}\n',
+            '.agents/skills/blank/SKILL.md': '---\nname: blank\ndescription: ""\n---\n',
+            '.agents/skills/undescribed/SKILL.md': '---\nname: undescribed\n---\n'})
         found = self.entries(commands.capture(checkout, CODEX), 'skill')
         rows = {p: (e.id, e.load, e.flags, e.labels, e.openai_yaml) for p, e in found.items()}
         self.assertEqual(rows['.agents/skills/beta/SKILL.md'], ('$beta', 'startup', ('duplicate_name',), (), False))
@@ -156,13 +160,19 @@ class CommandsInventoryTests(unittest.TestCase):
         self.assertEqual(rows['src/.agents/skills/long/SKILL.md'][1:],
                          ('startup', ('description_too_long', 'name_too_long'), ('description_limit_unverified',), True))
         self.assertEqual(rows['.agents/skills/a/b/c/d/e/f/deep/SKILL.md'][2], ('depth_exceeded',))
-        self.assertEqual(rows['.agents/skills/nameless/SKILL.md'][:3], (None, 'startup', ('name_missing',)))
+        # Pinned parser.rs: a missing name defaults to the directory; a missing frontmatter block or an empty
+        # or missing description is rejected, so the skill has no key and joins no duplicate or config check.
+        self.assertEqual(rows['.agents/skills/nameless/SKILL.md'][:3], ('$nameless', 'startup', ()))
+        self.assertEqual(rows['.agents/skills/nofm/SKILL.md'][:3], (None, 'startup', ('parse_failed',)))
+        for path in ('.agents/skills/blank/SKILL.md', '.agents/skills/undescribed/SKILL.md'):
+            self.assertEqual(rows[path][:3], (None, 'startup', ('description_missing',)))
         self.assertNotIn('.claude/skills/alpha/SKILL.md', found)  # Codex does not read .claude/skills
         # Telemetry skill prefixes come from the unchanged adoptable bundle rows.
         self.assertEqual(surfaces.skill_prefixes(), ('.agents/skills', '.claude/skills', 'skills'))
 
     def test_skills_config_disables_apply_only_from_a_declared_config(self):
-        checkout = self.build({'src/task/.agents/skills/gamma/SKILL.md': skill('gamma')})
+        checkout = self.build({'src/task/.agents/skills/gamma/SKILL.md': skill('gamma'),
+                               '.agents/skills/beta/SKILL.md': skill('beta')})
         config = self.base / 'config.toml'
         config.write_text(f'[[skills.config]]\npath = "{checkout}/.agents/skills/beta/SKILL.md"\nenabled = false\n'
                           '[[skills.config]]\nname = "gamma"\nenabled = false\n'
@@ -181,6 +191,63 @@ class CommandsInventoryTests(unittest.TestCase):
         for bad in (dict(codex_config='relative.toml'), dict(codex_config=str(self.base / 'missing.toml'))):
             with self.subTest(bad=bad), self.assertRaises((ValueError, OSError)): commands.capture(checkout, CODEX, **bad)
         with self.assertRaises(ValueError): commands.capture(checkout, CLAUDE, codex_config=str(config))
+
+    def test_a_nameless_codex_skill_is_named_after_its_directory_for_duplicates_and_config(self):
+        checkout = self.build({'.agents/skills/beta/SKILL.md': f'---\ndescription: d\n---\n{SECRET}\n',
+                               'src/task/.agents/skills/beta/SKILL.md': skill('beta')})
+        config = self.base / 'config.toml'
+        config.write_text('[[skills.config]]\nname = "beta"\nenabled = false\n')
+        found = self.entries(commands.capture(checkout, CODEX, codex_config=str(config)), 'skill')
+        self.assertEqual({p: (e.id, e.flags) for p, e in found.items()}, {
+            '.agents/skills/beta/SKILL.md': ('$beta', ('disabled_by_declared_config', 'duplicate_name')),
+            'src/task/.agents/skills/beta/SKILL.md': ('$beta', ('disabled_by_declared_config', 'duplicate_name'))})
+
+    def test_commands_below_an_ordinary_skills_directory_are_commands(self):
+        checkout = self.build({'packages/skills/.claude/commands/ship.md': f'{SECRET}\n',
+                               'skills/demo/.claude/commands/bundled.md': f'{SECRET}\n',
+                               '.claude/skills/demo/.claude/commands/inner.md': f'{SECRET}\n'})
+        found = self.entries(commands.capture(checkout, dict(CLAUDE, task_cwd='packages/skills')), 'command')
+        self.assertEqual({p: (e.id, e.load) for p, e in found.items()},
+                         {'packages/skills/.claude/commands/ship.md': ('/ship', 'startup')})
+        # A root skills/<dir> encloses its .claude/commands only when the caller owns a root skills/ tree.
+        for root_skills, kind in ((False, 'command'), (True, 'skill')):
+            with self.subTest(root_skills=root_skills):
+                self.assertEqual(surfaces.classify('skills/demo/.claude/commands/x.md', 'claude-code',
+                                                   root_skills=root_skills).kind, kind)
+
+    def test_prompts_and_skill_rereads_share_the_inventory_bounds(self):
+        profile = dict(CODEX, task_cwd='.')
+        checkout = self.build({'.agents/skills/big/SKILL.md': skill('big', 'd' * 600)})
+        home = self.base / 'codex-home'
+        (home / 'prompts').mkdir(parents=True)
+        for index in range(3): (home / f'prompts/p{index}.md').write_text('x' * 400)
+        self.assertEqual(commands.capture(checkout, profile, codex_home=str(home)).status, 'declared')
+        walk = inventory._Walk(profile)
+        self.assertEqual(inventory.capture(checkout, profile, walk=walk).status, 'declared')
+        # Each budget alone is enough; one byte budget across inventory, re-reads and prompts blocks.
+        with patch.object(inventory, 'MAX_BYTES', walk.bytes + 1000):
+            self.assertEqual(inventory.capture(checkout, profile).status, 'declared')
+            blocked = commands.capture(checkout, profile, codex_home=str(home))
+        self.assertEqual((blocked.status, blocked.blocked_reason), ('blocked', 'byte_bound_exceeded'))
+        nodes = len(inventory.capture(checkout, profile).nodes)
+        with patch.object(inventory, 'MAX_FILES', nodes + 2):
+            blocked = commands.capture(checkout, profile, codex_home=str(home))
+        self.assertEqual((blocked.status, blocked.blocked_reason), ('blocked', 'file_bound_exceeded'))
+        with patch.object(inventory, 'MAX_FILES', nodes + 3):
+            self.assertEqual(len(self.entries(commands.capture(checkout, profile, codex_home=str(home)), 'prompt')), 3)
+
+    def test_frontmatter_comments_and_quotes_follow_the_shared_reader(self):
+        checkout = self.build({'.claude/skills/deploy/SKILL.md': '---\nname: deploy # primary\ndescription: d\n---\n',
+                               '.claude/commands/deploy.md': f'{SECRET}\n',
+                               '.claude/skills/open/SKILL.md': '---\nname: open\ndescription: "unclosed\n---\n'})
+        found = self.entries(commands.capture(checkout, CLAUDE))
+        self.assertEqual((found['.claude/skills/deploy/SKILL.md'].id, found['.claude/skills/deploy/SKILL.md'].flags),
+                         ('/deploy', ()))
+        self.assertEqual(found['.claude/commands/deploy.md'].flags, ('shadowed_by_skill',))
+        self.assertEqual(found['.claude/skills/open/SKILL.md'].flags, ('parse_failed',))
+        self.assertEqual(commands.frontmatter(b'---\nname: a # c\ntools: [x, y]\n---\n')['name'], 'a')
+        for raw in (b'---\ndescription: "unclosed\n---\n', b'---\nname: a\n...\n', b'---\n' + b''.join(b'k%d: v\n' % i for i in range(600)) + b'---\n'):
+            with self.subTest(raw=raw[:20]), self.assertRaises(ValueError): commands.frontmatter(raw)
 
     def test_codex_prompts_are_read_only_from_a_declared_codex_home_and_stay_labelled(self):
         checkout = self.build({'prompts/review.md': f'{SECRET}\n'})

@@ -282,8 +282,10 @@ def external(roots, checkout):
     return tuple(result)
 
 
-def capture(checkout, profile, *, external_roots=None, harness_sha256=None):
-    """Inventory one checkout plus caller-declared roots; a bound overflow is blocked, never truncated."""
+def capture(checkout, profile, *, external_roots=None, harness_sha256=None, walk=None):
+    """Inventory one checkout plus caller-declared roots; a bound overflow is blocked, never truncated.
+
+    walk is an unused _Walk a caller passes to keep reading under the same entry, byte and file bounds."""
     validate(profile)
     roots = external(external_roots, checkout)
     identity = dict(runtime=profile['runtime'], version=profile['version'], profile_sha256=digest(profile),
@@ -291,7 +293,7 @@ def capture(checkout, profile, *, external_roots=None, harness_sha256=None):
         external_roots=tuple(name for name, _ in roots))
     if profile['version'] != surfaces.PINS[profile['runtime']]:
         return HarnessInventory(**identity, status='unsupported', nodes=(), refusals=())
-    walk = _Walk(profile)
+    walk = _Walk(profile) if walk is None else walk
     try:
         walk.root(os.path.abspath(checkout), 'checkout', 'checkout')
         if profile['task_cwd'] not in walk.directories: raise ValueError('task_cwd is not a walked checkout directory')
