@@ -108,6 +108,24 @@ class InstructionInventoryTests(unittest.TestCase):
         self.profile['project_trust'] = 'declared_untrusted'
         self.assertEqual(self.state(self.read(), 'src/AGENTS.md'), ('out_of_scope', 'explicitly_untrusted'))
 
+    def test_later_empty_candidate_stays_shadowed_by_the_selection(self):
+        self.write('AGENTS.override.md', 'SYNTHETIC_OVERRIDE'); self.write('AGENTS.md', ' \n')
+        self.write('TEAM.md', '')
+        receipt = self.read()
+        self.assertEqual(self.state(receipt, 'AGENTS.override.md'), ('declared_applicable', 'directory_precedence'))
+        for later in ('AGENTS.md', 'TEAM.md'):
+            self.assertEqual(self.state(receipt, later), ('shadowed', 'directory_precedence'))
+            self.assertIn(('shadows', digest('AGENTS.override.md'), digest(later)), self.links(receipt))
+
+    def test_empty_candidate_above_the_project_root_is_out_of_scope(self):
+        self.write('AGENTS.md', ' '); self.write('src/task/AGENTS.md', 'SYNTHETIC_LEAF')
+        self.profile['project_root_markers'] = ['.git']; (self.root/'project/src/task/.git').mkdir()
+        receipt = self.read()
+        self.assertEqual(self.state(receipt, 'AGENTS.md'), ('out_of_scope', 'outside_project_root'))
+        self.assertEqual(self.state(receipt, 'src/task/AGENTS.md'), ('declared_applicable', 'directory_precedence'))
+        self.profile['project_root_markers'] = ['.absent-marker']
+        self.assertEqual(self.state(self.read(), 'AGENTS.md'), ('unknown', 'project_root_marker_not_found_in_checkout'))
+
     def test_codex_home_still_falls_through_an_empty_override(self):
         self.home('AGENTS.override.md', ' '); self.home('AGENTS.md', 'SYNTHETIC_GLOBAL')
         self.write('AGENTS.override.md', ' '); self.write('AGENTS.md', 'SYNTHETIC_PROJECT')
