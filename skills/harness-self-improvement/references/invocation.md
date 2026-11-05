@@ -37,6 +37,28 @@ Keep workflow output, hashes, traces and project-derived reports private. A
 private JSON result is not a public receipt. The controller owns target
 verification and rollback records.
 
+## Receipt parity with `ahl improve`
+
+For the same project, frozen inputs and runtime, `ahl skills invoke PROJECT`
+and `ahl improve PROJECT` return the same exit code and the same receipt keys and
+values. This covers status, reason, recommendation, `decision`, change plan,
+prerequisites and changed files. `agent_harness_lab/entry_parity.py` lists the
+only allowed differences:
+
+- each route's private run directory (`output`), with paths under it compared
+  relative to it;
+- digests that bind run artifacts holding timing or context values:
+  `plan_sha256`, `decision.bindings.results_sha256` and `manifest_sha256`,
+  and the change plan's `affected_controls_sha256` and `evidence` reference;
+- measured durations and remaining budget in private run artifacts, and the
+  `origin` and `parent_run_id` invocation context given to preparation children;
+- `invocation.json`, written only by the skill route after its run starts.
+
+Stdout is the receipt and also `workflow.json`. Stderr matches except for the
+run directory and elapsed times. A managed-preparation marker denies both routes
+with identical output. Treat any other difference as a defect to report. The
+synthetic parity tests do not establish native-host compliance.
+
 After this attempt, do not retry through `improve`, another adapter or manual
 model trials. Never fall back after a charged or ambiguous attempt. Retain its
 private artifacts and report the concrete remaining requirement. Recovery must

@@ -1,5 +1,6 @@
 """Installed skill hosts execute the common controller; no real agent is launched."""
 from contextlib import redirect_stderr,redirect_stdout
+import hashlib
 import io
 import json
 import os
@@ -13,7 +14,7 @@ import unittest
 from unittest.mock import patch
 
 import agent_harness_lab
-from agent_harness_lab import cli,workflow
+from agent_harness_lab import cli,entry_parity,workflow
 from agent_harness_lab.one_call import invocation_context
 from agent_harness_lab.evaluation import responses
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
@@ -161,3 +162,108 @@ class SkillInvocationTests(unittest.TestCase):
         for shape in (invocation,stage,dict(context=stage)):
             with self.subTest(shape=shape):
                 self.assertFalse(public_export_allowed([{**shape,**public}]))
+
+
+class EntryReceiptParityTests(unittest.TestCase):
+    """`ahl improve` and `ahl skills invoke` on one project, frozen inputs and fake runtime."""
+    CASES=(
+        ('no_history_no_change',dict(mode='no_change'),'no_change'),
+        ('no_beneficial_change',dict(agents='good'),'no_change'),
+        ('candidate_requires_certification',{},'inconclusive'),
+        ('refined_candidate',dict(mode='refine'),'inconclusive'),
+        ('blocked_runtime',dict(runtime='missing'),'blocked'),
+    )
+
+    def invoke(self,argv):
+        return SkillInvocationTests.invoke(self,argv)
+
+    def route(self,fixture,prefix,options,initial):
+        # Same project path and state root for both routes; restore the target
+        # bytes so each route starts from identical frozen inputs.
+        (fixture.project/'AGENTS.md').write_bytes(initial)
+        agent=str(fixture.root/'missing-agent') if options.get('runtime')=='missing' else str(fixture.agent)
+        code,stdout,stderr=self.invoke([*prefix,str(fixture.project),'--agent','codex','--codex',agent,'--timeout','30'])
+        receipt=json.loads(stdout);run=Path(receipt['output'])
+        self.assertEqual(json.loads((run/'workflow.json').read_text()),receipt)
+        self.assertEqual((fixture.project/'AGENTS.md').read_bytes(),initial)
+        return code,receipt,stderr,run
+
+    def test_cli_and_skill_receipts_differ_only_in_documented_fields(self):
+        for name,options,status in self.CASES:
+            with self.subTest(case=name):
+                fixture=SkillInvocationTests.fixture(self)
+                if 'mode' in options:(fixture.project/'mode').write_text(options['mode'])
+                if 'agents' in options:(fixture.project/'AGENTS.md').write_text(options['agents'])
+                initial=(fixture.project/'AGENTS.md').read_bytes()
+                cli_code,cli_receipt,cli_stderr,cli_run=self.route(fixture,['improve'],options,initial)
+                skill_code,skill_receipt,skill_stderr,skill_run=self.route(fixture,['skills','invoke'],options,initial)
+                self.assertNotEqual(cli_run,skill_run)
+                self.assertEqual((cli_receipt['status'],skill_receipt['status']),(status,status))
+                self.assertEqual(cli_code,skill_code)
+                self.assertEqual(entry_parity.document_differences(entry_parity.RECEIPT,cli_receipt,skill_receipt,cli_run,skill_run),[])
+                self.assertEqual(entry_parity.run_differences(cli_run,skill_run),{})
+                self.assertEqual(entry_parity.normalized_stderr(cli_stderr,cli_run),entry_parity.normalized_stderr(skill_stderr,skill_run))
+                self.assertFalse((cli_run/'invocation.json').exists())
+                if status=='blocked':
+                    # Preflight blocks before the controller writes invocation context.
+                    self.assertFalse((skill_run/'invocation.json').exists())
+                else:
+                    context=json.loads((skill_run/'invocation.json').read_text())
+                    self.assertEqual((context['origin'],context['parent_run_id'],context['execution_authority']),('skill',skill_run.name,False))
+                if status=='inconclusive':
+                    for key in ('decision','plan','recommendation','blocked_prerequisites','implementation_prerequisites'):
+                        self.assertIn(key,cli_receipt)
+                    self.assert_bound_digests(cli_receipt,cli_run);self.assert_bound_digests(skill_receipt,skill_run)
+
+    def assert_bound_digests(self,receipt,run):
+        # Allowed digest differences must bind this run's compared artifacts.
+        bindings=receipt['decision']['bindings']
+        manifest=run/'preparation'/f'evaluation-{bindings["attempt"]}'/'manifest.json'
+        self.assertEqual(bindings['manifest_sha256'],hashlib.sha256(manifest.read_bytes()).hexdigest())
+        self.assertEqual(Path(bindings['evaluation']).parent,run)
+        self.assertEqual(bindings['results_sha256'],hashlib.sha256((Path(bindings['evaluation'])/'results.json').read_bytes()).hexdigest())
+        self.assertEqual(Path(receipt['plan']),run/'change-plan.json')
+        self.assertEqual(json.loads((run/'change-plan.json').read_text())['plan_sha256'],receipt['plan_sha256'])
+
+    def test_contract_reports_every_difference_outside_the_allowed_set(self):
+        first=dict(status='inconclusive',output='/a/run-1',plan='/a/run-1/change-plan.json',plan_sha256='1',
+            decision=dict(disposition='insufficient_evidence',bindings=dict(evaluation='/a/run-1/evaluation-0',results_sha256='1')))
+        second=json.loads(json.dumps(first).replace('/a/run-1','/b/run-2').replace('"1"','"2"'))
+        self.assertEqual(entry_parity.document_differences('workflow.json',first,second,'/a/run-1','/b/run-2'),[])
+        for path,value in ((('status',),'applied'),(('decision','disposition'),'invalid_evidence'),
+                           (('plan',),'/b/run-2/other.json'),(('decision','bindings','evaluation'),'/elsewhere')):
+            changed=json.loads(json.dumps(second));target=changed
+            for key in path[:-1]:target=target[key]
+            target[path[-1]]=value
+            with self.subTest(path=path):
+                self.assertEqual(entry_parity.document_differences('workflow.json',first,changed,'/a/run-1','/b/run-2'),['.'.join(path)])
+        missing=json.loads(json.dumps(second));del missing['plan_sha256']
+        self.assertEqual(entry_parity.document_differences('workflow.json',first,missing,'/a/run-1','/b/run-2'),['plan_sha256'])
+        self.assertEqual(entry_parity.document_differences('feedback-0.json',dict(origin='cli'),dict(origin='skill'),'/a','/b'),['origin'])
+
+    def test_managed_preparation_denial_is_identical_for_both_routes(self):
+        fixture=SkillInvocationTests.fixture(self);initial=(fixture.project/'AGENTS.md').read_bytes()
+        for marker in ('','not-a-budget','{"authorized":true}'):
+            with self.subTest(marker=marker),patch.dict(os.environ,{'AHL_MANAGED_PREPARATION':marker}), \
+                    patch.object(workflow,'collect',side_effect=AssertionError('no collection')):
+                results=[self.invoke([*prefix,str(fixture.project),'--agent','codex','--codex',str(fixture.agent)])
+                         for prefix in (['improve'],['skills','invoke'])]
+            self.assertEqual(results[0],results[1])
+            self.assertEqual(results[0][:2],(3,''));self.assertIn('managed preparation',results[0][2])
+        self.assertFalse((fixture.root/'state/runs').exists())
+        self.assertEqual((fixture.project/'AGENTS.md').read_bytes(),initial)
+
+    def test_process_entry_preserves_stdout_stderr_and_exit_status(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary);missing=root/'missing-project'
+            environment=dict(os.environ,HOME=str(root),XDG_STATE_HOME=str(root/'state'))
+            environment.pop('AHL_MANAGED_PREPARATION',None)
+            for marker in (None,''):
+                if marker is not None:environment['AHL_MANAGED_PREPARATION']=marker
+                with self.subTest(marker=marker):
+                    results=[subprocess.run([sys.executable,'-m','agent_harness_lab',*prefix,str(missing)],
+                        capture_output=True,text=True,env=environment,timeout=30) for prefix in (['improve'],['skills','invoke'])]
+                    self.assertEqual([(r.returncode,r.stdout,r.stderr) for r in results][0],
+                                     [(r.returncode,r.stdout,r.stderr) for r in results][1])
+                    self.assertNotEqual(results[0].returncode,0);self.assertEqual(results[0].stdout,'');self.assertTrue(results[0].stderr)
+            self.assertFalse((root/'state').exists())
