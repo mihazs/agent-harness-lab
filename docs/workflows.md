@@ -90,7 +90,8 @@ control runs and extracts only declared artifacts. An unavailable boundary block
 before agent execution; grading never falls back to host execution. Optional
 `--cgroup-root`, `--image-root` with `--image-sha256`, and `--disk-bytes` select
 the existing resource/image profiles for both control and trial graders.
-Agents still use the cooperative native CLI, inherited authentication and hooks;
+Agents still use the cooperative native CLI with the trial surface requests and
+credential rules in [source contracts](source-contracts.md#surface-faithful-trial-workspaces);
 this option does not establish full role isolation or authorize promotion.
 
 `--agent responses --inference-settings FILE` selects the controlled workflow on

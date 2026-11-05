@@ -313,3 +313,209 @@ class InterruptCleanupTests(unittest.TestCase):
                 runner.execute(['synthetic-child'], Path.cwd(), 10)
         kill.assert_called_once_with(12345, signal.SIGKILL)
         self.assertEqual(process.communicate.call_count, 2)
+
+
+class TrialSurfaceTests(unittest.TestCase):
+    """Synthetic HOME and CODEX_HOME only; the real user layers are never read or named."""
+    def setUp(self):
+        from unittest.mock import patch
+        import importlib.util
+        spec = importlib.util.spec_from_file_location('runner_trial_surfaces', RUNNER)
+        self.runner = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.runner)
+        folder = tempfile.TemporaryDirectory(); self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name)
+        self.home = self.root / 'synthetic-home'
+        (self.home / '.agents/skills/example').mkdir(parents=True)
+        self.user_codex = self.root / 'synthetic-user-codex'
+        (self.user_codex / 'skills/example').mkdir(parents=True)
+        (self.user_codex / 'auth.json').write_text('{"synthetic": "credential"}')
+        self.environ = {'HOME': str(self.home), 'CODEX_HOME': str(self.user_codex), 'PATH': '/synthetic/bin'}
+        self.trial = self.root / 'out/candidate/case'
+        self.workspace = self.trial / 'workspace'
+        self.workspace.mkdir(parents=True)
+        patcher = patch.dict('os.environ', self.environ, clear=True)
+        patcher.start(); self.addCleanup(patcher.stop)
+
+    def assert_no_user_layers(self, argv, environment):
+        named = ' '.join([*argv, *environment.values()])
+        self.assertNotIn(str(self.home / '.claude'), named)
+        self.assertNotIn(str(self.user_codex), named)
+        self.assertNotIn(str(self.home / '.codex'), named)
+
+    def test_claude_trial_requests_project_only_settings_strict_mcp_and_no_hooks(self):
+        argv, environment = self.runner.trial_command('claude', 'claude', self.workspace / '.harness-trial', (),
+                                                      self.trial, self.workspace, {}, self.environ)
+        self.assertEqual(argv[argv.index('--setting-sources') + 1], 'project')
+        self.assertIn('--strict-mcp-config', argv)
+        mcp = Path(argv[argv.index('--mcp-config') + 1])
+        self.assertEqual(json.loads(mcp.read_text()), {'mcpServers': {}})
+        settings = Path(argv[argv.index('--settings') + 1])
+        self.assertEqual(json.loads(settings.read_text()), {'disableAllHooks': True})
+        for staged in (mcp, settings):
+            self.assertEqual(staged.parent, self.trial)
+            self.assertFalse(staged.is_relative_to(self.workspace))
+            self.assertEqual(staged.stat().st_mode & 0o777, 0o600)
+        self.assert_no_user_layers(argv, environment)
+
+    def test_codex_trial_uses_a_temporary_home_with_only_defaults_and_workspace_trust(self):
+        import tomllib
+        argv, environment = self.runner.trial_command('codex', 'codex', None, ('example',), self.trial, self.workspace,
+                                                      dict(model='synthetic-model', model_reasoning_effort='low'),
+                                                      self.environ)
+        home = Path(environment['CODEX_HOME'])
+        self.assertEqual(home, self.trial / 'codex-home')
+        self.assertEqual(sorted(p.name for p in home.iterdir()), ['config.toml'])
+        self.assertEqual(tomllib.loads((home / 'config.toml').read_text()),
+                         dict(model='synthetic-model', model_reasoning_effort='low',
+                              projects={str(self.workspace): dict(trust_level='trusted')}))
+        self.assertEqual(home.stat().st_mode & 0o777, 0o700)
+        disabled = argv[argv.index('-c', argv.index('-c') + 1) + 1]
+        self.assertIn(str(self.home / '.agents/skills/example'), disabled)
+        self.assertEqual(argv[-1], '-')
+        self.assert_no_user_layers(argv, environment)
+
+    def test_unverified_or_missing_capability_rows_never_claim_isolation(self):
+        from unittest.mock import patch
+        from dataclasses import replace
+        from agent_harness_lab import surfaces
+        from agent_harness_lab.evaluation import trial_surfaces
+        for runtime in ('claude-code', 'codex'):
+            value = trial_surfaces.descriptor(runtime)
+            self.assertEqual(value['status'], 'inherited_unverified')
+            self.assertFalse(value['observed']); self.assertFalse(value['security_isolation'])
+            self.assertTrue(all(row['status'] == 'unverified' for row in value['requests']))
+        verified = tuple(replace(row, status='verified') for row in surfaces.CAPABILITIES)
+        with patch.object(surfaces, 'CAPABILITIES', verified):
+            self.assertEqual(trial_surfaces.descriptor('codex')['status'], 'requested_documented_unobserved')
+        without = tuple(row for row in surfaces.CAPABILITIES if row.item != '--setting-sources project CLI flag')
+        with patch.object(surfaces, 'CAPABILITIES', without):
+            argv, _ = self.runner.trial_command('claude', 'claude', None, (), self.trial, self.workspace, {}, self.environ)
+            self.assertNotIn('--setting-sources', argv)
+            value = trial_surfaces.descriptor('claude-code')
+            self.assertEqual(value['status'], 'inherited_unverified')
+            self.assertIn('no_capability_row', [row['status'] for row in value['requests']])
+        for runtime in ('claude-code', 'codex'):
+            self.assertNotIn('isolated', json.dumps(trial_surfaces.descriptor(runtime)))
+
+    def test_claude_descriptor_excludes_the_user_permissions_that_project_only_sources_drop(self):
+        from agent_harness_lab.evaluation import trial_surfaces
+        value = trial_surfaces.descriptor('claude-code')
+        self.assertIn('user and local permission rules and sandbox settings', value['excluded_requested'])
+        self.assertIn('user and local settings env and apiKeyHelper', value['excluded_requested'])
+        self.assertNotIn('permissions and sandbox', value['inherited'])
+        self.assertNotIn('authentication', value['inherited'])
+        self.assertIn('project and managed permission rules and sandbox settings', value['inherited'])
+        self.assertTrue(all('user' not in layer and 'local' not in layer for layer in value['inherited']))
+
+    def test_codex_authentication_blocks_only_the_recognised_cli_without_an_environment_key(self):
+        from unittest.mock import patch
+        from agent_harness_lab import surfaces
+        from agent_harness_lab.evaluation import trial_surfaces
+        banner = 'codex-cli 0.166.0\n'
+        self.assertEqual(trial_surfaces.codex_authentication(banner, self.environ), 'unavailable')
+        self.assertEqual(trial_surfaces.codex_authentication(banner, dict(self.environ, CODEX_API_KEY='')), 'unavailable')
+        self.assertEqual(trial_surfaces.codex_authentication(banner, dict(self.environ, OPENAI_API_KEY='synthetic')),
+                         'unavailable')
+        self.assertEqual(trial_surfaces.codex_authentication(banner, dict(self.environ, CODEX_API_KEY='synthetic')),
+                         'environment_variable_unobserved')
+        self.assertEqual(trial_surfaces.codex_authentication('codex-test 1.0', self.environ), 'unknown')
+        self.assertEqual(trial_surfaces.codex_authentication('', self.environ), 'unknown')
+        without = tuple(row for row in surfaces.CAPABILITIES if row.runtime != 'codex' or row.surface != 'settings'
+                        or 'temporary CODEX_HOME' not in row.item)
+        with patch.object(surfaces, 'CAPABILITIES', without):
+            self.assertEqual(trial_surfaces.codex_authentication(banner, self.environ), 'inherited')
+
+
+class TrialWorkspaceTests(unittest.TestCase):
+    """End to end with the fake CLIs and a synthetic HOME/CODEX_HOME."""
+    run_case = EvaluationTests.run_case
+    use_claude_fake = EvaluationTests.use_claude_fake
+
+    def setUp(self):
+        EvaluationTests.setUp(self)
+        self.home = self.root / 'synthetic-home'; self.home.mkdir()
+        self.user_codex = self.root / 'synthetic-user-codex'; self.user_codex.mkdir()
+        (self.user_codex / 'config.toml').write_text('model = "synthetic-model"\nmodel_reasoning_effort = "low"\nsecret = "x"\n')
+        self.fake.write_text(self.fake.read_text().replace(
+            "prompt=sys.stdin.read()", "import os\nprompt=sys.stdin.read()\npathlib.Path('env.json').write_text(json.dumps(dict(os.environ)))"))
+
+    def run_isolated(self, **options):
+        import os
+        from unittest.mock import patch
+        environ = {**os.environ, 'HOME': str(self.home), 'CODEX_HOME': str(self.user_codex)}
+        with patch.dict('os.environ', environ, clear=True):
+            return self.run_case(**options)
+
+    def test_nested_harness_file_is_copied_to_the_same_relative_path_and_recorded(self):
+        for version in ('baseline', 'candidate'):
+            (self.root / version / 'app').mkdir()
+            (self.root / version / 'AGENTS.md').write_text(version + ' root')
+            (self.root / version / 'app/AGENTS.md').write_text(version + ' app')
+        result, data = self.run_isolated(harness_paths=['AGENTS.md', 'app/AGENTS.md', 'app/.claude/rules/absent.md'])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for trial in data['trials']:
+            workspace = self.root / 'out' / trial['version'] / 'case/workspace'
+            self.assertEqual((workspace / 'app/AGENTS.md').read_text(), trial['version'] + ' app')
+            self.assertEqual((workspace / 'AGENTS.md').read_text(), trial['version'] + ' root')
+            surfaces = trial['workspace_surfaces']
+            self.assertEqual([row['path'] for row in surfaces['included']], ['AGENTS.md', 'app/AGENTS.md'])
+            self.assertEqual(surfaces['absent'], ['app/.claude/rules/absent.md'])
+            self.assertEqual(surfaces['observed_loading'], 'unknown')
+
+    def test_codex_run_records_unverified_isolation_and_uses_only_the_trial_home(self):
+        result, data = self.run_isolated()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        isolation = data['isolation']
+        self.assertEqual(isolation['status'], 'inherited_unverified')
+        self.assertEqual(isolation['copied_config_keys'], ['model', 'model_reasoning_effort'])
+        self.assertFalse(isolation['full_certification'])
+        for trial in data['trials']:
+            case = self.root / 'out' / trial['version'] / 'case'
+            seen = json.loads((case / 'workspace/env.json').read_text())
+            self.assertEqual(seen['CODEX_HOME'], str(case / 'codex-home'))
+            self.assertNotIn('secret', (case / 'codex-home/config.toml').read_text())
+
+    def use_codex_banner(self):
+        self.fake.write_text(self.fake.read_text().replace("print('codex-test 1.0')", "print('codex-cli 0.166.0')"))
+
+    def test_recognised_codex_without_an_environment_key_blocks_before_any_trial(self):
+        self.use_codex_banner()
+        import os
+        from unittest.mock import patch
+        with patch.dict('os.environ', {key: value for key, value in os.environ.items() if key != 'CODEX_API_KEY'},
+                        clear=True):
+            result, data = self.run_isolated()
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual((data['status'], data['reason']), ('blocked', 'codex_credentials_unavailable'))
+        self.assertEqual(data['runtime']['codex_authentication'], 'unavailable')
+        self.assertEqual(data['trials'], [])
+        self.assertFalse((self.root / 'out/candidate').exists())
+
+    def test_recognised_codex_with_an_environment_key_runs_and_labels_it_unobserved(self):
+        self.use_codex_banner()
+        from unittest.mock import patch
+        with patch.dict('os.environ', {'CODEX_API_KEY': 'synthetic-key'}):
+            result, data = self.run_isolated()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(data['runtime']['codex_authentication'], 'environment_variable_unobserved')
+        for trial in data['trials']:
+            seen = json.loads((self.root / 'out' / trial['version'] / 'case/workspace/env.json').read_text())
+            self.assertEqual(seen['CODEX_API_KEY'], 'synthetic-key')
+
+    def test_unrecognised_codex_binary_runs_with_unknown_authentication(self):
+        import os
+        from unittest.mock import patch
+        with patch.dict('os.environ', {key: value for key, value in os.environ.items() if key != 'CODEX_API_KEY'},
+                        clear=True):
+            result, data = self.run_isolated()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(data['runtime']['codex_authentication'], 'unknown')
+
+    def test_claude_run_records_unverified_isolation(self):
+        self.use_claude_fake()
+        result, data = self.run_isolated(agent='claude')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(data['isolation']['status'], 'inherited_unverified')
+        self.assertEqual(data['isolation']['runtime'], 'claude-code')
+        self.assertTrue(all(row['requested'] for row in data['isolation']['requests']))

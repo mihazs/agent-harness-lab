@@ -1,4 +1,4 @@
-# Controller-loaded root instructions
+# Controller-loaded instructions
 
 Controlled Responses runs can opt into `ahl-controlled-agents-v1` by adding
 `"instruction_protocol": "ahl-controlled-agents-v1"` to the existing inference
@@ -11,9 +11,18 @@ The controller freezes the admitted harness snapshot, including root
 strict UTF-8 content in a deterministic envelope before the first request and
 retains that prefix on every continuation. Removing the file produces an
 explicit absent envelope with empty content. No normalization, truncation,
-nested instruction discovery, skill loading or `CLAUDE.md` activation is
-implied. Preparation roles keep their existing policies and input views;
-candidate instruction content is not injected into their requests.
+skill loading or `CLAUDE.md` activation is implied. Preparation roles keep their
+existing policies and input views; candidate instruction content is not
+injected into their requests.
+
+A manifest task may set `cwd`, a safe relative directory. The executor's context
+is then the `AGENTS.md` chain from the harness root down to `cwd`, one file per
+directory in that order, each recorded as present or absent. `cwd` requires this
+protocol in the inference settings. Preflight rejects a `cwd` task without it,
+and rejects a frozen baseline or candidate chain over 32 KiB or with a
+non-regular member, before credentials, inference or output. The chain is never
+truncated. `AGENTS.override.md` and fallback names are not modelled. Tasks
+without `cwd` keep the root-only context above.
 
 The existing request checkpoint and action records contain digests of the
 actual serialized request, initial context, settings, requested tool policy,

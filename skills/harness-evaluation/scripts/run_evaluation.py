@@ -169,21 +169,39 @@ def trace_result(run, agent="codex"):
     return 'completed', usage
 
 
-def agent_command(agent, binary, plugin=None, skills=()):
+def agent_command(agent, binary, plugin=None, skills=(), *, skill_homes=None):
     if agent == 'claude':
         argv = [binary, '--print', '--output-format', 'stream-json', '--verbose',
                 '--no-session-persistence']
         if plugin is not None:
             argv += ['--plugin-dir', str(plugin)]
         return argv
+    homes = (Path.home() / '.agents/skills', Path.home() / '.codex/skills') if skill_homes is None else skill_homes
     disabled = [dict(path=str(home / skill), enabled=False) for skill in skills
-                for home in (Path.home() / '.agents/skills', Path.home() / '.codex/skills')
-                if (home / skill).exists()]
+                for home in homes if (home / skill).exists()]
     argv = [binary, 'exec', '--ephemeral', '--skip-git-repo-check',
             '--sandbox', 'workspace-write', '--json', '-c', 'approval_policy="never"']
     if disabled:
         argv += ['-c', 'skills.config=' + json.dumps(disabled).replace(': ', ' = ')]
     return argv + ['-']
+
+
+def trial_command(agent, binary, plugin, skills, trial, workspace, defaults, environ=None):
+    """Argv and environment for one cooperative trial with the gated user-layer exclusions requested.
+
+    Claude gets project-only setting sources, a strict empty MCP config and hook-disabling flag settings;
+    Codex gets a temporary CODEX_HOME. Neither the real CODEX_HOME nor ~/.claude is named in either.
+    """
+    application_modules()
+    from agent_harness_lab.evaluation import trial_surfaces
+    environ = dict(os.environ if environ is None else environ)
+    if agent == 'claude':
+        environ.pop('CODEX_HOME', None)
+        return agent_command(agent, binary, plugin) + trial_surfaces.claude_arguments(trial), environ
+    environment = trial_surfaces.codex_environment(trial, workspace, defaults, environ)
+    staged = environment.get('CODEX_HOME') != environ.get('CODEX_HOME')
+    homes = trial_surfaces.home_skills(environ) if staged else None
+    return agent_command(agent, binary, None, skills, skill_homes=homes), environment
 
 
 def evaluate(args):
@@ -317,6 +335,12 @@ def _evaluate(args):
                 program = (manifest_path.parent / argument).resolve()
                 if program.is_file() and program.is_relative_to(fixture):
                     raise ValueError('grader programs must be outside fixture workspaces')
+        if 'cwd' in task:
+            if not controlled:
+                raise ValueError('task cwd is supported only by the controlled Responses executor')
+            application_modules()
+            from agent_harness_lab.evaluation.instruction_context import chain_paths
+            chain_paths(task['cwd'])
         if task['split'] not in ('development', 'regression', 'heldout'):
             raise ValueError('invalid split')
         if not task['grader'] or not all(isinstance(a, str) for a in task['grader']):
@@ -394,6 +418,13 @@ def _evaluate(args):
             from agent_harness_lab.evaluation import responses as response_runtime
             from agent_harness_lab.evaluation.working_state import WorkingState
             inference_settings,inference_hash = response_runtime.read_settings(inference_path)
+            cwd_tasks = [task['cwd'] for task in tasks if 'cwd' in task]
+            if cwd_tasks and inference_settings.get('instruction_protocol') is None:
+                raise ValueError('task cwd requires the controller instruction protocol in the inference settings')
+            from agent_harness_lab.evaluation.instruction_context import chain_size
+            for task_cwd in cwd_tasks:
+                for root in versions.values():
+                    chain_size(root, task_cwd)
             fixtures = [contained(manifest_path.parent,task['fixture']) for task in tasks]
             for root in versions.values():
                 bounded_tree(root)
@@ -501,6 +532,14 @@ def _evaluate(args):
                   if isinstance(raw_config.get(k), str)}
     except (OSError, ValueError):
         pass
+    authentication = None
+    if agent == 'codex' and not blocked:
+        application_modules()
+        from agent_harness_lab.evaluation import trial_surfaces
+        authentication = trial_surfaces.codex_authentication(
+            version_info['stdout'] if version_info['exit_code'] == 0 else '', os.environ)
+        if authentication == 'unavailable':
+            blocked = 'codex_credentials_unavailable'
     output.mkdir(parents=True, exist_ok=False)
     output.chmod(0o700)
     results = dict(manifest_sha256=manifest_hash,
@@ -508,7 +547,13 @@ def _evaluate(args):
                    fixtures=frozen_fixtures, trials=[],
                    runtime={'agent': agent, agent + '_version': version_info['stdout'].strip()[:200] if version_info['exit_code'] == 0 else 'unavailable',
                             'user_config_defaults': config, 'effective_settings_verified': False},
-                   isolation=('cooperative trusted fixtures; ' + ('workspace-write; ' if agent == 'codex' else 'inherited Claude permissions/sandbox; ') + 'inherited configuration/auth/hooks; no security or network isolation claim'))
+                   isolation=dict(status='not_executed', full_certification=False))
+    if authentication is not None:
+        results['runtime']['codex_authentication'] = authentication
+    if agent in ('codex', 'claude'):
+        application_modules()
+        from agent_harness_lab.evaluation import trial_surfaces
+        results['isolation'] = trial_surfaces.descriptor('claude-code' if agent == 'claude' else 'codex', config)
     results['grader_bundle_digests'] = frozen_bundles
     if permission_audit is not None:results['isolation_qualification']=backend.permission_qualification()
     if precision_report is not None:
@@ -517,7 +562,7 @@ def _evaluate(args):
         (output/'precision-preflight.json').chmod(0o600)
     if sandbox_graders:
         results['runtime']['grader_capability'] = capability
-        results['isolation'] = dict(executor='cooperative native CLI; no role isolation claim',
+        results['isolation'] = dict(results['isolation'],
             grader='fresh offline namespace with readonly artifacts and frozen oracle', full_certification=False)
     if configured:
         results['effective_configuration'] = dict(configured, applied_limits=dict(seconds=budget, trials=trial_limit),
@@ -642,16 +687,10 @@ def _evaluate(args):
         workspace = trial / 'workspace'
         fixture = (manifest_path.parent / task['fixture']).resolve()
         shutil.copytree(fixture, workspace)
-        for relative in harness_paths:
-            target = workspace / relative
-            if target.exists():
-                if not target.is_file():
-                    raise ValueError('fixture harness path must be a file')
-                target.unlink()
-            source = root / relative
-            if source.is_file():
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source, target)
+        if harness_paths:
+            application_modules()
+            from agent_harness_lab.evaluation.trial_surfaces import stage_harness
+            record['workspace_surfaces'] = stage_harness(root, workspace, harness_paths)
         loaded = []
         plugin = workspace / '.harness-trial'
         if agent == 'claude':
@@ -664,7 +703,11 @@ def _evaluate(args):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(root / skill, target)
             loaded.append(str(target / 'SKILL.md'))
-        argv = task['offline_executor'] if offline else None if controlled else agent_command(agent, binary, plugin if agent == 'claude' else None, skills)
+        environment = None
+        if offline or controlled:
+            argv = task['offline_executor'] if offline else None
+        else:
+            argv, environment = trial_command(agent, binary, plugin if agent == 'claude' else None, skills, trial, workspace, config)
         prompt = ('Load these exact evaluation skill files before the task: ' + ', '.join(loaded) + '\n' if loaded and task.get('preload_skills', True) else '')
         if manifest.get('no_nested_agents', False):
             prompt += 'Do not launch child agents or nested model trials; the parent owns the evaluation budget.\n'
@@ -689,7 +732,7 @@ def _evaluate(args):
             if binding is not None: record['controller_trial_id'] = trial_id
             try:
                 run = response_runtime.run_trial(client,backend,workspace,root,prompt,task['artifacts'],trial/'artifacts',min(timeout,remaining),
-                    trial_id=trial_id, trajectory=binding)
+                    trial_id=trial_id, trajectory=binding, **({'task_cwd': task['cwd']} if 'cwd' in task else {}))
                 trajectory_capture = run.pop('_trajectory_capture', None)
                 record['controller_actions'] = run.pop('controller_actions')
                 grade_workspace = Path(run.pop('artifact_workspace'))
@@ -714,7 +757,7 @@ def _evaluate(args):
                 continue
             run['timeout'] = run['status'] == 'timeout'
         else:
-            run = execute(argv, workspace, min(timeout, remaining), prompt)
+            run = execute(argv, workspace, min(timeout, remaining), prompt, env=environment)
         trace = trial / ('stdout.txt' if offline or controlled else 'trace.jsonl')
         trace.write_text(run.pop('stdout'))
         (trial / 'stderr.txt').write_text(run.pop('stderr'))
@@ -802,7 +845,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='Requires a JSON task manifest and separate existing baseline/candidate harness directories.\n'
         'Creates a NEW private directory with trial workspaces, artifact grades and results.json; checks input digests afterward.\n'
-        'Codex/Claude inherit their configured authentication and permissions; offline/Responses require supported Linux isolation.\n'
+        'Claude keeps authentication but loads only project and managed settings, so put trial permissions in the fixture .claude/settings.json;\n'
+        'Codex gets a credential-free temporary CODEX_HOME and blocks without CODEX_API_KEY (results: inherited_unverified);\n'
+        'offline/Responses require supported Linux isolation.\n'
         'Read results.json for machine output; passing trials never authorize promotion. Exit 0: passing trials or supported/rejected sequential decision;\n'
         '1: failed/incomplete execution; 2: setup/input error; 3: blocked/inconclusive sequential analysis.\n'
         'Example: ahl evaluate --manifest tasks.json --baseline baseline --candidate candidate --output /tmp/ahl-evaluation')

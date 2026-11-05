@@ -1859,6 +1859,85 @@ JSON and TOML share one nesting bound of 64, so a deeply nested
 walk's pruning of memory directories under declared roots, and profile-scoped
 Codex keys remain open in #281.
 
+### Surface-faithful trial workspaces
+
+A cooperative Claude Code or Codex trial copies the fixture, then each
+`harness_paths` file at its relative path, at any depth. A path that the version
+lacks is removed from the copy, so the absence is faithful too. Each trial
+records `workspace_surfaces`: the included paths with their `surfaces.classify`
+kind and SHA-256, the absent paths, and `observed_loading: "unknown"`. A source
+path that crosses a symlink is refused.
+
+Each trial also asks the runtime to skip user, local and global layers. Every
+request is gated on a `surfaces.CAPABILITIES` row, and a request without a row
+is not made:
+
+| Runtime | Request | Capability row |
+| --- | --- | --- |
+| Claude Code | `--setting-sources project` | `settings:claude-code` |
+| Claude Code | `--strict-mcp-config --mcp-config` with `{"mcpServers": {}}` | `mcp:claude-code` |
+| Claude Code | `--settings` with `{"disableAllHooks": true}` | `hooks:claude-code` |
+| Codex | temporary `CODEX_HOME` | `settings:codex` |
+
+The Claude files and the temporary `CODEX_HOME` are private and sit beside the
+workspace, never inside it. The Codex home holds only one `config.toml`, with the
+`model` and `model_reasoning_effort` copied from the user configuration and one
+`trust_level = "trusted"` entry for the trial workspace. With that trust entry,
+staged project `.codex` surfaces can load. Neither the argv nor the environment
+of a trial names the real `CODEX_HOME` or `~/.claude`. Claude trials drop
+`CODEX_HOME` from their environment.
+
+The temporary Codex home holds no `auth.json`, so a saved `codex login` never
+reaches a trial. At Codex 0.166.0, `codex login status` under such a home
+reports `Not logged in` even with `CODEX_API_KEY` set, because it reads only
+saved credentials. `CODEX_API_KEY` is the documented credential override for
+`codex exec`; `OPENAI_API_KEY` is not documented for it. Before any trial,
+`trial_surfaces.codex_authentication` records `runtime.codex_authentication`:
+
+| Value | When | Effect |
+| --- | --- | --- |
+| `environment_variable_unobserved` | `CODEX_API_KEY` is set | Trials run; acceptance of the key is not observed |
+| `unavailable` | No key, and `--version` prints the `codex-cli` banner | The run blocks as `codex_credentials_unavailable` |
+| `unknown` | No key, and the binary is not recognised as the Codex CLI | Trials run; nothing is claimed |
+| `inherited` | No temporary home is requested | Trials use the inherited home |
+
+`--setting-sources project` also drops the permission rules, sandbox settings,
+`env` and `apiKeyHelper` of the user and local settings files. The descriptor
+lists them under `excluded_requested`. Only project and managed permission rules
+are inherited, so put the rules a trusted fixture needs in its
+`.claude/settings.json`. Authentication stored outside settings files is kept.
+
+`results.json` records the `isolation` descriptor (`ahl-trial-surfaces-v1`) in
+place of the former free-text admission. It lists each request with its row
+status, plus the layers that are requested excluded, inherited (Claude
+authentication stored outside settings files, project and managed permissions,
+managed settings, environment, `HOME/.agents/skills`) or unknown.
+All four rows are `unverified` at the pins in `surfaces.PINS`, so the status is
+`inherited_unverified`. Rows marked verified give
+`requested_documented_unobserved`. No descriptor says `isolated`, and
+`security_isolation`, `network_isolation` and `full_certification` are always
+false. Only fake-runtime tests run in CI. A native smoke run is reported
+separately, as observed or skipped, and it is the only thing that can move a row
+to verified.
+
+The controlled Responses executor accepts an optional task `cwd`, a safe
+relative directory. Its effective instructions are then the `AGENTS.md` chain
+from the harness root down to `cwd`, in that order, one file per directory. Each
+member is recorded as present or absent with its mode, SHA-256 and size.
+`AGENTS.override.md` and fallback names are not modelled. A chain over Codex's
+default 32 KiB `project_doc_max_bytes` blocks before any request and is never
+truncated. Tasks without `cwd` keep the root-only `AGENTS.md` context unchanged.
+`cwd` requires `instruction_protocol`; preflight checks that and each frozen
+chain's size before credentials, inference or output. Other executors reject
+`cwd` as a setup error. The closed project input profile still signs only
+the root `AGENTS.md`.
+
+Sources: [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference),
+[Claude Code settings](https://code.claude.com/docs/en/settings),
+[Codex configuration reference](https://developers.openai.com/codex/config-reference) and
+[Codex non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode),
+retrieved 2026-11-05 for Claude Code 2.1.317 and Codex 0.166.0.
+
 ## ai-memory OKF project exports
 
 Select `local_file/ai-memory-okf/0.2` in the existing source declaration, with

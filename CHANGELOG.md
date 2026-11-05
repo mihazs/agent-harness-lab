@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.114.0
+
+### Minor Changes
+
+- 2983071: Cooperative Claude Code and Codex trials now copy each `harness_paths` file at its relative path at any depth and record `workspace_surfaces` (included paths with kind and SHA-256, absent paths, `observed_loading: "unknown"`). Each trial requests exclusion of user, local and global layers, gated on new `surfaces.CAPABILITIES` rows: Claude Code gets `--setting-sources project`, `--strict-mcp-config` with an empty staged MCP config and `--settings` with `disableAllHooks`, and Codex gets a temporary `CODEX_HOME` holding only the copied `model` and `model_reasoning_effort` and one trust entry for the trial workspace. The Codex home holds no credentials. Neither the argv nor the environment names the real `CODEX_HOME` or `~/.claude`. `results.json` replaces the free-text isolation admission with an `ahl-trial-surfaces-v1` descriptor. Its status is `inherited_unverified` while the rows are unverified, and it never says `isolated`. The controlled Responses executor accepts an optional task `cwd` and loads the root-to-`cwd` `AGENTS.md` chain in order. A chain over 32 KiB blocks instead of being truncated.
+
+### Patch Changes
+
+- 4a7d49c: A Codex CLI evaluation now blocks as `codex_credentials_unavailable` before any trial when the binary reports the `codex-cli` banner and `CODEX_API_KEY` is not set, because the credential-free temporary `CODEX_HOME` cannot reach a saved `codex login`. `results.json` records `runtime.codex_authentication` (`environment_variable_unobserved`, `unavailable`, `unknown` or `inherited`). The Claude Code trial descriptor now lists user and local permission rules, sandbox settings, `env` and `apiKeyHelper` as excluded by `--setting-sources project`, and inherits only project and managed permissions. The execution reference, workflow guide and help text now say to put trial permissions in the fixture's `.claude/settings.json`.
+
 ## 0.113.0
 
 ### Minor Changes
