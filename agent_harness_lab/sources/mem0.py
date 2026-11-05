@@ -162,13 +162,16 @@ def parse(value, selection, bounds):
     for row in rows:
         bounded(row)
         identity = text(row.get('id'))
+        if identity is not None and any(row.get(key) != expected for key, expected in filters.items()):
+            # A row the declared filter would not return names another scope's memory, even when the row is malformed or
+            # repeats an ID: that ID and its history stay out, so a wrong listing cannot import another scope.
+            if identity in listed: warnings.add('duplicate_memory_id')
+            if set(row) - set(MEMORY_FIELDS): unknown['memories'] += 1; warnings.add('unknown_memory_fields')
+            counts['outside_filter'] += 1; warnings.add('memory_outside_filter_scope'); listed[identity] = None; continue
         if identity is None or identity in listed or not isinstance(row.get('memory'), str):
             rejected['memories'] += 1
             warnings.add('duplicate_memory_id' if identity in listed else 'memory_without_identity_or_text'); continue
         if set(row) - set(MEMORY_FIELDS): unknown['memories'] += 1; warnings.add('unknown_memory_fields')
-        if any(row.get(key) != expected for key, expected in filters.items()):
-            # A row the declared filter would not return is another scope's memory: it and its history stay out.
-            counts['outside_filter'] += 1; warnings.add('memory_outside_filter_scope'); listed[identity] = None; continue
         listed[identity] = row
     claims, seen, heads = [], set(), {}
     def live(row): return row is not None and expiry(row.get('expiration_date'), exported)[0] == 'asserted'

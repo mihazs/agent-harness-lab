@@ -118,6 +118,20 @@ class Mem0SourceTests(unittest.TestCase):
         self.read(dict(EXPORT, filters=dict(user_id='user-aaa', run_id='run-aaa')))
         self.assertEqual((self.connector.summary['excluded']['memories_outside_filter'], self.memory('mem-expired')), (2, []))
 
+    def test_malformed_or_repeated_rows_from_other_scopes_still_keep_their_history_out(self):
+        value = copy.deepcopy(EXPORT)
+        value['memories']['results'] += [item('mem-blank', None, user='user-bbb'),
+                                          item('mem-tests', 'repeated elsewhere', user='user-bbb')]
+        value['history']['mem-blank'] = [event('h8', 'mem-blank', 'ADD', None, 'another user invented note', None)]
+        for mode in ('exclude', 'include_unverified'):
+            with self.subTest(unlisted_history=mode):
+                self.read(value, unlisted_history=mode)
+                self.assertEqual((self.memory('mem-blank'), self.memory('mem-tests')), ([], []))
+                self.assertEqual(self.connector.summary['excluded'], dict(memories_outside_filter=3,
+                    history_outside_filter=3, history_unlisted=2 if mode == 'exclude' else 0))
+                self.assertEqual(self.connector.summary['rows_rejected']['memories'], 0)
+                self.assertIn('duplicate_memory_id', self.connector.summary['warnings'])
+
     def test_deletions_become_tombstones_only_when_unlisted_history_is_selected(self):
         snapshot = self.read(unlisted_history='include_unverified')
         add, delete = self.memory('mem-gone')
@@ -182,7 +196,7 @@ class Mem0SourceTests(unittest.TestCase):
 
     def test_malformed_rows_are_counted_and_chain_breaks_flagged(self):
         value = copy.deepcopy(EXPORT)
-        value['memories']['results'] += [dict(id=None, memory='x'), dict(id='mem-tests', memory='duplicate'),
+        value['memories']['results'] += [dict(id=None, memory='x'), item('mem-tests', 'duplicate'),
                                           dict(item('mem-new', 'invented new'), extra=1)]
         value['history']['mem-tests'] += [dict(event('h3', 'mem-tests', 'UPDATE', 'x', 'y', None)),
                                           event('h9', 'mem-other', 'UPDATE', 'x', 'y', None)]

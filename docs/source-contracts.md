@@ -2312,7 +2312,11 @@ as Platform `count`/`next`, is refused rather than read with a guessed shape.
 
 Every memory whose `user_id`, `agent_id` or `run_id` differs from a declared
 filter is excluded with its history (`memory_outside_filter_scope`), so a wrong
-listing cannot import another scope. History rows carry no scope of their own.
+listing cannot import another scope. The check runs before row validation: a
+row from another scope that lacks memory text, or repeats a listed ID, still
+excludes that ID and its history, and the first listing of a repeated ID is
+dropped too. A row without a usable `id` is only counted as rejected, because no
+history can be tied to it. History rows carry no scope of their own.
 History for an ID absent from the listing (normally a deleted memory) is
 excluded by default (`history_for_unlisted_memory_excluded`). With
 `unlisted_history: include_unverified` it is imported with `scope_status:
