@@ -586,6 +586,10 @@ tasks:
     desc: Run offline Mem0 OSS v2.2.1 memory/history export controls with synthetic invented exports
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_mem0.py" -v'
+  test:sources:hindsight:
+    desc: Run offline Hindsight v1.1.0 bank archive controls with synthetic invented banks
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_hindsight.py" -v'
   test:sources:memory-provenance:
     desc: Run declared ai-memory handoff/workstream provenance cases with synthetic OKF bundles
     cmds:
