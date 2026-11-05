@@ -605,10 +605,11 @@ tasks:
       - for: [test_evidence.py, test_monitoring.py, test_codex_rollout.py, test_codex_discovery.py, test_claude_native.py, 'test_source_codex*.py', test_source_claude.py, test_source_claude_root.py, test_source_git.py]
         cmd: '{{.PYTHON | shellQuote}} -m unittest discover -s {{.ROOT_DIR | shellQuote}}/tools/tests -p {{.ITEM | shellQuote}} -v'
   test:captures:claude:
-    desc: Run pinned Claude native scope, privacy, response consistency, declared source order and resource controls
+    desc: Run pinned Claude native scope, privacy, response consistency, declared source order, declared skill signals and resource controls
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_claude_native.py" -v'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_claude_source_order.py" -v'
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_claude_skill_signals.py" -v'
   test:sources:github:live:
     desc: Run explicitly selected public GitHub acceptance without credentials or captured fixtures
     requires:

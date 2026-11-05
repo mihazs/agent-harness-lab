@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Map declared skill evidence in pinned Claude Code 2.1.316 captures. A `Skill` tool call with a nonempty `skill` name adds `skill_signal: declared_invocation` to its `tool_call` event, and a `Read` of an exact `PROJECT/{.agents/skills,.claude/skills,skills}/<name>/SKILL.md` path adds `skill_signal: file_read`. Each carries a pseudonymous `skill_id` and a new `skill_signal_confidence` label (`declared_name`, `full_read_request` or `partial_read_request`); no name, path, argument or content is copied. The `skill`/`file_path` input field names are an assumption from Claude Code's public tool interface, not from the pinned SDK reference. The adapter capability is `skill_activation: False` with `skill_signal: observed_declared`. These are requests, not activation: `evaluation.skills.activation` never treats them as activated, and outcomes stay unknown. Captures without such calls keep identical events, identities, collection fingerprints and summaries. Codex adapters are unchanged.
