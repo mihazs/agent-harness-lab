@@ -35,7 +35,7 @@ def write_json(path, value):
     atomic_json(path, value)
 
 
-def output_dir(args):
+def output_dir(args, *, deadline=None):
     parent = state_root() / 'runs' / identity(args.project)
     if args.output is None:
         parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -46,6 +46,13 @@ def output_dir(args):
     output.chmod(0o700)
     args._run_output = output
     write_json(output / 'workflow.json', {'status': 'collecting'})
+    if getattr(args, '_invocation_origin', None) == 'skill':
+        # Descriptive entry context, recorded once the run exists so early
+        # exits keep their origin; it never issues execution authority.
+        from .one_call import invocation_context
+        if deadline is None:
+            deadline = time.monotonic() + args.timeout
+        write_json(output / 'invocation.json', invocation_context(args, output, deadline))
     return output
 
 
@@ -414,9 +421,7 @@ def _improve(args):
     started=min(started,getattr(args,'_construction_started',started))
     remaining = lambda: args.timeout - (time.monotonic() - started)
     runner = evaluator()
-    output = output_dir(args)
-    if getattr(args,'_invocation_origin',None)=='skill':
-        write_json(output/'invocation.json',invocation_context(args,output,started+args.timeout))
+    output = output_dir(args,deadline=started+args.timeout)
     access_path=None
     if getattr(args,'evaluation_store',None) is not None:
         from .evaluation.construction_access import selection
@@ -862,7 +867,7 @@ def _run_improvement(args, *, parent_started=None):
             reason = preflight(args)
             if configured and time.monotonic()>=started+args.timeout:raise TimeoutError('configured preflight exhausted improvement budget')
             if reason:
-                output = output_dir(args)
+                output = output_dir(args,deadline=(time.monotonic() if started is None else started)+args.timeout)
                 result = dict(status='blocked', reason=reason, output=str(output), changed_files=[],
                               remediation='Select a supported runtime/profile and budget; see ahl improve --help')
                 write_json(output/'workflow.json', result)
