@@ -102,8 +102,8 @@ The first five lines are the exact records `Ledger.ingest` appends to
 and the ledger against this page, so the output cannot drift unnoticed.
 
 - **Bodies are omitted.** The command, the error text, the assistant sentence, the
-  `Read` path and every copy of the canary are absent. Only tool blocks become
-  events, so the text block before the `Bash` call leaves only its position in
+  `Read` path and every copy of the canary are absent. In a line with tool blocks,
+  only those blocks become events, so the text block before the `Bash` call leaves only its position in
   `event_id` (`synthetic-a1:1`), and the text-only line becomes a bare
   `assistant` event.
 - **A tool error is not a task failure.** `is_error: true` sets
@@ -127,7 +127,8 @@ and the ledger against this page, so the output cannot drift unnoticed.
 
 Normalization is not general sanitization. It drops undeclared fields, but the
 declared ones are copied verbatim: the native `sessionId`, `uuid`-derived event
-IDs, `tool_use` IDs, timestamps and tool names appear as written. A real capture's
+IDs, `tool_use` IDs, timestamps, tool names and, for a row without tool blocks,
+the native row `type` (as `activity`) appear as written. A real capture's
 ledger stays private local data. The `claude-jsonl-v1` name identifies the
 synthetic contract tested here; compatibility with any released Claude Code CLI
 is unverified. The [pinned 2.1.316 profile](#explicit-claude-code-21316-file-profile)
