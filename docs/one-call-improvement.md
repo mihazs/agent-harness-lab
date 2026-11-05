@@ -167,8 +167,10 @@ Codex `.rules`, `.mcp.json`, memory and plugin checkouts
 unchanged: a snapshot without configured `harness_paths` still stages only root
 instructions and root skill bundles, so a same-named file elsewhere never becomes
 writable through discovery. A nested file reaches the baseline only when
-`ahl.json` `harness_paths` selects it. A candidate can still create a new one. The
-configuration accepts any classified path there, but not a `private_excluded` one.
+`ahl.json` `harness_paths` selects it. A candidate can create a new nested
+instruction or rule file only inside the governing scope its instruction plan
+declares (see the next section). The configuration accepts any classified path
+there, but not a `private_excluded` one.
 
 Both proposer prompts (the preparation stage in `workflow.py` and the controlled
 proposer in `evaluation/construction.py`) list the allowed kinds from
@@ -191,6 +193,79 @@ public documentation URL. Items the research could not confirm are marked
 `unverified`, for example the Claude plugin cache subpath and the Codex memories
 layout. `verified` means only that the item is documented at the pin.
 Classification does not read the table yet.
+
+## Scoped instruction rewrites and pruning
+
+`agent_harness_lab/sources/instruction_validation.py` checks instruction and
+path-rule candidates against their effective context before any evaluation. It
+runs the instruction resolver (`sources/instructions.py`) and the rule resolver
+(`sources/claude_rules.py`) again on a baseline closure and a candidate closure.
+Each closure holds the project's in-checkout instruction and rule files, read
+through the read-only harness inventory, with the staged copy laid over them.
+`CLAUDE.local.md` stays out. Nothing is executed, and every result keeps
+`observed_loading` and `effective` at `unknown`.
+
+A proposal that changes a nested instruction file or any rule file must add an
+`instruction_plan` to `proposal.json`:
+
+```json
+{"schema_version": 1,
+ "profile": {"schema_version": 1, "runtime": "claude-code", "version": "2.1.317", "task_cwd": "src"},
+ "task_paths": ["src/app/view.ts"],
+ "required": [{"id": "tests", "text": "Always run the unit tests."}],
+ "shadowing_changes": [{"change": "add", "shadow": "src/AGENTS.override.md", "shadowed": "src/AGENTS.md"}],
+ "removed_task_paths": []}
+```
+
+`profile` uses the instruction resolver's profile schema, and its runtime must be
+the trial runtime (`responses` validates as `codex`, because the controlled
+executor loads the `AGENTS.md` chain). Root-only edits without a plan keep their
+previous path. Both proposer prompts state these rules. The validator blocks a
+candidate in these cases:
+
+- It edits an instruction file outside the governing scope. The governing scope
+  is the deepest directory on the task path that holds an applicable instruction
+  file, plus the task directory itself (`outside_governing_scope`).
+- It edits a rule that matches no declared task path (`rule_matches_no_task_path`).
+- It edits a file the runtime does not load as an instruction or rule
+  (`not_a_runtime_instruction_surface`).
+- It adds an import cycle (`import_cycle`), a missing import (`missing_import`)
+  or another unresolved import (`import_unresolved`).
+- It changes which file shadows which, such as Codex override precedence or
+  Claude `AGENTS.md` shadowing, without the plan declaring that change
+  (`undeclared_shadowing_change`).
+- A rule's `paths` edit stops matching a declared task path that is not listed in
+  `removed_task_paths` (`rule_paths_dropped_task_path`).
+- A required text leaves the active context of a task path. It can move to an
+  inactive file (`required_text_left_active_context`) or disappear
+  (`required_text_removed`). A newly required text must also become active
+  (`required_text_not_active`).
+- The staged baseline no longer matches the project (`stale_baseline`).
+- The plan is missing or invalid, its runtime is not the trial runtime, its task
+  directory does not exist, or either closure fails to resolve.
+
+`one_call.check_scope(args, proposed, original)` enforces the same scope. It
+rejects a changed instruction or rule file outside the validated scope. Without a
+validated scope it rejects any changed nested file the frozen baseline does not
+already hold, so a candidate cannot edit an unrelated same-named file.
+
+A shorter file is not automatically better. The report gives active-context bytes
+(`utf8-bytes-v1`) for both versions as a secondary measurement only. A reduction
+earns `credited_reduction_bytes` only after subtracting the lines that moved out
+of the active context into another file, and `selects_winner` is always `false`.
+When a removed file's active lines all stay active for the same task paths, the
+operation is `consolidate`. Otherwise it is `remove`. Any active line that leaves
+the context sets `removal.disposition` to `requires_behavioral_controls`. After
+evaluation, `removal_disposition` reads the trial records. It returns `rejected`
+when a candidate regression control fails. It returns `inconclusive` when
+regression controls are missing, a baseline control fails, or the
+`workspace_surfaces` of a trial workspace do not hold each version's changed
+files exactly, including the absence of a removed file. It returns `recommended`
+only when all of those hold, and `certification` stays `required`. Before
+recording a recommendation, the workflow runs the validation again. A changed
+project instruction file or a modified evaluated candidate invalidates the
+recommendation, and the project is left untouched. The validator never reads
+evaluation manifests, graders or held-out inputs.
 
 ## Independently verified format repair
 
@@ -244,7 +319,8 @@ are all verified is reported as the actual committed result.
 ## Remaining implementation
 
 This is the first deterministic application slice of #77, not completion of its
-behavioral controller. Effective instruction hierarchy (#79), skill lifecycle and
+behavioral controller. Effective instruction hierarchy (#79, whose scoped rewrite
+validation is described above; operation-level delivery remains), skill lifecycle and
 routing utility (#78), native hooks (#80), pinned target-bank integration (#142),
 and full executable CLI/skill parity (#143) remain incomplete; the
 [receipt parity contract](../skills/harness-self-improvement/references/invocation.md#receipt-parity-with-ahl-improve)

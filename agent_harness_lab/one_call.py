@@ -115,10 +115,16 @@ def allowed_paths(args):
     return settings['harness_paths'] if settings else None
 
 
-def check_scope(args, proposed):
+def check_scope(args, proposed, original=None):
+    """Configured harness scope, then the instruction scope from surfaces: with the frozen baseline inventory, a
+    changed instruction or rule file must be governing (see sources.instruction_validation.outside_scope)."""
     allowed = allowed_paths(args)
     if allowed is not None and not set(proposed) <= set(allowed):
         raise ValueError('candidate exceeds configured harness scope')
+    if original is not None:
+        from .sources.instruction_validation import outside_scope
+        if outside_scope(original, proposed, getattr(args, '_instruction_scope', None)):
+            raise ValueError('candidate edits an instruction or rule file outside its governing scope')
 
 
 def structural_candidate(raw, directory):
