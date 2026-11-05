@@ -54,12 +54,46 @@ class InstructionInventoryTests(unittest.TestCase):
         self.assertNotIn('SYNTHETIC_', json.dumps(asdict(receipt)))
         with self.assertRaises(FrozenInstanceError): receipt.resolution_status = 'observed'
 
-    def test_empty_override_does_not_shadow_normal_guidance(self):
-        self.write('AGENTS.override.md', ' \n\t')
-        self.write('AGENTS.md', 'SYNTHETIC_NORMAL')
-        nodes = self.nodes(self.read())
-        self.assertEqual(nodes[digest('AGENTS.md')].applicability, 'declared_applicable')
-        self.assertEqual(nodes[digest('AGENTS.override.md')].reason, 'empty')
+    def state(self, receipt, path):
+        node = self.nodes(receipt)[digest(path)]
+        return node.applicability, node.reason
+
+    def links(self, receipt): return {(e.kind, e.source_sha256, e.target_sha256) for e in receipt.edges}
+
+    def test_empty_override_is_selected_and_shadows_agents_md(self):
+        # openai/codex@d786ff91 codex-rs/core/src/agents_md.rs agents_md_paths returns the first candidate whose
+        # metadata is a regular file, content unread; read_agents_md later drops a whitespace-only entry.
+        for override in (' \n\t', ''):
+            with self.subTest(override=override):
+                self.write('AGENTS.override.md', override)
+                self.write('AGENTS.md', 'SYNTHETIC_NORMAL'); self.write('src/task/AGENTS.md', 'SYNTHETIC_LEAF')
+                self.profile['project_doc_max_bytes'] = len('SYNTHETIC_LEAF')  # an empty selection uses no budget
+                receipt = self.read()
+                self.assertEqual(receipt.resolution_status, 'declared')
+                self.assertEqual(self.state(receipt, 'AGENTS.override.md'), ('unknown', 'selected_empty'))
+                self.assertEqual(self.state(receipt, 'AGENTS.md'), ('shadowed', 'directory_precedence'))
+                self.assertEqual(self.state(receipt, 'src/task/AGENTS.md'), ('declared_applicable', 'directory_precedence'))
+                self.assertIn(('shadows', digest('AGENTS.override.md'), digest('AGENTS.md')), self.links(receipt))
+                self.assertFalse(any(e.kind == 'parent' for e in receipt.edges))
+                self.assertEqual(self.nodes(receipt)[digest('AGENTS.override.md')].presence, 'present')
+
+    def test_empty_agents_md_shadows_a_present_fallback(self):
+        self.write('src/AGENTS.md', '\n'); self.write('src/TEAM.md', 'SYNTHETIC_FALLBACK')
+        receipt = self.read()
+        self.assertEqual(self.state(receipt, 'src/AGENTS.md'), ('unknown', 'selected_empty'))
+        self.assertEqual(self.state(receipt, 'src/TEAM.md'), ('shadowed', 'directory_precedence'))
+        self.assertIn(('shadows', digest('src/AGENTS.md'), digest('src/TEAM.md')), self.links(receipt))
+        self.assertFalse(any(n.applicability == 'declared_applicable' for n in receipt.nodes))
+        self.profile['project_trust'] = 'declared_untrusted'
+        self.assertEqual(self.state(self.read(), 'src/AGENTS.md'), ('out_of_scope', 'explicitly_untrusted'))
+
+    def test_codex_home_still_falls_through_an_empty_override(self):
+        self.home('AGENTS.override.md', ' '); self.home('AGENTS.md', 'SYNTHETIC_GLOBAL')
+        self.write('AGENTS.override.md', ' '); self.write('AGENTS.md', 'SYNTHETIC_PROJECT')
+        receipt = self.read(codex_home='home'); nodes = self.nodes(receipt)
+        self.assertEqual((nodes[digest(['codex_home', 'AGENTS.override.md'])].reason,
+                          nodes[digest(['codex_home', 'AGENTS.md'])].applicability), ('empty', 'declared_applicable'))
+        self.assertEqual(self.state(receipt, 'AGENTS.md'), ('shadowed', 'directory_precedence'))
 
     def test_same_filename_in_unrelated_scope_is_present_but_not_applicable(self):
         self.write('other/AGENTS.md', 'SYNTHETIC_OTHER_SCOPE')

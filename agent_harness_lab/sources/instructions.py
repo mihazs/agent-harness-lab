@@ -198,16 +198,21 @@ def capture(profile, folder, checkout, selected=(), *, git_harness_sha256=None, 
             value, raw = node(path, 'unknown', 'missing')
             applicability, reason = 'unknown', 'missing'
             if raw is not None:
-                text = raw.decode('utf-8')
-                if not text.strip(): reason = 'empty'
-                elif index in excluded:
+                empty = not raw.decode('utf-8').strip()
+                if index in excluded:
                     applicability, reason = excluded[index]
-                    # Outside a marker the checkout lacks, the scope's first file may still load: it uses budget.
-                    if applicability == 'unknown' and not counted: counted = True; total += len(raw)+(2 if total else 0)
+                    # Outside a marker the checkout lacks, the scope's selected (first existing) file may still load;
+                    # a non-empty selection uses budget, an empty one adds nothing.
+                    if applicability == 'unknown' and not counted:
+                        counted = True
+                        if not empty: total += len(raw)+(2 if total else 0)
                 elif untrusted: applicability, reason = 'out_of_scope', 'explicitly_untrusted'
                 elif active:
                     applicability, reason = 'shadowed', 'directory_precedence'
                     edges.append(InstructionEdge('shadows', active, value.path_sha256))
+                # openai/codex@d786ff91 codex-rs/core/src/agents_md.rs: the first existing regular-file candidate is
+                # selected by metadata alone; an empty one is dropped at load, so it shadows the rest and adds nothing.
+                elif empty: active, reason = value.path_sha256, 'selected_empty'
                 else:
                     active = value.path_sha256
                     # shortcut: uncertain native truncation blocks resolution; add a native receipt before modeling partial files.
