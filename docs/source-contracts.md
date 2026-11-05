@@ -1354,8 +1354,9 @@ the Claude settings file and the two Codex files are `hook` surfaces with
 `recommendation_only`. Only the `hooks` key is
 projected. All other settings keys, such as permissions, env and MCP servers,
 appear only as a count and a digest of their key names. JSON is decoded with
-`hardened.load_json`. A file over 1 MiB or with more than 512 handlers, a
-malformed file or invalid TOML is `parse_failed`, never truncated. Each handler
+`hardened.load_json`, and decoded TOML passes through the same depth bound. A
+file over 1 MiB or with more than 512 handlers, a malformed file, invalid TOML
+or a file nested past the depth bound is `parse_failed`, never truncated. Each handler
 adds 15 facts to the harness inventory, so the inventory-wide 50000-fact bound
 also limits the handlers summed across files. Many small plugin `hooks/hooks.json`
 files that exceed it make the whole inventory `blocked` with `fact_bound_exceeded`.
@@ -1771,6 +1772,92 @@ rejects their absolute paths. A bound overflow returns `blocked` with no
 declarations or checkouts, and the document is marked
 `publication_allowed: false` and `loading_evidence: false`. The selected
 checkout is never edited, executed or imported.
+
+### Presence-only runtime configuration inventory
+
+`agent_harness_lab.sources.config_inventory.capture(checkout, profile,
+declared_roots=...)` records which runtime configuration exists and its
+structure, never its values. It takes the same profile as the harness surface
+inventory. It opens only fixed paths, by name beneath an opened directory with
+`O_NOFOLLOW`, and shares that inventory's byte, entry, depth and row bounds.
+For Claude Code the paths are `.mcp.json`, `.claude/settings.json`,
+`.claude/settings.local.json` and every `.claude/output-styles/` from
+`task_cwd` up to the checkout root. For Codex the path is `.codex/config.toml`.
+Roots outside the checkout are read only when the caller declares them by
+role. `home` reads `.claude.json`, and only the key names under `mcpServers`.
+`claude_home` reads `settings.json` and `output-styles/`. `codex_home` reads
+`config.toml`. Any other role label is rejected. Because only those fixed
+names are opened, a role root may be an ancestor of the checkout, such as
+`$HOME`. A root at or inside the checkout, or one whose fixed path contains
+the checkout, is rejected. When a parent component of a fixed path, or
+`output-styles` itself, is a link or not a directory, the path gets a
+`refused` row, so configuration that could not be captured is never reported
+as absent.
+
+The projection is an allowlist. A row field is a fixed vocabulary label, a
+boolean, a count or a SHA-256 digest, and construction rejects every other
+string. Commands, arguments, URLs, env and header values, bearer variables,
+OAuth secrets and instruction text are never recorded. Server ids, env and
+header key names and style names are digested. A synthetic test fills every
+such field with canary secrets and scans the whole JSON output for them.
+
+- MCP rows record the server digest, transport, the `has_` field names that
+  are present and a count of unknown fields. Claude rows record
+  `project_approval_prompt` for `.mcp.json` servers and the documented scope
+  precedence: local 1, project 2, user 3. Codex rows record `enabled`,
+  `default_tools_approval_mode` and the number of per-tool approval overrides.
+  Codex precedence is not recorded.
+- Output style rows record the name digest, `has_description`,
+  `keep-coding-instructions`, `force-for-plugin` and the directory distance
+  from `task_cwd`. Among project directories the closest same-named style wins,
+  and the others are `shadowed`. Shadowing of user-layer styles is
+  unverified, so those rows carry `shadowed: null`. Loading from subdirectories
+  of `output-styles/` is also unverified, so those rows carry
+  `subdirectory: true`. The `outputStyle` selection in settings is recorded as
+  the same name digest.
+- The Codex keys `instructions`, `developer_instructions`,
+  `model_instructions_file`, `personality` and `compact_prompt` become
+  `instructions` rows that hold a value digest.
+- Settings rows record key presence for an allowlist that includes
+  `permissions`, `env`, `model` and `statusLine`, a count of other keys, the
+  `.mcp.json` approval lists as server digests, and Codex `features.memories`
+  as `declared_on`, `declared_off` or `default_off`.
+
+Memory locations are `private_excluded`. These are `.claude/agent-memory`,
+`.claude/agent-memory-local`, a declared `claude_home/agent-memory`, a declared
+`claude_project_state/memory` and a declared `codex_home/memories`.
+`.claude/settings.local.json` holds personal settings and is `private_excluded`
+too, as in `surfaces.RULES` and the hook inventory. Existence comes from
+`lstat` on the parent descriptor, and the location is never opened, listed or
+digested. An inode-level open audit enforces this even for declared roots.
+Every other row is `recommendation_only`, and `surfaces.RULES` gives the same
+writability to these paths. In `surfaces.classify`, the `memories/` and
+`projects/<id>/memory/` layouts are `private_excluded` beneath every
+caller-declared root, whatever its label, so `--external-root codex=~/.codex`
+keeps them unread as `codex_home` does. Checkout folders with those names keep
+their own verdicts. Every capture shares the harness inventory's
+50000-fact bound, and each digest in a list fact counts toward it, so an
+oversized approval list or key table is `blocked` with `fact_bound_exceeded`,
+never truncated. A row's trust is `declared_trusted` only for
+checkout rows under a `declared_trusted` project. An undeclared or
+`declared_untrusted` project layer, and every declared root, stays `unknown`,
+because Codex loads project config only for trusted projects.
+`observed_loading` and `effective` are always `unknown`.
+
+`server_sha256` and `telemetry_server_sha256('mcp__<server>__<tool>')` share
+one digest function, so telemetry tool names can be compared with inventory
+servers. Plugin and ambiguous names give `null`, and no match means `unknown`,
+not absence. AHL's own derivation snapshot, `derivations/<id>/settings.json`,
+classifies as `private_excluded` by its path. Content never hides a file at a
+runtime settings path: a `settings.json` there is inventoried whatever keys it
+holds. In the surface walk, `.mcp.json` and output styles are `config` nodes
+whose parser reports path-free row counts. The settings files and
+`.codex/config.toml` stay `hook` nodes with a `config` facet, and the hook
+parser owns them there. Undecodable files become a `parse_failed` presence row.
+JSON and TOML share one nesting bound of 64, so a deeply nested
+`.codex/config.toml` is also `parse_failed`, never a crash. A CLI, the surface
+walk's pruning of memory directories under declared roots, and profile-scoped
+Codex keys remain open in #281.
 
 ## ai-memory OKF project exports
 

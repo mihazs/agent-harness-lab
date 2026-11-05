@@ -32,8 +32,9 @@ class SurfaceClass:
 
 class _Context:
     """Caller facts a row may need; a callable is evaluated only by the row that asks for it."""
-    def __init__(self, root_skills, external_root=False):
-        self._root_skills, self.external_root = root_skills, bool(external_root)
+    def __init__(self, root_skills, external_root=False, declared_root=None):
+        self._root_skills, self.declared_root = root_skills, declared_root
+        self.external_root = bool(external_root) or declared_root is not None
 
     @property
     def root_skills(self):
@@ -64,6 +65,13 @@ def _bundle(root, *, needs_root_skills=False):
         return (len(parts) >= len(prefix) + 2 and parts[:len(prefix)] == prefix
                 and (not needs_root_skills or context.root_skills))
     return match
+
+
+def _declared_memory(parts, root):
+    """Memory store layouts of a runtime home beneath any declared root, whatever its free-form label; a
+    checkout path (root None) never matches them."""
+    return root is not None and (parts[0] == 'memories'
+                                 or len(parts) > 3 and parts[0] == 'projects' and parts[2] == 'memory')
 
 
 def _agent_file(layer, suffix):
@@ -154,6 +162,26 @@ RULES = (
     Rule('codex-agent-hooks', 'hook', 45, 'contract_required', lambda path, parts, context:
          _agent_file('.codex', '.toml')(path, parts, context) or _agent_file(None, '.toml')(path, parts, context),
          runtimes=frozenset({'codex'})),
+    # Runtime configuration is inventoried presence-only (sources/config_inventory.py); AHL only recommends changes.
+    Rule('claude-mcp-config', 'config', 40, 'recommendation_only', lambda path, parts, context: path == '.mcp.json',
+         runtimes=frozenset({'claude-code'})),
+    Rule('claude-settings', 'config', 40, 'recommendation_only',
+         lambda path, parts, context: path in ('.claude/settings.json', '.claude/settings.local.json'),
+         runtimes=frozenset({'claude-code'})),
+    Rule('claude-output-style', 'config', 40, 'recommendation_only',
+         lambda path, parts, context: path.endswith('.md') and '/.claude/output-styles/' in '/' + path,
+         runtimes=frozenset({'claude-code'})),
+    Rule('codex-config', 'config', 40, 'recommendation_only', lambda path, parts, context: path == '.codex/config.toml',
+         runtimes=frozenset({'codex'})),
+    # Memory stores are never read, adopted or recommended against: the project layout anywhere, and the
+    # memories/ and projects/<id>/memory/ layouts beneath any caller-declared root, never in the checkout.
+    Rule('runtime-memory', None, 0, 'private_excluded', lambda path, parts, context: (
+        '/.claude/agent-memory/' in '/' + path or '/.claude/agent-memory-local/' in '/' + path
+        or _declared_memory(parts, context.declared_root))),
+    # AHL's own derivation snapshot (evaluation/derivations.py), never runtime settings.
+    Rule('ahl-derivation-settings', None, 0, 'private_excluded', lambda path, parts, context: (
+        len(parts) >= 3 and parts[-3:-2] == ('derivations',) and parts[-1] == 'settings.json'
+        and re.fullmatch('[0-9a-f]{64}', parts[-2]) is not None)),
 )
 
 
@@ -162,17 +190,22 @@ def skill_prefixes():
     return tuple(row.root for row in RULES if row.kind == 'skill' and row.root and row.writability == 'adoptable')
 
 
-def classify(relative_path, runtime=None, mode=None, *, root_skills=False, external_root=False, origin='project'):
+def classify(relative_path, runtime=None, mode=None, *, root_skills=False, external_root=False, origin='project',
+             declared_root=None):
     """Classify a root-relative POSIX path; runtime None means either runtime, mode is optional st_mode bits.
 
-    external_root is True only for a path relative to a caller-declared root outside the checkout."""
+    external_root is True only for a path relative to a caller-declared root outside the checkout;
+    declared_root is that root's label and implies external_root; None means the checkout.
+    """
     if not isinstance(relative_path, str) or not relative_path: raise ValueError('invalid surface path')
     path = PurePosixPath(relative_path)
     if path.is_absolute() or '..' in path.parts: raise ValueError('unsafe surface path')
     if runtime is not None and runtime not in RUNTIMES: raise ValueError('unknown surface runtime')
     if mode is not None and (type(mode) is not int or mode < 0): raise ValueError('invalid surface mode')
     if origin not in ORIGINS: raise ValueError('unknown surface origin')
-    parts, context = path.parts, _Context(root_skills, external_root)
+    if declared_root is not None and (not isinstance(declared_root, str) or not declared_root):
+        raise ValueError('invalid declared surface root')
+    parts, context = path.parts, _Context(root_skills, external_root, declared_root)
     matched = [row for row in RULES if (runtime is None or runtime in row.runtimes)
                and row.match(relative_path, parts, context)]
     # Priority, then kind and name, so the answer never depends on where a row sits in the table.
@@ -298,5 +331,9 @@ CAPABILITIES = (
     _row('memory', 'codex', 'memories layout', _CODEX + 'memories', 'unverified'),
     _row('settings', 'claude-code', 'settings.json, settings.local.json and managed settings layers', _CLAUDE + 'settings'),
     _row('settings', 'claude-code', 'managed settings OS paths', _CLAUDE + 'settings', 'unverified'),
-    _row('settings', 'codex', 'config.toml layers, requirements.toml and project trust', _CODEX + 'config-reference'),
+    _row('settings', 'codex', 'config.toml layers, requirements.toml and project trust', _CODEX + 'config-reference'),    _row('mcp', 'claude-code', 'MCP scope precedence local, project, user; project servers need approval', _CLAUDE + 'mcp'),
+    _row('mcp', 'codex', 'mcp_servers enabled and default_tools_approval_mode keys', _CODEX + 'config-reference'),
+    _row('output_styles', 'claude-code', 'nested output-styles closest wins; keep-coding-instructions, force-for-plugin', _CLAUDE + 'output-styles'),
+    _row('output_styles', 'codex', 'instructions, developer_instructions, model_instructions_file, personality, compact_prompt', _CODEX + 'config-reference'),
+    _row('memory', 'codex', 'features.memories is off by default', _CODEX + 'config-reference'),
 )
