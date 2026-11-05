@@ -279,3 +279,29 @@ class ClaudeNativeTests(unittest.TestCase):
         self.assertEqual(sum(r['activity'] == 'response_stop' for r in rows), 2)
         self.assertNotIn('SYNTHETIC_SECRET', json.dumps(rows)); self.assertTrue(all(verified_outcome(r) is None for r in rows))
         self.assertEqual(summary['parent_session'], 'unknown')
+
+    def test_attachment_and_invocation_shapes_become_content_free_loading_patterns(self):
+        from agent_harness_lab.sources.schema import digest
+        memory = str(self.project/'pkg'/'CLAUDE.md')
+        self.rows = [self.row('attachment', 'm', None, attachment=dict(type='nested_memory', path=memory,
+                content=dict(path=memory, content='SYNTHETIC_SECRET'))),
+            self.row('attachment', 'h', 'm', attachment=dict(type='hook_additional_context', content=['SYNTHETIC_SECRET'])),
+            self.row('attachment', 'q', 'h', attachment=dict(type='queued_command', prompt='SYNTHETIC_SECRET')),
+            self.row('attachment', 'r', 'q', attachment=dict(type='nested_memory', path='relative/CLAUDE.md')),
+            self.row('attachment', 'c', 'r', attachment=dict(type='nested_memory', path=memory, content=dict(path='/other'))),
+            self.row('assistant', 'a', 'c', dict(role='assistant', content=[
+                dict(type='tool_use', id='x', name='Agent', input=dict(subagent_type='SYNTHETIC_SECRET')),
+                dict(type='tool_use', id='y', name='mcp__synthetic__SYNTHETIC_SECRET', input={}),
+                dict(type='tool_use', id='z', name='Task', input=dict(subagent_type=7))]))]
+        self.write(); rows, summary, _ = self.capture()
+        loading = [r for r in rows if r.get('loading_signal')]
+        self.assertEqual([r['loading_signal'] for r in loading], ['observed_attachment', 'observed_hook_output',
+            'declared_agent_invocation', 'declared_mcp_invocation'])
+        self.assertEqual(loading[0]['loading_path_sha256'], digest('pkg/CLAUDE.md'))
+        self.assertEqual(loading[0]['activity'], 'context'); self.assertEqual(loading[0]['loading_evidence'], 'observed_pattern')
+        self.assertEqual(loading[2]['agent_name_sha256'], digest('SYNTHETIC_SECRET'))
+        self.assertTrue(loading[3]['tool_name'].startswith('tool:'))
+        self.assertEqual(summary['unsupported_records'], 3)
+        self.assertEqual(sum(r.get('missing_reason') == 'unsupported_native_entry' for r in rows), 3)
+        self.assertTrue(all(verified_outcome(r) is None and r['outcome'] == 'unknown' for r in rows))
+        self.assertNotIn('SYNTHETIC_SECRET', json.dumps(rows)); self.assertNotIn(str(self.project), json.dumps(rows))
