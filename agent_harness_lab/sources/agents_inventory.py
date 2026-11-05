@@ -1,0 +1,287 @@
+"""Declared Claude Code and Codex custom agent definitions, read from harness inventory nodes; nothing is loaded.
+
+parse() is the PARSERS entry for kind 'agent': it reduces one definition file to flat facts. definitions() joins
+those facts across files into declared precedence labels, and embedded_hooks() lists every hook an agent file
+declares so it reaches hook classification. A definition is a declaration: available and loaded are always
+'unknown' and load timing is 'unverified'. Field sets cite the surfaces.CAPABILITIES pins: Claude
+code.claude.com/docs/en/sub-agents and Codex openai/codex@d786ff91 codex-rs/agent-roles and config_toml.rs.
+"""
+from dataclasses import dataclass
+from pathlib import PurePosixPath
+import re
+import tomllib
+from agent_harness_lab import surfaces
+from . import frontmatter
+from .schema import digest, label
+
+CLAUDE_FIELDS = frozenset((
+    'name', 'description', 'tools', 'disallowedTools', 'model', 'permissionMode', 'maxTurns', 'autoCompactWindow',
+    'skills', 'mcpServers', 'hooks', 'memory', 'background', 'omitClaudeMd', 'effort', 'isolation', 'color',
+    'initialPrompt', 'experimental'))
+PLUGIN_IGNORED = ('hooks', 'initialPrompt', 'mcpServers', 'permissionMode')
+# RawAgentRoleFileToml: name, description, nickname_candidates and a flattened ConfigToml, deny_unknown_fields.
+CODEX_FIELDS = frozenset(('name', 'description', 'nickname_candidates', *'''
+    model daybreak review_model model_provider model_context_window model_auto_compact_token_limit
+    model_auto_compact_token_limit_scope model_post_turn_compact_threshold_percent approval_policy approvals_reviewer
+    auto_review browser_use computer_use shell_environment_policy allow_login_shell sandbox_mode
+    allow_symlinked_codex_home sandbox_workspace_write default_permissions permissions notify instructions
+    developer_instructions include_permissions_instructions include_apps_instructions
+    include_collaboration_mode_instructions include_environment_context include_environment_context_time
+    model_instructions_file compact_prompt forced_chatgpt_workspace_id forced_login_method cli_auth_credentials_store
+    mcp_servers mcp_enterprise_managed_auth mcp_oauth_credentials_store mcp_oauth_callback_port mcp_oauth_callback_url
+    mcp_optional_startup_grace_ms model_providers project_doc_max_bytes project_doc_fallback_filenames
+    tool_output_token_limit background_terminal_max_timeout thread_unload_delay_secs js_repl_node_path
+    js_repl_node_module_dirs profile profiles history sqlite_home log_dir file_opener tui hide_agent_reasoning
+    show_raw_agent_reasoning model_reasoning_effort plan_mode_reasoning_effort model_reasoning_summary model_verbosity
+    model_catalog_json personality service_tier chatgpt_base_url apps_mcp_product_sku responses_api_metadata
+    orchestrator cloud openai_base_url audio experimental_realtime_ws_base_url experimental_realtime_webrtc_call_base_url
+    experimental_realtime_ws_model realtime experimental_realtime_ws_backend_prompt experimental_realtime_ws_startup_context
+    experimental_realtime_start_instructions experimental_thread_store_endpoint experimental_thread_store projects
+    web_search tools tool_suggest agents goals memories skills hooks plugins marketplaces features
+    suppress_unstable_features_warning ghost_snapshot project_root_markers check_for_update_on_startup disable_paste_burst
+    analytics feedback apps desktop otel windows notice experimental_compact_prompt_file
+    experimental_use_unified_exec_tool oss_provider'''.split()))
+NO_OVERRIDE = ('approval_policy', 'mcp_servers', 'model_provider', 'sandbox_mode')
+ROLES = {'claude_user': ('claude-code', 'user'), 'claude_plugin': ('claude-code', 'plugin'), 'codex_home': ('codex', 'user')}
+DISPOSITIONS = ('declared', 'skipped_silently', 'rejected_with_warning', 'unknown')
+PRECEDENCE = ('selected_by_declared_precedence', 'shadowed_by_declared_precedence', 'ambiguous_read_order',
+              'ambiguous_plugin_order', 'duplicate_in_layer_warned', 'outside_task_cwd_ancestry', 'trust_gated',
+              'not_a_definition', 'not_a_runtime_location', 'undeclared_root_role')
+_LAYERS = {'claude-code': '.claude', 'codex': '.codex'}
+_RANK = {'project': 0, 'user': 1, 'plugin': 2}
+
+
+def gates():
+    """Version-gated Claude agent fields, taken from the CAPABILITIES rows so the pin has one owner."""
+    rows = (row for row in surfaces.CAPABILITIES if row.surface == 'agents' and row.version_gate)
+    return {match.group(1): row.version_gate[2:] for row in rows
+            if (match := re.fullmatch(r'agent (\w+) field', row.item))}
+
+
+def _version(value): return tuple(int(part) for part in value.split('.'))
+
+
+def _labels(values):
+    """Label-safe names joined for a fact plus the count of every name, so no raw text reaches a node."""
+    values = sorted(str(value) for value in values)
+    safe = [value for value in values if re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}', value)]
+    return ','.join(safe), len(values)
+
+
+def _name(facts, name):
+    facts['name_sha256'] = digest(name)
+    if _labels([name]) == (name, 1): facts['name'] = name
+
+
+def _hooks(facts, value):
+    if value is None: return
+    keys = value.keys if isinstance(value, frontmatter.Mapping) else tuple(value) if isinstance(value, dict) else ()
+    facts['hooks_declared'], facts['hook_classification'] = True, surfaces.HOOK_FACET
+    facts['hook_events'], facts['hook_event_count'] = _labels(keys)
+
+
+def parse(path, raw, profile):
+    """PARSERS entry for kind 'agent': flat facts of one definition file, read as data and never loaded."""
+    facts = _claude(raw, profile['version']) if profile['runtime'] == 'claude-code' else _codex(raw)
+    return 'parsed', facts
+
+
+def _claude(raw, version):
+    facts = {'format': 'claude_markdown'}
+    try: fields = frontmatter.read(raw)
+    except frontmatter.FrontmatterError as error:
+        if error.reason in ('no_leading_fence', 'bad_yaml', 'unterminated'):
+            reason = 'no_leading_fence' if error.reason == 'no_leading_fence' else 'bad_yaml'
+            return dict(facts, disposition='skipped_silently', reason=reason)
+        return dict(facts, disposition='unknown', reason='frontmatter_' + error.reason)
+    name, description = fields.get('name'), fields.get('description')
+    reason = ('missing_name' if not isinstance(name, str) or not name.strip()
+              else 'invalid_name' if name.startswith('-') or ':' in name or len(name) > 256
+              else 'missing_description' if not isinstance(description, str) or not description.strip() else None)
+    facts.update(disposition='skipped_silently' if reason else 'declared', reason=reason)
+    if reason not in ('missing_name', 'invalid_name'): _name(facts, name)
+    unknown = set(fields) - CLAUDE_FIELDS
+    if unknown: facts['unknown_fields'], facts['unknown_field_count'] = _labels(unknown)
+    for field, gate in sorted(gates().items()):
+        if field in fields:
+            met = _version(version) >= _version(gate)
+            facts['version_gate.' + field] = f'>={gate} ' + ('satisfied' if met else 'not_satisfied')
+    plugin = [field for field in PLUGIN_IGNORED if field in fields]
+    if plugin: facts['plugin_ignored_fields'] = ','.join(plugin)
+    _hooks(facts, fields.get('hooks'))
+    return facts
+
+
+def _codex(raw):
+    facts = {'format': 'codex_toml'}
+    try: data = tomllib.loads(raw.decode('utf-8'))
+    except (UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return dict(facts, disposition='rejected_with_warning', reason='bad_toml')
+    unknown = set(data) - CODEX_FIELDS
+    name, description, instructions = (data.get(key) for key in ('name', 'description', 'developer_instructions'))
+    strings = all(value is None or isinstance(value, str) for value in (name, description, instructions))
+    # The pinned loader's order: deserialize, description, developer_instructions, then name.
+    reason = ('unknown_field_rejected' if unknown else 'invalid_field_type' if not strings
+              else 'blank_description' if description is not None and not description.strip()
+              else 'missing_developer_instructions' if instructions is None
+              else 'blank_developer_instructions' if not instructions.strip()
+              else 'missing_name' if name is None or not name.strip() else None)
+    # A missing description may still be filled from a same-name role in a lower layer, so it stays unknown.
+    disposition = ('rejected_with_warning' if reason else 'unknown' if description is None else 'declared')
+    facts.update(disposition=disposition, reason=reason or ('description_needs_lower_layer' if description is None else None))
+    if unknown: facts['unknown_fields'], facts['unknown_field_count'] = _labels(unknown)
+    if strings and name and name.strip(): _name(facts, name.strip())
+    override = [field for field in NO_OVERRIDE if field in data]
+    if override: facts['no_override_fields'] = ','.join(override)
+    _hooks(facts, data.get('hooks') if isinstance(data.get('hooks'), dict) else None)
+    return facts
+
+
+@dataclass(frozen=True)
+class AgentDefinition:
+    runtime: str
+    root: str
+    path: str
+    path_sha256: str
+    layer: str
+    layer_dir: str
+    name: str | None
+    name_sha256: str | None
+    disposition: str
+    reason: str | None
+    precedence: str
+    trust: str
+    warnings: tuple = ()
+    hook_events: tuple = ()
+    declared_state: str = 'declared'
+    available: str = 'unknown'
+    loaded: str = 'unknown'
+    load_timing: str = 'unverified'
+
+    def __post_init__(self):
+        if (self.runtime not in surfaces.RUNTIMES or self.path_sha256 != digest(self.path)
+                or self.disposition not in DISPOSITIONS or self.precedence not in PRECEDENCE
+                or self.trust not in ('unknown', 'declared_trusted', 'gated')
+                or (self.declared_state, self.available, self.loaded, self.load_timing)
+                != ('declared', 'unknown', 'unknown', 'unverified')
+                or any(type(row) is not tuple or len(row) != 2 for row in self.warnings)):
+            raise ValueError('invalid declared agent definition')
+        if not isinstance(self.layer_dir, str) or not self.layer_dir: raise ValueError('invalid agent layer directory')
+        for value in (self.root, self.layer, *self.hook_events, *(v for row in self.warnings for v in row)): label(value)
+
+
+@dataclass(frozen=True)
+class EmbeddedHook:
+    """A hook block inside an agent definition, listed for hook classification; it is never executed."""
+    runtime: str
+    root: str
+    path: str
+    event: str
+    status: str
+    owner: str = 'agent_definition'
+    classification: str = surfaces.HOOK_FACET
+    executed: bool = False
+
+    def __post_init__(self):
+        label(self.root); label(self.event)
+        if self.status not in ('declared', 'ignored_for_plugin_agents') or self.executed is not False:
+            raise ValueError('invalid embedded agent hook')
+
+
+def _layer(node, runtime, roles):
+    parts = PurePosixPath(node.path).parts
+    if node.root != 'checkout':
+        role = roles.get(node.root)
+        if role is None: return 'undeclared_root_role', node.root
+        return (ROLES[role][1] if parts[0] == 'agents' else 'not_a_runtime_location'), node.root
+    head = (_LAYERS[runtime], 'agents')
+    index = next((i for i in range(len(parts) - 2) if parts[i:i + 2] == head), None)
+    if index is None: return 'not_a_runtime_location', '.'
+    return 'project', str(PurePosixPath(*parts[:index])) if index else '.'
+
+
+def _warnings(runtime, layer, facts, trust):
+    rows = []
+    if runtime == 'claude-code' and facts.get('unknown_fields'):
+        rows += [(field, 'ignored_by_runtime') for field in facts['unknown_fields'].split(',')]
+    rows += [(key.partition('.')[2], 'version_gate_' + facts[key].split()[1]) for key in facts if key.startswith('version_gate.')]
+    if layer == 'plugin' and facts.get('plugin_ignored_fields'):
+        rows += [(field, 'ignored_for_plugin_agents') for field in facts['plugin_ignored_fields'].split(',')]
+    if facts.get('no_override_fields'):
+        rows += [(field, 'no_override_effect') for field in facts['no_override_fields'].split(',')]
+    if runtime == 'claude-code' and layer == 'project' and facts.get('hooks_declared') and trust != 'declared_trusted':
+        rows.append(('hooks', 'requires_folder_trust'))
+    return tuple(sorted(rows))
+
+
+def definitions(inventory, task_cwd, roles=None):
+    """Declared definitions with precedence labels; roles maps external root labels to a ROLES key."""
+    roles, runtime = dict(roles or {}), inventory.runtime
+    if any(name not in inventory.external_roots or role not in ROLES or ROLES[role][0] != runtime
+           for name, role in roles.items()):
+        raise ValueError('agent roots need a declared external root and a role of the inventory runtime')
+    if inventory.status != 'declared': return ()
+    rows = []
+    for node in (n for n in inventory.nodes if n.kind == 'agent' and n.parse_status == 'parsed'):
+        facts = dict(node.facts)
+        layer, layer_dir = _layer(node, runtime, roles)
+        disposition, reason, name = facts['disposition'], facts.get('reason'), facts.get('name')
+        name_sha256 = facts.get('name_sha256')
+        if layer == 'plugin' and reason in ('missing_name', 'bad_yaml'):  # documented: loads under its filename
+            stem = PurePosixPath(node.path).stem
+            disposition, name, name_sha256 = 'declared', stem if _labels([stem])[0] == stem else None, digest(stem)
+        elif layer == 'plugin' and reason == 'no_leading_fence': disposition = 'unknown'
+        trust = node.trust if layer == 'project' else 'unknown'
+        if runtime == 'codex' and trust == 'declared_untrusted': trust = 'gated'
+        if trust == 'declared_untrusted': trust = 'unknown'  # Claude folder trust is not modelled beyond hooks
+        hooks = tuple(e for e in facts.get('hook_events', '').split(',') if e)
+        if facts.get('hook_event_count', 0) > len(hooks): hooks += ('unlabelled_event',)
+        rows.append(dict(runtime=runtime, root=node.root, path=node.path, path_sha256=node.path_sha256, layer=layer,
+            layer_dir=layer_dir, name=name, name_sha256=name_sha256, disposition=disposition, reason=reason,
+            trust=trust, warnings=_warnings(runtime, layer, facts, node.trust), hook_events=hooks))
+    _precedence(rows, runtime, task_cwd)
+    return tuple(AgentDefinition(**row) for row in sorted(rows, key=lambda row: (row['root'], row['path'])))
+
+
+def _precedence(rows, runtime, task_cwd):
+    cwd = PurePosixPath(task_cwd).parts if task_cwd != '.' else ()
+    for row in rows:
+        layer_parts = PurePosixPath(row['layer_dir']).parts if row['layer_dir'] != '.' else ()
+        row['precedence'] = (row['layer'] if row['layer'] in ('not_a_runtime_location', 'undeclared_root_role')
+            else 'not_a_definition' if row['disposition'] != 'declared' or row['name_sha256'] is None
+            else 'outside_task_cwd_ancestry' if row['layer'] == 'project' and cwd[:len(layer_parts)] != layer_parts
+            else 'trust_gated' if row['trust'] == 'gated' else None)
+        row['key'] = (_RANK[row['layer']], -len(layer_parts)) if row['precedence'] is None else None
+    groups = {}
+    for row in rows:
+        if row['key'] is not None: groups.setdefault(row['name_sha256'], []).append(row)
+    for group in groups.values():
+        trees = {}
+        for row in sorted(group, key=lambda row: PurePosixPath(row['path']).parts):
+            trees.setdefault((row['root'], row['layer_dir']), []).append(row)
+        for tree in trees.values():
+            for row in tree[1:]:
+                if runtime == 'codex': row['precedence'], row['key'] = 'duplicate_in_layer_warned', None
+        live = [row for row in group if row['key'] is not None]
+        best = min(row['key'] for row in live)
+        winners = [row for row in live if row['key'] == best]
+        tied = 'ambiguous_plugin_order' if len({r['root'] for r in winners}) > 1 else 'ambiguous_read_order'
+        for row in live:
+            row['precedence'] = ('shadowed_by_declared_precedence' if row['key'] != best
+                                 else tied if len(winners) > 1 else 'selected_by_declared_precedence')
+    for row in rows: del row['key']
+
+
+def embedded_hooks(agents):
+    """Every hook event an agent file declares, labelled for hook classification and never run."""
+    return tuple(EmbeddedHook(row.runtime, row.root, row.path, event,
+                              'ignored_for_plugin_agents' if row.layer == 'plugin' else 'declared')
+                 for row in agents for event in row.hook_events)
+
+
+def capture(checkout, profile, *, external_roots=None, roles=None):
+    """Harness inventory of one checkout plus its declared agent definitions and embedded hooks."""
+    from .harness_inventory import capture as inventory_capture
+    inventory = inventory_capture(checkout, profile, external_roots=external_roots)
+    agents = definitions(inventory, profile['task_cwd'], roles)
+    return inventory, agents, embedded_hooks(agents)
