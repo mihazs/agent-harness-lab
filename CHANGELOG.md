@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.99.0
+
+### Minor Changes
+
+- ae4c73c: Add an offline `local_file/claude-mem-export/v1` source that reads one selected Claude-Mem JSON export (the `scripts/export-memories.ts` output) pinned to upstream release v15.9.0, commit `d0968e5d`. Other declared releases are refused, as is any version field in the export that disagrees with the declared one. The export carries no version of its own, so the release stays caller-declared and the profile is marked `compatibility: unverified`. Observations, generated summaries, user prompts, memory sessions and the query's search hits become separate hash-only `contextual_assertion` claims, namespaced by a declared instance label. A summary is a derived session synthesis, never an observation or an independent case. A search hit points at its target claim and is not evidence of use. No claim becomes a verified task outcome. Unknown fields, rows without an ID, missing or conflicting timestamps, duplicate IDs, total mismatches and unscoped exports are counted or warned, never dropped silently. Bodies, session IDs, projects and the query are fingerprinted only. `ahl sources preview` prints a `claude_mem_summary`, and profile `claude-mem-export-v1` is rejected by public export. The source never contacts the worker or MCP server, opens the SQLite database or touches the network. The test-result source's bounded JSON loader is now shared as `load_json`. Worker/MCP reads, a SQLite snapshot mode, `tool_uses` and cross-journal duplication checks remain open.
+
 ## 0.98.0
 
 ### Minor Changes
