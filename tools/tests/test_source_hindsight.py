@@ -228,6 +228,21 @@ class HindsightSourceTests(unittest.TestCase):
             with self.subTest(bound=bound):
                 with self.assertRaisesRegex(ValueError, 'source limits'): self.read(limits=bound)
 
+    def test_archive_wide_bounds_stop_decoding_before_the_last_file(self):
+        # Records are counted per decoded file: the first document already exceeds the bound, so no later file is decoded.
+        decoded, actual = [], hindsight.load_json
+        def load(raw, *args, **kwargs): decoded.append(raw); return actual(raw, *args, **kwargs)
+        with patch.object(hindsight, 'load_json', load), self.assertRaisesRegex(HostileReport, 'row bound'):
+            self.read(limits=dict(max_rows=2))
+        self.assertEqual(len(decoded), 2)
+        # Every file stays inside the per-file JSON caps, but together they exceed them; decoded trees are all held.
+        wide = {f'documents/{i:06d}.json': dict(id=f'doc-{i}', facts=[dict(metadata=[{}]*40, tags=[0]*60)]) for i in range(3)}
+        wide['manifest.json'] = dict(MANIFEST, document_count=3, observation_count=0, invalidated_memory_count=0)
+        self.assertEqual(len(self.read(wide).records), 7)
+        for bound in (dict(max_json_containers=100), dict(max_json_values=150)):
+            with self.subTest(bound=bound):
+                with self.assertRaisesRegex(HostileReport, 'container bound|value bound'): self.read(wide, limits=bound)
+
     def test_capture_changes_and_unsafe_archive_paths_are_refused(self):
         with patch.object(hindsight, 'regular_sha256', lambda path, limit: '0'*64):
             with self.assertRaisesRegex(ValueError, 'changed during capture'): self.read()

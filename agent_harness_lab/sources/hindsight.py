@@ -130,17 +130,27 @@ class HindsightArchive(LocalExport):
         label(selection['instance']); archive = relative(selection['archive'])
         bounds = limits(selection.get('limits'), LIMITS)
         def path(name): return contained(self.manifest.parent, archive+'/'+name)
+        # Decoded trees are all held until mapping, so the JSON container and value caps cover the whole archive and
+        # records are counted as each file is decoded, never only per file or after the last one.
+        left = dict(max_json_containers=bounds['max_json_containers'], max_json_values=bounds['max_json_values'])
+        def decode(raw, name):
+            spent = []
+            value = load_json(raw, dict(bounds, **left), name, spent=spent)
+            left['max_json_containers'] -= spent[0][0]; left['max_json_values'] -= spent[0][1]
+            return value
         first = read_regular(path('manifest.json'), bounds['max_file_bytes'])
-        manifest = load_json(first, bounds, 'Hindsight manifest')
+        manifest = decode(first, 'Hindsight manifest')
         names = entries(manifest, bounds)
         # The archive's own bank is checked before any document is read; there is no discovery of other banks.
         if manifest['source_bank_id'] != selection['bank_id']: raise PermissionError('Hindsight archive is for another bank')
-        decoded, total = [], [0]
+        decoded, total, records = [], [0], [1]
         def consume(position, raw, sha256):
             total[0] += len(raw)
             if total[0] > bounds['max_archive_bytes']: raise HostileReport('Hindsight archive byte bound exceeded')
             if position == 0 and raw != first: raise ValueError('Hindsight archive changed during capture')
-            decoded.append(manifest if position == 0 else load_json(raw, bounds, 'Hindsight archive'))
+            decoded.append(manifest if position == 0 else decode(raw, 'Hindsight archive'))
+            records[0] += admitted(names[position], decoded[-1])
+            if records[0] > bounds['max_rows']: raise HostileReport('Hindsight row bound exceeded')
         hashes = self.capture(source, descriptor, selection, [path(n) for n in names], bounds['max_file_bytes'], consume,
             'Hindsight archive changed during capture', read_regular, regular_sha256)
         del first
@@ -173,6 +183,15 @@ def entries(manifest, bounds):
             *(['observations.json'] if counts[1] else []), *(['data/invalidated_memory_units.json'] if counts[2] else [])]
 
 
+def admitted(name, value):
+    """Records one decoded file can admit: a document, its facts and their relations, or one per row of a row file."""
+    if name == 'manifest.json': return 0
+    if not name.startswith('documents/'): return len(value) if isinstance(value, list) else 0
+    facts = value.get('facts') if isinstance(value, dict) and isinstance(value.get('facts'), list) else []
+    return 1 + len(facts) + sum(len(f['causal_relations']) for f in facts
+                                if isinstance(f, dict) and isinstance(f.get('causal_relations'), list))
+
+
 def parse(parts, selection, version, bounds):
     """Map one decoded archive to claims plus a coverage summary; refuses shapes the pin does not describe."""
     manifest, instance, bank = parts['manifest.json'], selection['instance'], selection['bank_id']
@@ -181,11 +200,6 @@ def parse(parts, selection, version, bounds):
     if not all(isinstance(d, dict) for d in documents) or not isinstance(observations, list) or not isinstance(invalidated, list):
         raise ValueError('Hindsight archive documents must be objects and row files lists')
     facts_of = [d.get('facts') if isinstance(d.get('facts'), list) else [] for d in documents]
-    relations = sum(len(f['causal_relations']) for fs in facts_of for f in fs
-                    if isinstance(f, dict) and isinstance(f.get('causal_relations'), list))
-    # The bound counts records: one per document, fact, relation, observation and invalidated row, plus the archive.
-    if 1 + len(documents) + sum(map(len, facts_of)) + relations + len(observations) + len(invalidated) > bounds['max_rows']:
-        raise HostileReport('Hindsight row bound exceeded')
     warnings, rejected, unknown, times = set(), Counter(), Counter(), Counter()
     if set(manifest) - set(MANIFEST): warnings.add('unknown_manifest_fields')
     warnings.update(flag for key, flag in UNREAD.items() if manifest.get(key))

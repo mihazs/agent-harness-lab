@@ -2519,16 +2519,20 @@ Capture stays `partial`. The profile `hindsight-bank-archive-v1` is rejected by
 Decoding reuses the hardened `load_json` from `sources/hardened.py`, one file at a
 time. Malformed JSON, duplicate keys, a non-object document or row, or a
 non-list row file rejects the whole capture and leaves the previous checkpoint
-unchanged.
+unchanged. Every decoded file is held until mapping, so the JSON container and
+value caps are one budget for the whole archive, and records are counted as each
+file is decoded: a capture stops at the file that crosses a bound, before any
+later file is decoded.
 
 | Limit | Ceiling |
 | --- | --- |
 | `max_file_bytes` | 16 MiB |
 | `max_archive_bytes` (all files) | 32 MiB |
 | `max_documents` | 10,000 |
-| `max_rows` (records admitted, counted before mapping) | 100,000 |
+| `max_rows` (records admitted, counted per decoded file) | 100,000 |
 | `max_fields` (per row) | 64 |
-| `max_json_depth`, `max_json_containers`, `max_json_values` (per file) | 16, 1,000,000, 4,000,000 |
+| `max_json_depth` (per file) | 16 |
+| `max_json_containers`, `max_json_values` (all files) | 1,000,000, 4,000,000 |
 
 `limits` may only lower these ceilings. `task test:sources:hindsight` runs the
 synthetic controls. Still open in #51: reading the ZIP archive directly, an
