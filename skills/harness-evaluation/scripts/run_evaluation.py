@@ -13,6 +13,8 @@ import sys
 import time
 import tomllib
 
+DIGEST_CHUNK_BYTES = 1024 * 1024
+
 
 def application_modules():
     checkout = Path(__file__).resolve().parents[3]
@@ -24,12 +26,35 @@ def digest(root):
     if not root.is_dir() or root.is_symlink():
         raise ValueError(f'evaluation input must be an existing directory: {root}')
     h = hashlib.sha256()
+    buffer = bytearray(DIGEST_CHUNK_BYTES)
+    view = memoryview(buffer)
     for p in sorted(root.rglob('*')):
         if p.is_symlink():
             raise ValueError(f'symlinks are not allowed in evaluation inputs: {p}')
         if p.is_file():
-            h.update(str(p.relative_to(root)).encode() + b'\0' + p.read_bytes())
+            # Same bytes in the same order as hashing path, NUL and whole contents, one reused chunk at a time.
+            h.update(str(p.relative_to(root)).encode() + b'\0')
+            with p.open('rb') as handle:
+                while size := handle.readinto(buffer):
+                    h.update(view[:size])
     return h.hexdigest()
+
+
+def write_results(path, results):
+    """Write json.dumps(results, indent=2) + newline bytes without building the document string.
+
+    A temporary sibling replaces the file only after a complete write, so a serialization error
+    leaves the previous results.json intact as it did when the string was built first.
+    """
+    temporary = path.with_name(path.name + '.tmp')
+    try:
+        with open(temporary, 'w') as handle:
+            json.dump(results, handle, indent=2)
+            handle.write('\n')
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def managed_environment(parent_id):
@@ -103,23 +128,45 @@ def jsonl_lines(text):
 def trace_result(run, agent="codex"):
     if run['timeout'] or run['exit_code'] != 0:
         return 'execution_error', None
+    # One pass that keeps only the flags, counts and usage the classification needs. Every line is
+    # still parsed before classifying, so parse errors and non-object records win exactly as before.
+    non_object = error_event = False
+    results = turns = 0
+    first_result_ok = False
+    usage = None
     try:
-        events = [json.loads(line) for line in jsonl_lines(run['stdout']) if line.strip()]
-        if any(not isinstance(e, dict) for e in events):
-            return 'invalid_trace', None
-        if agent == 'claude':
-            completed = [e for e in events if e.get('type') == 'result']
-            if (len(completed) != 1 or completed[0].get('subtype') != 'success'
-                    or completed[0].get('is_error') is not False
-                    or any(e.get('type') == 'error' for e in events)):
-                return 'incomplete', None
-            return 'completed', completed[0].get('usage')
-        completed = [e for e in events if e.get('type') == 'turn.completed']
-        if not completed or any(e.get('type') in ('turn.failed', 'error') for e in events):
-            return 'incomplete', None
-        return 'completed', completed[-1].get('usage')
+        for line in jsonl_lines(run['stdout']):
+            if not line.strip():
+                continue
+            event = json.loads(line)
+            if not isinstance(event, dict):
+                non_object = True
+                continue
+            kind = event.get('type')
+            if agent == 'claude':
+                if kind == 'result':
+                    results += 1
+                    if results == 1:
+                        first_result_ok = event.get('subtype') == 'success' and event.get('is_error') is False
+                        usage = event.get('usage')
+                elif kind == 'error':
+                    error_event = True
+            elif kind == 'turn.completed':
+                turns += 1
+                usage = event.get('usage')
+            elif kind in ('turn.failed', 'error'):
+                error_event = True
     except json.JSONDecodeError:
         return 'invalid_trace', None
+    if non_object:
+        return 'invalid_trace', None
+    if agent == 'claude':
+        if results != 1 or not first_result_ok or error_event:
+            return 'incomplete', None
+        return 'completed', usage
+    if not turns or error_event:
+        return 'incomplete', None
+    return 'completed', usage
 
 
 def agent_command(agent, binary, plugin=None, skills=()):
@@ -479,7 +526,7 @@ def _evaluate(args):
         results['isolation'] = dict(status='not_executed', full_certification=False)
         results.update(status='budget_exhausted' if blocked == 'preflight_budget_exhausted' else 'blocked',
                        reason=blocked, automatic_promotion=False, elapsed_seconds=time.monotonic()-started)
-        (output/'results.json').write_text(json.dumps(results, indent=2)+'\n')
+        write_results(output / 'results.json', results)
         return 1 if results['status'] == 'budget_exhausted' else 3
     if offline:
         results['runtime'] = dict(agent='offline', model_inference=False, effective_settings_verified=False,
@@ -490,7 +537,7 @@ def _evaluate(args):
         results['automatic_promotion'] = False
         if capability['status'] != 'available':
             results.update(status='blocked', reason='offline_sandbox_unavailable', elapsed_seconds=time.monotonic()-started)
-            (output/'results.json').write_text(json.dumps(results, indent=2)+'\n')
+            write_results(output / 'results.json', results)
             return 3
     if plan is not None and plan.sequential is not None:
         from agent_harness_lab.evaluation.sequential_state import Controller
@@ -523,7 +570,7 @@ def _evaluate(args):
         if not ready:
             results['sequential_analysis']=sequential_controller.finish([])
             results['inputs_unchanged']=inputs_unchanged()
-            (output/'results.json').write_text(json.dumps(results,indent=2)+'\n')
+            write_results(output / 'results.json', results)
             return 3 if results['sequential_analysis']['status']=='inconclusive' else 1
 
     client = None
@@ -663,7 +710,7 @@ def _evaluate(args):
                 record.update(status='execution_error', error=str(exc))
                 if source_capture is not None: source_capture.cancel()
                 results['trials'].append(record)
-                (output/'results.json').write_text(json.dumps(results, indent=2)+'\n')
+                write_results(output / 'results.json', results)
                 continue
             run['timeout'] = run['status'] == 'timeout'
         else:
@@ -716,7 +763,7 @@ def _evaluate(args):
             record['source_capture'] = source_sink.finish(source_capture,source_inputs_unchanged)
         if comparison is not None:comparison.after(record)
         results['trials'].append(record)
-        (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
+        write_results(output / 'results.json', results)
     results['elapsed_seconds'] = time.monotonic() - started
     if client is not None: results['runtime']['inference'] = client.report()
     results['inputs_unchanged'] = inputs_unchanged()
@@ -744,7 +791,7 @@ def _evaluate(args):
         results['isolation_qualification']=backend.permission_qualification()
         if sequential_controller is not None and results['isolation_qualification']['qualification']!='qualified' and results['sequential_analysis']['status']!='rejected':
             results['sequential_analysis'].update(status='blocked',reason='isolation_qualification_unverified')
-    (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
+    write_results(output / 'results.json', results)
     if sequential_controller is not None:
         status=results['sequential_analysis']['status']
         return {'supported':0,'rejected':0,'inconclusive':3,'blocked':3}.get(status,1)
