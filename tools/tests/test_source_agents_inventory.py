@@ -10,7 +10,10 @@ from agent_harness_lab import surfaces
 from agent_harness_lab.harness_change_plan import _operation
 from agent_harness_lab.sources import agents_inventory as agents
 from agent_harness_lab.sources import frontmatter
-from tools.tests import harness_surface_fixture as fixture
+if __package__:
+    from . import harness_surface_fixture as fixture
+else:
+    import harness_surface_fixture as fixture
 
 SECRET = fixture.SECRET
 CLAUDE = dict(schema_version=1, runtime='claude-code', version='2.1.317', task_cwd='src/task')
