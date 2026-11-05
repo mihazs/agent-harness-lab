@@ -2333,10 +2333,10 @@ row becomes one `mem0_history_event` claim (`native_field`) with its `event`,
 | `expiration_date` before the date of `exported_at` | `expired` | false |
 | Expiry present but unparseable, or no valid `exported_at` | `expiry_unverified` | false |
 | Listed memory whose history ends in `DELETE` | `deleted` | false |
-| Last event of an asserted memory | `current` | true |
+| Last `ADD` or `UPDATE` of an asserted memory whose `new_memory` matches the listed text and that is not flagged `is_deleted` | `current` | true |
 | Event followed by a later event | `superseded` | false |
 | `DELETE` event | `tombstone`; record `state: tombstone` | false |
-| Last event of an expired, deleted or unlisted memory | `historical` | false |
+| Any other last event: of an expired, deleted or unlisted memory, disagreeing with the listing, unrecognized or flagged `is_deleted` | `historical` | false |
 
 Superseded, expired and deleted claims stay in evidence and are excluded only
 from `currently_asserted`. An edit is a further version of one memory, never a
@@ -2369,7 +2369,7 @@ memories by status, `currently_asserted`, history events by type, tombstones,
 | First event not `ADD`; `old_memory` not the previous `new_memory`; decreasing change times | `history_starts_without_add`, `history_chain_break`, `history_out_of_order` |
 | Last event disagrees with the listed memory, or is `DELETE` | `history_head_mismatch` |
 | Listed memory with no history | `memory_without_history` |
-| Missing or naive timestamps | `missing_timestamp`, `invalid_timestamp`, `export_time_unverified` |
+| Missing or naive memory `created_at`, history change time or `exported_at` | `missing_timestamp`, `invalid_timestamp`, `export_time_unverified` |
 
 `edits_not_independent`, `memories_are_contextual_claims` and
 `run_id_not_task_root` are always present. Capture stays `partial`. The summary

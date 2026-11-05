@@ -150,6 +150,31 @@ class Mem0SourceTests(unittest.TestCase):
         self.assertEqual((fact.status, fact.currently_asserted), ('deleted', False))
         self.assertIn('history_head_mismatch', self.connector.summary['warnings'])
 
+    def test_a_head_that_disagrees_with_the_listing_or_is_flagged_deleted_is_never_current(self):
+        for case, head in (('mismatched', event('h3', 'mem-tests', 'ADD', None, 'other invented body', None)),
+                           ('unrecognized', event('h3', 'mem-tests', 'purge', None, 'all tests pass in the invented repo',
+                                                  None, True)),
+                           ('flagged', event('h3', 'mem-tests', 'UPDATE', None, 'all tests pass in the invented repo',
+                                             None, True))):
+            with self.subTest(head=case):
+                value = copy.deepcopy(EXPORT)
+                value['history']['mem-tests'] = [head]
+                self.read(value)
+                last, fact = self.memory('mem-tests')
+                self.assertEqual((last.status, last.currently_asserted, last.tombstone), ('historical', False, False))
+                self.assertEqual((fact.status, fact.currently_asserted), ('asserted', True))
+                self.assertEqual(self.connector.summary['currently_asserted'], 2)
+
+    def test_history_rows_with_missing_or_naive_timestamps_are_warned(self):
+        for case, stamps, warning in (('missing', dict(created_at=None, updated_at=None), 'missing_timestamp'),
+                                      ('naive', dict(created_at='2031-04-05T06:07:08', updated_at=None), 'invalid_timestamp')):
+            with self.subTest(timestamp=case):
+                value = copy.deepcopy(EXPORT)
+                value['history']['mem-tests'][0].update(stamps)
+                self.read(value)
+                self.assertEqual(self.memory('mem-tests')[0].timestamp_status, case if case == 'missing' else 'invalid')
+                self.assertIn(warning, self.connector.summary['warnings'])
+
     def test_memories_never_become_outcomes_roots_or_independent_cases(self):
         self.read()
         for claim in self.connector.claims:
@@ -237,12 +262,13 @@ class Mem0SourceTests(unittest.TestCase):
         for text in (SECRET, 'user-aaa', 'run-aaa', 'mem-edited', 'invented', 'exports/mem0.json'):
             self.assertNotIn(text, raw)
         self.assertEqual(json.loads(self.invoke('import')[1])['skipped'], 8)
-        # An edited memory body is a new revision of the same native memory, plus the changed export record.
+        # An edited memory body is a new revision of the same native memory, plus the changed export record; the history
+        # head that no longer matches the listing is revised from current to historical.
         value = copy.deepcopy(EXPORT)
         value['memories']['results'][1]['memory'] = 'revised invented'
         (self.root/'exports/mem0.json').write_text(json.dumps(value))
         receipt = json.loads(self.invoke('import')[1])
-        self.assertEqual((receipt['imported'], receipt['skipped']), (2, 6))
+        self.assertEqual((receipt['imported'], receipt['skipped']), (3, 5))
 
 
 if __name__ == '__main__':

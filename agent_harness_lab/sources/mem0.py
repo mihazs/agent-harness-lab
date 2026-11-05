@@ -200,11 +200,14 @@ def parse(value, selection, bounds):
             if position and event.get('old_memory') != kept[position-1].get('new_memory'): warnings.add('history_chain_break')
             # Upstream orders by created_at, then updated_at; UPDATE and DELETE rows keep the memory's created_at.
             changed, stamp = instant(event.get('updated_at') or event.get('created_at'), None)
-            if stamp == 'native':
+            if stamp != 'native': warnings.add(stamp+'_timestamp')
+            else:
                 if previous is not None and datetime.fromisoformat(changed) < previous: warnings.add('history_out_of_order')
                 previous = datetime.fromisoformat(changed)
             final = position == len(kept)-1
-            current = kind != 'DELETE' and final and live(row)
+            # Only a live head that agrees with the listing is current; a disagreeing or deleted-flagged head is historical.
+            current = (kind in ('ADD', 'UPDATE') and final and live(row) and event.get('new_memory') == row['memory']
+                       and event.get('is_deleted') is not True)
             claims.append(Mem0Claim('history_event', scoped('history', event['id']), scoped('memory', identity),
                 DERIVATION['history_event'], 'tombstone' if kind == 'DELETE' else 'current' if current else
                 'historical' if final else 'superseded', 'unlisted_unverified' if unlisted else 'filter_matched', current,
