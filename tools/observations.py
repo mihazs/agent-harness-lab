@@ -28,7 +28,7 @@ class ObservationCache:
             self.cases[case] = dict(revision=None, keys=OrderedDict(), pending={})
         state = self.cases[case]
         self.cases.move_to_end(case)
-        while self.max_age is not None and self.entries and position - next(iter(self.entries.values()))['position'] > self.max_age:
+        while self.max_age is not None and self.entries and position - next(iter(self.entries.values()))[2] > self.max_age:
             self._evict('age_eviction')
         revision = event.get('state_revision')
         if revision is not None and revision != state['revision']:
@@ -71,14 +71,18 @@ class ObservationCache:
         key = (case, tool, inputs, revision)
         previous = self.entries.pop(key, None)
         state['keys'].pop(key, None)
-        ref = dict(case_id=case, event_id=event['event_id'])
-        finding = None
-        if previous and previous['result'] == result:
+        # Entries are (result, ref, position); ref stays the event id until emitted as evidence.
+        ref, finding = event['event_id'], None
+        if previous and previous[0] == result:
+            prior = previous[1]
+            if type(prior) is not dict:
+                prior = dict(case_id=case, event_id=prior)
+            ref = dict(case_id=case, event_id=ref)
             finding = dict(kind='duplicate_observation', status='observed_pattern',
-                evidence=[previous['ref'], ref],
+                evidence=[prior, ref],
                 matched_dimensions=list(dimensions),
                 explanation='Same observation at the same recorded state; necessity is unverified.')
-        self.entries[key] = dict(result=result, ref=ref, position=position)
+        self.entries[key] = (result, ref, position)
         state['keys'][key] = None
         while self.per_case is not None and len(state['keys']) > self.per_case:
             old, _ = state['keys'].popitem(last=False)
