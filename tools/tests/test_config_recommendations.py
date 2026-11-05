@@ -157,6 +157,28 @@ class ConfigRecommendationTests(unittest.TestCase):
                 self.assertEqual((shadowed['compatibility'], dict(shadowed['facts'])['winner_approval']),
                                  ('unverified', 'unknown'))
 
+    def test_readable_user_approval_survives_an_unread_project_settings_file(self):
+        # An unread layer can only add a rejection, so a user-approved server is approved or rejected, never prompted.
+        target = self.home / 'dotfiles-project-settings.json'; target.write_text(json.dumps(PROJECT_SETTINGS))
+        project = self.checkout / '.claude/settings.json'
+        for settings in ({'enabledMcpjsonServers': ['shared-tool', 'approved-tool']}, {'enableAllProjectMcpServers': True}):
+            (self.claude_home / 'settings.json').write_text(json.dumps(settings))
+            project.unlink(); project.symlink_to(target)
+            report = self.claude()
+            unapproved = {dict(row['facts'])['server_sha256'] for row in self.codes(report, 'mcp_project_server_unapproved')}
+            shadowed, = self.codes(report, 'mcp_server_shadowed')
+            with self.subTest(settings=settings):
+                self.assertNotIn(config.server_sha256('approved-tool'), unapproved)
+                self.assertNotIn(config.server_sha256('shared-tool'), unapproved)
+                # The winner stays unverified while the unread file could still reject it.
+                self.assertEqual((shadowed['compatibility'], dict(shadowed['facts'])['winner_approval']),
+                                 ('unverified', 'approved_unless_unread_rejects'))
+            if 'enabledMcpjsonServers' in settings:
+                facts = {dict(row['facts'])['server_sha256']: dict(row['facts'])
+                         for row in self.codes(report, 'mcp_project_server_unapproved')}
+                self.assertEqual({key: (value['approval'], value['user_settings_declared']) for key, value in facts.items()},
+                                 {config.server_sha256(name): ('unknown', True) for name in ('rejected-tool', 'project-only')})
+
     def test_project_settings_rejections_and_enable_all(self):
         project = self.checkout / '.claude/settings.json'
         project.write_text(json.dumps({'disabledMcpjsonServers': ['project-only']}))

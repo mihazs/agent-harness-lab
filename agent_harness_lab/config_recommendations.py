@@ -62,7 +62,8 @@ CODES = {
         'A memory location is present. It is private_excluded: never opened, listed or analyzed, and never a '
         'recommendation target.', writability='private_excluded'),
 }
-APPROVALS = ('not_required', 'approved', 'rejected', 'trust_dependent', 'none', 'unknown')
+APPROVALS = ('not_required', 'approved', 'approved_unless_unread_rejects', 'rejected', 'trust_dependent', 'none',
+             'unknown')
 VOCABULARY = frozenset((*config.LAYERS, *inventory.TRUST, *APPROVALS, 'present_excluded', 'refused_excluded',
                         'not_recorded'))
 # What the inventories cannot show; a recommendation never claims these were checked.
@@ -154,8 +155,9 @@ def _row(code, row, compatibility='verified', evidence=(), **facts):
 def _approvals(rows):
     """Approval label of a Claude .mcp.json server name from inventoried settings; a rejection always wins.
 
-    A refused (linked) or unparsable settings file carries no approval facts but may approve or reject the server,
-    so any name a readable layer does not reject is 'unknown' while one exists.
+    A refused (linked) or unparsable settings file carries no approval facts but may approve or reject the server.
+    While one exists, a name readable user settings approve is 'approved_unless_unread_rejects' (approved or
+    rejected, never prompted), and any other name a readable layer does not reject is 'unknown'.
     """
     readable = lambda row: row.declared_state == 'present' and dict(row.facts).get('parse_failed') is not True
     settings = [(row, dict(row.facts)) for row in rows if row.surface == 'settings' and readable(row)]
@@ -166,8 +168,12 @@ def _approvals(rows):
     user_all = any(facts.get('enable_all_project_mcp_servers') is True for row, facts in settings if row.layer == 'user')
     scoped = listed('enabled_mcpjson_server_sha256s', ('project', 'local'))
     scoped_all = any(facts.get('enable_all_project_mcp_servers') is True for row, facts in settings if row.layer != 'user')
-    return (lambda name: 'rejected' if name in rejected else 'unknown' if unread else 'approved' if name in user or user_all
-            else 'trust_dependent' if name in scoped or scoped_all else 'none'), any(row.layer == 'user' for row, _ in settings)
+    def approval(name):
+        if name in rejected: return 'rejected'
+        if name in user or user_all: return 'approved_unless_unread_rejects' if unread else 'approved'
+        if unread: return 'unknown'
+        return 'trust_dependent' if name in scoped or scoped_all else 'none'
+    return approval, any(row.layer == 'user' for row, _ in settings)
 
 
 def _mcp(rows, runtime):
@@ -188,7 +194,8 @@ def _mcp(rows, runtime):
     for name, declared in by_name.items():
         if len(declared) < 2: continue
         winner, best = min(declared, key=lambda pair: pair[1]['precedence'])
-        # A project winner loads only once approved; while it is rejected or unapproved the shadowing is unverified.
+        # A project winner loads only once approved; while it is rejected, unapproved or could still be rejected by an
+        # unread settings file, the shadowing is unverified.
         won = approval(name) if winner.layer == 'project' else 'not_required'
         for row, facts in declared:
             if facts['precedence'] > best['precedence']:  # a lower number is a higher-precedence scope
@@ -197,7 +204,8 @@ def _mcp(rows, runtime):
                            winner_path_sha256=winner.path_sha256, winner_approval=won)
     for row, facts in servers:
         name = facts['server_sha256']
-        if row.layer != 'project' or approval(name) in ('rejected', 'approved'): continue
+        # A readable user approval is decisive here: an unread layer can only add a rejection, never a prompt.
+        if row.layer != 'project' or approval(name) in ('rejected', 'approved', 'approved_unless_unread_rejects'): continue
         yield _row('mcp_project_server_unapproved', row, 'unverified' if approval(name) == 'unknown' else 'verified',
                    server_sha256=name, approval=approval(name),
                    user_settings_declared=user_declared, interactive_choice='unknown')
