@@ -32,9 +32,9 @@ class MemoryProvenanceTests(unittest.TestCase):
         self.root = Path(self.temp.name); self.bundle = self.root/'bundle'; self.bundle.mkdir()
         (self.bundle/'index.md').write_text('---\nokf_version: "0.2"\n---\n# Bundle index\n')
         (self.bundle/'_meta.md').write_text('---\ntype: Scope Manifest\nproject: synthetic-project\n---\n')
-        self.write('sessions/s-one.md', page('Session Summary', session_id='s-one'))
-        self.write('sessions/s-two.md', page('Session Summary', session_id='s-two'))
-        self.write('decisions/retry.md', page('Decision'))
+        self.write('sessions/s-one.md', page('Session Summary', session_id='s-one', project='synthetic-project'))
+        self.write('sessions/s-two.md', page('Session Summary', session_id='s-two', project='synthetic-project'))
+        self.write('decisions/retry.md', page('Decision', project='synthetic-project'))
         self.source = SourceSpec('local_file', 'ai-memory-okf', '0.2', digest(str(self.root.resolve())),
             digest('synthetic-project'), digest('synthetic-workspace'), identity_provenance='source_declared_id', enabled=True)
         self.manifest = self.root/'source.json'
@@ -49,6 +49,20 @@ class MemoryProvenanceTests(unittest.TestCase):
                       created_at='2026-01-02T03:04:05Z', summary=SECRET+' summary', next_steps=[SECRET+' step'])
         values.update(fields)
         self.write(path, page('Handoff', **{k: v for k, v in values.items() if v is not None}))
+
+    def test_target_scope_must_match_and_workstream_from_session_is_reported(self):
+        self.write('sessions/s-ws.md', page('Session Summary', session_id='s-ws', project='synthetic-project', workspace='other-workspace'))
+        self.write('sessions/s-none.md', page('Session Summary', session_id='s-none'))
+        self.handoff(from_session='s-one', linked_sessions=['s-ws', 's-none', 's-two'])
+        self.write('workstreams/w-one.md', page('Workstream', workstream_id='w-one', project='synthetic-project',
+                                                 created_at='2026-01-02T03:04:05Z', from_session='s-one'))
+        report = self.bind()
+        reasons = sorted((l['relation'], l['status'], l['reason']) for r in report['records'] for l in r['links'])
+        self.assertIn(('memory_links_session', 'unlinked', 'target_cross_scope'), reasons)
+        self.assertIn(('memory_links_session', 'unlinked', 'target_scope_undeclared'), reasons)
+        self.assertIn(('handoff_from_session', 'unlinked', 'field_not_applicable_to_kind'), reasons)
+        candidates = {l['target'] for r in report['records'] for l in r['links'] if l['status'] == 'candidate'}
+        self.assertEqual(report['counts']['distinct_targets'], len(candidates))
 
     def bind(self, imported=True):
         if imported:
@@ -93,7 +107,7 @@ class MemoryProvenanceTests(unittest.TestCase):
         self.assertEqual(resolve([facet], '2026-02-01T00:00:00+00:00')['records'][0]['status'], 'unknown')
 
     def test_missing_ambiguous_and_inexact_links_stay_unlinked(self):
-        self.write('sessions/s-copy.md', page('Session Summary', session_id='s-two'))
+        self.write('sessions/s-copy.md', page('Session Summary', session_id='s-two', project='synthetic-project'))
         self.write('sessions/foreign.md', page('Session Summary', session_id='s-foreign', project='other-project'))
         self.handoff(from_session='s-absent', linked_sessions=['s-two', 'ai-memory://session/s-one', 's-foreign', 'S-ONE'],
                      linked_pages=['./decisions/retry.md', 'decisions/Retry.md', 'handoffs/h-one.md'])
@@ -102,7 +116,7 @@ class MemoryProvenanceTests(unittest.TestCase):
         self.assertEqual(row['status'], 'unlinked')
         self.assertEqual(links, [('handoff_from_session', 'unlinked', 'target_missing'),
             ('memory_links_session', 'unlinked', 'target_ambiguous'), ('memory_links_session', 'unlinked', 'target_missing'),
-            ('memory_links_session', 'unlinked', 'cross_scope'), ('memory_links_session', 'unlinked', 'target_missing'),
+            ('memory_links_session', 'unlinked', 'target_cross_scope'), ('memory_links_session', 'unlinked', 'target_missing'),
             ('memory_links_page', 'unlinked', 'target_missing'), ('memory_links_page', 'unlinked', 'target_missing'),
             ('memory_links_page', 'unlinked', 'self_reference')])
         receipts = [JoinReceipt.parse(r) for r in report['receipts']]
@@ -138,7 +152,7 @@ class MemoryProvenanceTests(unittest.TestCase):
         report = self.bind(imported=False)
         self.assertEqual((report['status'], report['reason'], report['receipts']), ('unknown', 'journal_unavailable', []))
         self.bind()
-        self.write('sessions/s-one.md', page('Session Summary', session_id='s-one', title='edited'))
+        self.write('sessions/s-one.md', page('Session Summary', session_id='s-one', title='edited', project='synthetic-project'))
         store = SourceStore(self.cache, project_sha256=self.source.project_sha256, scope_sha256=self.source.scope_sha256)
         report = bind_provenance(OKFExport(self.manifest), self.source, store)
         self.assertEqual((report['status'], report['reason'], report['records']), ('unknown', 'bundle_not_latest_checkpoint', []))
@@ -162,7 +176,8 @@ class MemoryProvenanceTests(unittest.TestCase):
             created_at='2026-01-01T00:00:00+00:00', from_session='s-two', linked_sessions=['s-one'], linked_pages=['decisions/retry.md']))
         report = self.bind()
         row, links = self.links(report, 'workstream')
-        self.assertEqual(sorted(links), [('memory_links_page', 'candidate', 'exact_declared_identifier'),
+        self.assertEqual(sorted(links), [('handoff_from_session', 'unlinked', 'field_not_applicable_to_kind'),
+            ('memory_links_page', 'candidate', 'exact_declared_identifier'),
             ('memory_links_session', 'candidate', 'exact_declared_identifier')])
         self.assertEqual(report['counts']['candidate_links'], 4)
         self.assertEqual(report['counts']['distinct_targets'], 2)

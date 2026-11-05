@@ -69,7 +69,7 @@ def _report(source, status, reason, journal, bundle, rows=(), graph=None, facets
             statuses={k: n for k, n in sorted(Counter(r['status'] for r in rows).items())},
             candidate_links=sum(l['status'] == 'candidate' for l in links),
             unlinked_links=sum(l['status'] == 'unlinked' for l in links),
-            distinct_targets=len({l['target'] for l in links if l['target'] is not None})),
+            distinct_targets=len({l['target'] for l in links if l['status'] == 'candidate' and l['target'] is not None})),
         shape='caller_declared_okf_concept', upstream_format_documented=False, workspace_scope='caller_attested',
         delivery_observed=False, injection_observed=False, native_session_correlation='not_attempted',
         lifecycle_interpreted=False, independent_roots=None, task_outcomes_verified=False,
@@ -122,7 +122,6 @@ def bind_provenance(connector, source, store):
         facets.append(TemporalFacet(left, recorded_at=created))
         scope = _scope(page.metadata, source); row['scope'] = scope or 'declared_match'
         for name, relation, target_kind in LINKS:
-            if name == 'from_session' and kind != 'handoff': continue
             namespace = 'ai-memory.'+kind
             def unlinked(reason, target=None):
                 # One unresolved receipt per record and relation; the rows keep each target's reason.
@@ -130,6 +129,9 @@ def bind_provenance(connector, source, store):
                     reason='missing_identity', effective_from=created)
                 joins[receipt.sha256] = receipt
                 row['links'].append(dict(relation=relation, target=target, status='unlinked', reason=reason, receipt_sha256=receipt.sha256))
+            if name == 'from_session' and kind != 'handoff':
+                if page.metadata.get(name) is not None: unlinked('field_not_applicable_to_kind')
+                continue
             targets = _targets(page.metadata, name, target_kind)
             if targets is None: unlinked('link_field_invalid'); continue
             if name == 'from_session' and not targets: unlinked('from_session_missing'); continue
@@ -140,10 +142,10 @@ def bind_provenance(connector, source, store):
                 if not found: unlinked('target_missing', target); continue
                 if len(found) > 1: unlinked('target_ambiguous', target); continue
                 other = found[0]; right = refs[other.path]
-                project = other.metadata.get('project')
                 if other.path == page.path: unlinked('self_reference', target); continue
-                if project is not None and (not _identifier(project) or digest(project) != source.project_sha256):
-                    unlinked('cross_scope', target); continue
+                # The target must declare the same project and workspace scope as the record itself.
+                target_scope = _scope(other.metadata, source)
+                if target_scope is not None: unlinked('target_'+target_scope, target); continue
                 if (right.native_id_sha256, right.revision_sha256) not in present: unlinked('target_not_imported', target); continue
                 nodes[right.key] = right
                 receipt = JoinReceipt(left, right, relation, namespace, RESOLVER_VERSION, (left, right), effective_from=created)

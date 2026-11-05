@@ -1115,8 +1115,10 @@ relation, and its rows list every failed target:
 | --- | --- |
 | `target_missing` | No session page or bundle path matches exactly |
 | `target_ambiguous` | Several session pages declare the identifier |
-| `cross_scope` | The record names another project or workspace, or a target page declares another project |
+| `cross_scope` | The record names another project or workspace |
 | `scope_undeclared` / `scope_invalid` | The record declares no project, or a non-text scope |
+| `target_cross_scope` / `target_scope_undeclared` / `target_scope_invalid` | The target page declares another project or workspace, declares no project, or a non-text scope; targets need the same declared scope as the record |
+| `field_not_applicable_to_kind` | A workstream declares `from_session`, which only handoffs use |
 | `self_reference` | The record links to itself |
 | `target_not_imported` | The target revision is not present in the journal |
 | `link_field_invalid` / `from_session_missing` | A link field is malformed, or a handoff names no source session |
@@ -1128,11 +1130,14 @@ are `ambiguous_identity`. Both emit no links. Every other record also yields a
 or missing time stays unknown with its reason. Declared validity and handoff
 lifecycle states (open, accepted, expired) are not interpreted.
 
-Reports contain fingerprints, record references, receipts and counts only.
-Bodies, summaries, next steps, identifiers, paths and scope names are never
-included. The handoff body is represented only by its page revision hash.
-`counts.distinct_targets` counts linked targets once, however many records link
-them. Reports carry profile `ai-memory-okf-provenance-v1`, `delivery_observed`
+Reports contain fingerprints, record references, receipts, counts and the declared
+`created_at` times (as receipt `effective_from` and facet `recorded_at`). Bodies,
+summaries, next steps, identifiers, paths and scope names are never included.
+Fingerprints are unsalted SHA-256 values, so a holder of a private report can
+confirm guessed low-entropy values such as project names or short identifiers
+(tracked in #237). The handoff body is represented only by its page revision hash.
+`counts.distinct_targets` counts linked (candidate) targets once, however many
+records link them; unlinked targets are not counted. Reports carry profile `ai-memory-okf-provenance-v1`, `delivery_observed`
 and `injection_observed` false, `native_session_correlation: not_attempted`,
 `independent_roots: null`, `persisted: false` and `publication_allowed: false`,
 and public benchmark export rejects them.
