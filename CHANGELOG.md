@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.114.1
+
+### Patch Changes
+
+- 6cb118f: The declared Codex instruction inventory now selects each project directory's instruction file by existence, as `openai/codex@d786ff91` `codex-rs/core/src/agents_md.rs` does. The first existing regular-file candidate (`AGENTS.override.md`, `AGENTS.md`, then the fallback names) is selected whatever its content. An empty selection is recorded as `unknown` with reason `selected_empty`, contributes no guidance or byte budget, and shadows the directory's later candidates, so an empty `AGENTS.override.md` now hides that directory's `AGENTS.md` instead of falling through. An untrusted project or a directory above the project root now marks empty files `out_of_scope` too. `CODEX_HOME` keeps its first-non-empty rule.
+- 8649f74: The declared Codex instruction inventory now decides whether a project or `CODEX_HOME` instruction file is empty with Rust `str::trim` semantics, as `openai/codex@d786ff91` does in `codex-rs/core/src/agents_md.rs` and `codex-rs/codex-home/src/instructions/mod.rs`. Python `str.strip()` also removed U+001C to U+001F, so a file containing only those separators was recorded as `selected_empty` with no byte budget, although Codex loads it and charges its bytes. Such a file is now content: it is declared applicable, counts against `project_doc_max_bytes`, and a budget it exhausts blocks the receipt.
+
 ## 0.114.0
 
 ### Minor Changes

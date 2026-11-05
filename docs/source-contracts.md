@@ -917,8 +917,18 @@ checked 2026-11-01; synthetic resolution tests are not native loading evidence.
 
 For the supported declaration, discovery examines each directory from the checkout
 root through `task_cwd`, considering `AGENTS.override.md`, `AGENTS.md` and the explicit
-fallback names in order. The first non-empty UTF-8 file is declared applicable;
-other non-empty candidates in that directory remain visible as shadowed. Selected
+fallback names in order. Following `openai/codex@d786ff91`
+`codex-rs/core/src/agents_md.rs`, the first candidate that exists as a regular file
+is selected by its metadata alone, whatever its content. A non-empty selection is
+declared applicable. A zero-byte or whitespace-only selection is hashed and stays
+`unknown` with reason `selected_empty`. Whitespace here is what Rust `str::trim`
+removes, the Unicode `White_Space` set; the separators U+001C to U+001F are content,
+as they are to Codex, although Python `str.strip()` removes them. An empty selection
+contributes no guidance, uses no `project_doc_max_bytes` budget and takes no `parent`
+edge, yet it still shadows the directory's later candidates. Every later existing
+candidate in that directory, empty or not, remains visible as `shadowed` (`directory_precedence`) with a
+`shadows` edge from the selection, so an empty `AGENTS.override.md` hides that
+directory's `AGENTS.md`. Only `CODEX_HOME` (below) skips empty files. Selected
 files outside that directory chain are out of scope; unrecognized filenames within
 it remain unsupported. Parent and shadowing edges describe declared hierarchy,
 without resolving semantic contradictions in the text. Imports, path-scoped Claude
@@ -1127,8 +1137,9 @@ pinned to the public `openai/codex@d786ff91` source
 - `capture(..., codex_home='home')` names a folder-relative `CODEX_HOME` that
   does not overlap the checkout. It is never discovered, defaulted or read from
   the environment. Its `AGENTS.override.md`, then `AGENTS.md`, are hashed with
-  origin `codex_home`. The first non-empty one is `declared_applicable`
-  (`codex_home_first_non_empty`), so an empty override falls through. A later
+  origin `codex_home`. The first non-empty one, by the same Rust `trim` rule, is
+  `declared_applicable` (`codex_home_first_non_empty`), so an empty override falls
+  through, unlike a project directory, where an empty selection shadows the rest. A later
   non-empty file is `shadowed` (`codex_home_precedence`). A `parent` edge links
   it to the first applicable project file. It is not counted against
   `project_doc_max_bytes`.
@@ -1139,10 +1150,11 @@ pinned to the public `openai/codex@d786ff91` source
   `task_cwd`. A declared marker found nowhere in the checkout leaves the
   ancestors `unknown` (`project_root_marker_not_found_in_checkout`), because a
   marker above the checkout is not read. Those ancestors may still load, so the
-  first non-empty file of each counts toward a declared `project_doc_max_bytes`;
-  a later file that would pass the limit is `unknown`
-  (`byte_limit_requires_native_resolution`) and the receipt is `blocked`.
-- `project_trust: declared_untrusted` drops every non-empty project file to
+  selected (first existing) file of each counts toward a declared
+  `project_doc_max_bytes` unless it is empty; a later file that would pass the
+  limit is `unknown` (`byte_limit_requires_native_resolution`) and the receipt is
+  `blocked`.
+- `project_trust: declared_untrusted` drops every present project file to
   `out_of_scope` (`explicitly_untrusted`), as Codex loads no project docs for an
   untrusted project. The `CODEX_HOME` files still apply. Trust is never read
   from configuration.

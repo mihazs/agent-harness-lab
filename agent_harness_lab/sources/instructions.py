@@ -16,6 +16,14 @@ CODEX, CLAUDE = ('codex', '0.166.0'), ('claude-code', '2.1.317')
 # openai/codex@d786ff91 codex-rs/codex-home/src/instructions/mod.rs: first non-empty of these in CODEX_HOME.
 GLOBAL_NAMES = ('AGENTS.override.md', 'AGENTS.md')
 CODEX_DEFAULT_BYTES = 32*1024  # documented project_doc_max_bytes default; a fact, never an implicit bound here
+# Rust char::is_whitespace (Unicode White_Space), which Codex's str::trim uses. Python's str.strip() also strips
+# U+001C..U+001F, so a file of only those characters would look empty here yet load, and use budget, in Codex.
+RUST_WHITESPACE = ' \t\n\x0b\x0c\r\x85\xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000'
+
+
+def codex_blank(raw):
+    """openai/codex@d786ff91 agents_md.rs `text.trim().is_empty()`: true when Codex drops the content as empty."""
+    return not raw.decode('utf-8').strip(RUST_WHITESPACE)
 
 
 def names(value, error):
@@ -173,7 +181,7 @@ def capture(profile, folder, checkout, selected=(), *, git_harness_sha256=None, 
         for name in GLOBAL_NAMES:
             value, raw = read_node(folder, codex_home, name, 'unknown', 'missing')
             applicability, reason = 'unknown', 'missing' if raw is None else 'empty'
-            if raw is not None and raw.decode('utf-8').strip():
+            if raw is not None and not codex_blank(raw):
                 applicability, reason = ('shadowed', 'codex_home_precedence') if home else ('declared_applicable', 'codex_home_first_non_empty')
             value = replace(value, path_sha256=digest(['codex_home', name]), scope_sha256=digest(['codex_home']),
                             applicability=applicability, reason=reason, origin='codex_home')
@@ -198,16 +206,21 @@ def capture(profile, folder, checkout, selected=(), *, git_harness_sha256=None, 
             value, raw = node(path, 'unknown', 'missing')
             applicability, reason = 'unknown', 'missing'
             if raw is not None:
-                text = raw.decode('utf-8')
-                if not text.strip(): reason = 'empty'
-                elif index in excluded:
+                empty = codex_blank(raw)
+                if index in excluded:
                     applicability, reason = excluded[index]
-                    # Outside a marker the checkout lacks, the scope's first file may still load: it uses budget.
-                    if applicability == 'unknown' and not counted: counted = True; total += len(raw)+(2 if total else 0)
+                    # Outside a marker the checkout lacks, the scope's selected (first existing) file may still load;
+                    # a non-empty selection uses budget, an empty one adds nothing.
+                    if applicability == 'unknown' and not counted:
+                        counted = True
+                        if not empty: total += len(raw)+(2 if total else 0)
                 elif untrusted: applicability, reason = 'out_of_scope', 'explicitly_untrusted'
                 elif active:
                     applicability, reason = 'shadowed', 'directory_precedence'
                     edges.append(InstructionEdge('shadows', active, value.path_sha256))
+                # openai/codex@d786ff91 codex-rs/core/src/agents_md.rs: the first existing regular-file candidate is
+                # selected by metadata alone; an empty one is dropped at load, so it shadows the rest and adds nothing.
+                elif empty: active, reason = value.path_sha256, 'selected_empty'
                 else:
                     active = value.path_sha256
                     # shortcut: uncertain native truncation blocks resolution; add a native receipt before modeling partial files.
