@@ -172,8 +172,12 @@ class GiteaAPI:
             raise ValueError('Gitea pagination escaped its collection or skipped a page')
         return page+1
 
-    def _list(self, collection, state):
-        """Forward page/limit listing; returns rows and an explicit coverage state with its basis."""
+    def _list(self, collection, state, project):
+        """Forward page/limit listing; returns (native id, projected node) pairs and an explicit coverage state.
+
+        Each page is projected to its digest node before the next request, so raw rows never accumulate
+        across pages and a malformed row fails the capture on the page that carries it.
+        """
         rows, seen, total, page = [], set(), None, 1
         while True:
             try:
@@ -194,14 +198,15 @@ class GiteaAPI:
                 native = integer(item.get('id'), minimum=1)
                 if native in seen: raise ValueError('duplicate Gitea listing identity')
                 seen.add(native)
-            rows.extend(value)
+            rows.extend((item['id'], project(item)) for item in value)
+            size = len(value); del value
             following = self._following(headers.get('link'), collection, page)
             if following is None: break
-            if len(value) != PAGE_SIZE: raise ValueError('Gitea page size changed before the last page')
+            if size != PAGE_SIZE: raise ValueError('Gitea page size changed before the last page')
             page = following
         # A full last page needs a total to show nothing follows it.
         if total is not None and len(rows) != total: return rows, ('pagination_incomplete', 'total_count_mismatch')
-        if total is None and len(value) >= PAGE_SIZE: return rows, ('pagination_incomplete', 'page_size_unverified')
+        if total is None and size >= PAGE_SIZE: return rows, ('pagination_incomplete', 'page_size_unverified')
         return rows, ('captured', None)
 
     def _version(self, state):
@@ -346,11 +351,12 @@ class GiteaAPI:
                 if number in selection.pulls and not node['is_pull']: raise ValueError('selected Gitea PR is a plain issue')
                 issues[number] = node; emit('gitea_issue', number, node, node['created_at'])
                 if 'comments' not in selection.capture: continue
-                rows, outcome = self._list(f'{self.repo_path}/issues/{number}/comments', state)
+                rows, outcome = self._list(f'{self.repo_path}/issues/{number}/comments', state,
+                    lambda row, n=number, p=parent: self._comment(row, n, p))
                 if outcome[0] == 'captured' and len(rows) != node['comments']: outcome = ('pagination_incomplete', 'declared_count_mismatch')
                 note('comments', outcome, parent)
-                for row in rows:
-                    child = emit('gitea_comment', row['id'], self._comment(row, number, parent), moment(row.get('created_at')))
+                for native, comment in rows:
+                    child = emit('gitea_comment', native, comment, comment['created_at'])
                     relations.add(('conversation_on', child, parent))
             for number in selection.pulls:
                 if number not in issues: continue
@@ -360,13 +366,13 @@ class GiteaAPI:
                 pulls[number] = node; emit('gitea_pull', number, node, node['created_at'])
                 relations.add(('pull_issue', parent, key('gitea_issue', number)))
                 if 'reviews' not in selection.capture: continue
-                rows, outcome = self._list(f'{self.repo_path}/pulls/{number}/reviews', state)
+                rows, outcome = self._list(f'{self.repo_path}/pulls/{number}/reviews', state,
+                    lambda row, n=number, p=parent, head=node['head']['sha256']: self._review(row, n, p, head))
                 if outcome == ('not_found', None): outcome = ('unsupported_endpoint', 'review_listing_not_found')
                 note('reviews', outcome, parent)
-                for row in rows:
-                    review = self._review(row, number, parent, node['head']['sha256'])
+                for native, review in rows:
                     unrecognized |= review['state'] == 'unknown'
-                    child = emit('gitea_review', row['id'], review, review['submitted_at'])
+                    child = emit('gitea_review', native, review, review['submitted_at'])
                     relations.add(('review_on', child, parent))
             # Readbacks narrow, but cannot remove, the window for a change between non-atomic reads.
             for number, before in issues.items():

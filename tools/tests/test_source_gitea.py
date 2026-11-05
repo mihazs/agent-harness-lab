@@ -272,6 +272,29 @@ class GiteaSourceTests(GiteaFixture, unittest.TestCase):
         self.assertLessEqual(max(parsed), gitea.MAX_RESPONSE_BYTES)
         self.assertLess(gitea.MAX_RESPONSE_BYTES, gitea.DEFAULT_LIMITS['max_bytes'])
 
+    def test_listing_rejects_a_malformed_page_before_reading_the_next(self):
+        # Every page passes the listing checks, so only per-page projection keeps raw rows from accumulating.
+        routes, declared = dict(self.routes), self.issue['comments']
+        for collection, row in (('/issues/7/comments', self.comment), ('/pulls/8/reviews', self.review)):
+            for body, safe in (('SYNTHETIC_PRIVATE_BODY', True), ([[], {}], False)):
+                with self.subTest(collection=collection, safe=safe):
+                    self.routes.clear(); self.routes.update(routes); self.issue['comments'] = declared
+                    path = self.repo_path+collection
+                    rows = [dict(row, id=3000+i, body=body) for i in range(150)]
+                    for page in (1, 2, 3):
+                        link = {'Link': f'<{self.base}{path}?page={page+1}&limit=50>; rel="next"'} if page < 3 else {}
+                        self.routes[f'{path}?page={page}&limit=50'] = Response(rows[50*(page-1):50*page],
+                            headers={**self.headers, 'X-Total-Count': '150', **link})
+                    self.issue['comments'] = 150 if collection.endswith('comments') else 1
+                    self.targets.clear()
+                    if safe:
+                        client, snapshot = self.read()
+                        self.assertTrue(snapshot.checkpoint_ready)
+                    else:
+                        with self.assertRaises(TransportError): self.read()
+                    listed = [t for t in self.targets if t.startswith(path+'?')]
+                    self.assertEqual(listed, [f'{path}?page={p}&limit=50' for p in ((1, 2, 3) if safe else (1,))])
+
     def test_repeat_import_is_idempotent_and_updates_add_native_revisions(self):
         registry = self.registry()
         with tempfile.TemporaryDirectory() as folder:

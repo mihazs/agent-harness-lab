@@ -1745,6 +1745,9 @@ capture. Budgets left unset in the configuration default to 1,000 requests,
 256 MiB and 900 seconds; configured values take precedence. The byte budget is
 cumulative; each response is also limited to 8 MiB, because it is held and
 parsed whole. A response above that limit fails the capture before parsing.
+A listing reduces each page to its digest nodes before it requests the next one,
+so raw rows from earlier pages are never kept. A row that fails that reduction,
+such as a non-string `body`, fails the capture on the page that carries it.
 
 HTTP 401, 403, 404 and 429 become coverage states (`unauthorized`, `forbidden`,
 `not_found`, `rate_limited`) on the resource that returned them. A 429 stops every
