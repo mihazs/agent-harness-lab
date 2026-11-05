@@ -3,6 +3,7 @@ from pathlib import Path, PurePosixPath
 from .native import guarded, jsonl, number, text, timestamp
 from .schema import SOURCE_ORDER, event
 from ..sources.schema import digest
+from ..surfaces import skill_prefixes
 
 VERSION = 'claude-jsonl-2.1.316'
 # Declared subordinal within one native line of one file (segment); never execution or cross-file order.
@@ -12,8 +13,8 @@ UPSTREAM_COMMIT = '2146f9d8985513053e904b13200c8f744b36785a'
 ENTRY_TYPES = ('user', 'assistant', 'system', 'progress', 'attachment')
 KNOWN_TOOLS = ('Bash', 'Read', 'Write', 'Edit', 'MultiEdit', 'Glob', 'Grep', 'Agent', 'Task', 'Skill',
     'WebFetch', 'WebSearch', 'NotebookEdit', 'TodoWrite', 'AskUserQuestion', 'EnterPlanMode', 'ExitPlanMode')
-# Project-owned bundle layout of workflow.skill_roots; only an exact entry-point path under the project qualifies.
-SKILL_BUNDLE_PREFIXES = (('.agents', 'skills'), ('.claude', 'skills'), ('skills',))
+# Project-owned bundle layout from the surface classifier; only an exact entry-point path under the project qualifies.
+SKILL_BUNDLE_PREFIXES = tuple(PurePosixPath(root).parts for root in skill_prefixes())
 # Assumed native inputs (not pinned by the SDK wire reference): Skill `skill` names a skill; Read `file_path` is
 # absolute and `offset`/`limit`/`pages` select a window. Signals are declared requests, never observed activation.
 CAPABILITY = dict(version=VERSION, call_ids=True, outcome=False, skill_activation=False, skill_signal='observed_declared')

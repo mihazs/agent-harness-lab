@@ -92,7 +92,8 @@ def classify(relative_path, runtime=None, mode=None, *, root_skills=False):
     parts, context = path.parts, _Context(root_skills)
     matched = [row for row in RULES if (runtime is None or runtime in row.runtimes)
                and row.match(relative_path, parts, context)]
-    named = sorted((row for row in matched if row.kind), key=lambda row: row.priority)
+    # Priority, then kind and name, so the answer never depends on where a row sits in the table.
+    named = sorted((row for row in matched if row.kind), key=lambda row: (row.priority, row.kind, row.name))
     kinds = tuple(dict.fromkeys(row.kind for row in named))
     executable = bool(mode and mode & 0o111) or path.suffix in EXECUTABLE_SUFFIXES
     facets = kinds + ((HOOK_FACET,) if 'hook' in kinds or executable else ())

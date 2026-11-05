@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+import unittest.mock
 from unittest.mock import patch
 
 from agent_harness_lab.harness_change_plan import _operation
@@ -220,3 +221,32 @@ class CapabilityTableTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class SurfaceOwnershipTests(unittest.TestCase):
+    def test_classification_does_not_depend_on_row_order(self):
+        from agent_harness_lab import surfaces
+        paths = ('CLAUDE.md', '.claude/skills/demo/SKILL.md', '.claude/skills/demo/hooks/run.sh', 'apps/x/AGENTS.md',
+                 '.claude/rules/a.md', '.git/config', 'skills/demo/SKILL.md')
+        expected = {path: surfaces.classify(path, root_skills=True) for path in paths}
+        with unittest.mock.patch.object(surfaces, 'RULES', tuple(reversed(surfaces.RULES))):
+            for path in paths:
+                with self.subTest(path=path):
+                    self.assertEqual(surfaces.classify(path, root_skills=True), expected[path])
+        # Two added rows that tie on priority must name the same kind whichever branch put its row first.
+        always = lambda path, parts, context: path == 'docs/tied.md'
+        tied = (surfaces.Rule('zeta-added', 'zeta', 40, 'recommendation_only', always),
+                surfaces.Rule('alpha-added', 'alpha', 40, 'recommendation_only', always))
+        results = []
+        for order in (tied, tuple(reversed(tied))):
+            with unittest.mock.patch.object(surfaces, 'RULES', surfaces.RULES + order):
+                results.append(surfaces.classify('docs/tied.md'))
+        self.assertEqual(results[0], results[1])
+        self.assertEqual(results[0].kind, 'alpha')
+
+    def test_telemetry_skill_prefixes_come_from_the_classifier(self):
+        from pathlib import PurePosixPath
+        from agent_harness_lab import surfaces
+        from agent_harness_lab.telemetry import claude_native
+        self.assertEqual(claude_native.SKILL_BUNDLE_PREFIXES,
+                         tuple(PurePosixPath(root).parts for root in surfaces.skill_prefixes()))
