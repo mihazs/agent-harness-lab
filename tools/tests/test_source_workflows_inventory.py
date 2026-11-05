@@ -88,10 +88,42 @@ class WorkflowLintTests(unittest.TestCase):
             with self.subTest(reason=reason):
                 value = facts(text)
                 self.assertEqual((value['lint_result'], value['inconclusive_reason']), ('lint_inconclusive', reason))
+                # Counts are null, never 0, even when the doubt is raised while reading meta.
+                self.assertEqual({key: value[key] for key in workflows.FORBIDDEN}, dict.fromkeys(workflows.FORBIDDEN))
+                self.assertIsNone(value['phase_calls'])
         undecodable = workflows.lint(b'export const meta = {\xff}')
         self.assertEqual((undecodable['lint_result'], undecodable['forbidden_date_now']), ('lint_inconclusive', None))
         with patch.object(workflows, 'MAX_TOKENS', 3):
             self.assertEqual(facts(VALID)['inconclusive_reason'], 'token_bound_exceeded')
+
+    def test_an_out_of_range_escape_is_inconclusive_instead_of_raising(self):
+        for escape in ('\\u{FFFFFF}', '\\u{110000}'):
+            with self.subTest(escape=escape):
+                value = facts(script('a', f"const s = '{escape}'\n"))
+                self.assertEqual((value['lint_result'], value['inconclusive_reason'], value['forbidden_date_now']),
+                                 ('lint_inconclusive', 'invalid_escape', None))
+        self.assertEqual(facts(script('a', "const s = '\\u{10FFFF}\\uD800'\n"))['lint_result'], 'no_issues_found')
+
+    def test_a_regex_the_lexer_could_misread_never_hides_a_forbidden_call(self):
+        # A regex holding a quote, read as division, would open a string that swallows the Date.now() call.
+        hidden = 'go(Date.now()) // "\n'
+        for body in ('if (ok) /"/.test(s) && ' + hidden, 'for await (const x of xs) /"/.test(x) && ' + hidden,
+                     'while (a.b) /"/.test(s) && ' + hidden, "x = `${a}${/'/}`; go(Date.now()) // '}`\n"):
+            with self.subTest(body=body):
+                value = facts(script('a', body))
+                self.assertEqual((value['lint_result'], value['forbidden_date_now']), ('issues_found', 1))
+        for body in ('if (a) { b() }\n/"/.test(s) && ' + hidden, 'x = a++ / 2; go(Date.now()); y = 1 / 3\n',
+                     'x = a-- / 2; go(Date.now()); y = 1 / 3\n'):
+            with self.subTest(body=body):
+                value = facts(script('a', body))
+                self.assertEqual((value['lint_result'], value['inconclusive_reason'], value['forbidden_date_now']),
+                                 ('lint_inconclusive', 'regex_or_division_ambiguous', None))
+        # Division stays division: after a non-control ')', after ']', and after a keyword used as a property name.
+        for body in ('x = (a + b) / 2 / Date.now()\n', 'x = obj.if(a) / 2 / Date.now()\n',
+                     'x = a.of / 2 + Date.now() / 3\n', 'x = list[0] / 2 / Date.now()\n'):
+            with self.subTest(body=body):
+                value = facts(script('a', body))
+                self.assertEqual((value['lint_result'], value['forbidden_date_now']), ('issues_found', 1))
 
     def test_meta_phases_are_compared_with_literal_phase_titles(self):
         text = ("export const meta = { name: 'p', description: 'd', phases: [{ title: 'Scan' }, 'Fix'] }\n"
@@ -153,6 +185,33 @@ class WorkflowInventoryTests(unittest.TestCase):
         self.assertEqual({e.path: e.state for e in root.entries if 'audit' in e.path},
                          {'.claude/workflows/audit.js': 'precedence_winner'})
         self.assertEqual(root.roots, ())
+
+    def test_a_malformed_script_is_inconclusive_instead_of_denying_the_inventory(self):
+        hostile = script('bad', "const s = '\\u{FFFFFF}'\n")
+        (self.checkout / '.claude/workflows/bad.js').write_text(hostile)
+        (self.personal / 'bad.js').write_text(hostile)
+        value = self.capture()
+        self.assertEqual(value.status, 'declared')
+        bad = {(e.root, e.path): e for e in value.entries if e.path.endswith('bad.js')}
+        self.assertEqual(set(bad), {('checkout', '.claude/workflows/bad.js'), ('personal', 'bad.js')})
+        for entry in bad.values():
+            self.assertEqual((entry.state, entry.name_sha256, dict(entry.facts)['lint_result']),
+                             ('name_unavailable', None, 'lint_inconclusive'))
+        # A parse_failed harness node, which carries no facts, is name_unavailable rather than a KeyError.
+        with patch.object(workflows, 'lint', side_effect=ValueError('synthetic parser failure')):
+            failed = self.capture(personal=None, plugins=None)
+        self.assertEqual({e.state for e in failed.entries}, {'name_unavailable'})
+
+    def test_a_workflow_under_a_hooks_or_skills_segment_is_still_a_workflow(self):
+        for path in ('src/hooks/.claude/workflows/x.js', 'skills/a/.claude/workflows/x.js',
+                     '.claude/skills/a/.claude/workflows/x.js'):
+            with self.subTest(path=path):
+                self.assertEqual(surfaces.classify(path, 'claude-code').kind, 'workflow')
+        checkout = fixture.build(self.base / 'segmented', {'.claude/workflows/a.js': script('a'),
+                                                           'src/hooks/.claude/workflows/a.js': script('a')})
+        value = workflows.capture(checkout, dict(CLAUDE, task_cwd='src/hooks'))
+        self.assertEqual({e.path: e.state for e in value.entries},
+                         {'.claude/workflows/a.js': 'shadowed', 'src/hooks/.claude/workflows/a.js': 'precedence_winner'})
 
     def test_no_javascript_runtime_process_or_network_is_used(self):
         before = fixture.tree_state(self.checkout)

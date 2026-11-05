@@ -89,8 +89,9 @@ RULES = (
     Rule('codex-exec-policy', 'exec_policy', 25, 'recommendation_only', lambda path, parts, context: path.endswith(
          '.rules') and parts[-2:-1] == ('rules',) and (parts[:-2] == ('.codex',) or not parts[:-2]
          and context.external_root), runtimes=frozenset({'codex'})),
-    # Claude Code loads direct *.js children of .claude/workflows/ at any directory on the cwd-to-root path.
-    Rule('claude-workflow-script', 'workflow', 40, 'contract_required',
+    # Claude Code loads direct *.js children of .claude/workflows/ at any directory on the cwd-to-root path, so the
+    # workflow kind outranks skill and hook path segments and skill bundles that the directory sits beneath.
+    Rule('claude-workflow-script', 'workflow', 15, 'contract_required',
          lambda path, parts, context: parts[-3:-1] == ('.claude', 'workflows') and PurePosixPath(path).suffix == '.js',
          runtimes=frozenset({'claude-code'})),
     Rule('vcs-and-cache', None, 0, 'private_excluded',

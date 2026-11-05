@@ -36,7 +36,9 @@ _TEMPLATE = re.compile(r'(?:[^`\\$]++|\\[\s\S]|\$(?!\{))*+')
 _REGEX = re.compile(r'(?:[^/\\\[\n\r]++|\\[^\n\r]|\[(?:[^\]\\\n\r]++|\\[^\n\r])*+\])*+/[\w$]*')
 _ESCAPE = re.compile(r'\\(u\{[0-9a-fA-F]{1,6}\}|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|\r\n|[\s\S])')
 _SIMPLE = dict(n='\n', t='\t', r='\r', b='\b', f='\f', v='\v', **{'0': '\0', '\n': '', '\r': '', '\r\n': ''})
-# A regex literal, not division, may follow these; ')' ']' '}' and other names mean division (a heuristic).
+# A regex literal, not division, may follow these names; other names mean division. A ')' starts a regex only when it
+# closes an if, while, for or with head, ']' never does, and '}' or '++' / '--' cannot be settled without a parser.
+_CONTROL = {'if', 'while', 'for', 'with'}
 _BEFORE_EXPRESSION = {'return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw', 'case', 'do',
                       'else', 'yield', 'await'}
 _CONTINUES = set('.([?+-*/%&|^<>=') | {'?.'}
@@ -53,7 +55,10 @@ class _NotLiteral(Exception):
 def _cook(body):
     def one(match):
         text = match[1]
-        if text[0] == 'u': return chr(int(text.strip('u{}'), 16))
+        if text[0] == 'u':
+            code = int(text.strip('u{}'), 16)
+            if code > 0x10FFFF: raise Inconclusive('invalid_escape')  # a JavaScript syntax error, not a string
+            return chr(code)
         if text[0] == 'x' and len(text) == 3: return chr(int(text[1:], 16))
         return _SIMPLE.get(text, text)
     return _ESCAPE.sub(one, body)
@@ -61,7 +66,7 @@ def _cook(body):
 
 def tokens(text):
     """Code tokens as (kind, value), comments dropped; string and no-substitution template values are cooked."""
-    found, stack, pos = [], [], 0
+    found, stack, controls, pos = [], [], set(), 0
     if text.startswith('\ufeff'): pos = 1
     if text.startswith('#!', pos): pos = text.find('\n', pos) if '\n' in text else len(text)
     while pos < len(text):
@@ -80,19 +85,20 @@ def tokens(text):
             body = _TEMPLATE.match(text, end); end = body.end()
             if text.startswith('${', end):
                 stack.append('${'); end += 2
-                if kind == 'tpl': found.append(('template_substitution', None))
+                found.append(('template_substitution', None))
             elif text.startswith('`', end):
                 end += 1
                 if kind == 'tpl': found.append(('template', _cook(body[0])))
             else: raise Inconclusive('unterminated_template')
-        elif kind == 'p' and value == '/' and _regex_allowed(found[-1] if found else None):
+        elif kind == 'p' and value == '/' and _regex_allowed(found, controls):
             body = _REGEX.match(text, end)
             if body is None: raise Inconclusive('unterminated_regex')
             found.append(('regex', None)); end = body.end()
         elif kind in ('id', 'num', 'p'):
-            if kind == 'p' and value in '([{': stack.append(value)
-            elif kind == 'p' and value in ')]}' and (not stack or stack.pop() != '([{'[')]}'.index(value)]):
-                raise Inconclusive('unbalanced_brackets')
+            if kind == 'p' and value in '([{': stack.append('c(' if value == '(' and _control(found) else value)
+            elif kind == 'p' and value in ')]}':
+                if not stack or stack[-1][-1] != '([{'[')]}'.index(value)]: raise Inconclusive('unbalanced_brackets')
+                if stack.pop() == 'c(': controls.add(len(found))
             found.append((kind, value))
         if len(stack) > MAX_NESTING: raise Inconclusive('nesting_bound_exceeded')
         if len(found) > MAX_TOKENS: raise Inconclusive('token_bound_exceeded')
@@ -101,11 +107,28 @@ def tokens(text):
     return found
 
 
-def _regex_allowed(previous):
-    if previous is None: return True
-    kind, value = previous
-    if kind == 'p': return value not in (')', ']', '}')
-    return kind == 'id' and value in _BEFORE_EXPRESSION
+def _bare(found, index):
+    """found[index] is a name that is not a property after '.' or '?.', so it can be a keyword."""
+    return index >= 0 and found[index][0] == 'id' and not (index and found[index - 1] in (('p', '.'), ('p', '?.')))
+
+
+def _control(found):
+    """The '(' about to open is the head of an if, while, for, 'for await' or with statement."""
+    last = len(found) - 1
+    if _bare(found, last) and found[last][1] == 'await': last -= 1
+    return _bare(found, last) and found[last][1] in _CONTROL
+
+
+def _regex_allowed(found, controls):
+    """Whether a '/' after found starts a regex literal; Inconclusive where the preceding token cannot tell."""
+    if not found: return True
+    kind, value = found[-1]
+    if kind == 'template_substitution': return True
+    if kind == 'id': return value in _BEFORE_EXPRESSION and _bare(found, len(found) - 1)
+    if kind != 'p': return False
+    if value == ')': return len(found) - 1 in controls
+    if value == '}' or value in '+-' and found[-2:-1] == [found[-1]]: raise Inconclusive('regex_or_division_ambiguous')
+    return value != ']'
 
 
 class _Literal:
@@ -189,9 +212,9 @@ def lint(raw):
                  phase_titles_unlisted=None, **dict.fromkeys(FORBIDDEN))
     try:
         found = tokens(raw.decode('utf-8'))
+        meta, name, titles = _meta(found)  # may still raise Inconclusive, so no count is written before it settles
         counts, phases, dynamic = _calls(found)
         facts.update(counts, phase_calls=len(phases) + dynamic, phase_calls_dynamic=dynamic)
-        meta, name, titles = _meta(found)
         facts.update(meta=meta, meta_name_sha256=digest(name) if name else None)
         if titles is not None:
             facts.update(meta_phases=len(titles), phase_titles_unlisted=len(set(phases) - titles))
@@ -304,7 +327,7 @@ def _states(rows):
     Two same-name scripts the docs give no order for are clash_unresolved, never a guessed winner."""
     groups, states = {}, {}
     for index, (scope, root, path, content, facts, rank) in enumerate(rows):
-        name = facts['meta_name_sha256']
+        name = facts.get('meta_name_sha256')  # a parse_failed harness node carries no facts
         if name is None: states[index] = 'name_unavailable'
         else: groups.setdefault((root if scope == 'plugin' else '', name), []).append(index)
     for members in groups.values():
@@ -347,7 +370,7 @@ def capture(checkout, profile, *, personal=None, plugins=None):
         return WorkflowInventory(**identity, status='blocked', blocked_reason=str(error),
                                  harness_inventory_sha256=inventory.sha256)
     states = _states(rows)
-    entries = tuple(WorkflowEntry(scope, root, path, digest(path), content, facts['meta_name_sha256'], states[index],
+    entries = tuple(WorkflowEntry(scope, root, path, digest(path), content, facts.get('meta_name_sha256'), states[index],
                                   tuple(sorted(facts.items()))) for index, (scope, root, path, content, facts, _)
                     in enumerate(rows))
     return WorkflowInventory(**identity, status='declared', entries=entries, roots=tuple(root_states),

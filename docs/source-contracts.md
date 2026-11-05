@@ -1415,7 +1415,9 @@ execution attribution remain open in #276, #278 and #282.
 lists Claude Code workflow scripts and lints them statically. The lint is also
 registered as the `workflow` parser in the harness inventory. `surfaces.classify`
 names each direct `*.js` child of `.claude/workflows/` at any depth a `workflow`
-surface that is `contract_required`, for `claude-code` only. No script is ever
+surface that is `contract_required`, for `claude-code` only. The `workflow` kind
+outranks the skill and hook path rules, so a `.claude/workflows/` beneath a
+`hooks` or `skills` directory still yields workflow entries. No script is ever
 executed: no `node`, `deno` or other JavaScript runtime, no subprocess, no import
 and no evaluation. Each script is read as bytes through the harness inventory walk,
 then scanned by a bounded standard-library lexer that skips comments, strings and
@@ -1446,13 +1448,20 @@ The rules follow the pinned workflows page,
   reaches a fact.
 
 `lint_result` is `issues_found`, `no_issues_found` or `lint_inconclusive`; it is
-never `pass`. The lexer guesses regular-expression versus division from the
-preceding token and can misread template-literal edge cases. These cases give
-`lint_inconclusive` with an `inconclusive_reason`: an unterminated comment,
-string, template or regular expression, unbalanced brackets, a template literal
-in `meta`, invalid UTF-8, or more than 200000 tokens or 64 open brackets. The
-call counts are then `null`, never `0`. A clean lint is not evidence that the
-script parses, runs or loads.
+never `pass`. The lexer tells a regular expression from division by the
+preceding token. A `/` starts a regular expression after an operator, an opening
+bracket, a template interpolation, an expression keyword or the `)` that closes
+an `if`, `while`, `for`, `for await` or `with` head. It is division after any
+other `)`, after `]`, a name, a number, a string or a keyword used as a property
+name. After `}`, `++` or `--` the preceding token cannot settle it, so the
+script is `regex_or_division_ambiguous`. These cases give `lint_inconclusive`
+with an `inconclusive_reason`: an unterminated comment, string, template or
+regular expression, unbalanced brackets, `regex_or_division_ambiguous`, an
+`invalid_escape` such as `\u{110000}`, a template literal in `meta`, invalid
+UTF-8, or more than 200000 tokens or 64 open brackets. The call and phase
+counts are then `null`, never `0`. A malformed script never fails the whole
+inventory; it is listed as `lint_inconclusive` and `name_unavailable`. A clean
+lint is not evidence that the script parses, runs or loads.
 
 Project scripts come from every `.claude/workflows/` on the path from `task_cwd`
 up to the checkout root; directories off that path are left out. `personal` is
