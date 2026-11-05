@@ -152,7 +152,8 @@ class Projection:
                     record.update(activity='response_usage', input_tokens=input_tokens, output_tokens=output_tokens)
                 else: record.update(activity='response_stop', native_stop_reason_fingerprint=supporting[0])
                 self.rows.append(event(record))
-        return tuple(sorted(self.rows, key=lambda r: r['capture_order'])), conflicts
+        self.rows.sort(key=lambda r: r['capture_order'])  # stable, like sorted(), without a second list
+        return tuple(self.rows), conflicts
 
 
 def decode(folder, name, project, max_records, *, revisions=None, **limits):
