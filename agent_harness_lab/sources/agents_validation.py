@@ -9,15 +9,19 @@ gives every create, update or remove one verdict:
   bad YAML or TOML, unknown or ignored field, a field above the version pin, duplicate name), or the file
   declares hooks, which need the hook contract (I16).
 - recommendation_only: the change touches a permission surface (Claude tools, disallowedTools, permissionMode,
-  mcpServers or command allowed-tools; Codex tool, permission, sandbox-write or approval fields).
-- no_effect: the change has no runtime effect, so it never counts as an improvement: a Codex role adds or changes
-  a field a role cannot override (no_override_effect), or a command is shadowed by a same-name skill, for which
-  migration to a skill is recommended (#78).
+  mcpServers or command allowed-tools in any YAML form; any Codex role field outside the CODEX_INERT_FIELDS
+  allowlist of identity, instruction and model-tuning fields, apart from the no-override fields).
+- no_effect: the change has no runtime effect, so it never counts as an improvement: a Codex role update changes
+  only fields a role cannot override (no_override_effect), or a command is shadowed by a same-name skill, for which
+  migration to a skill is recommended (#78). A no-override field next to an effective change is only flagged.
 - adoptable: none of the above; a removal is always adoptable.
 
-The candidate verdict is the strictest file verdict. Findings carry fixed labels and paths only, never file text.
+The candidate verdict is the strictest file verdict, except that no_effect files next to an adoptable file or
+another changed path leave the candidate adoptable, since it still changes runtime behaviour. Findings carry fixed
+labels and paths only, never file text.
 """
 from dataclasses import asdict, dataclass
+import codecs
 import hashlib
 from pathlib import PurePosixPath
 import tomllib
@@ -28,9 +32,15 @@ PROFILE = 'ahl-definition-validation-v1'
 VERDICTS = ('blocked', 'recommendation_only', 'no_effect', 'adoptable')  # strictest first
 CLAUDE_PERMISSION_FIELDS = ('disallowedTools', 'mcpServers', 'permissionMode', 'tools')
 COMMAND_PERMISSION_FIELDS = ('allowed-tools',)
-# Codex role fields (a flattened ConfigToml) that govern tools, permissions, sandbox writes or approvals.
-CODEX_PERMISSION_FIELDS = ('allow_login_shell', 'approvals_reviewer', 'auto_review', 'default_permissions',
-                           'permissions', 'sandbox_workspace_write', 'shell_environment_policy', 'tools')
+# Codex role fields (of a flattened ConfigToml) that only name the role, carry its instructions or tune the model.
+# Every other field may enable tools, run programs, widen permissions or redirect traffic, so it is a permission
+# field; the no-override fields are judged separately because a role cannot set them.
+CODEX_INERT_FIELDS = frozenset(('name', 'description', 'nickname_candidates', 'developer_instructions',
+    'instructions', 'model', 'review_model', 'model_context_window', 'model_auto_compact_token_limit',
+    'model_auto_compact_token_limit_scope', 'model_post_turn_compact_threshold_percent', 'model_reasoning_effort',
+    'plan_mode_reasoning_effort', 'model_reasoning_summary', 'model_verbosity', 'personality', 'compact_prompt',
+    'hide_agent_reasoning', 'show_raw_agent_reasoning', 'tool_output_token_limit', 'project_doc_max_bytes'))
+_LOSSY = frontmatter.Mapping(('<unread>',))  # a command value neither reader keeps; equal to itself only
 # Workflow status and reason per non-adoptable candidate verdict; none of them reaches evaluation.
 OUTCOMES = {'blocked': ('blocked', 'definition_validation_failed'),
             'recommendation_only': ('inconclusive', 'definition_change_recommendation_only'),
@@ -61,10 +71,13 @@ class Finding:
 @dataclass(frozen=True)
 class Review:
     findings: tuple
+    other_changes: bool = False  # a changed path outside the reviewed definitions
 
     @property
     def verdict(self):
-        return min((row.verdict for row in self.findings), key=VERDICTS.index, default='adoptable')
+        strictest = min((row.verdict for row in self.findings), key=VERDICTS.index, default='adoptable')
+        effective = self.other_changes or any(row.verdict == 'adoptable' for row in self.findings)
+        return 'adoptable' if strictest == 'no_effect' and effective else strictest
 
     def document(self):
         return dict(profile=PROFILE, verdict=self.verdict, findings=[asdict(row) for row in self.findings],
@@ -96,8 +109,20 @@ def _fields(runtime, kind, raw):
     """Field values for comparison, or None when they cannot be read (the parse already blocks such a file)."""
     try:
         if runtime == 'codex': return tomllib.loads(raw.decode('utf-8'))
-        return frontmatter.read(raw) if kind == 'agent' else commands_inventory.frontmatter(raw) or {}
+        return frontmatter.read(raw) if kind == 'agent' else _command_fields(raw)
     except (ValueError, RecursionError): return None
+
+
+def _command_fields(raw):
+    """The command reader's text fields, with each list or mapping it reduces to None read again by read(), which
+    keeps lists; a value neither keeps is _LOSSY, so any byte change counts as a change of that field."""
+    fields = commands_inventory.frontmatter(raw) or {}
+    if all(value is not None for value in fields.values()): return fields
+    try: kept = frontmatter.read(raw.removeprefix(codecs.BOM_UTF8),
+                                 max_bytes=commands_inventory.MAX_FRONTMATTER_BYTES)
+    except frontmatter.FrontmatterError: kept = {}  # a '...' close, which read() does not accept
+    return {key: value if value is not None else _LOSSY if kept.get(key) is None else kept[key]
+            for key, value in fields.items()}
 
 
 def _changed(fields, before, after, before_raw, after_raw, exact):
@@ -152,55 +177,71 @@ def _skill_names(staged):
     return names
 
 
-def _duplicate(path, runtime, kind, name, staged):
-    """Whether another staged file of the same layer declares the same name or command id."""
-    for other, raw in staged.items():
-        if other == path or surface(other) != (runtime, kind): continue
-        if kind == 'command':
-            if _command_id(other) == name: return True
-        elif _owner(other, _HEADS[runtime, kind])[0] == _owner(path, _HEADS[runtime, kind])[0] \
-                and _agent(runtime, raw)[2] == name:
-            return True
-    return False
+def _key(path, runtime, kind, name):
+    """The same-layer identity two definitions must not share: (layer, name hash) or (layer, command id)."""
+    return (runtime, kind, *(_command_id(path) if kind == 'command' else (_owner(path, _HEADS[runtime, kind])[0], name)))
 
 
-def _finding(path, runtime, kind, before, after, staged):
+def _index(staged):
+    """One pass over the staged tree: staged paths per identity, so each definition is parsed once."""
+    paths = {}
+    for path, raw in staged.items():
+        found = surface(path)
+        if found is not None:
+            name = _agent(found[0], raw)[2] if found[1] == 'agent' else None
+            paths.setdefault(_key(path, *found, name), set()).add(path)
+    return paths
+
+
+def _inert_only(old, new):
+    """Whether an update of a Codex role changes nothing but fields a role cannot override."""
+    effective = lambda data: {key: value for key, value in data.items() if key not in agents_inventory.NO_OVERRIDE}
+    return old is not None and effective(old) == effective(new)
+
+
+def _finding(path, runtime, kind, before, after, names, skills):
     action = 'create' if before is None else 'remove' if after is None else 'update'
     if after is None: return Finding(path, runtime, kind, action, 'adoptable')
-    flags, recommendations = [], []
-    if kind == 'agent':
-        reasons, flags, name = _agent(runtime, after)
-        if name is not None and _duplicate(path, runtime, kind, name, staged): reasons.append('duplicate_name')
-    else:
-        reasons = _command(path, after)
-        if _duplicate(path, runtime, kind, _command_id(path), staged): reasons.append('duplicate_name')
+    flags, recommendations, name = [], [], None
+    if kind == 'agent': reasons, flags, name = _agent(runtime, after)
+    else: reasons = _command(path, after)
+    if (kind == 'command' or name is not None) and names.get(_key(path, runtime, kind, name), set()) - {path}:
+        reasons.append('duplicate_name')
     verdict = 'blocked' if reasons else 'adoptable'
     old, new = (None if before is None else _fields(runtime, kind, before)), _fields(runtime, kind, after)
     if verdict == 'adoptable' and new is not None:
-        permission = (CODEX_PERMISSION_FIELDS if runtime == 'codex' else CLAUDE_PERMISSION_FIELDS if kind == 'agent'
+        permission = (sorted((set(old or {}) | set(new)) - CODEX_INERT_FIELDS - set(agents_inventory.NO_OVERRIDE))
+                      if runtime == 'codex' else CLAUDE_PERMISSION_FIELDS if kind == 'agent'
                       else COMMAND_PERMISSION_FIELDS)
         widened = _changed(permission, old, new, before, after, runtime == 'codex')
         inert = _changed(agents_inventory.NO_OVERRIDE, old, new, before, after, True) if runtime == 'codex' else ()
-        shadowed = kind == 'command' and _command_id(path)[1] in _skill_names(staged)
+        if inert: flags.append('no_override_effect')
+        shadowed = kind == 'command' and _command_id(path)[1] in skills
         if shadowed: flags.append('shadowed_by_skill'); recommendations.append('migrate_to_skill')
         reasons = ([f'permission_field_changed:{field}' for field in widened]
                    + [f'no_override_field_changed:{field}' for field in inert] + ['shadowed_by_skill'] * shadowed)
-        verdict = 'recommendation_only' if widened else 'no_effect' if reasons else 'adoptable'
+        verdict = ('recommendation_only' if widened else 'no_effect' if shadowed or inert and _inert_only(old, new)
+                   else 'adoptable')
+        if verdict == 'adoptable': reasons = []  # an inert field next to an effective change is only flagged
     return Finding(path, runtime, kind, action, verdict, tuple(reasons), tuple(sorted(set(flags))),
                    tuple(recommendations))
 
 
-def review(changes, staged=None):
-    """Findings for each changed agent or command path; staged maps every staged path to its bytes."""
+def review(changes, staged=None, other_changes=False):
+    """Findings for each changed agent or command path; staged maps every staged path to its bytes. A changed
+    path that is not a definition, here or flagged by other_changes, keeps a no_effect file from stopping the
+    candidate."""
     staged = dict(staged if staged is not None else
                   {path: after for path, (_, after) in changes.items() if after is not None})
-    rows = []
+    names, skills, rows = _index(staged), _skill_names(staged), []
     for path in sorted(changes):
         found = surface(path)
-        if found is None: continue
+        if found is None:
+            other_changes = other_changes or changes[path][0] != changes[path][1]
+            continue
         before, after = changes[path]
-        rows.append(_finding(path, *found, before, after, staged))
-    return Review(tuple(rows))
+        rows.append(_finding(path, *found, before, after, names, skills))
+    return Review(tuple(rows), other_changes)
 
 
 def review_tree(baseline, candidate, original, proposed):
@@ -210,10 +251,10 @@ def review_tree(baseline, candidate, original, proposed):
         if hashlib.sha256(raw).hexdigest() != states[name][0]:
             raise ValueError('Candidate changed during definition review')
         return raw
-    changed = sorted(name for name in original.keys() | proposed.keys()
-                     if original.get(name) != proposed.get(name) and surface(name) is not None)
+    every = {name for name in original.keys() | proposed.keys() if original.get(name) != proposed.get(name)}
+    changed = sorted(name for name in every if surface(name) is not None)
     if not changed: return Review(())
     staged = {name: read(candidate, name, proposed) for name in proposed
               if surface(name) is not None or name.endswith('/SKILL.md')}
     return review({name: (read(baseline, name, original) if name in original else None,
-                          staged.get(name)) for name in changed}, staged)
+                          staged.get(name)) for name in changed}, staged, len(every) > len(changed))

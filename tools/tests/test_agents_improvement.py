@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from agent_harness_lab.sources.agents_validation import review
+from agent_harness_lab.sources.agents_validation import review, review_tree
 from agent_harness_lab.workflow import adopt, candidate_states, improve, snapshot
 
 AGENT = b'---\nname: reviewer\ndescription: Reviews synthetic diffs\n---\nCheck the diff.\n'
@@ -73,13 +73,63 @@ class DefinitionReviewTests(unittest.TestCase):
                          'recommendation_only')
         self.assertEqual(verdict('.claude/agents/reviewer.md', before, before + b'More.\n')[0], 'adoptable')
 
+    def test_list_valued_command_allowed_tools_is_a_permission_change(self):
+        flow, block = b'---\nallowed-tools: [Read]\n---\nShip.\n', b'---\nallowed-tools:\n  - Read\n  - Bash(rm:*)\n---\nShip.\n'
+        for old, new in ((None, flow), (None, block), (flow, flow.replace(b'[Read]', b'[Read, Bash]')), (flow, block),
+                         (flow, b'Ship.\n'), (b'\xef\xbb\xbf' + flow, b'\xef\xbb\xbfShip.\n'),
+                         (flow.replace(b'\n---\n', b'\n...\n'), flow.replace(b'\n---\n', b'\n...\n') + b'More.\n')):
+            with self.subTest(old=old, new=new):
+                self.assertEqual(verdict('.claude/commands/ship.md', old, new)[:2],
+                                 ('recommendation_only', ('permission_field_changed:allowed-tools',)))
+        for raw in (flow, block, b'\xef\xbb\xbf' + flow):  # an unchanged list is compared exactly
+            self.assertEqual(verdict('.claude/commands/ship.md', raw, raw + b'More.\n')[0], 'adoptable')
+
+    def test_codex_fields_outside_the_inert_allowlist_are_permission_changes(self):
+        for extra, name in ((b'web_search = "live"', 'web_search'), (b'browser_use = true', 'browser_use'),
+                            (b'computer_use = true', 'computer_use'), (b'notify = ["sh", "-c", "true"]', 'notify'),
+                            (b'js_repl_node_path = "/synthetic/node"', 'js_repl_node_path'),
+                            (b'openai_base_url = "https://example.invalid"', 'openai_base_url'),
+                            (b'chatgpt_base_url = "https://example.invalid"', 'chatgpt_base_url'),
+                            (b'[features]\nsynthetic = true', 'features'), (b'[apps]\nsynthetic = {}', 'apps'),
+                            (b'[plugins]\nsynthetic = {}', 'plugins'), (b'[otel]\nsynthetic = 1', 'otel'),
+                            (b'[model_providers.x]\nbase_url = "https://example.invalid"', 'model_providers')):
+            with self.subTest(field=name):
+                self.assertEqual(verdict('.codex/agents/reviewer.toml', ROLE, ROLE + extra + b'\n')[:2],
+                                 ('recommendation_only', (f'permission_field_changed:{name}',)))
+        tuned = ROLE + b'model = "synthetic"\nmodel_reasoning_effort = "high"\n'
+        self.assertEqual(verdict('.codex/agents/reviewer.toml', ROLE, tuned)[0], 'adoptable')
+
     def test_codex_no_override_field_has_no_effect(self):
         added = ROLE + b'sandbox_mode = "read-only"\n'
-        self.assertEqual(verdict('.codex/agents/reviewer.toml', None, added),
+        self.assertEqual(verdict('.codex/agents/reviewer.toml', ROLE, added),
                          ('no_effect', ('no_override_field_changed:sandbox_mode',), ('no_override_effect',), ()))
-        self.assertEqual(verdict('.codex/agents/reviewer.toml', ROLE, added)[0], 'no_effect')
+        self.assertEqual(verdict('.codex/agents/reviewer.toml', added, ROLE)[0], 'no_effect')
         kept = verdict('.codex/agents/reviewer.toml', added, added.replace(b'Check the diff.', b'Check twice.'))
         self.assertEqual(kept, ('adoptable', (), ('no_override_effect',), ()))
+
+    def test_an_inert_part_next_to_an_effective_change_is_only_flagged(self):
+        added = ROLE + b'sandbox_mode = "read-only"\n'
+        effective = (('adoptable', (), ('no_override_effect',), ()))
+        self.assertEqual(verdict('.codex/agents/reviewer.toml', None, added), effective)  # a new role takes effect
+        self.assertEqual(verdict('.codex/agents/reviewer.toml', ROLE, added.replace(b'Check the diff.', b'Check twice.')),
+                         effective)
+        inert = {'.codex/agents/reviewer.toml': (ROLE, added)}
+        self.assertEqual(review(inert).verdict, 'no_effect')
+        self.assertEqual(review({**inert, 'AGENTS.md': (b'old', b'new')}).verdict, 'adoptable')
+        self.assertEqual(review({**inert, '.claude/agents/reviewer.md': (None, AGENT)}).verdict, 'adoptable')
+        self.assertEqual(review(inert, other_changes=True).verdict, 'adoptable')
+        shadowed = {'.claude/commands/deploy.md': (None, b'Deploy.\n'), '.claude/skills/deploy/SKILL.md': (None, SKILL)}
+        self.assertEqual(review(shadowed).verdict, 'adoptable')  # the new skill itself changes behaviour
+        self.assertEqual(review(shadowed, {'.claude/commands/deploy.md': b'Deploy.\n',
+                                           '.claude/skills/deploy/SKILL.md': SKILL}).findings[0].verdict, 'no_effect')
+
+    def test_review_parses_each_staged_definition_once(self):
+        changes = {f'.claude/agents/a{index}.md': (None, AGENT.replace(b'reviewer', b'r%d' % index))
+                   for index in range(40)}
+        with patch('agent_harness_lab.sources.agents_validation.agents_inventory.parse',
+                   wraps=__import__('agent_harness_lab.sources.agents_inventory', fromlist=['parse']).parse) as parse:
+            self.assertEqual(review(changes).verdict, 'adoptable')
+        self.assertLessEqual(parse.call_count, 2 * len(changes))
 
     def test_commands(self):
         self.assertEqual(verdict('.claude/commands/ops/deploy.md', None, b'Deploy the synthetic app.\n')[0], 'adoptable')
@@ -136,13 +186,13 @@ class WorkflowDefinitionTests(unittest.TestCase):
             agent='codex', codex=str(self.agent), claude='missing', timeout=30, interval=1, once=True, focus=None))
 
     def test_invalid_or_permission_candidates_stop_before_evaluation(self):
-        role = ROLE.decode() + 'sandbox_mode = "read-only"\n'
         for files, status, reason in (
+                ({'.codex/agents/reviewer.toml': ROLE.decode() + 'web_search = "live"\n'},
+                 'inconclusive', 'definition_change_recommendation_only'),
                 ({'.claude/agents/reviewer.md': '\n' + AGENT.decode()}, 'blocked', 'definition_validation_failed'),
                 ({'.claude/agents/reviewer.md': '---\ndescription: d\n---\n'}, 'blocked', 'definition_validation_failed'),
                 ({'.claude/agents/reviewer.md': field(b'permissionMode: bypassPermissions').decode()},
-                 'inconclusive', 'definition_change_recommendation_only'),
-                ({'.codex/agents/reviewer.toml': role}, 'no_change', 'definition_change_has_no_effect')):
+                 'inconclusive', 'definition_change_recommendation_only')):
             with self.subTest(reason=reason, files=list(files)):
                 result = self.improve(files)
                 self.assertEqual((result['status'], result['reason']), (status, reason))
@@ -151,6 +201,27 @@ class WorkflowDefinitionTests(unittest.TestCase):
                 self.assertFalse((Path(result['output']) / 'candidate-0').exists())
                 self.assertEqual(json.loads((Path(result['output']) / 'workflow.json').read_text())['reason'], reason)
                 self.assertFalse((self.project / '.claude').exists() or (self.project / '.codex').exists())
+
+    def test_a_role_with_an_inert_field_next_to_an_effective_change_reaches_evaluation(self):
+        role = ROLE.decode() + 'sandbox_mode = "read-only"\n'
+        for files in ({'.codex/agents/reviewer.toml': role},
+                      {'.codex/agents/reviewer.toml': role, 'AGENTS.md': 'synthetic and changed\n'}):
+            with self.subTest(files=list(files)):
+                result = self.improve(files)
+                self.assertNotIn('definition_review', result)
+                self.assertTrue((Path(result['output']) / 'candidate-0/.codex/agents/reviewer.toml').is_file())
+
+    def test_review_tree_stops_only_an_inert_only_candidate(self):
+        (self.project / '.codex/agents').mkdir(parents=True)
+        (self.project / '.codex/agents/reviewer.toml').write_bytes(ROLE)
+        original = snapshot(self.project, self.root / 'baseline', allowed_paths=['AGENTS.md', '.codex/agents/reviewer.toml'])
+        shutil.copytree(self.root / 'baseline', self.root / 'candidate')
+        (self.root / 'candidate/.codex/agents/reviewer.toml').write_bytes(ROLE + b'sandbox_mode = "read-only"\n')
+        tree = lambda: review_tree(self.root / 'baseline', self.root / 'candidate', original,
+                                   candidate_states(self.root / 'candidate', original))
+        self.assertEqual(tree().outcome()['reason'], 'definition_change_has_no_effect')
+        (self.root / 'candidate/AGENTS.md').write_text('synthetic and changed\n')
+        self.assertEqual((tree().verdict, tree().outcome()), ('adoptable', None))
 
     def test_valid_agent_candidate_reaches_evaluation(self):
         result = self.improve({'.claude/agents/reviewer.md': AGENT.decode()})

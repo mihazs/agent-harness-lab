@@ -307,22 +307,29 @@ loads nothing and gives each file one verdict:
   (`hooks_need_hook_contract`) is routed to the hook contract.
 - `recommendation_only`: the change adds, removes or alters a permission
   field, namely Claude `tools`, `disallowedTools`, `permissionMode` or
-  `mcpServers`, command `allowed-tools`, or a Codex `tools`, `permissions`,
-  `default_permissions`, `sandbox_workspace_write`, `shell_environment_policy`,
-  `allow_login_shell`, `approvals_reviewer` or `auto_review` field. A new agent
-  that declares one counts as a change. No plan declaration authorizes such a
-  change yet. A field value the reader reduces, such as a nested `mcpServers`
-  mapping, counts as changed whenever the file bytes differ.
+  `mcpServers`, or command `allowed-tools` as a string, flow list or block
+  list. For a Codex role every field outside a fixed allowlist of identity,
+  instruction and model-tuning fields (`name`, `description`,
+  `developer_instructions`, `model`, `model_reasoning_effort`, `personality`
+  and similar) is a permission field, because fields such as `tools`,
+  `permissions`, `web_search`, `notify`, `features`, `openai_base_url` or
+  `model_providers` enable tools, run programs or redirect model traffic. A new
+  agent that declares one counts as a change. No plan declaration authorizes
+  such a change yet. A field value the reader reduces, such as a nested
+  `mcpServers` mapping, counts as changed whenever the file bytes differ.
 - `no_effect`: the change cannot alter runtime behaviour, so it is never counted
-  as an improvement. A Codex role that adds or changes `sandbox_mode`,
-  `approval_policy`, `model_provider` or `mcp_servers` gets
+  as an improvement. A Codex role update that changes nothing but
+  `sandbox_mode`, `approval_policy`, `model_provider` or `mcp_servers` gets
   `no_override_effect`. A command whose id matches a staged
   `.claude/skills/<dir>/` skill gets `shadowed_by_skill` and the recommendation
-  `migrate_to_skill` (#78). An unchanged no-override field only keeps the
-  `no_override_effect` flag.
+  `migrate_to_skill` (#78). A no-override field in a new role or next to an
+  effective change, or one left unchanged, only sets the `no_override_effect`
+  flag and leaves the file adoptable.
 - `adoptable`: none of the above. Removing a definition is always adoptable.
 
-The candidate takes the strictest file verdict. `ahl improve` stops before
+The candidate takes the strictest file verdict, except that `no_effect` files
+next to an adoptable file or any other changed path leave the candidate
+adoptable, since it still changes runtime behaviour. `ahl improve` stops before
 freezing or evaluating a non-adoptable candidate: `blocked` gives status
 `blocked` with reason `definition_validation_failed`, `recommendation_only`
 gives `inconclusive` with `definition_change_recommendation_only`, and
