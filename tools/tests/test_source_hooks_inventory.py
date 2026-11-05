@@ -167,6 +167,36 @@ class HookInventoryTests(unittest.TestCase):
         self.assertEqual(hooks.resolve('${CLAUDE_PROJECT_DIR}/x/y.sh', None, 'codex')[0], 'external_or_dynamic_command')
         self.assertEqual(hooks.resolve('node', ['tools/x.js'], 'claude-code')[1], 'tools/x.js')
 
+    def test_interpreter_options_and_inline_code_never_become_a_script_path(self):
+        for command, args in (('bash -ec "rm -rf tools/x"', None), ('bash -lc "tools/run.sh arg"', None),
+                              ('node --eval "tools/x"', None), ('python3 -um tools/x', None), ('sh -xc tools/x', None),
+                              ('ruby --disable-gems tools/x', None), ('"tools/run.sh arg"', None),
+                              ('bash', ['-lc', 'tools/deploy --token X']), ('node', ['--eval', 'tools/x'])):
+            with self.subTest(command=command, args=args):
+                self.assertEqual(hooks.resolve(command, args, 'claude-code'), ('external_or_dynamic_command', None, None))
+        self.assertEqual(hooks.resolve('bash tools/run.sh -c x', None, 'claude-code')[1], 'tools/run.sh')
+        settings = {'hooks': {'Stop': [group(None, {'type': 'command', 'command': f'bash -lc "tools/deploy --token {SECRET}"'},
+                                             {'type': 'command', 'command': 'bash', 'args': ['-ec', f'tools/x {SECRET}']})]}}
+        (self.checkout / '.claude/settings.json').write_text(json.dumps(settings))
+        value = self.capture()
+        self.assertEqual({row.resolution for row in value.handlers if row.source == '.claude/settings.json'},
+                         {'external_or_dynamic_command'})
+        documents = json.dumps([value.document(), harness_inventory.capture(self.checkout, CLAUDE).document()])
+        self.assertNotIn(SECRET, documents)
+        self.assertNotIn('tools/deploy', documents)
+
+    def test_many_small_plugin_files_are_blocked_by_the_inventory_wide_fact_bound(self):
+        handlers = json.dumps({'hooks': {'Stop': [{'hooks': [{}] * hooks.MAX_HANDLERS}]}})
+        per_file = len(hooks.parse('p/hooks/hooks.json', handlers.encode(), CLAUDE)[1])
+        files = harness_inventory.MAX_FACTS // per_file + 1
+        self.assertLess(files * len(handlers), harness_inventory.MAX_BYTES // 10)  # small input, far inside the byte bound
+        for index in range(files):
+            folder = self.checkout / f'p{index}' / 'hooks'
+            folder.mkdir(parents=True); (folder / 'hooks.json').write_text(handlers)
+        value = harness_inventory.capture(self.checkout, CLAUDE)
+        self.assertEqual((value.status, value.blocked_reason, value.nodes), ('blocked', 'fact_bound_exceeded', ()))
+        self.assertEqual((self.capture().status, self.capture().handlers), ('blocked', ()))
+
     def test_malformed_and_oversized_configuration_is_parse_failed_not_truncated(self):
         for text in ('{"hooks": {"PreToolUse": {}}}', '{"hooks": [', '[' * 64 + ']' * 64, '{"hooks": 1}'):
             with self.subTest(text=text[:20]):

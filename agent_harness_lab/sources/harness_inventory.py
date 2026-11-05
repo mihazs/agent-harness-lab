@@ -22,6 +22,7 @@ MAX_FILES = 1000              # inventory nodes
 MAX_BYTES = 10 * 1024 * 1024  # bytes read from candidate files, across every root
 MAX_DEPTH = 32                # directory nesting below a root
 MAX_ENTRIES = 20000           # directory entries examined, candidates or not
+MAX_FACTS = 50000             # parser facts across every node, so many small files cannot amplify memory
 ORIGINS = ('checkout', 'caller_declared_external')
 TRUST = ('unknown', 'declared_trusted', 'declared_untrusted')
 DECLARED_STATES = ('present', 'present_content_not_read')
@@ -169,7 +170,7 @@ class _Walk:
     def __init__(self, profile):
         self.profile, self.parsers = profile, parsers()
         self.nodes, self.refusals, self.directories = [], [], set()
-        self.entries = self.bytes = 0
+        self.entries = self.bytes = self.facts = 0
 
     def root(self, path, origin, name):
         descriptor = open_directory_nofollow(path)
@@ -222,6 +223,8 @@ class _Walk:
             raw = self.read(descriptor, name, info)
             content, state = hashlib.sha256(raw).hexdigest(), 'present'
             status, facts = parse(reference, path, raw, self.profile)
+            self.facts += len(facts)
+            if self.facts > MAX_FACTS: raise _Blocked('fact_bound_exceeded')
         runtime = self.profile['runtime']
         pinned = self.profile['version'] == surfaces.PINS[runtime] and capability is not None and any(
             row.surface == capability and row.runtime == runtime for row in surfaces.CAPABILITIES)

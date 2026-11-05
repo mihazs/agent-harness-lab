@@ -1203,7 +1203,8 @@ no entry is `no_parser`, and a parser that raises `ValueError` gives
 reaches a node.
 
 Bounds: 1000 nodes, 10 MiB of read candidate bytes across all roots, directory
-depth 32 and 20000 examined directory entries. Entries are counted as each is
+depth 32, 20000 examined directory entries and 50000 parser facts across all
+nodes, so many small parsed files cannot multiply memory. Entries are counted as each is
 read, so one huge directory is blocked before it is held in memory. Exceeding
 any bound returns `blocked` with its reason and no nodes or refusals, never a
 truncated result.
@@ -1325,7 +1326,10 @@ hashed; reading it on an explicit opt-in remains open. Only the `hooks` key is
 projected. All other settings keys, such as permissions, env and MCP servers,
 appear only as a count and a digest of their key names. JSON is decoded with
 `hardened.load_json`. A file over 1 MiB or with more than 512 handlers, a
-malformed file or invalid TOML is `parse_failed`, never truncated.
+malformed file or invalid TOML is `parse_failed`, never truncated. Each handler
+adds 15 facts to the harness inventory, so the inventory-wide 50000-fact bound
+also limits the handlers summed across files. Many small plugin `hooks/hooks.json`
+files that exceed it make the whole inventory `blocked` with `fact_bound_exceeded`.
 
 For each handler the inventory records the event, checked against the 33
 pinned Claude events or the 14 Codex events; an unknown event name is flagged
@@ -1353,7 +1357,11 @@ Command resolution tokenizes the command with `shlex`, or uses the exec-form
 `args` as given. Only `${CLAUDE_PROJECT_DIR}` (Claude only) is substituted, with the
 checkout root, giving the `project_dir` anchor. Any other relative path is
 `cwd_relative_unverified`. A leading interpreter such as `bash` or `python3` is
-skipped, unless it runs inline code with `-c`, `-e` or `-m`. A safe repo-relative
+skipped only when the next token is not an option. Any interpreter option, such as
+`-c`, `-lc`, `-ec`, `-m` or `--eval`, can turn the next token into inline code, so
+the command is `external_or_dynamic_command` and the code string is never
+recorded. A target containing whitespace or a control character is a quoted
+argument string, not a path, and is also external. A safe repo-relative
 path containing `/` becomes a `referenced_script` node with the content hash from
 the inventory, or `inventoried: false` when the walk did not list it. A pipe, a
 substitution, a bare `PATH` name, an absolute or parent path, or any other variable

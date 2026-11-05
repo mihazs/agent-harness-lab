@@ -49,6 +49,7 @@ GIT_DEVELOPER = ('lefthook.yml', '.lefthook.yml', '.pre-commit-config.yaml')
 INTERPRETERS = frozenset(('sh', 'bash', 'zsh', 'dash', 'python', 'python3', 'node', 'bun', 'deno', 'ruby', 'perl'))
 PROJECT_DIR = ('${CLAUDE_PROJECT_DIR}', '$CLAUDE_PROJECT_DIR')
 _SHELL = re.compile(r'[|&;<>()`$\n*?\[\]{}~]')
+_SPACE = re.compile(r'[\s\x01-\x1f\x7f]')   # a quoted argument string is never a script path
 HANDLER_FACTS = ('event', 'event_known', 'matcher_kind', 'matcher_sha256', 'type', 'status', 'timeout', 'on_failure',
                  'resolution', 'script', 'anchor', 'command_sha256', 'header_keys_sha256', 'env_keys_sha256',
                  'unknown_fields')
@@ -176,10 +177,11 @@ def resolve(command, args, runtime):
         except ValueError: return external
     else: tokens = [text, *args]
     if tokens and PurePosixPath(tokens[0]).name in INTERPRETERS:
-        tokens = [t for t in tokens[1:] if not t.startswith('-')] if not {'-c', '-e', '-m'} & set(tokens[1:]) else []
+        # Any interpreter option (-c, -lc, -ec, --eval, -m, ...) may make the next token inline code, never a path.
+        tokens = tokens[1:] if len(tokens) > 1 and not tokens[1].startswith('-') else []
     if not tokens: return external
     target, anchor = tokens[0], 'cwd_relative_unverified'
-    if '/' not in target: return external  # a bare name is a PATH lookup
+    if '/' not in target or _SPACE.search(target): return external  # a bare name is a PATH lookup
     if target.startswith('\0/'): target, anchor = target[2:], 'project_dir'
     target = target[2:] if target.startswith('./') else target
     if '\0' in target or _SHELL.search(target): return external
