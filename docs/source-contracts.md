@@ -1786,7 +1786,13 @@ For Claude Code the paths are `.mcp.json`, `.claude/settings.json`,
 Roots outside the checkout are read only when the caller declares them by
 role. `home` reads `.claude.json`, and only the key names under `mcpServers`.
 `claude_home` reads `settings.json` and `output-styles/`. `codex_home` reads
-`config.toml`. Any other role label is rejected.
+`config.toml`. Any other role label is rejected. Because only those fixed
+names are opened, a role root may be an ancestor of the checkout, such as
+`$HOME`. A root at or inside the checkout, or one whose fixed path contains
+the checkout, is rejected. When a parent component of a fixed path, or
+`output-styles` itself, is a link or not a directory, the path gets a
+`refused` row, so configuration that could not be captured is never reported
+as absent.
 
 The projection is an allowlist. A row field is a fixed vocabulary label, a
 boolean, a count or a SHA-256 digest, and construction rejects every other
@@ -1819,11 +1825,19 @@ such field with canary secrets and scans the whole JSON output for them.
 
 Memory locations are `private_excluded`. These are `.claude/agent-memory`,
 `.claude/agent-memory-local`, a declared `claude_home/agent-memory`, a declared
-`claude_project_state/memory` and a declared `codex_home/memories`. Existence
-comes from `lstat` on the parent descriptor, and the location is never opened,
-listed or digested. An inode-level open audit enforces this even for declared
-roots. Every other row is `recommendation_only`, and `surfaces.RULES` gives the
-same writability to these paths. A row's trust is `declared_trusted` only for
+`claude_project_state/memory` and a declared `codex_home/memories`.
+`.claude/settings.local.json` holds personal settings and is `private_excluded`
+too, as in `surfaces.RULES` and the hook inventory. Existence comes from
+`lstat` on the parent descriptor, and the location is never opened, listed or
+digested. An inode-level open audit enforces this even for declared roots.
+Every other row is `recommendation_only`, and `surfaces.RULES` gives the same
+writability to these paths. In `surfaces.classify`, the `memories/` and
+`projects/<id>/memory/` layouts are `private_excluded` only beneath a root
+declared as `codex_home` or `claude_home`, so checkout folders with those names
+keep their own verdicts. Every capture shares the harness inventory's
+50000-fact bound, and each digest in a list fact counts toward it, so an
+oversized approval list or key table is `blocked` with `fact_bound_exceeded`,
+never truncated. A row's trust is `declared_trusted` only for
 checkout rows under a `declared_trusted` project. An undeclared or
 `declared_untrusted` project layer, and every declared root, stays `unknown`,
 because Codex loads project config only for trusted projects.
@@ -1835,8 +1849,10 @@ servers. Plugin and ambiguous names give `null`, and no match means `unknown`,
 not absence. AHL's own derivation snapshot, `derivations/<id>/settings.json`,
 classifies as `private_excluded` by its path. Content never hides a file at a
 runtime settings path: a `settings.json` there is inventoried whatever keys it
-holds. In the surface walk, these files are `config` nodes whose parser reports
-path-free row counts. Undecodable files become a `parse_failed` presence row.
+holds. In the surface walk, `.mcp.json` and output styles are `config` nodes
+whose parser reports path-free row counts. The settings files and
+`.codex/config.toml` stay `hook` nodes with a `config` facet, and the hook
+parser owns them there. Undecodable files become a `parse_failed` presence row.
 JSON and TOML share one nesting bound of 64, so a deeply nested
 `.codex/config.toml` is also `parse_failed`, never a crash. A CLI, the surface
 walk's pruning of memory directories under declared roots, and profile-scoped

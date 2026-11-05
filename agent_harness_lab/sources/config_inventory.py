@@ -4,8 +4,8 @@ The projection is an allowlist: a row holds fixed vocabulary labels, booleans, c
 construction rejects any other string, so a command, argument, URL, env or header value, bearer token or
 instruction text cannot reach a row. Server ids, env and header key names and style names are digested. Only fixed
 paths beneath the checkout or a caller-declared root are opened, by name beneath an opened directory with
-O_NOFOLLOW. Memory locations are private_excluded: their existence comes from lstat on the parent descriptor and the
-directory itself is never opened, listed or digested. A row is a declaration, never evidence that a runtime
+O_NOFOLLOW. Memory locations and .claude/settings.local.json are private_excluded: their existence comes from lstat
+on the parent descriptor and they are never opened, listed or digested. A row is a declaration, never evidence that a runtime
 loaded it: observed_loading and effective are always 'unknown'.
 """
 from dataclasses import asdict, dataclass
@@ -44,7 +44,7 @@ STATES = ('present', 'present_content_not_read', 'refused')
 # Fixed paths per caller-declared root role: (relative path, reader, runtime, layer). Nothing else is opened.
 CHECKOUT = (('.mcp.json', 'claude_mcp', 'claude-code', 'project'),
     ('.claude/settings.json', 'claude_settings', 'claude-code', 'project'),
-    ('.claude/settings.local.json', 'claude_settings', 'claude-code', 'local'),
+    ('.claude/settings.local.json', 'local_settings', 'claude-code', 'local'),
     ('.claude/agent-memory', 'memory', 'claude-code', 'project'),
     ('.claude/agent-memory-local', 'memory', 'claude-code', 'local'),
     ('.codex/config.toml', 'codex_config', 'codex', 'project'))
@@ -54,6 +54,7 @@ ROLES = {'home': (('.claude.json', 'claude_user_servers', 'claude-code', 'user')
     'claude_project_state': (('memory', 'memory', 'claude-code', 'user'),),
     'codex_home': (('config.toml', 'codex_config', 'codex', 'user'), ('memories', 'memory', 'codex', 'user'))}
 _HEX = re.compile('[0-9a-f]{64}')
+_REFUSED = 'refused'  # _locate: a path component is a link or not a directory, so the fixed path cannot be captured
 
 
 def server_sha256(server_id):
@@ -76,8 +77,19 @@ def telemetry_server_sha256(tool_name):
 def style_sha256(name): return digest(('ahl-output-style-v1', name))
 
 
+def _bounded(names):
+    """A name list past the inventory fact bound blocks before any digest is computed; it is never truncated."""
+    if len(names) > inventory.MAX_FACTS: raise inventory._Blocked('fact_bound_exceeded')
+    return names
+
+
+def _private(surface, layer):
+    """Memory and personal local settings: presence from lstat only, as surfaces.RULES classifies them."""
+    return surface == 'memory' or surface == 'settings' and layer == 'local'
+
+
 def _keys(*tables):
-    names = sorted({key for table in tables if isinstance(table, dict) for key in table})
+    names = _bounded(sorted({key for table in tables if isinstance(table, dict) for key in table}))
     return tuple(sorted(digest(('ahl-config-key-v1', name)) for name in names))
 
 
@@ -105,7 +117,7 @@ class ConfigRow:
 
     def __post_init__(self):
         label(self.root)
-        private = self.surface == 'memory'
+        private = _private(self.surface, self.layer)
         if (self.surface not in SURFACES or self.item not in ITEMS or self.runtime not in surfaces.RUNTIMES
                 or self.layer not in LAYERS or not _HEX.fullmatch(self.path_sha256) or self.declared_state not in STATES
                 or self.writability != ('private_excluded' if private else 'recommendation_only')
@@ -156,7 +168,7 @@ def _claude_settings(data, layer):
         facts['enable_all_project_mcp_servers'] = data['enableAllProjectMcpServers']
     for key, fact in (('enabledMcpjsonServers', 'enabled_mcpjson_server_sha256s'), ('disabledMcpjsonServers', 'disabled_mcpjson_server_sha256s')):
         if isinstance(data.get(key), list):
-            facts[fact] = tuple(sorted({server_sha256(name) for name in data[key] if isinstance(name, str) and name}))
+            facts[fact] = tuple(sorted({server_sha256(name) for name in _bounded(data[key]) if isinstance(name, str) and name}))
     yield 'settings', 'file', facts
 
 
@@ -213,13 +225,15 @@ def _decode(reader, raw):
 
 class _Capture:
     def __init__(self, profile):
-        self.profile, self.walk, self.rows = profile, inventory._Walk(profile), []
+        self.profile, self.walk, self.rows, self.facts = profile, inventory._Walk(profile), [], 0
         self.trusted = 'declared_trusted' if profile.get('project_trust') == 'declared_trusted' else 'unknown'
 
     def add(self, surface, item, root, layer, path, state, facts=None):
         if len(self.rows) >= inventory.MAX_FILES: raise inventory._Blocked('row_bound_exceeded')
+        self.facts += sum(len(value) if type(value) is tuple else 1 for value in (facts or {}).values())  # each digest counts
+        if self.facts > inventory.MAX_FACTS: raise inventory._Blocked('fact_bound_exceeded')
         self.rows.append(ConfigRow(surface, item, self.profile['runtime'], root, layer, digest(path),
-            'private_excluded' if surface == 'memory' else 'recommendation_only', state,
+            'private_excluded' if _private(surface, layer) else 'recommendation_only', state,
             self.trusted if root == 'checkout' else 'unknown', tuple(sorted((facts or {}).items()))))
 
     def root(self, path, name, entries, styles=()):
@@ -232,13 +246,15 @@ class _Capture:
 
     def entry(self, descriptor, root, path, reader, layer):
         if reader == 'styles': return self.styles(descriptor, root, path, layer, None)
+        surface = 'memory' if reader == 'memory' else 'mcp' if reader.endswith(('mcp', 'servers')) else 'settings'
+        item = 'directory' if reader == 'memory' else 'file'
         located = _locate(descriptor, path)
         if located is None: return
+        if located is _REFUSED: return self.add(surface, item, root, layer, path, 'refused')
         parent, name, info = located
         try:
-            surface = 'memory' if reader == 'memory' else 'mcp' if reader.endswith(('mcp', 'servers')) else 'settings'
-            if reader == 'memory':  # lstat only: the memory directory is never opened
-                return self.add('memory', 'directory', root, layer, path, 'refused' if stat.S_ISLNK(info.st_mode) else 'present_content_not_read')
+            if reader in ('memory', 'local_settings'):  # lstat only: the memory directory or local settings is never opened
+                return self.add(surface, item, root, layer, path, 'refused' if stat.S_ISLNK(info.st_mode) else 'present_content_not_read')
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1: return self.add(surface, 'file', root, layer, path, 'refused')
             raw = self.walk.read(parent, name, info)
             try: projected = list(READERS[reader](_decode(reader, raw), layer))
@@ -249,9 +265,10 @@ class _Capture:
     def styles(self, descriptor, root, path, layer, distance):
         located = _locate(descriptor, path)
         if located is None: return
+        if located is _REFUSED: return self.add('output_styles', 'directory', root, layer, path, 'refused')
         parent, name, info = located
         try:
-            if not stat.S_ISDIR(info.st_mode): return
+            if not stat.S_ISDIR(info.st_mode): return self.add('output_styles', 'directory', root, layer, path, 'refused')
             folder = os.open(name, inventory._DIRECTORY, dir_fd=parent)
             try: inventory._same(folder, info); self.style_files(folder, root, path, layer, distance, 0)
             finally: os.close(folder)
@@ -287,14 +304,18 @@ class _Capture:
 
 
 def _locate(descriptor, path):
-    """(parent descriptor, name, lstat) beneath descriptor without following links; None when absent or linked."""
+    """(parent descriptor, name, lstat) beneath descriptor without following links.
+
+    None when a component is absent; _REFUSED when a parent component is a link or not a directory, so configuration
+    that could not be captured is never reported as absent.
+    """
     *folders, name = path.split('/')
     current = os.dup(descriptor)
     try:
         for folder in folders:
             try: info = os.stat(folder, dir_fd=current, follow_symlinks=False)
             except FileNotFoundError: return os.close(current)
-            if not stat.S_ISDIR(info.st_mode): return os.close(current)
+            if not stat.S_ISDIR(info.st_mode): os.close(current); return _REFUSED
             nested = os.open(folder, inventory._DIRECTORY, dir_fd=current)
             os.close(current); current = nested; inventory._same(current, info)
         try: return current, name, os.stat(name, dir_fd=current, follow_symlinks=False)
@@ -309,11 +330,31 @@ def _style_folders(task_cwd):
                  for index in range(len(parts), -1, -1))
 
 
+def _declared(roots, checkout):
+    """Role roots as sorted (role, absolute path); none is ever discovered.
+
+    Only fixed names beneath a role root are opened, so a root may be an ancestor of the checkout, such as $HOME. A root
+    at or inside the checkout, or one whose fixed path contains the checkout, is rejected.
+    """
+    if roots is None: return ()
+    if not isinstance(roots, dict): raise ValueError('declared config roots must be a role mapping')
+    base, result = os.path.abspath(checkout), []
+    for name, path in sorted(roots.items()):
+        if name not in ROLES: raise ValueError('declared config roots must name a known role')
+        if not isinstance(path, str) or not os.path.isabs(path) or '\0' in path:
+            raise ValueError('declared config roots need an absolute path')
+        path = os.path.abspath(path)
+        fixed = [os.path.join(path, entry[0]) for entry in ROLES[name]]
+        if os.path.commonpath((base, path)) == base or any(os.path.commonpath((base, item)) == item for item in fixed):
+            raise ValueError('declared config root overlaps the checkout')
+        result.append((name, path))
+    return tuple(result)
+
+
 def capture(checkout, profile, *, declared_roots=None):
     """Config inventory of one checkout plus caller-declared role roots; a bound overflow is blocked, never truncated."""
     inventory.validate(profile)
-    roots = inventory.external(declared_roots, checkout)
-    if any(name not in ROLES for name, _ in roots): raise ValueError('declared config roots must name a known role')
+    roots = _declared(declared_roots, checkout)
     document = dict(profile=PROFILE, schema_version=1, runtime=profile['runtime'], version=profile['version'],
         declared_roots=[name for name, _ in roots], status='declared', blocked_reason=None, rows=[],
         publication_allowed=False, loading_evidence=False, observed_loading='unknown', effective='unknown')
@@ -331,12 +372,14 @@ def capture(checkout, profile, *, declared_roots=None):
 
 
 def parse(path, raw, profile):
-    """harness_inventory parser for 'config' nodes: path-free row counts from the same allowlisted projection."""
-    reader = {'.mcp.json': 'claude_mcp', '.claude/settings.json': 'claude_settings',
-              '.claude/settings.local.json': 'claude_settings', '.codex/config.toml': 'codex_config'}.get(path)
-    if reader is not None:
+    """harness_inventory parser for 'config' nodes: path-free row counts from the same allowlisted projection.
+
+    Only .mcp.json and output styles are config nodes. Settings files and .codex/config.toml stay hook nodes with a
+    config facet, so the hooks parser owns them in the surface walk.
+    """
+    if path == '.mcp.json':
         counts = {}
-        for surface, item, _ in READERS[reader](_decode(reader, raw), 'local' if path.endswith('.local.json') else 'project'):
+        for surface, item, _ in _claude_servers(_decode('claude_mcp', raw), 'project'):
             counts[f'{surface}_{item}'] = counts.get(f'{surface}_{item}', 0) + 1
         return 'parsed', counts
     if path.endswith('.md') and '/.claude/output-styles/' in '/' + path:

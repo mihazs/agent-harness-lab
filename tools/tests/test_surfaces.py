@@ -73,6 +73,11 @@ GOLDEN = (
     ('.claude-plugin/plugin.json', U, U, 'unsupported', (), (H,)),
     ('.claude/output-styles/terse.md', *('recommendation_only',) * 2, 'config', (), (H,)),
     ('.mcp.json', *('recommendation_only',) * 2, 'config', (), (H,)),
+    # Runtime memory layouts of a declared home root never hide checkout folders that share their names.
+    ('memories/AGENTS.md', R, R, 'instruction', (I,), (I, H)),
+    ('memories/hooks/pre.sh', C, C, 'hook', (H,), (H,)),
+    ('projects/api/memory/CLAUDE.md', R, R, 'instruction', (I,), (I, H)),
+    ('.claude/agent-memory/hooks/pre.sh', P, P, 'hook', (H,), (H,)),
     ('.git/config', P, P, 'unsupported', (), (H,)),
     ('.git/hooks/pre-commit', P, P, 'hook', (H,), (H,)),
     ('__pycache__/m.pyc', P, P, 'unsupported', (), (H,)),
@@ -169,6 +174,17 @@ class SurfaceClassifierTests(unittest.TestCase):
         with self.assertRaises(ValueError): classify('AGENTS.md', None, True)
         self.assertTrue(classify('bin/tool', None, 0o100).executable)
         self.assertFalse(classify('bin/tool', None, 0o644).executable)
+        for bad in ('', 7):
+            with self.assertRaises(ValueError): classify('AGENTS.md', None, None, declared_root=bad)
+
+    def test_home_memory_layouts_are_private_only_beneath_their_declared_root(self):
+        from agent_harness_lab.surfaces import classify
+        for path, root in (('memories/AGENTS.md', 'codex_home'), ('memories/hooks/pre.sh', 'codex_home'),
+                           ('projects/api/memory/CLAUDE.md', 'claude_home')):
+            with self.subTest(path=path):
+                self.assertEqual(classify(path, None, None, declared_root=root).writability, P)
+                self.assertNotEqual(classify(path, None, None).writability, P)
+                self.assertNotEqual(classify(path, None, None, declared_root='plugins').writability, P)
 
     def test_root_skills_condition_is_evaluated_lazily(self):
         from agent_harness_lab.surfaces import classify

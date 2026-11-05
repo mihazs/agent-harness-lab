@@ -49,7 +49,8 @@ STYLE = '---\nname: canary-style-name\ndescription: canary-instructions\nkeep-co
 FILES = {'.mcp.json': json.dumps(MCP), '.claude/settings.json': json.dumps(SETTINGS), '.codex/config.toml': CODEX_TOML,
          '.claude/output-styles/terse.md': STYLE, 'src/task/.claude/output-styles/near.md': STYLE,
          '.claude/output-styles/plain.md': 'canary-instructions without frontmatter\n',
-         '.claude/agent-memory/reviewer/MEMORY.md': 'canary-memory-body\n'}
+         '.claude/agent-memory/reviewer/MEMORY.md': 'canary-memory-body\n',
+         '.claude/settings.local.json': json.dumps(dict(SETTINGS, permissions={'allow': ['canary-command']}))}
 AUDIT = []
 
 
@@ -182,7 +183,7 @@ class ConfigInventoryTests(unittest.TestCase):
             self.assertEqual((row['writability'], row['declared_state'], row['facts']),
                              ('private_excluded', 'present_content_not_read', ()))
         self.assertEqual(surfaces.classify('.claude/agent-memory/reviewer/MEMORY.md').writability, 'private_excluded')
-        self.assertEqual(surfaces.classify('projects/p/memory/MEMORY.md').writability, 'private_excluded')
+        self.assertEqual(surfaces.classify('projects/p/memory/MEMORY.md', declared_root='claude_home').writability, 'private_excluded')
 
     def test_undeclared_roots_are_never_read_and_roles_are_fixed(self):
         with patch.dict(os.environ, HOME=str(self.home), CODEX_HOME=str(self.codex_home), CLAUDE_CONFIG_DIR=str(self.home)):
@@ -238,10 +239,83 @@ class ConfigInventoryTests(unittest.TestCase):
         (self.checkout / '.claude/settings.json').write_text(disguised)
         document = self.capture(claude_home=claude_home)
         for root in ('checkout', 'claude_home'):
-            facts = [dict(r['facts']) for r in self.rows(document, surface='settings', root=root)]
+            facts = [dict(r['facts']) for r in self.rows(document, surface='settings', root=root, layer=self.layer(root))]
             with self.subTest(root=root):
                 self.assertEqual([(f['has_hooks'], f['has_permissions'], f['other_keys']) for f in facts], [(True, True, 1)])
-        self.assertEqual(config.parse('.claude/settings.json', disguised.encode(), CLAUDE), ('parsed', {'settings_file': 1}))
+
+    def layer(self, root): return 'project' if root == 'checkout' else 'user'
+
+    def test_surface_walk_keeps_settings_and_codex_config_as_hook_nodes_owned_by_the_hooks_parser(self):
+        claude = {n.path: n for n in inventory.capture(self.checkout, dict(CLAUDE, task_cwd='.')).nodes}
+        codex = {n.path: n for n in inventory.capture(self.checkout, dict(CODEX, task_cwd='.')).nodes}
+        for nodes, runtime, path, form in ((claude, 'claude-code', '.claude/settings.json', 'claude_settings'),
+                                           (codex, 'codex', '.codex/config.toml', 'codex_config_toml')):
+            with self.subTest(path=path):
+                node = nodes[path]
+                self.assertEqual((node.kind, node.parse_status, dict(node.facts).get('format')), ('hook', 'parsed', form))
+                self.assertNotIn('settings_file', dict(node.facts))
+                self.assertIn('config', surfaces.classify(path, runtime).facets)
+        for path in ('.claude/settings.json', '.claude/settings.local.json', '.codex/config.toml'):
+            with self.subTest(dead=path): self.assertEqual(config.parse(path, b'{}', CLAUDE), ('not_parsed', {}))
+        self.assertEqual(claude['.mcp.json'].kind, 'config')
+
+    def test_checkout_memories_folder_is_read_but_a_declared_codex_home_memories_folder_is_not(self):
+        (self.checkout / 'memories').mkdir(); (self.checkout / 'memories/AGENTS.md').write_text('synthetic\n')
+        (self.codex_home / 'memories/AGENTS.md').write_text('canary-memory-body\n')
+        walked = inventory.capture(self.checkout, dict(CODEX, task_cwd='.'), external_roots={'codex_home': str(self.codex_home)})
+        nodes = {(n.root, n.path): n for n in walked.nodes}
+        self.assertEqual((nodes['checkout', 'memories/AGENTS.md'].declared_state, nodes['checkout', 'memories/AGENTS.md'].parse_status),
+                         ('present', 'parsed'))
+        self.assertEqual(nodes['codex_home', 'memories/AGENTS.md'].declared_state, 'present_content_not_read')
+
+    def test_local_settings_are_private_presence_rows_and_never_opened(self):
+        local = self.checkout / '.claude/settings.local.json'
+        forbidden = {_identity(local.lstat())}
+        documents, opened, listed = self.touched()
+        self.assertFalse(forbidden & (opened | listed), 'settings.local.json was opened')
+        (row,) = self.rows(documents[0], surface='settings', layer='local')
+        self.assertEqual((row['writability'], row['declared_state'], row['facts'], row['path_sha256']),
+                         ('private_excluded', 'present_content_not_read', (), digest('.claude/settings.local.json')))
+        self.assertEqual(row['writability'], surfaces.classify('.claude/settings.local.json', 'claude-code').writability)
+        self.assert_clean(documents[0])
+        with self.assertRaises(ValueError):
+            config.ConfigRow('settings', 'file', 'claude-code', 'checkout', 'local', 'a' * 64, 'recommendation_only', 'present')
+
+    def test_linked_or_non_directory_parents_are_refused_never_silently_absent(self):
+        elsewhere = self.base / 'elsewhere/.claude'; (elsewhere / 'output-styles').mkdir(parents=True)
+        (elsewhere / 'settings.json').write_text(json.dumps(SETTINGS)); (elsewhere / 'output-styles/s.md').write_text(STYLE)
+        linked = self.base / 'linked'; linked.mkdir(); (linked / '.claude').symlink_to(elsewhere)
+        document = config.capture(linked, dict(CLAUDE, task_cwd='.'))
+        self.assertEqual(document['status'], 'declared')
+        self.assertEqual({(r['surface'], r['path_sha256'], r['declared_state'], r['facts']) for r in document['rows']},
+                         {(surface, digest(path), 'refused', ()) for surface, path in (
+                             ('settings', '.claude/settings.json'), ('settings', '.claude/settings.local.json'),
+                             ('memory', '.claude/agent-memory'), ('memory', '.claude/agent-memory-local'),
+                             ('output_styles', '.claude/output-styles'))})
+        self.assertEqual(inventory.capture(linked, dict(CLAUDE, task_cwd='.')).refusals[0].reason, 'symlink')
+        plain = self.base / 'plain'; (plain / '.claude').mkdir(parents=True); (plain / '.claude/output-styles').write_text('x')
+        (row,) = config.capture(plain, dict(CLAUDE, task_cwd='.'))['rows']
+        self.assertEqual((row['surface'], row['item'], row['declared_state']), ('output_styles', 'directory', 'refused'))
+
+    def test_digest_lists_count_toward_the_fact_bound_and_block_never_truncate(self):
+        names = [f'server-{index}' for index in range(30)]
+        (self.checkout / '.claude/settings.json').write_text(json.dumps({'enabledMcpjsonServers': names}))
+        with patch.object(inventory, 'MAX_FACTS', 25):
+            document = self.capture()
+        self.assertEqual((document['status'], document['blocked_reason'], document['rows']), ('blocked', 'fact_bound_exceeded', []))
+        (self.checkout / '.claude/settings.json').write_text(json.dumps({'enabledMcpjsonServers': names[:20]}))
+        with patch.object(inventory, 'MAX_FACTS', 25):  # 20 digests plus the facts of the other rows overflow together
+            self.assertEqual(self.capture()['blocked_reason'], 'fact_bound_exceeded')
+        self.assertEqual(self.capture()['status'], 'declared')
+
+    def test_a_role_root_may_be_an_ancestor_of_the_checkout(self):
+        (self.base / '.claude.json').write_text(json.dumps(MCP))
+        document = self.capture(home=self.base)
+        self.assertEqual(len(self.rows(document, root='home', surface='mcp')), 2)
+        nested = self.base / 'ch/output-styles/co'; nested.mkdir(parents=True)
+        for checkout, roots in ((self.checkout, {'home': self.checkout}), (nested, {'claude_home': self.base / 'ch'})):
+            with self.subTest(roots=roots), self.assertRaises(ValueError):
+                config.capture(checkout, dict(CLAUDE, task_cwd='.'), declared_roots={k: str(v) for k, v in roots.items()})
 
     def test_deeply_nested_toml_is_parse_failed_never_a_recursion_error(self):
         for name, text in (('array', 'a = ' + '[' * 5000 + ']' * 5000), ('inline', 'a = ' + '{b = ' * 3000 + '1' + '}' * 3000),
