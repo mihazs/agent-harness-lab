@@ -107,15 +107,18 @@ class Journal:
         return contained(self.project,name)
 
     def prepare(self,before,after,metadata=None,kind='promotion'):
+        return self._prepare(before,after,metadata,kind,restores=False)
+
+    def _prepare(self,before,after,metadata,kind,*,restores):
         names=sorted(before.keys()|after.keys())
         if not names or len(names)>1000: raise ValueError('invalid transaction size')
         for mapping in (before,after):
             for snapshot in mapping.values(): validate_snapshot(snapshot)
-        # A promotion probes containment and checks what it writes; a rollback restores a record already admitted.
-        promotion=kind=='promotion'
+        # Every transaction probes containment and checks what it writes, except the rollback of a promotion,
+        # which restores that promotion's admitted 'before' snapshot (restores, set only by _rollback).
         for name in names:
             relative(name)
-            self.owned(name,after.get(name) if promotion else None,probe=promotion)
+            self.owned(name,None if restores else after.get(name),probe=not restores)
             if before.get(name)!=file_record(self.project/name): raise ValueError('project changed before journaling')
         if sum(len((record or {}).get('content','')) for mapping in (before,after) for record in mapping.values())>28*1024*1024:
             raise ValueError('journal snapshot limit')
@@ -269,5 +272,7 @@ class Journal:
                 return latest
         if self.preview_rollback(deployment)['status']!='rollback_eligible': raise ValueError('rollback conflict')
         record=self.load(deployment)
-        rollback=self.prepare(record['after'],record['before'],dict(reverts=deployment),'rollback')
+        # Reverting a rollback re-applies a promotion's 'after', so it is admitted again like a new promotion.
+        rollback=self._prepare(record['after'],record['before'],dict(reverts=deployment),'rollback',
+                               restores=record['kind']=='promotion')
         return self._execute(rollback['deployment'])

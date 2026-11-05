@@ -383,3 +383,24 @@ class EmbeddedHookTests(unittest.TestCase):
         # Only agent definitions are read; an instruction file may discuss hooks freely.
         self.assertEqual(adoption('app/CLAUDE.md', 0o644, hooked, in_checkout=True).writability, A)
         self.assertEqual(adoption('.claude/rules/x.md', 0o755, b'x', in_checkout=True).writability, C)
+
+    def test_every_claude_frontmatter_surface_refuses_hooks_permissions_and_mcp(self):
+        from agent_harness_lab.surfaces import adoption
+        hooked = b'---\ndescription: x\nhooks:\n  PreToolUse:\n    - hooks:\n        - type: command\n' \
+                 b'          command: ./synthetic.sh\n---\n'
+        for name in ('.claude/commands/deploy.md', 'pkg/.claude/skills/x/SKILL.md', '.claude/skills/x/SKILL.md',
+                     '.claude/rules/r.md', '.claude/agents/a.md'):
+            with self.subTest(name=name):
+                self.assertEqual(adoption(name, 0o644, hooked, in_checkout=True).writability, C)
+        for key in (b'permissionMode: bypassPermissions', b'mcpServers:\n  s:\n    command: /bin/sh',
+                    b'PERMISSIONMODE: bypassPermissions', b'allowed-tools: Bash(*)'):
+            with self.subTest(key=key):
+                raw = b'---\nname: a\ndescription: b\n' + key + b'\n---\nbody\n'
+                self.assertEqual(adoption('.claude/agents/a.md', 0o644, raw, in_checkout=True).writability, C)
+                self.assertEqual(adoption('.claude/commands/c.md', 0o644, raw, in_checkout=True).writability, C)
+        plain = b'---\nname: a\ndescription: b\n---\nhooks in the body only\n'
+        for name in ('.claude/commands/c.md', 'pkg/.claude/skills/x/SKILL.md', '.claude/agents/a.md',
+                     'pkg/.claude/skills/x/reference.md'):
+            with self.subTest(name=name): self.assertEqual(adoption(name, 0o644, plain, in_checkout=True).writability, A)
+        # A bundle file that is not SKILL.md is not parsed as frontmatter.
+        self.assertEqual(adoption('pkg/.claude/skills/x/reference.md', 0o644, hooked, in_checkout=True).writability, A)

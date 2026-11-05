@@ -189,7 +189,8 @@ RULES = (
     # runtime's hook row adds the hook contract facet and an agent edit can never evade hook review. The agent
     # rows outrank the skill and hook segment rows, so agents/hooks/x.md stays an agent that has the hook facet.
     # Checkout agent files are adoptable, yet the hook facet keeps every agent edit unresolved in change plans, and
-    # adoption() refuses an agent whose own content registers hooks.
+    # adoption() refuses an agent, command, path rule or SKILL.md whose frontmatter registers hooks, grants
+    # permissions or tools, or starts an MCP server (CLAUDE_GRANT_KEYS).
     Rule('claude-agent-definition', 'agent', 15, 'adoptable', _agent_file('.claude', '.md'),
          runtimes=frozenset({'claude-code'}), label='.claude/agents/**/*.md agent definitions',
          unconfirmed='recommendation_only'),
@@ -294,9 +295,15 @@ def classify(relative_path, runtime=None, mode=None, *, root_skills=False, exter
     return SurfaceClass(kinds[0] if kinds else 'unsupported', str(scope), executable, writability, facets)
 
 
+# Claude frontmatter keys that register hooks, grant tools or permissions, or start MCP server processes.
+CLAUDE_GRANT_KEYS = ('hooks', 'permissionMode', 'mcpServers', 'allowed-tools')
+_CLAUDE_GRANTS = re.compile('|'.join(map(re.escape, CLAUDE_GRANT_KEYS)), re.IGNORECASE)
+
+
 def embeds_hooks(relative_path, raw):
-    """Whether agent-definition bytes can register hooks: a `hooks` word in Claude frontmatter, or a `hooks` key at
-    any depth of a Codex role file. Fails closed: undecodable bytes, a YAML escape or unparsable TOML count as hooks."""
+    """Whether harness bytes can register hooks or grant execution: a CLAUDE_GRANT_KEYS word in Claude frontmatter,
+    or a `hooks` key at any depth of a Codex role file. Fails closed: undecodable bytes, a YAML escape or unparsable
+    TOML count as hooks."""
     try: text = raw.decode('utf-8')
     except UnicodeDecodeError: return True
     if relative_path.endswith('.toml'):
@@ -310,14 +317,22 @@ def embeds_hooks(relative_path, raw):
     if not lines or lines[0].rstrip() != '---': return False  # Claude skips a file without a leading fence.
     end = next((index for index, line in enumerate(lines[1:], 1) if line.rstrip() in ('---', '...')), len(lines))
     front = '\n'.join(lines[1:end])
-    return bool(re.search('hooks', front, re.IGNORECASE)) or '\\' in front
+    return bool(_CLAUDE_GRANTS.search(front)) or '\\' in front
+
+
+def _reads_frontmatter(relative_path, facets):
+    """Agent definitions, and the Markdown commands, path rules and SKILL.md files whose frontmatter Claude parses."""
+    name = PurePosixPath(relative_path).name
+    return ('agent' in facets or name.endswith('.md') and bool({'command', 'path_rule'} & set(facets))
+            or name == 'SKILL.md' and 'skill' in facets)
 
 
 def adoption(relative_path, mode, raw, **context):
-    """classify() for writing raw bytes with st_mode bits mode at the path. An agent definition whose content can
-    register hooks needs the hook contract, so adoption never evades hook review; raw None writes no content."""
+    """classify() for writing raw bytes with st_mode bits mode at the path. A file whose frontmatter can register
+    hooks, grant permissions or start processes needs the hook contract, so adoption never evades hook review;
+    raw None writes no content."""
     verdict = classify(relative_path, None, mode, **context)
-    if verdict.writability == 'adoptable' and 'agent' in verdict.facets and raw is not None \
+    if verdict.writability == 'adoptable' and raw is not None and _reads_frontmatter(relative_path, verdict.facets) \
             and embeds_hooks(relative_path, raw):
         return replace(verdict, writability='contract_required')
     return verdict

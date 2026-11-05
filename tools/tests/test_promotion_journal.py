@@ -286,6 +286,49 @@ class NestedSurfaceAdoptionTests(unittest.TestCase):
         original,states=self.stage_files(plain)
         self.assertEqual(self.adopt(original,states()),sorted(plain))
 
+    def test_frontmatter_that_registers_hooks_or_grants_execution_is_never_adopted(self):
+        hook='hooks:\n  PreToolUse:\n    - hooks:\n        - type: command\n          command: ./synthetic.sh\n'
+        granted={'.claude/commands/deploy.md':'---\ndescription: x\n'+hook+'---\nBody\n',
+                 'pkg/.claude/skills/s/SKILL.md':'---\nname: s\ndescription: d\n'+hook+'---\nBody\n',
+                 '.claude/skills/s/SKILL.md':'---\nname: s\ndescription: d\n'+hook+'---\nBody\n',
+                 '.claude/rules/r.md':'---\npaths: ["*.py"]\n'+hook+'---\nBody\n',
+                 '.claude/commands/run.md':'---\ndescription: d\nallowed-tools: Bash(*)\n---\nBody\n',
+                 '.claude/agents/p.md':'---\nname: p\ndescription: d\npermissionMode: bypassPermissions\n---\nBody\n',
+                 '.claude/agents/m.md':'---\nname: m\ndescription: d\nmcpServers:\n  synthetic:\n'
+                 '    command: /bin/sh\n    args: ["-c", "true"]\n---\nBody\n'}
+        for name,text in granted.items():
+            with self.subTest(name=name):
+                import shutil; shutil.rmtree(self.root/'baseline',ignore_errors=True); shutil.rmtree(self.root/'candidate',ignore_errors=True)
+                _,states=self.stage_files({name:text})
+                with self.assertRaisesRegex(ValueError,'needs a hook contract'): states()
+                journal=Journal(self.project,self.root/'journals'/name.replace('/','_'))
+                with self.assertRaisesRegex(ValueError,'outside owned harness surface'):
+                    journal.prepare({name:None},{name:file_record(self.root/'candidate'/name)})
+        self.assertFalse((self.project/'pkg').exists()); self.assertFalse((self.project/'.claude/commands').exists())
+        import shutil; shutil.rmtree(self.root/'baseline'); shutil.rmtree(self.root/'candidate')
+        plain={'.claude/commands/ok.md':'---\ndescription: summarize synthetic diffs\n---\nBody\n',
+               'pkg/.claude/skills/ok/SKILL.md':'---\nname: ok\ndescription: d\n---\nBody\n'}
+        original,states=self.stage_files(plain)
+        self.assertEqual(self.adopt(original,states()),sorted(plain))
+
+    def test_rolling_back_a_rollback_probes_containment_like_a_promotion(self):
+        original,proposed=self.stage_files({'app/CLAUDE.md':'after'})
+        self.assertEqual(self.adopt(original,proposed()),['app/CLAUDE.md'])
+        (self.project/'app/.git').mkdir()
+        journal=Journal(self.project,next((self.root/'state/promotions').iterdir()))
+        rollback=journal.rollback(journal.active)
+        self.assertEqual((self.project/'app/CLAUDE.md').read_text(),'before')
+        # Reverting the rollback re-applies the promotion's content into what is now a nested repository.
+        with self.assertRaisesRegex(ValueError,'outside owned harness surface'): journal.rollback(rollback['deployment'])
+        self.assertEqual((self.project/'app/CLAUDE.md').read_text(),'before')
+        # An external caller cannot claim the rollback exemption either.
+        self.write(self.project/'vendor/AGENTS.md','before'); (self.project/'vendor/.git').mkdir()
+        target=self.root/'target'; target.write_text('after')
+        with self.assertRaisesRegex(ValueError,'outside owned harness surface'):
+            journal.prepare({'vendor/AGENTS.md':file_record(self.project/'vendor/AGENTS.md')},
+                            {'vendor/AGENTS.md':file_record(target)},None,'rollback')
+        self.assertEqual((self.project/'vendor/AGENTS.md').read_text(),'before')
+
     def test_rollback_survives_a_repository_created_below_the_project_after_adoption(self):
         original,proposed=self.stage_files({'AGENTS.md':'after','app/CLAUDE.md':'after'})
         self.assertEqual(self.adopt(original,proposed()),['AGENTS.md','app/CLAUDE.md'])
