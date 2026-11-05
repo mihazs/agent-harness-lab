@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.107.0
+
+### Minor Changes
+
+- 0b6bac1: Add `agent_harness_lab/sources/claude_rules.py`, which classifies Claude Code path-scoped rules (`.claude/rules/**/*.md`, nested rules directories included) against declared task paths and setting sources: `launch`, `on_demand_subdirectory`, `conditional_matched`, `conditional_unmatched`, `conditional_unknown` or `skipped_setting_sources`. A new bounded, standard-library frontmatter reader accepts only a `paths` YAML list or flow sequence of strings. Any other construct is `frontmatter_unsupported`, and brace expansion past 256 patterns is `blocked`. Symlinked rules are refused as `symlink_not_followed`. No rule is reported as loaded: `observed_loading` and `effective` stay `unknown`. The harness inventory registers a `path_rule` parser and classifies Codex `.codex/rules/*.rules` files as `exec_policy`. They are `recommendation_only`, read once for a digest and never evaluated, and `codex execpolicy check` is recorded as their native validator. Selected rule files in the Claude instruction receipt now name their frontmatter instead of `rules_not_modeled`. Glob dotfile, case, bracket and negation semantics are marked unverified.
+
+### Patch Changes
+
+- 703460c: Bound hostile Claude path-scoped rules. A pattern of more than 64 path segments is now `blocked`, brace groups are found in one linear scan, and glob matching no longer recurses, so a rule file can no longer raise `RecursionError` or burn minutes of CPU during capture or inventory. A `.md` file below `.claude/rules/` is now kind `path_rule` even when its path contains a `skills/` directory, so such rules are no longer dropped from the rules receipt.
+
 ## 0.106.0
 
 ### Minor Changes
