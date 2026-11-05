@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.95.2
+
+### Patch Changes
+
+- f5cbb36: Document which upstream ai-memory session-observation fields are normalized. Pin with tests that titles, bodies, body tool headers, extension events and unrecognized row fields never become tool names, call IDs or outcomes.
+
 ## 0.95.1
 
 ### Patch Changes

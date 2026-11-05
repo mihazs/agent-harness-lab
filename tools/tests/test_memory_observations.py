@@ -178,3 +178,48 @@ def test_interrupted_memory_read_exits_without_analysis_or_private_output(observ
     assert not streams.out and 'interrupted' in streams.err
     assert 'SYNTHETIC_PRIVATE_BODY' not in streams.err and 'SYNTHETIC_SECRET' not in streams.err
     assert not (output / 'analysis.json').exists()
+
+
+def _upstream_row(session, ident, kind, **overrides):
+    # Full public ObservationRecord shape (ai-memory reader.rs); values are synthetic.
+    row = dict(id=ident, session_id=session, kind=kind, title=kind, body='', importance=5,
+        created_at='2026-01-01T00:00:00Z', extension=None, source_event=None)
+    row.update(overrides)
+    return row
+
+
+def test_upstream_text_extension_and_unpinned_fields_never_become_tool_metadata(observation_wire, tmp_path, capsys):
+    wire = observation_wire
+    kinds = ('pre-tool-use', 'post-tool-use', 'other', 'stop')
+    wire.rows = [_upstream_row(wire.session, str(i), kind) for i, kind in enumerate(kinds)]
+    baseline, baseline_summary = wire.read()
+    wire.calls.clear()
+    wire.rows = [_upstream_row(wire.session, str(i), kind,
+        title='tool call: SYNTHETIC_TOOL_NAME', importance=9,
+        # Upstream's tool body header shape (TOOL_BODY_SEPARATOR) is text, not record fields.
+        body='tool_name: SYNTHETIC_TOOL_NAME\ntool_family: shell\ntool_call_id: SYNTHETIC_CALL_ID\n'
+             'outcome: error\n---\nexit_code: 1\n[body truncated; 40 chars omitted]',
+        extension='synthetic-extension', source_event='tool_call',
+        # Fields outside the upstream record are ignored even when a server sends them.
+        tool_name='SYNTHETIC_TOOL_NAME', call_id='SYNTHETIC_CALL_ID', tool_use_id='SYNTHETIC_CALL_ID',
+        execution_status='error', outcome='failure', status='success')
+        for i, kind in enumerate(kinds)]
+    records, summary = wire.read()
+    assert records == baseline
+    assert [row['activity'] for row in records] == ['tool_call', 'tool_result', 'other', 'turn_stop']
+    for row in records:
+        assert not {'tool_name', 'call_id', 'execution_status', 'root_case_id'} & set(row)
+        assert (row['outcome'], row['outcome_provenance'], row['lineage_verified']) == ('unknown', 'unknown', False)
+        assert row['missing_reason'] == 'source_lacks_structured_tool_and_outcome_metadata'
+    assert summary['missing_fields'] == baseline_summary['missing_fields'] == [
+        'tool_name', 'call_id', 'execution_status', 'verified_outcome', 'independent_lineage']
+    assert (summary['diagnostic_evidence'], summary['body_interpretation']) == ('insufficient', 'excluded')
+    output = tmp_path / 'upstream-shaped'
+    assert main(['analyze', str(tmp_path), '--memory-manifest', str(wire.manifest),
+        '--authorization-file', str(wire.auth), '--output', str(output)]) == 0
+    streams = capsys.readouterr()
+    artifacts = streams.out + streams.err + ''.join(
+        path.read_text() for path in output.iterdir() if path.is_file())
+    for marker in ('SYNTHETIC_TOOL_NAME', 'SYNTHETIC_CALL_ID', 'synthetic-extension'):
+        assert marker not in artifacts
+    assert json.loads(streams.out)['memory_source']['diagnostic_evidence'] == 'insufficient'

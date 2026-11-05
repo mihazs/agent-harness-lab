@@ -1288,6 +1288,46 @@ captures with caller-selected shared bounds and readbacks. No server is contacte
 installation, constructor invocation, help or default source discovery. Native
 tests use synthetic wire responses; they establish client contracts, not live
 server efficacy or scientific independence.
+
+### Session-observation field contract
+
+`ahl analyze --memory-manifest` reads `memory_read_session_observations`. Each row
+follows the public upstream
+[`ObservationRecord`](https://github.com/akitaonrails/ai-memory/blob/e6715cf08142183a7b2737cc909575a35ce209b0/crates/ai-memory-store/src/reader.rs#L1906)
+(ai-memory 3.4.0). The pinned manifest fingerprints the tool's input schema, not
+this output record, so the reader handles each row field explicitly:
+
+| Upstream field | Normalized use |
+| --- | --- |
+| `id` | `event_id`; duplicates reject the capture |
+| `session_id` | Must equal the selected session; becomes `case_id` |
+| `kind` | `activity`: `pre-tool-use` → `tool_call`, `post-tool-use` → `tool_result`, `user-prompt` → `user_message`, `stop` → `turn_stop`; other kinds pass through unchanged |
+| `created_at` | `timestamp` |
+| `title`, `body` | Not normalized (see below) |
+| `importance` | Not normalized; it is a capture heuristic, not an outcome |
+| `extension`, `source_event` | Not normalized; an opt-in caller vocabulary, not tool identity or result |
+
+The record has no field for tool name, call ID, exit code or result status. For some
+agents and capture policies, upstream writes a text header into the tool `body`.
+The header can hold `tool_family`, `tool_call_id`, `mcp_server`/`mcp_tool` and
+`tool_name` lines, and on `post-tool-use` an `outcome: success|error|unknown` line,
+followed by `\n---\n` and an output excerpt
+([`TOOL_BODY_SEPARATOR`](https://github.com/akitaonrails/ai-memory/blob/e6715cf08142183a7b2737cc909575a35ce209b0/crates/ai-memory-core/src/observation.rs#L17)).
+Other agents get free-form titles and bodies. These lines live in sanitized body
+text, which the server truncates, and this reader requests 200-character bodies,
+less than upstream's 512-character header bound. The outcome is what the harness
+reported, not a verified result. Tool titles may also embed a tool name.
+
+The reader never parses titles or bodies. Every event therefore keeps `outcome`
+and `outcome_provenance` `unknown` with
+`missing_reason=source_lacks_structured_tool_and_outcome_metadata`. Pre/post
+events are never paired into calls, and `memory_source.missing_fields` lists
+`tool_name`, `call_id`, `execution_status`, `verified_outcome` and
+`independent_lineage`. Row fields outside this record, such as `tool_name`, `call_id`
+or `status` from a different server build, are ignored and do not change events.
+A structured mapping needs upstream record fields, or a versioned body-header
+contract accepted for this project, and then a new pinned profile. Until then,
+use a native capture for tool calls and results.
 ## Explicit GitHub REST captures
 
 `sources.github.GitHubAPI` is an optional standard-library reader for one explicitly

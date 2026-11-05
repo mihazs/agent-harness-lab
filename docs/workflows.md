@@ -223,9 +223,12 @@ The reader normalizes lifecycle activity and checks every page again before
 acceptance. Changed pages, duplicates, unsupported pins and missing authorization
 fail explicitly without retries. Readback does **not** prove an atomic server
 snapshot. `memory_source` in the JSON receipt and private analysis reports these
-coverage limitations and rows elided from other scopes. Bodies are excluded from
-normalization; names, call linkage and outcomes absent from structured source
-metadata remain unknown. These observations cannot certify a no-defect outcome
+coverage limitations and rows elided from other scopes. Only observation ID, session,
+kind and creation time are normalized. The upstream observation record has no
+structured tool name, call ID or result status, so those stay unknown; titles,
+bodies, importance and extension event names are never parsed for them (see
+[observation field contract](source-contracts.md#session-observation-field-contract)).
+These observations cannot certify a no-defect outcome
 or grant permission to apply a candidate. Use an explicitly supported native
 capture when structured diagnostic metadata is needed.
 CLI progress reports aggregate page/observation counts on stderr during retrieval
