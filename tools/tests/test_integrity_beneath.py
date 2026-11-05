@@ -356,6 +356,26 @@ class BeneathTests(unittest.TestCase):
         self.assertEqual(events[0][1], private_journal.hashlib.sha256(raw).hexdigest())
         self.assertEqual(private_journal.record_bytes(raw)[0], events[0][0])
 
+    def test_journal_event_guard_reaches_the_shared_replace_step_locked_and_unlocked(self):
+        # Fault injection (e.g. the native bank-requalification expiry test) hooks _publish_at, so both append paths
+        # must hand their guard to it at the replace step.
+        store = self.root/'deep'/'sub'/'store'
+        journal = private_journal.PrivateJournal(store, 'synthetic-v1', lambda *args: True)
+        real, reached = private_journal._publish_at, []
+        def publish(parent, name, value, before_replace):
+            if value.get('kind') == 'opened':
+                reached.append(name)
+                def expired(): raise TimeoutError('synthetic expiry at replace')
+                before_replace = expired
+            return real(parent, name, value, before_replace)
+        guard = lambda: None
+        with self.unleaked(), patch.object(private_journal, '_publish_at', side_effect=publish):
+            with self.assertRaises(TimeoutError):
+                with journal.locked(create=True): journal.append(store/'locked', [], 'opened', 'open', {}, before_publish=guard)
+            with self.assertRaises(TimeoutError): journal.append(store/'unlocked', [], 'opened', 'open', {}, before_publish=guard)
+        self.assertEqual(reached, ['0000.json', '0000.json'])
+        for case in ('locked', 'unlocked'): self.assertEqual(os.listdir(store/case/'events'), [])
+
     def test_journal_publication_keeps_atomic_json_bytes(self):
         store, events = self.root/'deep'/'sub'/'store', []
         journal = private_journal.PrivateJournal(store, 'synthetic-v1', lambda *args: True)
