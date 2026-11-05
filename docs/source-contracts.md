@@ -2256,6 +2256,138 @@ authorized read-only SQLite snapshot mode with a verified schema, `tool_uses`
 rows, multi-agent duplication checks against native Claude/Codex journals on
 verified IDs, verifying the shape against a real export, and further releases.
 
+## Offline Mem0 OSS memory and history exports
+
+Select `local_file/mem0-oss-export/v1` in the existing local source declaration,
+with `data` naming a selection descriptor next to the manifest:
+
+```json
+{"schema_version": 1, "mem0_version": "2.2.1", "instance": "laptop-a",
+ "export": "exports/mem0.json", "unlisted_history": "exclude", "limits": {"max_rows": 5000}}
+```
+
+The scope fingerprint must equal `digest(selection)`. The export is one regular
+file in the manifest folder, read and re-hashed through the same `LocalExport`
+capture as the Claude-Mem source. `Mem0Export` never contacts a Mem0 server or
+the hosted Platform, never opens `history.db` or a vector store, and never reads
+`~/.mem0`. It calls no add, update, delete or reset operation.
+
+Mem0 OSS has no export command, so the file is an AHL envelope around the
+responses the pinned release returns:
+
+```json
+{"exported_at": "2031-06-01T00:00:00+00:00", "mem0_version": "2.2.1",
+ "filters": {"user_id": "u1"}, "show_expired": true,
+ "memories": {"results": [/* Memory.get_all / GET /memories items */]},
+ "history": {"<memory id>": [/* Memory.history / GET /memories/{id}/history rows */]}}
+```
+
+`filters` is required. It names the `user_id`, `agent_id` or `run_id` values
+the listing used, as the pinned `get_all` requires at least one. The unscoped
+admin listing has no supported form. `exported_at` and `mem0_version` are
+optional; `mem0_version` must match the declared release when present.
+
+### Pinned upstream shape
+
+The adapter models one release:
+[mem0ai/mem0 `v2.2.1`](https://github.com/mem0ai/mem0/tree/v2.2.1), commit
+`94c3fe9f238f3dbf29c9ce98643bd71eb13077cd`. Any other `mem0_version` is refused.
+
+| Shape | Upstream file at the pin |
+| --- | --- |
+| `{"results": [...]}` items: `id`, `memory`, `hash`, `metadata`, `created_at`, `updated_at`, plus promoted `user_id`, `agent_id`, `run_id`, `actor_id`, `role`, `attributed_to`, `expiration_date` | `MemoryItem` in [`mem0/configs/base.py`](https://github.com/mem0ai/mem0/blob/94c3fe9f238f3dbf29c9ce98643bd71eb13077cd/mem0/configs/base.py); `get_all` in [`mem0/memory/main.py`](https://github.com/mem0ai/mem0/blob/94c3fe9f238f3dbf29c9ce98643bd71eb13077cd/mem0/memory/main.py) |
+| History rows: `id`, `memory_id`, `old_memory`, `new_memory`, `event`, `created_at`, `updated_at`, `is_deleted`, `actor_id`, `role`, ordered by `created_at` then `updated_at` | `get_history` in [`mem0/memory/storage.py`](https://github.com/mem0ai/mem0/blob/94c3fe9f238f3dbf29c9ce98643bd71eb13077cd/mem0/memory/storage.py) |
+| `ADD`, `UPDATE`, `DELETE` events; `DELETE` writes `is_deleted=1` and removes the vector entry | `_create_memory`, `_update_memory`, `_delete_memory` in `mem0/memory/main.py` |
+| Expiry: `expiration_date` is an ISO date, hidden from `get_all` unless `show_expired` | `_payload_is_expired` in `mem0/memory/main.py` |
+| REST routes `GET /memories`, `GET /memories/{id}/history` | [`server/main.py`](https://github.com/mem0ai/mem0/blob/94c3fe9f238f3dbf29c9ce98643bd71eb13077cd/server/main.py) |
+
+The profile reports `upstream_shape: source_inferred` and `compatibility:
+unverified`. The envelope is defined by AHL, no real export has been read, and
+the tests use invented fixtures only. The hosted Platform (`/v3/memories/`
+pagination and filters, `/v1/memories/{id}/history/`, the Platform export) is
+`platform_v3: unsupported`. A `memories` object with keys beyond `results`, such
+as Platform `count`/`next`, is refused rather than read with a guessed shape.
+
+### Scope, lifecycle and claims
+
+Every memory whose `user_id`, `agent_id` or `run_id` differs from a declared
+filter is excluded with its history (`memory_outside_filter_scope`), so a wrong
+listing cannot import another scope. History rows carry no scope of their own.
+History for an ID absent from the listing (normally a deleted memory) is
+excluded by default (`history_for_unlisted_memory_excluded`). With
+`unlisted_history: include_unverified` it is imported with `scope_status:
+unlisted_unverified` and warning `history_scope_unverified`.
+
+Each listed memory becomes one `Mem0Claim` (`mem0_memory`, record provenance
+`model_hypothesis`, since Mem0 may extract the fact with a model). Each history
+row becomes one `mem0_history_event` claim (`native_field`) with its `event`,
+`sequence` (export order) and fingerprints of `old_memory` and `new_memory`:
+
+| Condition | Status | `currently_asserted` |
+| --- | --- | --- |
+| Listed memory, no expiry or expiry on or after `exported_at` | `asserted` | true |
+| `expiration_date` before the date of `exported_at` | `expired` | false |
+| Expiry present but unparseable, or no valid `exported_at` | `expiry_unverified` | false |
+| Listed memory whose history ends in `DELETE` | `deleted` | false |
+| Last event of an asserted memory | `current` | true |
+| Event followed by a later event | `superseded` | false |
+| `DELETE` event | `tombstone`; record `state: tombstone` | false |
+| Last event of an expired, deleted or unlisted memory | `historical` | false |
+
+Superseded, expired and deleted claims stay in evidence and are excluded only
+from `currently_asserted`. An edit is a further version of one memory, never a
+further independent success (`edits_not_independent`). `run_id` is a scoped
+Mem0 identifier, not an AHL task root (`run_is_task_root: false`). A `score` is
+retrieval relevance, recorded only as `score_reported`. Every claim carries
+`independent_case`, `evidence_of_use` and `task_outcome_verified` as `false`, and
+`Mem0Claim` refuses any other value, so a memory saying tests pass is not a
+verified outcome.
+
+Identity is hash-only: `digest(['mem0', instance, 'memory'|'history', id])`, and
+user, agent, run and actor IDs are fingerprinted under the same `instance`
+namespace. Memory text, metadata and history text are fingerprinted, never
+stored or printed. An edited memory body is a new revision of the same native
+memory.
+
+### Coverage and warnings
+
+The `mem0_summary` printed by `ahl sources preview` reports claim counts,
+memories by status, `currently_asserted`, history events by type, tombstones,
+`rows_rejected`, `rows_with_unknown_fields` and `excluded` counts.
+
+| Condition | Result |
+| --- | --- |
+| Memory without a string `id` or `memory`, or a repeated `id` | rejected, `memory_without_identity_or_text` or `duplicate_memory_id` |
+| History row without an `id`, with a repeated `id`, or whose `memory_id` differs from its key | rejected, `history_row_rejected` |
+| Field outside the pinned sets | counted, `unknown_memory_fields` or `unknown_history_fields` |
+| Event outside `ADD`/`UPDATE`/`DELETE` | `event: unrecognized`, `unrecognized_history_event` |
+| `DELETE` without `is_deleted: true`, or the reverse | `tombstone_flag_mismatch` |
+| First event not `ADD`; `old_memory` not the previous `new_memory`; decreasing change times | `history_starts_without_add`, `history_chain_break`, `history_out_of_order` |
+| Last event disagrees with the listed memory, or is `DELETE` | `history_head_mismatch` |
+| Listed memory with no history | `memory_without_history` |
+| Missing or naive timestamps | `missing_timestamp`, `invalid_timestamp`, `export_time_unverified` |
+
+`edits_not_independent`, `memories_are_contextual_claims` and
+`run_id_not_task_root` are always present. Capture stays `partial`. The summary
+reports `task_outcomes_verified`, `evidence_of_use`, `publication_allowed`,
+`network_used`, `server_contacted`, `database_opened` and `bodies_stored` as
+`false`, and profile `mem0-oss-export-v1` is rejected by `public_export_allowed`.
+
+Decoding reuses the hardened `load_json`. Malformed JSON, missing `filters`, a
+non-boolean `show_expired` or a non-list history value rejects the whole
+capture and leaves the previous checkpoint unchanged. The ceilings are
+`max_export_bytes` 32 MiB, `max_rows` 100,000 (memories plus history rows plus
+the export record, checked before mapping), `max_fields` 64 per row,
+`max_json_depth` 16, `max_json_containers` 1,000,000 and `max_json_values`
+4,000,000. `limits` may only lower them. `task test:sources:mem0` runs the
+synthetic controls.
+
+Still open in #49: a read-only OSS REST client and the hosted Platform v3
+profile with explicit origin, token source, pagination, retry and 401/403/404/429
+stops, Platform fixtures with their own schema version, `app_id` scoping, the
+hosted user-or-assistant attribution, categories and other Platform lifecycle
+fields, and verifying the envelope against a real OSS capture.
+
 No source is enabled by installation. Tests use synthetic metadata; they establish
 contract validation, checkpoint behavior and a side-effect-free registry, not
 real-source compatibility, containment, diagnostic usefulness or certification.

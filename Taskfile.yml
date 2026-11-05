@@ -582,6 +582,10 @@ tasks:
     desc: Run offline Claude-Mem v15.9.0 export controls with synthetic invented exports
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_claude_mem.py" -v'
+  test:sources:mem0:
+    desc: Run offline Mem0 OSS v2.2.1 memory/history export controls with synthetic invented exports
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_mem0.py" -v'
   test:sources:memory-provenance:
     desc: Run declared ai-memory handoff/workstream provenance cases with synthetic OKF bundles
     cmds:
