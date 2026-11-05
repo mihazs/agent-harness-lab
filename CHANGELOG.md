@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.93.0
+
+### Minor Changes
+
+- 05bbc19: Add `sources.memory_provenance.bind_provenance`, an offline API that relates declared `Handoff` and `Workstream` concept records in an authorized ai-memory OKF bundle to the session and page records already imported from that bundle. Links bind only on exact identifiers inside the declared project and workspace scope, and only while the bundle still equals the journal's latest checkpoint. They become `candidate` `JoinReceipt`s with the new `handoff_from_session`, `memory_links_session` and `memory_links_page` relations. Missing, ambiguous, cross-scope, self-referencing and malformed links stay `unlinked` with reasons. Duplicate or invalid record identifiers emit no links. Each record's `created_at` becomes a `TemporalFacet` knowledge time, and naive or missing times stay unknown. Upstream ai-memory documents no OKF handoff or workstream type, so the shape is caller-declared and reported as such. Reports hold fingerprints, receipts and counts only, never bodies, identifiers or paths. They write nothing, claim no delivery, injection, native session correlation or independence, and are rejected by public benchmark export.
+
 ## 0.92.1
 
 ### Patch Changes

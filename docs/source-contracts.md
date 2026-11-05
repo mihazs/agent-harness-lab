@@ -1054,8 +1054,9 @@ Journal imports retain only source/page/revision/content fingerprints, normalize
 timestamps and contextual-assertion records. Raw text, paths, native IDs and parsed
 frontmatter are not persisted. Parsed metadata is available through the reader API;
 it is not yet stored as structured journal facets. History includes revisions
-observed through successive imports; Git history, native session correlation and
-handoffs/workstreams remain open in #43. A separate explicit
+observed through successive imports; Git history and native session correlation
+remain open in #43. Declared handoff/workstream links are described
+[below](#declared-handoff-and-workstream-provenance). A separate explicit
 [selected MCP page capture](memory-page-capture.md) now supports hash-only journals.
 
 The reader imposes no concept, directory-entry, frontmatter, per-page or aggregate
@@ -1066,6 +1067,89 @@ ordinary note using a monthly-ledger filename is also excluded in this first sli
 Coverage remains unknown. Use an extracted static export for stable input; this is
 not an atomic snapshot of a concurrently edited wiki. Tests use synthetic bundles
 and do not read real memories or call models.
+
+### Declared handoff and workstream provenance
+
+`sources.memory_provenance.bind_provenance(connector, source, store)` relates
+declared handoff and workstream records to session and page records of one
+authorized OKF bundle that was already imported into `store`. It is an offline
+Python API with no CLI exposure. It re-reads the bundle through `OKFExport.pages`,
+so the declaration, root, project and version checks above apply, and it reads the
+selected journal. It writes nothing, runs no ai-memory command, opens no network
+connection and never reads SQLite.
+
+Neither the pinned OKF v0.2 document nor upstream `main` (checked at
+`8e122ef82a826f5e39e11779b56e2d80119ee17a`) defines a handoff or workstream concept
+type. Upstream keeps handoffs and managed workstreams in its server database. This
+profile therefore reads a caller-declared concept shape, reported as
+`shape: caller_declared_okf_concept` with `upstream_format_documented: false`.
+The field names follow the public handoff tool documentation:
+
+| Field | Meaning |
+| --- | --- |
+| `type` | `Handoff` or `Workstream` |
+| `handoff_id` / `workstream_id` | Required record identifier, unique per kind in the bundle |
+| `project`, optional `workspace` | Declared scope, compared with the source's project and scope fingerprints |
+| `created_at` | Offset-bearing creation time |
+| `from_session` | Handoffs only: the session that left it |
+| `linked_sessions`, `linked_pages` | Lists of exact session identifiers and bundle-relative page paths |
+
+A session identifier matches only a `type: Session Summary` page whose
+`session_id` is the identical string. A page link matches only the identical path
+of a concept in the bundle. No case folding, path normalization, URI parsing,
+prefix search or filename inference is done. Links bind only when the bundle
+still equals the journal's latest active checkpoint
+(`okf.bundle_sha256(pages)`), so both endpoints are exact imported revisions.
+Otherwise the report is `unknown` with `journal_unavailable` or
+`bundle_not_latest_checkpoint` and has no receipts.
+
+A bound link is a `JoinReceipt` with relation `handoff_from_session`,
+`memory_links_session` or `memory_links_page`, namespace `ai-memory.handoff` or
+`ai-memory.workstream`, and the record's parsed `created_at` as `effective_from`.
+It stays `candidate` with basis `source_declaration`, because the export declares
+the identifiers and nothing verifies them natively. Each failed link stays
+`unlinked` with one of these reasons; a record has one unlinked receipt per
+relation, and its rows list every failed target:
+
+| Reason | Meaning |
+| --- | --- |
+| `target_missing` | No session page or bundle path matches exactly |
+| `target_ambiguous` | Several session pages declare the identifier |
+| `cross_scope` | The record names another project or workspace |
+| `scope_undeclared` / `scope_invalid` | The record declares no project, or a non-text scope |
+| `target_cross_scope` / `target_scope_undeclared` / `target_scope_invalid` | The target page declares another project or workspace, declares no project, or a non-text scope; targets need the same declared scope as the record |
+| `field_not_applicable_to_kind` | A workstream declares `from_session`, which only handoffs use |
+| `self_reference` | The record links to itself |
+| `target_not_imported` | The target revision is not present in the journal |
+| `link_field_invalid` / `from_session_missing` | A link field is malformed, or a handoff names no source session |
+
+A record without a valid identifier is `invalid`. Records sharing one identifier
+are `ambiguous_identity`. Both emit no links. Every other record also yields a
+`TemporalFacet` whose `recorded_at` is `created_at`, for use with
+[`resolve`](#declared-validity-as-of-an-instant). A naive, date-only, unparseable
+or missing time stays unknown with its reason. Declared validity and handoff
+lifecycle states (open, accepted, expired) are not interpreted.
+
+Reports contain fingerprints, record references, receipts, counts and the declared
+`created_at` times (as receipt `effective_from` and facet `recorded_at`). Bodies,
+summaries, next steps, identifiers, paths and scope names are never included.
+Fingerprints are unsalted SHA-256 values, so a holder of a private report can
+confirm guessed low-entropy values such as project names or short identifiers
+(tracked in #237). The handoff body is represented only by its page revision hash.
+`counts.distinct_targets` counts linked (candidate) targets once, however many
+records link them; unlinked targets are not counted. Reports carry profile `ai-memory-okf-provenance-v1`, `delivery_observed`
+and `injection_observed` false, `native_session_correlation: not_attempted`,
+`independent_roots: null`, `persisted: false` and `publication_allowed: false`,
+and public benchmark export rejects them.
+
+These receipts establish exact declared-identifier co-occurrence inside one
+scoped bundle and journal. They do not establish that a handoff was delivered,
+claimed or injected into an agent, that an ai-memory session is a Codex or Claude
+native session, that its content is true, or that linked records are independent.
+`task test:sources:memory-provenance` runs synthetic bundles only. Still open in
+#43: native session correlation across journals without duplicate roots, the
+upstream database or MCP handoff and workstream surfaces, delivery and injection
+evidence, persisted links and lineage components, and deletion reconciliation.
 
 ### Declared validity as of an instant
 

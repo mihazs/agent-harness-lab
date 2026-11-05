@@ -1,6 +1,6 @@
 {
   "name": "agent-harness-lab",
-  "version": "0.92.1",
+  "version": "0.93.0",
   "private": true,
   "scripts": {
     "hooks:install": "python3 scripts/install_hooks.py",
