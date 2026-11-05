@@ -172,7 +172,8 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
     from .telemetry.codex_rollout import VERSION as CODEX_NATIVE_VERSION
     from .telemetry.claude_native import VERSION as CLAUDE_NATIVE_VERSION
     codex_pinned = source_format == 'codex' and source_version == CODEX_NATIVE_VERSION
-    pinned = codex_pinned or source_format == 'claude' and source_version == CLAUDE_NATIVE_VERSION
+    native_order = source_format == 'claude' and source_version == CLAUDE_NATIVE_VERSION
+    pinned = codex_pinned or native_order
     if source_identity is not None:
         from .sources.schema import fingerprint as validate_fingerprint
         validate_fingerprint(source_identity)
@@ -278,8 +279,9 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                     root = event.get('root_case_id', case)
                     event['root_case_id'] = hashlib.sha256((fmt + ':' + root).encode()).hexdigest()
                 tool_error = event.get('execution_status') == 'error'
-                # Declared source order derives from capture_order and event identity; it stays out of the fingerprint.
-                hashed = {k: v for k, v in event.items() if k not in SOURCE_ORDER} if 'source_order_profile' in event else event
+                # The pinned Claude adapter derives source order from capture_order, the hashed block index and the
+                # file read, so it stays out of that fingerprint. Caller-supplied ledgers declare it, so it is hashed.
+                hashed = {k: v for k, v in event.items() if k not in SOURCE_ORDER} if native_order and 'source_order_profile' in event else event
                 fingerprint.update(json.dumps(dict(event=hashed, tool_error=tool_error), sort_keys=True).encode() + b'\n')
                 source['events'] += 1
                 total_events += 1
@@ -296,7 +298,9 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
             source['sha256'] = native_digest if pinned else source_digest.hexdigest()
         notify('analysis', events=total_events, captures=len(selected))
 
-    analysis = analyze(normalized_events(), max_events=max_events, sequence_length=sequence_length, select_methods=True)
+    # Analysis attributes declared source order to the caller unless the pinned adapter produced it.
+    attribution = dict(source_order_declared_by='native_adapter') if native_order else {}
+    analysis = analyze(normalized_events(), max_events=max_events, sequence_length=sequence_length, select_methods=True, **attribution)
     analysis['findings'].extend(errors)
     notify('evaluation_reports', events=analysis['events'])
     outcomes = [] if events is not None or source_root is not None else _evaluation_results(project, max_files, sources, fingerprint, caveats)

@@ -159,7 +159,8 @@ def recurring_sequences(cases, roots, maximum=None):
     return sorted(result, key=lambda row: (-row['reported_roots'], row['activities']))
 
 
-def analyze(rows, max_events=None, *, observation_per_case=None, observation_total=None, observation_max_age=None, sequence_length=None, select_methods=False):
+def analyze(rows, max_events=None, *, observation_per_case=None, observation_total=None, observation_max_age=None, sequence_length=None, select_methods=False,
+            source_order_declared_by='caller'):
     from agent_harness_lab.diagnostics.process_mining import ProcessMiner
     # Versioned producer subordinals that may break capture-order ties as declared capture order.
     from agent_harness_lab.telemetry.schema import SOURCE_ORDER_PROFILES
@@ -210,7 +211,8 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
         else:
             last = order['last_source']
             if last is not None and source[:2] != last[:2]:
-                # Records of another file (or profile) have no established order; capture order is unknown too.
+                # Records of another file (or profile) have no established capture order; strict timestamps
+                # remain an independent route and are reported separately.
                 order['crossed'] = True; order['source'] = order['capture'] = False
             elif last is not None and source[2:] <= last[2:]:
                 order['source'] = False
@@ -286,14 +288,17 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
         # Present only when a producer declared a subordinal, so other inputs keep their exact receipts.
         declared = {case for case, state in ordering.items() if state['source'] and not (state['capture'] or state['timestamp'])}
         inputs['source_order'] = dict(profile='ahl-declared-source-order-v1', source_profiles=sorted(declared_profiles),
-            declared_events=declared_events, basis='declared_capture_order', execution_order='unknown',
+            declared_events=declared_events, declared_by=source_order_declared_by,
+            basis='declared_capture_order', execution_order='unknown',
             cross_segment_order='unknown', declared_order_cases=sum(state['source'] for state in ordering.values()),
             declared_order_only_cases=len(declared),
             selected_sequence_cases=len(declared & set(sequence_inputs)),
             selected_observation_cases=len(declared & selected_observations),
             tied_capture_order_cases=sum(state['tied'] for state in ordering.values()),
             unresolved_tied_cases=sum(state['tied'] and case not in ordered for case, state in ordering.items()),
-            cross_segment_cases=sum(state['crossed'] for state in ordering.values()))
+            cross_segment_cases=sum(state['crossed'] for state in ordering.values()),
+            cross_segment_unordered_cases=sum(state['crossed'] and case not in ordered for case, state in ordering.items()),
+            cross_segment_timestamp_ordered_cases=sum(state['crossed'] and case in ordered for case, state in ordering.items()))
         limitations.append('Declared source subordinals order records within one native line of one file only; '
                            'they are not execution, causal or cross-file order.')
     return dict(schema_version=1, profile='ahl-private-diagnosis-v1',

@@ -144,6 +144,41 @@ class ClaudeSourceOrderTests(unittest.TestCase):
         same_file = analyze((dict(row, source_order_segment=0) for row in events), select_methods=True)['method_inputs']
         self.assertEqual((same_file['capture_order_cases'], same_file['unordered_sequence_cases']), (1, 0))
 
+    def test_cross_file_reports_separate_unknown_capture_order_from_timestamp_ordered_cases(self):
+        def events(case, stamps):
+            return [dict(case_id=case, event_id=str(index), activity='tool_call', capture_order=index,
+                         source_order_profile=PROFILE, source_order_segment=index, source_suborder=0,
+                         **({'timestamp': f'2026-01-01T00:00:0{index}Z'} if stamps else {})) for index in range(2)]
+        result = analyze(iter([*events('timed', True), *events('untimed', False)]), select_methods=True)
+        declared = result['method_inputs']['source_order']
+        self.assertEqual((declared['cross_segment_cases'], declared['cross_segment_unordered_cases'],
+                          declared['cross_segment_timestamp_ordered_cases']), (2, 1, 1))
+        self.assertEqual(result['method_inputs']['selected_sequence_cases'], 1)  # Timestamps are an independent route.
+        receipt = summarize(dict(analysis=result))
+        coverage = {row['id']: row for row in receipt['algorithms']}['recurring_sequences']['coverage']
+        self.assertEqual((coverage['cross_file_capture_order_unknown_cases'], coverage['cross_file_unordered_cases']), (2, 1))
+        self.assertNotIn('cross_file_cases', coverage)
+        text = report(receipt)
+        self.assertIn('Capture order is unknown across files for 2 cases: 1 remain unordered and 1 are ordered only by strict timestamps.', text)
+
+    def test_caller_supplied_ledgers_fingerprint_the_subordinal_and_are_attributed_to_the_caller(self):
+        from agent_harness_lab.evidence import collect
+        rows = [dict(row) for row in self.read()]
+        def ledger(rows):  # One path: case identities depend on the ledger path, not only its records.
+            return fixture.write(self.root/'ledger.jsonl', [schema.event(row) for row in rows])
+        first = collect(self.project, events=ledger(rows))
+        rows[1]['source_suborder'], rows[2]['source_suborder'] = rows[2]['source_suborder'], rows[1]['source_suborder']
+        second = collect(self.project, events=ledger(rows))
+        self.assertNotEqual(first['fingerprint'], second['fingerprint'])
+        self.assertNotEqual(first['analysis']['method_inputs'], second['analysis']['method_inputs'])
+        self.assertEqual(first['analysis']['method_inputs']['source_order']['declared_by'], 'caller')
+        native = collect(self.project, events=self.single, source_format='claude', source_version=VERSION)
+        self.assertEqual(native['analysis']['method_inputs']['source_order']['declared_by'], 'native_adapter')
+        for change in (dict(source_format='normalized'), dict(source_version='claude-jsonl-v1'), dict(source_format=None)):
+            row = {key: value for key, value in dict(rows[0], **change).items() if value is not None}
+            with self.subTest(change), self.assertRaisesRegex(ValueError, 'declared source order'):
+                schema.event(row)
+
     def test_identities_revisions_journals_and_fingerprints_ignore_the_subordinal(self):
         from agent_harness_lab.evidence import collect
         def outputs(tag):
@@ -204,7 +239,9 @@ class ClaudeSourceOrderTests(unittest.TestCase):
         for text in (markdown, ledger, json.dumps(receipt)):
             self.assertNotIn('SYNTHETIC_SECRET', text); self.assertNotIn(str(self.project), text)
         again, _ = run('normalized', '--events', str(output/'events.v2.jsonl'))
-        self.assertEqual(again['method_selection']['inputs']['source_order'], declared)
+        exported = again['method_selection']['inputs']['source_order']
+        self.assertEqual((declared['declared_by'], exported['declared_by']), ('native_adapter', 'caller'))
+        self.assertEqual(dict(exported, declared_by='native_adapter'), declared)
 
 
 if __name__ == '__main__':

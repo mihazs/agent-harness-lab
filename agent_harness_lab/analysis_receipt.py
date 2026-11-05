@@ -13,12 +13,14 @@ def summarize(data):
     declared = inputs.get('source_order')
     def ordered(reason, coverage, selected):
         if declared is None: return reason, coverage
-        # Only producer-declared subordinals reach this branch; execution and cross-file order stay unknown.
+        # Reached when any record declares a subordinal, by the native adapter or a caller (see declared_by).
+        # Execution order stays unknown; capture order across files is unknown, though timestamps may still order a case.
         return (reason + ' A versioned within-line source subordinal can supply declared capture order; '
-                'tied, absent and cross-file order remain excluded.',
+                'tied or absent subordinals cannot, capture order across files is unknown, and strict timestamps remain an independent route.',
                 dict(coverage, declared_capture_order_cases=declared[selected],
                      unresolved_tied_cases=declared['unresolved_tied_cases'],
-                     cross_file_cases=declared['cross_segment_cases']))
+                     cross_file_capture_order_unknown_cases=declared['cross_segment_cases'],
+                     cross_file_unordered_cases=declared['cross_segment_unordered_cases']))
     def method(name, algorithm, outputs, *, eligible=True, reason, coverage):
         selected = bool(events and eligible and execution.get(name) == 'completed')
         method_events = dict(directly_follows=events, recurring_sequences=inputs.get('sequence_events', 0),
@@ -133,8 +135,11 @@ def report(receipt):
     declared = receipt.get('method_selection', {}).get('inputs', {}).get('source_order')
     if declared is not None:
         lines += [f"Declared capture order: {declared['declared_order_only_cases']} cases are ordered only by a versioned "
-                  f"within-line source subordinal ({', '.join(declared['source_profiles'])}); it is not execution or causal order. "
-                  f"Still unordered: {declared['unresolved_tied_cases']} tied and {declared['cross_segment_cases']} cross-file cases.", '']
+                  f"within-line source subordinal ({', '.join(declared['source_profiles'])}, declared by {declared['declared_by']}); "
+                  f"it is not execution or causal order. Still unordered: {declared['unresolved_tied_cases']} tied cases.",
+                  f"Capture order is unknown across files for {declared['cross_segment_cases']} cases: "
+                  f"{declared['cross_segment_unordered_cases']} remain unordered and "
+                  f"{declared['cross_segment_timestamp_ordered_cases']} are ordered only by strict timestamps.", '']
     lines += ['', 'Not run by read-only analysis:', '']
     lines += [f"- {row['id']}: {row['reason']}" for row in receipt['not_run']]
     lines += ['', 'Collection caveats:', '']

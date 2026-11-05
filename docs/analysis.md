@@ -118,11 +118,14 @@ key `(capture_order, source_suborder)` within one segment and profile as
 `declared_capture_order_cases` in the receipt coverage). Remaining limitations stay
 explicit: a tie whose records lack a usable subordinal, a repeated or reversed key,
 and an unrecognized profile leave the case unordered (`unresolved_tied_cases`).
-When one case's records come from different segments, the case is unordered even
-if offset ordinals increase (`cross_segment_cases`); the order of copies or
-archives of one session is not established. Valid strictly increasing timestamps
-remain a separate route. Hashed block identities and response IDs never supply
-order, and no timestamp is synthesized.
+When one case's records come from different segments, its capture order is
+unknown even if offset ordinals increase (`cross_segment_cases`); the order of
+copies or archives of one session is not established. Valid strictly increasing
+timestamps remain an independent route, so such a case can still be ordered by
+its timestamps. The receipt reports both parts: `cross_segment_unordered_cases`
+stay unordered and `cross_segment_timestamp_ordered_cases` are ordered only by
+timestamps. Hashed block identities and response IDs never supply order, and no
+timestamp is synthesized.
 
 The subordinal changes only which cases qualify as ordered inputs. It adds no
 outcome, success/failure or independence label, and recurrence and matching
@@ -132,13 +135,18 @@ roots, for example a normalized file combining exported ledgers of separate
 sessions. Claude records carry no input/result/state signatures, so state-aware
 matching stays unselected for them.
 
-The new fields stay outside event IDs, journal record identities and revisions,
-the collection fingerprint and duplicate-UUID comparison; they derive from
-`capture_order`, the hashed block index and the file being read. Inputs without
-these fields keep their previous receipts byte for byte, and the `source_order`
-summary appears only when a record declares one. Normalized inputs may carry the
-fields as caller declarations, as with `capture_order`; partial declarations and
-unknown profiles are rejected. Broader cross-file ordering remains open in
+For the pinned Claude adapter the new fields stay outside event IDs, journal
+record identities and revisions, the collection fingerprint and duplicate-UUID
+comparison; they derive from `capture_order`, the hashed block index and the file
+being read. Inputs without these fields keep their previous receipts byte for
+byte, and the `source_order` summary appears only when a record declares one.
+A profile is accepted only on records of its producer (`source_format: claude`,
+`source_version: claude-jsonl-2.1.316`); partial declarations and unknown profiles
+are rejected. A normalized ledger, such as an exported `events.v2.jsonl`, may
+carry the fields as caller declarations, like `capture_order`. The summary then
+reports `declared_by: caller` instead of `native_adapter`, and the collection
+fingerprint includes the fields because they cannot be rederived from the
+ledger. Broader cross-file ordering remains open in
 [#190](https://github.com/mihazs/agent-harness-lab/issues/190).
 
 ## Optional algorithms and remaining integration
