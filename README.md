@@ -66,7 +66,8 @@ input/output conventions and nested command help.
 You can call `ahl improve .` directly: it collects and analyzes evidence itself.
 Running `analyze` first is optional.
 
-What `improve` and `watch` change, and what they never change:
+What `improve` and `watch` themselves write, and what AHL never writes (their agent is
+cooperative, not sandboxed):
 
 - `ahl improve .` writes private state only: staged baseline and candidate copies,
   evaluation results, a change plan and a run lock. AHL itself never writes project

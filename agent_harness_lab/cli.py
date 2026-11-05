@@ -111,7 +111,7 @@ def main(argv=None):
         from tools.link_skills import main as install_skills
         install_skills(argv[1:], source=assets() / 'skills')
         return 0
-    parser = argparse.ArgumentParser(prog='ahl', description='Start with ahl analyze . for read-only analysis, or ahl improve . to stage, evaluate and recommend\nharness candidates in one call. improve and watch never apply behavioral changes to the project.',
+    parser = argparse.ArgumentParser(prog='ahl', description='Start with ahl analyze . for read-only analysis, or ahl improve . to stage, evaluate and recommend\nharness candidates in one call. AHL itself writes only private state; behavioral candidates stay recommendations\n(except explicit improve --repair-contracts skill-header repairs), and the cooperative agent is not sandboxed.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='Everyday use:\n  ahl analyze .\n  ahl improve .\n\nOptional setup inspection:\n  ahl doctor . --json\n\nUse ahl COMMAND --help for required inputs, side effects and output contracts.\nAnalysis and improvement outputs are private; hashes do not authorize publication.\nWorkflow exits: 0 completed; 1 execution/interruption/budget; 2 invalid input;\n3 blocked or inconclusive. Setup and low-level tools document their own outcomes.')
     parser.add_argument('--version', action='version', version=version(),help='Print the installed AHL version and exit without running a command')
@@ -146,7 +146,7 @@ def main(argv=None):
     for name in ('analyze', 'improve', 'watch'):
         helps = {'analyze': 'Discover project evidence and failure candidates',
             'improve': 'Stage and evaluate harness candidates, then recommend; never applies behavioral changes (only --repair-contracts may apply bounded skill-header repairs)',
-            'watch': 'Recheck evidence; rerun recommendation-only staging and evaluation only when evidence or configuration changes; AHL never writes harness files'}
+            'watch': 'Recheck evidence; rerun recommendation-only staging and evaluation on a first pass, changed evidence or configuration, or a classified transient retry; AHL never writes harness files'}
         boundary = {'analyze': '',
             'improve': 'Changes: private state only: run artifacts (staged baseline/candidate copies, evaluation results, change plan) and a run lock.\n'
                 'AHL never writes project instructions, skills or hooks; behavioral candidates stay recommendations.\n'

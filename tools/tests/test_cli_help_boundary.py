@@ -12,12 +12,13 @@ ROOT = Path(__file__).resolve().parents[2]
 
 # Exact help snapshots: the lines that say what each command changes and never changes.
 TOP_DESCRIPTION = ('Start with ahl analyze . for read-only analysis, or ahl improve . to stage, evaluate and recommend\n'
-                   'harness candidates in one call. improve and watch never apply behavioral changes to the project.\n')
+                   'harness candidates in one call. AHL itself writes only private state; behavioral candidates stay recommendations\n'
+                   '(except explicit improve --repair-contracts skill-header repairs), and the cooperative agent is not sandboxed.\n')
 SUMMARIES = {
     'improve': 'Stage and evaluate harness candidates, then recommend; never applies behavioral changes '
                '(only --repair-contracts may apply bounded skill-header repairs)',
-    'watch': 'Recheck evidence; rerun recommendation-only staging and evaluation only when evidence or '
-             'configuration changes; AHL never writes harness files',
+    'watch': 'Recheck evidence; rerun recommendation-only staging and evaluation on a first pass, changed evidence '
+             'or configuration, or a classified transient retry; AHL never writes harness files',
 }
 BOUNDARIES = {
     'improve': 'Changes: private state only: run artifacts (staged baseline/candidate copies, evaluation results, change plan) and a run lock.\n'
@@ -51,7 +52,8 @@ FORBIDDEN = ('adopt supported harness repairs', 'continuously improve', 'automat
              'auto-adopt', 'adopts')
 # Unqualified guarantees about the whole command: the cooperative agent is not sandboxed, so only what AHL
 # itself writes can be promised.
-UNQUALIFIED = ('never changes:', 'never edits')
+UNQUALIFIED = ('never changes:', 'never change:', 'never edits', 'never apply behavioral changes to the project',
+               'only when evidence or configuration changes')
 README_BOUNDARY = (
     '`ahl improve .` writes private state only: staged baseline and candidate copies, evaluation results, '
     'a change plan and a run lock. AHL itself never writes project instructions, skills or hooks.',
