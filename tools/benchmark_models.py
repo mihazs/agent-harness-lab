@@ -239,6 +239,12 @@ def evaluate_triage_policy(rows, probabilities, policy):
         qualification='descriptive_only', automatic_promotion=False)
 
 
+def file_sha256(path):
+    """Same digest as hashing path.read_bytes(), without holding the file beside loaded models."""
+    with Path(path).open('rb') as stream:
+        return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
 def model_digest(path):
     digest = hashlib.sha256()
     for file in sorted(path.rglob('*')):
@@ -413,7 +419,7 @@ def main():
         calibration = [(r, p) for r, p in zip(rows, probabilities) if r['split'] == 'calibration']
         threshold = choose_threshold([r for r, _ in calibration], [p for _, p in calibration])
         result = dict(schema_version=1, method=args.method, model_path=str(args.model_path) if args.model_path else None,
-                      revision=args.revision, question=args.question, input_sha256=hashlib.sha256(args.input.read_bytes()).hexdigest(),
+                      revision=args.revision, question=args.question, input_sha256=file_sha256(args.input),
                       threshold=threshold, elapsed_seconds=elapsed, peak_rss_native_units=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss,
                       threshold_authority='descriptive_smoke_only',
                       probability_semantics='model scores; calibration is measured, not assumed',

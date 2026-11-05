@@ -11,7 +11,7 @@ import time
 from weakref import WeakKeyDictionary
 
 from agent_harness_lab.private_journal import encoded
-from agent_harness_lab.evaluation.integrity import digest,read_regular
+from agent_harness_lab.evaluation.integrity import digest,read_regular,regular_sha256
 
 PROFILE='ahl-implementation-prerequisites-v1'
 _ACTIVE=ContextVar('ahl_workflow_prerequisites',default=None)
@@ -198,7 +198,7 @@ class _Scope:
         for binding in self.data['bindings']:
             if (self._tree(Path(binding['baseline']))!=binding['baseline_sha256']
                     or self._tree(Path(binding['candidate']))!=binding['candidate_sha256']
-                    or hashlib.sha256(read_regular(Path(binding['manifest']),1024*1024)).hexdigest()!=binding['manifest_sha256']
+                    or regular_sha256(Path(binding['manifest']),1024*1024)!=binding['manifest_sha256']
                     or any(self._tree(Path(root))!=sha for root,sha in binding['oracle_roots'].items())):
                 self.lost=True;raise ValueError('workflow prerequisite binding changed')
         if self.instruction_client is not None:

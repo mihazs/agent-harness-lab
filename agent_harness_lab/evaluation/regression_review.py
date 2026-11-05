@@ -11,7 +11,7 @@ import time
 from agent_harness_lab.monitoring.state import atomic_json
 from agent_harness_lab.private_journal import MAX_EVENTS, MAX_METADATA, PrivateJournal, encoded, record, sync_directory, write_bytes
 from .bank_tools import materialize_sources
-from .integrity import artifacts_digest, contained, copy_frozen, digest, read_regular, tree
+from .integrity import artifacts_digest, contained, copy_frozen, digest, read_regular, regular_sha256, tree
 from .regression_controls import containment, read_draft
 from .regression_replay import outcome_rows, read_spec, replay
 from .regressions import fields, load, references, sha256, text
@@ -81,7 +81,7 @@ class ReviewStore(PrivateJournal):
         if events[0][0]['payload'].get('inputs_sha256') != identity:
             raise ValueError('case input manifest changed')
         for name, expected in inputs['hashes'].items():
-            if hashlib.sha256(read_regular(contained(case, name), 256*1024)).hexdigest() != expected:
+            if regular_sha256(contained(case, name), 256*1024) != expected:
                 raise ValueError('stored case declaration changed')
         return case, inputs, events
 
@@ -271,7 +271,7 @@ class ReviewStore(PrivateJournal):
             # Leave room for completion, draft/review, acceptance and two operator decisions.
             if len(events)+7 > MAX_EVENTS: raise ValueError('case journal lacks lifecycle completion capacity')
             try:
-                sources_match = all(hashlib.sha256(read_regular(p, 256*1024)).hexdigest() == inputs['hashes'][n]
+                sources_match = all(regular_sha256(p, 256*1024) == inputs['hashes'][n]
                                     for n, p in inputs['origins'].items())
             except (OSError, ValueError): sources_match = False
             if not sources_match:

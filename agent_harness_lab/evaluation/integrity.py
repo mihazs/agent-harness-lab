@@ -42,6 +42,26 @@ def read_regular(path, max_bytes):
     return b''.join(_regular_chunks(path,max_bytes))
 
 
+def regular_sha256(path, max_bytes):
+    """Hex SHA-256 of what read_regular would return, holding one chunk at a time."""
+    identity = hashlib.sha256()
+    for raw in _regular_chunks(path, max_bytes): identity.update(raw)
+    return identity.hexdigest()
+
+
+def regular_size(path, max_bytes):
+    """Byte length of what read_regular would return, holding one chunk at a time."""
+    return sum(len(raw) for raw in _regular_chunks(path, max_bytes))
+
+
+def regular_equal(path, expected, max_bytes):
+    """Whether read_regular(path, max_bytes) == expected; the whole file is still read and checked."""
+    view, offset, same = memoryview(expected), 0, True
+    for raw in _regular_chunks(path, max_bytes):
+        same = same and view[offset:offset+len(raw)] == raw; offset += len(raw)
+    return same and offset == len(view)
+
+
 def relative(value):
     if not isinstance(value, str) or not value or '\\' in value or '\0' in value:
         raise ValueError('invalid relative path')

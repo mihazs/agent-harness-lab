@@ -12,9 +12,9 @@ from agent_harness_lab.cli import assets
 from agent_harness_lab.private_journal import encoded, record, sync_directory, write_bytes
 from . import certification_access as ledger
 from .decision_receipts import engine
-from .integrity import contained, copy_frozen, digest, read_regular, tree
+from .integrity import contained, copy_frozen, digest, read_regular, regular_size, tree
 from .regressions import fields, sha256
-from .working_state import WorkingState, analysis_snapshot, check_deadline
+from .working_state import Snapshot, WorkingState, analysis_snapshot, check_deadline
 
 PROFILE='controlled-development-derivation-v1'
 _OWNED=WeakKeyDictionary()
@@ -27,8 +27,37 @@ class _Handoff:
 def _hash(value): return hashlib.sha256(encoded(value)).hexdigest()
 
 
+def _bytes_repr(raw, size=65536):
+    """repr(raw) in pieces: the quote is chosen for the whole value and every escape is per byte."""
+    double = b"'" in raw and b'"' not in raw
+    quote = '"' if double else "'"
+    yield 'b'+quote
+    for start in range(0, len(raw), size):
+        piece = raw[start:start+size]; text = repr(piece)[2:-1]
+        # Alone, a piece with only single quotes would pick double quotes and leave them unescaped.
+        if not double and b"'" in piece and b'"' not in piece: text = text.replace("'", "\\'")
+        yield text
+    yield quote
+
+
+def _snapshot_repr(snapshot):
+    """repr(snapshot) in pieces, so a pin never holds a second, escaped copy of every file."""
+    files = snapshot.files
+    if (type(snapshot) is not Snapshot or type(files) is not tuple or any(type(f) is not tuple or len(f) != 3
+            or type(f[0]) is not str or type(f[1]) is not int or type(f[2]) is not bytes for f in files)):
+        yield repr(snapshot); return
+    yield repr(replace(snapshot, files=()))[:-2]
+    for index, (name, mode, raw) in enumerate(files):
+        yield (', (' if index else '(') + repr(name) + ', ' + repr(mode) + ', '
+        yield from _bytes_repr(raw)
+        yield ')'
+    yield (',' if len(files) == 1 else '') + '))'
+
+
 def _snapshot_pin(snapshot):
-    return hashlib.sha256(repr(snapshot).encode()).hexdigest()
+    identity = hashlib.sha256()
+    for piece in _snapshot_repr(snapshot): identity.update(piece.encode())
+    return identity.hexdigest()
 
 
 def _tree_pin(path,deadline):
@@ -125,7 +154,7 @@ def _source(store,source_run,source_derivation,task_ids,deadline):
         for source_path,target in ((fixture,'fixtures/'+ident),(bundle,'oracles/'+ident)):
             metadata=tree(source_path); copies.append((source_path,target,digest(source_path),metadata))
     base=tree(baseline,max_files=100,max_bytes=1024*1024)
-    if 1+sum(len(value[3]) for value in copies)>100 or sum(len(read_regular(p/rel,1024*1024)) for p,_,_,metadata in copies for rel in metadata)>1024*1024:
+    if 1+sum(len(value[3]) for value in copies)>100 or sum(regular_size(p/rel,1024*1024) for p,_,_,metadata in copies for rel in metadata)>1024*1024:
         raise ValueError('selected source exceeds existing working-state input bounds')
     view=dict(skills=[],harness_paths=[],tasks=selected,grader_bundles={t['id']:dict(path='oracles/'+t['id']) for t in tasks})
     return origin,parents,baseline,_tree_pin(baseline,deadline),copies,view

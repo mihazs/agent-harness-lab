@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import stat
 import tempfile
-from agent_harness_lab.evaluation.integrity import contained, read_regular
+from agent_harness_lab.evaluation.integrity import contained, read_regular, regular_sha256
 from agent_harness_lab.private_journal import PrivateJournal, encoded, record, record_bytes, sync_directory, write_bytes
 from .execution import RecordRef, frozen, objects, unpack
 from .schema import Contract, EvidenceRecord, digest, fingerprint, label
@@ -119,6 +119,18 @@ class LineageStore(PrivateJournal):
         state, raw = store.read_snapshot()
         return path, state, raw, hashlib.sha256(raw).hexdigest()
 
+    def unchanged(self, path, cache_sha256):
+        """Same outcome as self.cache(path)[3] == cache_sha256 without a second parsed copy.
+
+        Matching bytes were already validated, so only a mismatch or read failure needs the full
+        read_snapshot path to raise exactly what it always raised."""
+        store = SourceStore(path, project_sha256=self.project, scope_sha256=self.scope)
+        try:
+            store._safe_path()
+            if regular_sha256(store.path, store.path.stat().st_size) == cache_sha256: return True
+        except (OSError, ValueError): pass
+        return self.cache(path)[3] == cache_sha256
+
     def case_identity(self, claim, cache_sha256):
         value = claim.to_dict(); value.pop('author')
         return digest(dict(project_sha256=self.project, scope_sha256=self.scope, cache_sha256=cache_sha256, claim=value))
@@ -135,7 +147,7 @@ class LineageStore(PrivateJournal):
                 fingerprint(entry.name[:-5]); info = entry.stat(follow_symlinks=False)
                 if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1: raise ValueError('unsafe lineage snapshot')
         if path.exists():
-            if hashlib.sha256(read_regular(path, None)).hexdigest() != identity:
+            if regular_sha256(path, None) != identity:
                 raise ValueError('immutable lineage snapshot changed')
         else:
             write_bytes(path, raw)
@@ -159,7 +171,7 @@ class LineageStore(PrivateJournal):
             with tempfile.TemporaryDirectory(dir=self.root, prefix='.lineage-stage-') as temporary:
                 stage = Path(temporary)/'case'; stage.mkdir(mode=0o700); (stage/'events').mkdir(mode=0o700)
                 write_bytes(stage/'claim.json', raw_claim); write_bytes(stage/'inputs.json', encoded(inputs)); sync_directory(stage)
-                if self.cache(origin)[3] != cache_hash: raise ValueError('source cache changed during lineage capture')
+                if not self.unchanged(origin, cache_hash): raise ValueError('source cache changed during lineage capture')
                 events = []; self.append(stage, events, 'proposed', 'proposed', dict(inputs_sha256=hashlib.sha256(encoded(inputs)).hexdigest()))
                 cases = contained(self.root, 'cases'); cases.mkdir(mode=0o700, exist_ok=True)
                 stage.rename(self.case(case_id)); sync_directory(cases); sync_directory(self.root)
@@ -178,7 +190,7 @@ class LineageStore(PrivateJournal):
             raise ValueError('lineage claim changed')
         fingerprint(inputs['cache_sha256'])
         if inputs['snapshot'] != 'snapshots/'+inputs['cache_sha256']+'.json': raise ValueError('invalid lineage snapshot locator')
-        if hashlib.sha256(read_regular(contained(self.root, inputs['snapshot']), None)).hexdigest() != inputs['cache_sha256']:
+        if regular_sha256(contained(self.root, inputs['snapshot']), None) != inputs['cache_sha256']:
             raise ValueError('lineage snapshot changed')
         for event, _ in events[1:]:
             if set(event['payload']) != {'review'}: raise ValueError('invalid persisted lineage decision')

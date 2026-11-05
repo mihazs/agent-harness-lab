@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 from agent_harness_lab.config import read_json
-from agent_harness_lab.evaluation.integrity import contained, read_regular, unique_object
+from agent_harness_lab.evaluation.integrity import contained, read_regular, regular_equal, unique_object
 from .schema import EvidenceRecord, SourceSpec, digest, fingerprint
 from .store import native_metadata
 from .execution import ExecutionMetadata
@@ -73,11 +73,14 @@ class LocalExport:
                 self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)[1] != expected):
             raise ValueError('source selection changed during capture')
 
-    def _normalized_export(self, source, expected=None):
+    def _normalized_payload(self, source, expected=None):
         current, value = self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)
         if current != source or not current.enabled or expected is not None and value != expected:
             raise ValueError('normalized export declaration changed or is disabled')
-        payload = contained(self.manifest.parent, value['data'])
+        return value, contained(self.manifest.parent, value['data'])
+
+    def _normalized_export(self, source, expected=None):
+        value, payload = self._normalized_payload(source, expected)
         return value, read_regular(payload, None)
 
     def read(self, source):
@@ -100,7 +103,7 @@ class LocalExport:
         records = tuple(EvidenceRecord.parse(r) for r in rows)
         if metadata is not None: metadata.validate(source, records)
         if graph is not None: graph.validate(source, records)
-        if self._normalized_export(source, value)[1] != raw:
+        if not regular_equal(self._normalized_payload(source, value)[1], raw, None):
             raise ValueError('normalized export payload changed during capture')
         if self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256) != (source, value):
             raise ValueError('normalized export declaration changed after readback')

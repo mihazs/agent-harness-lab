@@ -1,4 +1,5 @@
 """Synthetic local export readbacks; no network, credentials or outcome authority."""
+from contextlib import ExitStack
 from dataclasses import replace
 import hashlib
 import json
@@ -35,12 +36,17 @@ class NormalizedExportTests(unittest.TestCase):
         return before
 
     def mutate_during_read(self,change,at=1):
-        original=snapshot.read_regular; reads=[]
-        def reading(path,limit):
-            raw=original(path,limit); reads.append(Path(path))
+        # The capture reads the payload whole; the readback compares it chunk by chunk.
+        original,compare=snapshot.read_regular,snapshot.regular_equal; reads=[]
+        def observed(path,result):
+            reads.append(Path(path))
             if Path(path)==self.f.data and reads.count(self.f.data)==at: change()
-            return raw
-        return reads,patch.object(snapshot,'read_regular',side_effect=reading)
+            return result
+        control=ExitStack()
+        control.enter_context(patch.object(snapshot,'read_regular',side_effect=lambda path,limit:observed(path,original(path,limit))))
+        control.enter_context(patch.object(snapshot,'regular_equal',
+            side_effect=lambda path,expected,limit:observed(path,compare(path,expected,limit))))
+        return reads,control
 
     def test_payload_change_after_capture_cannot_advance_checkpoint(self):
         before=self.seed()
