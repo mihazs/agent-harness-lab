@@ -155,7 +155,10 @@ class Mem0SourceTests(unittest.TestCase):
                            ('unrecognized', event('h3', 'mem-tests', 'purge', None, 'all tests pass in the invented repo',
                                                   None, True)),
                            ('flagged', event('h3', 'mem-tests', 'UPDATE', None, 'all tests pass in the invented repo',
-                                             None, True))):
+                                             None, True)),
+                           # An unrecognized event name is never current, even unflagged and matching the listing.
+                           ('unrecognized-live', event('h3', 'mem-tests', 'add', None, 'all tests pass in the invented repo',
+                                                       None, False))):
             with self.subTest(head=case):
                 value = copy.deepcopy(EXPORT)
                 value['history']['mem-tests'] = [head]
