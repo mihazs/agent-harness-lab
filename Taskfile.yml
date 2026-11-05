@@ -559,6 +559,10 @@ tasks:
     desc: Run offline Git/GitHub commit-join negative controls with synthetic journals
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_commit_join.py" -v'
+  test:sources:memory-provenance:
+    desc: Run declared ai-memory handoff/workstream provenance cases with synthetic OKF bundles
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_memory_provenance.py" -v'
   test:sources:context:
     desc: Run private journal inventory and offline analyze/doctor context cases
     cmds:
