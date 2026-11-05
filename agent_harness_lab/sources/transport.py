@@ -2,6 +2,7 @@
 import http.client
 import json
 import math
+import re
 import ssl
 import time
 from urllib.parse import unquote, urljoin, urlsplit
@@ -11,6 +12,28 @@ from .schema import SourceSpec, digest, fingerprint
 
 class TransportError(ValueError):
     """Redacted transport failure; raw URLs, headers and bodies stay in memory."""
+
+
+class HTTPStatusError(TransportError):
+    """A non-200 response; only the status code is retained, never the body or headers."""
+
+    def __init__(self, status):
+        super().__init__('unsupported HTTP status or encoding')
+        self.status = status
+
+
+def next_link(link):
+    """Return the single rel="next" target of an RFC 8288 Link header, or None."""
+    if link is None: return None
+    if not isinstance(link, str): raise ValueError('invalid pagination header')
+    following = None
+    for part in link.split(','):
+        match = re.fullmatch(r'\s*<([^<>]+)>;\s*rel="(next|prev|first|last)"\s*', part)
+        if match is None: raise ValueError('unsupported pagination header')
+        if match[2] != 'next': continue
+        if following is not None: raise ValueError('duplicate next page')
+        following = match[1]
+    return following
 
 
 def _json_exchange(origin, target, headers, *, timeout, deadline, max_bytes, body=None):
@@ -24,7 +47,9 @@ def _json_exchange(origin, target, headers, *, timeout, deadline, max_bytes, bod
     try:
         connection.request('GET' if body is None else 'POST', target, body=body, headers=headers)
         response = connection.getresponse()
-        if response.status != 200 or response.getheader('Content-Encoding', 'identity') != 'identity':
+        if response.status != 200:
+            raise HTTPStatusError(response.status)
+        if response.getheader('Content-Encoding', 'identity') != 'identity':
             raise TransportError('unsupported HTTP status or encoding')
         length = response.getheader('Content-Length')
         if length is not None and (not length.isdecimal() or max_bytes is not None and int(length) > max_bytes):

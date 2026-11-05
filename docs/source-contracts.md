@@ -1233,7 +1233,9 @@ does not assert compatibility with any real provider format.
 Pagination is confined to the configured HTTPS host, port and path subtree.
 Credential-bearing URLs, fragments, traversal and nested encodings are rejected.
 Redirects, non-200 statuses (including 429), compressed bodies, oversized or
-incomplete content and duplicate JSON keys fail the whole collection. There are
+incomplete content and duplicate JSON keys fail the whole collection. A non-200
+status raises `HTTPStatusError`, a `TransportError` that keeps only the status
+code, so a provider reader can map a denial to an explicit coverage state. There are
 no automatic retries, cookies, environment proxies or partial page returns.
 Connections and response streams close on success and failure. Raw URLs, headers
 and bodies stay in memory; public errors are redacted. Provider code must treat
@@ -1676,6 +1678,108 @@ grouping and diagnostic-utility validation remain open in #58.
 controls. `task test:sources:github:recheck:live` runs an explicitly selected public
 PR import/recheck with no credentials; it uses private temporary metadata, checks
 that the candidate journal is unchanged, and is skipped in ordinary test runs.
+
+## Explicit Gitea REST captures
+
+`sources.gitea.GiteaAPI` is a standard-library, GET-only reader for selected
+issues and pull requests of one explicitly named repository on a self-hosted
+Gitea instance. It does not assume GitHub API compatibility. Construct:
+
+```python
+GiteaSelection(base_url="https://gitea.example.test", owner="synthetic-owner",
+    repo="synthetic-repository", capture=("comments", "issues", "pulls", "reviews"),
+    issues=(7,), pulls=(8,))
+```
+
+`base_url` is the canonical HTTPS instance root: lowercase host, no default
+`:443`, no trailing slash, query, credentials or `/api/v1` suffix; a sub-path
+such as `https://gitea.example.test/forge` is allowed. `http://` and every other
+form are refused before any connection. `capture` is an ascending subset of
+`comments`, `issues`, `pulls` and `reviews`; `issues` and `pulls` must appear
+exactly when numbers are selected, `reviews` requires `pulls`, and one number
+cannot be both an issue and a PR (Gitea shares one index). There is no
+repository listing, search or enumeration: only the named numbers are read.
+
+Use `SourceSpec(kind="api", provider="gitea", version="v1", root_sha256=digest(base_url),
+project_sha256=selection.project_sha256, scope_sha256=selection.sha256,
+identity_provenance="source_declared_id", enabled=True)` and register
+`Capability("api", "gitea", "v1", ("contextual_assertion", "development_artifact"))`.
+
+Identity is the instance (host, port and root path) plus the case-insensitive
+`owner/repo` name, then the issue/PR number or the comment/review ID. The same
+number on another host, sub-path or repository has a different project and
+native identity. Each PR side keeps its own repository identity: a fork head is
+`head_repository_state: "other_repository"` with the fork's repository hash, even
+when its branch name and commit match the base; a deleted head repository is
+`unknown`. Issue repository, PR base repository and native comment/review parent
+links are checked against the selection; a foreign parent, a plain issue
+selected as a PR, or an issue/PR/repository that changes between its read and
+its readback fails the whole capture.
+
+Requests go to `/api/v1/version`, `/api/v1/repos/OWNER/REPO`, `.../issues/N`,
+`.../issues/N/comments`, `.../pulls/N` and `.../pulls/N/reviews`. The server
+version is recorded when `/api/v1/version` reports one, otherwise
+`server_version: "unknown"` with the observed state (`not_found`, `forbidden`,
+`unrecognized` and so on). Records are `gitea_instance`, `gitea_repository`,
+`gitea_issue`, `gitea_pull`, `gitea_comment` and `gitea_review`. Titles, bodies,
+labels, branch names and users are SHA-256 fingerprints, as in the GitHub reader;
+raw text, owner and repository names are neither stored nor printed. PRs keep
+base/head repository, branch and commit hashes, state, draft (or `unknown`),
+`merged`, the merge commit and merge base. Reviews keep their state (`APPROVED`,
+`COMMENT`, `PENDING`, `REQUEST_CHANGES`, `REQUEST_REVIEW`, otherwise `unknown`),
+commit, whether that commit matches the captured head, and `stale`, `dismissed`
+and `official` flags. A closed issue, merged PR or approval is a native claim
+only: `task_outcomes_verified` is false and records keep causal status and
+independence `unknown`.
+
+Listings send `page` and `limit=50`. A `Link` `rel="next"` must name the same
+collection with exactly the next page and the same limit, or the capture fails.
+`X-Total-Count` must stay constant and match the rows received. A missing next
+page, a changed or mismatched total, a full last page without a total, an issue
+comment count that differs from its listing, and a budget spent mid-listing each
+leave `pagination_incomplete` coverage with the reason in `basis`.
+
+HTTP 401, 403, 404 and 429 become coverage states (`unauthorized`, `forbidden`,
+`not_found`, `rate_limited`) on the resource that returned them. A 429 stops every
+later request; there is no automatic retry. A spent page, byte or deadline budget
+is `budget_exhausted`. Any of these, and any incomplete listing, makes the
+snapshot `checkpoint_ready: false`; the coverage manifest adds `not_observed` and
+marks `limit_reached`/`truncated`, and the registry refuses to commit it. The one
+exception is a 404 from the review listing of an already read PR, which older
+servers return: it is `unsupported_endpoint` with gap `unsupported_version` and
+warning `review_endpoint_unsupported`, and the rest of the capture may still be
+checkpointed. Other statuses, malformed JSON and non-JSON content fail closed
+without a snapshot.
+
+Repeat imports use the shared journal: an unchanged capture imports nothing, and
+an edited comment, moved PR head or changed review state adds a new native
+revision. The reader does not reconcile absences, so a comment missing from a
+later listing creates no tombstone.
+
+### Gitea CLI configuration
+
+The manifest has the GitHub configuration shape: `schema_version: 1`, `source`,
+`endpoint` (equal to `selection.base_url`), `selection` (`GiteaSelection.to_dict()`)
+and optional `limits` (`max_pages`, `max_bytes`, `timeout`, `seconds`). Probe and
+status never read credentials or contact the server. For `auth_mode: "configured"`,
+pass either `--authorization-file PRIVATE_FILE` or `--authorization-env NAME`.
+Both hold the complete Authorization header value, for example `token ...`.
+Only the named file or variable is read; there is no implicit lookup of Gitea
+CLI settings, Git credentials, netrc files or other environment variables, and
+`--authorization-env` is refused for GitHub configurations. A missing variable
+exits 3. Preview prints `gitea_summary` and `checkpoint_ready`. An import whose
+capture is denied, rate-limited or incomplete prints `status: "blocked"` with the
+summary, commits nothing and exits 3.
+
+`task test:sources:gitea` runs the synthetic controls against a fake HTTPS API
+on `gitea.example.test`: issues, PRs, comments and reviews; page/limit pagination
+and each incomplete-page case; repeat import and update; cross-host, sub-path and
+cross-repository number collisions; fork and deleted head identity; missing
+review and version endpoints; 401/403/404/429 coverage; non-HTTPS refusal; and
+GET-only requests. Live Gitea compatibility is not established by these fixtures.
+Still open in #170: inline review comments (`/pulls/N/reviews/ID/comments`),
+PR commits and files, timelines, issue/PR enumeration by state or time window,
+absence tombstones, a relationship graph and native recheck, and CI/job evidence.
 
 ## Offline CI test result reports
 

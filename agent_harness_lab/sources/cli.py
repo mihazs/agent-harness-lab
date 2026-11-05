@@ -12,6 +12,8 @@ from .git import GitExport
 from .test_results import PROVIDER as TEST_RESULTS, SOURCE_VERSION as TEST_RESULTS_VERSION, TestResultsExport
 from .execution import capture_snapshot
 from .github_config import GitHubConfigured
+from .gitea import PROVIDER as GITEA, GiteaConfigured
+from .remote_config import ConfiguredAPI
 from .native import NativeCapture
 from .claude import ClaudeCapture, SOURCE_VERSION as CLAUDE_VERSION, ROOT_VERSION as CLAUDE_ROOT_VERSION
 from .codex import CodexCapture, SOURCE_VERSION as CODEX_VERSION, ROOT_VERSION as CODEX_ROOT_VERSION
@@ -33,15 +35,17 @@ def main(argv):
         'For reviewed cache relationships, use ahl sources lineage --help.')
     parser.add_argument('operation', nargs='?', default='probe', choices=('probe', 'preview', 'import', 'status', 'recheck', 'lineage'),
         help='Requested source operation (default: %(default)s); lineage has its own subcommands and help')
-    parser.add_argument('--manifest',help='Schema-1 JSON: source/data local declaration, or source/endpoint/selection/limits GitHub configuration; no automatic discovery')
+    parser.add_argument('--manifest',help='Schema-1 JSON: source/data local declaration, or source/endpoint/selection/limits GitHub or Gitea configuration; no automatic discovery')
     parser.add_argument('--project-sha256',help='Expected 64-hex project identity matching the manifest; required with --manifest')
     parser.add_argument('--scope-sha256',help='Expected 64-hex selection/scope identity matching the manifest; required with --manifest')
     parser.add_argument('--cache',help='Private SourceStore journal file; required for import, status and recheck')
     parser.add_argument('--authorization-file',help='Private ASCII HTTP Authorization header file for an API source using configured authentication; never read by probe')
+    parser.add_argument('--authorization-env',metavar='NAME',help='Name of one environment variable holding the complete Authorization header value for a configured Gitea source; '
+        'only this named variable is read, never by probe; excludes --authorization-file')
     args = parser.parse_args(argv)
     try:
         if args.manifest is None:
-            if args.operation != 'probe' or any((args.project_sha256, args.scope_sha256, args.cache, args.authorization_file)):
+            if args.operation != 'probe' or any((args.project_sha256, args.scope_sha256, args.cache, args.authorization_file, args.authorization_env)):
                 raise ValueError()
             result = dict(schema_version=1, enabled_sources=0, source_read=False, network_used=False)
         else:
@@ -49,7 +53,10 @@ def main(argv):
             declaration = read_json(args.manifest)
             remote = isinstance(declaration, dict) and isinstance(declaration.get('source'), dict) and declaration['source'].get('kind') == 'api'
             if args.authorization_file is not None and not remote: raise ValueError('authorization file requires an API configuration')
-            connector = (GitHubConfigured(args.manifest, authorization_file=args.authorization_file) if remote else LocalExport(args.manifest))
+            gitea = remote and declaration['source'].get('provider') == GITEA
+            if args.authorization_env is not None and not gitea: raise ValueError('authorization variable requires a Gitea configuration')
+            connector = (GiteaConfigured(args.manifest, authorization_file=args.authorization_file, authorization_env=args.authorization_env) if gitea
+                else GitHubConfigured(args.manifest, authorization_file=args.authorization_file) if remote else LocalExport(args.manifest))
             source, _ = connector.declaration(**scope)
             if source.provider == 'ai-memory-okf':
                 connector = OKFExport(args.manifest)
@@ -73,8 +80,8 @@ def main(argv):
                 registry.register(Capability('local_file', 'codex-rollout', version, ('behavioral_event',)), connector)
             for version in (CLAUDE_VERSION, CLAUDE_ROOT_VERSION):
                 registry.register(Capability('local_file', 'claude-jsonl', version, ('behavioral_event',)), connector)
-            if isinstance(connector, GitHubConfigured):
-                registry.register(Capability('api', 'github', source.version, ('contextual_assertion', 'development_artifact')), connector)
+            if isinstance(connector, ConfiguredAPI):
+                registry.register(Capability('api', connector.provider, source.version, ('contextual_assertion', 'development_artifact')), connector)
             result = registry.probe(source, **scope)
             if result['status'] != 'recognized':
                 print(json.dumps(result)); return 3
@@ -93,6 +100,9 @@ def main(argv):
                     result['git_summary'] = connector.summary
                 elif isinstance(connector, TestResultsExport):
                     result['test_results_summary'] = connector.summary
+                elif isinstance(connector, GiteaConfigured):
+                    result['gitea_summary'] = connector.summary
+                    result['checkpoint_ready'] = snapshot.checkpoint_ready
                 elif isinstance(connector, NativeCapture):
                     result['native_summary'] = connector.summary
                     result['checkpoint_ready'] = snapshot.checkpoint_ready
@@ -102,7 +112,14 @@ def main(argv):
                 store = SourceStore(args.cache, **scope)
                 if args.operation == 'recheck': result = registry.recheck(source, store, **scope)
                 elif args.operation == 'import':
-                    result = registry.ingest(source, store, **scope).to_dict()
+                    try:
+                        result = registry.ingest(source, store, **scope).to_dict()
+                    except ValueError:
+                        # A denied, rate-limited or incomplete Gitea read is blocked access, never a checkpoint.
+                        if not isinstance(connector, GiteaConfigured) or getattr(connector, 'summary', {}).get('checkpoint_ready') is not False: raise
+                        print(json.dumps(dict(schema_version=1, status='blocked', checkpoint_committed=False, source_read=True,
+                            network_used=True, gitea_summary=connector.summary), sort_keys=True))
+                        return 3
                     if remote: result.update(source_read=True, network_used=True)
                 else:
                     result = registry.status(source, store, **scope)
