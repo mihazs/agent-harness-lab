@@ -5,9 +5,13 @@ on:
   pull_request:
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
         with:
@@ -30,4 +34,7 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 scripts/check_commit_message.py --range "origin/$BASE_REF..$HEAD_SHA"
       - run: task setup:test
-      - run: task test
+      - name: Run the suite and stop at the first failure
+        env:
+          PYTEST_ADDOPTS: --maxfail=1
+        run: task test
