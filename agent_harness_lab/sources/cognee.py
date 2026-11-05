@@ -192,20 +192,23 @@ def parse(value, selection, bounds):
         sources, targets = STRUCTURAL.get(name, ((), ()))
         return types.get(source) in sources and types.get(target) in targets
     documents = {identity for identity, kind in kinds.items() if kind == 'document'}
-    # A chunk names its document by the is_part_of edge and its flat document_id; both must agree.
+    # A chunk names its document by a structural is_part_of edge and its flat document_id; both must agree.
+    # Only edges between their pinned types trace origins, as only they are native structure.
     parents = defaultdict(set)
     for identity, occurrence, row in nodes:
         if kinds[identity] == 'chunk' and text(row.get('document_id')): parents[identity].add(row['document_id'])
     for source, target, name, occurrence, properties in edges:
-        if name == 'is_part_of' and kinds.get(source) == 'chunk': parents[source].add(target)
+        if name == 'is_part_of' and structural(source, target, name): parents[source].add(target)
     def chunk_origin(identity):
         found = parents.get(identity, set())
         if len(found) != 1: return 'missing' if not found else 'conflicting', None
         document, = found
-        return 'traced' if document in documents else 'not_exported', ref(document)
+        if document in documents: return 'traced', ref(document)
+        # An exported node that is not a document is never an origin document; only an absent one is not_exported.
+        return ('not_exported', ref(document)) if document not in kinds else ('missing', None)
     sources = defaultdict(set)
     for source, target, name, occurrence, properties in edges:
-        if name == 'contains' and kinds.get(source) == 'chunk':
+        if name == 'contains' and structural(source, target, name):
             status, document = chunk_origin(source)
             sources[target].add(document if status == 'traced' else None)
     def origin(identity):

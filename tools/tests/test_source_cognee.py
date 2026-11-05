@@ -181,6 +181,35 @@ class CogneeSourceTests(unittest.TestCase):
         self.assertEqual([(c.detail, provenance[c.native_id_sha256]) for c in relations[len(EDGES):]],
                          [('other', 'model_hypothesis')]*len(misnamed))
         self.assertEqual([c.detail for c in relations[:len(EDGES)]], ['is_part_of', 'contains', 'contains', 'is_a', 'other'])
+        # Misnamed edges never decide an origin: the chunk keeps its one document and the contained type stays untraced.
+        ids = {n['id']: c.native_id_sha256 for n, c in zip(NODES, self.connector.claims)}
+        origins = {c.native_id_sha256: (c.origin_status, c.origin_document_sha256) for c in self.connector.claims}
+        self.assertEqual(origins[ids[CHUNK]], ('traced', ids[DOC]))
+        self.assertEqual([origins[ids[i]] for i in (ALICE, ACME, PERSON)], [('traced', ids[DOC])]*2 + [('untraced', None)])
+        self.assertEqual([(c.origin_status, c.origin_document_sha256) for c in relations[len(EDGES):]],
+                         [('traced', ids[DOC])]*4 + [('missing', None)])
+        self.assertFalse({'chunk_origin_conflicting', 'entity_origin_traced'} & set(self.connector.summary['warnings']))
+
+    def test_origins_never_name_an_exported_non_document(self):
+        ids = lambda: {n['id']: c.native_id_sha256 for n, c in zip(nodes, self.connector.claims)}
+        # A document_id, or the only is_part_of edge, naming an exported entity names no document.
+        bare = {k: v for k, v in NODES[1].items() if k != 'document_id'}
+        for case, chunk, edges in (('document_id', dict(NODES[1], document_id=ALICE), EDGES[1:]),
+                                   ('is_part_of', bare, [(CHUNK, ALICE, 'is_part_of', {})]+EDGES[1:])):
+            with self.subTest(case=case):
+                nodes = [NODES[0], chunk, *NODES[2:]]
+                self.read(snapshot(nodes=nodes, edges=edges))
+                chunk_claim, = self.claims('chunk')
+                self.assertEqual((chunk_claim.origin_status, chunk_claim.origin_document_sha256), ('missing', None))
+                self.assertNotIn(ids()[ALICE], {c.origin_document_sha256 for c in self.connector.claims})
+                self.assertEqual(self.connector.summary['origins']['not_exported'], 0)
+                self.assertIn('chunk_origin_missing', self.connector.summary['warnings'])
+                self.assertNotIn('chunk_origin_not_exported', self.connector.summary['warnings'])
+        # Beside a document_id naming an exported document, an is_part_of edge to an entity changes nothing.
+        nodes = NODES
+        self.read(snapshot(edges=EDGES+[(CHUNK, ALICE, 'is_part_of', {})]))
+        chunk_claim, = self.claims('chunk')
+        self.assertEqual((chunk_claim.origin_status, chunk_claim.origin_document_sha256), ('traced', ids()[DOC]))
 
     def test_missing_refs_altered_edges_and_revisions_are_explicit(self):
         nodes = [n for n in NODES if n['id'] != DOC] + [dict(NODES[1], id='node-chunk-2', document_id='node-elsewhere')]

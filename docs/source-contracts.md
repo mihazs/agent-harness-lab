@@ -2641,16 +2641,18 @@ called `contains` is a model hypothesis.
 
 Edges and entities are derived evidence. Each claim keeps an `origin_status` and,
 when it can be traced, the hashed ID of its origin document. That hash is the
-document claim's `native_id_sha256`, and a relation's `source_node_sha256` and
-`target_node_sha256` are the `native_id_sha256` of its endpoint node claims. A
-repeated node ID resolves to its first occurrence:
+document claim's `native_id_sha256`, never that of another node type. Only a
+chunk's `document_id` and structural `is_part_of` and `contains` edges between
+their pinned types trace an origin; a misnamed edge never does. A relation's
+`source_node_sha256` and `target_node_sha256` are the `native_id_sha256` of its
+endpoint node claims. A repeated node ID resolves to its first occurrence:
 
 | `origin_status` | Meaning |
 | --- | --- |
 | `self` | a document |
 | `traced` | a chunk whose `document_id` and `is_part_of` edges name one exported document; an entity that only chunks of one such document `contain`; an edge from a document, or from a traced chunk or entity |
 | `not_exported` | the named document is not in the export |
-| `missing` | a chunk that names no document, or an edge with an endpoint not in the export |
+| `missing` | a chunk that names no document or only an exported node that is not a document, or an edge with an endpoint not in the export |
 | `conflicting` | a chunk whose `document_id` and `is_part_of` edges disagree |
 | `multiple` | an entity contained by chunks of more than one document, or by a traced chunk and an untraced one |
 | `untraced` | no origin path in the export: an `EntityType`, an unmodelled node, or an edge from one |
