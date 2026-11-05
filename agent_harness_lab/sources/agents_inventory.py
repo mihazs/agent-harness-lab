@@ -42,8 +42,9 @@ CODEX_FIELDS = frozenset(('name', 'description', 'nickname_candidates', *'''
     analytics feedback apps desktop otel windows notice experimental_compact_prompt_file
     experimental_use_unified_exec_tool oss_provider'''.split()))
 NO_OVERRIDE = ('approval_policy', 'mcp_servers', 'model_provider', 'sandbox_mode')
-# ConfigToml fields of a primitive Rust type, checked as serde would; every other field is an enum, struct or map
-# whose contents are not modelled, so only a string or table value is accepted as possibly valid.
+# ConfigToml fields of a primitive Rust type, checked as serde would. Every other field is an enum, struct or map
+# whose contents are not modelled: a value of the TOML shape its type reads (_CODEX_SHAPES) is possibly valid, and
+# any other value is config_field_type_unverified.
 _CODEX_STR = frozenset('''model review_model model_provider default_permissions instructions developer_instructions
     model_instructions_file compact_prompt mcp_oauth_callback_url js_repl_node_path profile sqlite_home log_dir
     model_catalog_json service_tier chatgpt_base_url apps_mcp_product_sku openai_base_url
@@ -62,6 +63,12 @@ _CODEX_INT = {'model_context_window': (-2 ** 63, 2 ** 63 - 1), 'model_auto_compa
 _CODEX_STR_LIST = frozenset(('nickname_candidates', 'notify', 'project_doc_fallback_filenames',
                              'js_repl_node_module_dirs', 'project_root_markers'))
 _CODEX_STR_MAP = frozenset(('responses_api_metadata',))
+# Unit enums read from a string (ReasoningEffort parses one), AskForApproval also takes its Granular table, and
+# ForcedChatgptWorkspaceIds is a string or a string list. The remaining fields are derived structs or maps (tables).
+_CODEX_SHAPES = {**dict.fromkeys('''model_auto_compact_token_limit_scope approvals_reviewer sandbox_mode forced_login_method
+    cli_auth_credentials_store mcp_oauth_credentials_store file_opener model_reasoning_effort plan_mode_reasoning_effort
+    model_reasoning_summary model_verbosity personality web_search'''.split(), (str,)),
+                 'approval_policy': (str, dict), 'forced_chatgpt_workspace_id': (str, list)}
 ROLES = {'claude_user': ('claude-code', 'user'), 'claude_plugin': ('claude-code', 'plugin'), 'codex_home': ('codex', 'user')}
 DISPOSITIONS = ('declared', 'skipped_silently', 'rejected_with_warning', 'unknown')
 PRECEDENCE = ('selected_by_declared_precedence', 'shadowed_by_declared_precedence', 'ambiguous_read_order',
@@ -175,7 +182,7 @@ def _codex(raw):
 
 
 def _codex_types(data):
-    """(primitive fields all deserialize, some unmodelled field holds a value that is neither a string nor a table)."""
+    """(primitive fields all deserialize, some unmodelled field holds a value outside the TOML shape its type reads)."""
     def fits(key, value):
         if key in _CODEX_STR: return isinstance(value, str)
         if key in _CODEX_BOOL: return isinstance(value, bool)
@@ -188,7 +195,7 @@ def _codex_types(data):
     modelled = _CODEX_STR | _CODEX_BOOL | set(_CODEX_INT) | _CODEX_STR_LIST | _CODEX_STR_MAP
     known = {key: value for key, value in data.items() if key in CODEX_FIELDS}
     return (all(fits(key, value) for key, value in known.items()),
-            any(not isinstance(value, (str, dict)) for key, value in known.items() if key not in modelled))
+            any(not isinstance(value, _CODEX_SHAPES.get(key, (dict,))) for key, value in known.items() if key not in modelled))
 
 
 def _nicknames(values):
@@ -301,16 +308,16 @@ def definitions(inventory, task_cwd, roles=None):
         rows.append(dict(runtime=runtime, root=node.root, path=node.path, path_sha256=node.path_sha256, layer=layer,
             layer_dir=layer_dir, name=name, name_sha256=name_sha256, disposition=disposition, reason=reason,
             trust=trust, warnings=_warnings(runtime, layer, facts, node.trust), hook_events=hooks))
-    _precedence(rows, runtime, task_cwd, 'codex_home' in roles.values())
+    _precedence(rows, runtime, task_cwd)
     return tuple(AgentDefinition(**row) for row in sorted(rows, key=lambda row: (row['root'], row['path'])))
 
 
-def _precedence(rows, runtime, task_cwd, home_inventoried=False):
+def _precedence(rows, runtime, task_cwd):
     """Declared precedence labels. Codex loads a project layer only when the project is trusted, so with unknown
     trust each row is resolved twice and a label that differs between the two passes is depends_on_project_trust."""
     cwd = PurePosixPath(task_cwd).parts if task_cwd != '.' else ()
     open_trust = runtime == 'codex' and any(row['layer'] == 'project' and row['trust'] == 'unknown' for row in rows)
-    passes = [_resolve(rows, runtime, cwd, trusted, home_inventoried)
+    passes = [_resolve(rows, runtime, cwd, trusted)
               for trusted in ((True, False) if open_trust else (True,))]
     for index, row in enumerate(rows):
         found = {labels[index] for labels, _ in passes}
@@ -321,7 +328,7 @@ def _precedence(rows, runtime, task_cwd, home_inventoried=False):
             row['disposition'], row['reason'] = 'declared', 'description_from_lower_layer'
 
 
-def _resolve(rows, runtime, cwd, trusted, home_inventoried):
+def _resolve(rows, runtime, cwd, trusted):
     """One pass of the declared loader order: labels by row index and the rows whose description is inherited.
     A row whose disposition is unknown is unknown_definition; when it is in reach, it may shadow any same-name (or,
     without a name, any) selection it ranks equal to or above, so that selection is depends_on_unparsed_definition."""
@@ -357,8 +364,8 @@ def _resolve(rows, runtime, cwd, trusted, home_inventoried):
                 level = [index for index in live if keys[index] == key]
                 for index in (index for index in level if pending(rows[index])):
                     if accepted: filled.add(index)
-                    else:  # an uninventoried codex_home may still hold the lower role
-                        labels[index] = 'not_a_definition' if home_inventoried else 'unknown_definition'; del keys[index]
+                    else:  # an unknown file, the system layer or config.toml [agents] may still hold the lower role
+                        labels[index] = 'unknown_definition'; del keys[index]
                 accepted = accepted or any(index in keys for index in level)
             live = [index for index in live if index in keys]
         if not live: continue

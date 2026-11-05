@@ -6,14 +6,14 @@ quoted keys, plain or quoted scalars with trailing comments, block scalars (| an
 'bad_yaml' is kept for syntax every YAML parser rejects: a duplicate key, tab indentation, an unclosed quote or
 flow list, text after a closing quote, ': ' inside a block plain scalar, and a bare word or stray sequence entry
 where a mapping key belongs. Anything else outside the subset, such as anchors, aliases, tags, flow mappings,
-explicit keys, an indented root, or an opening delimiter after a BOM, trailing blanks or blank lines, is
-'unsupported_yaml', so a caller can keep its verdict 'unknown' instead of
+explicit keys or an indented root, is 'unsupported_yaml', so a caller can keep its verdict 'unknown' instead of
 guessing what a full YAML parser would decide.
 
 string_lists() is the same reader in strict mode for keys that hold only string lists: every top-level entry
 is one of the caller's keys, each holding a block list at one indent or a one-line flow sequence of plain,
 single-quoted or double-quoted strings. A comment after a value, a backslash escape, a plain scalar starting
-with a YAML indicator, an empty flow item, deeper-indented list content or any other construct raises
+with a YAML indicator, an empty flow item, deeper-indented list content, an opening delimiter after a BOM,
+trailing blanks or blank lines, or any other construct raises
 Unsupported, so a construct a real YAML parser might read differently is never guessed.
 """
 from dataclasses import dataclass
@@ -68,8 +68,9 @@ def string_lists(text, keys, *, max_lines=LIST_MAX_LINES, max_items=MAX_ITEMS):
 def _fields(text, max_bytes, max_lines, strict):
     lines = text.split('\n', max_lines + 2)
     if lines[0].rstrip('\r') != '---':
-        # A BOM, trailing blanks or leading blank lines before a delimiter may still open a block for the runtime.
-        first = next((line for line in lines[:max_lines + 1] if line.strip()), '')
+        # In strict mode a BOM, trailing blanks or leading blank lines before a delimiter may still open a block
+        # for the runtime, so they are unsupported rather than no block.
+        first = next((line for line in lines[:max_lines + 1] if line.strip()), '') if strict else ''
         if first.lstrip('\ufeff').strip() == '---': raise FrontmatterError('unsupported_yaml')
         raise FrontmatterError('no_leading_fence')
     size = len(lines[0]) + 1
@@ -155,13 +156,17 @@ def _scalar(value, flow=False, strict=False):
 
 
 def _block_scalar(block):
-    """Content lines of a | or > scalar: lines at the first content line's indent or deeper, up to a shallower one."""
+    """Content lines of a | or > scalar: lines at the first indented line's indent or deeper, up to a shallower one.
+    A column-0 line in a block can only be a comment (_mapping ends the block at any other), so it is never
+    content: it ends the scalar, and an indented non-comment line after the end is outside the subset."""
     lines = [line for line in block if line.strip()]
     if any(line[0] == '\t' for line in lines): raise FrontmatterError('bad_yaml')
-    indent = _width(lines[0]) if lines else 0
-    content = []
-    for line in lines:
-        if _width(line) < indent: break  # a shallower line can only be a comment ending the scalar
+    content, indent = [], None
+    for number, line in enumerate(lines):
+        if _width(line) < (indent or 1):  # a shallower or column-0 line can only be a comment ending the scalar
+            if not all(_blank(later) for later in lines[number:]): raise FrontmatterError('unsupported_yaml')
+            break
+        indent = indent or _width(line)
         content.append(line)
     return content
 

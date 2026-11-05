@@ -1532,7 +1532,9 @@ scalar, and a bare word or stray list entry where a key belongs. Other YAML
 outside the subset, such as anchors, tags, flow mappings, nested flow
 collections and an indented root, gives the disposition `unknown` and is
 never guessed. A `#` inside a quoted flow item or a `|`/`>` block scalar is
-content, not a comment, and comment detection is one linear scan. Unknown
+content, not a comment, and comment detection is one linear scan. A column-0
+line inside a block can only be a comment, so it ends a block scalar, and an
+indented non-comment line after the end gives `unknown`. Unknown
 fields give `ignored_by_runtime`.
 `omitClaudeMd` (2.1.271) and `autoCompactWindow` (2.1.296) are checked against
 the declared version, and the gates come from the capability rows. For a
@@ -1560,9 +1562,12 @@ pinned loader's order. `invalid_field_type` covers `name`, `description`,
 `nickname_candidates` and every `ConfigToml` field of a primitive Rust type
 (string, path, bool, bounded integer, string list or string map). The other
 `ConfigToml` fields are enums, structs or maps whose contents are not
-modelled: a string or table value is accepted, and any other value gives
-`unknown` (`config_field_type_unverified`) instead of `declared`. Enum values
-and table contents are not validated. Nesting deeper than
+modelled. A value of the TOML shape the pinned type reads is accepted: a
+string for a unit enum or `ReasoningEffort`, a string or table for
+`approval_policy`, a string or string list for `forced_chatgpt_workspace_id`,
+and a table for every derived struct or map. Any other value gives `unknown`
+(`config_field_type_unverified`) instead of `declared`. Enum values and table
+contents are not validated. Nesting deeper than
 `tomllib` can recurse gives `unknown` (`toml_nesting_unsupported`) instead of
 a crash, because the pinned Rust parser's limit is not modelled. A missing
 description stays `unknown` (`description_needs_lower_layer`). The pinned
@@ -1570,8 +1575,10 @@ loader walks layers from low to high and fills it from an accepted same-name
 role in a lower layer (`merge_missing_role_fields` in
 `codex-rs/agent-roles/src/loader.rs`). When such a role is in the inventory,
 the file becomes `declared` (`description_from_lower_layer`), it wins and the
-lower role is shadowed. Without one it is `not_a_definition` when a
-`codex_home` root is inventoried, and `unknown_definition` when none is. `sandbox_mode`,
+lower role is shadowed. Without one it is `unknown_definition`, even when a
+`codex_home` root is inventoried: a lower same-name role whose disposition is
+`unknown`, the system layer's agents directory and `[agents.<role>]` tables in
+a lower `config.toml` are not modelled, and any of them may complete it. `sandbox_mode`,
 `approval_policy`, `model_provider` and `mcp_servers` give
 `no_override_effect`. Within one layer the first sorted file wins and later
 same-name files are `duplicate_in_layer_warned`. A deeper project layer wins

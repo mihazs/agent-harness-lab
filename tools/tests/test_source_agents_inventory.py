@@ -123,7 +123,7 @@ class AgentDefinitionTests(unittest.TestCase):
             self.assertEqual((row.disposition, row.reason, row.precedence), ('rejected_with_warning', reason, 'not_a_definition'))
         nodesc = rows['checkout', '.codex/agents/nodesc.toml']
         self.assertEqual((nodesc.disposition, nodesc.reason, nodesc.precedence),
-                         ('unknown', 'description_needs_lower_layer', 'not_a_definition'))
+                         ('unknown', 'description_needs_lower_layer', 'unknown_definition'))
         self.assertEqual(rows['checkout', '.codex/agents/dup-a.toml'].precedence, 'selected_by_declared_precedence')
         self.assertEqual(rows['checkout', '.codex/agents/sub/dup-b.toml'].precedence, 'duplicate_in_layer_warned')
 
@@ -152,6 +152,20 @@ class AgentDefinitionTests(unittest.TestCase):
         rows = self.by_path(found)
         self.assertEqual({rows[key].precedence for key in (('checkout', '.codex/agents/nodesc.toml'),
                           ('home', 'agents/nodesc.toml'))}, {'depends_on_project_trust'})
+
+    def test_codex_role_without_description_stays_unknown_over_an_unknown_lower_role(self):
+        # The codex_home role may deserialize, fill the description and let the project role win, so neither is
+        # a definite label. A forced_chatgpt_workspace_id list is a valid ForcedChatgptWorkspaceIds and is accepted.
+        lower = 'name = "nodesc"\ndescription = "d"\ndeveloper_instructions = "y"\n'
+        for extra, home_reason, project in (('history = "x"\n', 'config_field_type_unverified', 'unknown_definition'),
+                                            ('forced_chatgpt_workspace_id = ["w"]\n', None, 'selected_by_declared_precedence')):
+            with self.subTest(extra=extra):
+                (self.home / 'agents/nodesc.toml').write_text(lower + extra)
+                rows = self.by_path(self.codex(project_trust='declared_trusted')[1])
+                checkout, home = rows['checkout', '.codex/agents/nodesc.toml'], rows['home', 'agents/nodesc.toml']
+                self.assertEqual(checkout.precedence, project)
+                self.assertEqual(home.reason, home_reason)
+                if home_reason: self.assertEqual(home.precedence, 'unknown_definition')
 
     def test_hostile_or_unreadable_agent_files_are_reported_and_keep_their_hooks(self):
         deep = 'hooks = ' + '[' * 1000 + ']' * 1000 + '\n'
@@ -201,7 +215,7 @@ class AgentDefinitionTests(unittest.TestCase):
         self.assertEqual((rows['checkout', 'other/.claude/agents/far.md'].precedence,
                           rows['checkout', '.claude/agents/root.md'].precedence),
                          ('unknown_definition', 'selected_by_declared_precedence'))
-        # Without an inventoried codex_home, a role without a description may still be completed, so it stays unknown.
+        # Without an accepted lower role, a role without a description may still be completed, so it stays unknown.
         for trust in ('declared_trusted', None):
             with self.subTest(trust=trust):
                 _, found, _ = agents.capture(checkout, {**CODEX, **({'project_trust': trust} if trust else {})})
@@ -241,9 +255,17 @@ class AgentDefinitionTests(unittest.TestCase):
                 self.assertEqual((facts['disposition'], facts['reason']), ('rejected_with_warning', reason))
         _, facts = agents.parse('x.toml', (role + 'nickname_candidates = [" Ada ", "b_2-c"]\n').encode(), CODEX)
         self.assertEqual((facts['disposition'], facts['reason']), ('declared', None))
-        # An enum or struct field whose value is neither a string nor a table is not modelled, so it is not declared.
-        _, facts = agents.parse('x.toml', (role + 'sandbox_mode = 5\n').encode(), CODEX)
-        self.assertEqual((facts['disposition'], facts['reason']), ('unknown', 'config_field_type_unverified'))
+        # An enum, struct or map field holding a value outside the TOML shape its type reads is not declared.
+        for extra in ('sandbox_mode = 5', 'sandbox_mode = {}', 'model_reasoning_effort = { a = 1 }', 'history = "x"',
+                      'tui = "x"', 'features = "x"', 'shell_environment_policy = "x"', 'mcp_servers = []'):
+            with self.subTest(extra=extra):
+                _, facts = agents.parse('x.toml', (role + extra + '\n').encode(), CODEX)
+                self.assertEqual((facts['disposition'], facts['reason']), ('unknown', 'config_field_type_unverified'))
+        for extra in ('sandbox_mode = "read-only"', 'approval_policy = "never"', 'approval_policy = { granular = {} }',
+                      'forced_chatgpt_workspace_id = ["w"]', 'history = {}', 'mcp_servers = {}'):
+            with self.subTest(extra=extra):
+                _, facts = agents.parse('x.toml', (role + extra + '\n').encode(), CODEX)
+                self.assertEqual((facts['disposition'], facts['reason']), ('declared', None))
 
     def test_same_name_agents_in_two_plugin_roots_are_ambiguous_plugin_order(self):
         second = self.base / 'plugin-b'
@@ -311,6 +333,16 @@ class FrontmatterReaderTests(unittest.TestCase):
                          {'d': '# h\nt', 'e': '# x y'})
         _, facts = agents.parse('x.md', b'---\nname: r\ndescription: |\n  # Reviewer\n---\n', CLAUDE)
         self.assertEqual((facts['disposition'], facts['reason']), ('declared', None))
+        # A column-0 line can only be a comment: it ends the scalar, so the later indented comments are not content.
+        empty = b'---\nname: r\ndescription: |\n# comment\n  # Heading\n---\n'
+        self.assertEqual(frontmatter.read(empty), {'name': 'r', 'description': ''})
+        _, facts = agents.parse('x.md', empty, CLAUDE)
+        self.assertEqual((facts['disposition'], facts['reason']), ('skipped_silently', 'missing_description'))
+        self.assertEqual(frontmatter.read(b'---\nd: |\n  a\n# c\n  # d\n---\n'), {'d': 'a'})
+        for text in (b'---\nd: |\n  a\n# c\n  b\n---\n', b'---\nd: |\n    deep\n  shallow\n---\n'):
+            with self.subTest(text=text):
+                with self.assertRaises(frontmatter.FrontmatterError) as caught: frontmatter.read(text)
+                self.assertEqual(caught.exception.reason, 'unsupported_yaml')
         _, facts = agents.parse('x.md', b'---\nname: r\ndescription: d\ntools: [Read, "a #b"]\n---\n', CLAUDE)
         self.assertEqual((facts['disposition'], facts['reason']), ('declared', None))
         self.assertEqual(frontmatter.string_lists('---\npaths: ["a #b", c]\n---\n', ('paths',)), {'paths': ('a #b', 'c')})
