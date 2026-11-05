@@ -5,9 +5,18 @@ import math
 import re
 import ssl
 import time
-from urllib.parse import unquote, urljoin, urlsplit
+from urllib.parse import parse_qsl, unquote, urljoin, urlsplit
 from agent_harness_lab.evaluation.integrity import unique_object
 from .schema import SourceSpec, digest, fingerprint
+
+# Selected-resource forge readers: denials that become coverage states instead of data.
+DENIED = {401: 'unauthorized', 403: 'forbidden', 404: 'not_found', 429: 'rate_limited'}
+# A server that ignores its page size may answer with one longer first page, never an unbounded one.
+MAX_UNPAGED_ROWS = 1000
+# Budgets that apply when a forge configuration leaves one unset; a configured value always takes precedence.
+DEFAULT_LIMITS = dict(max_pages=1000, max_bytes=256*1024*1024, seconds=900)
+# A forge response is read and parsed whole, so each has its own ceiling below the cumulative byte budget.
+MAX_RESPONSE_BYTES = 8*1024*1024
 
 
 class TransportError(ValueError):
@@ -28,6 +37,14 @@ class BudgetError(TransportError):
     def __init__(self, message, reason, size=0):
         super().__init__(message)
         self.reason, self.size = reason, size
+
+
+class Unavailable(Exception):
+    """A native read that produced an explicit coverage state instead of data."""
+
+    def __init__(self, state):
+        super().__init__(state)
+        self.state = state
 
 
 def next_link(link):
@@ -107,6 +124,93 @@ def endpoint(url):
             or any(part in ('.', '..') for part in path.split('/'))):
         raise TransportError('invalid HTTPS endpoint')
     return parsed, path
+
+
+def instance_root(base_url, api_prefix):
+    """A canonical HTTPS instance root (sub-path allowed, no API suffix) as (host, port, path)."""
+    parsed, path = endpoint(base_url)
+    host = f'[{parsed.hostname}]' if ':' in parsed.hostname else parsed.hostname
+    port = '' if parsed.port in (None, 443) else f':{parsed.port}'
+    if (parsed.query or base_url != f'https://{host}{port}{path}' or path.endswith('/')
+            or path.casefold().endswith(api_prefix)):
+        raise ValueError('base URL must be a canonical HTTPS instance root')
+    return parsed.hostname, parsed.port or 443, path
+
+
+def capture_state(api):
+    """One capture's shared request, byte and deadline budget over a JsonAPI."""
+    return dict(requests=0, used=0, halted=None,
+        deadline=time.monotonic()+api.seconds if api.seconds is not None else None)
+
+
+def budget_spent(api, state):
+    return (api.max_pages is not None and state['requests'] >= api.max_pages
+        or api.max_bytes is not None and state['used'] >= api.max_bytes
+        or state['deadline'] is not None and time.monotonic() >= state['deadline'])
+
+
+def metered_exchange(api, target, headers, state, *, authorization=None, body=None, ceiling=None):
+    """One request charged to the capture budget; returns the JSON value and lowercase response headers.
+
+    ``ceiling`` caps this one response below whatever remains of the cumulative byte budget.
+    """
+    headers = {'Accept-Encoding': 'identity', 'User-Agent': 'agent-harness-lab-reader', **headers}
+    if authorization is not None: headers['Authorization'] = authorization
+    state['requests'] += 1
+    remaining = None if api.max_bytes is None else api.max_bytes-state['used']
+    limit = remaining if ceiling is None else ceiling if remaining is None else min(ceiling, remaining)
+    value, metadata, size = _json_exchange(api.origin, target, headers, body=body, timeout=api.timeout,
+        deadline=state['deadline'], max_bytes=limit)
+    state['used'] += size
+    return value, {k.lower(): v for k, v in metadata.items()}
+
+
+def guarded_get(api, target, state, *, authorization=None):
+    """One JSON GET below the instance path; denials, rate limits and spent budgets raise Unavailable, never retry."""
+    if state['halted'] is not None: raise Unavailable(state['halted'])
+    if budget_spent(api, state):
+        state['halted'] = 'budget_exhausted'
+        raise Unavailable('budget_exhausted')
+    remaining = None if api.max_bytes is None else api.max_bytes-state['used']
+    try:
+        value, metadata = metered_exchange(api, api.path+target, {'Accept': 'application/json'}, state,
+            authorization=authorization, ceiling=MAX_RESPONSE_BYTES)
+    except HTTPStatusError as error:
+        if error.status not in DENIED: raise
+        if error.status == 429: state['halted'] = 'rate_limited'
+        raise Unavailable(DENIED[error.status]) from None
+    except BudgetError as spent:
+        # A response over the per-response ceiling fails closed; only a spent remaining budget is coverage.
+        if spent.reason == 'bytes' and (remaining is None or remaining > MAX_RESPONSE_BYTES):
+            raise ValueError('response exceeds the per-response byte limit') from None
+        state['used'] += spent.size if remaining is None else min(spent.size, remaining)
+        state['halted'] = 'budget_exhausted'
+        raise Unavailable('budget_exhausted') from None
+    if metadata.get('content-type', '').split(';')[0].strip() != 'application/json':
+        raise ValueError('JSON content capability is unavailable')
+    return value, metadata
+
+
+def next_page(api, link, collection, page, query, *, echoed=None):
+    """The page a rel="next" Link names; it must keep the collection, the fixed query and the next page.
+
+    ``echoed`` names route parameters a server may repeat in the link; each must keep its exact value.
+    """
+    target = next_link(link)
+    if target is None: return None
+    parsed, path = endpoint(target)
+    pairs = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
+    values, echoed = dict(pairs), echoed or {}
+    if ((parsed.hostname, parsed.port or 443) != api.origin or path.casefold() != (api.path+collection).casefold()
+            or len(pairs) != len(values) or any(values[k] != v for k, v in echoed.items() if k in values)
+            or {k: v for k, v in values.items() if k not in echoed} != dict(query, page=str(page+1))):
+        raise ValueError('pagination escaped its collection or skipped a page')
+    return page+1
+
+
+def bounded_api(base_url, limits):
+    """A JsonAPI whose unset budgets take the forge defaults."""
+    return JsonAPI(base_url, **{**DEFAULT_LIMITS, **{k: v for k, v in limits.items() if v is not None}})
 
 
 class JsonAPI:

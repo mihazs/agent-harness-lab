@@ -4,12 +4,11 @@ from datetime import datetime, timedelta, timezone
 import json
 import re
 import time
-from urllib.parse import parse_qsl
 from .execution import CoverageManifest, ExecutionMetadata, RecordRef, ScanBound
 from .graph import EvidenceGraph, JoinReceipt
 from .schema import Contract, EvidenceRecord, SourceSpec, digest, timestamp
 from .snapshot import Snapshot
-from .transport import JsonAPI, TransportError, _json_exchange, endpoint, next_link
+from .transport import JsonAPI, TransportError, budget_spent, endpoint, metered_exchange, next_page
 
 API_VERSION = '2026-03-10'
 SOURCE_VERSION = API_VERSION+'-v1'
@@ -181,20 +180,10 @@ class GitHubAPI:
         return self._request(target+('?' + query if query else ''), state)
 
     def _request(self, target, state, *, body=None):
-        if (self.transport.max_pages is not None and state['requests'] >= self.transport.max_pages
-                or self.transport.max_bytes is not None and state['used'] >= self.transport.max_bytes
-                or state['deadline'] is not None and time.monotonic() >= state['deadline']):
-            raise TransportError('GitHub capture budget exhausted')
-        headers = {'Accept': 'application/vnd.github+json', 'Accept-Encoding': 'identity', 'User-Agent': 'agent-harness-lab-reader'}
-        if body is None: headers['X-GitHub-Api-Version'] = API_VERSION
-        else: headers.update(Accept='application/json', **{'Content-Type': 'application/json'})
-        if self.authorization is not None: headers['Authorization'] = self.authorization
-        state['requests'] += 1
-        value, metadata, size = _json_exchange(self.transport.origin, target, headers, body=body,
-            timeout=self.transport.timeout, deadline=state['deadline'],
-            max_bytes=self.transport.max_bytes-state['used'] if self.transport.max_bytes is not None else None)
-        state['used'] += size
-        metadata = {k.lower(): v for k, v in metadata.items()}
+        if budget_spent(self.transport, state): raise TransportError('GitHub capture budget exhausted')
+        headers = ({'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': API_VERSION} if body is None
+            else {'Accept': 'application/json', 'Content-Type': 'application/json'})
+        value, metadata = metered_exchange(self.transport, target, headers, state, authorization=self.authorization, body=body)
         if (body is None and metadata.get('x-github-api-version-selected') != API_VERSION
                 or metadata.get('content-type', '').split(';')[0].strip() not in ('application/json', 'application/vnd.github+json')):
             raise TransportError('GitHub API version/content capability is unavailable')
@@ -306,17 +295,7 @@ class GitHubAPI:
         return threads, links
 
     def _next(self, link, suffix, current):
-        target = next_link(link)
-        if target is None: return None
-        parsed, path = endpoint(target)
-        if (parsed.hostname, parsed.port or 443) != self.transport.origin or path.casefold() != (self.transport.path+suffix).casefold():
-            raise ValueError('GitHub pagination escaped its collection')
-        pairs = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
-        values = dict(pairs)
-        if (len(pairs) != 2 or set(values) != {'page', 'per_page'} or values['per_page'] != '100'
-                or re.fullmatch(r'[1-9][0-9]*', values['page']) is None or int(values['page']) != current+1):
-            raise ValueError('GitHub pagination skipped or repeated a page')
-        return int(values['page'])
+        return next_page(self.transport, link, suffix, current, dict(per_page='100'))
 
     def _list(self, suffix, state, key='id', *, envelope=None):
         page, result, seen, total = 1, [], set(), None

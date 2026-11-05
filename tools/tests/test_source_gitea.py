@@ -16,7 +16,7 @@ else:
     from test_source_transport import Response
 
 from agent_harness_lab.cli import main
-from agent_harness_lab.sources import gitea
+from agent_harness_lab.sources import gitea, transport
 from agent_harness_lab.sources.gitea import PROVIDER, SOURCE_VERSION, GiteaAPI, GiteaConfigured, GiteaSelection
 from agent_harness_lab.sources.github import GitHubSelection
 from agent_harness_lab.sources.registry import Capability, Registry
@@ -217,7 +217,7 @@ class GiteaSourceTests(GiteaFixture, unittest.TestCase):
             ('budget_exhausted', linked, stalled, {}, dict(seconds=55)))
         for basis, response, following, issue, options in cases:
             with (self.subTest(basis=basis, options=options, following=getattr(following, '__name__', None)),
-                    tempfile.TemporaryDirectory() as folder, patch.object(gitea.time, 'monotonic', lambda: clock[0])):
+                    tempfile.TemporaryDirectory() as folder, patch.object(transport.time, 'monotonic', lambda: clock[0])):
                 self.routes[page] = response; self.issue.update({'comments': 1, **issue})
                 if following is None: self.routes.pop(second, None)
                 else: self.routes[second] = following
@@ -258,7 +258,6 @@ class GiteaSourceTests(GiteaFixture, unittest.TestCase):
                     self.assertNotIn(second, self.targets)
 
     def test_oversized_single_response_fails_before_parsing(self):
-        from agent_harness_lab.sources import transport
         parsed, loads = [], transport.json.loads
 
         def spy(body, **options):

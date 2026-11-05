@@ -14,11 +14,15 @@ from .claude_mem import PROVIDER as CLAUDE_MEM, SOURCE_VERSION as CLAUDE_MEM_VER
 from .execution import capture_snapshot
 from .github_config import GitHubConfigured
 from .gitea import PROVIDER as GITEA, GiteaConfigured
+from .gitlab import PROVIDER as GITLAB, GitLabConfigured
 from .remote_config import ConfiguredAPI
 from .native import NativeCapture
 from .claude import ClaudeCapture, SOURCE_VERSION as CLAUDE_VERSION, ROOT_VERSION as CLAUDE_ROOT_VERSION
 from .codex import CodexCapture, SOURCE_VERSION as CODEX_VERSION, ROOT_VERSION as CODEX_ROOT_VERSION
 from agent_harness_lab.config import read_json
+
+# Selected-resource forge readers: connector and the preview summary key each prints.
+FORGES = {GITEA: (GiteaConfigured, 'gitea_summary'), GITLAB: (GitLabConfigured, 'gitlab_summary')}
 
 
 def main(argv):
@@ -34,16 +38,18 @@ def main(argv):
         'All operations print JSON metadata. Exit 0: completed; 2: invalid/rejected input; 3: unsupported or blocked capability/access. '
         'Local providers include ahl-metadata, ai-memory-okf, git, test-results, claude-jsonl, codex-rollout and '
         'claude-mem-export (one selected Claude-Mem v15.9.0 JSON export; no worker, database or network). '
+        'API configurations select github, gitea or gitlab (api/gitlab/v4: named issue and merge request IIDs of one '
+        'project on an explicit HTTPS instance, GET only, no enumeration). '
         'Example: ahl sources preview --manifest export.json --project-sha256 PROJECT_HASH --scope-sha256 SCOPE_HASH. '
         'For reviewed cache relationships, use ahl sources lineage --help.')
     parser.add_argument('operation', nargs='?', default='probe', choices=('probe', 'preview', 'import', 'status', 'recheck', 'lineage'),
         help='Requested source operation (default: %(default)s); lineage has its own subcommands and help')
-    parser.add_argument('--manifest',help='Schema-1 JSON: source/data local declaration, or source/endpoint/selection/limits GitHub or Gitea configuration; no automatic discovery')
+    parser.add_argument('--manifest',help='Schema-1 JSON: source/data local declaration, or source/endpoint/selection/limits GitHub, Gitea or GitLab configuration; no automatic discovery')
     parser.add_argument('--project-sha256',help='Expected 64-hex project identity matching the manifest; required with --manifest')
     parser.add_argument('--scope-sha256',help='Expected 64-hex selection/scope identity matching the manifest; required with --manifest')
     parser.add_argument('--cache',help='Private SourceStore journal file; required for import, status and recheck')
     parser.add_argument('--authorization-file',help='Private ASCII HTTP Authorization header file for an API source using configured authentication; never read by probe')
-    parser.add_argument('--authorization-env',metavar='NAME',help='Name of one environment variable holding the complete Authorization header value for a configured Gitea source; '
+    parser.add_argument('--authorization-env',metavar='NAME',help='Name of one environment variable holding the complete Authorization header value for a configured Gitea or GitLab source; '
         'only this named variable is read, never by probe; excludes --authorization-file')
     args = parser.parse_args(argv)
     try:
@@ -56,9 +62,9 @@ def main(argv):
             declaration = read_json(args.manifest)
             remote = isinstance(declaration, dict) and isinstance(declaration.get('source'), dict) and declaration['source'].get('kind') == 'api'
             if args.authorization_file is not None and not remote: raise ValueError('authorization file requires an API configuration')
-            gitea = remote and declaration['source'].get('provider') == GITEA
-            if args.authorization_env is not None and not gitea: raise ValueError('authorization variable requires a Gitea configuration')
-            connector = (GiteaConfigured(args.manifest, authorization_file=args.authorization_file, authorization_env=args.authorization_env) if gitea
+            forge = FORGES.get(declaration['source'].get('provider')) if remote else None
+            if args.authorization_env is not None and forge is None: raise ValueError('authorization variable requires a Gitea or GitLab configuration')
+            connector = (forge[0](args.manifest, authorization_file=args.authorization_file, authorization_env=args.authorization_env) if forge
                 else GitHubConfigured(args.manifest, authorization_file=args.authorization_file) if remote else LocalExport(args.manifest))
             source, _ = connector.declaration(**scope)
             if source.provider == 'ai-memory-okf':
@@ -108,8 +114,8 @@ def main(argv):
                     result['test_results_summary'] = connector.summary
                 elif isinstance(connector, ClaudeMemExport):
                     result['claude_mem_summary'] = connector.summary
-                elif isinstance(connector, GiteaConfigured):
-                    result['gitea_summary'] = connector.summary
+                elif forge is not None:
+                    result[forge[1]] = connector.summary
                     result['checkpoint_ready'] = snapshot.checkpoint_ready
                 elif isinstance(connector, NativeCapture):
                     result['native_summary'] = connector.summary
@@ -123,10 +129,10 @@ def main(argv):
                     try:
                         result = registry.ingest(source, store, **scope).to_dict()
                     except ValueError:
-                        # A denied, rate-limited or incomplete Gitea read is blocked access, never a checkpoint.
-                        if not isinstance(connector, GiteaConfigured) or getattr(connector, 'summary', {}).get('checkpoint_ready') is not False: raise
-                        print(json.dumps(dict(schema_version=1, status='blocked', checkpoint_committed=False, source_read=True,
-                            network_used=True, gitea_summary=connector.summary), sort_keys=True))
+                        # A denied, rate-limited or incomplete forge read is blocked access, never a checkpoint.
+                        if forge is None or getattr(connector, 'summary', {}).get('checkpoint_ready') is not False: raise
+                        print(json.dumps({'schema_version': 1, 'status': 'blocked', 'checkpoint_committed': False, 'source_read': True,
+                            'network_used': True, forge[1]: connector.summary}, sort_keys=True))
                         return 3
                     if remote: result.update(source_read=True, network_used=True)
                 else:
