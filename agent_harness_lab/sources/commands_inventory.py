@@ -5,10 +5,10 @@ capture() runs harness_inventory.capture and resolves names across its nodes: Cl
 load 'on_demand', qualified as /<subdir>:<dir> only on a directory-name clash; Codex .agents/skills in every directory from task_cwd to the checkout root are
 all listed, and same-name skills are flagged, never merged. Codex prompts are read only from a caller-declared
 CODEX_HOME and stay 'deprecated' and 'loader_unverified_at_head'; they and the SKILL.md re-reads share the inventory's
-entry, byte and file bounds. Frontmatter goes through the shared bounded reader (sources.frontmatter), never a
-YAML load; a block the reader cannot model (unsupported_yaml, too_large, a space-padded fence) is the unknown
-'frontmatter_unsupported', never 'parse_failed', and such a skill has no id. An emitted id is derived from the path
-only: a frontmatter name that differs from its directory resolves shadowing internally and is withheld
+entry, byte and file bounds. Frontmatter goes through the shared bounded reader sources.frontmatter.texts(), never
+a YAML load, and this module has no parser of its own; a block the reader cannot model (unsupported_yaml, too_large,
+a space-padded fence) is the unknown 'frontmatter_unsupported', never 'parse_failed', and such a skill has no id. An
+emitted id is derived from the path only: a frontmatter name that differs from its directory resolves shadowing internally and is withheld
 ('id_withheld'). Nodes the inventory left unread (private_excluded) are skipped.
 A row is a declaration: observed_loading and effective are always 'unknown'.
 """
@@ -40,28 +40,12 @@ _ROOTS = {'claude-code': ('.claude', 'skills'), 'codex': ('.agents', 'skills')}
 DEFINITE = ('bad_yaml', 'not_utf8', 'unterminated')
 
 
-def _padded_fence(raw):
-    """Whether the opening fence, or a fence line before the closing one, carries trailing blanks. The shared reader
-    needs an exact '---'; whether a runtime trims the line is not verified, so such a block is never judged."""
-    for number, line in enumerate(raw.split(b'\n', shared.MAX_LINES + 2)[:shared.MAX_LINES + 2]):
-        line = line.rstrip(b'\r')
-        if line != b'---' and line.rstrip(b' \t') == b'---': return True
-        if (line == b'---') == bool(number): return False  # no opening fence, or the block closed
-    return False
-
-
 def frontmatter(raw):
-    """Top-level keys of a leading '---' block via sources.frontmatter.read, or None without one.
+    """Top-level keys of a leading '---' block as text via sources.frontmatter.texts(), or None without one.
 
-    A scalar stays text ('' when empty); a list or nested mapping stays an opaque non-text value. A malformed or
-    out-of-subset block raises FrontmatterError, a ValueError; a space-padded fence is 'unsupported_yaml'."""
-    raw = raw.removeprefix(b'\xef\xbb\xbf')
-    if _padded_fence(raw): raise shared.FrontmatterError('unsupported_yaml')
-    try: fields = shared.read(raw)
-    except shared.FrontmatterError as error:
-        if error.reason == 'no_leading_fence': return None
-        raise
-    return {key: '' if value is None else value for key, value in fields.items()}
+    A scalar is text ('' when empty) and a list or nested mapping is None. A malformed or out-of-subset block, or
+    a space-padded fence, raises FrontmatterError, a ValueError."""
+    return shared.texts(raw)
 
 
 def parse(path, raw, profile):

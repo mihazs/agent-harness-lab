@@ -15,6 +15,11 @@ single-quoted or double-quoted strings. A comment after a value, a backslash esc
 with a YAML indicator, an empty flow item, deeper-indented list content, an opening delimiter after a BOM,
 trailing blanks or blank lines, or any other construct raises
 Unsupported, so a construct a real YAML parser might read differently is never guessed.
+
+texts() is read() for callers that need text values, such as the command, skill and prompt inventory: a leading
+BOM is dropped, a file without a leading fence is None, an empty value is '' and a list or nested mapping is None,
+since it is not text. A fence line with trailing blanks is 'unsupported_yaml': whether a runtime trims it is not
+verified, so such a block is never judged. Bounds and the other error reasons are those of read().
 """
 from dataclasses import dataclass
 import re
@@ -50,6 +55,26 @@ def read(raw, *, max_bytes=MAX_BYTES, max_lines=MAX_LINES):
     try: text = raw.decode('utf-8')
     except UnicodeDecodeError: raise FrontmatterError('not_utf8') from None
     return _fields(text, max_bytes, max_lines, False)
+
+
+def texts(raw, *, max_bytes=MAX_BYTES, max_lines=MAX_LINES):
+    """{key: str, or None for a list or mapping} of a leading block, None without one; else FrontmatterError."""
+    raw = raw.removeprefix(b'\xef\xbb\xbf')
+    if _padded_fence(raw, max_lines): raise FrontmatterError('unsupported_yaml')
+    try: fields = read(raw, max_bytes=max_bytes, max_lines=max_lines)
+    except FrontmatterError as error:
+        if error.reason == 'no_leading_fence': return None
+        raise
+    return {key: '' if value is None else value if isinstance(value, str) else None for key, value in fields.items()}
+
+
+def _padded_fence(raw, max_lines):
+    """Whether the opening fence, or a fence line before the closing one, carries trailing blanks."""
+    for number, line in enumerate(raw.split(b'\n', max_lines + 2)[:max_lines + 2]):
+        line = line.rstrip(b'\r')
+        if line != b'---' and line.rstrip(b' \t') == b'---': return True
+        if (line == b'---') == bool(number): return False  # no opening fence, or the block closed
+    return False
 
 
 def string_lists(text, keys, *, max_lines=LIST_MAX_LINES, max_items=MAX_ITEMS):
