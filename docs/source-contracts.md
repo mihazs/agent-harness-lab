@@ -1061,6 +1061,63 @@ Coverage remains unknown. Use an extracted static export for stable input; this 
 not an atomic snapshot of a concurrently edited wiki. Tests use synthetic bundles
 and do not read real memories or call models.
 
+### Declared validity as of an instant
+
+`sources.temporal` is an offline Python API for the knowledge sources described in
+#47: OKF pages, LLM wiki pages, Markdown knowledge-graph notes and ADRs. It does
+not read pages. A caller supplies one `TemporalFacet` per exact imported revision
+(`RecordRef`). The facet holds the knowledge time `recorded_at`, the author-declared
+`valid_from` and `valid_until` (or an explicit `open_ended` declaration), a decision
+status (`unspecified`, `proposed`, `accepted`, `rejected`, `deprecated` or
+`superseded`) and explicit `supersedes`/`superseded_by` references.
+`resolve(facets, at)` returns one row per record with a status (`in_force`,
+`superseded`, `not_yet_valid`, `expired`, `not_adopted` or `unknown`) and the
+reasons for it. `resolve_store` binds facets to present revisions of one validated
+`SourceStore` journal, treats the journal's revision supersession edges as
+successors and reports the journal's SHA-256. Neither function writes anything.
+Existing record, journal and source fingerprints are unchanged.
+
+The default `historical` view is a replay. It considers only records whose
+`recorded_at` is at or before `at`. A record first recorded later is listed under
+`not_known_at_instant`, and the supersessions it declares do not apply, even when
+it claims an earlier `valid_from`. `knowledge='as_known_now'` is a separate
+retrospective view that must be requested explicitly and applies every supplied
+record. Its output carries `retrospective: true` and a different input fingerprint.
+
+A status stays `unknown` when the facts it needs are missing:
+
+- `at` must carry a UTC offset. A naive or unparseable query instant is rejected.
+- Missing, unparseable or timezone-less declared times give reasons such as
+  `valid_from_timezone_missing`. A date without a time has no offset and is unknown.
+  An unknown `recorded_at` blocks a historical replay but not the retrospective view.
+- Records on a supersession cycle, including a self-loop, are `unknown` with
+  `supersession_cycle` and listed under `conflicts`. The cycle is never broken arbitrarily.
+- Two revisions of one native record known at the instant without an ordering edge
+  are both `unknown` with `ambiguous_revisions`. Two successors of one record that
+  do not supersede each other are both `unknown` with `competing_successors`.
+  Arrival order, `recorded_at` order and collection time never choose a winner.
+  Only explicit declarations do.
+- A predecessor is `unknown` when a successor is structurally unknown, has no facet
+  (a deletion tombstone, for example), is not yet known at the instant, or has no
+  usable `valid_from`. A proposed or rejected successor does not take effect.
+- A self-declared `deprecated` or `superseded` status takes effect no later than the
+  revision's `recorded_at`. When that time is unknown or after the instant, the status
+  is unknown. A declared interval is half-open, so the `valid_until` instant is expired.
+
+References to records without a facet stay visible under `dangling`. Each result
+carries `profile: knowledge-temporal-v1`, `validity_source: author_declared`,
+`truth_established: false`, `authority: none` and `publication_allowed: false`,
+and `public_export_allowed` rejects that profile. An `in_force` row means only that
+the author's declarations agree at that instant. It does not mean the statement is
+true or reviewed, that an agent retrieved it, or that it helps with a task.
+Synthetic fixtures establish this contract, not factual accuracy.
+
+Still open in #47: the readers do not yet map OKF, wiki, knowledge-graph or ADR
+fields to facets, resolve their links to `RecordRef`s, or store facets. Claim
+identity across sources, project-scope compatibility checks, review provenance and
+`stale_after` handling in the resolver, contradiction detection between statements,
+a CLI and the #43/#58/#11 integrations are also still open.
+
 ## Shared HTTPS transport
 
 `sources.transport.JsonAPI` supplies the shared GET transport for explicitly
