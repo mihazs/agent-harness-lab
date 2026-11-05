@@ -4,11 +4,14 @@ import hashlib
 import json
 from pathlib import Path
 import tempfile
+import os
 import time
 import unittest
+from unittest.mock import patch
 
+from agent_harness_lab.sources import harness_inventory
 from agent_harness_lab.sources.git_view import Folder
-from agent_harness_lab.sources.instructions import capture
+from agent_harness_lab.sources.instructions import capture, validate
 from agent_harness_lab.sources.schema import digest
 
 
@@ -25,9 +28,9 @@ class InstructionInventoryTests(unittest.TestCase):
         path.write_text(text)
         return path
 
-    def read(self, selected=()):
+    def read(self, selected=(), **options):
         with Folder(self.root, time.monotonic()+30, limit_total_bytes=False, limit_tree=False) as folder:
-            value = capture(self.profile, folder, 'project', selected)
+            value = capture(self.profile, folder, 'project', selected, **options)
             folder.verify()
         self.assertNotIn(str(self.root), json.dumps(asdict(value)))
         return value
@@ -140,6 +143,115 @@ class InstructionInventoryTests(unittest.TestCase):
             with self.subTest(names=names):
                 self.profile['fallback_filenames'] = names
                 with self.assertRaises(ValueError): self.read()
+
+    def home(self, name, text):
+        path = self.root/'home'/name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text(text)
+
+    def test_codex_home_is_read_only_when_declared_and_override_beats_agents(self):
+        self.write('AGENTS.md', 'SYNTHETIC_PROJECT'); self.home('AGENTS.md', 'SYNTHETIC_GLOBAL')
+        self.home('AGENTS.override.md', 'SYNTHETIC_OVERRIDE')
+        original, names = Folder.read, []
+        def recording(folder, name, *args, **kwargs):
+            names.append(name); return original(folder, name, *args, **kwargs)
+        with patch.object(Folder, 'read', recording), patch.dict(os.environ, CODEX_HOME=str(self.root/'home')):
+            undeclared = self.read()
+        self.assertTrue(names and all(name.startswith('project/') for name in names), names)
+        self.assertFalse(any(n.origin == 'codex_home' for n in undeclared.nodes))
+        receipt = self.read(codex_home='home'); nodes = self.nodes(receipt)
+        override, agents = nodes[digest(['codex_home', 'AGENTS.override.md'])], nodes[digest(['codex_home', 'AGENTS.md'])]
+        self.assertEqual((override.applicability, override.reason, override.origin),
+                         ('declared_applicable', 'codex_home_first_non_empty', 'codex_home'))
+        self.assertEqual((agents.applicability, agents.reason), ('shadowed', 'codex_home_precedence'))
+        edges = {(e.kind, e.source_sha256, e.target_sha256) for e in receipt.edges}
+        self.assertIn(('shadows', override.path_sha256, agents.path_sha256), edges)
+        self.assertIn(('parent', override.path_sha256, digest('AGENTS.md')), edges)
+        self.assertNotEqual(receipt.sha256, undeclared.sha256)
+        self.home('AGENTS.override.md', ' \n')
+        nodes = self.nodes(self.read(codex_home='home'))
+        self.assertEqual(nodes[digest(['codex_home', 'AGENTS.override.md'])].reason, 'empty')
+        self.assertEqual(nodes[digest(['codex_home', 'AGENTS.md'])].applicability, 'declared_applicable')
+        self.profile['project_doc_max_bytes'] = len('SYNTHETIC_PROJECT')  # the global file is outside the project budget
+        self.assertEqual(self.read(codex_home='home').resolution_status, 'declared')
+        for home in ('project', 'project/src', '.', '../home'):
+            with self.subTest(home=home), self.assertRaises(ValueError): self.read(codex_home=home)
+        self.profile.update(runtime='codex', version='0.165.0')
+        self.assertEqual((self.read(codex_home='home').resolution_status, self.read(codex_home='home').nodes), ('unsupported', ()))
+        self.profile = dict(schema_version=1, runtime='claude-code', version='2.1.317', task_cwd='.')
+        with self.assertRaises(ValueError): self.read(codex_home='home')
+
+    def test_project_root_markers_and_explicit_untrust_are_declared_inputs(self):
+        self.write('AGENTS.md', 'SYNTHETIC_ROOT'); self.write('src/AGENTS.md', 'SYNTHETIC_MIDDLE')
+        self.write('src/task/AGENTS.md', 'SYNTHETIC_LEAF'); self.home('AGENTS.md', 'SYNTHETIC_GLOBAL')
+        state = lambda receipt, path: (self.nodes(receipt)[digest(path)].applicability, self.nodes(receipt)[digest(path)].reason)
+        self.profile['project_root_markers'] = ['.hg']; (self.root/'project/src/.hg').mkdir()
+        rooted = self.read()
+        self.assertEqual(state(rooted, 'AGENTS.md'), ('out_of_scope', 'outside_project_root'))
+        self.assertEqual(state(rooted, 'src/AGENTS.md'), ('declared_applicable', 'directory_precedence'))
+        self.profile['project_root_markers'] = []
+        alone = self.read()
+        self.assertEqual(state(alone, 'src/AGENTS.md'), ('out_of_scope', 'outside_project_root'))
+        self.assertEqual(state(alone, 'src/task/AGENTS.md'), ('declared_applicable', 'directory_precedence'))
+        self.profile['project_root_markers'] = ['.absent-marker']
+        missing = self.read()
+        self.assertEqual(state(missing, 'AGENTS.md'), ('unknown', 'project_root_marker_not_found_in_checkout'))
+        self.assertEqual(state(missing, 'src/task/AGENTS.md'), ('declared_applicable', 'directory_precedence'))
+        self.profile.pop('project_root_markers')
+        self.assertEqual(state(self.read(), 'AGENTS.md'), ('declared_applicable', 'directory_precedence'))
+        self.profile['project_trust'] = 'declared_untrusted'
+        untrusted = self.read(codex_home='home')
+        self.assertEqual({state(untrusted, p) for p in ('AGENTS.md', 'src/AGENTS.md', 'src/task/AGENTS.md')},
+                         {('out_of_scope', 'explicitly_untrusted')})
+        self.assertEqual(self.nodes(untrusted)[digest(['codex_home', 'AGENTS.md'])].applicability, 'declared_applicable')
+        for key, value in (('project_trust', 'trusted'), ('project_root_markers', ['a/b']), ('project_root_markers', '.git'),
+                           ('project_root_markers', ['.git', '.git'])):
+            with self.subTest(key=key, value=value), self.assertRaises(ValueError): validate(dict(self.profile, **{key: value}))
+
+    def test_unknown_marker_ancestors_still_count_toward_the_declared_byte_limit(self):
+        state = lambda receipt, path: (self.nodes(receipt)[digest(path)].applicability, self.nodes(receipt)[digest(path)].reason)
+        self.write('AGENTS.md', 'SYNTHETIC'); self.write('TEAM.md', 'SYNTHETIC_SHADOWED_FALLBACK')
+        self.write('src/task/AGENTS.md', 'LEAF!')
+        self.profile.update(project_doc_max_bytes=15, project_root_markers=['.absent-marker'])
+        over = self.read()
+        self.assertEqual(state(over, 'AGENTS.md'), ('unknown', 'project_root_marker_not_found_in_checkout'))
+        self.assertEqual(state(over, 'src/task/AGENTS.md'), ('unknown', 'byte_limit_requires_native_resolution'))
+        self.assertEqual(over.resolution_status, 'blocked')
+        self.profile['project_doc_max_bytes'] = 9+2+5  # the scope's first file, a separator and the leaf
+        fits = self.read()
+        self.assertEqual(state(fits, 'src/task/AGENTS.md'), ('declared_applicable', 'directory_precedence'))
+        self.assertEqual(fits.resolution_status, 'declared')
+        self.profile['project_root_markers'] = ['.hg']; (self.root/'project/src/.hg').mkdir()
+        self.profile['project_doc_max_bytes'] = 5
+        rooted = self.read()
+        self.assertEqual(state(rooted, 'AGENTS.md'), ('out_of_scope', 'outside_project_root'))
+        self.assertEqual(state(rooted, 'src/task/AGENTS.md'), ('declared_applicable', 'directory_precedence'))
+
+    def test_inventory_parser_reports_relations_and_never_reads_local_files(self):
+        root = self.root/'project'
+        for name, text in (('CLAUDE.md', 'SYNTHETIC_ROOT @a.md'), ('src/task/deep/CLAUDE.md', 'SYNTHETIC_DEEP'),
+                           ('src/task/deep/AGENTS.md', 'SYNTHETIC_DEEP_AGENTS'), ('other/CLAUDE.md', 'SYNTHETIC_OTHER'),
+                           ('src/CLAUDE.local.md', 'SYNTHETIC_PRIVATE'), ('src/AGENTS.override.md', 'x'*(32*1024+1))):
+            self.write(name, text)
+        claude = harness_inventory.capture(root, dict(schema_version=1, runtime='claude-code', version='2.1.317', task_cwd='src/task'))
+        nodes = {n.path: n for n in claude.nodes}
+        facts = lambda node: dict(node.facts)
+        self.assertEqual(facts(nodes['CLAUDE.md'])['checkout_relation'], 'launch_ancestor')
+        self.assertEqual(facts(nodes['CLAUDE.md'])['import_tokens'], 1)
+        deep = facts(nodes['src/task/deep/CLAUDE.md'])
+        self.assertEqual((deep['checkout_relation'], deep['loading_trigger'], deep['subdirectory_size_limit']),
+                         ('on_demand_subdirectory', 'read_write_edit_in_subtree', 'unverified'))
+        self.assertEqual(facts(nodes['src/task/deep/AGENTS.md'])['instruction_files_setting'], 'instruction_files_setting_unknown')
+        self.assertEqual(facts(nodes['other/CLAUDE.md'])['checkout_relation'], 'outside_task_scope')
+        local = nodes['src/CLAUDE.local.md']
+        self.assertEqual((local.declared_state, local.parse_status, local.content_sha256), ('present_content_not_read', 'not_read', None))
+        self.assertNotIn('src/AGENTS.override.md', nodes)
+        self.assertNotIn('SYNTHETIC_', json.dumps(claude.document()))
+        codex_profile = dict(schema_version=1, runtime='codex', version='0.166.0', task_cwd='src/task')
+        codex = {n.path: n for n in harness_inventory.capture(root, codex_profile).nodes}
+        override = facts(codex['src/AGENTS.override.md'])
+        self.assertEqual((override['checkout_relation'], override['exceeds_default_project_doc_max_bytes']), ('directory_chain', True))
+        self.assertEqual(facts(codex['src/task/deep/AGENTS.md'])['checkout_relation'], 'below_task_cwd_not_loaded')
+        self.assertNotIn('src/CLAUDE.local.md', codex)
+        self.assertEqual(codex['CLAUDE.md'].parse_status, 'unsupported')
 
     def test_profile_validation_rejects_unknown_fields_types_and_escaped_cwd(self):
         invalid = [('task_cwd', '../outside'), ('task_cwd', 'src//task'),

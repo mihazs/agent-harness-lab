@@ -37,7 +37,7 @@ _FILE = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC
 # (parse_status, facts), facts a flat mapping of label to str/int/bool/None, so raw text never reaches a node.
 PARSERS = (
     ('hook', 'hooks', STUB),
-    ('instruction', 'instructions', STUB),
+    ('instruction', 'instructions', 'agent_harness_lab.sources.instructions:parse_surface'),
     ('skill', 'commands_skills', STUB),
 )
 

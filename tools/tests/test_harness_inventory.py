@@ -22,7 +22,8 @@ else:
 
 CODEX = dict(schema_version=1, runtime='codex', version='0.166.0', task_cwd='src/task')
 SURFACES = {'AGENTS.md': 'instruction', 'CLAUDE.md': 'instruction', '.agents/skills/beta/SKILL.md': 'skill',
-            '.claude/skills/alpha/SKILL.md': 'skill', '.claude/hooks/check.sh': 'hook'}
+            '.claude/skills/alpha/SKILL.md': 'skill', '.claude/hooks/check.sh': 'hook', 'src/task/AGENTS.md': 'instruction'}
+PARSED = {'AGENTS.md': 'parsed', 'src/task/AGENTS.md': 'parsed', 'CLAUDE.md': 'unsupported'}  # Codex reads no CLAUDE.md
 REFUSED = {'.git': 'vcs_metadata', **fixture.HOSTILE}
 AUDIT = []
 
@@ -58,7 +59,8 @@ class HarnessInventoryTests(unittest.TestCase):
         self.assertEqual((hook.mode, hook.scope, hook.origin, hook.root), (0o755, '.claude/hooks', 'checkout', 'checkout'))
         for node in value.nodes:
             self.assertEqual(node.path_sha256, digest(node.path))  # the #46 HarnessFile path identity
-            self.assertEqual((node.declared_state, node.parse_status, node.trust), ('present', 'not_parsed', 'unknown'))
+            self.assertEqual((node.declared_state, node.parse_status, node.trust),
+                             ('present', PARSED.get(node.path, 'not_parsed'), 'unknown'))
             self.assertEqual(node.content_sha256, hashlib.sha256((self.checkout / node.path).read_bytes()).hexdigest())
         self.assertEqual({n.kind: n.capability_ref for n in value.nodes},
                          {'instruction': 'instructions:codex', 'skill': 'commands_skills:codex', 'hook': 'hooks:codex'})
@@ -188,7 +190,7 @@ class HarnessInventoryTests(unittest.TestCase):
     def test_parser_registry_is_sorted_single_line_entries_with_stub_parsers(self):
         kinds = [row[0] for row in inventory.PARSERS]
         self.assertEqual(kinds, sorted(set(kinds)))
-        for kind, surface, reference in inventory.PARSERS:
+        for kind, surface, reference in (row for row in inventory.PARSERS if row[2] == inventory.STUB):
             self.assertEqual(inventory._resolve(reference)('AGENTS.md', b'', CODEX), ('not_parsed', {}))
         source = Path(inventory.__file__).read_text()
         for row in inventory.PARSERS:
@@ -220,7 +222,7 @@ class HarnessInventoryTests(unittest.TestCase):
         self.assertEqual((code, error.getvalue()), (0, ''))
         result = json.loads(out.getvalue())
         self.assertEqual((result['publication_allowed'], result['status'], result['nodes'], result['network_used']),
-                         (False, 'declared', 7, False))
+                         (False, 'declared', 8, False))
         self.assertNotIn('AGENTS.md', out.getvalue())
         output = Path(result['output'])
         self.assertTrue(output.is_relative_to(state))

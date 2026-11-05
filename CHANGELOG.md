@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.106.0
+
+### Minor Changes
+
+- 5b82622: Inventory nested instructions across the whole checkout. The Claude Code profile now walks the checkout without following links or entering nested repositories. Every `CLAUDE.md`, `.claude/CLAUDE.md`, `CLAUDE.local.md` and `AGENTS.md` is classified against `task_cwd` as a launch ancestor, `on_demand_subdirectory` (its imports are resolved but stay `unknown`), a shadowed `AGENTS.md`, or `outside_task_scope`. `CLAUDE.local.md` is always `private_excluded`: it is hashed but never admitted, expanded or output. The optional declared `instruction_files` mode and `claude_md_excludes` patterns are inputs; an unknown mode leaves every project file `instruction_files_setting_unknown`, and exclude matching is labelled unverified. A walk over 100000 entries or depth 64 is `blocked`. Codex captures accept a caller-declared `CODEX_HOME`, where the first non-empty `AGENTS.override.md` or `AGENTS.md` applies. They also accept declared `project_root_markers` (`[]` limits discovery to the cwd) and `project_trust: declared_untrusted`, which drops project files. `CODEX_HOME` is never read unless declared. The surface inventory classifies nested instruction files as `recommendation_only` and registers an instruction parser that reports path-free relation, trigger and size facts, never loading evidence.
+
+### Patch Changes
+
+- 765e672: Keep the whole-tree Claude Code instruction walk bounded and non-fatal. Files are hashed while streamed, so outside-scope and `CLAUDE.local.md` files no longer stay in memory, and an expanded file is re-read, at most 4 MiB of it. An unreadable subdirectory or instruction file becomes an `unknown` node (`instruction_directory_unreadable` or `instruction_file_unreadable`); the receipt is `blocked` only when it sits on or below the task directory. An on-demand import through a link, a nested repository or an unreadable path becomes an unresolved node instead of failing the capture. An oversized on-demand file is no longer skipped silently: following the documented truncation, its imports are still resolved, the file is marked `on_demand_truncation_unverified`, and imports past the smallest documented 40,000-character limit are `import_beyond_on_demand_truncation_unverified`.
+
 ## 0.105.0
 
 ### Minor Changes
