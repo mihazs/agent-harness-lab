@@ -64,6 +64,10 @@ oracle correction/invalidation and protected certification remain separate work.
   not a security boundary on their own.
 - Artifact extraction rejects traversal, symlinks, hardlinks and special files,
   and enforces declared file/byte bounds after the worker stops.
+- Contained reads open each directory by name from its already opened parent,
+  starting at `/`, without following links, so a parent swapped for a symlink
+  after the containment check is refused. Platforms whose `os.open` lacks
+  `dir_fd` support refuse these reads.
 
 ## Offline sandbox and threat model
 
