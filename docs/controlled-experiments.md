@@ -8,7 +8,7 @@ model. Existing cooperative evaluation remains recommendation-only.
 
 | Issue | Implemented and tested | Still required before issue closure |
 | --- | --- | --- |
-| #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral | Integrate portfolio queue with real proposal sessions and versioned evidence; evaluate composed repairs |
+| #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral; bounded admission of proposer `mechanisms`/`falsifiers` JSON as unverified records with per-entry rejection reasons; pure planned route dispositions | Attach admission and dispositions to the `ahl improve` receipt and queue; integrate real proposal sessions and versioned evidence; evaluate composed repairs |
 | #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, approved procedure hypothesis API | Native activation instrumentation, independently graded routing/transfer pack, live utility and compiler evaluation |
 | #12 search | Candidate identity/scope/hash checks, deduplication, hard safety feasibility, Pareto frontier, bounded development callbacks, final reserve, durable state, single final callback, conflict-checked composition | Version-verified reflective CLI proposer, actual inference resource accounting, full resume/recovery and algorithm comparisons; optional halving is not implemented |
 | #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting | An actually supported tool proxy/interception runtime and independently graded adapter effectiveness; no runtime flags are invented |
@@ -26,6 +26,34 @@ does not erase another. Development validation yields a recommendation, never
 certification. Queue/search callbacks are controller extension points: their work
 unit charges do not establish measured token/time/cost accounting for an arbitrary
 external callback. A production integration must account for every nested action.
+
+`mechanisms.from_proposal` admits untrusted proposer output of the form
+`{"status":"candidate","mechanisms":[{...}],"falsifiers":[{"mechanism_id":...,"falsifier":...}]}`.
+It is pure and total over the proposal: any value yields a
+`proposer-mechanism-admission-v1` receipt listing admitted entries and every
+rejected location with a reason. Citations must come from the controller's
+`evidence_refs` allowlist; components and severities must use the router
+vocabulary; versions come from the controller. Fields that claim authority
+(`disposition`, `status`, `validated`, `reviewed_component`, versions, history)
+reject the entry. Identical repeats are duplicates; one identity with differing
+or malformed variants is contradictory and none of its variants is admitted.
+A record carries one falsifier, inline or attached by ID; several distinct ones
+reject it rather than selecting one. Count, list, text and identifier bounds
+are explicit and reported (`None` means unlimited); an oversized entry is
+rejected and an oversized list rejects the whole proposal, never a truncated
+prefix. Admitted entries are `proposed_unverified`: records keep disposition
+`proposed` and the unreviewed `insufficient_evidence` component, with the
+proposer's claim kept only as `proposed_component`. Admission is bookkeeping;
+it establishes no diagnosis, cause or validated repair.
+
+`router.dispositions` plans the queue without evaluating, charging or mutating
+records or the budget. Routes come only from a separate `reviewed` mapping and
+explicit expected-negative labels, never from a record's own component, so
+unreviewed proposer records defer as `route_requires_review` and unauthorized
+adapter routes defer. Order, deduplication and budget charges match
+`run_queue`; eligible records stay `proposed`. Both receipts are private
+profiles rejected by public export. Neither is attached to the `ahl improve`
+receipt yet; that integration remains open in #10.
 
 Search persists charges and stages before callbacks. Restart returns recorded
 state without repeating charged work. An interrupted stage requires explicit
