@@ -361,24 +361,31 @@ class GitExport(LocalExport):
             valid.append((name, oid, fields[1].decode()))
         return tuple(valid)
 
-    def committed(self, head, path):
+    def commit_tree(self, head):
         header = self.object('commit', head).split(b'\n\n', 1)[0]
         roots = [line[5:] for line in header.splitlines() if line.startswith(b'tree ')]
         if len(roots) != 1: raise ValueError('invalid commit tree identity')
-        tree = roots[0]
+        return roots[0]
+
+    def entries(self, tree):
+        """Checked {name: (mode, oid)} of one tree object, parsed once per capture."""
+        if tree not in self.trees:
+            raw, entries, offset = self.object('tree', tree), {}, 0
+            width = 20 if self.algorithm == 'sha1' else 32
+            while offset < len(raw):
+                end = raw.index(b'\0', offset)
+                mode, name = raw[offset:end].split(b' ', 1)
+                if name in entries or b'/' in name or name in (b'.', b'..') or end+1+width > len(raw):
+                    raise ValueError('invalid Git tree entry')
+                entries[name] = (int(mode, 8), raw[end+1:end+1+width].hex().encode()); offset = end+1+width
+            self.trees[tree] = entries
+        return self.trees[tree]
+
+    def committed(self, head, path):
+        tree = self.commit_tree(head)
         parts = Path(path).parts
         for position, part in enumerate(parts):
-            if tree not in self.trees:
-                raw, entries, offset = self.object('tree', tree), {}, 0
-                width = 20 if self.algorithm == 'sha1' else 32
-                while offset < len(raw):
-                    end = raw.index(b'\0', offset)
-                    mode, name = raw[offset:end].split(b' ', 1)
-                    if name in entries or b'/' in name or name in (b'.', b'..') or end+1+width > len(raw):
-                        raise ValueError('invalid Git tree entry')
-                    entries[name] = (int(mode, 8), raw[end+1:end+1+width].hex().encode()); offset = end+1+width
-                self.trees[tree] = entries
-            mode, oid = self.trees[tree].get(os.fsencode(part), (None, None))
+            mode, oid = self.entries(tree).get(os.fsencode(part), (None, None))
             if mode is None: return None, None
             if mode == 0o160000: raise NotImplementedError('submodule contents are outside Git harness scope')
             if position == len(parts)-1:

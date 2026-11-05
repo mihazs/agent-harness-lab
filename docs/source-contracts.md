@@ -1867,6 +1867,61 @@ declarations or checkouts, and the document is marked
 `publication_allowed: false` and `loading_evidence: false`. The selected
 checkout is never edited, executed or imported.
 
+### Patch bundles for selected plugin checkouts
+
+`agent_harness_lab.plugin_recommendations.bundle(PROJECT, PROFILE,
+PLUGIN_CHECKOUTS, PLUGIN_ID, CHANGES, state=STATE)` turns a proposed change to
+one selected plugin checkout into a reviewable patch bundle. Nothing is applied.
+`workflow.recommend_plugin_change` is the routed entry point. It writes bundles
+below `$XDG_STATE_HOME/agent-harness-lab/plugin-recommendations/<project id>`.
+`CHANGES` maps plain checkout-relative paths to new UTF-8 text, or to `None` for
+a deletion. Each path must be outside `.git`, at most 1 MiB, and classified
+`recommendation_only` by `plugins_inventory.writability`. A bundle takes at most
+64 paths. `surfaces.classify` treats a project-relative path whose first segment
+starts with a `plugin:` root label as `external_repository`, so a nested
+instruction or other adoptable row below such a label stays
+`recommendation_only` and adoption never writes it.
+
+The plugin must be selected through `plugin_checkouts` and declared enabled, as
+in the inventory above. Two more conditions apply. The checkout must be pinned:
+`HEAD` resolves to a readable commit, and that commit matches the HEAD the
+inventory recorded. It must also be clean: every worktree file equals the HEAD
+tree in content and executable bit, and no file is missing or untracked. Ignored
+files count as untracked. Commit and tree objects are read with `GitExport`'s
+layout, reference and object checks, through a private `GitView` copy. Source
+Git configuration is data, and only allowlisted read-only commands run. A
+checkout that fails a condition gets a `refused` receipt with reason
+`unpinned_checkout`, `dirty_checkout`, `stale_inventory`,
+`unsupported_checkout` (symlinks, submodules, alternates) or
+`checkout_bound_exceeded` (5000 files, 64 MiB). Nothing is written then.
+
+A bundle is a new `0o700` folder holding `patch.diff` and `manifest.json`, both
+`0o600`. `patch.diff` is a git-format unified diff computed against the
+recorded HEAD, applied with `git apply` in the plugin checkout. The manifest
+records the HEAD commit, the object format, the inventory and snapshot digests,
+the patch SHA-256, and for each file the operation, mode and before and after
+SHA-256. It also carries the caller's recommendations. `status(BUNDLE,
+CHECKOUT)` checks staleness without running Git. It returns `stale_patch` when
+HEAD moved, `dirty_checkout` when a touched file changed at the same HEAD,
+`unpinned_checkout`, or `current`, and it raises `ValueError` when the patch
+changed after bundling.
+
+Enablement changes (`enabledPlugins`, `extraKnownMarketplaces`, Codex
+`[plugins.*]`) are recorded only as `recommendation_only` rows naming the
+settings file. Settings are forbidden to the proposer and marketplace trust is
+policy. Changed components are re-parsed with the registered parsers on the
+patched tree, in a temporary copy. Each file reports its kind and
+`parse_status`, or `not_a_component` or `deleted`. Runtime loading and
+compatibility stay `unverified`, and `cli_validation` is `not_run`: no
+`claude plugin validate`, install or update runs. The receipt and manifest are
+marked `applied: false`, `upstream_actions: none`, `publication_allowed:
+false`, `adoption_authority: false`, `outcome_evidence: false` and
+`independence: unknown`. AHL never writes into the checkout, the plugin cache
+or the project. It never pushes, comments on or opens pull requests against
+the plugin repository. `Journal.owned`, `adopt` and repair-contracts reject
+every external path. Bundles stay in private state and are never copied into
+docs or reports.
+
 ### Presence-only runtime configuration inventory
 
 `agent_harness_lab.sources.config_inventory.capture(checkout, profile,

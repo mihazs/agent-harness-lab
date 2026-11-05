@@ -404,6 +404,13 @@ def adopt(project, baseline, candidate, original, proposed):
         return sorted(before)
 
 
+def recommend_plugin_change(project, profile, plugin_checkouts, plugin_id, changes, **options):
+    """Route a change to a selected external plugin checkout to a private patch bundle; adopt never sees it."""
+    from .plugin_recommendations import bundle
+    state = state_root() / 'plugin-recommendations' / identity(Path(project).resolve())
+    return bundle(project, profile, plugin_checkouts, plugin_id, changes, state=state, **options)
+
+
 def _bounded_sha256(path, limit=8*1024*1024):
     """Explanatory binding only: unreadable, irregular or oversized evidence stays unknown."""
     from .evaluation.integrity import regular_sha256
