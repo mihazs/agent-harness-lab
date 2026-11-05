@@ -1742,12 +1742,17 @@ leave `pagination_incomplete` coverage with the reason in `basis`.
 A server that ignores `page`/`limit` may answer with one longer first page of at
 most 1,000 rows; a longer response, or any later page above the limit, fails the
 capture. Budgets left unset in the configuration default to 1,000 requests,
-256 MiB and 900 seconds; configured values take precedence.
+256 MiB and 900 seconds; configured values take precedence. The byte budget is
+cumulative; each response is also limited to 8 MiB, because it is held and
+parsed whole. A response above that limit fails the capture before parsing.
 
 HTTP 401, 403, 404 and 429 become coverage states (`unauthorized`, `forbidden`,
 `not_found`, `rate_limited`) on the resource that returned them. A 429 stops every
 later request; there is no automatic retry. A spent page, byte or deadline budget
-is `budget_exhausted`. Any of these, and any incomplete listing, makes the
+is `budget_exhausted`, whether it runs out before a request, while a response
+body would pass the remaining bytes, or when the deadline (including a socket
+timeout shortened to it) arrives during a request; it also stops every later
+request. Any of these, and any incomplete listing, makes the
 snapshot `checkpoint_ready: false`; the coverage manifest adds `not_observed` and
 marks `limit_reached`/`truncated`, and the registry refuses to commit it. The one
 exception is a 404 from the review listing of an already read PR, which older

@@ -22,6 +22,14 @@ class HTTPStatusError(TransportError):
         self.status = status
 
 
+class BudgetError(TransportError):
+    """A caller byte ceiling or collection deadline ran out during one exchange; `size` bytes were read."""
+
+    def __init__(self, message, reason, size=0):
+        super().__init__(message)
+        self.reason, self.size = reason, size
+
+
 def next_link(link):
     """Return the single rel="next" target of an RFC 8288 Link header, or None."""
     if link is None: return None
@@ -37,13 +45,15 @@ def next_link(link):
 
 
 def _json_exchange(origin, target, headers, *, timeout, deadline, max_bytes, body=None):
+    capped = False
     if deadline is not None:
         remaining = deadline-time.monotonic()
-        if remaining <= 0: raise TransportError('collection deadline reached')
+        if remaining <= 0: raise BudgetError('collection deadline reached', 'deadline')
+        capped = timeout is None or remaining <= timeout
         timeout = remaining if timeout is None else min(timeout, remaining)
     connection = http.client.HTTPSConnection(*origin,
         timeout=timeout, context=ssl.create_default_context())
-    response = None
+    response, size = None, 0
     try:
         connection.request('GET' if body is None else 'POST', target, body=body, headers=headers)
         response = connection.getresponse()
@@ -52,24 +62,30 @@ def _json_exchange(origin, target, headers, *, timeout, deadline, max_bytes, bod
         if response.getheader('Content-Encoding', 'identity') != 'identity':
             raise TransportError('unsupported HTTP status or encoding')
         length = response.getheader('Content-Length')
-        if length is not None and (not length.isdecimal() or max_bytes is not None and int(length) > max_bytes):
+        if length is not None and not length.isdecimal():
             raise TransportError('response byte limit exceeded')
-        chunks, size = [], 0
+        if length is not None and max_bytes is not None and int(length) > max_bytes:
+            raise BudgetError('response byte limit exceeded', 'bytes')
+        chunks = []
         while True:
             if deadline is not None and time.monotonic() >= deadline:
-                raise TransportError('collection deadline reached')
+                raise BudgetError('collection deadline reached', 'deadline', size)
             chunk = response.read1(65536 if max_bytes is None else min(65536, max_bytes-size+1))
             if deadline is not None and time.monotonic() >= deadline:
-                raise TransportError('collection deadline reached')
+                raise BudgetError('collection deadline reached', 'deadline', size+len(chunk))
             if not chunk:
                 break
             size += len(chunk)
             if max_bytes is not None and size > max_bytes:
-                raise TransportError('response byte limit exceeded')
+                raise BudgetError('response byte limit exceeded', 'bytes', size)
             chunks.append(chunk)
         if length is not None and size != int(length):
             raise TransportError('incomplete HTTP response')
         return json.loads(b''.join(chunks), object_pairs_hook=unique_object), dict(response.getheaders()), size
+    except TimeoutError:
+        # A socket timeout shortened to the remaining collection time is the deadline, not a server fault.
+        if capped: raise BudgetError('collection deadline reached', 'deadline', size) from None
+        raise
     finally:
         if response is not None:
             response.close()

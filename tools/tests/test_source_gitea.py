@@ -18,6 +18,7 @@ else:
 from agent_harness_lab.cli import main
 from agent_harness_lab.sources import gitea
 from agent_harness_lab.sources.gitea import PROVIDER, SOURCE_VERSION, GiteaAPI, GiteaConfigured, GiteaSelection
+from agent_harness_lab.sources.github import GitHubSelection
 from agent_harness_lab.sources.registry import Capability, Registry
 from agent_harness_lab.sources.schema import SourceSpec, digest
 from agent_harness_lab.sources.store import SourceStore
@@ -120,6 +121,15 @@ class GiteaFixture:
         registry.register(Capability('api', PROVIDER, SOURCE_VERSION, PLANES), client or GiteaAPI(self.base, self.selection))
         return registry
 
+    def linked_pages(self):
+        """A full first comment page whose next page is the caller's to supply."""
+        full = [dict(self.comment, id=1000+index) for index in range(50)]
+        second = self.repo_path+'/issues/7/comments?page=2&limit=50'
+        return lambda: Response(full, headers={**self.headers, 'X-Total-Count': '51', 'Link': f'<{self.base}{second}>; rel="next"'}), second
+
+    def large_page(self):
+        return Response([dict(self.comment, id=2000, body='SYNTHETIC_PRIVATE_BODY'*10000)], headers={**self.headers, 'X-Total-Count': '51'})
+
 
 class GiteaSourceTests(GiteaFixture, unittest.TestCase):
     def test_capture_keeps_issues_pulls_comments_and_reviews_without_grading_them(self):
@@ -189,20 +199,35 @@ class GiteaSourceTests(GiteaFixture, unittest.TestCase):
     def test_incomplete_pagination_is_visible_coverage_and_never_checkpoints(self):
         page = self.repo_path+'/issues/7/comments?page=1&limit=50'
         full = [dict(self.comment, id=1000+index) for index in range(50)]
-        cases = (('total_count_mismatch', lambda: Response([self.comment], headers={**self.headers, 'X-Total-Count': '3'}), {}),
-            ('page_size_unverified', lambda: Response(full, headers=self.headers), {}),
-            ('declared_count_mismatch', [self.comment], dict(comments=2)),
-            ('budget_exhausted', lambda: Response(full, headers={**self.headers, 'X-Total-Count': '51',
-                'Link': f'<{self.base}{self.repo_path}/issues/7/comments?page=2&limit=50>; rel="next"'}), {}))
-        for basis, response, issue in cases:
-            with self.subTest(basis=basis), tempfile.TemporaryDirectory() as folder:
+        linked, second = self.linked_pages()
+        clock = [0.0]
+
+        def late():
+            clock[0] += 1000
+            return Response([dict(self.comment, id=2000)], headers={**self.headers, 'X-Total-Count': '51'})
+
+        def stalled(): raise TimeoutError()
+        # Each budget runs out mid-capture: before a request, during a response body, and as a deadline-capped socket timeout.
+        cases = (('total_count_mismatch', lambda: Response([self.comment], headers={**self.headers, 'X-Total-Count': '3'}), None, {}, {}),
+            ('page_size_unverified', lambda: Response(full, headers=self.headers), None, {}, {}),
+            ('declared_count_mismatch', [self.comment], None, dict(comments=2), {}),
+            ('budget_exhausted', linked, None, {}, dict(max_pages=4)),
+            ('budget_exhausted', linked, self.large_page, {}, dict(max_bytes=100_000)),
+            ('budget_exhausted', linked, late, {}, dict(seconds=55)),
+            ('budget_exhausted', linked, stalled, {}, dict(seconds=55)))
+        for basis, response, following, issue, options in cases:
+            with (self.subTest(basis=basis, options=options, following=getattr(following, '__name__', None)),
+                    tempfile.TemporaryDirectory() as folder, patch.object(gitea.time, 'monotonic', lambda: clock[0])):
                 self.routes[page] = response; self.issue.update({'comments': 1, **issue})
-                options = dict(max_pages=4) if basis == 'budget_exhausted' else {}
+                if following is None: self.routes.pop(second, None)
+                else: self.routes[second] = following
                 client, snapshot = self.read(**options)
                 self.assertIn(('comments', 'pagination_incomplete', basis), self.states(client))
                 self.assertFalse(snapshot.checkpoint_ready)
                 self.assertTrue(snapshot.metadata.coverage.truncated)
                 self.assertEqual(snapshot.metadata.coverage.limit_reached, basis == 'budget_exhausted')
+                bound = next(b for b in snapshot.metadata.coverage.scan_bounds if b.dimension == 'bytes')
+                self.assertLessEqual(bound.observed, bound.limit)
                 self.assertIn('capture_blocked_or_incomplete', client.summary['warnings'])
                 store = SourceStore(Path(folder)/'journal.json', **self.scope())
                 with self.assertRaises(ValueError): self.registry(GiteaAPI(self.base, self.selection, **options)).ingest(self.source, store, **self.scope())
@@ -210,13 +235,42 @@ class GiteaSourceTests(GiteaFixture, unittest.TestCase):
 
     def test_unsafe_next_links_fail_closed(self):
         collection = f'{self.base}{self.repo_path}/issues/7/comments'
-        for target in ('https://other.example.test'+self.repo_path+'/issues/7/comments?page=2&limit=50',
-                f'{self.base}{self.repo_path}/issues/8/comments?page=2&limit=50', collection+'?page=3&limit=50',
-                collection+'?page=2&limit=50&token=secret', collection+'?page=2&limit=10'):
+        rows = [dict(self.comment, id=1000+i) for i in range(51)]
+        second = self.repo_path+'/issues/7/comments?page=2&limit=50'
+        # A real second page exists, so only link validation can stop an unsafe target from being captured.
+        self.routes[second] = lambda: Response(rows[50:], headers={**self.headers, 'X-Total-Count': '51'})
+        self.issue['comments'] = 51
+        for target, safe in ((collection+'?page=2&limit=50', True),
+                ('https://other.example.test'+self.repo_path+'/issues/7/comments?page=2&limit=50', False),
+                (f'{self.base}{self.repo_path}/issues/8/comments?page=2&limit=50', False), (collection+'?page=3&limit=50', False),
+                (collection+'?page=2&limit=50&token=secret', False), (collection+'?page=2&limit=10', False)):
             with self.subTest(target=target):
-                self.routes[self.repo_path+'/issues/7/comments?page=1&limit=50'] = Response([dict(self.comment, id=1000+i) for i in range(50)],
-                    headers={**self.headers, 'Link': f'<{target}>; rel="next"'})
-                with self.assertRaises(TransportError): self.read()
+                self.targets.clear()
+                self.routes[self.repo_path+'/issues/7/comments?page=1&limit=50'] = lambda target=target: Response(rows[:50],
+                    headers={**self.headers, 'X-Total-Count': '51', 'Link': f'<{target}>; rel="next"'})
+                if safe:
+                    client, snapshot = self.read()
+                    self.assertTrue(snapshot.checkpoint_ready)
+                    self.assertEqual(len(self.nodes(client, 'gitea_comment')), 52)
+                    self.assertIn(second, self.targets)
+                else:
+                    with self.assertRaises(TransportError): self.read()
+                    self.assertNotIn(second, self.targets)
+
+    def test_oversized_single_response_fails_before_parsing(self):
+        from agent_harness_lab.sources import transport
+        parsed, loads = [], transport.json.loads
+
+        def spy(body, **options):
+            parsed.append(len(body)); return loads(body, **options)
+        # A whitespace-padded empty listing parses cheaply, so only the per-response ceiling can reject it.
+        self.routes[self.repo_path+'/issues/7/comments?page=1&limit=50'] = lambda: Response(b'['+b' '*gitea.MAX_RESPONSE_BYTES+b']',
+            headers={**self.headers, 'X-Total-Count': '0'})
+        self.issue['comments'] = 0
+        with patch.object(transport.json, 'loads', spy), self.assertRaises(TransportError): self.read()
+        self.assertTrue(parsed)
+        self.assertLessEqual(max(parsed), gitea.MAX_RESPONSE_BYTES)
+        self.assertLess(gitea.MAX_RESPONSE_BYTES, gitea.DEFAULT_LIMITS['max_bytes'])
 
     def test_repeat_import_is_idempotent_and_updates_add_native_revisions(self):
         registry = self.registry()
@@ -402,6 +456,17 @@ class GiteaConfigurationTests(GiteaFixture, unittest.TestCase):
             self.assertEqual(self.journal.read_bytes(), original)
             self.assertEqual(self.invoke('status')[0], 0)
             self.assertEqual(self.invoke('preview', *env, '--authorization-file', str(self.credential))[0], 2)
+            self.routes[self.repo_path+'/issues/7'] = self.issue
+            # A byte budget spent partway through a listing is blocked coverage with its summary, never an integrity failure.
+            linked, second = self.linked_pages()
+            self.routes[self.repo_path+'/issues/7/comments?page=1&limit=50'], self.routes[second] = linked, self.large_page
+            self.write(limits=dict(max_pages=40, max_bytes=100_000))
+            code, result = self.invoke('import', *env)
+            self.assertEqual((code, result['status'], result['checkpoint_committed']), (3, 'blocked', False))
+            self.assertIn(('comments', 'pagination_incomplete', 'budget_exhausted'),
+                [(c['resource'], c['state'], c['basis']) for c in result['gitea_summary']['coverage']])
+            self.assertEqual(self.journal.read_bytes(), original)
+        self.write()
         self.credential.write_text('token SYNTHETIC_SECRET\n')
         self.routes[self.repo_path+'/issues/7'] = self.issue
         self.assertEqual(self.invoke('preview', '--authorization-file', str(self.credential))[0], 0)
@@ -413,9 +478,17 @@ class GiteaConfigurationTests(GiteaFixture, unittest.TestCase):
             with self.subTest(change=change):
                 self.write(**change)
                 with self.assertRaises(ValueError): connector.declaration(**self.scope())
-        self.write()
-        self.source = replace(self.source, provider='github'); self.write()
-        self.assertEqual(self.invoke('probe', '--authorization-env', 'SYNTHETIC_GITEA_AUTHORIZATION')[0], 2)
+        # A GitHub configuration that probes cleanly, so only the CLI guard can refuse the variable.
+        github = GitHubSelection(42, (7,), (8,))
+        endpoint = 'https://api.github.com/repos/synthetic-github/synthetic-project'
+        self.source = SourceSpec('api', 'github', github.source_version, digest(endpoint), github.project_sha256, github.sha256,
+            identity_provenance='source_declared_id', auth_mode='configured', enabled=True)
+        self.write(endpoint=endpoint, selection=github.to_dict())
+        self.assertEqual(self.invoke('probe')[0], 0)
+        with patch.dict(os.environ, SYNTHETIC_GITEA_AUTHORIZATION='token SYNTHETIC_SECRET'):
+            for operation in ('probe', 'preview'):
+                with self.subTest(operation=operation):
+                    self.assertEqual(self.invoke(operation, '--authorization-env', 'SYNTHETIC_GITEA_AUTHORIZATION'), (2, None))
         self.wire.assert_not_called()
 
 

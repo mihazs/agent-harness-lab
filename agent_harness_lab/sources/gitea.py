@@ -9,7 +9,7 @@ from .github import commit_hash, integer, moment, text_hash
 from .remote_config import ConfiguredAPI
 from .schema import Contract, EvidenceRecord, SourceSpec, digest
 from .snapshot import Snapshot
-from .transport import HTTPStatusError, JsonAPI, TransportError, _json_exchange, endpoint, next_link
+from .transport import BudgetError, HTTPStatusError, JsonAPI, TransportError, _json_exchange, endpoint, next_link
 
 PROVIDER = 'gitea'
 SOURCE_VERSION = 'v1'
@@ -17,6 +17,8 @@ API_PREFIX = '/api/v1'
 PAGE_SIZE = 50
 # A server that ignores page/limit may answer with one longer first page, never an unbounded one.
 MAX_UNPAGED_ROWS = 1000
+# One response is read and parsed whole, so each has its own ceiling below the cumulative byte budget.
+MAX_RESPONSE_BYTES = 8*1024*1024
 # Budgets that apply when the configuration leaves one unset; a configured value always takes precedence.
 DEFAULT_LIMITS = dict(max_pages=1000, max_bytes=256*1024*1024, seconds=900)
 CAPTURE = ('comments', 'issues', 'pulls', 'reviews')
@@ -138,13 +140,21 @@ class GiteaAPI:
         headers = {'Accept': 'application/json', 'Accept-Encoding': 'identity', 'User-Agent': 'agent-harness-lab-reader'}
         if self.authorization is not None: headers['Authorization'] = self.authorization
         state['requests'] += 1
+        remaining = None if api.max_bytes is None else api.max_bytes-state['used']
         try:
             value, metadata, size = _json_exchange(api.origin, api.path+target, headers, timeout=api.timeout,
-                deadline=state['deadline'], max_bytes=None if api.max_bytes is None else api.max_bytes-state['used'])
+                deadline=state['deadline'], max_bytes=MAX_RESPONSE_BYTES if remaining is None else min(MAX_RESPONSE_BYTES, remaining))
         except HTTPStatusError as error:
             if error.status not in DENIED: raise
             if error.status == 429: state['halted'] = 'rate_limited'
             raise Unavailable(DENIED[error.status]) from None
+        except BudgetError as spent:
+            # A response over the per-response ceiling fails closed; only a spent remaining budget is coverage.
+            if spent.reason == 'bytes' and (remaining is None or remaining > MAX_RESPONSE_BYTES):
+                raise ValueError('Gitea response exceeds the per-response byte limit') from None
+            state['used'] += spent.size if remaining is None else min(spent.size, remaining)
+            state['halted'] = 'budget_exhausted'
+            raise Unavailable('budget_exhausted') from None
         state['used'] += size
         metadata = {k.lower(): v for k, v in metadata.items()}
         if metadata.get('content-type', '').split(';')[0].strip() != 'application/json':
