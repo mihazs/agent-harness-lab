@@ -284,8 +284,49 @@ class ClaudeInstructionInventoryTests(unittest.TestCase):
         self.write('src/task/CLAUDE.md', '@linkdir/x.md')
         with self.assertRaises(ValueError): self.read()
 
+    def test_launch_imports_of_linked_instruction_named_files_found_by_the_walk_fail_closed(self):
+        self.profile['task_cwd'] = '.'
+        (self.root/'outside.md').write_text('SYNTHETIC_OUTSIDE'); self.write('CLAUDE.md', '@sub/CLAUDE.md')
+        (self.root/'project/sub').mkdir()
+        for link in (lambda path: path.symlink_to('../../outside.md'), lambda path: os.link(self.root/'outside.md', path)):
+            target = self.root/'project/sub/CLAUDE.md'; target.unlink(missing_ok=True); link(target)
+            with self.subTest(link=link), self.assertRaises(ValueError): self.read()
+
+    def test_empty_launch_agents_file_is_never_admitted_under_a_declared_mode(self):
+        self.profile['task_cwd'] = '.'
+        self.write('AGENTS.md', '   \n'); self.write('agents-note.md', 'SYNTHETIC_NOTE')
+        for mode in ('claude-md-or-agents-md', 'claude-md-and-agents-md'):
+            self.profile['instruction_files'] = mode
+            if mode == 'claude-md-and-agents-md': self.write('CLAUDE.md', 'SYNTHETIC_ROOT')
+            with self.subTest(mode=mode):
+                receipt = self.read()
+                self.assertEqual(self.state(receipt, 'AGENTS.md'), ('unknown', 'empty'))
+                self.assertFalse(any(e.target_sha256 == digest('AGENTS.md') for e in receipt.edges))
+
+    def test_empty_local_files_are_private_not_missing(self):
+        self.profile['task_cwd'] = '.'
+        for name in ('CLAUDE.local.md', 'deep/CLAUDE.local.md'): self.write(name, '')
+        receipt = self.read()
+        for name in ('CLAUDE.local.md', 'deep/CLAUDE.local.md'):
+            node = self.nodes(receipt)[digest(name)]
+            self.assertEqual((node.presence, node.applicability, node.reason), ('present', 'private_excluded', 'private_excluded'))
+
     def unreadable(self, path, mode):
         path.chmod(mode); self.addCleanup(path.chmod, 0o755 if path.is_dir() else 0o644)
+
+    @unittest.skipIf(os.geteuid() == 0, 'permissions do not bind root')
+    def test_unreadable_import_targets_stay_unresolved_on_demand_and_fail_the_launch_chain(self):
+        self.write('src/task/sub/locked/x.md', 'SYNTHETIC_LOCKED'); self.write('src/task/sub/CLAUDE.md', '@locked/x.md')
+        self.unreadable(self.root/'project/src/task/sub/locked', 0)
+        node = self.unresolved(self.read(), 'src/task/sub/CLAUDE.md', 'import_target_unreadable')
+        self.assertEqual((node.presence, node.applicability, node.reason), ('unknown', 'unsupported', 'import_target_unreadable'))
+        self.write('src/task/CLAUDE.md', '@sub/locked/x.md')
+        with self.assertRaises(PermissionError): self.read()
+        (self.root/'project/src/task/CLAUDE.md').unlink()
+        self.profile['task_cwd'] = 'src'
+        self.write('src/CLAUDE.md', '@../other/CLAUDE.md'); self.write('other/CLAUDE.md', 'SYNTHETIC_HIDDEN')
+        self.unreadable(self.root/'project/other/CLAUDE.md', 0)
+        with self.assertRaises(PermissionError): self.read()
 
     @unittest.skipIf(os.geteuid() == 0, 'permissions do not bind root')
     def test_unreadable_entries_are_reported_and_block_only_where_they_can_hide_instructions(self):
@@ -301,6 +342,11 @@ class ClaudeInstructionInventoryTests(unittest.TestCase):
         node = self.nodes(receipt)[digest('other/CLAUDE.md')]
         self.assertEqual((node.presence, node.applicability, node.reason), ('unknown', 'out_of_scope', 'instruction_file_unreadable'))
         self.assertEqual(self.state(receipt, 'CLAUDE.md'), ('declared_applicable', 'directory_concatenation'))
+        self.unreadable(self.write('src/task/file/CLAUDE.md', 'SYNTHETIC_HIDDEN'), 0)
+        hidden = self.read()
+        self.assertEqual(hidden.resolution_status, 'blocked')
+        node = self.nodes(hidden)[digest('src/task/file/CLAUDE.md')]
+        self.assertEqual((node.presence, node.applicability, node.reason), ('unknown', 'unknown', 'instruction_file_unreadable'))
         self.write('src/task/deep/CLAUDE.md', 'SYNTHETIC_HIDDEN'); self.unreadable(self.root/'project/src/task/deep', 0)
         blocked = self.read()
         self.assertEqual(blocked.resolution_status, 'blocked')

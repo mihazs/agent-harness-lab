@@ -206,6 +206,25 @@ class InstructionInventoryTests(unittest.TestCase):
                            ('project_root_markers', ['.git', '.git'])):
             with self.subTest(key=key, value=value), self.assertRaises(ValueError): validate(dict(self.profile, **{key: value}))
 
+    def test_unknown_marker_ancestors_still_count_toward_the_declared_byte_limit(self):
+        state = lambda receipt, path: (self.nodes(receipt)[digest(path)].applicability, self.nodes(receipt)[digest(path)].reason)
+        self.write('AGENTS.md', 'SYNTHETIC'); self.write('TEAM.md', 'SYNTHETIC_SHADOWED_FALLBACK')
+        self.write('src/task/AGENTS.md', 'LEAF!')
+        self.profile.update(project_doc_max_bytes=15, project_root_markers=['.absent-marker'])
+        over = self.read()
+        self.assertEqual(state(over, 'AGENTS.md'), ('unknown', 'project_root_marker_not_found_in_checkout'))
+        self.assertEqual(state(over, 'src/task/AGENTS.md'), ('unknown', 'byte_limit_requires_native_resolution'))
+        self.assertEqual(over.resolution_status, 'blocked')
+        self.profile['project_doc_max_bytes'] = 9+2+5  # the scope's first file, a separator and the leaf
+        fits = self.read()
+        self.assertEqual(state(fits, 'src/task/AGENTS.md'), ('declared_applicable', 'directory_precedence'))
+        self.assertEqual(fits.resolution_status, 'declared')
+        self.profile['project_root_markers'] = ['.hg']; (self.root/'project/src/.hg').mkdir()
+        self.profile['project_doc_max_bytes'] = 5
+        rooted = self.read()
+        self.assertEqual(state(rooted, 'AGENTS.md'), ('out_of_scope', 'outside_project_root'))
+        self.assertEqual(state(rooted, 'src/task/AGENTS.md'), ('declared_applicable', 'directory_precedence'))
+
     def test_inventory_parser_reports_relations_and_never_reads_local_files(self):
         root = self.root/'project'
         for name, text in (('CLAUDE.md', 'SYNTHETIC_ROOT @a.md'), ('src/task/deep/CLAUDE.md', 'SYNTHETIC_DEEP'),

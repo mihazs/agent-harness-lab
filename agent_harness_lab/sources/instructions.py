@@ -192,7 +192,7 @@ def capture(profile, folder, checkout, selected=(), *, git_harness_sha256=None, 
     previous, total, blocked = None, 0, False
     limit = profile.get('project_doc_max_bytes')
     for index, scope in enumerate(scopes):
-        active = None
+        active = counted = None
         for name in candidates:
             path = str(Path(scope)/name)
             value, raw = node(path, 'unknown', 'missing')
@@ -200,7 +200,10 @@ def capture(profile, folder, checkout, selected=(), *, git_harness_sha256=None, 
             if raw is not None:
                 text = raw.decode('utf-8')
                 if not text.strip(): reason = 'empty'
-                elif index in excluded: applicability, reason = excluded[index]
+                elif index in excluded:
+                    applicability, reason = excluded[index]
+                    # Outside a marker the checkout lacks, the scope's first file may still load: it uses budget.
+                    if applicability == 'unknown' and not counted: counted = True; total += len(raw)+(2 if total else 0)
                 elif untrusted: applicability, reason = 'out_of_scope', 'explicitly_untrusted'
                 elif active:
                     applicability, reason = 'shadowed', 'directory_precedence'
@@ -208,7 +211,7 @@ def capture(profile, folder, checkout, selected=(), *, git_harness_sha256=None, 
                 else:
                     active = value.path_sha256
                     # shortcut: uncertain native truncation blocks resolution; add a native receipt before modeling partial files.
-                    total += len(raw)+(2 if previous else 0)
+                    total += len(raw)+(2 if total else 0)
                     if blocked or limit is not None and total > limit:
                         blocked, reason = True, 'byte_limit_requires_native_resolution'
                     else:

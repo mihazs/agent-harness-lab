@@ -253,7 +253,7 @@ def capture(profile, scopes, selected, folder, checkout):
         sha, permissions, info = scanned or (None, None, None)
         value = InstructionNode(digest(path), digest(str(Path(path).parent)), sha, permissions,
                                 'present' if scanned else 'missing' if scanned is None else 'unknown', applicability, reason)
-        if private: value = replace(value, applicability=PRIVATE, reason=PRIVATE if info and info[0] else reason
+        if private: value = replace(value, applicability=PRIVATE, reason=PRIVATE if scanned else reason
                                     if scanned is False else 'missing')
         keep(value, info, path)
         return value, info
@@ -297,10 +297,12 @@ def capture(profile, scopes, selected, folder, checkout):
             for token, uncertainty in imports(text, ON_DEMAND_CHARS if conditional else None):
                 target, reason = resolve(source_path, token, cwd)
                 key = digest(target) if target is not None else unresolved(source_path, reason)
-                if target is not None and key not in nodes:
+                # A launch import is probed even when the walk recorded it, so links and unreadable files fail closed.
+                if target is not None and (key not in nodes or not conditional):
                     status = locate(target, conditional)
-                    if status == 'file': read(target, 'unknown', 'import_pending', conditional)
-                    else: key = unresolved(source_path, UNRESOLVED[status])
+                    if status == 'file' and (key not in nodes or facts[key] is None and nodes[key].reason == UNREADABLE):
+                        read(target, 'unknown', 'import_pending', conditional)
+                    elif key not in nodes: key = unresolved(source_path, UNRESOLVED[status])
                 links.setdefault((source, key), None)
                 info, current = facts[key], nodes[key]
                 if info is None or key in depth or current.applicability in ('declared_applicable', PRIVATE): continue
@@ -337,7 +339,8 @@ def capture(profile, scopes, selected, folder, checkout):
         if not known: continue
         if excluded(path_of[key], patterns): nodes[key] = replace(nodes[key], reason=EXCLUDES)
         elif mode == 'claude-md-and-agents-md' or mode == 'claude-md-or-agents-md' and not claude_files:
-            if facts[key][0] > SKIPPED_BYTES: nodes[key] = replace(nodes[key], reason='runtime_size_limit_unverified')
+            if facts[key][2]: nodes[key] = replace(nodes[key], reason='empty')
+            elif facts[key][0] > SKIPPED_BYTES: nodes[key] = replace(nodes[key], reason='runtime_size_limit_unverified')
             else: admit(key, 0, launch, False, 'declared_instruction_files_setting')
     claude_scopes = {}  # a subdirectory's first CLAUDE.md, .claude/CLAUDE.md or CLAUDE.local.md, in LAUNCH order
     for name in LAUNCH:

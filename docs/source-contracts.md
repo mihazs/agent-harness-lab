@@ -1020,9 +1020,11 @@ linked final target or a non-UTF-8 launch file. Only a genuinely absent path is
 `import_missing`. Every file is hashed in full with no byte cap, but it is
 streamed: no file's bytes are kept once its hash is taken. A file that is
 expanded for imports is read again, at most 4 MiB of it, and its hash is
-checked against the first read. Node count is bounded
-by the launch candidates, the distinct in-checkout files reached within four hops,
-five unresolved-reference nodes per expanded file and the selected files. The
+checked against the first read. Node count is bounded by the launch
+candidates, the instruction-named entries found by the whole-tree walk (itself
+capped at 100000 entries), one node per unreadable directory, the distinct
+in-checkout files reached within four hops, up to eight unresolved-reference
+nodes per expanded file, one per unresolved reason, and the selected files. The
 receipt uses the existing `InstructionInventory` shape and `instruction_inventory`
 record. Observed loading stays `unknown`, and the receipt grants no edit authority.
 Content, import, cwd and profile changes invalidate it. Native
@@ -1072,7 +1074,11 @@ and `.claude/AGENTS.md` becomes a node, classified against `task_cwd`:
   a `CLAUDE.md` when deciding whether an `AGENTS.md` is shadowed, as documented.
 - A linked or hard-linked instruction file outside the launch chain is
   `unsupported` (`instruction_link_not_followed`) and is never opened. Links in
-  the launch chain still fail the capture.
+  the launch chain still fail the capture, including a launch-chain import of a
+  linked or unreadable file the walk already recorded.
+- An empty or whitespace-only `CLAUDE.md` or `AGENTS.md` in the launch chain
+  stays `unknown` (`empty`) under any `instruction_files` mode that would
+  otherwise admit it.
 
 Two optional profile fields declare settings that live only in user or managed
 configuration:
@@ -1127,7 +1133,10 @@ pinned to the public `openai/codex@d786ff91` source
   are `out_of_scope` (`outside_project_root`). An empty list limits discovery to
   `task_cwd`. A declared marker found nowhere in the checkout leaves the
   ancestors `unknown` (`project_root_marker_not_found_in_checkout`), because a
-  marker above the checkout is not read.
+  marker above the checkout is not read. Those ancestors may still load, so the
+  first non-empty file of each counts toward a declared `project_doc_max_bytes`;
+  a later file that would pass the limit is `unknown`
+  (`byte_limit_requires_native_resolution`) and the receipt is `blocked`.
 - `project_trust: declared_untrusted` drops every non-empty project file to
   `out_of_scope` (`explicitly_untrusted`), as Codex loads no project docs for an
   untrusted project. The `CODEX_HOME` files still apply. Trust is never read
