@@ -41,12 +41,14 @@ class LoadingJoinTests(unittest.TestCase):
         self.rows.append(self.row(ident, type='assistant', message=dict(role='assistant', content=[
             dict(type='tool_use', id='call-' + ident, name=name, input=arguments)])))
 
-    def join(self, profile=CLAUDE, events=True):
-        captured = inventory.capture(self.checkout, profile)
-        if events is not True: return captured, inventory.join_loading(captured, events)
+    def read(self):
         self.transcript.write_text(''.join(json.dumps(row) + '\n' for row in self.rows))
         rows, _, _ = claude_native.read(self.transcript, self.checkout)
-        return captured, inventory.join_loading(captured, rows)
+        return rows
+
+    def join(self, profile=CLAUDE, events=True):
+        captured = inventory.capture(self.checkout, profile)
+        return captured, inventory.join_loading(captured, self.read() if events is True else events)
 
     def node(self, captured, joined, path):
         index = next(i for i, node in enumerate(captured.nodes) if node.path == path)
@@ -68,6 +70,9 @@ class LoadingJoinTests(unittest.TestCase):
         self.assertEqual(sum(row['observed_loading'] == 'observed_pattern' for row in joined['nodes']), 2)
         self.assertEqual((joined['outcome'], joined['independence'], joined['effective']), ('unknown',) * 3)
         self.assertEqual(joined['version_alignment'], 'unverified')
+        self.assertEqual((joined['loading_evidence'], joined['attachment_shapes']),
+            ('observed_pattern', 'unverified_fixture_only'))
+        self.assertEqual((joined['duplicate_events'], joined['warnings']), (0, []))
         self.assertTrue(all(node.observed_loading == 'unknown' for node in captured.nodes))
         text = json.dumps(joined)
         for secret in ('SYNTHETIC', str(self.checkout), 'CLAUDE.md'): self.assertNotIn(secret, text)
@@ -78,6 +83,45 @@ class LoadingJoinTests(unittest.TestCase):
         captured, joined = self.join()
         row = self.node(captured, joined, 'CLAUDE.md')
         self.assertEqual((row['observed_loading'], row['path_only_attachments'], row['exact_attachments']), ('unknown', 2, 0))
+
+    def test_join_without_matched_evidence_reports_no_observed_pattern(self):
+        _, joined = self.join(events=[])
+        self.assertEqual(joined['status'], 'joined')
+        self.assertEqual((joined['loading_evidence'], joined['attachment_shapes'], joined['duplicate_events']),
+            ('none', 'none', 0))
+        self.attach('n', 'CLAUDE.md', 'SYNTHETIC_EDITED_TEXT')
+        self.call('a', 'Agent', dict(subagent_type='reviewer'))
+        _, joined = self.join()
+        self.assertEqual((joined['loading_evidence'], joined['attachment_shapes']), ('none', 'unverified_fixture_only'))
+        _, joined = self.join(events=None)
+        self.assertEqual((joined['status'], joined['loading_evidence'], joined['attachment_shapes']),
+            ('no_capture', 'none', 'none'))
+
+    def test_a_capture_read_twice_counts_each_event_once_and_warns(self):
+        self.attach('m', 'CLAUDE.md', fixture.FILES['CLAUDE.md'])
+        self.attach('x', 'missing/CLAUDE.md', 'SYNTHETIC_ABSENT')
+        self.call('a', 'Agent', dict(subagent_type='reviewer'))
+        captured, once = self.join()
+        rows = self.read()
+        _, twice = self.join(events=rows + rows)
+        self.assertEqual((twice['nodes'], twice['unattributed']), (once['nodes'], once['unattributed']))
+        self.assertEqual(self.node(captured, twice, 'CLAUDE.md')['exact_attachments'], 1)
+        loading = sum('loading_signal' in row for row in rows)
+        self.assertEqual(loading, 3)
+        self.assertEqual((twice['duplicate_events'], twice['warnings']), (loading, ['duplicate_event_identity']))
+        first = next(row for row in rows if row.get('loading_path_sha256') == digest('CLAUDE.md'))
+        forged = dict(first, loading_content_sha256=digest('SYNTHETIC_OTHER'))
+        _, joined = self.join(events=[first, forged])
+        self.assertEqual(self.node(captured, joined, 'CLAUDE.md')['exact_attachments'], 1)
+        self.assertEqual((joined['duplicate_events'], joined['warnings']),
+            (1, ['duplicate_event_conflict', 'duplicate_event_identity']))
+
+    def test_distinct_events_of_one_file_are_each_counted(self):
+        self.attach('m1', 'CLAUDE.md', fixture.FILES['CLAUDE.md'])
+        self.attach('m2', 'CLAUDE.md', fixture.FILES['CLAUDE.md'])
+        captured, joined = self.join()
+        self.assertEqual(self.node(captured, joined, 'CLAUDE.md')['exact_attachments'], 2)
+        self.assertEqual((joined['duplicate_events'], joined['warnings']), (0, []))
 
     def test_agent_hook_and_mcp_signals_never_set_observed_loading(self):
         self.call('a', 'Agent', dict(subagent_type='reviewer', prompt='SYNTHETIC'))
