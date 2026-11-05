@@ -48,7 +48,7 @@ only allowed differences:
 - each route's private run directory (`output`), with paths under it compared
   relative to it;
 - digests that bind run artifacts holding timing or context values:
-  `plan_sha256`, `decision.bindings.evaluation_sha256` and `manifest_sha256`,
+  `plan_sha256`, `decision.bindings.results_sha256` and `manifest_sha256`,
   and the change plan's `affected_controls_sha256` and `evidence` reference;
 - measured durations and remaining budget in private run artifacts, and the
   `origin` and `parent_run_id` invocation context given to preparation children;

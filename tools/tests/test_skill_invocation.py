@@ -221,13 +221,13 @@ class EntryReceiptParityTests(unittest.TestCase):
         manifest=run/'preparation'/f'evaluation-{bindings["attempt"]}'/'manifest.json'
         self.assertEqual(bindings['manifest_sha256'],hashlib.sha256(manifest.read_bytes()).hexdigest())
         self.assertEqual(Path(bindings['evaluation']).parent,run)
-        self.assertEqual(bindings['evaluation_sha256'],cli.evaluator().digest(Path(bindings['evaluation'])))
+        self.assertEqual(bindings['results_sha256'],hashlib.sha256((Path(bindings['evaluation'])/'results.json').read_bytes()).hexdigest())
         self.assertEqual(Path(receipt['plan']),run/'change-plan.json')
         self.assertEqual(json.loads((run/'change-plan.json').read_text())['plan_sha256'],receipt['plan_sha256'])
 
     def test_contract_reports_every_difference_outside_the_allowed_set(self):
         first=dict(status='inconclusive',output='/a/run-1',plan='/a/run-1/change-plan.json',plan_sha256='1',
-            decision=dict(disposition='insufficient_evidence',bindings=dict(evaluation='/a/run-1/evaluation-0',evaluation_sha256='1')))
+            decision=dict(disposition='insufficient_evidence',bindings=dict(evaluation='/a/run-1/evaluation-0',results_sha256='1')))
         second=json.loads(json.dumps(first).replace('/a/run-1','/b/run-2').replace('"1"','"2"'))
         self.assertEqual(entry_parity.document_differences('workflow.json',first,second,'/a/run-1','/b/run-2'),[])
         for path,value in ((('status',),'applied'),(('decision','disposition'),'invalid_evidence'),
