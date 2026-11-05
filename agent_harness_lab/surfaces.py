@@ -8,7 +8,7 @@ that a runtime loads the file. Rows that need checkout containment carry their p
 `unconfirmed`; only a caller that has observed the containment fact (in_checkout) receives `adoptable`, and
 only for a path the row itself names.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import PurePosixPath
 import re
 
@@ -188,7 +188,8 @@ RULES = (
     # CODEX_HOME root. Claude frontmatter and Codex role files (a config layer) can both carry hooks, so each
     # runtime's hook row adds the hook contract facet and an agent edit can never evade hook review. The agent
     # rows outrank the skill and hook segment rows, so agents/hooks/x.md stays an agent that has the hook facet.
-    # Checkout agent files are adoptable, yet the hook facet keeps every agent edit unresolved in change plans.
+    # Checkout agent files are adoptable, yet the hook facet keeps every agent edit unresolved in change plans, and
+    # adoption() refuses an agent whose own content registers hooks.
     Rule('claude-agent-definition', 'agent', 15, 'adoptable', _agent_file('.claude', '.md'),
          runtimes=frozenset({'claude-code'}), label='.claude/agents/**/*.md agent definitions',
          unconfirmed='recommendation_only'),
@@ -291,6 +292,35 @@ def classify(relative_path, runtime=None, mode=None, *, root_skills=False, exter
                                           if row.unconfirmed is not None)), key=rank)
     if origin == 'external_repository' and writability != 'private_excluded': writability = 'recommendation_only'
     return SurfaceClass(kinds[0] if kinds else 'unsupported', str(scope), executable, writability, facets)
+
+
+def embeds_hooks(relative_path, raw):
+    """Whether agent-definition bytes can register hooks: a `hooks` word in Claude frontmatter, or a `hooks` key at
+    any depth of a Codex role file. Fails closed: undecodable bytes, a YAML escape or unparsable TOML count as hooks."""
+    try: text = raw.decode('utf-8')
+    except UnicodeDecodeError: return True
+    if relative_path.endswith('.toml'):
+        import tomllib
+        def keys(value):
+            if isinstance(value, dict): return any(key == 'hooks' or keys(item) for key, item in value.items())
+            return isinstance(value, list) and any(keys(item) for item in value)
+        try: return keys(tomllib.loads(text))
+        except tomllib.TOMLDecodeError: return True
+    lines = text.lstrip('\ufeff \t\r\n').splitlines()
+    if not lines or lines[0].rstrip() != '---': return False  # Claude skips a file without a leading fence.
+    end = next((index for index, line in enumerate(lines[1:], 1) if line.rstrip() in ('---', '...')), len(lines))
+    front = '\n'.join(lines[1:end])
+    return bool(re.search('hooks', front, re.IGNORECASE)) or '\\' in front
+
+
+def adoption(relative_path, mode, raw, **context):
+    """classify() for writing raw bytes with st_mode bits mode at the path. An agent definition whose content can
+    register hooks needs the hook contract, so adoption never evades hook review; raw None writes no content."""
+    verdict = classify(relative_path, None, mode, **context)
+    if verdict.writability == 'adoptable' and 'agent' in verdict.facets and raw is not None \
+            and embeds_hooks(relative_path, raw):
+        return replace(verdict, writability='contract_required')
+    return verdict
 
 
 # Pinned public sources; the research was retrieved on RETRIEVED. status is the research label: 'verified'

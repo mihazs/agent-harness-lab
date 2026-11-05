@@ -235,3 +235,66 @@ class NestedSurfaceAdoptionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'outside owned harness surface'):
             self.adopt(original,candidate_states(self.root/'candidate',original))
         self.assertEqual([(self.project/n).read_text() for n in names],['foreign','foreign'])
+
+    def stage_files(self,files,modes={}):
+        """Stage candidate bytes over a baseline of NAMES; modes sets st_mode bits on staged files."""
+        import shutil
+        from agent_harness_lab.workflow import snapshot,candidate_states
+        original=snapshot(self.project,self.root/'baseline',allowed_paths=list(self.NAMES))
+        shutil.copytree(self.root/'baseline',self.root/'candidate')
+        for name,text in files.items():
+            self.write(self.root/'candidate'/name,text); (self.root/'candidate'/name).chmod(modes.get(name,0o644))
+        return original,lambda:candidate_states(self.root/'candidate',original)
+
+    def test_executable_files_on_gated_rows_are_never_staged_or_journaled(self):
+        script='#!/bin/sh\necho synthetic\n'
+        for name in ('.claude/rules/x.md','pkg/.claude/skills/demo/scripts/deploy','app/CLAUDE.md'):
+            with self.subTest(name=name):
+                import shutil; shutil.rmtree(self.root/'baseline',ignore_errors=True); shutil.rmtree(self.root/'candidate',ignore_errors=True)
+                _,states=self.stage_files({name:script},{name:0o755})
+                with self.assertRaisesRegex(ValueError,'needs a hook contract'): states()
+                journal=Journal(self.project,self.root/'journals'/name.replace('/','_'))
+                before=file_record(self.project/name) if (self.project/name).exists() else None
+                with self.assertRaisesRegex(ValueError,'outside owned harness surface'):
+                    journal.prepare({name:before},{name:file_record(self.root/'candidate'/name)})
+        self.assertFalse((self.project/'pkg').exists())
+        self.assertEqual([(self.project/n).stat().st_mode&0o777 for n in self.NAMES],[0o644]*3)
+        # An unchanged executable file is never written, so staging still accepts it.
+        (self.project/'.claude/rules/x.md').chmod(0o755)
+        import shutil; shutil.rmtree(self.root/'baseline'); shutil.rmtree(self.root/'candidate')
+        original,states=self.stage_files({'app/CLAUDE.md':'after'})
+        self.assertEqual(states()['.claude/rules/x.md'],original['.claude/rules/x.md'])
+
+    def test_agent_definitions_that_register_hooks_are_never_adopted(self):
+        hooked={'.claude/agents/r.md':'---\nname: r\ndescription: d\nhooks:\n  PreToolUse:\n    - hooks:\n'
+                '        - type: command\n          command: synthetic-hook\n---\nBody\n',
+                '.claude/agents/q.md':'---\n{name: q, description: d, "\\x68ooks": {}}\n---\n',
+                '.codex/agents/r.toml':'name = "r"\ndeveloper_instructions = "x"\n[[hooks.PreToolUse]]\ncommand = "x"\n',
+                '.codex/agents/bad.toml':'name = = "broken"\n'}
+        for name,text in hooked.items():
+            with self.subTest(name=name):
+                import shutil; shutil.rmtree(self.root/'baseline',ignore_errors=True); shutil.rmtree(self.root/'candidate',ignore_errors=True)
+                _,states=self.stage_files({name:text})
+                with self.assertRaisesRegex(ValueError,'needs a hook contract'): states()
+                journal=Journal(self.project,self.root/'journals'/name.replace('/','_'))
+                with self.assertRaisesRegex(ValueError,'outside owned harness surface'):
+                    journal.prepare({name:None},{name:file_record(self.root/'candidate'/name)})
+        self.assertFalse((self.project/'.claude/agents').exists()); self.assertFalse((self.project/'.codex').exists())
+        import shutil; shutil.rmtree(self.root/'baseline'); shutil.rmtree(self.root/'candidate')
+        plain={'.claude/agents/ok.md':'---\nname: ok\ndescription: reviews synthetic diffs\n---\nRead only.\n',
+               '.codex/agents/ok.toml':'name = "ok"\ndeveloper_instructions = "Review synthetic diffs."\n'}
+        original,states=self.stage_files(plain)
+        self.assertEqual(self.adopt(original,states()),sorted(plain))
+
+    def test_rollback_survives_a_repository_created_below_the_project_after_adoption(self):
+        original,proposed=self.stage_files({'AGENTS.md':'after','app/CLAUDE.md':'after'})
+        self.assertEqual(self.adopt(original,proposed()),['AGENTS.md','app/CLAUDE.md'])
+        (self.project/'app/.git').mkdir()  # a later git init, submodule or worktree
+        journal=Journal(self.project,next((self.root/'state/promotions').iterdir()))
+        self.assertEqual(journal.preview_rollback(journal.active)['status'],'rollback_eligible')
+        journal.rollback(journal.active)
+        self.assertEqual([(self.project/n).read_text() for n in ('AGENTS.md','app/CLAUDE.md')],['before','before'])
+        # A new promotion still probes containment, so the nested repository's file is no longer adoptable.
+        target=self.root/'target'; target.write_text('again')
+        with self.assertRaisesRegex(ValueError,'outside owned harness surface'):
+            journal.prepare({'app/CLAUDE.md':file_record(self.project/'app/CLAUDE.md')},{'app/CLAUDE.md':file_record(target)})

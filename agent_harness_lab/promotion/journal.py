@@ -7,7 +7,7 @@ from pathlib import Path, PurePosixPath
 import stat
 import uuid
 from agent_harness_lab.evaluation.integrity import contained, relative
-from agent_harness_lab.surfaces import classify
+from agent_harness_lab.surfaces import adoption
 from agent_harness_lab.monitoring.state import atomic_json
 
 
@@ -87,14 +87,22 @@ class Journal:
         for mapping in (record['before'],record['after']):
             if not isinstance(mapping,dict) or len(mapping)>1000: raise ValueError('invalid snapshot set')
             for name,snapshot in mapping.items():
-                self.owned(name); validate_snapshot(snapshot)
+                validate_snapshot(snapshot)
+                # Containment was probed when the record was prepared, so a .git created later cannot strand
+                # its rollback; a promotion's targets are re-checked with their modes and bytes.
+                self.owned(name,snapshot if record['kind']=='promotion' and mapping is record['after'] else None,
+                           probe=False)
         return record
 
-    def owned(self,name):
+    def owned(self,name,target=None,*,probe=True):
+        """Resolve an owned path. target is a snapshot about to be written (its mode and bytes are checked);
+        probe False takes containment as observed when the transaction was prepared."""
         relative(name)
+        raw=None if target is None else base64.b64decode(target['content'],validate=True)
         # The root skills/ and containment probes run only for a path whose row needs them.
-        if classify(name,None,None,root_skills=lambda:(self.project/'skills').is_dir(),
-                    in_checkout=lambda:in_checkout(self.project,name)).writability!='adoptable':
+        if adoption(name,None if target is None else target['mode'],raw,
+                    root_skills=lambda:(self.project/'skills').is_dir(),
+                    in_checkout=(lambda:in_checkout(self.project,name)) if probe else True).writability!='adoptable':
             raise ValueError('transaction outside owned harness surface')
         return contained(self.project,name)
 
@@ -103,9 +111,11 @@ class Journal:
         if not names or len(names)>1000: raise ValueError('invalid transaction size')
         for mapping in (before,after):
             for snapshot in mapping.values(): validate_snapshot(snapshot)
+        # A promotion probes containment and checks what it writes; a rollback restores a record already admitted.
+        promotion=kind=='promotion'
         for name in names:
             relative(name)
-            self.owned(name)
+            self.owned(name,after.get(name) if promotion else None,probe=promotion)
             if before.get(name)!=file_record(self.project/name): raise ValueError('project changed before journaling')
         if sum(len((record or {}).get('content','')) for mapping in (before,after) for record in mapping.values())>28*1024*1024:
             raise ValueError('journal snapshot limit')
@@ -117,8 +127,10 @@ class Journal:
 
     def _check(self,record):
         if self.active not in (record['parent'],record['deployment']): raise ValueError('newer deployment conflict')
+        # Only an unfinished promotion probes containment again, once before any write; other reads and writes
+        # resolve the recorded paths without the probe, so a later nested .git never strands a restoration.
         for name in record['before'].keys()|record['after'].keys():
-            path=self.owned(name)
+            path=self.owned(name,probe=record['kind']=='promotion')
             current=file_record(path)
             if current not in (record['before'].get(name),record['after'].get(name)):
                 raise ValueError('intervening edit/mode/path conflict')
@@ -129,7 +141,7 @@ class Journal:
             return self._execute(deployment)
 
     def _write_snapshot(self,name,current,target,pre_write=None):
-        destination=self.owned(name)
+        destination=self.owned(name,probe=False)
         if target is None:
             if pre_write: pre_write()
             if file_record(destination)!=current: raise ValueError('target changed during transaction')
@@ -159,14 +171,14 @@ class Journal:
         for name in sorted(record['before'].keys()|record['after'].keys(),reverse=True):
             before=record['before'].get(name)
             try:
-                current=file_record(self.owned(name))
+                current=file_record(self.owned(name,probe=False))
                 if current==before: continue
                 if current!=record['after'].get(name): raise ValueError('intervening change during restoration')
                 self._write_snapshot(name,current,before)
-                if file_record(self.owned(name))!=before: raise ValueError('restoration verification failed')
+                if file_record(self.owned(name,probe=False))!=before: raise ValueError('restoration verification failed')
             except BaseException:
                 try:
-                    restored=file_record(self.owned(name))==before
+                    restored=file_record(self.owned(name,probe=False))==before
                 except BaseException:
                     restored=False
                 if not restored: remaining.append(name)
@@ -203,11 +215,11 @@ class Journal:
             if pre_write: record['commit_guarded']=True
             atomic_json(self.folder/(deployment+'.json'),record)
             for name in sorted(record['before'].keys()|record['after'].keys()):
-                current=file_record(self.owned(name)); target=record['after'].get(name)
+                current=file_record(self.owned(name,probe=False)); target=record['after'].get(name)
                 if current==target: continue
                 if current!=record['before'].get(name): raise ValueError('target changed during transaction')
                 self._write_snapshot(name,current,target,pre_write)
-            if any(file_record(self.owned(name))!=record['after'].get(name)
+            if any(file_record(self.owned(name,probe=False))!=record['after'].get(name)
                    for name in record['before'].keys()|record['after'].keys()):
                 raise ValueError('post-write verification failed')
             if pre_write: pre_write()
@@ -219,7 +231,7 @@ class Journal:
                 try:
                     observed=self.load(deployment)
                     committed=(observed==record and observed['status']=='committed' and self.active==deployment
-                        and all(file_record(self.owned(name))==record['after'].get(name)
+                        and all(file_record(self.owned(name,probe=False))==record['after'].get(name)
                                 for name in record['before'].keys()|record['after'].keys()))
                 except BaseException:
                     committed=False
@@ -238,7 +250,7 @@ class Journal:
             return dict(status='conflict',reason='deployment_not_active')
         try:
             for name in record['before'].keys()|record['after'].keys():
-                if file_record(self.owned(name))!=record['after'].get(name):
+                if file_record(self.owned(name,probe=False))!=record['after'].get(name):
                     raise ValueError('intervening edit or mode change')
         except ValueError:
             return dict(status='conflict',reason='intervening_file_path_or_mode_change')

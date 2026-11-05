@@ -112,6 +112,20 @@ adopts only a path it names itself and only a non-executable one, so
 nested bundle stays `contract_required`. Root instructions and root skill
 bundles do not depend on this fact, so their verdicts are unchanged.
 
+Both writers check what they write, not only its path. `surfaces.adoption(path,
+mode, bytes)` classifies with the file's execute bits, so a changed `0755`
+`.claude/rules/x.md` or a suffix-less executable in a nested bundle is
+`contract_required` in `candidate_states` and in `Journal.prepare`. It also reads
+an agent definition: `surfaces.embeds_hooks` finds a `hooks` word in Claude
+frontmatter or a `hooks` key at any depth of a Codex role file, and fails closed
+on undecodable bytes, a YAML escape or unparsable TOML. Such an agent needs the
+hook contract and is never adopted. An unchanged staged file is never written,
+so these checks skip it. The containment probe runs when a promotion is
+prepared and again before its first write. Loading a recorded transaction,
+previewing it and rolling it back take containment as observed when it was
+prepared, so a `.git` created later below the project cannot strand a rollback.
+A new promotion of that file is still refused.
+
 `CLAUDE.local.md`, `settings*.json`, `.codex/config.toml`, hooks, workflows,
 Codex `.rules`, `.mcp.json`, memory and plugin checkouts
 (`origin="external_repository"`) stay non-adoptable. Default discovery is also
@@ -129,7 +143,8 @@ change plan marks an operation unresolved when its kind has no adoptable row
 (`surfaces.unresolved_kinds()`: hook, workflow, exec policy, config, unsupported)
 or when it carries the hook facet. Agent definitions always carry that facet, so
 an agent edit stays in `unresolved_operations`. Command and rule edits no longer
-do. Staging confers no authority: a behavioral candidate remains inconclusive or
+do. That plan is advisory; the content check above is what keeps an adopted agent
+free of hooks. Staging confers no authority: a behavioral candidate remains inconclusive or
 needs certification exactly as before, and only `directly_authorized_adopt_api`
 applies a staged nested file, with the journal's stale-baseline, concurrent-edit
 and rollback checks.

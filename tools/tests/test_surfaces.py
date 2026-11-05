@@ -117,7 +117,9 @@ class CallerCharacterization(unittest.TestCase):
 
     def candidate(self, name, root_skills):
         folder = Path(tempfile.mkdtemp(dir=self.root))
-        (folder / name).parent.mkdir(parents=True, exist_ok=True); (folder / name).write_text('synthetic')
+        # A changed agent role is parsed, so a TOML path holds valid synthetic TOML.
+        (folder / name).parent.mkdir(parents=True, exist_ok=True)
+        (folder / name).write_text('name = "synthetic"\n' if name.endswith('.toml') else 'synthetic')
         original = {'skills/other/SKILL.md': None} if root_skills else {}
         try: return list(candidate_states(folder, original)) == [name]
         except ValueError as error:
@@ -358,3 +360,26 @@ class SurfaceOwnershipTests(unittest.TestCase):
         from agent_harness_lab.telemetry import claude_native
         self.assertEqual(claude_native.SKILL_BUNDLE_PREFIXES,
                          tuple(PurePosixPath(root).parts for root in surfaces.skill_prefixes()))
+
+
+class EmbeddedHookTests(unittest.TestCase):
+    def test_agent_hook_detection_fails_closed(self):
+        from agent_harness_lab.surfaces import adoption, embeds_hooks
+        cases = (('a.md', b'---\nname: a\ndescription: d\n---\nMention hooks in the body only.\n', False),
+                 ('a.md', b'No fence, so Claude skips the file.\nhooks: x\n', False),
+                 ('a.md', b'\xef\xbb\xbf---\nhooks: {}\n---\n', True),
+                 ('a.md', b'---\nname: a\nHOOKS: {}\n', True),
+                 ('a.md', b'---\n"\\u0068ooks": {}\n---\n', True),
+                 ('a.md', b'\xff\xfe', True),
+                 ('a.toml', b'name = "a"\n[nested]\nlist = [{hooks = 1}]\n', True),
+                 ('a.toml', b'"\\u0068ooks" = 1\n', True),
+                 ('a.toml', b'name = "a"\ndeveloper_instructions = "hooks are fine in prose"\n', False),
+                 ('a.toml', b'[unterminated\n', True))
+        for name, raw, expected in cases:
+            with self.subTest(raw=raw): self.assertEqual(embeds_hooks(name, raw), expected)
+        hooked = b'---\nhooks: {}\n---\n'
+        self.assertEqual(adoption('.claude/agents/a.md', 0o644, hooked, in_checkout=True).writability, C)
+        self.assertEqual(adoption('.claude/agents/a.md', 0o644, None, in_checkout=True).writability, A)
+        # Only agent definitions are read; an instruction file may discuss hooks freely.
+        self.assertEqual(adoption('app/CLAUDE.md', 0o644, hooked, in_checkout=True).writability, A)
+        self.assertEqual(adoption('.claude/rules/x.md', 0o755, b'x', in_checkout=True).writability, C)

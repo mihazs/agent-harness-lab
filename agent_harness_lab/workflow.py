@@ -214,6 +214,12 @@ def candidate_states(folder, original):
         if len(states) >= MAX_FILES or total > MAX_BYTES:
             raise ValueError('Candidate exceeds its file/byte limit')
         states[relative] = file_state(path)
+        # A changed file is checked with its mode and bytes: a gated row adopts no executable, and an agent
+        # definition that registers hooks needs the hook contract. An unchanged file is never written.
+        if states[relative] != original.get(relative) and surfaces.adoption(
+                relative, states[relative][1], path.read_bytes(), root_skills=root_skills,
+                in_checkout=True).writability != 'adoptable':
+            raise ValueError(f'Candidate path needs a hook contract: {relative}')
     return states
 
 
