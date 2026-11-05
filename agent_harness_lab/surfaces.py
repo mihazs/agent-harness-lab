@@ -68,10 +68,10 @@ def _bundle(root, *, needs_root_skills=False):
 
 
 def _declared_memory(parts, root):
-    """Memory store layouts of a declared runtime home; a checkout path never matches them."""
-    if root == 'codex_home': return parts[0] == 'memories'
-    if root == 'claude_home': return len(parts) > 3 and parts[0] == 'projects' and parts[2] == 'memory'
-    return False
+    """Memory store layouts of a runtime home beneath any declared root, whatever its free-form label; a
+    checkout path (root None) never matches them."""
+    return root is not None and (parts[0] == 'memories'
+                                 or len(parts) > 3 and parts[0] == 'projects' and parts[2] == 'memory')
 
 
 def _agent_file(layer, suffix):
@@ -174,7 +174,7 @@ RULES = (
     Rule('codex-config', 'config', 40, 'recommendation_only', lambda path, parts, context: path == '.codex/config.toml',
          runtimes=frozenset({'codex'})),
     # Memory stores are never read, adopted or recommended against: the project layout anywhere, and the
-    # memories/ and projects/<id>/memory/ layouts only beneath a declared codex_home or claude_home root.
+    # memories/ and projects/<id>/memory/ layouts beneath any caller-declared root, never in the checkout.
     Rule('runtime-memory', None, 0, 'private_excluded', lambda path, parts, context: (
         '/.claude/agent-memory/' in '/' + path or '/.claude/agent-memory-local/' in '/' + path
         or _declared_memory(parts, context.declared_root))),

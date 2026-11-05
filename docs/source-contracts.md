@@ -1832,9 +1832,10 @@ too, as in `surfaces.RULES` and the hook inventory. Existence comes from
 digested. An inode-level open audit enforces this even for declared roots.
 Every other row is `recommendation_only`, and `surfaces.RULES` gives the same
 writability to these paths. In `surfaces.classify`, the `memories/` and
-`projects/<id>/memory/` layouts are `private_excluded` only beneath a root
-declared as `codex_home` or `claude_home`, so checkout folders with those names
-keep their own verdicts. Every capture shares the harness inventory's
+`projects/<id>/memory/` layouts are `private_excluded` beneath every
+caller-declared root, whatever its label, so `--external-root codex=~/.codex`
+keeps them unread as `codex_home` does. Checkout folders with those names keep
+their own verdicts. Every capture shares the harness inventory's
 50000-fact bound, and each digest in a list fact counts toward it, so an
 oversized approval list or key table is `blocked` with `fact_bound_exceeded`,
 never truncated. A row's trust is `declared_trusted` only for

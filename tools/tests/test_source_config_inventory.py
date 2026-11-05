@@ -267,6 +267,16 @@ class ConfigInventoryTests(unittest.TestCase):
         self.assertEqual((nodes['checkout', 'memories/AGENTS.md'].declared_state, nodes['checkout', 'memories/AGENTS.md'].parse_status),
                          ('present', 'parsed'))
         self.assertEqual(nodes['codex_home', 'memories/AGENTS.md'].declared_state, 'present_content_not_read')
+        # --external-root labels are free-form: the memory layouts stay unread under any declared label.
+        claude_home = self.base / 'claude-home'; (claude_home / 'projects/p/memory').mkdir(parents=True)
+        (claude_home / 'projects/p/memory/CLAUDE.md').write_text('canary-memory-body\n')
+        for profile, label, home, path in ((CODEX, 'codex', self.codex_home, 'memories/AGENTS.md'),
+                                           (CLAUDE, 'claude', claude_home, 'projects/p/memory/CLAUDE.md'),
+                                           (CLAUDE, 'claude_user', claude_home, 'projects/p/memory/CLAUDE.md')):
+            with self.subTest(label=label):
+                walked = inventory.capture(self.checkout, dict(profile, task_cwd='.'), external_roots={label: str(home)})
+                node = {(n.root, n.path): n for n in walked.nodes}[label, path]
+                self.assertEqual(node.declared_state, 'present_content_not_read')
 
     def test_local_settings_are_private_presence_rows_and_never_opened(self):
         local = self.checkout / '.claude/settings.local.json'

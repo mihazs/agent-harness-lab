@@ -177,14 +177,14 @@ class SurfaceClassifierTests(unittest.TestCase):
         for bad in ('', 7):
             with self.assertRaises(ValueError): classify('AGENTS.md', None, None, declared_root=bad)
 
-    def test_home_memory_layouts_are_private_only_beneath_their_declared_root(self):
+    def test_home_memory_layouts_are_private_beneath_any_declared_root(self):
         from agent_harness_lab.surfaces import classify
-        for path, root in (('memories/AGENTS.md', 'codex_home'), ('memories/hooks/pre.sh', 'codex_home'),
-                           ('projects/api/memory/CLAUDE.md', 'claude_home')):
+        for path in ('memories/AGENTS.md', 'memories/hooks/pre.sh', 'projects/api/memory/CLAUDE.md'):
             with self.subTest(path=path):
-                self.assertEqual(classify(path, None, None, declared_root=root).writability, P)
                 self.assertNotEqual(classify(path, None, None).writability, P)
-                self.assertNotEqual(classify(path, None, None, declared_root='plugins').writability, P)
+                # Labels are free-form, so the memory layout never depends on a magic root name.
+                for root in ('codex_home', 'claude_home', 'codex', 'claude', 'claude_user', 'plugins'):
+                    self.assertEqual(classify(path, None, None, declared_root=root).writability, P)
 
     def test_root_skills_condition_is_evaluated_lazily(self):
         from agent_harness_lab.surfaces import classify
