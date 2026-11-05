@@ -89,6 +89,11 @@ RULES = (
     Rule('codex-exec-policy', 'exec_policy', 25, 'recommendation_only', lambda path, parts, context: path.endswith(
          '.rules') and parts[-2:-1] == ('rules',) and (parts[:-2] == ('.codex',) or not parts[:-2]
          and context.external_root), runtimes=frozenset({'codex'})),
+    # Claude Code loads direct *.js children of .claude/workflows/ at any directory on the cwd-to-root path, so the
+    # workflow kind outranks skill and hook path segments and skill bundles that the directory sits beneath.
+    Rule('claude-workflow-script', 'workflow', 15, 'contract_required',
+         lambda path, parts, context: parts[-3:-1] == ('.claude', 'workflows') and PurePosixPath(path).suffix == '.js',
+         runtimes=frozenset({'claude-code'})),
     Rule('vcs-and-cache', None, 0, 'private_excluded',
          lambda path, parts, context: any(part in ('.git', '__pycache__') for part in parts)),
     # Hook registrations live in settings and config files that also hold permissions and env; the hook
@@ -202,6 +207,11 @@ CAPABILITIES = (
          _CODEX_SOURCE + '/hooks/src/engine/discovery.rs'),
     _row('workflows', 'claude-code', '.claude/workflows/*.js with a literal meta export', _CLAUDE + 'workflows'),
     _row('workflows', 'claude-code', 'no static validator; syntax errors surface at run time', _CLAUDE + 'workflows', 'unverified'),
+    _row('workflows', 'claude-code', 'closest .claude/workflows/ on the cwd-to-root path wins a name; project beats personal', _CLAUDE + 'workflows'),
+    _row('workflows', 'claude-code', 'plugin workflows/ directory, namespaced by plugin name', _CLAUDE + 'workflows'),
+    _row('workflows', 'claude-code', 'Date.now(), Math.random() and no-argument new Date() throw; import() fails before the run', _CLAUDE + 'workflows'),
+    _row('workflows', 'claude-code', '/workflow-authoring bundled skill', _CLAUDE + 'workflows', gate='>=2.1.248'),
+    _row('workflows', 'claude-code', 'CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS concurrency limit', _CLAUDE + 'workflows', gate='>=2.1.269'),
     _row('workflows', 'codex', 'no workflow script loader in the pinned source', _CODEX_SOURCE),
     _row('agents', 'claude-code', '.claude/agents/** Markdown with name and description frontmatter', _CLAUDE + 'sub-agents'),
     _row('agents', 'claude-code', 'agent omitClaudeMd field', _CLAUDE + 'sub-agents', gate='>=2.1.271'),

@@ -1409,6 +1409,94 @@ construction rejects any other value. Configuration presence is not evidence
 that a hook ran. Skill and agent frontmatter hooks, a CLI, and loading or
 execution attribution remain open in #276, #278 and #282.
 
+### Static Claude workflow script lint
+
+`sources.workflows_inventory.capture(checkout, profile, personal=None, plugins=None)`
+lists Claude Code workflow scripts and lints them statically. The lint is also
+registered as the `workflow` parser in the harness inventory. `surfaces.classify`
+names each direct `*.js` child of `.claude/workflows/` at any depth a `workflow`
+surface that is `contract_required`, for `claude-code` only. The `workflow` kind
+outranks the skill and hook path rules, so a `.claude/workflows/` beneath a
+`hooks` or `skills` directory still yields workflow entries. No script is ever
+executed: no `node`, `deno` or other JavaScript runtime, no subprocess, no import
+and no evaluation. Each script is read as bytes through the harness inventory walk,
+then scanned by a bounded standard-library lexer that skips comments, strings and
+template text. Every entry and fact carries `lint:
+static_lint_not_runtime_validation`, because a heuristic lint is not runtime
+validation.
+
+The rules follow the pinned workflows page,
+<https://code.claude.com/docs/en/workflows>, at Claude Code 2.1.317 (retrieved
+2026-11-05), as recorded in `surfaces.CAPABILITIES`. The lint checks the following:
+
+- `meta` is `meta_first_literal` only when the first statement is
+  `export const meta = {` followed by a plain object literal. That literal may
+  hold only string, number, boolean and null values, arrays and nested objects,
+  and it needs `name` and `description` string literals; a number, boolean or
+  `null` in either is not one. A preceding import or
+  directive, a variable, call, spread, shorthand or computed key, or a following
+  operator gives `meta_not_first_literal`, which means the command would vanish
+  from `/` autocomplete.
+- It counts `import(` (`forbidden_dynamic_import`), `Date.now(`, `Math.random(`
+  and a `new Date` with no arguments in code, including template
+  interpolations. Matches inside strings and comments are not counted. A
+  `new Date(value)` with an argument is allowed, as the page states. A static
+  `import` statement is counted as `static_import`, because the page forbids
+  module loading.
+- It records `phase()` calls, the titles listed in `meta.phases` and
+  `phase_titles_unlisted`. An unlisted title is informational, not an issue.
+- The meta name is kept only as `meta_name_sha256`, so raw script text never
+  reaches a fact.
+
+`lint_result` is `issues_found`, `no_issues_found` or `lint_inconclusive`; it is
+never `pass`. The lexer tells a regular expression from division by the
+preceding token. A `/` starts a regular expression after an operator, an opening
+bracket, a template interpolation, an expression keyword or the `)` that closes
+an `if`, `while`, `for`, `for await` or `with` head. It is division after any
+other `)`, after `]`, a name, a number, a string or a keyword used as a property
+name. After `}`, `++`, `--` or a bare `of`, which may also be a variable name, the
+preceding token cannot settle it, so the script is `regex_or_division_ambiguous`.
+These cases give `lint_inconclusive` with an `inconclusive_reason`: an
+unterminated comment, string, template or regular expression, unbalanced
+brackets, `regex_or_division_ambiguous`, an `invalid_escape` such as
+`\u{110000}`, `\u` or `\x` without its hex digits, an `identifier_escape` (a
+backslash in code, such as `D\u0061te.now()`), a template literal in `meta`,
+invalid UTF-8, or more than 200000 tokens or 64 open brackets. The call and phase
+counts are then `null`, never `0`. A malformed script never fails the whole
+inventory; it is listed as `lint_inconclusive` and `name_unavailable`. A clean
+lint is not evidence that the script parses, runs or loads.
+
+Project scripts come from every `.claude/workflows/` on the path from `task_cwd`
+up to the checkout root; directories off that path are left out. `personal` is
+the absolute path of a personal workflows directory, such as
+`$CLAUDE_CONFIG_DIR/workflows`. `plugins` maps plugin names to absolute workflows
+directories. Both are caller declarations, are never discovered, must not
+overlap the checkout, and are opened without following links. A linked,
+missing or non-directory root is labelled `refused_link`, `absent` or
+`not_a_directory`. Custom plugin manifest `workflows` locations are not read.
+
+Each entry's `state` follows the documented precedence. The closest directory
+wins a name, a project script shadows a personal one with the same name, and
+plugin scripts are namespaced by plugin. Two same-name scripts with no
+documented order between them, such as two files in one directory, are
+`clash_unresolved`, never a guessed winner. A script without a literal name is
+`name_unavailable`. When its lint was inconclusive or its parse failed, it may
+still carry the same name, so a leader it could outrank or tie is
+`clash_unresolved`, not `precedence_winner`. A `meta_not_first_literal` script,
+which the page says drops out of `/`, is left out of that doubt. Clashes with
+bundled workflows are not modelled.
+`observed_loading` is always `unknown`, and documents carry `executed: false`,
+`loading_evidence: false` and `publication_allowed: false`. Symlinked, special
+and multiply linked scripts are refused. Harness inventory bounds block the
+whole result instead of truncating it.
+
+Codex has no equivalent. A `codex` profile returns `unsupported` without
+reading anything, and its `evidence` cites the `surfaces.CAPABILITIES` row for
+openai/codex@d786ff91, whose pinned `codex-rs` source has no workflow script
+loader. The absence of a native static validator stays `unverified`. The
+version gates recorded for this release are the `/workflow-authoring` skill
+(>=2.1.248) and `CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS` (>=2.1.269).
+
 ## ai-memory OKF project exports
 
 Select `local_file/ai-memory-okf/0.2` in the existing source declaration, with
