@@ -4,12 +4,13 @@ import io
 import json
 from pathlib import Path
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
 from agent_harness_lab.cli import main
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
-from agent_harness_lab.sources import test_results
+from agent_harness_lab.sources import claude_mem, hardened, test_results
 from agent_harness_lab.sources.schema import SourceSpec, digest
 from agent_harness_lab.sources.test_results import HostileReport, TestResultsExport
 
@@ -243,6 +244,66 @@ class TestResultSourceTests(unittest.TestCase):
         self.declare([dict(path='reports/pytest.json', format='pytest-json')])
         with patch.object(test_results, 'unique_object', side_effect=AssertionError('decoded')):
             with self.assertRaises(HostileReport): self.connector.read(self.source)
+
+    def test_pytest_json_scalar_values_are_bounded_before_decoding(self):
+        # Two values in the test entry plus ten floats; the entry's object closes early, so decoding would reach the hook.
+        body = '{"tests": [{"nodeid": "a", "outcome": "passed"}], "x": ['+', '.join(['1.5']*10)+']}'
+        (self.root/'reports/pytest.json').write_text(body)
+        for bound, outcome in ((11, HostileReport), (12, AssertionError)):
+            with self.subTest(bound=bound):
+                self.declare([dict(path='reports/pytest.json', format='pytest-json')], limits=dict(max_json_values=bound))
+                with patch.object(test_results, 'unique_object', side_effect=AssertionError('decoded')):
+                    with self.assertRaises(outcome): self.connector.read(self.source)
+        self.declare([dict(path='reports/pytest.json', format='pytest-json')], limits=dict(max_json_values=10**9))
+        with self.assertRaisesRegex(ValueError, 'only lower'): self.connector.read(self.source)
+        # The ceilings admit 100k tests of about 25 values, and 100k Claude-Mem rows of about 40 fields.
+        self.assertGreaterEqual(test_results.LIMITS['max_json_values'], test_results.LIMITS['max_cases']*25)
+        self.assertGreaterEqual(claude_mem.LIMITS['max_json_values'], claude_mem.LIMITS['max_rows']*40)
+
+    def test_scalar_count_skips_keys_containers_and_string_contents(self):
+        def admitted(raw, bound):
+            try: hardened.load_json(raw, dict(max_json_depth=8, max_json_containers=64, max_json_values=bound), 'probe')
+            except HostileReport: return False
+            return True
+        for raw, values in ((b'[]', 0), (b'{}', 0), (b'[1]', 1), (b'[[], {}, [[{}]]]', 0), (b'{"a": [], "b": {}}', 0),
+                (b'{"a" : 1, "b": "x,]"}', 2), (b'["a,b", "[{", "}]:,", 1.5e3, true, false, null]', 7),
+                (b'"\\"],[\\\\"', 1), (b'{"k": {"k2": [1, 2, {"z": "q\\"],"}]}}', 3), (b' -0.5 ', 1)):
+            with self.subTest(raw=raw):
+                self.assertTrue(admitted(raw, values))
+                if values: self.assertFalse(admitted(raw, values-1))
+        # An unterminated string is refused in one pass instead of rescanned from every later quote.
+        bounds = dict(max_json_depth=8, max_json_containers=64, max_json_values=10)
+        with patch.object(hardened, 'unique_object', side_effect=AssertionError('decoded')):
+            started = time.perf_counter()
+            with self.assertRaisesRegex(HostileReport, 'probe string is unterminated'):
+                hardened.load_json(b'{"tests": ["'+b'\\"'*40000, bounds, 'probe')
+            self.assertLess(time.perf_counter()-started, 2)
+
+    def test_scalar_heavy_json_peak_stays_a_bounded_multiple_of_input(self):
+        import tracemalloc
+        bound = 100000
+        bounds = dict(max_json_depth=8, max_json_containers=8, max_json_values=bound)
+        def peak(raw):
+            tracemalloc.start()
+            try:
+                try: hardened.load_json(raw, bounds, 'probe')
+                except HostileReport: refused = True
+                else: refused = False
+                return refused, tracemalloc.get_traced_memory()[1]
+            finally:
+                tracemalloc.stop()
+        for item in (b'"ab"', b'1.5'):
+            with self.subTest(item=item):
+                # Measured about 11.3x for two-character strings and 9.2x for floats; the stated bound is 12x.
+                raw = b'['+b','.join([item]*bound)+b']'
+                refused, used = peak(raw)
+                self.assertFalse(refused)
+                self.assertLess(used, 12*len(raw))
+                # Twice the bound is refused by the screen, which holds one match at a time.
+                raw = b'['+b','.join([item]*2*bound)+b']'
+                refused, used = peak(raw)
+                self.assertTrue(refused)
+                self.assertLess(used, len(raw)//100)
 
     def test_finished_elements_are_released_while_parsing(self):
         import tracemalloc

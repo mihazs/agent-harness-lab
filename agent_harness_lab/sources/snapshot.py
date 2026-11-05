@@ -4,7 +4,7 @@ import hashlib
 import json
 from pathlib import Path
 from agent_harness_lab.config import read_json
-from agent_harness_lab.evaluation.integrity import contained, read_regular, regular_equal, unique_object
+from agent_harness_lab.evaluation.integrity import contained, read_regular, regular_equal, regular_sha256, unique_object
 from .schema import EvidenceRecord, SourceSpec, digest, fingerprint
 from .store import native_metadata
 from .execution import ExecutionMetadata
@@ -72,6 +72,24 @@ class LocalExport:
         if (read_json(descriptor) != selection or
                 self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)[1] != expected):
             raise ValueError('source selection changed during capture')
+
+    def capture(self, source, descriptor, selection, paths, limit, consume, changed, read=read_regular, rehash=regular_sha256):
+        """Read each selected file once and pass (position, bytes, SHA-256) to consume; return the hashes.
+
+        One file's bytes are held at a time. Every hash is then re-checked by streaming and the selection re-read, so a
+        file or declaration that changed during capture raises. A source passes its own read and rehash names so its
+        module stays the file-access seam.
+        """
+        hashes = []
+        for position, path in enumerate(paths):
+            raw = read(path, limit)
+            hashes.append(hashlib.sha256(raw).hexdigest())
+            consume(position, raw, hashes[-1])
+            del raw
+        for path, expected in zip(paths, hashes):
+            if rehash(path, limit) != expected: raise ValueError(changed)
+        self.verify_selection(source, descriptor, selection)
+        return hashes
 
     def _normalized_payload(self, source, expected=None):
         current, value = self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)

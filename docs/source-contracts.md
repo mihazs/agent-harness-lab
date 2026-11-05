@@ -2009,11 +2009,19 @@ instructions are skipped; an unterminated one is refused).
 first bound exceeded: element count, depth, attributes per element and attribute
 key/value length. Finished elements are emptied and detached as parsing proceeds,
 so retained memory does not grow with element count. pytest JSON is screened
-before decoding: structural brackets outside strings are counted against
-`max_json_depth` and `max_json_containers`, because the decoder builds the whole
-tree first and empty containers amplify memory roughly 48-fold. The screen is a
-single linear pass with possessive quantifiers; a string that never closes is refused as
-`HostileReport` instead of being rescanned from every later quote. It is then decoded
+before decoding by the shared loader in `agent_harness_lab/sources/hardened.py`.
+One streaming pass skips each string whole, so commas, colons and brackets
+inside strings never count. Brackets are counted against `max_json_depth` and
+`max_json_containers`, and scalar values (strings, numbers, `true`, `false` and
+`null`, but not object keys) against `max_json_values`. The decoder builds the
+whole tree first. Empty containers amplify memory roughly 48-fold, and scalars
+amplify it too: measured with `tracemalloc`, an admitted array of two-character
+strings peaks at about 11.3 times its size and an array of `1.5` floats at about
+9.2 times. That is about 135 MiB for a 12.5 MB document at the 2,500,000-value
+ceiling; by the same ratio, an unbounded 16 MiB string array reaches about 181 MiB.
+The screen is a single linear pass with possessive quantifiers; a string that
+never closes is refused there as `HostileReport` instead of being rescanned from
+every later quote. The document is then decoded
 strictly as UTF-8 with duplicate-key rejection and no `NaN`/`Infinity`, and the
 `tests` schema is validated before any record is made. Each report's bytes are
 released after parsing; the change check re-reads by streaming hash.
@@ -2032,6 +2040,7 @@ these bounds.
 | `max_attribute_length` | 4,096 characters |
 | `max_json_depth` | 64 |
 | `max_json_containers` | 1,000,000 |
+| `max_json_values` | 2,500,000 (100,000 tests of about 25 values) |
 
 `limits` may only lower these ceilings. Limitation: Python's `xml.etree` and
 `pyexpat` do not offer a supported switch that disables DTD processing. The
@@ -2192,11 +2201,17 @@ rejects.
 
 Malformed input rejects the whole capture: non-UTF-8 bytes, a byte-order mark,
 duplicate JSON keys, `NaN`/`Infinity`, a non-object envelope, a missing or
-non-list array, or a non-object row. Decoding reuses the hardened
-`load_json` from the test-result source: brackets are counted against
-`max_json_depth` and `max_json_containers` in one linear pass before the decoder
-runs, an unterminated string is refused there, and refusals raise `HostileReport`. A refused export imports nothing and leaves the
-previous checkpoint unchanged.
+non-list array, or a non-object row. Decoding reuses the hardened `load_json`
+in `agent_harness_lab/sources/hardened.py`, shared with the test-result source.
+Before the decoder runs, one linear pass counts brackets against
+`max_json_depth` and `max_json_containers`, and scalar values outside strings
+(object keys excluded) against `max_json_values`; an unterminated string is
+refused there. Refusals raise `HostileReport`. The same measured
+peaks apply: about 11.3 times the input for two-character strings and 9.2 times
+for floats. That is about 216 MiB at the 4,000,000-value ceiling; without the
+bound, a 32 MiB string array reaches about 362 MiB by the same ratio. The export's bytes are released
+before rows are mapped. A refused export imports nothing and leaves the previous
+checkpoint unchanged.
 
 | Limit | Ceiling |
 | --- | --- |
@@ -2205,6 +2220,7 @@ previous checkpoint unchanged.
 | `max_fields` (per row) | 128 |
 | `max_json_depth` | 16 |
 | `max_json_containers` | 1,000,000 |
+| `max_json_values` | 4,000,000 (100,000 rows of about 40 fields) |
 
 `limits` may only lower these ceilings. `task test:sources:claude-mem` runs the
 synthetic controls: each claim type, summary/observation separation, search-hit
