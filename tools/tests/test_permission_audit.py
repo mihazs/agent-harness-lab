@@ -540,6 +540,16 @@ class PermissionProtocolTests(unittest.TestCase):
         with self.assertRaises(ValueError):backend.run(['/usr/bin/true'],Path('/tmp'),{},'executor')
         self.assertEqual(SandboxBackend().permission_qualification()['status'],'not_requested')
 
+    def test_observation_refuses_unsupported_architectures_with_the_documented_error(self):
+        from agent_harness_lab.evaluation import permission_audit as audit
+        with patch.object(audit.platform, 'machine', return_value='aarch64'):
+            self.assertFalse(audit.supported())
+            with self.assertRaisesRegex(ValueError, 'permission audit requires Linux x86_64'):
+                audit.Observation(['/usr/bin/true'],[['/usr/bin/true']]*5,SimpleNamespace(root='/synthetic',name='group'),
+                    Limits(),time.monotonic()+5,'executor')
+
+    @unittest.skipUnless(__import__('agent_harness_lab.evaluation.permission_audit',fromlist=['supported']).supported(),
+                         'permission audit requires a Linux x86_64 host')
     def test_result_channel_rejects_lost_forged_and_inconsistent_completions(self):
         from agent_harness_lab.evaluation.permission_audit import Observation,encoded,hashed,policy
         item=Observation(['/usr/bin/true'],[['/usr/bin/true']]*5,SimpleNamespace(root='/synthetic',name='group'),Limits(),time.monotonic()+5,'executor')
