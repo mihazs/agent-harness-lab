@@ -184,6 +184,63 @@ class TestResultSourceTests(unittest.TestCase):
             with self.assertRaises(HostileReport): self.connector.read(self.source)
         self.assertEqual(len(feeds), 1)
 
+    def test_oversized_start_tags_are_refused_before_expat_builds_them(self):
+        for raw, bound in ((b'<testsuite '+b' '.join(b'a%d="1"' % i for i in range(65))+b'/>', None),
+                           (b'<testsuite a="1" b="2" c="3"/>', 2), (b'<testsuite><!-- open', None),
+                           (b'<testsuite><![CDATA[ open', None), (b'<testsuite a="unterminated/>', None)):
+            with self.subTest(raw=raw[:30]):
+                (self.root/'reports/junit.xml').write_bytes(raw)
+                self.declare([dict(path='reports/junit.xml', format='junit-xml')],
+                    **({'limits': dict(max_attributes=bound)} if bound else {}))
+                with patch.object(test_results.ElementTree, 'XMLPullParser', side_effect=AssertionError('parser ran')):
+                    with self.assertRaises(HostileReport): self.connector.read(self.source)
+        self.junit(b'<?xml version="1.0"?><testsuite name="s"><testcase name="t" message=\'a > b\'>'
+                   b'<system-out><![CDATA[<Foo object at 0x1> </x>]]></system-out><!-- <y z --></testcase><?pi <a ?></testsuite>')
+        self.connector.read(self.source)
+        self.assertEqual(self.statuses('junit-xml'), {'t': ('passed', 'no_status_element', None)})
+
+    def test_status_attributes_and_contradictory_phases_never_pass(self):
+        self.junit(b'<testsuite name="s"><testcase name="a" status="failed"/><testcase name="b" skipped="true"/>'
+                   b'<testcase name="c" file="x.py" line="3"/></testsuite>')
+        self.connector.read(self.source)
+        self.assertEqual(self.statuses('junit-xml'), {'a': ('unknown', 'status_attribute', None),
+            'b': ('unknown', 'status_attribute', None), 'c': ('passed', 'no_status_element', None)})
+        self.assertIn('status_attribute_unrecognized', self.connector.summary['warnings'])
+        (self.root/'reports/pytest.json').write_text(json.dumps(dict(tests=[
+            dict(nodeid='t::a', outcome='passed', teardown=dict(outcome='failed')),
+            dict(nodeid='t::b', outcome='passed', setup=dict(outcome='passed'), call=dict(outcome='passed'))])))
+        self.declare([dict(path='reports/pytest.json', format='pytest-json')])
+        self.connector.read(self.source)
+        self.assertEqual({k: v[:2] for k, v in self.statuses('pytest-json').items()},
+            {'t::a': ('unknown', 'conflicting'), 't::b': ('passed', 'passed')})
+
+    def test_pytest_json_containers_and_depth_are_bounded_before_decoding(self):
+        for body, bound in (('{"tests": ['+','.join(['{}']*20)+']}', dict(max_json_containers=10)),
+                            ('{"tests": [], "x": '+'['*100000+']'*100000+'}', None),
+                            ('{"tests": [], "s": "'+'['*200+'\\"'+'"}', dict(max_json_depth=2))):
+            with self.subTest(body=body[:40]):
+                (self.root/'reports/pytest.json').write_text(body)
+                self.declare([dict(path='reports/pytest.json', format='pytest-json')], **({'limits': bound} if bound else {}))
+                with patch.object(test_results, 'unique_object', side_effect=AssertionError('decoded')):
+                    if bound == dict(max_json_depth=2):
+                        # Brackets inside strings are not structure; screening passes and decoding is reached.
+                        with self.assertRaisesRegex(AssertionError, 'decoded'): self.connector.read(self.source)
+                    else:
+                        with self.assertRaises(HostileReport): self.connector.read(self.source)
+
+    def test_finished_elements_are_released_while_parsing(self):
+        import tracemalloc
+        raw = b'<testsuite name="s">'+b'<properties/>'*300000+b'<testcase name="t"/>'*10+b'</testsuite>'
+        tracemalloc.start()
+        try:
+            cases = sum(1 for _ in test_results.parse_junit(raw, test_results.limits(None), set()))
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        # Retaining the 300k finished elements peaked near 60 MiB; released elements stay a few MiB.
+        self.assertEqual(cases, 10)
+        self.assertLess(peak, 16*1024*1024)
+
     def test_limits_only_lower_hard_ceilings(self):
         for bound in (dict(max_cases=0), dict(max_cases=10**9), dict(unknown=1), dict(max_depth=True), []):
             with self.subTest(bound=bound):
@@ -216,10 +273,10 @@ class TestResultSourceTests(unittest.TestCase):
         self.declare([dict(path='reports/link.xml', format='junit-xml')])
         with self.assertRaises(ValueError): self.connector.read(self.source)
         self.declare([dict(path='reports/junit.xml', format='junit-xml')])
-        actual = test_results.regular_equal
-        with patch.object(test_results, 'regular_equal', lambda path, raw, limit: False):
+        actual = test_results.regular_sha256
+        with patch.object(test_results, 'regular_sha256', lambda path, limit: '0'*64):
             with self.assertRaises(ValueError): self.connector.read(self.source)
-        self.assertIs(actual, test_results.regular_equal)
+        self.assertIs(actual, test_results.regular_sha256)
 
     def test_cli_preview_import_and_reimport_keep_hashes_only(self):
         code, preview = self.invoke('preview')

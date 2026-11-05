@@ -2,12 +2,13 @@
 from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
 import hashlib
 import json
 import math
 import re
 import xml.etree.ElementTree as ElementTree
-from agent_harness_lab.evaluation.integrity import contained, read_regular, regular_equal, relative, unique_object
+from agent_harness_lab.evaluation.integrity import contained, read_regular, regular_sha256, relative, unique_object
 from .schema import Contract, EvidenceRecord, digest, label
 from .snapshot import LocalExport, Snapshot
 
@@ -19,16 +20,22 @@ STATUSES = ('passed', 'failed', 'error', 'skipped', 'unknown')
 FULL_SHA = re.compile('(?:[0-9a-f]{40}|[0-9a-f]{64})')
 # Hard ceilings; a selection may only lower them.
 LIMITS = dict(max_reports=64, max_report_bytes=16*1024*1024, max_cases=100000, max_elements=500000,
-              max_depth=32, max_attributes=64, max_attribute_length=4096, max_json_depth=64)
+              max_depth=32, max_attributes=64, max_attribute_length=4096, max_json_depth=64,
+              max_json_containers=1000000)
 CHUNK = 64*1024
 JUNIT_STATUS = {'failure': 'failed', 'error': 'error', 'skipped': 'skipped'}
 JUNIT_IGNORED = ('system-out', 'system-err', 'properties')
+# Status-like testcase attributes are not part of JUnit; their presence makes an element-less case unknown, not passed.
+STATUS_ATTRIBUTES = frozenset(('status', 'result', 'outcome', 'passed', 'failed', 'failure', 'failures', 'error', 'errors',
+    'skipped', 'skip', 'disabled'))
 PYTEST_STATUS = {'passed': 'passed', 'failed': 'failed', 'error': 'error', 'skipped': 'skipped'}
 # Expected-failure outcomes carry inverted semantics; they stay unknown, labelled as reported.
 PYTEST_KNOWN = ('passed', 'failed', 'error', 'skipped', 'xfailed', 'xpassed', 'rerun')
 DECLARATION = re.compile(rb'\A(?:\xef\xbb\xbf)?<\?xml[ \t\r\n][^?>]*?encoding[ \t\r\n]*=[ \t\r\n]*["\']([^"\']*)["\']')
 # Any markup declaration (DOCTYPE, ENTITY, ELEMENT, ATTLIST, NOTATION, conditional sections) is refused.
 MARKUP_DECLARATION = re.compile(rb'<!(?!--|\[CDATA\[)')
+# JSON strings are skipped so only structural brackets are counted; the unrolled loop cannot backtrack.
+JSON_STRUCTURE = re.compile(rb'"[^"\\]*(?:\\.[^"\\]*)*"|[\[{\]}]', re.S)
 
 
 class HostileReport(ValueError):
@@ -93,7 +100,7 @@ def duration(value, warnings):
     return number
 
 
-def screen_xml(raw):
+def screen_xml(raw, bounds):
     """Refuse encodings and declarations the byte screen cannot see through, before any parser runs."""
     if b'\0' in raw or raw.startswith((b'\xfe\xff', b'\xff\xfe', b'\x00\x00\xfe\xff', b'\xff\xfe\x00\x00')):
         raise HostileReport('only UTF-8 JUnit XML is supported')
@@ -104,11 +111,33 @@ def screen_xml(raw):
         raise HostileReport('only UTF-8 JUnit XML is supported')
     if MARKUP_DECLARATION.search(raw):
         raise HostileReport('DOCTYPE, ENTITY and other markup declarations are refused')
+    # Expat materializes a whole start tag and its attribute dict before any event, so the count is bounded here.
+    if any(token[0] == b'<' for token in tags(bounds['max_attributes']).finditer(raw)):
+        raise HostileReport('JUnit XML start tag is malformed or exceeds the attribute bound')
+
+
+@lru_cache(maxsize=8)
+def tags(attributes):
+    """Comments, CDATA, processing instructions, end tags and bounded start tags; a bare '<' is anything else."""
+    return re.compile(rb'<!--.*?-->|<!\[CDATA\[.*?\]\]>|<\?.*?\?>|</|<[^\s/>!?<=]+'
+        rb'(?:\s+[^\s=/>]+\s*=\s*(?:"[^"]*"|\'[^\']*\')){0,%d}\s*/?>|<' % attributes, re.S)
+
+
+def screen_json(raw, bounds):
+    """Bound nesting and container count before json.loads builds the tree (empty containers amplify ~48x)."""
+    depth = containers = 0
+    for token in JSON_STRUCTURE.finditer(raw):
+        mark = raw[token.start()]
+        if mark in b'[{':
+            depth += 1; containers += 1
+            if depth > bounds['max_json_depth']: raise HostileReport('pytest JSON depth bound exceeded')
+            if containers > bounds['max_json_containers']: raise HostileReport('pytest JSON container bound exceeded')
+        elif mark in b']}': depth -= 1
 
 
 def parse_junit(raw, bounds, warnings):
     """Yield (suite identity, case name, status, reported outcome, duration) with early abort on bounds."""
-    screen_xml(raw)
+    screen_xml(raw, bounds)
     parser = ElementTree.XMLPullParser(events=('start', 'end'))
     stack, elements = [], 0
     def admit(element):
@@ -132,7 +161,9 @@ def parse_junit(raw, bounds, warnings):
             for child in element:
                 if child.tag in JUNIT_STATUS: found.add(child.tag)
                 elif child.tag not in JUNIT_IGNORED: found.add('unrecognized')
-            if not found: status, reported = 'passed', 'no_status_element'
+            if not found and STATUS_ATTRIBUTES & set(element.attrib):
+                status, reported = 'unknown', 'status_attribute'; warnings.add('status_attribute_unrecognized')
+            elif not found: status, reported = 'passed', 'no_status_element'
             elif 'unrecognized' in found: status, reported = 'unknown', 'unrecognized'; warnings.add('unrecognized_case_element')
             elif len(found) > 1: status, reported = 'unknown', 'conflicting'; warnings.add('conflicting_case_status')
             else: reported = found.pop(); status = JUNIT_STATUS[reported]
@@ -142,11 +173,14 @@ def parse_junit(raw, bounds, warnings):
             # Suite-level failures and errors name no case; they are never attributed to one.
             if element.tag in JUNIT_STATUS: warnings.add('suite_level_status_unattributed')
             elif element.tag not in ('testsuite', *JUNIT_IGNORED): warnings.add('unrecognized_suite_element')
-        if parent is not None and element.tag in ('testcase', 'testsuite'): element.clear()
     def drain():
         for event, element in parser.read_events():
-            if event == 'start': stack.append(element); admit(element)
-            else: stack.pop(); yield from finish(element)
+            if event == 'start': stack.append(element); admit(element); continue
+            stack.pop(); yield from finish(element)
+            if not stack: continue
+            # Finished elements are emptied; only a testcase keeps its (tag-only) children until it is finished.
+            element.clear()
+            if stack[-1].tag != 'testcase': stack[-1].remove(element)
     try:
         for offset in range(0, len(raw), CHUNK):
             parser.feed(raw[offset:offset+CHUNK]); yield from drain()
@@ -161,6 +195,7 @@ def _constant(value):
 
 
 def parse_pytest(raw, bounds, warnings):
+    screen_json(raw, bounds)
     try:
         value = json.loads(raw.decode('utf-8'), object_pairs_hook=unique_object, parse_constant=_constant)
     except RecursionError:
@@ -190,10 +225,13 @@ def parse_pytest(raw, bounds, warnings):
         total = None if not spans or None in spans else float(sum(spans))
         outcome = test['outcome']
         if outcome not in PYTEST_KNOWN: warnings.add('unrecognized_outcome')
+        status, reported = PYTEST_STATUS.get(outcome, 'unknown'), outcome if outcome in PYTEST_KNOWN else 'unrecognized'
+        if status == 'passed' and any(phase.get('outcome', 'passed') != 'passed' for phase in phases):
+            # A passed test with a failed, errored or skipped phase is contradictory, never a pass.
+            status, reported = 'unknown', 'conflicting'; warnings.add('conflicting_case_status')
         nodeid = test['nodeid']
         suite = nodeid.rsplit('::', 1)[0] if '::' in nodeid else None
-        yield (['pytest-json', suite], nodeid, PYTEST_STATUS.get(outcome, 'unknown'),
-               outcome if outcome in PYTEST_KNOWN else 'unrecognized', total)
+        yield (['pytest-json', suite], nodeid, status, reported, total)
 
 
 class TestResultsExport(LocalExport):
@@ -219,7 +257,7 @@ class TestResultsExport(LocalExport):
         if len({r['path'] for r in reports}) != len(reports): raise ValueError('duplicate test report path')
         now = datetime.now(timezone.utc).isoformat()
         commit_sha256 = digest(sha)
-        records, results, raws, warnings, cases = [], [], [], set(), 0
+        records, results, captured, warnings, cases = [], [], [], set(), 0
         declared = {}
         def record(kind, native, revision):
             return EvidenceRecord(source.source_key, native, revision, revision, 'development_artifact', kind, now,
@@ -227,8 +265,8 @@ class TestResultsExport(LocalExport):
         for report in reports:
             path = contained(self.manifest.parent, report['path'])
             raw = read_regular(path, bounds['max_report_bytes'])
-            raws.append((path, raw))
             report_sha256, path_sha256 = hashlib.sha256(raw).hexdigest(), digest(report['path'])
+            captured.append((path, report_sha256))
             parse = parse_junit if report['format'] == 'junit-xml' else parse_pytest
             seen = Counter()
             for suite, case, status, reported, seconds in parse(raw, bounds, warnings):
@@ -244,8 +282,10 @@ class TestResultsExport(LocalExport):
                 value = asdict(result)
                 records.append(record('test_case_result', digest(('test_case_result', sha, path_sha256, case_sha256, occurrence)), digest(value)))
             records.append(record('test_report', digest(('test_report', sha, path_sha256)), report_sha256))
-        for path, raw in raws:
-            if not regular_equal(path, raw, bounds['max_report_bytes']): raise ValueError('test report changed during capture')
+            del raw
+        # Re-read by streaming hash so only one report's bytes are held at a time.
+        for path, report_sha256 in captured:
+            if regular_sha256(path, bounds['max_report_bytes']) != report_sha256: raise ValueError('test report changed during capture')
         self.verify_selection(source, descriptor, selection)
         statuses = Counter(r.status for r in results)
         self.results, self.declared_cases = tuple(results), declared

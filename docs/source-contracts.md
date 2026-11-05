@@ -1715,10 +1715,12 @@ and `reported_outcome` keeps the native label:
 | Input | Status |
 | --- | --- |
 | JUnit case with no `failure`/`error`/`skipped` child | `passed` (`no_status_element`) |
+| JUnit case with no status child but a status-like attribute (`status`, `result`, `outcome`, `skipped`, `failed`, ...) | `unknown` (`status_attribute`) |
 | JUnit `failure`, `error` or `skipped` child | `failed`, `error` or `skipped` |
 | JUnit case with two different status children | `unknown` (`conflicting`) |
 | JUnit case with an unrecognized child such as `flakyFailure` or `rerunFailure` | `unknown` (`unrecognized`) |
 | pytest `passed`, `failed`, `error`, `skipped` | the same status |
+| pytest `passed` with a setup, call or teardown phase whose outcome is not `passed` | `unknown` (`conflicting`) |
 | pytest `xfailed`, `xpassed`, `rerun` | `unknown` with that label |
 | any other pytest outcome | `unknown` (`unrecognized`) |
 
@@ -1748,11 +1750,20 @@ and no UTF-16/32 byte-order mark. Any `<!` markup declaration other than a comme
 or CDATA section is refused before a parser is constructed: `DOCTYPE`, `ENTITY`,
 `ELEMENT`, `ATTLIST` and conditional sections. Without a DTD there is no entity
 expansion and no external entity; an undefined entity reference is a parse error.
+Expat materializes a whole start tag and its attributes before reporting it, so
+the same pre-parse screen also requires every start tag to be well delimited with at
+most `max_attributes` quoted attributes (comments, CDATA and processing
+instructions are skipped; an unterminated one is refused).
 `xml.etree.ElementTree.XMLPullParser` then receives 64 KiB chunks and aborts on the
 first bound exceeded: element count, depth, attributes per element and attribute
-key/value length. pytest JSON is decoded strictly as UTF-8 with duplicate-key
-rejection and no `NaN`/`Infinity`. Its nesting depth is checked after decoding
-(decoder recursion also fails closed), and the `tests` schema is validated before any record is made.
+key/value length. Finished elements are emptied and detached as parsing proceeds,
+so retained memory does not grow with element count. pytest JSON is screened
+before decoding: structural brackets outside strings are counted against
+`max_json_depth` and `max_json_containers`, because the decoder builds the whole
+tree first and empty containers amplify memory roughly 48-fold. It is then decoded
+strictly as UTF-8 with duplicate-key rejection and no `NaN`/`Infinity`, and the
+`tests` schema is validated before any record is made. Each report's bytes are
+released after parsing; the change check re-reads by streaming hash.
 The case count is bounded across all reports. A refused report imports nothing and
 leaves the previous checkpoint unchanged; `HostileReport` marks refusals from
 these bounds.
@@ -1767,6 +1778,7 @@ these bounds.
 | `max_attributes` | 64 |
 | `max_attribute_length` | 4,096 characters |
 | `max_json_depth` | 64 |
+| `max_json_containers` | 1,000,000 |
 
 `limits` may only lower these ceilings. Limitation: Python's `xml.etree` and
 `pyexpat` do not offer a supported switch that disables DTD processing. The
