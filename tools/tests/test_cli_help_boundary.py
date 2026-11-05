@@ -17,15 +17,18 @@ SUMMARIES = {
     'improve': 'Stage and evaluate harness candidates, then recommend; never applies behavioral changes '
                '(only --repair-contracts may apply bounded skill-header repairs)',
     'watch': 'Recheck evidence; rerun recommendation-only staging and evaluation only when evidence or '
-             'configuration changes; never edits harness files',
+             'configuration changes; AHL never writes harness files',
 }
 BOUNDARIES = {
     'improve': 'Changes: private state only: run artifacts (staged baseline/candidate copies, evaluation results, change plan) and a run lock.\n'
-               'Never changes: project instructions, skills or hooks; behavioral candidates stay recommendations.\n'
+               'AHL never writes project instructions, skills or hooks; behavioral candidates stay recommendations.\n'
+               'The agent is cooperative: read-only project access is instructed, not enforced; its own permission settings apply.\n'
+               'AHL rechecks the project harness before recommending and rejects a stale result; it does not revert that change.\n'
                'Exception: explicit --repair-contracts may apply a bounded skill-header repair with a rollback journal;\n'
                'a project ahl.json keeps that repair recommendation-only. No commit, publish, deploy or background service.\n',
     'watch': 'Changes: private state only: run artifacts, a run lock and the watch checkpoint.\n'
-             'Never changes: project harness files; watch has no --repair-contracts and applies no candidate.\n'
+             'AHL never writes project harness files; watch has no --repair-contracts and applies no candidate.\n'
+             'Each pass uses the same cooperative agent as improve: read-only project access is instructed, not enforced.\n'
              'Reruns: on changed evidence or execution configuration, or a classified transient retry.\n',
 }
 # Option snapshots guard against dropping options while rewording help.
@@ -46,15 +49,22 @@ SUBCOMMANDS = ('rollback', 'update', 'mine', 'diagnose', 'evaluate', 'benchmark'
 # Wording that would imply behavioral auto-adoption or continuous self-modification.
 FORBIDDEN = ('adopt supported harness repairs', 'continuously improve', 'automatic improvement', 'automatically apply',
              'auto-adopt', 'adopts')
+# Unqualified guarantees about the whole command: the cooperative agent is not sandboxed, so only what AHL
+# itself writes can be promised.
+UNQUALIFIED = ('never changes:', 'never edits')
 README_BOUNDARY = (
     '`ahl improve .` writes private state only: staged baseline and candidate copies, evaluation results, '
-    'a change plan and a run lock. It never edits project instructions, skills or hooks.',
+    'a change plan and a run lock. AHL itself never writes project instructions, skills or hooks.',
+    'It is told to treat the project as read-only, but nothing enforces that; your agent\'s own permission '
+    'settings decide whether it can write there.',
+    'AHL rechecks the project harness before it recommends and rejects a stale result, but it does not revert '
+    'such a change.',
     'A candidate that passes evaluation is reported for independent certification; it is not applied.',
     '`ahl improve . --repair-contracts` is the one exception',
     'A project `ahl.json` keeps even that repair recommendation-only.',
     '`ahl watch .` reruns the same recommendation-only staging and evaluation when evidence or execution '
     'configuration changes, or after a classified transient failure.',
-    'has no `--repair-contracts` option and never edits harness files.',
+    'has no `--repair-contracts` option and never writes harness files itself; its agent is cooperative in the same way.',
     'Neither command commits, publishes, deploys or starts a background service.',
 )
 
@@ -120,6 +130,18 @@ class HelpBoundaryTests(unittest.TestCase):
             for phrase in FORBIDDEN:
                 with self.subTest(command=name, phrase=phrase):
                     self.assertNotIn(phrase, text)
+
+    def test_help_and_docs_promise_only_what_ahl_itself_writes(self):
+        texts = {name: run.stdout for name, run in self.outputs.items()}
+        for doc in ('README.md', 'docs/cli-help.md', 'docs/workflows.md'):
+            texts[doc] = (ROOT / doc).read_text(encoding='utf-8')
+        for name, text in texts.items():
+            for phrase in UNQUALIFIED:
+                with self.subTest(source=name, phrase=phrase):
+                    self.assertFalse(phrase in flat(text).lower(), f'{name} states an unqualified {phrase!r}')
+        for name in ('improve', 'watch'):
+            with self.subTest(command=name):
+                self.assertIn('read-only project access is instructed, not enforced', flat(texts[name]))
 
     def test_readme_states_the_same_boundary_for_improve_and_watch(self):
         readme = flat((ROOT / 'README.md').read_text(encoding='utf-8'))

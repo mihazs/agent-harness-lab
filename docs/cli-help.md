@@ -42,8 +42,10 @@ runtime and may spend model resources. JSON receipts and private artifacts carry
 the actual outcome; help text and declared configuration never grant authority or
 certify success. Behavioral candidates remain recommendations. Explicit
 `--repair-contracts` is a separate bounded structural application path; `watch`
-has no such option and never edits harness files. `ahl improve --help` and
-`ahl watch --help` list what each command changes and never changes.
+has no such option and never writes harness files itself. The agent either command
+starts is cooperative: read-only project access is instructed, not enforced.
+`ahl improve --help` and `ahl watch --help` list what each command changes, what
+AHL never writes and that cooperative limit.
 
 Capture stdout and inspect the process exit status. Workflow exits distinguish
 completed work (0), execution/interruption/budget failures (1), invalid input (2)

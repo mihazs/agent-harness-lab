@@ -146,14 +146,17 @@ def main(argv=None):
     for name in ('analyze', 'improve', 'watch'):
         helps = {'analyze': 'Discover project evidence and failure candidates',
             'improve': 'Stage and evaluate harness candidates, then recommend; never applies behavioral changes (only --repair-contracts may apply bounded skill-header repairs)',
-            'watch': 'Recheck evidence; rerun recommendation-only staging and evaluation only when evidence or configuration changes; never edits harness files'}
+            'watch': 'Recheck evidence; rerun recommendation-only staging and evaluation only when evidence or configuration changes; AHL never writes harness files'}
         boundary = {'analyze': '',
             'improve': 'Changes: private state only: run artifacts (staged baseline/candidate copies, evaluation results, change plan) and a run lock.\n'
-                'Never changes: project instructions, skills or hooks; behavioral candidates stay recommendations.\n'
+                'AHL never writes project instructions, skills or hooks; behavioral candidates stay recommendations.\n'
+                'The agent is cooperative: read-only project access is instructed, not enforced; its own permission settings apply.\n'
+                'AHL rechecks the project harness before recommending and rejects a stale result; it does not revert that change.\n'
                 'Exception: explicit --repair-contracts may apply a bounded skill-header repair with a rollback journal;\n'
                 'a project ahl.json keeps that repair recommendation-only. No commit, publish, deploy or background service.\n',
             'watch': 'Changes: private state only: run artifacts, a run lock and the watch checkpoint.\n'
-                'Never changes: project harness files; watch has no --repair-contracts and applies no candidate.\n'
+                'AHL never writes project harness files; watch has no --repair-contracts and applies no candidate.\n'
+                'Each pass uses the same cooperative agent as improve: read-only project access is instructed, not enforced.\n'
                 'Reruns: on changed evidence or execution configuration, or a classified transient retry.\n'}
         command = sub.add_parser(name, aliases=['analysis'] if name == 'analyze' else [],
             help=helps[name], description=helps[name],formatter_class=argparse.RawDescriptionHelpFormatter,

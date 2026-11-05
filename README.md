@@ -69,16 +69,21 @@ Running `analyze` first is optional.
 What `improve` and `watch` change, and what they never change:
 
 - `ahl improve .` writes private state only: staged baseline and candidate copies,
-  evaluation results, a change plan and a run lock. It never edits project
+  evaluation results, a change plan and a run lock. AHL itself never writes project
   instructions, skills or hooks. A candidate that passes evaluation is reported for
   independent certification; it is not applied.
+- The agent that `improve` starts is cooperative. It is told to treat the project
+  as read-only, but nothing enforces that; your agent's own permission settings
+  decide whether it can write there. AHL rechecks the project harness before it
+  recommends and rejects a stale result, but it does not revert such a change.
 - `ahl improve . --repair-contracts` is the one exception: it may apply a bounded
   skill-header repair, without model calls and with a rollback journal. A project
   `ahl.json` keeps even that repair recommendation-only.
 - `ahl watch .` reruns the same recommendation-only staging and evaluation when
   evidence or execution configuration changes, or after a classified transient
   failure. It writes run artifacts and a private checkpoint, has no
-  `--repair-contracts` option and never edits harness files.
+  `--repair-contracts` option and never writes harness files itself; its agent is
+  cooperative in the same way.
 - Neither command commits, publishes, deploys or starts a background service.
 
 Already working inside an agent session? Invoke the installed
