@@ -1257,11 +1257,18 @@ these files (`hook`), and its `facets` list every matching kind in priority
 order: `hook`, `config`, then `plugin`. The `plugin` facet rows are
 `recommendation_only`, so the file's writability stays `contract_required`.
 
-The harness inventory offers a read file to the parser of every facet kind with
-a `PARSERS` entry. The primary kind's parser keeps the node's `parse_status`
-and its plain fact keys, so the hook, agent and other kind consumers read the
-same facts as before. Every other facet kind's parser reads the same bytes on
-its own and records `<kind>.parse_status` plus `<kind>.<fact>`, for example
+The harness inventory offers these files, and only these, to more than one
+parser. `harness_inventory.COMBINED` lists them per runtime with the extra kinds
+(`config` and `plugin`) whose parsers also read them, and each listed kind must
+also be one of the file's facets. Other files can carry a second facet without
+a runtime reading them as that surface: a `hooks/hooks.json` inside a skill
+bundle, the hook facet of an agent definition, or a `CLAUDE.md` inside a skill.
+Only their primary parser reads them, so a skill bundle's `hooks/hooks.json`
+stays `not_parsed` with no `hook.*` facts.
+
+The primary kind's parser keeps the node's `parse_status` and its plain fact
+keys, so the hook, agent and other kind consumers read the same facts as
+before. Each extra kind's parser reads the same bytes on its own and records `<kind>.parse_status` plus `<kind>.<fact>`, for example
 `config.settings_file` or `plugin.plugins_declared`. Each parser runs
 separately, so a `parse_failed` result from one leaves every other result in
 place. A primary fact key inside another kind's namespace is rejected as a

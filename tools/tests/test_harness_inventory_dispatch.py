@@ -107,6 +107,39 @@ class MultiSurfaceDispatchTests(unittest.TestCase):
                 self.assertNotIn(SECRET, json.dumps(node.facts))
                 self.assertNotIn('synthetic-market', json.dumps(node.facts))  # plugin ids are counted, never listed
 
+    def test_the_combined_table_names_only_parser_facets_of_each_file(self):
+        for runtime, paths in inventory.COMBINED.items():
+            for path, kinds in paths.items():
+                with self.subTest(runtime=runtime, path=path):
+                    facets = surfaces.classify(path, runtime).facets
+                    self.assertTrue(set(kinds) <= set(facets[1:]) & set(inventory.parsers()))
+
+    def test_other_multi_facet_files_are_read_by_their_primary_parser_only(self):
+        # A hooks/ segment, an agent's hook facet or an instruction name gives these files a second facet, but no
+        # runtime is shown to read them as that surface, so no other parser may describe them.
+        hooks = json.dumps({'hooks': {'PreToolUse': [{'matcher': 'Bash', 'hooks': [
+            {'type': 'command', 'command': f'echo {SECRET}'}]}]}})
+        files = {'.claude/skills/x/hooks/hooks.json': hooks, '.agents/skills/z/hooks/hooks.json': hooks,
+                 'skills/y/SKILL.md': 'synthetic', 'skills/y/hooks/hooks.json': hooks,
+                 '.claude/skills/x/CLAUDE.md': 'synthetic', '.claude/agents/a.md': '---\nname: a\n---\nsynthetic',
+                 '.claude/commands/hooks/c.md': 'synthetic', '.claude/rules/hooks/r.md': 'synthetic',
+                 '.codex/agents/r.toml': 'name = "r"\n'}
+        for path, text in files.items():
+            (self.checkout / path).parent.mkdir(parents=True, exist_ok=True); (self.checkout / path).write_text(text)
+        namespaces = tuple(kind + '.' for kind in inventory.parsers())
+        checked = set()
+        for profile in (CLAUDE, CODEX):
+            nodes = {node.path: node for node in inventory.capture(self.checkout, profile).nodes}
+            for path in files:
+                if path not in nodes or len(surfaces.classify(path, profile['runtime']).facets) < 2: continue
+                with self.subTest(runtime=profile['runtime'], path=path):
+                    node, checked = nodes[path], checked | {(profile['runtime'], path)}
+                    self.assertFalse([key for key, _ in node.facts if key.startswith(namespaces)])
+                    if node.kind == 'skill': self.assertEqual((node.parse_status, node.facts), ('not_parsed', ()))
+        self.assertLessEqual({('claude-code', '.claude/skills/x/hooks/hooks.json'), ('codex', 'skills/y/hooks/hooks.json'),
+                              ('claude-code', '.claude/agents/a.md'), ('claude-code', '.claude/skills/x/CLAUDE.md'),
+                              ('codex', '.codex/agents/r.toml')}, checked)
+
     def test_single_kind_files_and_unread_local_settings_are_unchanged(self):
         node = self.node(CLAUDE, 'CLAUDE.md')
         self.assertFalse([key for key, _ in node.facts if '.parse_status' in key])
