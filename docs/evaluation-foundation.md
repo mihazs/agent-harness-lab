@@ -66,8 +66,10 @@ oracle correction/invalidation and protected certification remain separate work.
   and enforces declared file/byte bounds after the worker stops.
 - Contained reads open each directory by name from its already opened parent,
   starting at `/`, without following links, so a parent swapped for a symlink
-  after the containment check is refused. Platforms whose `os.open` lacks
-  `dir_fd` support refuse these reads.
+  after the containment check is refused. Bank revision, case evidence and
+  lineage snapshot fsyncs, and private journal directory fsyncs, open their
+  targets through the same walk. Platforms whose `os.open` lacks `dir_fd`
+  support refuse these reads and fsyncs.
 
 ## Offline sandbox and threat model
 

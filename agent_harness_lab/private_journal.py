@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import re
 import stat
-from .evaluation.integrity import contained, invalid_constant, read_regular, unique_object
+from .evaluation.integrity import contained, invalid_constant, open_directory_nofollow, read_regular, unique_object
 from .monitoring.state import atomic_json
 
 MAX_EVENTS = 64
@@ -32,7 +32,7 @@ def record(path, limit=256*1024):
 
 
 def sync_directory(path):
-    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    descriptor = open_directory_nofollow(path)
     try: os.fsync(descriptor)
     finally: os.close(descriptor)
 

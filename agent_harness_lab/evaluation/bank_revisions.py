@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 from agent_harness_lab.private_journal import MAX_EVENTS, encoded, record, record_bytes, sync_directory, write_bytes
 from agent_harness_lab.sources.schema import digest as metadata_digest
-from .integrity import contained, copy_frozen, digest, read_regular, regular_sha256, regular_size, tree
+from .integrity import contained, copy_frozen, digest, open_nofollow, read_regular, regular_sha256, regular_size, tree
 from .regression_controls import read_draft
 from .regressions import fields, load, sha256, text
 from .task_bank import TaskSpec
@@ -30,7 +30,7 @@ def payload_tree(path):
 def sync_tree(path):
     files = tree(path, max_files=4096, max_bytes=MAX_REVISION_BYTES); folders = {Path(path)}
     for relative in files:
-        target = contained(path, relative); descriptor = os.open(target, os.O_RDONLY | os.O_NOFOLLOW)
+        target = contained(path, relative); descriptor = open_nofollow(target)
         try: os.fsync(descriptor)
         finally: os.close(descriptor)
         folders.update(p for p in target.parents if p.is_relative_to(path))
