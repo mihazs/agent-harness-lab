@@ -3,6 +3,7 @@ from contextlib import contextmanager
 import fcntl
 import os
 from pathlib import Path
+import socket
 import stat
 import tempfile
 import threading
@@ -65,6 +66,27 @@ class BeneathTests(unittest.TestCase):
         self.assertNotIn(OUTSIDE, value if isinstance(value, bytes) else b'')
         self.fail(f'read was not refused: {value!r}')
 
+    def bounded(self, call, seconds=5):
+        """Run call on a daemon thread, so a blocking special-file open fails the test instead of hanging it."""
+        outcome = []
+        def run():
+            try: outcome.append((True, call()))
+            except BaseException as error: outcome.append((False, error))
+        worker = threading.Thread(target=run, daemon=True)
+        worker.start(); worker.join(seconds)
+        self.assertFalse(worker.is_alive(), 'opening a special file blocked')
+        returned, value = outcome[0]
+        if not returned: raise value
+        return value
+
+    @contextmanager
+    def opened(self):
+        """Record every name passed to os.open."""
+        real, names = os.open, []
+        def recorded(name, flags, *args, **kwargs):
+            names.append(os.fsdecode(name)); return real(name, flags, *args, **kwargs)
+        with patch.object(integrity.os, 'open', recorded): yield names
+
     def restore(self, directory):
         if directory.is_symlink(): directory.unlink()
         if directory.with_name(directory.name+'.orig').exists(): directory.with_name(directory.name+'.orig').rename(directory)
@@ -109,7 +131,7 @@ class BeneathTests(unittest.TestCase):
         for name, message in (('pipe', 'artifact must be a regular single-link file'),
                               ('twin', 'artifact must be a regular single-link file')):
             with self.subTest(name=name):
-                self.assertEqual(str(self.refused(lambda: artifacts(self.root, [name]))), message)
+                self.assertEqual(str(self.bounded(lambda: self.refused(lambda: artifacts(self.root, [name])))), message)
         self.assertEqual(str(self.refused(lambda: artifacts(self.root, ['deep/sub/f'], max_bytes=len(INSIDE)-1))),
                          'artifact byte bound exceeded')
 
@@ -126,7 +148,7 @@ class BeneathTests(unittest.TestCase):
         for label, (path, message) in cases.items():
             for reader, call in readers(path).items():
                 with self.subTest(case=label, reader=reader):
-                    self.assertEqual(str(self.refused(call)), message)
+                    self.assertEqual(str(self.bounded(lambda: self.refused(call))), message)
         for reader, call in readers(self.target, len(INSIDE)-1).items():
             with self.subTest(case='byte-bound', reader=reader):
                 self.assertEqual(str(self.refused(call)), 'input must be a bounded single-link regular file')
@@ -134,12 +156,45 @@ class BeneathTests(unittest.TestCase):
             self.assertIsInstance(self.refused(lambda: read_regular(self.root/'absent', 10)), FileNotFoundError)
 
     def test_fifo_is_refused_without_blocking(self):
-        os.mkfifo(self.root/'pipe'); outcome = []
-        worker = threading.Thread(target=lambda: outcome.append(self.refused(lambda: read_regular(self.root/'pipe', 10))),
-                                  daemon=True)
-        worker.start(); worker.join(5)
-        self.assertFalse(worker.is_alive(), 'opening a FIFO blocked')
-        self.assertEqual(str(outcome[0]), 'input must be a bounded single-link regular file')
+        os.mkfifo(self.root/'pipe')
+        self.assertEqual(str(self.bounded(lambda: self.refused(lambda: read_regular(self.root/'pipe', 10)))),
+                         'input must be a bounded single-link regular file')
+
+    def special_leaves(self):
+        """FIFO, Unix socket and, where this process may create one, a character device node."""
+        os.mkfifo(self.root/'pipe')
+        cwd = os.getcwd(); os.chdir(self.root)  # a relative bind keeps the socket path short
+        try:
+            server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM); self.addCleanup(server.close)
+            server.bind('sock')
+        finally: os.chdir(cwd)
+        names = ['pipe', 'sock']
+        try: os.mknod(self.root/'device', stat.S_IFCHR | 0o600, os.makedev(1, 3)); names.append('device')
+        except (PermissionError, AttributeError): pass
+        return names
+
+    def test_special_leaves_are_refused_with_the_label_before_any_open(self):
+        for name in self.special_leaves():
+            for label, call, message in (
+                    ('artifact', lambda: artifacts(self.root, [name]), 'artifact must be a regular single-link file'),
+                    ('read', lambda: read_regular(self.root/name, 10), 'input must be a bounded single-link regular file')):
+                with self.subTest(name=name, reader=label), self.opened() as names:
+                    self.assertEqual(str(self.bounded(lambda: self.refused(call))), message)
+                    self.assertNotIn(name, names)
+
+    def test_device_leaf_is_refused_before_its_open(self):
+        """Simulated where mknod needs privileges: the pre-open lstat reports a character device."""
+        (self.root/'device').write_bytes(INSIDE); real = os.stat
+        def as_device(name, *args, **kwargs):
+            info = real(name, *args, **kwargs)
+            if name != 'device' or 'dir_fd' not in kwargs: return info
+            return os.stat_result((stat.S_IFCHR | 0o600, *info[1:]))
+        for label, call, message in (
+                ('artifact', lambda: artifacts(self.root, ['device']), 'artifact must be a regular single-link file'),
+                ('read', lambda: read_regular(self.root/'device', 10), 'input must be a bounded single-link regular file')):
+            with self.subTest(reader=label), patch.object(integrity.os, 'stat', as_device), self.opened() as names:
+                self.assertEqual(str(self.refused(call)), message)
+                self.assertNotIn('device', names)
 
     def test_relative_and_bounded_reads_still_return_contents(self):
         with self.unleaked():

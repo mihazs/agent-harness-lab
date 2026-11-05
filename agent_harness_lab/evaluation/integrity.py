@@ -60,9 +60,18 @@ def _open_beneath(path, leaf):
         return _open_step(name, _beneath_api()[1][leaf], parent)
 
 
-def open_nofollow(path):
-    """Read-only descriptor for an existing file (fstat, read, fsync) reached by the no-follow walk."""
-    return _open_beneath(path, 'file')
+def open_nofollow(path, refusal='input must be a bounded single-link regular file'):
+    """Read-only descriptor for an existing regular file (fstat, read, fsync) reached by the no-follow walk.
+
+    The leaf is lstat-ed relative to its walked parent before the open, so a device node, socket,
+    FIFO or directory is refused with ValueError(refusal) and never opened. The leaf can still be
+    replaced between that check and the open, so callers keep their own fstat of the descriptor."""
+    _, leaf_flags = _beneath_api()
+    with _parent_beneath(path) as (parent, name):
+        mode = os.stat(name, dir_fd=parent, follow_symlinks=False).st_mode
+        if stat.S_ISLNK(mode): raise ValueError('input crosses a symlink')
+        if not stat.S_ISREG(mode): raise ValueError(refusal)
+        return _open_step(name, leaf_flags['file'], parent)
 
 
 def open_directory_nofollow(path):
@@ -249,7 +258,7 @@ def artifacts(root, allowlist, max_bytes=1024 * 1024):
         raise ValueError('invalid artifact allowlist')
     result, total = {}, 0
     for name in allowlist:
-        descriptor = open_nofollow(contained(root, name))
+        descriptor = open_nofollow(contained(root, name), 'artifact must be a regular single-link file')
         try:
             info = os.fstat(descriptor)
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
