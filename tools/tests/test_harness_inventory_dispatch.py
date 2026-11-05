@@ -204,6 +204,24 @@ class ConfigByteBoundTests(unittest.TestCase):
                     _, lengths = self.decoded(target, call)
                     self.assertEqual(lengths, [])
 
+    def test_dispatch_refuses_an_oversized_combined_file_before_any_parser_is_called(self):
+        # A parser with no size check of its own stands in for a future facet parser that leaves out the bound, so
+        # only the dispatch refusal can keep it from seeing the oversized bytes; at the bound it must still be called.
+        at_bound = CONFIG_TOML + '#' * (BOUND - len(CONFIG_TOML.encode()) - 1) + '\n'
+        for profile, path, text in ((CODEX, '.codex/config.toml', None), (CLAUDE, '.claude/settings.json', None),
+                                    (CODEX, '.codex/config.toml', at_bound)):
+            if text is not None: (self.checkout / path).write_text(text)
+            calls = []
+            def unbounded(target, raw, _profile): calls.append(target); return 'parsed', {}
+            with self.subTest(path=path, at_bound=text is not None), patch.object(inventory, '_resolve', lambda _: unbounded):
+                node = next(node for node in inventory.capture(self.checkout, profile).nodes if node.path == path)
+                if text is None:
+                    self.assertNotIn(path, calls)
+                    self.assertEqual(node.parse_status, 'parse_failed')
+                else:
+                    self.assertEqual(calls.count(path), 3)  # hook, config and plugin each see the bytes once
+                    self.assertEqual(node.parse_status, 'parsed')
+
     def test_a_config_at_the_bound_is_still_parsed_by_every_facet(self):
         text = CONFIG_TOML + '#' * (BOUND - len(CONFIG_TOML.encode()) - 1) + '\n'
         self.assertEqual(len(text.encode()), BOUND)
