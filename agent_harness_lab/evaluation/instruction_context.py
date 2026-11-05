@@ -30,6 +30,22 @@ def chain_paths(task_cwd):
     return tuple(str(PurePosixPath(*path.parts[:depth],'AGENTS.md')) for depth in range(len(path.parts)+1))
 
 
+def _within_budget(size):
+    if size>CHAIN_BUDGET:raise ValueError('instruction chain exceeds its 32 KiB budget; nothing is truncated')
+    return size
+
+
+def chain_size(root,task_cwd):
+    """Preflight a frozen harness's chain so an oversized or irregular chain blocks before any trial."""
+    size=0
+    for relative in chain_paths(task_cwd):
+        path=Path(root)/relative
+        if path.is_symlink() or path.exists() and not path.is_file():
+            raise ValueError('instruction chain files must be regular files')
+        size+=path.stat().st_size if path.exists() else 0
+    return _within_budget(size)
+
+
 def _member(snapshot,files,path):
     if any(name==path for name,_ in snapshot.directories):
         raise ValueError('root AGENTS.md must be a regular file' if path=='AGENTS.md' else 'instruction chain files must be regular files')
@@ -54,8 +70,7 @@ def prepare(client,backend,inputs,role,instructions,prompt,deadline,*,task_cwd=N
             membership=metadata['membership'],content=text),ensure_ascii=False,sort_keys=True)
     elif role=='executor':
         members=[_member(snapshot,files,path) for path in paths]
-        size=sum(row['bytes'] for row,_ in members)
-        if size>CHAIN_BUDGET:raise ValueError('instruction chain exceeds its 32 KiB budget; nothing is truncated')
+        size=_within_budget(sum(row['bytes'] for row,_ in members))
         metadata={key:members[0][0][key] for key in ('path','membership','mode','sha256')}
         metadata.update(task_cwd=task_cwd,chain=[row for row,_ in members],chain_bytes=size,chain_budget=CHAIN_BUDGET,
             discovery='AGENTS.md per directory from the harness root; override and fallback names not modelled')

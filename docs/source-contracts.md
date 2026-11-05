@@ -1927,7 +1927,9 @@ member is recorded as present or absent with its mode, SHA-256 and size.
 `AGENTS.override.md` and fallback names are not modelled. A chain over Codex's
 default 32 KiB `project_doc_max_bytes` blocks before any request and is never
 truncated. Tasks without `cwd` keep the root-only `AGENTS.md` context unchanged.
-Other executors reject `cwd`. The closed project input profile still signs only
+`cwd` requires `instruction_protocol`; preflight checks that and each frozen
+chain's size before credentials, inference or output. Other executors reject
+`cwd` as a setup error. The closed project input profile still signs only
 the root `AGENTS.md`.
 
 Sources: [Claude Code CLI reference](https://code.claude.com/docs/en/cli-reference),

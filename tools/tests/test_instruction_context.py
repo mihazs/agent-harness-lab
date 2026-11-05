@@ -1,9 +1,14 @@
 """Controller-loaded AGENTS.md chain for a task directory; synthetic harness and wire only."""
+import contextlib
+import io
 import json
+import sys
 import unittest
+from unittest.mock import patch
 
 from agent_harness_lab.evaluation import instruction_context, responses
 import test_effective_agents as agents
+import test_sandbox_inference as inference_fixtures
 
 
 class InstructionChainTests(agents.InstructionFixture, unittest.TestCase):
@@ -65,6 +70,72 @@ class InstructionChainTests(agents.InstructionFixture, unittest.TestCase):
         with self.assertRaises(ValueError):
             self.run_cwd(self.client(), 'app')
         self.assertEqual(self.bodies, [])
+
+
+class ManifestTaskCwdTests(unittest.TestCase):
+    """Task cwd configured through the runner manifest, not a direct run_role call."""
+    def setUp(self):
+        self.f = inference_fixtures.ResponsesEvaluationTests(); self.f.setUp(); self.addCleanup(self.f.doCleanups)
+        self.fixture, self.runner, self.args = self.f.fixture, self.f.runner, self.f.args
+        self.fixture.manifest['tasks'][0]['cwd'] = 'app'; self.fixture.write_manifest()
+
+    def protocol(self):
+        self.f.settings['instruction_protocol'] = instruction_context.PROFILE
+        self.args.inference_settings.write_text(json.dumps(self.f.settings))
+
+    def blocked_before_inference(self, message):
+        with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend', return_value=self.f.backend), \
+                patch.object(responses, 'read_credential', side_effect=AssertionError('no key before setup')), \
+                patch.object(responses, 'request', side_effect=AssertionError('no inference before setup')), \
+                self.assertRaisesRegex(ValueError, message):
+            self.runner.evaluate(self.args)
+        self.assertFalse(self.args.output.exists())
+        self.assertEqual(self.f.requests, 0)
+
+    def test_cooperative_and_offline_executors_reject_cwd_as_a_setup_error(self):
+        for agent in ('codex', 'offline'):
+            with self.subTest(agent=agent):
+                self.args.agent, self.args.inference_settings = agent, None
+                for name in ('cgroup_root', 'image_root', 'image_sha256', 'disk_bytes'): setattr(self.args, name, None)
+                argv = ['run_evaluation.py', '--agent', agent, '--manifest', str(self.args.manifest),
+                        '--baseline', str(self.args.baseline), '--candidate', str(self.args.candidate),
+                        '--output', str(self.args.output)]
+                stderr = io.StringIO()
+                with patch.object(sys, 'argv', argv), contextlib.redirect_stderr(stderr), \
+                        patch.object(self.runner, 'execute', side_effect=AssertionError('no native CLI')), \
+                        self.assertRaises(SystemExit) as stopped:
+                    self.runner.main()
+                self.assertEqual(stopped.exception.code, 2)
+                self.assertIn('task cwd is supported only by the controlled Responses executor', stderr.getvalue())
+                self.assertFalse(self.args.output.exists())
+
+    def test_cwd_without_instruction_protocol_blocks_before_any_trial(self):
+        self.blocked_before_inference('task cwd requires the controller instruction protocol')
+
+    def test_frozen_chain_over_budget_blocks_before_any_trial(self):
+        self.protocol()
+        (self.args.candidate / 'AGENTS.md').write_text('x' * (32 * 1024 + 1))
+        self.blocked_before_inference('32 KiB budget')
+
+    def test_irregular_chain_member_blocks_before_any_trial(self):
+        self.protocol()
+        (self.args.baseline / 'app/AGENTS.md').mkdir(parents=True)
+        self.blocked_before_inference('regular files')
+
+    def test_manifest_cwd_reaches_run_trial_only_for_its_task(self):
+        self.protocol(); calls = []
+        def stop(*args, **kwargs):
+            calls.append((args[4], kwargs.get('task_cwd', 'unset')))
+            raise ValueError('synthetic stop after capture')
+        with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend', return_value=self.f.backend), \
+                patch.object(responses, 'request', side_effect=AssertionError('run_trial is replaced')), \
+                patch.object(responses.Client, 'abort'), patch.object(responses, 'run_trial', side_effect=stop):
+            self.runner.evaluate(self.args)
+        cwd_prompt = self.fixture.manifest['tasks'][0]['prompt']
+        self.assertEqual(len(calls), 2 * len(self.fixture.manifest['tasks']))
+        for prompt, task_cwd in calls:
+            self.assertEqual(task_cwd, 'app' if prompt.endswith(cwd_prompt) else 'unset')
+        self.assertEqual(sum(task_cwd == 'app' for _, task_cwd in calls), 2)
 
 
 if __name__ == '__main__':

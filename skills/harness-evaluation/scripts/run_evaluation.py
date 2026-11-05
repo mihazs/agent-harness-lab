@@ -418,6 +418,13 @@ def _evaluate(args):
             from agent_harness_lab.evaluation import responses as response_runtime
             from agent_harness_lab.evaluation.working_state import WorkingState
             inference_settings,inference_hash = response_runtime.read_settings(inference_path)
+            cwd_tasks = [task['cwd'] for task in tasks if 'cwd' in task]
+            if cwd_tasks and inference_settings.get('instruction_protocol') is None:
+                raise ValueError('task cwd requires the controller instruction protocol in the inference settings')
+            from agent_harness_lab.evaluation.instruction_context import chain_size
+            for task_cwd in cwd_tasks:
+                for root in versions.values():
+                    chain_size(root, task_cwd)
             fixtures = [contained(manifest_path.parent,task['fixture']) for task in tasks]
             for root in versions.values():
                 bounded_tree(root)
