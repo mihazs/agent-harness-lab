@@ -1904,8 +1904,9 @@ classifies as `private_excluded` by its path. Content never hides a file at a
 runtime settings path: a `settings.json` there is inventoried whatever keys it
 holds. In the surface walk, `.mcp.json` and output styles are `config` nodes
 whose parser reports path-free row counts. The settings files and
-`.codex/config.toml` stay `hook` nodes with a `config` facet, and the hook
-parser owns them there. Undecodable files become a `parse_failed` presence row.
+`.codex/config.toml` stay `hook` nodes with a `config` facet. The hook parser
+owns their `parse_status`, and the config parser adds namespaced `config.*`
+counts (see Multi-surface file dispatch). Undecodable files become a `parse_failed` presence row.
 JSON and TOML share one nesting bound of 64, so a deeply nested
 `.codex/config.toml` is also `parse_failed`, never a crash. A CLI, the surface
 walk's pruning of memory directories under declared roots, and profile-scoped

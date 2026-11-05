@@ -7,7 +7,10 @@ from unittest.mock import patch
 
 from agent_harness_lab import surfaces
 from agent_harness_lab.sources import harness_inventory as inventory
-from tools.tests import harness_surface_fixture as fixture
+if __package__:
+    from . import harness_surface_fixture as fixture
+else:
+    import harness_surface_fixture as fixture
 
 SECRET = 'synthetic-dispatch-secret-7f3a'
 CLAUDE = dict(schema_version=1, runtime='claude-code', version='2.1.317', task_cwd='.')

@@ -256,10 +256,11 @@ class ConfigInventoryTests(unittest.TestCase):
             with self.subTest(path=path):
                 node = nodes[path]
                 self.assertEqual((node.kind, node.parse_status, dict(node.facts).get('format')), ('hook', 'parsed', form))
-                self.assertNotIn('settings_file', dict(node.facts))
+                self.assertNotIn('settings_file', dict(node.facts))  # config facts are namespaced (#306)
+                self.assertEqual(dict(node.facts).get('config.parse_status'), 'parsed')
                 self.assertIn('config', surfaces.classify(path, runtime).facets)
-        for path in ('.claude/settings.json', '.claude/settings.local.json', '.codex/config.toml'):
-            with self.subTest(dead=path): self.assertEqual(config.parse(path, b'{}', CLAUDE), ('not_parsed', {}))
+        # The private local settings file is never read by the walk, so the config parser lists no reader for it.
+        self.assertEqual(config.parse('.claude/settings.local.json', b'{}', CLAUDE), ('not_parsed', {}))
         self.assertEqual(claude['.mcp.json'].kind, 'config')
 
     def test_checkout_memories_folder_is_read_but_a_declared_codex_home_memories_folder_is_not(self):
