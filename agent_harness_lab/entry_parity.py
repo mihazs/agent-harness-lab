@@ -18,8 +18,9 @@ import re
 PROFILE = 'ahl-entry-receipt-parity-v1'
 RUN_PLACEHOLDER = '<run>'
 
-# Private artifact written only by the skill route, once the controller has
-# allocated its run; a configuration preflight that blocks first writes none.
+# Private artifact written only by the named route as soon as its run directory
+# exists, including a run that the configuration preflight blocks.
+ROUTES = ('cli', 'skill')
 ENTRY_ONLY_ARTIFACTS = {'invocation.json': 'skill'}
 
 # Artifact pattern -> dotted key patterns that may differ. A ``*`` stands for a
@@ -98,17 +99,21 @@ def document_differences(artifact, first, second, first_run, second_run):
 
 
 def run_differences(first_run, second_run):
-    """Compare two private run directories; return {artifact: [keys]} outside the contract.
+    """Compare the CLI run (first) with the skill run (second); return {artifact: [keys]} outside the contract.
 
-    A file present in only one run is reported with the key ``<presence>`` unless
-    ``ENTRY_ONLY_ARTIFACTS`` names it. Non-JSON files must match byte for byte
-    after run-directory normalization.
+    A file present in only one run is reported with the key ``<presence>``. An
+    ``ENTRY_ONLY_ARTIFACTS`` file is reported unless it is present exactly in the
+    run of its named route. Non-JSON files must match byte for byte after
+    run-directory normalization.
     """
     first_run, second_run = Path(first_run), Path(second_run)
     files = [{str(path.relative_to(root)) for path in root.rglob('*') if path.is_file()}
              for root in (first_run, second_run)]
     found = {name: ['<presence>'] for name in files[0] ^ files[1] if name not in ENTRY_ONLY_ARTIFACTS}
-    for name in sorted(files[0] & files[1]):
+    for name, route in ENTRY_ONLY_ARTIFACTS.items():
+        if [name in names for names in files] != [owner == route for owner in ROUTES]:
+            found[name] = ['<presence>']
+    for name in sorted(files[0] & files[1] - ENTRY_ONLY_ARTIFACTS.keys()):
         raw = [(root / name).read_bytes() for root in (first_run, second_run)]
         try:
             first, second = (json.loads(data) for data in raw)

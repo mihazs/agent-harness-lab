@@ -52,7 +52,8 @@ only allowed differences:
   and the change plan's `affected_controls_sha256` and `evidence` reference;
 - measured durations and remaining budget in private run artifacts, and the
   `origin` and `parent_run_id` invocation context given to preparation children;
-- `invocation.json`, written only by the skill route after its run starts.
+- `invocation.json`, written only by the skill route as soon as its run directory
+  exists, including a run that the configuration preflight blocks.
 
 Stdout is the receipt and also `workflow.json`. Stderr matches except for the
 run directory and elapsed times. A managed-preparation marker denies both routes

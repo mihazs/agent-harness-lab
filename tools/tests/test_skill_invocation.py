@@ -74,6 +74,31 @@ class SkillInvocationTests(unittest.TestCase):
             results.append((code,result))
         self.assertEqual(results[0],results[1])
 
+    def test_preflight_blocked_skill_run_records_invocation_context(self):
+        fixture=self.fixture();missing=fixture.root/'missing-agent'
+        code,stdout,_=self.invoke(['skills','invoke',str(fixture.project),'--agent','codex','--codex',str(missing),'--timeout','10'])
+        result=json.loads(stdout);output=Path(result['output'])
+        self.assertEqual((result['status'],result['reason']),('blocked','agent_runtime_unavailable'))
+        self.assertEqual(json.loads((output/'workflow.json').read_text()),result)
+        context=json.loads((output/'invocation.json').read_text())
+        self.assertEqual(context['profile'],'ahl-skill-invocation-context-v1')
+        self.assertEqual((context['origin'],context['scope'],context['runtime']),('skill','project','codex'))
+        self.assertEqual(context['parent_run_id'],output.name)
+        self.assertEqual((context['execution_authority'],context['publication_allowed']),(False,False))
+        expected=invocation_context(SimpleNamespace(project=fixture.project,agent='codex'),output,0)
+        self.assertEqual(sorted(context),sorted(expected))
+
+    def test_contract_repair_skill_run_records_invocation_context(self):
+        for prefix in (['improve'],['skills','invoke']):
+            with self.subTest(entry=prefix[0]):
+                fixture=self.fixture()
+                code,stdout,_=self.invoke([*prefix,str(fixture.project),'--repair-contracts','--timeout','10'])
+                result=json.loads(stdout);output=Path(result['output'])
+                self.assertEqual((code,result['status']),(0,'no_change'))
+                self.assertEqual((output/'invocation.json').exists(),prefix[0]=='skills')
+                if prefix[0]=='skills':
+                    self.assertEqual(json.loads((output/'invocation.json').read_text())['origin'],'skill')
+
     def test_marker_presence_denies_all_entries_before_effects(self):
         fixture=self.fixture();initial=(fixture.project/'AGENTS.md').read_bytes()
         for marker in ('','not-a-budget','{"authorized":true}'):
@@ -203,13 +228,10 @@ class EntryReceiptParityTests(unittest.TestCase):
                 self.assertEqual(entry_parity.document_differences(entry_parity.RECEIPT,cli_receipt,skill_receipt,cli_run,skill_run),[])
                 self.assertEqual(entry_parity.run_differences(cli_run,skill_run),{})
                 self.assertEqual(entry_parity.normalized_stderr(cli_stderr,cli_run),entry_parity.normalized_stderr(skill_stderr,skill_run))
+                # A configuration preflight block also records the skill context.
                 self.assertFalse((cli_run/'invocation.json').exists())
-                if status=='blocked':
-                    # Preflight blocks before the controller writes invocation context.
-                    self.assertFalse((skill_run/'invocation.json').exists())
-                else:
-                    context=json.loads((skill_run/'invocation.json').read_text())
-                    self.assertEqual((context['origin'],context['parent_run_id'],context['execution_authority']),('skill',skill_run.name,False))
+                context=json.loads((skill_run/'invocation.json').read_text())
+                self.assertEqual((context['origin'],context['parent_run_id'],context['execution_authority']),('skill',skill_run.name,False))
                 if status=='inconclusive':
                     for key in ('decision','plan','recommendation','blocked_prerequisites','implementation_prerequisites'):
                         self.assertIn(key,cli_receipt)
@@ -240,6 +262,19 @@ class EntryReceiptParityTests(unittest.TestCase):
         missing=json.loads(json.dumps(second));del missing['plan_sha256']
         self.assertEqual(entry_parity.document_differences('workflow.json',first,missing,'/a/run-1','/b/run-2'),['plan_sha256'])
         self.assertEqual(entry_parity.document_differences('feedback-0.json',dict(origin='cli'),dict(origin='skill'),'/a','/b'),['origin'])
+
+    def test_entry_only_artifact_must_exist_only_in_the_skill_run(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            for name,cli_has,skill_has,expected in (('skill_only',False,True,{}),
+                    ('missing',False,False,{'invocation.json':['<presence>']}),
+                    ('cli_only',True,False,{'invocation.json':['<presence>']}),
+                    ('both',True,True,{'invocation.json':['<presence>']})):
+                with self.subTest(case=name):
+                    runs=[Path(temporary)/name/route for route in entry_parity.ROUTES]
+                    for run,present in zip(runs,(cli_has,skill_has)):
+                        run.mkdir(parents=True);(run/'workflow.json').write_text(json.dumps(dict(status='blocked',output=str(run))))
+                        if present:(run/'invocation.json').write_text('{}')
+                    self.assertEqual(entry_parity.run_differences(*runs),expected)
 
     def test_managed_preparation_denial_is_identical_for_both_routes(self):
         fixture=SkillInvocationTests.fixture(self);initial=(fixture.project/'AGENTS.md').read_bytes()
