@@ -1267,8 +1267,10 @@ Brace groups expand up to 256 patterns per rule, and patterns without braces do
 not count. A rule past that bound, or with a pattern longer than 4096
 characters or of more than 64 path segments, is `blocked`. Brace groups are found
 in one linear scan, and matching walks the pattern segments iteratively, so it
-never exhausts the stack. Matching draws on one budget of 10,000,000 segment
-comparisons for the whole receipt, shared by every rule. When the budget runs
+never exhausts the stack. Matching draws on one budget of 10,000,000 steps for
+the whole receipt, shared by every rule: one step per pattern checked and one
+per segment comparison. An unverified pattern is decided once and never paired
+with task paths, so it costs one step. When the budget runs
 out, the receipt is `blocked` with `match_budget_exceeded` and lists no rules,
 so many small hostile rules cannot add up to unbounded time. The documented
 runtime budget is 1000 patterns, so `blocked` means AHL did not evaluate the

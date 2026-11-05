@@ -198,6 +198,22 @@ class ClaudeRulesTests(unittest.TestCase):
                              {'.claude/rules/r.md': ('parsed', 'conditional_unmatched')})
         self.assertEqual(rules.capture(hostile, CLAUDE).status, 'declared')  # no task paths, nothing to match
 
+    def test_unverified_patterns_are_charged_once_and_never_paired_with_task_paths(self):
+        unverified = tuple(f'[{i}' for i in range(200)) + ('!x', 'a\\b', './s/*.ts', 'r/{x}')
+        paths = tuple(f'a/b/x{i}.py' for i in range(1000))
+        budget = rules.Budget(len(unverified))
+        self.assertEqual(rules.classify('.', 'parsed', unverified, ('.',), paths, None, budget), 'conditional_unknown')
+        self.assertEqual(budget.steps, 0)  # one step per pattern, none per (pattern, path) pair
+        self.assertEqual(rules.classify('.', 'parsed', unverified + ('**/x7.py',), ('.',), paths, None),
+                         'conditional_matched')  # a verified pattern still decides a rule with unverified ones
+        rule = '---\npaths: [' + ', '.join(f'"[{i}"' for i in range(50)) + ']\n---\n'
+        hostile = fixture.build(self.base / 'unverified', {f'.claude/rules/u{i}.md': rule for i in range(30)}, hostile=False)
+        with patch.object(rules, 'MAX_MATCH_STEPS', 1000):
+            receipt = rules.capture(hostile, CLAUDE, task_paths=list(paths))
+            self.assertEqual((receipt.status, receipt.blocked_reason, receipt.nodes), ('blocked', 'match_budget_exceeded', ()))
+        self.assertEqual({n.classification for n in rules.capture(hostile, CLAUDE, task_paths=list(paths)).nodes},
+                         {'conditional_unknown'})
+
     def test_hostile_rules_stay_bounded_and_rules_below_a_skills_directory_are_kept(self):
         hostile = self.base / 'hostile'
         fixture.build(hostile, {

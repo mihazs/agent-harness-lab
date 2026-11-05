@@ -153,8 +153,11 @@ def classify(base, status, patterns, scopes, task_paths, setting_sources, budget
         return 'on_demand_subdirectory' if cwd == '.' or base.startswith(cwd + '/') else 'outside_task_scope'
     if task_paths is None: return 'conditional_unknown'
     under = [p if base == '.' else p[len(base) + 1:] for p in task_paths if base == '.' or p.startswith(base + '/')]
-    unknown = False
-    for pattern in patterns:
+    if budget is not None: budget.spend(len(patterns))  # one step per pattern checked, so unverified ones cost too
+    # An unverified pattern is never a match or a miss, so it is decided once and skipped, never paired with paths.
+    checked = [pattern for pattern in patterns if verified(pattern)]
+    unknown = bool(under) and len(checked) < len(patterns)
+    for pattern in checked:
         for path in under:
             result = outcome(pattern, path, budget)
             if result: return 'conditional_matched'
