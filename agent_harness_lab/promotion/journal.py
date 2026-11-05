@@ -6,10 +6,12 @@ after snapshot of a JSON or TOML configuration file that changes only its `hooks
 """
 import base64
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path, PurePosixPath
 import re
+import secrets
 import stat
 import subprocess
 import tomllib
@@ -288,8 +290,8 @@ class Journal:
 
     def _admitted(self,record,*,prepare=False):
         """Paths a passed hook contract admitted: exactly the record's whole deployment unit, or none. A promotion's
-        admission binds the sha256 and mode of every member snapshot; a rollback's is its reverted deployment's, and
-        only the exact reversal of that deployment's snapshots carries it."""
+        admission binds the sha256 and mode of every member snapshot and is sealed with the journal key when prepared;
+        a rollback's is its reverted deployment's, and only the exact reversal of that sealed deployment carries it."""
         metadata=record.get('metadata') or {}
         contract=metadata.get('hook_contract')
         if contract is None: return frozenset()
@@ -299,6 +301,7 @@ class Journal:
                 or contract.get('members')!=names:
             raise ValueError('invalid hook contract admission')
         if record.get('kind')=='rollback':
+            # The reverted record was sealed when it was prepared, so its before bytes are what the disk held then.
             try: reverted=self.load(metadata.get('reverts'))
             except OSError: raise ValueError('rollback admission differs from the reverted deployment') from None
             if (prepare and reverted['status']!='committed') or reverted['metadata'].get('hook_contract')!=contract \
@@ -307,7 +310,39 @@ class Journal:
         elif record.get('kind')!='promotion' or contract.get('snapshots')!=[
                 list(row) for row in unit_snapshots(record['before'],record['after'])]:
             raise ValueError('hook contract admission does not bind this deployment unit')
+        elif not prepare:
+            seal=metadata.get('hook_contract_seal')
+            if not isinstance(seal,str) or not hmac.compare_digest(seal,self._seal(record.get('deployment'),contract)):
+                raise ValueError('hook contract admission is not authenticated')
         return frozenset(names)
+
+    def _admission_key(self,*,create=False):
+        """The journal's private key for admission seals. It lives beside the records, outside every record, so a
+        record whose snapshots and admission rows are rewritten together no longer carries a valid seal."""
+        path=self.folder/'admission.key'
+        if create and not os.path.lexists(path):
+            temporary=self.folder/('.admission-'+uuid.uuid4().hex)
+            fd=os.open(temporary,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600)
+            try:
+                with os.fdopen(fd,'wb') as stream:
+                    stream.write(secrets.token_bytes(32)); stream.flush(); os.fsync(stream.fileno())
+                try: os.link(temporary,path)
+                except FileExistsError: pass
+            finally:
+                temporary.unlink(missing_ok=True)
+        try: fd=os.open(path,os.O_RDONLY|os.O_NOFOLLOW)
+        except OSError: raise ValueError('hook contract admission is not authenticated') from None
+        with os.fdopen(fd,'rb') as stream:
+            info=os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid!=os.geteuid() or stat.S_IMODE(info.st_mode)&0o077 \
+                    or info.st_size!=32:
+                raise ValueError('unsafe hook admission key')
+            return stream.read(32)
+
+    def _seal(self,deployment,contract,*,create=False):
+        """Keyed digest of one promotion's admission, which binds the sha256 and mode of every member snapshot."""
+        message=json.dumps(dict(deployment=deployment,admission=contract),sort_keys=True,separators=(',',':')).encode()
+        return hmac.new(self._admission_key(create=create),message,hashlib.sha256).hexdigest()
 
     def owned(self,name,target=None,*,probe=True,admitted=frozenset()):
         """Resolve an owned path. target is a snapshot about to be written (its mode and bytes are checked);
@@ -342,7 +377,8 @@ class Journal:
         # only as its reverted record did.
         promotion=kind=='promotion'
         metadata=dict(metadata or {})
-        if kind!='rollback' and 'hook_contract' in metadata: raise ValueError('hook contract admission is never declared')
+        if (kind!='rollback' and 'hook_contract' in metadata) or 'hook_contract_seal' in metadata:
+            raise ValueError('hook contract admission is never declared')
         if hook_contract is not None:
             from agent_harness_lab.hooks_contract import evaluate
             verdict=evaluate(self.project,before,after) if promotion else None
@@ -357,6 +393,7 @@ class Journal:
         if sum(len((record or {}).get('content','')) for mapping in (before,after) for record in mapping.values())>28*1024*1024:
             raise ValueError('journal snapshot limit')
         deployment=uuid.uuid4().hex
+        if admitted and promotion: metadata['hook_contract_seal']=self._seal(deployment,metadata['hook_contract'],create=True)
         record=dict(schema_version=1,deployment=deployment,parent=self.active,kind=kind,
                     status='prepared',before=before,after=after,metadata=metadata)
         atomic_json(self.folder/(deployment+'.json'),record)
