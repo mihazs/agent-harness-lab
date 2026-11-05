@@ -56,6 +56,13 @@ class WorkflowLintTests(unittest.TestCase):
                      "export const meta = { ...base, name: 'a', description: 'b' }\n",
                      "export const meta = { name: 'a', description: 'b' }.valueOf()\n",
                      "export const meta = { name: 'a' }\n",
+                     "export const meta = { name: null, description: 'b' }\n",
+                     "export const meta = { name: 5, description: 'b' }\n",
+                     "export const meta = { name: -5, description: 'b' }\n",
+                     "export const meta = { name: true, description: 'b' }\n",
+                     "export const meta = { name: 'a', description: null }\n",
+                     "export const meta = { name: 'a', description: 7 }\n",
+                     "export const meta = { name: 'a', description: false }\n",
                      "'use strict'\n" + script('a')):
             with self.subTest(text=text):
                 value = facts(text)
@@ -97,7 +104,7 @@ class WorkflowLintTests(unittest.TestCase):
             self.assertEqual(facts(VALID)['inconclusive_reason'], 'token_bound_exceeded')
 
     def test_an_out_of_range_escape_is_inconclusive_instead_of_raising(self):
-        for escape in ('\\u{FFFFFF}', '\\u{110000}'):
+        for escape in ('\\u{FFFFFF}', '\\u{110000}', '\\u', '\\u{}', '\\uZZ', '\\u{1234567}', '\\x', '\\xZ'):
             with self.subTest(escape=escape):
                 value = facts(script('a', f"const s = '{escape}'\n"))
                 self.assertEqual((value['lint_result'], value['inconclusive_reason'], value['forbidden_date_now']),
@@ -113,7 +120,8 @@ class WorkflowLintTests(unittest.TestCase):
                 value = facts(script('a', body))
                 self.assertEqual((value['lint_result'], value['forbidden_date_now']), ('issues_found', 1))
         for body in ('if (a) { b() }\n/"/.test(s) && ' + hidden, 'x = a++ / 2; go(Date.now()); y = 1 / 3\n',
-                     'x = a-- / 2; go(Date.now()); y = 1 / 3\n'):
+                     'x = a-- / 2; go(Date.now()); y = 1 / 3\n',
+                     'let of = 6\nlet r = of / 2 + Date.now() / 3\n'):  # a bare 'of' may be a variable
             with self.subTest(body=body):
                 value = facts(script('a', body))
                 self.assertEqual((value['lint_result'], value['inconclusive_reason'], value['forbidden_date_now']),
@@ -124,6 +132,20 @@ class WorkflowLintTests(unittest.TestCase):
             with self.subTest(body=body):
                 value = facts(script('a', body))
                 self.assertEqual((value['lint_result'], value['forbidden_date_now']), ('issues_found', 1))
+
+    def test_an_escaped_identifier_never_hides_a_forbidden_call(self):
+        for body in ('const t = D\\u0061te.now()\n', 'const r = Math.r\\u0061ndom()\n', 'const d = new D\\u{61}te()\n'):
+            with self.subTest(body=body):
+                value = facts(script('a', body))
+                self.assertEqual((value['lint_result'], value['inconclusive_reason'], value['forbidden_date_now'],
+                                  value['forbidden_math_random']), ('lint_inconclusive', 'identifier_escape', None, None))
+
+    def test_a_non_string_phase_title_is_ignored_instead_of_raising(self):
+        for title in ('{}', '[1]', "['x']", '7', 'null'):
+            with self.subTest(title=title):
+                value = facts(f"export const meta = {{ name: 'a', description: 'b', phases: [{{ title: {title} }}, 'Fix', 3] }}\n")
+                self.assertEqual((value['meta'], value['lint_result'], value['meta_phases']),
+                                 ('meta_first_literal', 'no_issues_found', 1))
 
     def test_meta_phases_are_compared_with_literal_phase_titles(self):
         text = ("export const meta = { name: 'p', description: 'd', phases: [{ title: 'Scan' }, 'Fix'] }\n"
@@ -187,20 +209,52 @@ class WorkflowInventoryTests(unittest.TestCase):
         self.assertEqual(root.roots, ())
 
     def test_a_malformed_script_is_inconclusive_instead_of_denying_the_inventory(self):
-        hostile = script('bad', "const s = '\\u{FFFFFF}'\n")
-        (self.checkout / '.claude/workflows/bad.js').write_text(hostile)
-        (self.personal / 'bad.js').write_text(hostile)
-        value = self.capture()
-        self.assertEqual(value.status, 'declared')
-        bad = {(e.root, e.path): e for e in value.entries if e.path.endswith('bad.js')}
-        self.assertEqual(set(bad), {('checkout', '.claude/workflows/bad.js'), ('personal', 'bad.js')})
-        for entry in bad.values():
-            self.assertEqual((entry.state, entry.name_sha256, dict(entry.facts)['lint_result']),
-                             ('name_unavailable', None, 'lint_inconclusive'))
+        hostiles = (script('bad', "const s = '\\u{FFFFFF}'\n"), script('bad', "const s = '\\u'\n"),
+                    script('bad', "const s = '\\u{1234567}'\n"),
+                    "export const meta = { name: 'bad', description: 'b', phases: [{ title: {} }, { title: [1] }] }\n"
+                    "const s = 'D\\u0061te'\nconst t = D\\u0061te.now()\n")
+        for hostile in hostiles:
+            with self.subTest(hostile=hostile):
+                (self.checkout / '.claude/workflows/bad.js').write_text(hostile)
+                (self.personal / 'bad.js').write_text(hostile)
+                self.assertEqual(harness_inventory.capture(self.checkout, CLAUDE).status, 'declared')
+                value = self.capture()
+                self.assertEqual(value.status, 'declared')
+                bad = {(e.root, e.path): e for e in value.entries if e.path.endswith('bad.js')}
+                self.assertEqual(set(bad), {('checkout', '.claude/workflows/bad.js'), ('personal', 'bad.js')})
+                for entry in bad.values():
+                    self.assertEqual((entry.state, entry.name_sha256, dict(entry.facts)['lint_result']),
+                                     ('name_unavailable', None, 'lint_inconclusive'))
         # A parse_failed harness node, which carries no facts, is name_unavailable rather than a KeyError.
         with patch.object(workflows, 'lint', side_effect=ValueError('synthetic parser failure')):
             failed = self.capture(personal=None, plugins=None)
         self.assertEqual({e.state for e in failed.entries}, {'name_unavailable'})
+
+    def test_a_script_whose_name_is_unsettled_never_leaves_a_guessed_winner(self):
+        doubtful = script('dup', 'if (a) {}\n/re/.test(b)\n')  # meta is fine; the later lexer doubt drops the name
+        checkout = fixture.build(self.base / 'unsettled', {
+            '.claude/workflows/x.js': script('dup'), 'src/.claude/workflows/x.js': doubtful,
+            'src/.claude/workflows/solo.js': script('solo'), 'src/.claude/workflows/computed.js':
+            "const NAME = 'other'\nexport const meta = { name: NAME, description: 'x' }\n"})
+        personal = self.folder('unsettled-personal', {'p.js': script('p')})
+        plugin = self.folder('unsettled-plugin', {'q.js': script('q'), 'r.js': doubtful})
+        value = workflows.capture(checkout, dict(CLAUDE, task_cwd='src'), personal=str(personal),
+                                  plugins={'tools': str(plugin), 'other': str(self.plugin)})
+        self.assertEqual({(e.root, e.path): e.state for e in value.entries}, {
+            ('checkout', '.claude/workflows/x.js'): 'clash_unresolved',  # the closer unsettled script may shadow it
+            ('checkout', 'src/.claude/workflows/x.js'): 'name_unavailable',
+            ('checkout', 'src/.claude/workflows/solo.js'): 'clash_unresolved',  # same rank as the unsettled one
+            ('checkout', 'src/.claude/workflows/computed.js'): 'name_unavailable',  # meta_not_first_literal: no doubt
+            ('personal', 'p.js'): 'clash_unresolved',  # any unsettled project script may shadow a personal one
+            ('plugin:tools', 'q.js'): 'clash_unresolved',
+            ('plugin:tools', 'r.js'): 'name_unavailable',
+            ('plugin:other', 'audit.js'): 'precedence_winner',  # another plugin's namespace is not in doubt
+        })
+        # A farther unsettled script leaves a closer leader standing.
+        farther = fixture.build(self.base / 'farther', {'.claude/workflows/x.js': doubtful,
+                                                        'src/.claude/workflows/x.js': script('dup')})
+        self.assertEqual({e.path: e.state for e in workflows.capture(farther, dict(CLAUDE, task_cwd='src')).entries},
+                         {'.claude/workflows/x.js': 'name_unavailable', 'src/.claude/workflows/x.js': 'precedence_winner'})
 
     def test_a_workflow_under_a_hooks_or_skills_segment_is_still_a_workflow(self):
         for path in ('src/hooks/.claude/workflows/x.js', 'skills/a/.claude/workflows/x.js',

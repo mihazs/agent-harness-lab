@@ -37,9 +37,10 @@ _REGEX = re.compile(r'(?:[^/\\\[\n\r]++|\\[^\n\r]|\[(?:[^\]\\\n\r]++|\\[^\n\r])*
 _ESCAPE = re.compile(r'\\(u\{[0-9a-fA-F]{1,6}\}|u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|\r\n|[\s\S])')
 _SIMPLE = dict(n='\n', t='\t', r='\r', b='\b', f='\f', v='\v', **{'0': '\0', '\n': '', '\r': '', '\r\n': ''})
 # A regex literal, not division, may follow these names; other names mean division. A ')' starts a regex only when it
-# closes an if, while, for or with head, ']' never does, and '}' or '++' / '--' cannot be settled without a parser.
+# closes an if, while, for or with head, ']' never does, and '}', '++' / '--' or a bare 'of', which is also a valid
+# variable name, cannot be settled without a parser.
 _CONTROL = {'if', 'while', 'for', 'with'}
-_BEFORE_EXPRESSION = {'return', 'typeof', 'instanceof', 'in', 'of', 'new', 'delete', 'void', 'throw', 'case', 'do',
+_BEFORE_EXPRESSION = {'return', 'typeof', 'instanceof', 'in', 'new', 'delete', 'void', 'throw', 'case', 'do',
                       'else', 'yield', 'await'}
 _CONTINUES = set('.([?+-*/%&|^<>=') | {'?.'}
 
@@ -55,11 +56,12 @@ class _NotLiteral(Exception):
 def _cook(body):
     def one(match):
         text = match[1]
+        if text[0] in 'ux' and len(text) == 1: raise Inconclusive('invalid_escape')  # a '\u' or '\x' without its hex digits
         if text[0] == 'u':
             code = int(text.strip('u{}'), 16)
             if code > 0x10FFFF: raise Inconclusive('invalid_escape')  # a JavaScript syntax error, not a string
             return chr(code)
-        if text[0] == 'x' and len(text) == 3: return chr(int(text[1:], 16))
+        if text[0] == 'x': return chr(int(text[1:], 16))
         return _SIMPLE.get(text, text)
     return _ESCAPE.sub(one, body)
 
@@ -95,6 +97,7 @@ def tokens(text):
             if body is None: raise Inconclusive('unterminated_regex')
             found.append(('regex', None)); end = body.end()
         elif kind in ('id', 'num', 'p'):
+            if kind == 'p' and value == '\\': raise Inconclusive('identifier_escape')  # an escaped name such as D\u0061te
             if kind == 'p' and value in '([{': stack.append('c(' if value == '(' and _control(found) else value)
             elif kind == 'p' and value in ')]}':
                 if not stack or stack[-1][-1] != '([{'[')]}'.index(value)]: raise Inconclusive('unbalanced_brackets')
@@ -124,6 +127,7 @@ def _regex_allowed(found, controls):
     if not found: return True
     kind, value = found[-1]
     if kind == 'template_substitution': return True
+    if kind == 'id' and value == 'of' and _bare(found, len(found) - 1): raise Inconclusive('regex_or_division_ambiguous')
     if kind == 'id': return value in _BEFORE_EXPRESSION and _bare(found, len(found) - 1)
     if kind != 'p': return False
     if value == ')': return len(found) - 1 in controls
@@ -132,7 +136,8 @@ def _regex_allowed(found, controls):
 
 
 class _Literal:
-    """Reads one plain object literal from the token list: literal values, no names, calls or spreads."""
+    """Reads one plain object literal from the token list: literal values, no names, calls or spreads. Only string
+    literals come back as str; a number is ('num', text) and true, false and null are True, False and None."""
     def __init__(self, found, pos): self.found, self.pos = found, pos
 
     def next(self):
@@ -142,11 +147,12 @@ class _Literal:
     def value(self, depth):
         if depth > 8: raise Inconclusive('meta_depth_exceeded')
         kind, text = self.next()
-        if kind == 'str' or kind == 'num': return text
+        if kind == 'str': return text
+        if kind == 'num': return ('num', text)
         if kind == 'template': raise Inconclusive('meta_template_literal')
-        if kind == 'id' and text in ('true', 'false', 'null'): return text
+        if kind == 'id' and text in ('true', 'false', 'null'): return dict(true=True, false=False, null=None)[text]
         if (kind, text) == ('p', '-') and self.found[self.pos:self.pos + 1] and self.found[self.pos][0] == 'num':
-            return self.next()[1]
+            return ('num', '-' + self.next()[1])
         if (kind, text) == ('p', '{'): return self.object(depth + 1)
         if (kind, text) == ('p', '['):
             items = []
@@ -181,8 +187,8 @@ def _meta(found):
     if not isinstance(name, str) or not name or not isinstance(description, str):
         return 'meta_not_first_literal', None, None
     if phases is None: return 'meta_first_literal', name, None
-    titles = {item if isinstance(item, str) else item.get('title') for item in phases
-              if isinstance(item, (str, dict))} if isinstance(phases, list) else set()
+    titles = [item if isinstance(item, str) else item.get('title') if isinstance(item, dict) else None
+              for item in phases] if isinstance(phases, list) else []
     return 'meta_first_literal', name, {title for title in titles if isinstance(title, str)}
 
 
@@ -322,21 +328,32 @@ def _declared(walk, name, scope, path, rows, refusals):
     return 'read'
 
 
+def _precedence(row):
+    """(namespace, order) of one row; a lower order wins, and an equal order has no documented winner."""
+    scope, root, rank = row[0], row[1], row[5]
+    return (root if scope == 'plugin' else '', (0, rank) if scope == 'project' else (1, 0))
+
+
 def _states(rows):
     """Documented precedence: the closest project directory wins, project beats personal, plugins are namespaced.
-    Two same-name scripts the docs give no order for are clash_unresolved, never a guessed winner."""
-    groups, states = {}, {}
+    Two same-name scripts the docs give no order for are clash_unresolved, never a guessed winner. A script whose
+    name the lint could not settle may carry the same name, so a leader it could outrank or tie is clash_unresolved;
+    only a meta_not_first_literal script, which the pinned page says drops out of '/', is left out of that doubt."""
+    groups, states, unknown = {}, {}, []
     for index, (scope, root, path, content, facts, rank) in enumerate(rows):
         name = facts.get('meta_name_sha256')  # a parse_failed harness node carries no facts
-        if name is None: states[index] = 'name_unavailable'
-        else: groups.setdefault((root if scope == 'plugin' else '', name), []).append(index)
+        if name is None:
+            states[index] = 'name_unavailable'
+            if facts.get('meta') != 'meta_not_first_literal': unknown.append(_precedence(rows[index]))
+        else: groups.setdefault((_precedence(rows[index])[0], name), []).append(index)
     for members in groups.values():
-        project = [i for i in members if rows[i][0] == 'project']
-        best = min((rows[i][5] for i in project), default=None)
-        leaders = [i for i in project if rows[i][5] == best] or members
+        best = min(_precedence(rows[i])[1] for i in members)
+        leaders = [i for i in members if _precedence(rows[i])[1] == best]
+        namespace = _precedence(rows[leaders[0]])[0]
+        doubt = any(space == namespace and order <= best for space, order in unknown)
         for index in members:
             if index not in leaders: states[index] = 'shadowed'
-            else: states[index] = 'precedence_winner' if len(leaders) == 1 else 'clash_unresolved'
+            else: states[index] = 'precedence_winner' if len(leaders) == 1 and not doubt else 'clash_unresolved'
     return states
 
 
