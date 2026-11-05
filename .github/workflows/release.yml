@@ -11,7 +11,8 @@ concurrency:
   cancel-in-progress: false
 jobs:
   release:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
         with:
@@ -28,7 +29,10 @@ jobs:
           python-version: '3.14'
       - run: task setup
       - run: task setup:test
-      - run: task test
+      - name: Run the suite and stop at the first failure
+        env:
+          PYTEST_ADDOPTS: --maxfail=1
+        run: task test
       - uses: changesets/action@v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
