@@ -1,18 +1,21 @@
 """Synthetic trees: contained reads open each component from its parent and never follow a swapped link."""
 from contextlib import contextmanager
+import fcntl
 import os
 from pathlib import Path
 import stat
 import tempfile
 import threading
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
-from agent_harness_lab import private_journal
-from agent_harness_lab.evaluation import bank_revisions, integrity, regression_review
+from agent_harness_lab import config, private_journal
+from agent_harness_lab.evaluation import bank_revisions, cgroup, image, integrity, regression_review, working_state
 from agent_harness_lab.evaluation.integrity import (artifacts, contained, read_regular, regular_equal,
                                                     regular_sha256, regular_size)
+from agent_harness_lab.monitoring import state as state_module
 from agent_harness_lab.sources import lineage
 
 INSIDE, OUTSIDE = b'inside payload', b'outside secret'
@@ -228,6 +231,202 @@ class BeneathTests(unittest.TestCase):
             try: self.assertTrue(stat.S_ISDIR(os.fstat(descriptor).st_mode)); os.fsync(descriptor)
             finally: os.close(descriptor)
         self.assertTrue(expected.issubset(synced))
+
+    def outside_files(self):
+        return {path.relative_to(self.outside): path.read_bytes() for path in self.outside.rglob('*') if path.is_file()}
+
+    def assert_create_refused(self, step, directory, call, message='input crosses a symlink'):
+        """The swapped parent is refused before anything outside is created, written or read, leaking no descriptor."""
+        before, outside = self.outside_files(), {os.stat(self.outside).st_ino}
+        outside.update(os.stat(path).st_ino for path in self.outside.rglob('*') if path.is_dir())
+        real_mkdir, made = os.mkdir, []
+        def mkdir(path, mode=0o777, *, dir_fd=None):
+            real_mkdir(path, mode, dir_fd=dir_fd)
+            parent = os.fstat(dir_fd) if dir_fd is not None else os.stat(Path(path).absolute().parent)
+            made.append(parent.st_ino)
+        try:
+            with self.unleaked(), patch.object(integrity.os, 'mkdir', mkdir), \
+                    self.swapped_after(step, directory) as (fired, _):
+                try: value = call(); error = None
+                except (ValueError, OSError) as caught: error, value = caught, None
+        finally: self.restore(directory)
+        self.assertTrue(fired, 'the swap hook never ran')
+        self.assertEqual(self.outside_files(), before, 'a file outside was created or written')
+        self.assertFalse(outside.intersection(made), 'a directory was created outside')
+        self.assertNotIn(OUTSIDE, repr(value).encode())
+        self.assertIsInstance(error, ValueError, error)
+        self.assertEqual(str(error), message)
+
+    def test_open_beneath_creates_locks_and_reports_leaf_errors_unchanged(self):
+        target = self.root/'deep'/'sub'/'new'
+        with self.unleaked():
+            descriptor = integrity.open_beneath(target, os.O_WRONLY|os.O_CREAT|os.O_EXCL)
+            try:
+                info = os.fstat(descriptor)
+                self.assertEqual(stat.S_IMODE(info.st_mode) & 0o077, 0)
+                self.assertFalse(os.get_inheritable(descriptor))
+            finally: os.close(descriptor)
+            lock = integrity.open_beneath(self.root/'deep'/'.lock', os.O_RDWR|os.O_CREAT)
+            try: fcntl.flock(lock, fcntl.LOCK_EX|fcntl.LOCK_NB)
+            finally: os.close(lock)
+            with self.assertRaises(FileExistsError): integrity.open_beneath(target, os.O_WRONLY|os.O_CREAT|os.O_EXCL)
+            (self.root/'link').symlink_to(self.outside/'f')
+            with self.assertRaises(FileExistsError): integrity.open_beneath(self.root/'link', os.O_WRONLY|os.O_CREAT|os.O_EXCL)
+            with self.assertRaises(OSError): integrity.open_beneath(self.root/'link', os.O_RDWR|os.O_CREAT)
+        self.assertEqual((self.outside/'f').read_bytes(), OUTSIDE)
+
+    def test_journal_write_refuses_parent_swapped_before_the_walk(self):
+        (self.outside/'sub').mkdir()
+        self.assert_create_refused(None, self.root/'deep',
+                                   lambda: private_journal.write_bytes(self.root/'deep'/'sub'/'new', b'payload'))
+
+    def test_journal_lock_refuses_parent_swapped_before_the_walk(self):
+        store = self.root/'deep'/'sub'/'store'; store.mkdir(mode=0o700)
+        (self.outside/'sub').mkdir(); (self.outside/'sub'/'store').mkdir(mode=0o700)
+        journal = private_journal.PrivateJournal(store, 'synthetic-v1', lambda *args: None)
+        def lock():
+            with journal.locked(create=True): pass
+        self.assert_create_refused(None, self.root/'deep', lock)
+
+    def test_journal_marker_refuses_parent_swapped_after_the_lock(self):
+        # The outside tree mirrors the store, so a followed link would land the marker there.
+        store = self.root/'deep'/'sub'/'store'; (self.outside/'sub'/'store').mkdir(parents=True, mode=0o700)
+        journal = private_journal.PrivateJournal(store, 'synthetic-v1', lambda *args: None)
+        def lock():
+            with journal.locked(create=True): pass
+        self.assert_create_refused((private_journal.fcntl, 'flock'), self.root/'deep', lock)
+        self.assertFalse((store/'.store.json').exists())
+
+    def test_journal_event_refuses_parent_swapped_after_the_lock(self):
+        store = self.root/'deep'/'sub'/'store'; (self.outside/'sub'/'store'/'case'/'events').mkdir(parents=True, mode=0o700)
+        journal = private_journal.PrivateJournal(store, 'synthetic-v1', lambda *args: True)
+        with journal.locked(create=True): (store/'case'/'events').mkdir(parents=True)
+        def append():
+            with journal.locked(): journal.append(store/'case', [], 'opened', 'open', {})
+        # encoded() is the event's bound check, the last step before publication.
+        self.assert_create_refused((private_journal, 'encoded'), self.root/'deep', append)
+        self.assertEqual(list((store/'case'/'events').iterdir()), [])
+
+    def replaced(self, store):
+        """Rename an ancestor aside (no link anywhere) and build an empty owner-only replacement store."""
+        moved = self.root/'deep.orig'
+        def replace():
+            (self.root/'deep').rename(moved); store.mkdir(mode=0o700, parents=True)
+        return moved/store.relative_to(self.root/'deep'), replace
+
+    def test_journal_marker_refuses_ancestor_replaced_by_a_directory_after_the_lock(self):
+        store = self.root/'deep'/'sub'/'store'
+        journal = private_journal.PrivateJournal(store, 'synthetic-v1', lambda *args: None)
+        locked, replace = self.replaced(store)
+        real = private_journal.fcntl.flock
+        def flock(*args):
+            real(*args); replace()
+        with self.unleaked(), patch.object(private_journal.fcntl, 'flock', flock):
+            with self.assertRaises(ValueError) as caught:
+                with journal.locked(create=True): pass
+        self.assertEqual(str(caught.exception), 'case store changed while locked')
+        self.assertEqual(sorted(os.listdir(store)), [])
+        self.assertFalse((locked/'.store.json').exists())
+
+    def test_journal_event_refuses_ancestor_replaced_by_a_directory_after_the_lock(self):
+        store = self.root/'deep'/'sub'/'store'
+        journal = private_journal.PrivateJournal(store, 'synthetic-v1', lambda *args: True)
+        with journal.locked(create=True): pass
+        locked, replace = self.replaced(store)
+        real = private_journal.encoded
+        def encoded(value):
+            raw = real(value); replace(); return raw
+        with self.unleaked(), patch.object(private_journal, 'encoded', encoded):
+            with self.assertRaises(ValueError) as caught:
+                with journal.locked(): journal.append(store/'case', [], 'opened', 'open', {})
+        self.assertEqual(str(caught.exception), 'case store changed while locked')
+        self.assertEqual(sorted(os.listdir(store)), [])
+        self.assertFalse((locked/'case').exists())
+
+    def test_journal_event_lands_in_the_locked_store_when_replaced_during_publication(self):
+        # The swap runs after the store check, so only the held descriptor keeps the event in the locked store.
+        store, events = self.root/'deep'/'sub'/'store', []
+        journal = private_journal.PrivateJournal(store, 'synthetic-v1', lambda *args: True)
+        with journal.locked(create=True): pass
+        locked, replace = self.replaced(store)
+        with self.unleaked():
+            with journal.locked(): journal.append(store/'case', events, 'opened', 'open', {}, before_publish=replace)
+        self.assertEqual(sorted(os.listdir(store)), [])
+        raw = (locked/'case'/'events'/'0000.json').read_bytes()
+        self.assertEqual(events[0][1], private_journal.hashlib.sha256(raw).hexdigest())
+        self.assertEqual(private_journal.record_bytes(raw)[0], events[0][0])
+
+    def test_journal_event_guard_reaches_the_shared_replace_step_locked_and_unlocked(self):
+        # Fault injection (e.g. the native bank-requalification expiry test) hooks _publish_at, so both append paths
+        # must hand their guard to it at the replace step.
+        store = self.root/'deep'/'sub'/'store'
+        journal = private_journal.PrivateJournal(store, 'synthetic-v1', lambda *args: True)
+        real, reached = private_journal._publish_at, []
+        def publish(parent, name, value, before_replace):
+            if value.get('kind') == 'opened':
+                reached.append(name)
+                def expired(): raise TimeoutError('synthetic expiry at replace')
+                before_replace = expired
+            return real(parent, name, value, before_replace)
+        guard = lambda: None
+        with self.unleaked(), patch.object(private_journal, '_publish_at', side_effect=publish):
+            with self.assertRaises(TimeoutError):
+                with journal.locked(create=True): journal.append(store/'locked', [], 'opened', 'open', {}, before_publish=guard)
+            with self.assertRaises(TimeoutError): journal.append(store/'unlocked', [], 'opened', 'open', {}, before_publish=guard)
+        self.assertEqual(reached, ['0000.json', '0000.json'])
+        for case in ('locked', 'unlocked'): self.assertEqual(os.listdir(store/case/'events'), [])
+
+    def test_journal_publication_keeps_atomic_json_bytes(self):
+        store, events = self.root/'deep'/'sub'/'store', []
+        journal = private_journal.PrivateJournal(store, 'synthetic-v1', lambda *args: True)
+        with self.unleaked():
+            with journal.locked(create=True): journal.append(store/'case', events, 'opened', 'open', {})
+        target = self.root/'state.json'; state_module.atomic_json(target, events[0][0])
+        self.assertEqual((store/'case'/'events'/'0000.json').read_bytes(), target.read_bytes())
+        self.assertEqual(stat.S_IMODE((store/'case'/'events').stat().st_mode) & 0o077, 0)
+        self.assertEqual(sorted(path.name for path in (store/'case'/'events').iterdir()), ['0000.json'])
+        self.assertEqual(private_journal.record(store/'.store.json')[0], dict(schema_version=1, format='synthetic-v1'))
+
+    def test_project_configuration_create_refuses_parent_swapped_before_the_walk(self):
+        (self.outside/'sub').mkdir(); value, supported = config.defaults(), config.supported()
+        # supported() checks os.open against os.supports_dir_fd, which the swap hook's wrapper is not in.
+        with patch.object(config, 'supported', lambda: supported):
+            self.assert_create_refused(None, self.root/'deep', lambda: config.create(self.root/'deep'/'sub', value))
+
+    def test_working_state_roots_refuse_parent_swapped_after_their_checks(self):
+        (self.outside/'sub').mkdir(); (self.outside/'sub'/'f').write_bytes(OUTSIDE)
+        workspace, deadline = self.root/'deep'/'sub', time.monotonic()+60
+        with self.subTest(site='analysis_snapshot'):
+            self.assert_create_refused(None, self.root/'deep', lambda: working_state.analysis_snapshot(workspace, deadline))
+        with self.subTest(site='capture'):
+            self.assert_create_refused((working_state, 'tree'), self.root/'deep',
+                                       lambda: working_state.WorkingState(workspace, deadline))
+
+    def test_working_state_publish_refuses_stage_parent_swapped_after_staging(self):
+        (self.outside/'sub').mkdir(); state = working_state.WorkingState(self.root/'deep'/'sub', time.monotonic()+60)
+        real_mkdir, swap = os.mkdir, self.swap
+        def mirrored(directory):
+            # Give the outside tree the stage folder the publication just created, so a followed link would land there.
+            for stage in (self.root/'deep'/'sub').glob('.artifact-stage-*'):
+                real_mkdir(self.outside/'sub'/stage.name, 0o700); real_mkdir(self.outside/'sub'/stage.name/'artifacts', 0o700)
+            swap(directory)
+        with patch.object(self, 'swap', mirrored):
+            self.assert_create_refused(None, self.root/'deep',
+                                       lambda: state.publish(self.root/'deep'/'sub'/'out', time.monotonic()+60))
+        self.assertFalse((self.root/'deep'/'sub'/'out').exists())
+
+    def test_runtime_image_scan_refuses_parent_swapped_after_its_checks(self):
+        (self.root/'deep'/'sub').chmod(0o700); (self.outside/'sub').mkdir(mode=0o700)
+        for name in image.MOUNT_DIRS: (self.outside/'sub'/name).mkdir(parents=True, exist_ok=True)
+        self.assert_create_refused(None, self.root/'deep', lambda: image.scan(self.root/'deep'/'sub'))
+
+    def test_cgroup_root_refuses_parent_swapped_after_delegation(self):
+        (self.outside/'sub').mkdir()
+        group = cgroup.Cgroup(self.root/'deep'/'sub', SimpleNamespace(memory_bytes=1 << 26, processes=8), time.monotonic()+60)
+        with patch.object(cgroup, 'delegated', lambda root: Path(root)):
+            self.assert_create_refused((cgroup, 'delegated'), self.root/'deep', group.__enter__,
+                                       'delegated cgroup v2 resource setup failed')
+        self.assertIsNone(group.parent); self.assertIsNone(group.fd)
 
     def test_contained_still_refuses_links_and_escapes(self):
         (self.root/'parent').symlink_to(self.outside, target_is_directory=True)

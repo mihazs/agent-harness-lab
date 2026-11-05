@@ -214,16 +214,19 @@ class BankRequalificationKernelTests(kernel.KernelFixture):
     def test_expiry_at_actual_event_replace_keeps_prior_state_and_has_no_handle(self):
         store,case,domain,path,baseline,candidate,history,_,_,deadline,_,_=self.owned_case()
         before=store.history(store.case(case));ledger_bytes=history.access_ledger().path.read_bytes()
-        writer=private_journal.atomic_json
-        def publish(target,value,**kwargs):
+        # _publish_at is the replace step under both the locked-store and the
+        # unlocked journal paths, so the expiry reaches the actual event.
+        writer=private_journal._publish_at;reached=[]
+        def publish(parent,name,value,before_replace):
             if value.get('kind')=='bank_requalified':
-                guard=kwargs['before_replace']
+                guard=before_replace;reached.append(name)
                 def expired():
                     with patch('time.monotonic',return_value=deadline+1):guard()
-                kwargs['before_replace']=expired
-            return writer(target,value,**kwargs)
-        with patch.object(private_journal,'atomic_json',side_effect=publish):
+                before_replace=expired
+            return writer(parent,name,value,before_replace)
+        with patch.object(private_journal,'_publish_at',side_effect=publish):
             with self.assertRaises(TimeoutError):store.requalify_bank(case,domain,path,baseline,candidate,deadline=deadline)
+        self.assertEqual(len(reached),1)
         self.assertEqual(store.history(store.case(case)),before)
         self.assertEqual(history.access_ledger().path.read_bytes(),ledger_bytes)
         closed_inputs.close(domain)
