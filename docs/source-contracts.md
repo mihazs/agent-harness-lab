@@ -1247,6 +1247,46 @@ carry no absolute path: every opened or listed descriptor must be the
 checkout, an entry beneath it or one of its ancestors. Other surface parsers
 and loading attribution remain open in #275 to #282.
 
+### Multi-surface file dispatch
+
+Some runtime files hold several surfaces at once. `.claude/settings.json` holds
+hooks, `enabledPlugins` and `extraKnownMarketplaces`, permissions and MCP
+settings. `.codex/config.toml` holds `[hooks]`, `[mcp_servers]` and
+`[plugins]`/`[marketplaces]`. `surfaces.classify` keeps one primary kind for
+these files (`hook`), and its `facets` list every matching kind in priority
+order: `hook`, `config`, then `plugin`. The `plugin` facet rows are
+`recommendation_only`, so the file's writability stays `contract_required`.
+
+The harness inventory offers these files, and only these, to more than one
+parser. `harness_inventory.COMBINED` lists them per runtime with the extra kinds
+(`config` and `plugin`) whose parsers also read them, and each listed kind must
+also be one of the file's facets. Other files can carry a second facet without
+a runtime reading them as that surface: a `hooks/hooks.json` inside a skill
+bundle, the hook facet of an agent definition, or a `CLAUDE.md` inside a skill.
+Only their primary parser reads them, so a skill bundle's `hooks/hooks.json`
+stays `not_parsed` with no `hook.*` facts.
+
+The primary kind's parser keeps the node's `parse_status` and its plain fact
+keys, so the hook, agent and other kind consumers read the same facts as
+before. Each extra kind's parser reads the same bytes on its own and records `<kind>.parse_status` plus `<kind>.<fact>`, for example
+`config.settings_file` or `plugin.plugins_declared`. Each parser runs
+separately, so a `parse_failed` result from one leaves every other result in
+place. A primary fact key inside another kind's namespace is rejected as a
+parser error. The fact bound counts the namespaced facts too, and a
+`private_excluded` file such as `.claude/settings.local.json` is still not read
+by any parser.
+
+For a settings file the `plugin` parser records counts only: `plugin_file`
+(`claude_settings` or `codex_config`), `plugins_declared`,
+`marketplaces_declared`, and `plugins_content_not_selected`,
+`plugins_not_enabled` and `plugins_enablement_inherited`. It uses the same
+validation as plugin enablement below, under the same 1 MiB and
+256-declaration bounds. Plugin ids, marketplace locations, env values,
+instruction text and hook commands never reach a node. These facts are
+declarations, never evidence that a runtime enabled or loaded a plugin.
+Agent role tables in a Codex config are not dispatched, because the `agent`
+parser reads role files and no config row offers the `agent` facet.
+
 ### Declared Claude Code path-scoped rules and Codex exec policy
 
 `surfaces.classify` names two rule kinds that never mix. For `claude-code`,
@@ -1864,8 +1904,9 @@ classifies as `private_excluded` by its path. Content never hides a file at a
 runtime settings path: a `settings.json` there is inventoried whatever keys it
 holds. In the surface walk, `.mcp.json` and output styles are `config` nodes
 whose parser reports path-free row counts. The settings files and
-`.codex/config.toml` stay `hook` nodes with a `config` facet, and the hook
-parser owns them there. Undecodable files become a `parse_failed` presence row.
+`.codex/config.toml` stay `hook` nodes with a `config` facet. The hook parser
+owns their `parse_status`, and the config parser adds namespaced `config.*`
+counts (see Multi-surface file dispatch). Undecodable files become a `parse_failed` presence row.
 JSON and TOML share one nesting bound of 64, so a deeply nested
 `.codex/config.toml` is also `parse_failed`, never a crash. A CLI, the surface
 walk's pruning of memory directories under declared roots, and profile-scoped

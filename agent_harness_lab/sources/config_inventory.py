@@ -374,12 +374,15 @@ def capture(checkout, profile, *, declared_roots=None):
 def parse(path, raw, profile):
     """harness_inventory parser for 'config' nodes: path-free row counts from the same allowlisted projection.
 
-    Only .mcp.json and output styles are config nodes. Settings files and .codex/config.toml stay hook nodes with a
-    config facet, so the hooks parser owns them in the surface walk.
+    .mcp.json and output styles are config nodes. .claude/settings.json and .codex/config.toml stay hook nodes with a
+    config facet; harness_inventory.COMBINED offers them to this parser too, whose facts it namespaces as config.*.
+    .claude/settings.local.json is private_excluded, so the walk never reads it and no reader is listed for it.
     """
-    if path == '.mcp.json':
+    reader = {'.mcp.json': 'claude_mcp', '.claude/settings.json': 'claude_settings',
+              '.codex/config.toml': 'codex_config'}.get(path)
+    if reader is not None:
         counts = {}
-        for surface, item, _ in _claude_servers(_decode('claude_mcp', raw), 'project'):
+        for surface, item, _ in READERS[reader](_decode(reader, raw), 'project'):
             counts[f'{surface}_{item}'] = counts.get(f'{surface}_{item}', 0) + 1
         return 'parsed', counts
     if path.endswith('.md') and '/.claude/output-styles/' in '/' + path:

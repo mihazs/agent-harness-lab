@@ -56,7 +56,10 @@ def component(path):
 
 
 def parse_manifest(path, raw, profile):
-    """Registered 'plugin' parser: counts and flags only, so no manifest text reaches a node."""
+    """Registered 'plugin' parser: counts and flags only, so no manifest or settings text reaches a node."""
+    settings = {('claude-code', CLAUDE_SETTINGS): 'claude_settings', ('claude-code', CLAUDE_LOCAL): 'claude_settings',
+                ('codex', CODEX_CONFIG): 'codex_config'}.get((profile['runtime'], path))
+    if settings is not None: return 'parsed', _enablement(settings, path, raw)
     name = PurePosixPath(path).name
     if name not in ('plugin.json', 'marketplace.json', 'api_marketplace.json'): return 'not_parsed', {}
     value = load_json(raw, JSON_BOUNDS, 'plugin manifest')
@@ -71,6 +74,17 @@ def parse_manifest(path, raw, profile):
         entries = value.get('plugins')
         facts['marketplace_entries'] = len(entries) if isinstance(entries, list) else None
     return 'parsed', facts
+
+
+def _enablement(form, path, raw):
+    """Declaration counts of one settings file; plugin ids and marketplace locations never reach a node."""
+    if len(raw) > MAX_SETTINGS_BYTES: raise ValueError('plugin settings exceed their byte bound')
+    plugins, marketplaces = _claude_declarations(raw, path) if form == 'claude_settings' else _codex_declarations(raw)
+    if len(plugins) + len(marketplaces) > MAX_DECLARATIONS: raise ValueError('plugin declaration bound exceeded')
+    facts = dict(plugin_file=form, plugins_declared=len(plugins), marketplaces_declared=len(marketplaces))
+    for resolution in ('content_not_selected', 'not_enabled', 'enablement_inherited'):  # a file never selects a checkout
+        facts['plugins_' + resolution] = sum(p.resolution == resolution for p in plugins)
+    return facts
 
 
 def _layout(path, kind, raw):
@@ -210,23 +224,34 @@ def _claude(checkout, include_local):
     for source in sources:
         raw = _read(checkout, source)
         if raw is None: continue
-        value = load_json(raw, JSON_BOUNDS, 'Claude settings')
-        enabled, known = (value.get(key, {}) if isinstance(value, dict) else None for key in ('enabledPlugins', 'extraKnownMarketplaces'))
-        if not isinstance(enabled, dict) or not isinstance(known, dict): raise ValueError('invalid Claude plugin settings')
-        for plugin_id, flag in sorted(enabled.items()):
-            if type(flag) is not bool: raise ValueError('enabledPlugins values must be booleans')
-            plugins.append(PluginDeclaration(plugin_id, source, flag, _resolution(flag)))
-        for name, entry in sorted(known.items()):
-            origin = entry.get('source') if isinstance(entry, dict) else None
-            if not isinstance(origin, dict) or not isinstance(origin.get('source'), str): raise ValueError('invalid marketplace source')
-            marketplaces.append(MarketplaceDeclaration(name, source, origin['source'], _location(origin),
-                'after_project_trust' if source == CLAUDE_SETTINGS else 'unverified'))
+        found, known = _claude_declarations(raw, source)
+        plugins += found; marketplaces += known
     return plugins, marketplaces, local
+
+
+def _claude_declarations(raw, source):
+    value = load_json(raw, JSON_BOUNDS, 'Claude settings')
+    enabled, known = (value.get(key, {}) if isinstance(value, dict) else None for key in ('enabledPlugins', 'extraKnownMarketplaces'))
+    if not isinstance(enabled, dict) or not isinstance(known, dict): raise ValueError('invalid Claude plugin settings')
+    plugins, marketplaces = [], []
+    for plugin_id, flag in sorted(enabled.items()):
+        if type(flag) is not bool: raise ValueError('enabledPlugins values must be booleans')
+        plugins.append(PluginDeclaration(plugin_id, source, flag, _resolution(flag)))
+    for name, entry in sorted(known.items()):
+        origin = entry.get('source') if isinstance(entry, dict) else None
+        if not isinstance(origin, dict) or not isinstance(origin.get('source'), str): raise ValueError('invalid marketplace source')
+        marketplaces.append(MarketplaceDeclaration(name, source, origin['source'], _location(origin),
+            'after_project_trust' if source == CLAUDE_SETTINGS else 'unverified'))
+    return plugins, marketplaces
 
 
 def _codex(checkout, include_local):
     raw = _read(checkout, CODEX_CONFIG)
     if raw is None: return [], [], 'absent'
+    return (*_codex_declarations(raw), 'absent')
+
+
+def _codex_declarations(raw):
     # tomllib has no nesting bound, so recursion is refused here and the tree gets the JSON depth bound.
     try: value = tomllib.loads(raw.decode('utf-8'))
     except UnicodeDecodeError: raise ValueError('Codex config is not valid UTF-8') from None
@@ -245,7 +270,7 @@ def _codex(checkout, include_local):
             raise ValueError('invalid Codex marketplace entry')
         # The pinned source documents [marketplaces] as user-level entries, so a project layer's effect is unverified.
         marketplaces.append(MarketplaceDeclaration(name, CODEX_CONFIG, entry.get('source_type'), _location(entry.get('source')), 'unverified'))
-    return plugins, marketplaces, 'absent'
+    return plugins, marketplaces
 
 
 def head(path):

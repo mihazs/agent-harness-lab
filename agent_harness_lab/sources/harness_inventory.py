@@ -47,6 +47,15 @@ PARSERS = (
     ('skill', 'commands_skills', STUB),
     ('workflow', 'workflows', 'agent_harness_lab.sources.workflows_inventory:parse'),
 )
+# Runtime files documented to hold several surfaces, per runtime: path -> facet kinds whose parser also reads it.
+# Only these are dispatched to more than one parser. Any other facet (a hooks/ segment inside a skill bundle, the
+# hook facet of an agent file, an instruction name inside a skill) shows only the classifier's review contract, not
+# that a runtime reads the file as that surface, so that facet's parser never runs on it.
+_SETTINGS_FACETS = frozenset({'config', 'plugin'})
+COMBINED = {
+    'claude-code': {'.claude/settings.json': _SETTINGS_FACETS, '.claude/settings.local.json': _SETTINGS_FACETS},
+    'codex': {'.codex/config.toml': _SETTINGS_FACETS},
+}
 
 
 def not_parsed(path, raw, profile):
@@ -228,7 +237,7 @@ class _Walk:
         else:
             raw = self.read(descriptor, name, info)
             content, state = hashlib.sha256(raw).hexdigest(), 'present'
-            status, facts = parse(reference, path, raw, self.profile)
+            status, facts = self.dispatch(surface, reference, path, raw)
             self.facts += len(facts)
             if self.facts > MAX_FACTS: raise _Blocked('fact_bound_exceeded')
         runtime = self.profile['runtime']
@@ -237,6 +246,25 @@ class _Walk:
         self.nodes.append(InventoryNode(path, digest(path), origin, root_name, surface.kind, surface.scope_dir, state,
             status, content, mode, f'{capability}:{runtime}' if pinned else None,
             self.profile.get('project_trust', 'unknown') if origin == 'checkout' else 'unknown', facts))
+
+    def dispatch(self, surface, reference, path, raw):
+        """Offer a COMBINED runtime file to each of its facet parsers; one parser's failure never hides another's.
+
+        The primary kind's parser keeps parse_status and its plain facts, so kind consumers are unchanged. For a
+        COMBINED file, each listed kind that is also a classifier facet, such as plugin and config for a settings
+        file whose kind is hook, reads the same bytes independently into '<kind>.parse_status' and '<kind>.<fact>'.
+        Every other file is read by its primary parser only.
+        """
+        status, facts = parse(reference, path, raw, self.profile)
+        combined = COMBINED.get(self.profile['runtime'], {}).get(path, ())
+        others = [kind for kind in surface.facets if kind in combined and kind != surface.kind and kind in self.parsers]
+        if any(key.startswith(tuple(kind + '.' for kind in others)) for key, _ in facts):
+            raise ValueError('primary parser facts collide with a facet namespace')
+        extra = []
+        for kind in others:
+            other, rows = parse(self.parsers[kind][1], path, raw, self.profile)
+            extra += [(kind + '.parse_status', other), *((f'{kind}.{key}', value) for key, value in rows)]
+        return status, tuple(sorted(facts + tuple(extra)))
 
     def read(self, descriptor, name, info):
         remaining = MAX_BYTES - self.bytes
