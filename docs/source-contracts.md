@@ -1818,7 +1818,8 @@ cannot leave the selected project. The path is sent once, URL-encoded as the
 `:id` of `/api/v4/projects/:id`; every later request uses the numeric ID that read
 returned. `capture` is an ascending subset of `approvals`, `issues`,
 `merge_requests` and `notes`. `issues` and `merge_requests` must appear exactly
-when IIDs are selected, and `approvals` requires merge requests. Issues and merge
+when IIDs are selected, `approvals` requires merge requests, and a selection
+with no IID at all (for example `capture=("notes",)`) is refused. Issues and merge
 requests have separate IID sequences, so one IID may be selected as both. Nothing
 is listed, searched or enumerated: there is no group, project, issue or merge
 request listing.

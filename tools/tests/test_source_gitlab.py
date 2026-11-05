@@ -265,18 +265,29 @@ class GitLabSourceTests(GitLabFixture, unittest.TestCase):
     def test_unsafe_links_and_disagreeing_page_headers_fail_closed(self):
         collection = f'{self.base}{self.issue_path}/notes'
         full = [dict(self.note, id=10000+index) for index in range(100)]
+        # Valid later pages exist, so a refused link or header is the only way these reads can fail.
+        self.issue['user_notes_count'] = 101
+        later = (notes(self.issue_path, 2), notes(self.issue_path, 3))
+        for target in later: self.routes[target] = lambda: self.page([dict(self.note, id=20000)], **{'X-Next-Page': ''})
+        self.routes[notes(self.issue_path)] = self.page(full, **{'X-Next-Page': '2',
+            'Link': f'<{collection}?page=2&{QUERY}&id=42&noteable_id=7>; rel="next"'})
+        self.assertTrue(self.read()[1].checkpoint_ready)
         for target in ('https://other.example.test'+self.issue_path+'/notes?page=2&'+QUERY,
                 f'{self.base}{self.mr_path}/notes?page=2&{QUERY}', f'{collection}?page=3&{QUERY}',
                 f'{collection}?page=2&{QUERY}&private_token=secret', f'{collection}?page=2&order_by=created_at&sort=asc&per_page=20',
                 f'{collection}?page=2&{QUERY}&id=43', f'{collection}?page=2&{QUERY}&noteable_id=8'):
             with self.subTest(target=target):
                 self.routes[notes(self.issue_path)] = self.page(full, **{'X-Next-Page': '2', 'Link': f'<{target}>; rel="next"'})
+                start = len(self.targets)
                 with self.assertRaises(TransportError): self.read()
+                self.assertFalse(set(later) & set(self.targets[start:]))
         for headers in ({'X-Next-Page': '3'}, {'X-Next-Page': 'two'}, {'X-Next-Page': '', 'Link': f'<{collection}?page=2&{QUERY}>; rel="next"'},
                 {'X-Page': '2', 'X-Next-Page': ''}, {'X-Per-Page': '20', 'X-Next-Page': ''}):
             with self.subTest(headers=headers):
                 self.routes[notes(self.issue_path)] = self.page(full, **headers)
+                start = len(self.targets)
                 with self.assertRaises(TransportError): self.read()
+                self.assertFalse(set(later) & set(self.targets[start:]))
 
     def test_iid_and_global_id_stay_distinct_identities(self):
         client, snapshot = self.read()
@@ -417,7 +428,9 @@ class GitLabSourceTests(GitLabFixture, unittest.TestCase):
         with self.assertRaises(TransportError): GitLabAPI('https://other.example.test', self.selection)
         for change in (dict(capture=('issues',)), dict(capture=('merge_requests', 'issues')), dict(issues=(7, 7)),
                 dict(issues=(0,)), dict(capture=('approvals', 'issues', 'notes'), merge_requests=()),
-                dict(capture=('issues', 'merge_requests', 'pipelines')), dict(schema_version=2)):
+                dict(capture=('issues', 'merge_requests', 'pipelines')), dict(schema_version=2),
+                # A capture that selects no IID would read only the project yet look complete.
+                dict(capture=('notes',), issues=(), merge_requests=()), dict(capture=(), issues=(), merge_requests=())):
             with self.subTest(change=change), self.assertRaises(ValueError): replace(self.selection, **change)
         self.assertEqual(GitLabSelection.parse(json.loads(json.dumps(self.selection.to_dict()))), self.selection)
         self.assertEqual(GitLabSelection.parse(json.loads(json.dumps(replace(self.selection, project=42).to_dict()))).project, 42)

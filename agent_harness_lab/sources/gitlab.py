@@ -56,7 +56,7 @@ class GitLabSelection(Contract):
             if tuple(sorted(set(numbers))) != numbers: raise ValueError('GitLab IIDs must be unique and ascending')
         # Issues and merge requests have separate IID sequences, so one IID may name both.
         if (('issues' in self.capture) != bool(self.issues) or ('merge_requests' in self.capture) != bool(self.merge_requests)
-                or 'approvals' in self.capture and not self.merge_requests):
+                or 'approvals' in self.capture and not self.merge_requests or not (self.issues or self.merge_requests)):
             raise ValueError('GitLab capture kinds must match the explicitly selected IIDs')
 
     @classmethod
