@@ -2232,11 +2232,17 @@ checkpoint unchanged.
 | Limit | Ceiling |
 | --- | --- |
 | `max_export_bytes` | 32 MiB |
-| `max_rows` (all arrays) | 100,000 |
+| `max_rows` (records admitted) | 100,000 |
 | `max_fields` (per row) | 128 |
 | `max_json_depth` | 16 |
 | `max_json_containers` | 1,000,000 |
 | `max_json_values` | 4,000,000 (100,000 rows of about 40 fields) |
+
+`max_rows` counts the records an export admits, not its rows: each session row
+counts once, each observation, summary and prompt row twice (its claim and its
+`search_hit`), and the `claude_mem_export` record once. A rejected row still
+counts, because the bound is checked before rows are mapped. At the ceiling an
+export holds at most 49,999 hit-bearing rows, or 99,999 session rows.
 
 `limits` may only lower these ceilings. `task test:sources:claude-mem` runs the
 synthetic controls: each claim type, summary/observation separation, search-hit

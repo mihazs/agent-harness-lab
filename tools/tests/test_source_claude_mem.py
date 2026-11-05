@@ -281,6 +281,16 @@ class ClaudeMemSourceTests(unittest.TestCase):
             with self.subTest(bound=bound):
                 with self.assertRaises(ValueError): self.read(EXPORT, limits=bound)
 
+    def test_row_bound_counts_every_record_an_export_admits(self):
+        # One session, two observations, one summary and one prompt: a claim per row, a search hit per non-session row
+        # and the export record make 1 + 2*4 + 1 = 10 records from five rows.
+        snapshot = self.read(EXPORT, limits=dict(max_rows=10))
+        self.assertEqual(len(snapshot.records), 10)
+        with self.assertRaisesRegex(HostileReport, 'row bound'): self.read(EXPORT, limits=dict(max_rows=9))
+        # A row later rejected for lacking its identity still counts, since the bound is checked before mapping.
+        with self.assertRaisesRegex(HostileReport, 'row bound'):
+            self.read(self.edited('observations', id=None), limits=dict(max_rows=9))
+
     def test_unterminated_escaped_strings_are_screened_in_linear_time(self):
         raw = b'{"query":"'+b'\\"'*(512*1024)
         started = time.perf_counter()
