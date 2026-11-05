@@ -185,6 +185,9 @@ def parse_pytest(raw, bounds, warnings):
         if not all(isinstance(phase, dict) for phase in phases): raise ValueError('invalid pytest JSON test phase')
         spans = [duration(phase['duration'], warnings) for phase in phases if 'duration' in phase]
         total = None if not spans or None in spans else float(sum(spans))
+        if total is not None and not math.isfinite(total):
+            # Finite phases can still overflow when summed; the case keeps no duration.
+            warnings.add('invalid_duration'); total = None
         outcome = test['outcome']
         if outcome not in PYTEST_KNOWN: warnings.add('unrecognized_outcome')
         status, reported = PYTEST_STATUS.get(outcome, 'unknown'), outcome if outcome in PYTEST_KNOWN else 'unrecognized'
