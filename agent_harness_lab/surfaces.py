@@ -63,6 +63,16 @@ def _bundle(root, *, needs_root_skills=False):
     return match
 
 
+def _agent_file(layer, suffix):
+    """A definition file below <layer>/agents at any depth; layer None means a top-level agents/ folder."""
+    head = (layer, 'agents') if layer else ('agents',)
+    def match(path, parts, context):
+        if not path.endswith(suffix): return False
+        starts = range(len(parts) - len(head)) if layer else (0,)
+        return any(parts[index:index + len(head)] == head and len(parts) > index + len(head) for index in starts)
+    return match
+
+
 RULES = (
     Rule('root-instruction', 'instruction', 10, 'adoptable', lambda path, parts, context: path in ROOT_INSTRUCTIONS),
     # Nested and override instruction files rank after skills and hooks, so existing kinds never change;
@@ -110,6 +120,24 @@ RULES = (
     Rule('git-developer-hooks', 'hook', 31, 'recommendation_only',
          lambda path, parts, context: path in ('lefthook.yml', '.lefthook.yml', '.pre-commit-config.yaml')
          or (len(parts) == 2 and parts[0] == '.husky')),
+    # Custom agent definitions; the agents/ rows are layer-relative paths of a caller-declared user, plugin or
+    # CODEX_HOME root. Claude frontmatter and Codex role files (a config layer) can both carry hooks, so each
+    # runtime's hook row adds the hook contract facet and an agent edit can never evade hook review. The agent
+    # rows outrank the skill and hook segment rows, so agents/hooks/x.md stays an agent that has the hook facet.
+    Rule('claude-agent-definition', 'agent', 15, 'recommendation_only', _agent_file('.claude', '.md'),
+         runtimes=frozenset({'claude-code'})),
+    Rule('claude-layer-agent-definition', 'agent', 16, 'unsupported', _agent_file(None, '.md'),
+         runtimes=frozenset({'claude-code'})),
+    Rule('claude-agent-hooks', 'hook', 45, 'contract_required', lambda path, parts, context:
+         _agent_file('.claude', '.md')(path, parts, context) or _agent_file(None, '.md')(path, parts, context),
+         runtimes=frozenset({'claude-code'})),
+    Rule('codex-agent-definition', 'agent', 15, 'recommendation_only', _agent_file('.codex', '.toml'),
+         runtimes=frozenset({'codex'})),
+    Rule('codex-layer-agent-definition', 'agent', 16, 'unsupported', _agent_file(None, '.toml'),
+         runtimes=frozenset({'codex'})),
+    Rule('codex-agent-hooks', 'hook', 45, 'contract_required', lambda path, parts, context:
+         _agent_file('.codex', '.toml')(path, parts, context) or _agent_file(None, '.toml')(path, parts, context),
+         runtimes=frozenset({'codex'})),
 )
 
 
@@ -218,6 +246,12 @@ CAPABILITIES = (
     _row('agents', 'claude-code', 'agent autoCompactWindow field', _CLAUDE + 'sub-agents', gate='>=2.1.296'),
     _row('agents', 'codex', '<layer>/agents/**/*.toml role definitions', _CODEX + 'subagents'),
     _row('agents', 'codex', 'agent role load timing', _CODEX + 'subagents', 'unverified'),
+    _row('agents', 'claude-code', 'nearest nested .claude/agents wins; same-name files in one tree resolve by read order', _CLAUDE + 'sub-agents'),
+    _row('agents', 'claude-code', 'no leading fence, bad YAML, no name or no description skips the file silently', _CLAUDE + 'sub-agents'),
+    _row('agents', 'claude-code', 'plugin agents ignore hooks, mcpServers, permissionMode and initialPrompt', _CLAUDE + 'sub-agents'),
+    _row('agents', 'codex', 'role files deny unknown keys and need non-blank developer_instructions', _CODEX_SOURCE + '/agent-roles/src/agent_role_config.rs'),
+    _row('agents', 'codex', 'sandbox_mode, approval_policy, model_provider and mcp_servers do not override the parent', _CODEX + 'subagents'),
+    _row('agents', 'codex', 'first sorted file wins a same-layer duplicate with a startup warning', _CODEX_SOURCE + '/agent-roles/src/loader.rs'),
     _row('commands_skills', 'claude-code', '.claude/commands legacy commands and nested .claude/skills', _CLAUDE + 'skills'),
     _row('commands_skills', 'codex', '.agents/skills from the cwd to the root plus user and system roots', _CODEX + 'skills'),
     _row('commands_skills', 'codex', 'deprecated custom prompts may be removed after 0.166.0', _CODEX + 'custom-prompts', 'unverified'),

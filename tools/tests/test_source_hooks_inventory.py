@@ -247,9 +247,10 @@ class HookInventoryTests(unittest.TestCase):
         self.assertEqual((self.capture().status, self.capture().handlers), ('blocked', ()))
 
     def test_malformed_and_oversized_configuration_is_parse_failed_not_truncated(self):
+        hook_parser = next(row[2] for row in harness_inventory.PARSERS if row[0] == 'hook')
         for text in ('{"hooks": {"PreToolUse": {}}}', '{"hooks": [', '[' * 64 + ']' * 64, '{"hooks": 1}'):
             with self.subTest(text=text[:20]):
-                self.assertEqual(harness_inventory.parse(harness_inventory.PARSERS[0][2], '.claude/settings.json',
+                self.assertEqual(harness_inventory.parse(hook_parser, '.claude/settings.json',
                                                          text.encode(), CLAUDE), ('parse_failed', ()))
         toml = b'[[hooks.Stop]]\n[[hooks.Stop.hooks]]\ntype = "command"\ncommand = 1979-05-27\n'
         status, facts = hooks.parse('.codex/config.toml', toml, CODEX)

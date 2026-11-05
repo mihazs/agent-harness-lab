@@ -1261,9 +1261,10 @@ re-reads each in-checkout rule through the no-follow walk. If the bytes differ
 from the inventory digest, the capture fails. User rules in `~/.claude/rules/`
 are not read.
 
-Frontmatter goes through `sources/frontmatter.py`, a bounded reader that is not a
-YAML parser. It accepts only a leading `---` block of at most 200 lines whose one
-key, `paths`, holds a YAML block list or a one-line flow sequence of plain,
+Frontmatter goes through `frontmatter.string_lists`, the strict mode of the
+bounded `sources/frontmatter.py` reader that agent definitions also use. It is not
+a YAML parser. It accepts only a leading `---` block of at most 200 lines and
+64 KiB whose one key, `paths`, holds a YAML block list or a one-line flow sequence of plain,
 single-quoted or double-quoted strings, up to 256 items. Any other construct is
 `frontmatter_unsupported` and is never guessed. That includes other keys, the
 documented comma-separated string form, escapes, anchors, tabs, trailing
@@ -1496,6 +1497,116 @@ openai/codex@d786ff91, whose pinned `codex-rs` source has no workflow script
 loader. The absence of a native static validator stays `unverified`. The
 version gates recorded for this release are the `/workflow-authoring` skill
 (>=2.1.248) and `CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS` (>=2.1.269).
+
+### Declared custom agent definitions
+
+`agents_inventory.capture(checkout, profile, external_roots=..., roles=...)`
+runs the harness inventory and joins the `agent` nodes into declared
+definitions. It never loads, spawns or validates an agent with a runtime. The
+`surfaces` rows classify Claude `.claude/agents/**/*.md` and Codex
+`.codex/agents/**/*.toml` at any depth, including below a folder named
+`hooks` or `skills`. They also classify the layer-relative
+`agents/**` of a caller-declared root, which is labelled
+`not_a_runtime_location` inside the checkout. Agent files can embed hooks, so
+every agent row also carries the hook contract facet. An agent edit is
+therefore never adoptable and stays in a plan's `unresolved_operations`.
+`roles` maps an external root label to `claude_user`, `claude_plugin` or
+`codex_home`. A root without a role gives `undeclared_root_role`.
+
+Field sets are pinned to the `surfaces.CAPABILITIES` sources: Claude Code
+2.1.317 [sub-agents](https://code.claude.com/docs/en/sub-agents) and Codex
+0.166.0 `openai/codex@d786ff91`, namely `codex-rs/agent-roles` and
+`RawAgentRoleFileToml` over the flattened `ConfigToml` in
+`codex-rs/config/src/config_toml.rs`.
+
+Claude frontmatter is read by `sources/frontmatter.py`, a bounded reader
+(64 KiB, 512 lines) for a small YAML subset. The opening fence must be on
+line 1. These Claude files are `skipped_silently` with a reason:
+`no_leading_fence`, `bad_yaml`, `missing_name`, `invalid_name` (a leading `-`,
+a `:` or more than 256 characters) and `missing_description`. The subset
+covers plain and quoted keys, quoted scalars with a trailing comment, flow
+lists and block lists indented or at the key's own indent. `bad_yaml` is kept
+for syntax every YAML parser rejects: a duplicate key, tab indentation, an
+unclosed quote or flow list, text after a closing quote, `: ` inside a plain
+scalar, and a bare word or stray list entry where a key belongs. Other YAML
+outside the subset, such as anchors, tags, flow mappings, nested flow
+collections and an indented root, gives the disposition `unknown` and is
+never guessed. A `#` inside a quoted flow item or a `|`/`>` block scalar is
+content, not a comment, and comment detection is one linear scan. A column-0
+line inside a block can only be a comment, so it ends a block scalar, and an
+indented non-comment line after the end gives `unknown`. Unknown
+fields give `ignored_by_runtime`.
+`omitClaudeMd` (2.1.271) and `autoCompactWindow` (2.1.296) are checked against
+the declared version, and the gates come from the capability rows. For a
+plugin agent, `hooks`, `mcpServers`, `permissionMode` and `initialPrompt` give
+`ignored_for_plugin_agents`. A plugin agent with no name or with bad YAML is
+declared under its file name, as documented. A plugin file without a leading
+fence stays `unknown`. A definition whose disposition is `unknown` gets the
+precedence `unknown_definition`. When it is in reach (in the `task_cwd`
+ancestry and not trust gated), it may be the file the runtime loads, so a
+selection it ranks equal to or above becomes `depends_on_unparsed_definition`
+instead of `selected_by_declared_precedence`. That covers any name when the
+unknown file has no readable name, and the same name otherwise. Declared precedence follows the documented order:
+project, then user, then plugin. Only `.claude/agents` directories at
+`task_cwd` or its ancestors count, and the nearest one wins. Others are
+`outside_task_cwd_ancestry`. Same-name files in one tree are
+`ambiguous_read_order`, because the runtime picks by filesystem read order.
+
+Codex role files are parsed with `tomllib`. A file is `rejected_with_warning`
+for `bad_toml`, `unknown_field_rejected` (any key outside the pinned
+`deny_unknown_fields` set), `invalid_field_type`, `blank_description`,
+`missing_developer_instructions`, `blank_developer_instructions`,
+`missing_name` or `invalid_nickname_candidates` (an empty list, or a blank,
+duplicate or non-`[A-Za-z0-9 _-]` name after trimming). These follow the
+pinned loader's order. `invalid_field_type` covers `name`, `description`,
+`nickname_candidates` and every `ConfigToml` field of a primitive Rust type
+(string, path, bool, bounded integer, string list or string map). The other
+`ConfigToml` fields are enums, structs or maps whose contents are not
+modelled. A value of the TOML shape the pinned type reads is accepted: a
+string for a unit enum or `ReasoningEffort`, a string or table for
+`approval_policy`, a string or string list for `forced_chatgpt_workspace_id`,
+and a table for every derived struct or map. Any other value gives `unknown`
+(`config_field_type_unverified`) instead of `declared`. Enum values and table
+contents are not validated. Nesting deeper than
+`tomllib` can recurse gives `unknown` (`toml_nesting_unsupported`) instead of
+a crash, because the pinned Rust parser's limit is not modelled. A missing
+description stays `unknown` (`description_needs_lower_layer`). The pinned
+loader walks layers from low to high and fills it from an accepted same-name
+role in a lower layer (`merge_missing_role_fields` in
+`codex-rs/agent-roles/src/loader.rs`). When such a role is in the inventory,
+the file becomes `declared` (`description_from_lower_layer`), it wins and the
+lower role is shadowed. Without one it is `unknown_definition`, even when a
+`codex_home` root is inventoried: a lower same-name role whose disposition is
+`unknown`, the system layer's agents directory and `[agents.<role>]` tables in
+a lower `config.toml` are not modelled, and any of them may complete it. `sandbox_mode`,
+`approval_policy`, `model_provider` and `mcp_servers` give
+`no_override_effect`. Within one layer the first sorted file wins and later
+same-name files are `duplicate_in_layer_warned`. A deeper project layer wins
+over a shallower one, and project layers win over `codex_home`. Project trust
+is the inventory declaration. It is `unknown` by default, and
+`declared_untrusted` gives trust `gated` and precedence `trust_gated`. Codex
+loads a project layer only for a trusted project, so with unknown trust the
+labels are resolved once as trusted and once as untrusted. A row whose label
+differs between the two passes, such as a project role and the `codex_home`
+role it would shadow, is `depends_on_project_trust`.
+
+`embedded_hooks()` lists each hook event an agent file declares, with
+`classification: hook_contract_required` and `executed: false`. Plugin agent
+hooks are listed as `ignored_for_plugin_agents`, so a hook in agent
+frontmatter cannot evade hook classification (#80). A file whose fields cannot
+be read but which the runtime may still load (unsupported YAML, oversized or
+non-UTF-8 frontmatter, too deeply nested TOML; disposition `unknown`) always
+gets one hook with the event `unparsed_hooks` and status `unknown`, because a
+valid key form such as an escaped or explicit key can evade any text match. A
+file the runtime skips or rejects (no leading fence, bad YAML, bad TOML) gets
+that hook only when a `hooks` key pattern appears in its bytes. Every definition has
+`declared_state: declared`, `available: unknown`, `loaded: unknown` and
+`load_timing: unverified`, and construction rejects any other value. Parser
+facts are flat label-safe scalars, and names are kept only when label-safe,
+with a SHA-256 for duplicate detection. Prompts, descriptions and hook
+commands never reach a node. Still open: `[agents.<role>] config_file`
+references in `.codex/config.toml`, emission into the hook inventory once it
+lands (#276) and loading attribution (#282).
 
 ## ai-memory OKF project exports
 
