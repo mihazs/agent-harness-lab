@@ -1070,8 +1070,10 @@ no entry is `no_parser`, and a parser that raises `ValueError` gives
 reaches a node.
 
 Bounds: 1000 nodes, 10 MiB of read candidate bytes across all roots, directory
-depth 32 and 20000 examined directory entries. Exceeding any bound returns
-`blocked` with its reason and no nodes or refusals, never a truncated result.
+depth 32 and 20000 examined directory entries. Entries are counted as each is
+read, so one huge directory is blocked before it is held in memory. Exceeding
+any bound returns `blocked` with its reason and no nodes or refusals, never a
+truncated result.
 Roots outside the checkout, such as `~/.claude`, `$CODEX_HOME`, plugin caches
 and managed paths, are never read implicitly. The caller can declare one with
 `--external-root LABEL=PATH`. It must be an absolute path that does not overlap
@@ -1084,9 +1086,12 @@ marked `publication_allowed: false` and `loading_evidence: false`. It prints
 path-free metadata only. Git summaries carry only the inventory fingerprint,
 status and counts. Exit 0 means declared, 2 means invalid input, and 3 means
 blocked or unsupported. Synthetic tests check the walk, the refusals, the
-bounds, unchanged trees and the absence of processes, network use and opens
-outside the checkout. Surface parsers, nested-instruction discovery and loading
-attribution remain open in #274 to #282.
+bounds, unchanged trees and the absence of processes and network use. An
+open() audit compares inodes, because opens beneath a directory descriptor
+carry no absolute path: every opened or listed descriptor must be the
+checkout, an entry beneath it or one of its ancestors. Surface parsers,
+nested-instruction discovery and loading attribution remain open in #274 to
+#282.
 
 ## ai-memory OKF project exports
 

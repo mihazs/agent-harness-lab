@@ -25,7 +25,9 @@ AUDIT = []
 
 
 def _audit(event, args):
-    if AUDIT and event in ('open', 'os.scandir', 'os.listdir'): AUDIT[-1].append(args[0])
+    # A listed descriptor is recorded by inode while it is still open; a path is recorded as given.
+    if AUDIT and event in ('open', 'os.scandir', 'os.listdir'):
+        AUDIT[-1].append(_identity(os.fstat(args[0])) if isinstance(args[0], int) else args[0])
 
 
 sys.addaudithook(_audit)
@@ -93,20 +95,50 @@ class HarnessInventoryTests(unittest.TestCase):
         return dict(runtime=value.runtime, version=value.version, profile_sha256=value.profile_sha256,
                     task_cwd_sha256=value.task_cwd_sha256)
 
+    def test_entry_bound_stops_reading_a_large_directory_before_holding_it(self):
+        for index in range(200): (self.checkout / f'bulk-{index:03}.txt').write_text('')
+        real, yielded = os.scandir, []
+
+        class Counting:
+            def __init__(self, path): self.inner = real(path)
+            def __enter__(self): return self
+            def __exit__(self, *exc): self.inner.close()
+            def __iter__(self):
+                for entry in self.inner: yielded.append(entry.name); yield entry
+
+        with patch.object(inventory, 'MAX_ENTRIES', 10), patch('os.scandir', Counting):
+            value = self.capture()
+        self.assertEqual((value.status, value.blocked_reason), ('blocked', 'entry_bound_exceeded'))
+        self.assertEqual(len(yielded), 11)  # stops at the first entry past the bound, not after the whole directory
+
     def test_nothing_outside_the_checkout_is_opened_without_declared_roots(self):
         self.capture()  # warm imports so the audit sees only the inventory's own opens
+        real, opened = os.open, []
+
+        def recording(path, flags, mode=0o777, *, dir_fd=None):
+            descriptor = real(path, flags, mode, dir_fd=dir_fd)
+            opened.append((_identity(os.fstat(descriptor)), path)); return descriptor
+
         home = self.outside
-        with patch.dict(os.environ, HOME=str(home), CODEX_HOME=str(home), CLAUDE_CONFIG_DIR=str(home)):
+        with patch.dict(os.environ, HOME=str(home), CODEX_HOME=str(home), CLAUDE_CONFIG_DIR=str(home)), \
+                patch('os.open', recording):
             AUDIT.append([])
             try: value = self.capture()
-            finally: opened = AUDIT.pop()
+            finally: audited = AUDIT.pop()
         self.assertEqual(value.external_roots, ())
+        self.assertEqual({(n.origin, n.root) for n in value.nodes}, {('checkout', 'checkout')})
+        # Opens by name beneath a dir_fd carry no absolute path, so every descriptor's inode must be the
+        # checkout, an entry beneath it, or one of its ancestors; a listed descriptor must be one of those too.
+        allowed = {_identity(os.stat(p)) for p in (self.checkout, *self.checkout.parents)}
+        for folder, directories, names in os.walk(self.checkout, followlinks=False):
+            allowed.update(_identity(os.lstat(os.path.join(folder, n))) for n in directories + names)
+        listed = [p for p in audited if isinstance(p, tuple)]
+        self.assertTrue(opened and listed)
+        for identity, path in opened: self.assertTrue(identity in allowed, f'opened outside the checkout: {path}')
+        self.assertTrue(set(listed) <= allowed, 'listed a directory outside the checkout')
         root = str(self.checkout)
-        absolute = [p for p in opened if isinstance(p, str) and p.startswith('/')]
-        self.assertTrue(absolute)
-        for path in absolute:
+        for path in (p for p in audited if isinstance(p, str) and p.startswith('/')):
             self.assertTrue(path == root or path.startswith(root + '/') or root.startswith(path.rstrip('/') + '/'), path)
-        self.assertFalse(any(isinstance(p, str) and str(self.outside) in p for p in opened))
 
     def test_declared_external_roots_are_read_only_labelled_and_never_trusted(self):
         value = self.capture(dict(CODEX, project_trust='declared_trusted'), external_roots={'codex_home': str(self.outside)})
@@ -178,6 +210,9 @@ class HarnessInventoryTests(unittest.TestCase):
                                    '--version', '0.166.0']), 2)
             with patch.object(inventory, 'MAX_FILES', 1):
                 self.assertEqual(main(['sources', 'inventory', str(self.checkout), '--runtime', 'codex', '--version', '0.166.0']), 3)
+
+
+def _identity(info): return info.st_dev, info.st_ino
 
 
 def _facts(path, raw, profile): return 'parsed', {'bytes': len(raw)}

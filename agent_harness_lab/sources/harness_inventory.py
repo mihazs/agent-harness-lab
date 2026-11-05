@@ -179,11 +179,13 @@ class _Walk:
         finally: os.close(descriptor)
 
     def listing(self, descriptor):
-        with os.scandir(descriptor) as entries:
-            rows = sorted(((entry.name, entry.stat(follow_symlinks=False)) for entry in entries), key=lambda row: row[0])
-        self.entries += len(rows)
-        if self.entries > MAX_ENTRIES: raise _Blocked('entry_bound_exceeded')
-        return rows
+        rows = []
+        with os.scandir(descriptor) as entries:  # counted per entry, so a huge directory is never held whole
+            for entry in entries:
+                self.entries += 1
+                if self.entries > MAX_ENTRIES: raise _Blocked('entry_bound_exceeded')
+                rows.append((entry.name, entry.stat(follow_symlinks=False)))
+        return sorted(rows, key=lambda row: row[0])
 
     def walk(self, descriptor, prefix, depth, root, rows):
         if root[0] == 'checkout': self.directories.add(prefix[:-1] or '.')
