@@ -1010,14 +1010,17 @@ What the receipt declares, never verifies:
 - **Explicitly unknown.** Selected `.claude/rules/` files (`rules_not_modeled`)
   and launch filenames below `task_cwd` (`on_demand_subdirectory`) stay unknown.
   Files below `task_cwd` are discovered by the whole-tree walk described below.
-  Managed and user files, approval decisions, on-demand truncation and
-  path-scoped rule matching are not captured. A selected
+  Managed and user files, approval decisions, the session's on-demand
+  truncation point and path-scoped rule matching are not captured. A selected
   `AGENTS.override.md` or other unrecognized file in the chain is `unsupported`.
 
-An import whose path crosses a symbolic link, a non-directory component or a
-nested repository fails the capture, as does a linked final target or a non-UTF-8
-launch file. Only a genuinely absent path is `import_missing`. Like the Codex
-profile, files are read and hashed in full with no byte cap. Node count is bounded
+An import from the launch chain whose path crosses a symbolic link, a
+non-directory component or a nested repository fails the capture, as does a
+linked final target or a non-UTF-8 launch file. Only a genuinely absent path is
+`import_missing`. Every file is hashed in full with no byte cap, but it is
+streamed: no file's bytes are kept once its hash is taken. A file that is
+expanded for imports is read again, at most 4 MiB of it, and its hash is
+checked against the first read. Node count is bounded
 by the launch candidates, the distinct in-checkout files reached within four hops,
 five unresolved-reference nodes per expanded file and the selected files. The
 receipt uses the existing `InstructionInventory` shape and `instruction_inventory`
@@ -1043,8 +1046,24 @@ and `.claude/AGENTS.md` becomes a node, classified against `task_cwd`:
   a launch `AGENTS.md`. The existing `@path` resolver also expands every
   on-demand file. Files reached only that way stay `unknown`
   (`on_demand_import`); missing, cyclic and unsafe imports get the usual labels.
-  The per-file size limit for subdirectory files is unverified, so it is never
-  applied.
+  An on-demand import that crosses a link, a non-directory or a nested
+  repository, names a linked final target or cannot be read becomes an
+  unresolved node (`import_crosses_link_or_repository`,
+  `import_target_link_not_followed` or `import_target_unreadable`) instead of
+  failing the capture.
+- **On-demand size.** The public memory documentation
+  (code.claude.com/docs/en/memory, "Claude ignores the end of my subdirectory
+  CLAUDE.md", checked 2026-11-05) says a subdirectory `CLAUDE.md` or
+  `CLAUDE.local.md`, and each file it imports, is truncated, not skipped, past a
+  per-file limit of 40,000 characters (200K context window) or 150,000 to
+  200,000 characters (1M window). The session's window is never declared here,
+  so the 4 MiB launch skip is not applied on demand. An on-demand file or
+  import longer than 40,000 characters keeps its imports but gets reason
+  `on_demand_truncation_unverified`. An import token ending past character
+  40,000 is uncertain (`import_beyond_on_demand_truncation_unverified`), and its
+  target keeps that reason unless another path reaches it. Only the first
+  4 MiB of an on-demand file are scanned for imports, which is past every
+  documented limit.
 - **Anywhere else** (the same filename in an unrelated scope), files are
   `out_of_scope` with reason `outside_task_scope`.
 - **`CLAUDE.local.md`** is personal and usually gitignored. Every copy, wherever
@@ -1076,7 +1095,18 @@ configuration:
 
 The walk is bounded at 100000 entries and depth 64. Going past either bound
 gives a `blocked` receipt with a `tree_enumeration_bound_exceeded` node. It is
-never reported as a complete enumeration.
+never reported as a complete enumeration. These bounds limit the walk, not the
+bytes hashed: memory use stays bounded because files are streamed, as described
+above.
+
+A subdirectory that cannot be opened, listed or stat'ed gets an `unknown` node
+with reason `instruction_directory_unreadable`, and an unreadable instruction
+file found by the walk keeps its label with presence `unknown` and reason
+`instruction_file_unreadable`. Neither fails the capture. The receipt is
+`blocked` only when the entry is `task_cwd`, one of its ancestors or below it,
+where it can hide applicable or on-demand files. An unreadable entry in an
+unrelated scope leaves the receipt `declared`. An unreadable checkout root or
+launch-chain file still fails the capture.
 
 The Codex profile keeps its directory precedence and adds three declarations,
 pinned to the public `openai/codex@d786ff91` source

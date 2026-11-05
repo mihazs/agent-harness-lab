@@ -2,6 +2,7 @@
 from dataclasses import asdict
 import hashlib
 import json
+import os
 from pathlib import Path
 import tempfile
 import time
@@ -104,11 +105,11 @@ class ClaudeInstructionInventoryTests(unittest.TestCase):
         self.write('../outside.md', 'SYNTHETIC_OUTSIDE')
         self.write('src/task/CLAUDE.md', '@../../../outside.md @/etc/hostname @~/.claude/x.md @../../shared.md')
         self.write('shared.md', '@deeper.md'); self.write('deeper.md', 'SYNTHETIC_DEEPER')
-        original = Folder.read
-        def guarded(folder, name, *args):
+        original = Folder.open  # read() and the streaming hash both open through it
+        def guarded(folder, name, *args, **options):
             self.assertTrue(name.startswith('project/'), name)
-            return original(folder, name, *args)
-        with patch.object(Folder, 'read', guarded): receipt = self.read()
+            return original(folder, name, *args, **options)
+        with patch.object(Folder, 'open', guarded): receipt = self.read()
         external = [n for n in receipt.nodes if n.origin == 'external_reference']
         self.assertEqual(len(external), 1)
         self.assertTrue(all((n.presence, n.content_sha256, n.applicability) == ('unknown', None, 'unknown') for n in external))
@@ -267,6 +268,87 @@ class ClaudeInstructionInventoryTests(unittest.TestCase):
                 with self.assertRaises(ValueError): self.read()
         self.write('CLAUDE.md', '@absent/x.md')
         self.assertEqual(self.unresolved(self.read(), 'CLAUDE.md', 'import_missing').presence, 'missing')
+
+    def test_on_demand_imports_through_links_or_unreadable_paths_stay_unresolved(self):
+        self.write('CLAUDE.md', 'SYNTHETIC_ROOT'); self.write('real/x.md', 'SYNTHETIC_REAL')
+        self.write('src/task/note.md', 'SYNTHETIC_NOTE')
+        (self.root/'project/src/task/linkdir').symlink_to('../../real', target_is_directory=True)
+        (self.root/'project/src/task/linked.md').symlink_to('note.md')
+        self.write('src/task/sub/CLAUDE.md', '@../linkdir/x.md @../linked.md @../note.md')
+        receipt = self.read()
+        self.assertEqual(receipt.resolution_status, 'declared')
+        for reason in ('import_crosses_link_or_repository', 'import_target_link_not_followed'):
+            node = self.unresolved(receipt, 'src/task/sub/CLAUDE.md', reason)
+            self.assertEqual((node.presence, node.applicability), ('unknown', 'unsupported'))
+        self.assertEqual(self.state(receipt, 'src/task/note.md'), ('unknown', 'on_demand_import'))
+        self.write('src/task/CLAUDE.md', '@linkdir/x.md')
+        with self.assertRaises(ValueError): self.read()
+
+    def unreadable(self, path, mode):
+        path.chmod(mode); self.addCleanup(path.chmod, 0o755 if path.is_dir() else 0o644)
+
+    @unittest.skipIf(os.geteuid() == 0, 'permissions do not bind root')
+    def test_unreadable_entries_are_reported_and_block_only_where_they_can_hide_instructions(self):
+        self.write('CLAUDE.md', 'SYNTHETIC_ROOT'); self.write('cache/CLAUDE.md', 'SYNTHETIC_HIDDEN')
+        self.write('listed/CLAUDE.md', 'SYNTHETIC_HIDDEN'); self.write('other/CLAUDE.md', 'SYNTHETIC_HIDDEN')
+        self.unreadable(self.root/'project/cache', 0); self.unreadable(self.root/'project/listed', 0o444)
+        self.unreadable(self.root/'project/other/CLAUDE.md', 0)
+        receipt = self.read()
+        self.assertEqual(receipt.resolution_status, 'declared')
+        for path in ('cache', 'listed'):
+            node = self.nodes(receipt)[digest(['unreadable_directory', path])]
+            self.assertEqual((node.presence, node.applicability, node.reason), ('unknown', 'unknown', 'instruction_directory_unreadable'))
+        node = self.nodes(receipt)[digest('other/CLAUDE.md')]
+        self.assertEqual((node.presence, node.applicability, node.reason), ('unknown', 'out_of_scope', 'instruction_file_unreadable'))
+        self.assertEqual(self.state(receipt, 'CLAUDE.md'), ('declared_applicable', 'directory_concatenation'))
+        self.write('src/task/deep/CLAUDE.md', 'SYNTHETIC_HIDDEN'); self.unreadable(self.root/'project/src/task/deep', 0)
+        blocked = self.read()
+        self.assertEqual(blocked.resolution_status, 'blocked')
+        self.assertIn(digest(['unreadable_directory', 'src/task/deep']), self.nodes(blocked))
+
+    def test_files_that_are_never_expanded_are_hashed_without_being_kept(self):
+        import tracemalloc
+        from agent_harness_lab.sources import claude_instructions as module
+        size = 48*1024*1024
+        self.write('CLAUDE.md', 'SYNTHETIC_ROOT')
+        for name in ('unrelated/CLAUDE.local.md', 'unrelated/CLAUDE.md', 'src/task/deep/CLAUDE.local.md'):
+            path = self.write(name, b'')
+            with path.open('r+b') as handle: handle.truncate(size)
+        reads, original = [], Folder.read
+        def recorded(folder, name, maximum=65536, **options):
+            reads.append((name, maximum)); return original(folder, name, maximum, **options)
+        tracemalloc.start()
+        try:
+            with patch.object(Folder, 'read', recorded): receipt = self.read()
+            peak = tracemalloc.get_traced_memory()[1]
+        finally: tracemalloc.stop()
+        self.assertLess(peak, 16*1024*1024)
+        self.assertEqual({maximum for _, maximum in reads}, {module.SKIPPED_BYTES})
+        self.assertEqual([name for name, _ in reads], ['project/CLAUDE.md'])
+        sparse = hashlib.sha256(bytes(size)).hexdigest()
+        self.assertEqual(self.nodes(receipt)[digest('unrelated/CLAUDE.md')].content_sha256, sparse)
+        self.assertEqual(self.state(receipt, 'unrelated/CLAUDE.md'), ('out_of_scope', 'outside_task_scope'))
+        for path in ('unrelated/CLAUDE.local.md', 'src/task/deep/CLAUDE.local.md'):
+            self.assertEqual(self.state(receipt, path), ('private_excluded', 'private_excluded'))
+            self.assertEqual(self.nodes(receipt)[digest(path)].content_sha256, sparse)
+
+    def test_oversized_on_demand_files_are_truncated_not_skipped_and_say_so(self):
+        self.write('src/task/sub/note.md', 'SYNTHETIC_NOTE'); self.write('src/task/sub/late.md', 'SYNTHETIC_LATE')
+        filler = 'x'*40000  # the smallest documented on-demand limit, in characters
+        self.write('src/task/sub/CLAUDE.md', '@note.md\n'+filler+'\n@late.md\n')
+        receipt = self.read()
+        self.assertEqual(self.state(receipt, 'src/task/sub/CLAUDE.md'), ('unknown', 'on_demand_truncation_unverified'))
+        self.assertEqual(self.state(receipt, 'src/task/sub/note.md'), ('unknown', 'on_demand_import'))
+        self.assertEqual(self.state(receipt, 'src/task/sub/late.md'), ('unknown', 'import_beyond_on_demand_truncation_unverified'))
+        self.assertIn(('imports', digest('src/task/sub/CLAUDE.md'), digest('src/task/sub/late.md')), self.edges(receipt))
+        self.write('src/task/sub/CLAUDE.md', b'@note.md\n'+b'x'*(4*1024*1024+10))
+        large = self.read()
+        self.assertEqual(self.state(large, 'src/task/sub/CLAUDE.md'), ('unknown', 'on_demand_truncation_unverified'))
+        self.assertEqual(self.state(large, 'src/task/sub/note.md'), ('unknown', 'on_demand_import'))
+        self.assertIn(('imports', digest('src/task/sub/CLAUDE.md'), digest('src/task/sub/note.md')), self.edges(large))
+        self.assertEqual(imports('@a.md\r\n@b.md', 8), [('a.md', None), ('b.md', 'import_beyond_on_demand_truncation_unverified')])
+        self.profile['task_cwd'] = 'src/task/sub'
+        self.assertEqual(self.state(self.read(), 'src/task/sub/CLAUDE.md'), ('unknown', 'runtime_size_limit_unverified'))
 
     def test_cycle_detection_stays_near_linear_for_repeated_imports(self):
         self.profile['task_cwd'] = '.'
