@@ -124,7 +124,9 @@ ahl watch /path/to/project --agent claude --interval 300
 
 This foreground monitor performs an initial improvement pass, then checks evidence
 at the interval. It runs improvement again only when the accepted project evidence
-changes. Versioned checkpoints persist across restarts. Completed rejection/no-change runs
+or execution configuration changes. Each pass is recommendation-only: watch has no
+`--repair-contracts` option and never writes harness files itself; its agent is
+cooperative, so read-only project access is instructed, not enforced. Versioned checkpoints persist across restarts. Completed rejection/no-change runs
 are not repeated on unchanged evidence. Only explicitly classified transient
 infrastructure failures may retry, with backoff and at most three total attempts.
 Authentication, setup, interrupted and unknown failures require intervention or a
@@ -170,7 +172,7 @@ Inputs still require redaction; these tools are not general-purpose sanitizers.
 | Command | Purpose |
 | --- | --- |
 | `ahl improve [project]` | Discover issues, stage repairs and evaluate; behavioral adoption is blocked |
-| `ahl watch [project]` | Repeat improvement on changed evidence |
+| `ahl watch [project]` | Rerun recommendation-only evaluation when evidence or configuration changes; AHL never writes harness files |
 | `ahl analyze [project]` | Automatically collect and analyze evidence without an agent |
 | `ahl diagnose --events FILE --output DIR` | Diagnose an explicit event file |
 | `ahl mine FILE` | Mine event transitions and recurring root-case support |
