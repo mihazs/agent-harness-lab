@@ -1,6 +1,10 @@
 """Independently synthetic native shapes, not real-user recordings."""
 import json
+import os
 from pathlib import Path
+import re
+import subprocess
+import sys
 import tempfile
 import unittest
 from agent_harness_lab.telemetry.schema import event, verified_outcome, serialize
@@ -131,3 +135,61 @@ class TelemetryTests(unittest.TestCase):
         from agent_harness_lab.telemetry.adapters import correlate
         for capacity in (0, -1, False):
             with self.assertRaises(ValueError): list(correlate([], capacity))
+
+
+class WalkthroughTests(unittest.TestCase):
+    """The documented synthetic walkthrough must run offline and print what it shows."""
+    root = Path(__file__).resolve().parents[2]
+    heading = '## Worked example: a synthetic Claude tool error\n'
+
+    def blocks(self):
+        text = (self.root / 'docs/telemetry.md').read_text()
+        self.assertEqual(text.count(self.heading), 1)
+        section = text.split(self.heading, 1)[1].split('\n## ', 1)[0]
+        code = re.search(r'^```python\n(.*?)^```$', section, re.M | re.S)
+        shown = re.search(r'^```text\n(.*?)^```$', section, re.M | re.S)
+        self.assertIsNotNone(code)
+        self.assertIsNotNone(shown)
+        return code.group(1), shown.group(1)
+
+    def test_documented_snippet_prints_documented_output(self):
+        code, shown = self.blocks()
+        environment = {k: v for k, v in os.environ.items() if not k.startswith('PYTHON')}
+        result = subprocess.run([sys.executable, '-'], input=code, cwd=self.root, env=environment,
+                                capture_output=True, text=True, timeout=60)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, shown)
+
+    def test_documented_records_are_the_ledger_lines_and_omit_bodies(self):
+        _, shown = self.blocks()
+        lines = shown.splitlines()
+        fixture = (self.root / 'examples/claude-tool-error.jsonl').read_text()
+        self.assertIn('SYNTHETIC-CANARY-BODY', fixture)
+        self.assertNotIn('SYNTHETIC-CANARY-BODY', shown)
+        rows = [json.loads(line) for line in fixture.splitlines()]
+        with tempfile.TemporaryDirectory() as directory:
+            ledger = Path(directory) / 'events.v2.jsonl'
+            Ledger(ledger).ingest(normalize(rows, 'claude', source_version='claude-jsonl-v1'))
+            written = ledger.read_text().splitlines()
+        self.assertEqual(written, lines[:len(written)])
+        self.assertEqual(len(written), 5)
+        records = [json.loads(line) for line in written]
+        self.assertEqual({r['outcome'] for r in records}, {'unknown'})
+        self.assertTrue(all(verified_outcome(r) is None for r in records))
+        self.assertEqual([r.get('execution_status') for r in records if r['activity'] == 'tool_result'], ['error'])
+        self.assertEqual(records[-1]['capture_status'], 'unmatched_call')
+        for field in ('state_revision', 'input_fingerprint', 'result_fingerprint', 'tool_effect', 'mutation'):
+            self.assertFalse(any(field in r for r in records), field)
+
+    def test_documented_missing_reasons_match_each_record(self):
+        _, shown = self.blocks()
+        records = [json.loads(line) for line in shown.splitlines()[:5]]
+        events = [r['missing_reason'] for r in records if r['activity'] != 'capture_coverage']
+        coverage = [r['missing_reason'] for r in records if r['activity'] == 'capture_coverage']
+        self.assertEqual(events, ['no_independent_outcome'] * 4)
+        self.assertEqual(coverage, ['capture_ended_without_result'])
+        text = (self.root / 'docs/telemetry.md').read_text()
+        prose = ' '.join(text.split(self.heading, 1)[1].split('\n## ', 1)[0].split())
+        self.assertIn('The four event records carry `missing_reason: no_independent_outcome`', prose)
+        self.assertIn('the coverage record carries `missing_reason: capture_ended_without_result`', prose)
+        self.assertNotIn('`outcome_provenance: unknown` and `missing_reason: no_independent_outcome`', prose)

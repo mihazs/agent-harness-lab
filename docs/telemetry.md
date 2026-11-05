@@ -59,6 +59,82 @@ No real-model effectiveness experiment was run for this schema. Tests establish
 metadata/control-flow behavior only. No model weights, downloads, external ledger
 service or ML dependency is required.
 
+## Worked example: a synthetic Claude tool error
+
+[`examples/claude-tool-error.jsonl`](../examples/claude-tool-error.jsonl) is four
+invented rows in the `claude-jsonl-v1` contract from the table above: a `Bash`
+call that returns `is_error: true`, an assistant line claiming the task failed,
+and a `Read` call whose result never arrives. The session, IDs, timestamps, path
+and the `SYNTHETIC-CANARY-BODY` marker were written for this page; no real session
+was recorded or edited to produce them. From the repository root, pipe this
+snippet to `python3 -`. It runs offline with the standard library:
+
+```python
+import json
+from pathlib import Path
+from agent_harness_lab.telemetry.schema import serialize
+from tools.diagnose import analyze, normalize
+
+lines = Path('examples/claude-tool-error.jsonl').read_text().splitlines()
+rows = [json.loads(line) for line in lines]
+records = list(normalize(rows, 'claude', source_version='claude-jsonl-v1'))
+for record in records:
+    print(serialize(record))
+summary = analyze(records)
+print(json.dumps(summary['field_coverage'], sort_keys=True))
+print(json.dumps(summary['findings']))
+```
+
+It prints:
+
+```text
+{"activity":"tool_call","actor":"agent","call_id":"toolu_synthetic_1","capture_order":0,"capture_status":"unverified","case_id":"synthetic-walkthrough","event_id":"synthetic-a1:1","missing_reason":"no_independent_outcome","outcome":"unknown","outcome_provenance":"unknown","schema_version":2,"source_format":"claude","source_version":"claude-jsonl-v1","timestamp":"2026-01-01T00:00:00Z","tool_name":"Bash"}
+{"activity":"tool_result","actor":"tool","call_id":"toolu_synthetic_1","capture_order":1,"capture_status":"linked","case_id":"synthetic-walkthrough","event_id":"synthetic-u1:0","execution_status":"error","missing_reason":"no_independent_outcome","outcome":"unknown","outcome_provenance":"unknown","schema_version":2,"source_format":"claude","source_version":"claude-jsonl-v1","timestamp":"2026-01-01T00:00:01Z","tool_name":"Bash"}
+{"activity":"assistant","actor":"unknown","capture_order":2,"capture_status":"unverified","case_id":"synthetic-walkthrough","event_id":"synthetic-a2","missing_reason":"no_independent_outcome","outcome":"unknown","outcome_provenance":"unknown","schema_version":2,"source_format":"claude","source_version":"claude-jsonl-v1"}
+{"activity":"tool_call","actor":"agent","call_id":"toolu_synthetic_2","capture_order":3,"capture_status":"unverified","case_id":"synthetic-walkthrough","event_id":"synthetic-a3:0","missing_reason":"no_independent_outcome","outcome":"unknown","outcome_provenance":"unknown","schema_version":2,"source_format":"claude","source_version":"claude-jsonl-v1","timestamp":"2026-01-01T00:00:03Z","tool_name":"Read"}
+{"activity":"capture_coverage","call_id":"toolu_synthetic_2","capture_status":"unmatched_call","case_id":"synthetic-walkthrough","event_id":"coverage:unmatched:0","missing_reason":"capture_ended_without_result","outcome":"unknown","outcome_provenance":"unknown","schema_version":2}
+{"lineage_verified": {"known": 0, "total": 5}, "outcome": {"known": 0, "total": 5}, "state_revision": {"known": 0, "total": 5}, "tool_name": {"known": 3, "total": 5}}
+[]
+```
+
+The first five lines are the exact records `Ledger.ingest` appends to
+`events.v2.jsonl` for these rows; `tools/tests/test_telemetry.py` runs the snippet
+and the ledger against this page, so the output cannot drift unnoticed.
+
+- **Bodies are omitted.** The command, the error text, the assistant sentence, the
+  `Read` path and every copy of the canary are absent. In a line with tool blocks,
+  only those blocks become events, so the text block before the `Bash` call leaves only its position in
+  `event_id` (`synthetic-a1:1`), and the text-only line becomes a bare
+  `assistant` event.
+- **A tool error is not a task failure.** `is_error: true` sets
+  `execution_status: error` on the linked result, and nothing else. Every record,
+  including the assistant line that says the task failed, keeps `outcome: unknown`
+  with `outcome_provenance: unknown`. The four event records carry
+  `missing_reason: no_independent_outcome`, and the coverage record carries
+  `missing_reason: capture_ended_without_result`.
+  Only an executable grader or a reviewed annotation can supply an outcome; see
+  `verified_outcome` above. The failed command may have been an expected probe.
+- **A missing result is coverage, not an event.** The `Read` call gets a
+  `capture_coverage` record with `capture_status: unmatched_call` and
+  `missing_reason: capture_ended_without_result`. No result, error or
+  cancellation is invented for it.
+- **State and fingerprints are missing.** This adapter emits no
+  `state_revision`, `tool_effect`, `mutation`, `input_fingerprint` or
+  `result_fingerprint`, and does not derive them from the omitted bodies. Diagnosis
+  therefore counts `state_revision` as known for 0 of 5 events and can report no
+  finding; an empty `findings` list means nothing was comparable, not that the
+  session was healthy.
+
+Normalization is not general sanitization. It drops undeclared fields, but the
+declared ones are copied verbatim: the native `sessionId`, `uuid`-derived event
+IDs, `tool_use` IDs, timestamps, tool names and, for a row without tool blocks,
+the native row `type` (as `activity`) appear as written. A real capture's
+ledger stays private local data. The `claude-jsonl-v1` name identifies the
+synthetic contract tested here; compatibility with any released Claude Code CLI
+is unverified. The [pinned 2.1.316 profile](#explicit-claude-code-21316-file-profile)
+below is the version-pinned native contract, and its synthetic fixtures do not
+verify a live CLI either.
+
 ## Explicit Claude Code 2.1.316 file profile
 
 ```sh
