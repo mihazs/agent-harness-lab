@@ -29,8 +29,11 @@ DOCUMENTS = ('Document', 'TextDocument', 'PdfDocument', 'AudioDocument', 'ImageD
 ENTITIES = ('Entity', 'EntityType')
 NODES = ('ColumnValue', 'DltColumn', 'FactConflict', 'Skill', 'SkillImprovementProposal', 'SkillRun', 'TableRow',
          'TableType', 'Timestamp', 'Tool', 'Triplet')
-# Relations the pipeline writes from declared model fields; any other name is a model-extracted relation.
-STRUCTURAL = ('is_part_of', 'contains', 'is_a')
+# Relations the pipeline writes from declared model fields, with the node types each field joins at the pin
+# (DocumentChunk.is_part_of, DocumentChunk.contains, Entity.is_a). Any other name, or one of these names between
+# other or unexported types, is a model-extracted relation.
+STRUCTURAL = dict(is_part_of=(('DocumentChunk',), DOCUMENTS), contains=(('DocumentChunk',), ('Entity', 'Timestamp')),
+                  is_a=(('Entity',), ('EntityType',)))
 TIMESTAMPS = ('native', 'missing', 'invalid', 'conflicting', 'not_modelled')
 ORIGINS = ('self', 'traced', 'not_exported', 'missing', 'conflicting', 'multiple', 'untraced')
 # Neither pinned writer emits a version; any version-like key must agree with the declared release.
@@ -107,7 +110,8 @@ class CogneeExport(LocalExport):
             bounds['max_export_bytes'], consume, 'Cognee export changed during capture', read_regular, regular_sha256)
         self.claims, self.summary = parse(decoded.pop(), selection, bounds)
         return claim_snapshot(source, 'cognee_', self.claims, provenance,
-            digest(('cognee_export', selection['instance'], selection['dataset'], selection['export'])), export_sha256, self.summary)
+            digest(('cognee_export', selection['instance'], selection['dataset'], selection['dataset_id'], selection['export'])),
+            export_sha256, self.summary)
 
 
 def canonical_uuid(value):
@@ -153,8 +157,10 @@ def parse(value, selection, bounds):
     if lineage != 'export_matches_declaration': warnings.add('dataset_lineage_unverified')
     if selection['format'] == 'graph_snapshot' and not text(value.get('dataset_name')): warnings.add('dataset_name_missing')
     if 1 + len(value['nodes']) + len(value['edges']) > bounds['max_rows']: raise HostileReport('Cognee row bound exceeded')
-    def scoped(*parts): return digest(['cognee', selection['instance'], selection['dataset'], *parts])
-    def ref(identity): return scoped('node', identity)
+    # The declared dataset_id is part of every hash, so two datasets sharing a label never share claims.
+    def scoped(*parts): return digest(['cognee', selection['instance'], selection['dataset'], selection['dataset_id'], *parts])
+    # A reference names the first occurrence's node claim, so origins and endpoints resolve to a claim ID.
+    def ref(identity): return scoped('node', identity, 0)
     nodes, seen = [], Counter()
     for row in value['nodes']:
         if not isinstance(row, dict): raise ValueError('Cognee export nodes must be objects')
@@ -180,7 +186,11 @@ def parse(value, selection, bounds):
         occurrence = seen[('edge', source, name, target)]; seen[('edge', source, name, target)] += 1
         if occurrence: warnings.add('duplicate_native_id')
         edges.append((source, target, name, occurrence, properties))
-    kinds = {identity: node_kind(row.get('type'))[0] for identity, occurrence, row in nodes if not occurrence}
+    types = {identity: row.get('type') for identity, occurrence, row in nodes if not occurrence}
+    kinds = {identity: node_kind(kind)[0] for identity, kind in types.items()}
+    def structural(source, target, name):
+        sources, targets = STRUCTURAL.get(name, ((), ()))
+        return types.get(source) in sources and types.get(target) in targets
     documents = {identity for identity, kind in kinds.items() if kind == 'document'}
     # A chunk names its document by the is_part_of edge and its flat document_id; both must agree.
     parents = defaultdict(set)
@@ -232,7 +242,7 @@ def parse(value, selection, bounds):
             status, document = origin(source)
         origins[status] += 1
         claims.append(GraphClaim('relation', scoped('edge', source, name, target, occurrence), occurrence, 'graph_edge', dataset,
-            digest(properties) if properties else None, name if name in STRUCTURAL else 'other', None, None,
+            digest(properties) if properties else None, name if structural(source, target, name) else 'other', None, None,
             'not_modelled', status, document, ref(source), ref(target), scoped('relationship', name)))
     counts = Counter(c.claim_type for c in claims)
     summary = dict(schema_version=1, profile=PROFILE, cognee_version=version, upstream_commit=PINNED[version],

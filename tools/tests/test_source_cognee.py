@@ -127,6 +127,12 @@ class CogneeSourceTests(unittest.TestCase):
         self.assertEqual((edges['is_part_of'].origin_status, edges['is_part_of'].origin_document_sha256), ('traced', origin))
         self.assertEqual((edges['other'].origin_status, edges['other'].origin_document_sha256), ('traced', origin))
         self.assertEqual(edges['is_part_of'].target_node_sha256, origin)
+        # Every origin and endpoint hash resolves to the node claim it names.
+        ids = {n['id']: c.native_id_sha256 for n, c in zip(NODES, self.connector.claims)}
+        self.assertEqual(origin, document.native_id_sha256)
+        self.assertEqual({c.origin_document_sha256 for c in self.claims('entity') if c.origin_status == 'traced'}, {ids[DOC]})
+        self.assertEqual([(c.source_node_sha256, c.target_node_sha256) for c in self.claims('relation')],
+                         [(ids[s], ids[t]) for s, t, r, p in EDGES])
         # An entity named by chunks of two documents has several origins and names none of them.
         second = [node('node-doc-2', 'PdfDocument', name='other.pdf'), dict(NODES[1], id='node-chunk-2', document_id='node-doc-2')]
         self.read(snapshot(nodes=NODES+second, edges=EDGES+[('node-chunk-2', ALICE, 'contains', {})]))
@@ -144,6 +150,11 @@ class CogneeSourceTests(unittest.TestCase):
         b = self.read(snapshot(DATASET_B), dataset='dataset-b', dataset_id=DATASET_B)
         self.assertFalse(a_ids & {r.native_id_sha256 for r in b.records})
         self.assertNotEqual(self.connector.summary['dataset_sha256'], a_dataset)
+        # Two verified datasets sharing one label (Cognee's default name) still never share a claim or a dataset hash.
+        same = self.read(snapshot(DATASET_B), dataset='dataset-a', dataset_id=DATASET_B)
+        self.assertEqual(self.connector.summary['cross_source_joins'], 'dataset_id_bound')
+        self.assertFalse(a_ids & {r.native_id_sha256 for r in same.records})
+        self.assertNotEqual(self.connector.summary['dataset_sha256'], a_dataset)
         for dataset_id in ('not-a-uuid', DATASET_A.upper(), 7):
             with self.subTest(dataset_id=dataset_id), self.assertRaisesRegex(ValueError, 'canonical UUID'):
                 self.read(snapshot(), dataset_id=dataset_id)
@@ -159,6 +170,17 @@ class CogneeSourceTests(unittest.TestCase):
                 self.assertIn('dataset_lineage_unverified', summary['warnings'])
                 self.assertEqual(summary['claims']['relation'], 5)
         with self.assertRaisesRegex(ValueError, 'undeclared dataset'): self.read(snapshot(), dataset_id=None)
+
+    def test_structural_names_count_only_between_their_pinned_types(self):
+        # A model-extracted relation that happens to reuse a structural name is still a model hypothesis.
+        misnamed = [(ALICE, ACME, 'contains', {}), (ACME, ALICE, 'is_a', {}), (ALICE, DOC, 'is_part_of', {}),
+                    (CHUNK, PERSON, 'contains', {}), (CHUNK, 'node-missing', 'is_part_of', {})]
+        result = self.read(snapshot(edges=EDGES+misnamed))
+        provenance = {r.native_id_sha256: r.provenance for r in result.records}
+        relations = self.claims('relation')
+        self.assertEqual([(c.detail, provenance[c.native_id_sha256]) for c in relations[len(EDGES):]],
+                         [('other', 'model_hypothesis')]*len(misnamed))
+        self.assertEqual([c.detail for c in relations[:len(EDGES)]], ['is_part_of', 'contains', 'contains', 'is_a', 'other'])
 
     def test_missing_refs_altered_edges_and_revisions_are_explicit(self):
         nodes = [n for n in NODES if n['id'] != DOC] + [dict(NODES[1], id='node-chunk-2', document_id='node-elsewhere')]

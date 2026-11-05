@@ -2604,10 +2604,11 @@ is refused.
 
 ### Dataset scope
 
-Every claim ID is namespaced by `instance` and the declared `dataset` label.
-Cognee derives entity IDs from names, so the same node ID in datasets A and B
-still yields two unrelated claims. `dataset_id` is a canonical lowercase UUID or
-`null`:
+Every claim ID and the `dataset_sha256` are namespaced by `instance`, the
+declared `dataset` label and the declared `dataset_id`. Cognee derives entity IDs
+from names, so the same node ID in datasets A and B still yields two unrelated
+claims, even when both datasets carry the same label, such as Cognee's default
+`main_dataset`. `dataset_id` is a canonical lowercase UUID or `null`:
 
 | Export states | Selection declares | Result |
 | --- | --- | --- |
@@ -2630,11 +2631,19 @@ one `cognee_export` record whose revision is the file's SHA-256.
 | `DocumentChunk` | `chunk` (`cognee_chunk`) | `document_segment` | `native_field` |
 | `Entity`, `EntityType` | `entity` (`cognee_entity`) | `model_extraction` | `model_hypothesis` |
 | any other node type | `graph_node` (`cognee_graph_node`) | `unmodelled_datapoint` | `unknown` |
-| `is_part_of`, `contains`, `is_a` edges | `relation` (`cognee_relation`) | `graph_edge` | `native_field` |
-| any other edge | `relation` (`cognee_relation`) | `graph_edge` | `model_hypothesis` |
+| `DocumentChunk` `is_part_of` a document, `DocumentChunk` `contains` an `Entity` or `Timestamp`, `Entity` `is_a` an `EntityType` | `relation` (`cognee_relation`) | `graph_edge` | `native_field` |
+| any other edge, including a structural name between other or unexported node types | `relation` (`cognee_relation`) | `graph_edge` | `model_hypothesis` |
+
+A structural edge is recognized by its name and both endpoint types, which come
+from the `DocumentChunk.is_part_of`, `DocumentChunk.contains` and `Entity.is_a`
+fields at the pin. An extracted relation between two entities that happens to be
+called `contains` is a model hypothesis.
 
 Edges and entities are derived evidence. Each claim keeps an `origin_status` and,
-when it can be traced, the hashed ID of its origin document:
+when it can be traced, the hashed ID of its origin document. That hash is the
+document claim's `native_id_sha256`, and a relation's `source_node_sha256` and
+`target_node_sha256` are the `native_id_sha256` of its endpoint node claims. A
+repeated node ID resolves to its first occurrence:
 
 | `origin_status` | Meaning |
 | --- | --- |
@@ -2651,8 +2660,8 @@ A repeated relation is never a further independent case. Every claim carries
 `false`, and `GraphClaim` refuses any other value. Node and relationship names,
 `text`, `description`, `raw_data_location`, `external_metadata`, `edge_text` and
 every other property are fingerprinted as `body_sha256` and never stored or
-printed. A relation's name is kept only when it is one of the three structural
-names, and is otherwise `other` plus a scoped `relationship_sha256`. A node's
+printed. A relation's name is kept only for a structural edge between its pinned types,
+and is otherwise `other` plus a scoped `relationship_sha256`. A node's
 `created_at` (epoch milliseconds) and `version` are kept. An edited property or
 a bumped `version` is a new revision of the same native claim. A changed
 endpoint is a different relation.
