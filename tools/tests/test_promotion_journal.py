@@ -492,3 +492,48 @@ class VendoredTreeOwnershipTests(unittest.TestCase):
         self.assertEqual((self.project/'app/CLAUDE.md').read_text(),'before')
         # A new promotion probes the ignore rules again, so the now-ignored file is no longer adoptable.
         with self.assertRaisesRegex(ValueError,'outside owned harness surface'): self.prepare('app/CLAUDE.md')[1]()
+
+
+class StructuredKeyEditTests(unittest.TestCase):
+    """key_edit rewrites only the hooks key; every other member keeps its bytes or the edit is refused."""
+    VALUE={'Stop':[{'hooks':[{'type':'command','command':'./.claude/hooks/x.sh','timeout':5}]}]}
+
+    def test_json_members_keep_their_bytes_in_every_position(self):
+        from agent_harness_lab.promotion.journal import key_edit
+        cases=(b'{"permissions":{"allow":["Bash(ls)"]},"hooks":{},"env":{"A":"1"}}',
+               b'{\n    "hooks": {"Stop": []},\n    "env": {"A": "1"}\n}\n',
+               b'{\n  "env": {"A": "1"},\n  "hooks": {}\n}\n',b'{"hooks": {}}',b'{}',b'  ',None)
+        for raw in cases:
+            with self.subTest(raw=raw):
+                updated=key_edit(raw,'json',self.VALUE)
+                self.assertEqual(json.loads(updated)['hooks'],self.VALUE)
+                for key in (b'"permissions":{"allow":["Bash(ls)"]}',b'"env": {"A": "1"}',b'"env":{"A":"1"}'):
+                    if raw and key in raw: self.assertIn(key,updated)
+                removed=key_edit(updated,'json',None)
+                self.assertNotIn('hooks',json.loads(removed))
+                if raw and b'"hooks"' not in raw and raw.strip(): self.assertEqual(removed,raw)
+
+    def test_toml_keeps_other_tables_comments_and_trust_state(self):
+        from agent_harness_lab.promotion.journal import key_edit
+        import tomllib
+        raw=(b'model = "m"\n[hooks]\n[[hooks.Stop]]\n# inner note\nmatcher = "x"\n\n# next table\n[mcp_servers.a]\n'
+             b'command = "srv"\n[hooks.state."k 1"]\ntrusted_hash = "h"\n')
+        updated=key_edit(raw,'toml',self.VALUE)
+        document=tomllib.loads(updated.decode())
+        self.assertEqual({k:v for k,v in document['hooks'].items() if k!='state'},self.VALUE)
+        for kept in (b'model = "m"\n',b'# next table\n[mcp_servers.a]\ncommand = "srv"\n',b'[hooks.state."k 1"]\ntrusted_hash = "h"\n'):
+            self.assertIn(kept,updated)
+        self.assertNotIn(b'inner note',updated)
+        self.assertEqual(tomllib.loads(key_edit(updated,'toml',None).decode())['hooks'],{'state':{'k 1':{'trusted_hash':'h'}}})
+
+    def test_ambiguous_or_unsupported_layouts_fail_closed(self):
+        from agent_harness_lab.promotion.journal import key_edit
+        refused=((b'{"hooks": {}, "hooks": {}}','json'),(b'[1]','json'),(b'{"a": 1} trailing','json'),
+                 (b'hooks.Stop = []\n','toml'),(b'hooks = {}\n','toml'),(b'"hooks".Stop = []\n','toml'),
+                 (b'[profiles]\nx = """\n[hooks]\n"""\n','toml'),(b'x = = 1\n','toml'))
+        for raw,form in refused:
+            with self.subTest(raw=raw):
+                with self.assertRaises(ValueError): key_edit(raw,form,self.VALUE)
+        with self.assertRaises(ValueError): key_edit(b'{}','json',[])
+        with self.assertRaises(ValueError): key_edit(b'','toml',{'Stop':[{'hooks':[{'timeout':1.5}]}]})
+        with self.assertRaises(ValueError): key_edit(b'{}','yaml',self.VALUE)

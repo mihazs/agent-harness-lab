@@ -163,7 +163,8 @@ that re-applies the promotion's content is probed and checked.
 
 `CLAUDE.local.md`, `settings*.json`, `.codex/config.toml`, hooks, workflows,
 Codex `.rules`, `.mcp.json`, memory and plugin checkouts
-(`origin="external_repository"`) stay non-adoptable. Default discovery is also
+(`origin="external_repository"`) stay non-adoptable. Only a hook unit that passes
+the hook contract below reaches the journal, and only when a caller passes it. Default discovery is also
 unchanged: a snapshot without configured `harness_paths` still stages only root
 instructions and root skill bundles, so a same-named file elsewhere never becomes
 writable through discovery. A nested file reaches the baseline only when
@@ -185,6 +186,46 @@ command, rule or skill free of hooks, permission grants and MCP servers. Staging
 needs certification exactly as before, and only `directly_authorized_adopt_api`
 applies a staged nested file, with the journal's stale-baseline, concurrent-edit
 and rollback checks.
+
+## Hook contract
+
+`hooks_contract.py` defines `hook_contract_v1`. A hook operation is one
+deployment unit: the `hooks` key delta of exactly one project configuration file
+(Claude `.claude/settings.json`, Codex `.codex/hooks.json` or the `[hooks]` table
+of `.codex/config.toml`) plus the checkout scripts its handlers reference.
+`hooks_contract.stage(project, config, hooks, scripts)` builds the journal
+snapshots without writing the project. `promotion.journal.key_edit` rewrites only
+the top-level `hooks` key: every other JSON member, TOML table and the comments
+that introduce the next table keep their bytes, and an ambiguous layout (a
+duplicate key, root `hooks.*` dotted keys, an inline `hooks` table) is refused.
+
+`hooks_contract.evaluate(project, before, after)` is static and executes nothing.
+A unit is `blocked` when the event is not in the pinned list, a regex matcher
+does not compile with Python `re`, a handler is not a `command` naming a regular,
+non-symlink checkout script, its timeout is not set within 1 to 600 seconds, a
+member is unreferenced, or the config bytes are not exactly `key_edit` of the
+before bytes. Python `re` stands in for the runtimes' JavaScript and Rust engines,
+so `matcher_check` stays `python_re_proxy_runtime_regex_unverified`. Script modes
+are recorded. A network or credential word in the command line is a heuristic
+finding that makes the unit `recommendation_only`. `settings.local.json`,
+managed layers and plugin `hooks/hooks.json` are never written. AHL never writes
+Codex trust state: `[hooks.state]` stays byte-identical, a value carrying it is
+refused, and a Codex unit reports `trust_review: requires_user_trust_review`. A
+hook in skill or agent frontmatter makes that file `contract_required` too;
+without a frontmatter key edit such a unit stays blocked.
+
+`Journal.prepare(..., hook_contract=verdict)` is the explicit authorization. The
+journal evaluates the unit again and admits its `contract_required` hook members
+only when both verdicts agree and the unit passed; admission declared in metadata
+is refused. The unit applies as one deployment. A crash between the script and
+config writes resumes with `Journal.execute` or returns every member to its before
+state with `Journal.recover`, and a foreign edit to any member is a conflict that
+writes nothing. Rollback admits exactly the members its reverted deployment
+admitted. A change plan resolves a `contract_required` operation only through a
+passed contract (`hook_contracts`), and `ahl improve . --repair-contracts` drops
+`hooks` from its deferred surfaces only when every hook unit in the run passed.
+No CLI path stages a hook unit yet. A passed contract is not behavioral evidence,
+which stays inconclusive until hook behavior is evaluated.
 
 The module also holds the frozen `CAPABILITIES` table. It has one row per surface,
 runtime and documented item, pinned to Claude Code 2.1.317 and Codex 0.166.0

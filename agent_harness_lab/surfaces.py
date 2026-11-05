@@ -367,8 +367,8 @@ def _reads_frontmatter(relative_path, facets):
 
 def adoption(relative_path, mode, raw, **context):
     """classify() for writing raw bytes with st_mode bits mode at the path. A file whose frontmatter can register
-    hooks, grant permissions or start processes needs the hook contract, so adoption never evades hook review;
-    raw None writes no content."""
+    hooks, grant permissions or start processes needs the hook contract (hooks_contract), the same classification as
+    a settings hook, so adoption never evades hook review; raw None writes no content."""
     verdict = classify(relative_path, None, mode, **context)
     if verdict.writability == 'adoptable' and raw is not None and _reads_frontmatter(relative_path, verdict.facets) \
             and embeds_hooks(relative_path, raw):
