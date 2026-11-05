@@ -37,6 +37,15 @@ class HarnessChangePlanTests(unittest.TestCase):
         detached=plan.document();detached['after'].clear()
         self.assertEqual(len(plan.after),2)
 
+    def test_command_and_agent_files_stay_unresolved_once_classified(self):
+        # A classifier row that names a kind for a non-adoptable path must not open the plan gate.
+        options=dict(references={name:None for name in REFERENCE_NAMES},diagnosis=[],falsifiers=[],dependencies=[],controls=[],deferred=[])
+        paths=('.claude/agents/reviewer.md','.claude/commands/frontend/component.md','.claude/commands/ship.md')
+        plan=HarnessChangePlan.create({'.claude/commands/ship.md':('a'*64,0o644)},
+            {path:('b'*64,0o644) for path in paths},**options)
+        self.assertEqual(plan.unresolved_operations,paths)
+        self.assertEqual(HarnessChangePlan.create({},{'AGENTS.md':('a'*64,0o644)},**options).unresolved_operations,())
+
     def test_publication_rejects_contract_and_identity_even_with_forged_provenance(self):
         from agent_harness_lab.evaluation.benchmark import public_export_allowed
         provenance=dict(source_kind='synthetic',approved_publication=True,source_ref='synthetic:test',derived_from_private=False)

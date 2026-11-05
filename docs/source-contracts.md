@@ -1608,6 +1608,100 @@ commands never reach a node. Still open: `[agents.<role>] config_file`
 references in `.codex/config.toml`, emission into the hook inventory once it
 lands (#276) and loading attribution (#282).
 
+### Commands, skill roots and Codex custom prompts
+
+`commands_inventory.capture(checkout, profile, codex_home=None, codex_config=None)`
+runs the harness inventory above and resolves names across its nodes. Each entry
+records a kind (`command`, `skill` or `prompt`), an id, a name SHA-256, a path, a
+root label, a load class, the content SHA-256, flags and labels. Its
+`observed_loading` and `effective` are always `unknown`. Load classes describe
+where the pinned documentation says a file would be discovered: `startup`,
+`on_demand`, `outside_scan` or `unknown`. They never say that a runtime loaded the
+file.
+
+- Claude Code commands are Markdown files below `.claude/commands`, classified by
+  the `claude-command` row in `surfaces.RULES`, unless a skill bundle encloses the
+  folder: a `<dir>` below `.claude/skills` or `.agents/skills`, or below a root
+  `skills/` tree the caller owns. A `.claude/commands` folder below an ordinary
+  `skills/` directory, such as `packages/skills`, is still a command folder. Their writability stays
+  `unsupported`, and a harness change plan lists a created, edited or removed
+  command file under `unresolved_operations`, as it did before the row existed.
+  A subdirectory becomes part of the id, so
+  `.claude/commands/frontend/component.md` is `/frontend:component`. A command
+  whose id matches a skill's id is flagged `shadowed_by_skill`, because the skill
+  wins. The registered `command` parser records only flat facts: whether
+  frontmatter is present, the description length, and whether `name` or `paths`
+  keys appear. Those keys are flagged `frontmatter_name_ignored` and
+  `frontmatter_paths_ignored`, since commands do not accept them.
+- Claude Code skills in `.claude/skills` in `task_cwd` or any of its ancestors are
+  `startup`, named by the frontmatter `name` or else the directory name. Nested
+  `<subdir>/.claude/skills` below `task_cwd` are `on_demand` with the same name.
+  Only when the skill's directory name clashes with another listed skill is the
+  id qualified, as the subdirectory path relative to `task_cwd` and then the
+  directory name: with `task_cwd` `apps`, `apps/web/.claude/skills/deploy` next to
+  a root `deploy` skill is `/web:deploy`. A skill tree neither above nor below
+  `task_cwd` loads `unknown` and has no id.
+- Codex skills are read from `.agents/skills` in every directory from `task_cwd`
+  up to the checkout root. These entries are `startup`; other roots in the
+  checkout are `outside_scan`. A skill without a frontmatter `name` is named
+  after its directory, as `codex-rs/skills/src/parser.rs` does at the pin, so
+  `.agents/skills/beta` is `$beta`. Skills with the same name are all listed and
+  flagged `duplicate_name`, never merged. A `SKILL.md` without a frontmatter
+  block is `parse_failed`, and one with an empty or missing `description` is
+  `description_missing`; Codex rejects both, so they have no id and join no
+  duplicate or name-selected config check. Frontmatter the shared reader cannot
+  model is `frontmatter_unsupported` (see below), which claims no rejection. Entries are also flagged
+  `name_too_long` (more than 64 characters) and `depth_exceeded`
+  (a `SKILL.md` more than 6 directories below the root), following
+  `openai/codex@d786ff91` `codex-rs/ext/skills/src/loader/mod.rs`.
+  `description_too_long` (more than 1024 characters) carries the
+  `description_limit_unverified` label, because that bound was not found at the
+  pin. `openai_yaml` records whether the bundle has `agents/openai.yaml`.
+- `[[skills.config]]` disables are read only from a caller-declared absolute
+  `codex_config` path (at most 1 MiB, parsed with `tomllib`). An entry needs
+  exactly one `path` or `name` selector and a boolean `enabled`; any other entry
+  is ignored. A skill matched only by `enabled = false` is flagged
+  `disabled_by_declared_config`, and a skill matched by both values is flagged
+  `config_conflict` instead of having a precedence applied to it.
+- Codex custom prompts are read only from a caller-declared `codex_home`, which
+  must not overlap the checkout. Only top-level `prompts/*.md` regular files are
+  read, using the inventory's no-follow reads and refusals. They continue the
+  inventory's own walk, so its entry and byte counts carry on and `MAX_FILES`
+  covers the inventory nodes plus every prompt. Each prompt
+  has the id `/prompts:<name>`, the load `unknown`, and the labels `deprecated`
+  and `loader_unverified_at_head`. Without a declared root, nothing outside the
+  checkout is opened, and a checkout `prompts/` folder is not a surface.
+
+`SKILL.md` frontmatter is read again without following links, within the same
+byte budget, and must match the inventory node's content hash. A file that changed after the inventory is
+refused. Nodes the inventory classes `private_excluded` (for example below
+`__pycache__`) were never read, so they are skipped rather than opened.
+
+Emitted ids are derived from paths only. A skill whose frontmatter `name` differs
+from its directory name keeps that name in the private shadowing, duplicate and
+`[[skills.config]]` checks, but its id is `null` and it is flagged `id_withheld`;
+`name_sha256` still identifies it. A Codex name longer than 64 characters has no
+id. An id is at most 4096 characters and holds no control characters.
+Frontmatter goes through the shared `sources.frontmatter` reader (at most 64 KiB
+and 512 lines), so trailing `# comments` are dropped from values. It is never
+loaded as YAML. Only failures every YAML parser shares give `parse_failed`: an
+unterminated block, a file that is not UTF-8, syntax the reader classes
+`bad_yaml` (a duplicate key, an unclosed quote, tab indentation), or a list or
+mapping where a `name` or `description` belongs. Valid YAML the reader does not
+model (flow mappings such as `metadata: {short-description: s}`, anchors, tags,
+an unquoted `argument-hint: [a] [b]`), frontmatter over 64 KiB or 512 lines, and
+a `---` fence line with trailing blanks are flagged `frontmatter_unsupported`
+instead, because a runtime's own parser may accept them. That flag is an unknown,
+not a rejection: a command keeps its path-derived id, while a skill's name and
+description were not read, so it has no id, is not flagged `description_missing`
+or `name_too_long`, and joins no shadowing, qualification, duplicate or
+name-selected config check. A path-selected `[[skills.config]]` entry still
+applies to it. The document has `publication_allowed: false`
+and `loading_evidence: false`. Its summary carries only counts and the
+fingerprint. Codex prompts and the skills config require the `codex` runtime.
+User and system skill roots, plugin skills and loading attribution remain open
+in later increments.
+
 ## ai-memory OKF project exports
 
 Select `local_file/ai-memory-okf/0.2` in the existing source declaration, with
