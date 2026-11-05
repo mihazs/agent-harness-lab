@@ -68,7 +68,11 @@ def single_run_decision(manifest, trials, *, inputs_unchanged, prerequisites, pr
     tasks = manifest['tasks']
     if len({task['id'] for task in tasks}) != len(tasks) or not legacy_coverage(manifest, trials):
         raise ValueError('single-run decision requires exact unique legacy trial coverage')
-    outcome = {(trial['version'], trial['task']): trial.get('status') if trial.get('status') in ('passed', 'failed') else None
+    declared = {task['id']: task.get('split') for task in tasks}
+    # Splits come from the manifest; a trial reporting another split is unknown evidence.
+    mismatched = sum(trial.get('split') != declared[trial['task']] for trial in trials)
+    outcome = {(trial['version'], trial['task']): trial.get('status')
+               if trial.get('status') in ('passed', 'failed') and trial.get('split') == declared[trial['task']] else None
                for trial in trials}
     by_split = {}
     for task in tasks:
@@ -80,14 +84,14 @@ def single_run_decision(manifest, trials, *, inputs_unchanged, prerequisites, pr
     pairs = {kind: sum(row[kind] for row in by_split.values()) for kind in PAIR_KINDS}
     roots = [task.get('root') for task in tasks]
     declared_roots = len(set(roots)) if roots and all(isinstance(root, str) and root for root in roots) else None
-    observed = [(trial['version'], trial.get('split'), outcome[trial['version'], trial['task']]) for trial in trials]
     def failed(version, split=None):
-        return any(v == version and (split is None or s == split) and value == 'failed' for v, s, value in observed)
+        return any(outcome[version, task['id']] == 'failed' and (split is None or task.get('split') == split) for task in tasks)
     if not inputs_unchanged: pattern = 'frozen_inputs_changed'
     elif pairs['unknown']: pattern = 'unknown_trial_outcomes'
     elif failed('candidate'): pattern = 'candidate_failures_observed'
     elif failed('baseline', 'regression'): pattern = 'baseline_control_failures_observed'
     elif failed('baseline', 'development'): pattern = 'candidate_passed_where_baseline_failed'
+    elif pairs['candidate_only_passed']: pattern = 'difference_outside_gate_splits'
     else: pattern = 'no_observed_difference'
     isolation = isolation_qualification(prerequisite_scope)
     unmet = {name: value.get('reason') for name, value in prerequisites['mandatory_certification'].items()
@@ -95,6 +99,7 @@ def single_run_decision(manifest, trials, *, inputs_unchanged, prerequisites, pr
     reasons = ['single_run_per_task_arm', 'no_frozen_experiment_plan', 'descriptive_smoke_cannot_certify',
                'independent_roots_undeclared' if declared_roots is None else 'independent_roots_unverified']
     if pairs['unknown']: reasons.append('unknown_trial_outcomes')
+    if mismatched: reasons.append('trial_split_mismatch')
     if not inputs_unchanged: reasons.append('frozen_inputs_changed')
     if isolation != 'qualified': reasons.append('isolation_qualification_unknown')
     if unmet: reasons.append('certification_prerequisites_unverified')
@@ -104,7 +109,7 @@ def single_run_decision(manifest, trials, *, inputs_unchanged, prerequisites, pr
         disposition='insufficient_evidence' if inputs_unchanged else 'invalid_evidence',
         next_evidence='requires_repeated_paired_experiment', observed_pattern=pattern, reasons=reasons,
         unmet_prerequisites=unmet,
-        observed=dict(tasks=len(tasks), trials=len(trials), repeats_per_task_arm=1,
+        observed=dict(tasks=len(tasks), trials=len(trials), repeats_per_task_arm=1, split_mismatched_trials=mismatched,
                       declared_roots=declared_roots, pairs=pairs, by_split=by_split),
         promotion=dict(status=promotion.status, reason=promotion.reason, automatic=promotion.automatic,
                        isolation=promotion.isolation),

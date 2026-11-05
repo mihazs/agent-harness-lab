@@ -12,7 +12,7 @@ if __package__:
     from . import test_workflow as workflow_fixture
 else:
     import test_workflow as workflow_fixture
-from agent_harness_lab.cli import evaluator, main
+from agent_harness_lab.cli import main
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
 from agent_harness_lab.promotion import policy
 
@@ -20,6 +20,13 @@ from agent_harness_lab.promotion import policy
 FAILING = workflow_fixture.FAKE.replace("'worse' if mode=='refine' and c['attempt']==0",
                                         "'worse' if mode=='worse' or mode=='refine' and c['attempt']==0")
 assert FAILING != workflow_fixture.FAKE
+# Trial workspaces routinely hold symlinks (virtualenvs, node_modules/.bin).
+SYMLINKING = FAILING.replace(" p('artifact').write_text('done' if good", " p('venv-link').symlink_to('phase'); p('artifact').write_text('done' if good")
+assert SYMLINKING != FAILING
+# Candidate fails attempt 0; the proposer then stops attempt 1 before any evaluation.
+LATE_STOP = FAILING.replace("if mode=='no_change':", "if mode=='no_change' or mode=='late_stop' and c['attempt']==1:").replace(
+    "'worse' if mode=='worse' or", "'worse' if mode in ('worse','late_stop') or")
+assert LATE_STOP.count('late_stop') == 2
 FORBIDDEN = {'recommended', 'supported', 'eligible', 'applied', 'certified', 'adopted', 'validated_improvement'}
 
 
@@ -60,7 +67,9 @@ class DefaultDecisionDisposition(unittest.TestCase):
         self.assertEqual((self.project / 'AGENTS.md').read_text(), self.original)
         binding = decision['bindings']
         evaluation = Path(binding['evaluation'])
-        self.assertEqual(binding['evaluation_sha256'], evaluator().digest(evaluation))
+        self.assertNotIn('evaluation_sha256', binding)
+        self.assertEqual(binding['results_sha256'], hashlib.sha256((evaluation / 'results.json').read_bytes()).hexdigest())
+        self.assertEqual(binding['describes_final_attempt'], binding['attempt'] == binding['final_attempt'])
         self.assertEqual(binding['manifest_sha256'],
                          hashlib.sha256((evaluation.parent / 'preparation' / f"evaluation-{binding['attempt']}"
                                          / 'manifest.json').read_bytes()).hexdigest())
@@ -108,6 +117,42 @@ class DefaultDecisionDisposition(unittest.TestCase):
         self.assertEqual(decision['observed']['pairs'], dict(candidate_only_passed=0, baseline_only_passed=0,
                                                              both_passed=1, both_failed=2, unknown=0))
 
+    def test_trial_workspace_symlinks_keep_base_outcomes(self):
+        self.agent.write_text(SYMLINKING)
+        self.original = 'good'
+        (self.project / 'AGENTS.md').write_text('good')
+        code, result = self.run_cli()
+        self.assertEqual((code, result['status'], result.get('reason')), (0, 'no_change', 'evaluation_no_improvement'))
+        self.assertEqual(result['decision']['observed_pattern'], 'no_observed_difference')
+        self.assertTrue(any(path.is_symlink() for path in (self.root / 'run' / 'evaluation-0').rglob('*')))
+
+    def test_failed_candidate_with_trial_symlinks_keeps_base_outcome(self):
+        self.agent.write_text(SYMLINKING.replace("mode=(project/'mode').read_text() if (project/'mode').exists() else 'ok'", "mode='worse'"))
+        self.original = 'bad'
+        code, result = self.run_cli()
+        self.assertEqual((code, result['status']), (1, 'evaluation_failed'))
+        self.assertEqual(result['decision']['bindings']['attempt'], 1)
+
+    def test_block_marks_when_a_later_attempt_stopped_before_evaluation(self):
+        self.agent.write_text(LATE_STOP)
+        self.original = 'bad'
+        (self.project / 'mode').write_text('late_stop')
+        code, result = self.run_cli()
+        self.assertEqual((code, result['status'], result['reason']), (0, 'no_change', 'proposer_no_change'))
+        decision = self.assert_no_authority(result)
+        self.assertEqual((decision['bindings']['attempt'], decision['bindings']['final_attempt']), (0, 1))
+        self.assertIs(decision['bindings']['describes_final_attempt'], False)
+        self.assertEqual(decision['observed_pattern'], 'candidate_failures_observed')
+
+    def test_decision_failure_never_changes_the_run_result(self):
+        self.original = 'good'
+        (self.project / 'AGENTS.md').write_text('good')
+        with patch('agent_harness_lab.promotion.policy.single_run_decision', side_effect=RuntimeError('synthetic')):
+            code, result = self.run_cli()
+        self.assertEqual((code, result['status'], result['reason']), (0, 'no_change', 'evaluation_no_improvement'))
+        self.assertEqual((result['decision']['status'], result['decision']['reason']), ('unavailable', 'RuntimeError'))
+        self.assertFalse(public_export_allowed([result['decision']]))
+
     def test_decision_block_is_never_publicly_exportable(self):
         self.original = 'bad'
         _, result = self.run_cli()
@@ -141,6 +186,24 @@ class SingleRunDecisionUnit(unittest.TestCase):
         self.assertIn('independent_roots_unverified', decision['reasons'])
         self.assertEqual((decision['disposition'], decision['promotion']['status']), ('invalid_evidence', 'blocked'))
         self.assertEqual(decision['observed_pattern'], 'frozen_inputs_changed')
+
+    def test_difference_outside_gate_splits_is_not_reported_as_no_difference(self):
+        manifest = dict(tasks=[*self.manifest['tasks'], dict(id='c', split='heldout')])
+        trials = self.trials() + [dict(task='c', version='baseline', split='heldout', status='failed'),
+                                  dict(task='c', version='candidate', split='heldout', status='passed')]
+        decision = policy.single_run_decision(manifest, trials, inputs_unchanged=True,
+                                              prerequisites=policy.implementation_prerequisites())
+        self.assertEqual(decision['observed']['by_split']['heldout']['candidate_only_passed'], 1)
+        self.assertEqual(decision['observed_pattern'], 'difference_outside_gate_splits')
+
+    def test_trial_split_disagreeing_with_manifest_is_unknown(self):
+        trials = self.trials(baseline_a='failed')
+        trials[0]['split'] = 'regression'  # baseline 'a' is declared development
+        decision = self.decide(trials)
+        self.assertEqual(decision['observed']['split_mismatched_trials'], 1)
+        self.assertEqual(decision['observed']['by_split']['development']['unknown'], 1)
+        self.assertEqual(decision['observed_pattern'], 'unknown_trial_outcomes')
+        self.assertIn('trial_split_mismatch', decision['reasons'])
 
     def test_incomplete_or_duplicate_coverage_is_rejected(self):
         trials = self.trials()

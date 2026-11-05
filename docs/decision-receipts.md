@@ -63,9 +63,10 @@ Cohort-enabled promotion remains blocked until integration.
 
 ## Default improve single-run dispositions
 
-Plain `ahl improve` without a fixed repeated-bank request runs each task once per
-arm. When that evaluation has exact, unique baseline/candidate coverage, the
-controller adds a `decision` block with profile
+Every `ahl improve` evaluation that does not use a fixed repeated-bank request
+runs each task once per arm. This includes the default path and a configured
+pinned project bank. When such an evaluation has exact, unique baseline/candidate
+coverage, the controller adds a `decision` block with profile
 `ahl-single-run-decision-disposition-v1` to `workflow.json`. It explains why that
 evidence cannot support a recommendation. It is not a sealed controller receipt
 and does not replace the `recommendation` field, status or exit code, which keep
@@ -74,24 +75,30 @@ their previous values.
 - `disposition` is `insufficient_evidence`, or `invalid_evidence` when frozen
   inputs changed. `next_evidence` is `requires_repeated_paired_experiment`.
 - `observed_pattern` labels what one run showed, such as
-  `candidate_passed_where_baseline_failed`, `no_observed_difference`,
-  `candidate_failures_observed` or `unknown_trial_outcomes`. Pair counts per split
-  separate `candidate_only_passed`, `baseline_only_passed`, `both_passed`,
-  `both_failed` and `unknown`. Statuses other than pass/fail stay unknown.
+  `candidate_passed_where_baseline_failed`, `difference_outside_gate_splits`
+  (only held-out or undeclared splits differ), `no_observed_difference`,
+  `candidate_failures_observed` or `unknown_trial_outcomes`. Pair counts per
+  manifest split separate `candidate_only_passed`, `baseline_only_passed`,
+  `both_passed`, `both_failed` and `unknown`. Statuses other than pass/fail, and
+  trials whose reported split disagrees with the manifest, stay unknown.
 - `reasons` lists the unmet prerequisites: one repeat per task and arm, no frozen
   experiment plan, a descriptive profile, undeclared or unverified independent
   roots, isolation qualification from the live prerequisite scope that is not
   `qualified`, and each unverified mandatory certification prerequisite.
 - `promotion` mirrors the fail-closed policy outcome (`inconclusive` with
   `descriptive_smoke_cannot_certify`, or `blocked`). `bindings` carry the
-  attempt, evaluation directory and manifest hashes, and the baseline and candidate
-  hashes of the latest covered attempt.
+  attempt, evaluation directory, manifest and `results.json` hashes, and the
+  baseline and candidate hashes of the latest covered attempt. `final_attempt`
+  and `describes_final_attempt` state whether a later attempt began after it.
+  An unreadable, irregular or oversized `results.json` binds as `unknown`; the
+  trial workspaces are not hashed.
 
 Every authority field stays false. A run without an exactly covered evaluation
-carries no block; otherwise it describes the latest covered attempt, even when a
-later attempt stopped early. The opt-in
-[repeated-bank workflow](repeated-improvement.md) keeps its own verified receipt
-view under the same key. Public benchmark export rejects the profile.
+carries no block. If the explanation cannot be built, the block is
+`{"status": "unavailable"}` with the error type, and the run result is unchanged.
+The opt-in [repeated-bank workflow](repeated-improvement.md) keeps its own
+verified receipt view under the same key. Public benchmark export rejects the
+profile.
 
 Use `task test:evaluation:receipts` for the focused native receipt and CLI cases,
 and `task test:evaluation:preservation` for qualification and analysis contracts.
