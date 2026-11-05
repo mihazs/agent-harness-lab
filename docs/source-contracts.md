@@ -1860,10 +1860,13 @@ and `draft` (or `unknown`). These SHAs record what the server reported; they
 create no ancestry (warning `merge_and_squash_shas_not_ancestry`). Issues keep
 state and `confidential`. Notes with `system: true` become `gitlab_system_note`
 records linked by `system_event_on`; user notes are `gitlab_note` linked by
-`conversation_on`, with `internal`, `resolvable` and `resolved` flags. The ordinary
+`conversation_on`, with `internal` (or an older server's `confidential`), `resolvable` and `resolved` flags. The ordinary
 Notes API is not guaranteed to return every system event, so the summary warns
 `system_note_coverage_unverified`. Approvals keep `approved`, the required and
-remaining counts and hashed approvers. A merged or closed merge request, a
+remaining counts and hashed approvers, plus `approvers_unidentified` for approvers
+without a user ID. Global IDs are hashed with their resource type (issue, merge
+request, milestone), because GitLab numbers each type separately; a boolean is
+never accepted where a native integer is expected. A merged or closed merge request, a
 closed issue, a resolved note or an approval is a native claim only:
 `task_outcomes_verified` is false and records keep causal status and independence
 `unknown`.

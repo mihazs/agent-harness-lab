@@ -298,6 +298,25 @@ class GitLabSourceTests(GitLabFixture, unittest.TestCase):
         self.approvals['id'] = 901
         with self.assertRaises(TransportError): self.read()
 
+    def test_global_ids_are_typed_by_resource_and_booleans_are_not_integers(self):
+        # Issues, merge requests and milestones have separate global ID sequences; equal numbers are different resources.
+        self.issue['milestone'] = dict(id=self.issue['id'])
+        client, _ = self.read()
+        issue = self.nodes(client, 'gitlab_issue')[0]
+        self.assertNotEqual(issue['id_sha256'], issue['milestone_sha256'])
+        self.assertNotEqual(client._native('Issue', 5), client._native('MergeRequest', 5))
+        from agent_harness_lab.sources.gitlab import absent_or
+        self.assertEqual((absent_or(True, 1), absent_or(None, 1), absent_or(1, 1)), (False, True, True))
+        for change in (dict(noteable_iid=True), dict(project_id=True)):
+            with self.subTest(change=change), patch.dict(self.note, change), self.assertRaises(TransportError): self.read()
+        self.approvals.update(approved_by=[dict(user=None), dict(user=dict(id=55))])
+        client, _ = self.read()
+        approvals = self.nodes(client, 'gitlab_approvals')[0]
+        self.assertEqual((len(approvals['approvers_sha256']), approvals['approvers_unidentified']), (1, 1))
+        self.note.pop('internal', None); self.note['confidential'] = True
+        client, _ = self.read()
+        self.assertTrue(any(n.get('internal') is True for n in self.nodes(client, 'gitlab_note')))
+
     def test_same_iids_on_other_projects_and_hosts_stay_distinct(self):
         self.build(43, 'synthetic-group/other-project')
         self.build(42, PATH, prefix='/gitlab')

@@ -95,6 +95,12 @@ class GitLabSelection(Contract):
     def sha256(self): return digest(self.to_dict())
 
 
+
+def absent_or(value, expected):
+    """An optional native integer must be missing or exactly the expected one; a bool is never an integer."""
+    return value is None or type(value) is int and value == expected
+
+
 class GitLabAPI:
     """GET-only reader for selected issues and merge requests of one explicitly named project."""
 
@@ -141,9 +147,9 @@ class GitLabAPI:
         if not isinstance(value, dict): raise ValueError('invalid GitLab user')
         return digest(('gitlab.user', self.selection.instance_sha256, integer(value.get('id'), minimum=1)))
 
-    def _native(self, value):
-        """A global (instance-wide) ID, hashed apart from any per-project IID."""
-        return digest(('gitlab.global_id', self.selection.instance_sha256, integer(value, minimum=1)))
+    def _native(self, kind, value):
+        """A global ID, typed by resource: issues, merge requests, milestones and notes use separate sequences."""
+        return digest(('gitlab.global_id', self.selection.instance_sha256, kind, integer(value, minimum=1)))
 
     def _project(self, value):
         selection = self.selection
@@ -162,7 +168,7 @@ class GitLabAPI:
             default_branch_sha256=text_hash(value.get('default_branch')),
             forked_from_sha256=selection.project_identity(forked.get('id')) if forked else None)
 
-    def _common(self, value, iid, states):
+    def _common(self, value, iid, states, noteable):
         """Fields shared by issues and merge requests; IID and global ID stay separate identities."""
         if (not isinstance(value, dict) or integer(value.get('iid'), minimum=1) != iid
                 or integer(value.get('project_id'), minimum=1) != self.project_id or value.get('state') not in states):
@@ -170,21 +176,21 @@ class GitLabAPI:
         labels, milestone = value.get('labels') or [], value.get('milestone')
         if not isinstance(labels, list) or milestone is not None and not isinstance(milestone, dict):
             raise ValueError('invalid GitLab relations')
-        return dict(id_sha256=self._native(value.get('id')), iid_sha256=digest(('gitlab.iid', iid)), state=value['state'],
+        return dict(id_sha256=self._native(noteable, value.get('id')), iid_sha256=digest(('gitlab.iid', iid)), state=value['state'],
             title_sha256=text_hash(value.get('title')), body_sha256=text_hash(value.get('description')),
             user_notes_count=integer(value.get('user_notes_count')), created_at=moment(value.get('created_at')),
             updated_at=moment(value.get('updated_at')), closed_at=moment(value.get('closed_at')),
             actor_sha256=self._actor(value.get('author')),
             labels_sha256=sorted(text_hash(label, required=True) for label in labels),
-            milestone_sha256=self._native(milestone.get('id')) if milestone else None)
+            milestone_sha256=self._native('Milestone', milestone.get('id')) if milestone else None)
 
     def _issue(self, value, iid):
-        node = self._common(value, iid, ISSUE_STATES)
+        node = self._common(value, iid, ISSUE_STATES, 'Issue')
         confidential = value.get('confidential')
         return dict(node, confidential=confidential if type(confidential) is bool else 'unknown')
 
     def _merge_request(self, value, iid):
-        node, selection = self._common(value, iid, MERGE_STATES), self.selection
+        node, selection = self._common(value, iid, MERGE_STATES, 'MergeRequest'), self.selection
         source, target = integer(value.get('source_project_id'), minimum=1), integer(value.get('target_project_id'), minimum=1)
         if target != self.project_id: raise ValueError('GitLab merge request targets another project')
         draft = value.get('draft', value.get('work_in_progress'))
@@ -205,27 +211,29 @@ class GitLabAPI:
     def _note(self, value, noteable, iid, owner, parent):
         """A note must name its parent's type and global ID; system notes are server events, not comments."""
         if (type(value.get('system')) is not bool or value.get('noteable_type') != noteable
-                or self._native(value.get('noteable_id')) != owner['id_sha256']
-                or value.get('noteable_iid') not in (None, iid)
-                or value.get('project_id') not in (None, self.project_id)):
+                or self._native(noteable, value.get('noteable_id')) != owner['id_sha256']
+                or not absent_or(value.get('noteable_iid'), iid) or not absent_or(value.get('project_id'), self.project_id)):
             raise ValueError('GitLab note belongs to another project or parent')
         flags = {name: value[name] if type(value.get(name)) is bool else 'unknown' for name in ('internal', 'resolvable', 'resolved')}
+        if flags['internal'] == 'unknown' and type(value.get('confidential')) is bool:
+            flags['internal'] = value['confidential']  # older servers name internal notes `confidential`
         return dict(parent_sha256=parent, system=value['system'], **flags, body_sha256=text_hash(value.get('body')),
             created_at=moment(value.get('created_at')), updated_at=moment(value.get('updated_at')),
             actor_sha256=self._actor(value.get('author')))
 
     def _approvals(self, value, iid, owner, parent):
-        if (not isinstance(value, dict) or value.get('iid') not in (None, iid)
-                or value.get('id') is not None and self._native(value['id']) != owner['id_sha256']
-                or value.get('project_id') not in (None, self.project_id)):
+        if (not isinstance(value, dict) or not absent_or(value.get('iid'), iid)
+                or value.get('id') is not None and self._native('MergeRequest', value['id']) != owner['id_sha256']
+                or not absent_or(value.get('project_id'), self.project_id)):
             raise ValueError('GitLab approvals belong to another merge request')
         approvers = value.get('approved_by') or []
         if not isinstance(approvers, list) or len(approvers) > MAX_UNPAGED_ROWS or any(not isinstance(a, dict) for a in approvers):
             raise ValueError('invalid GitLab approvers')
         approved = value.get('approved')
         counts = {name: integer(value[name]) if value.get(name) is not None else None for name in ('approvals_required', 'approvals_left')}
+        actors = [self._actor(a.get('user')) for a in approvers]
         return dict(parent_sha256=parent, approved=approved if type(approved) is bool else 'unknown', **counts,
-            approvers_sha256=sorted(self._actor(a.get('user')) for a in approvers))
+            approvers_sha256=sorted(a for a in actors if a is not None), approvers_unidentified=actors.count(None))
 
     def _capture(self, source):
         selection = self.selection
