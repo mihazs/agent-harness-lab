@@ -1025,6 +1025,74 @@ Content, import, cwd and profile changes invalidate it. Native
 `InstructionsLoaded` evidence, managed and global capture, rules and on-demand
 modeling, and execution binding remain open in #46.
 
+### Read-only harness surface inventory
+
+`ahl sources inventory CHECKOUT --runtime RUNTIME --version VERSION` lists the
+harness surface files in one checkout. An optional `inventory_profile` in the Git
+selection captures the same inventory during a Git read:
+
+```json
+{"schema_version": 1, "runtime": "codex", "version": "0.166.0", "task_cwd": "src/task"}
+```
+
+The runtime, version, `task_cwd` and optional `project_trust`
+(`declared_trusted` or `declared_untrusted`) are caller declarations. Trust
+defaults to `unknown` and is never read from user configuration, so an
+unreadable or unread config never makes a project trusted or untrusted. A
+version other than the `surfaces.PINS` pin returns an `unsupported` inventory
+with no nodes. `task_cwd` must be a directory reached by the walk.
+
+The walk opens the checkout with `open_directory_nofollow`, then opens each
+directory and file by name beneath an already opened directory with
+`O_NOFOLLOW`. These entries are refused and never followed or read: symbolic
+links (`symlink`), FIFOs, sockets and devices (`special_file`), the checkout's
+`.git` (`vcs_metadata`), any directory that contains a `.git` entry
+(`nested_repository`) and multiply linked surface files (`hardlink`). Each
+regular file is classified by `surfaces.classify`; `unsupported` files are not
+opened. Nothing is executed, written or imported from the checkout.
+
+Each node records its relative path, `path_sha256`, kind, scope directory,
+content SHA-256, permission bits, `declared_state`, `parse_status`, trust and a
+capability reference such as `instructions:codex`, which names the matching
+`surfaces.CAPABILITIES` rows. `path_sha256` is the `HarnessFile` path identity,
+and `harness_sha256` names the `HarnessSnapshot` captured in the same Git read.
+The inventory therefore extends that snapshot without changing its fingerprint
+or the controller binding. Files that classify as `private_excluded` are
+`present_content_not_read`: their bytes are never read or hashed.
+`observed_loading` and `effective` are always `unknown`. Construction rejects
+any other value, because a listed file is not evidence that a runtime loaded it.
+
+Parsers are registered in `PARSERS`, a tuple sorted by surface kind with one
+self-contained `(kind, capability surface, 'module:function')` line per kind.
+Every parser in this release is a stub that returns `not_parsed`. A kind with
+no entry is `no_parser`, and a parser that raises `ValueError` gives
+`parse_failed`. Parser facts are flat scalar mappings, so raw text never
+reaches a node.
+
+Bounds: 1000 nodes, 10 MiB of read candidate bytes across all roots, directory
+depth 32 and 20000 examined directory entries. Entries are counted as each is
+read, so one huge directory is blocked before it is held in memory. Exceeding
+any bound returns `blocked` with its reason and no nodes or refusals, never a
+truncated result.
+Roots outside the checkout, such as `~/.claude`, `$CODEX_HOME`, plugin caches
+and managed paths, are never read implicitly. The caller can declare one with
+`--external-root LABEL=PATH`. It must be an absolute path that does not overlap
+the checkout, its nodes are labelled `caller_declared_external` with trust
+`unknown`, and it is only read.
+
+The CLI writes the full inventory document to a private `0700` directory
+under `$XDG_STATE_HOME/agent-harness-lab/inventories/`, in a `0600` file
+marked `publication_allowed: false` and `loading_evidence: false`. It prints
+path-free metadata only. Git summaries carry only the inventory fingerprint,
+status and counts. Exit 0 means declared, 2 means invalid input, and 3 means
+blocked or unsupported. Synthetic tests check the walk, the refusals, the
+bounds, unchanged trees and the absence of processes and network use. An
+open() audit compares inodes, because opens beneath a directory descriptor
+carry no absolute path: every opened or listed descriptor must be the
+checkout, an entry beneath it or one of its ancestors. Surface parsers,
+nested-instruction discovery and loading attribution remain open in #274 to
+#282.
+
 ## ai-memory OKF project exports
 
 Select `local_file/ai-memory-okf/0.2` in the existing source declaration, with

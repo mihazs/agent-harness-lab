@@ -32,6 +32,9 @@ def main(argv):
     if argv and argv[0] == 'lineage':
         from .lineage import main as lineage_main
         return lineage_main(argv[1:])
+    if argv and argv[0] == 'inventory':
+        from .harness_inventory import main as inventory_main
+        return inventory_main(argv[1:])
     parser = argparse.ArgumentParser(prog='ahl sources',
         description='Inspect explicitly configured sources and maintain a private metadata cache; no source is enabled by default.',
         epilog='Without --manifest, only the default probe is valid and reports zero enabled sources. '
@@ -47,9 +50,10 @@ def main(argv):
         'API configurations select github, gitea or gitlab (api/gitlab/v4: named issue and merge request IIDs of one '
         'project on an explicit HTTPS instance, GET only, no enumeration). '
         'Example: ahl sources preview --manifest export.json --project-sha256 PROJECT_HASH --scope-sha256 SCOPE_HASH. '
-        'For reviewed cache relationships, use ahl sources lineage --help.')
-    parser.add_argument('operation', nargs='?', default='probe', choices=('probe', 'preview', 'import', 'status', 'recheck', 'lineage'),
-        help='Requested source operation (default: %(default)s); lineage has its own subcommands and help')
+        'For reviewed cache relationships, use ahl sources lineage --help; for a read-only harness surface '
+        'inventory of one checkout, use ahl sources inventory --help.')
+    parser.add_argument('operation', nargs='?', default='probe', choices=('probe', 'preview', 'import', 'status', 'recheck', 'lineage', 'inventory'),
+        help='Requested source operation (default: %(default)s); lineage and inventory have their own options and help')
     parser.add_argument('--manifest',help='Schema-1 JSON: source/data local declaration, or source/endpoint/selection/limits GitHub, Gitea or GitLab configuration; no automatic discovery')
     parser.add_argument('--project-sha256',help='Expected 64-hex project identity matching the manifest; required with --manifest')
     parser.add_argument('--scope-sha256',help='Expected 64-hex selection/scope identity matching the manifest; required with --manifest')

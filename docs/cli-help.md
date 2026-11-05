@@ -8,6 +8,7 @@ ahl --help
 ahl analyze --help
 ahl sources --help
 ahl sources lineage --help
+ahl sources inventory --help
 ahl bank-review --help
 ahl bank-review qualify --help
 ```

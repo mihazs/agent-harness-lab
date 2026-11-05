@@ -9,6 +9,7 @@ import stat
 from agent_harness_lab.evaluation.integrity import relative
 from .git_view import Folder, GitView
 from .instructions import capture as capture_instructions, validate as validate_instruction_profile
+from . import harness_inventory
 from .schema import EvidenceRecord, digest, fingerprint
 from .snapshot import LocalExport, Snapshot
 from .git_evidence import capture as capture_evidence
@@ -75,7 +76,7 @@ class GitExport(LocalExport):
             raise ValueError('unsupported Git source version')
         descriptor, selection = self.selection(source)
         fields = {'schema_version', 'checkout', 'git_dir', 'common_dir', 'harness_paths'}
-        if (not isinstance(selection, dict) or set(selection)-{'max_commits','instruction_profile'} != fields
+        if (not isinstance(selection, dict) or set(selection)-{'max_commits','instruction_profile','inventory_profile'} != fields
                 or type(selection['schema_version']) is not int or selection['schema_version'] != 1):
             raise ValueError('invalid Git selection descriptor')
         if digest(selection) != source.scope_sha256: raise ValueError('Git selection scope mismatch')
@@ -91,6 +92,8 @@ class GitExport(LocalExport):
         if count is not None and (type(count) is not int or count <= 0): raise ValueError('invalid Git history bound')
         profile = selection.get('instruction_profile')
         if 'instruction_profile' in selection: validate_instruction_profile(profile)
+        inventory_profile = selection.get('inventory_profile')
+        if 'inventory_profile' in selection: harness_inventory.validate(inventory_profile)
         deadline = None
         self.warnings, self.trees, self.algorithm = set(), {}, 'sha1'
         self.harness_capture = None
@@ -172,6 +175,11 @@ class GitExport(LocalExport):
                 self.harness_file(head, checkout, str(Path(profile['task_cwd'])/'AGENTS.md'))
                 instructions = capture_instructions(profile, folder, checkout, paths, git_harness_sha256=harness.sha256)
                 rows.append(record('instruction_inventory', 'project', instructions.sha256, instructions.sha256))
+            # The inventory extends this snapshot by identity: node path_sha256 values are HarnessFile identities.
+            self.inventory = None if inventory_profile is None else harness_inventory.capture(
+                self.manifest.parent/checkout, inventory_profile, harness_sha256=harness.sha256)
+            if self.inventory is not None:
+                rows.append(record('harness_inventory', 'project', self.inventory.sha256, self.inventory.sha256))
             folder.verify()
             if Folder.stamp(view.binary.stat()) != view.binary_stamp: raise ValueError('trusted Git binary changed')
             self.verify_selection(source, descriptor, selection)
@@ -188,6 +196,7 @@ class GitExport(LocalExport):
                 network_used=False, capture_completeness='partial', source_identity='caller_declared')
             if instructions is not None:
                 self.summary.update(instruction_inventory=asdict(instructions), instruction_inventory_sha256=instructions.sha256)
+            if self.inventory is not None: self.summary['harness_inventory'] = self.inventory.summary()
             if source.version == 'v2':
                 return capture_evidence(source, rows, self.summary, record, count, folder.bytes)
             return Snapshot(digest(self.summary), tuple(rows))
