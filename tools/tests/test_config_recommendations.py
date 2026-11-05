@@ -10,7 +10,10 @@ from unittest.mock import patch
 from agent_harness_lab import config_recommendations as advice
 from agent_harness_lab.sources import config_inventory as config, harness_inventory as inventory
 from agent_harness_lab.sources.schema import digest
-from tools.tests import harness_surface_fixture as fixture
+if __package__:
+    from . import harness_surface_fixture as fixture
+else:
+    import harness_surface_fixture as fixture
 
 CLAUDE = dict(schema_version=1, runtime='claude-code', version='2.1.317', task_cwd='src/task')
 CODEX = dict(CLAUDE, runtime='codex', version='0.166.0')
