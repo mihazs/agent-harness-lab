@@ -35,7 +35,11 @@ GOLDEN = (
     ('.claude/skills/demo/.git/config', P, P, 'skill', (S,), (S, H)),
     ('plugin/skills/demo/SKILL.md', U, U, 'skill', (S,), (S, H)),
     ('my-skills/demo/SKILL.md', U, U, 'unsupported', (), (H,)),
-    ('.claude/rules/style.md', U, U, 'unsupported', (), (H,)),
+    ('.claude/rules/style.md', U, U, 'path_rule', (), (H,)),
+    ('.claude/rules/skills/style.md', U, U, 'path_rule', (S,), (S, H)),  # path_rule outranks a skills/ segment
+    ('plugin/skills/demo/.claude/rules/style.md', U, U, 'path_rule', (S,), (S, H)),
+    ('.codex/rules/default.rules', 'recommendation_only', 'recommendation_only', 'exec_policy', (), (H,)),
+    ('rules/x.rules', U, U, 'unsupported', (), (H,)),  # a checkout's own rules/ is not Codex policy
     ('.claude/hooks/pre.sh', C, C, 'hook', (H,), (H,)),
     ('hooks/hooks.json', C, C, 'hook', (H,), (H,)),
     ('src/hook', C, C, 'hook', (H,), (H,)),
@@ -158,7 +162,7 @@ class SurfaceClassifierTests(unittest.TestCase):
 
     def test_an_added_table_row_reaches_every_caller(self):
         from agent_harness_lab import surfaces
-        row = surfaces.Rule('synthetic-rules', 'rule', 40, A, lambda path, parts, ctx: parts[:2] == ('.claude', 'rules'))
+        row = surfaces.Rule('synthetic-rules', 'rule', 1, A, lambda path, parts, ctx: parts[:2] == ('.claude', 'rules'))
         with patch.object(surfaces, 'RULES', (*surfaces.RULES, row)):
             self.assertEqual(surfaces.classify('.claude/rules/style.md', None, None).kind, 'rule')
             self.assertTrue(CallerCharacterization.candidate(self.caller(), '.claude/rules/style.md', False))
@@ -182,6 +186,7 @@ class CapabilityTableTests(unittest.TestCase):
         ('instructions', 'claude-code'), ('hooks', 'codex'), ('workflows', 'claude-code'), ('agents', 'codex'),
         ('commands_skills', 'codex'), ('plugins', 'claude-code'), ('plugins', 'codex'), ('memory', 'codex'),
         ('settings', 'claude-code'),
+        ('path_rules', 'claude-code'),  # ancestor launch rules; glob dotfile, case, bracket and negation semantics
     }
 
     def test_rows_are_frozen_pinned_and_cite_public_docs(self):
@@ -199,11 +204,11 @@ class CapabilityTableTests(unittest.TestCase):
         from agent_harness_lab.surfaces import CAPABILITIES
         unverified = [r for r in CAPABILITIES if r.status == 'unverified']
         self.assertEqual({(r.surface, r.runtime) for r in unverified}, self.UNVERIFIED)
-        self.assertEqual(len(unverified), 11)
+        self.assertEqual(len(unverified), 13)
         items = ' '.join(r.item for r in unverified)
         for phrase in ('size limit', 'version gates', 'static validator', 'load timing', 'custom prompts',
                        'cache subpath', 'plugin agents', 'validate command', 'memories layout', 'managed settings',
-                       'claudeMdExcludes'):
+                       'claudeMdExcludes', 'dotfile', 'between the root and the cwd'):
             self.assertIn(phrase, items)
 
     def test_a_row_without_doc_url_pin_or_status_is_rejected(self):

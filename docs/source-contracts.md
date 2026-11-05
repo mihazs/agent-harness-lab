@@ -1007,8 +1007,13 @@ What the receipt declares, never verifies:
   managed configuration. Without a launch `CLAUDE.md` they are `unknown`. An
   `AGENTS.md` imported by a declared file becomes `declared_applicable` through
   that import.
-- **Explicitly unknown.** Selected `.claude/rules/` files (`rules_not_modeled`)
-  and launch filenames below `task_cwd` (`on_demand_subdirectory`) stay unknown.
+- **Explicitly unknown.** Selected `.claude/rules/` files stay `unknown`. Their
+  reason names the rule's frontmatter (`rule_without_paths`,
+  `rule_conditional_paths`, `rule_frontmatter_unsupported`, `rule_blocked`,
+  `rule_not_utf8`, or `rules_tree_not_markdown`); the
+  [path-scoped rules receipt](#declared-claude-code-path-scoped-rules-and-codex-exec-policy)
+  classifies them. Launch filenames below `task_cwd` (`on_demand_subdirectory`)
+  also stay unknown.
   Files below `task_cwd` are discovered by the whole-tree walk described below.
   Managed and user files, approval decisions, the session's on-demand
   truncation point and path-scoped rule matching are not captured. A selected
@@ -1228,6 +1233,103 @@ open() audit compares inodes, because opens beneath a directory descriptor
 carry no absolute path: every opened or listed descriptor must be the
 checkout, an entry beneath it or one of its ancestors. Other surface parsers
 and loading attribution remain open in #275 to #282.
+
+### Declared Claude Code path-scoped rules and Codex exec policy
+
+`surfaces.classify` names two rule kinds that never mix. For `claude-code`,
+every `.md` file below a `.claude/rules/` directory, including a nested one such
+as `pkg/.claude/rules/`, is kind `path_rule`. The row outranks every skill row, so
+`.claude/rules/skills/x.md` or a rules tree below a `skills/` directory is still a
+rule and carries the `skill` facet. Inside an adoptable skill bundle the file
+keeps the bundle's writability. For `codex`, `.codex/rules/*.rules` is kind
+`exec_policy`, and so is `rules/*.rules` at the top of a caller-declared
+external root such as `$CODEX_HOME`. The inventory passes
+`external_root=True` only for those roots, so a checkout's own top-level
+`rules/` directory stays `unsupported`. Neither kind carries the `instruction`
+facet, and neither runtime classifies the other's files. `path_rule` stays
+non-writable until adoption is extended; `exec_policy` is `recommendation_only`,
+because it is permission policy.
+
+The rules follow the public [Claude Code memory documentation](https://code.claude.com/docs/en/memory)
+and [Codex rules page](https://developers.openai.com/codex/rules), retrieved
+2026-11-05 for the `surfaces.PINS` versions. `agent_harness_lab.sources.claude_rules.capture(checkout, profile,
+task_paths=..., setting_sources=...)` takes a `claude-code` inventory profile,
+optional declared task file paths relative to the checkout, and an optional
+declared `--setting-sources` list. It runs the read-only harness inventory, then
+re-reads each in-checkout rule through the no-follow walk. If the bytes differ
+from the inventory digest, the capture fails. User rules in `~/.claude/rules/`
+are not read.
+
+Frontmatter goes through `sources/frontmatter.py`, a bounded reader that is not a
+YAML parser. It accepts only a leading `---` block of at most 200 lines whose one
+key, `paths`, holds a YAML block list or a one-line flow sequence of plain,
+single-quoted or double-quoted strings, up to 256 items. Any other construct is
+`frontmatter_unsupported` and is never guessed. That includes other keys, the
+documented comma-separated string form, escapes, anchors, tabs, trailing
+comments, an unterminated block and an opening delimiter that is not exactly
+`---`: one after a byte-order mark, with trailing blanks, or after blank lines.
+Claude Code loads a rule whose YAML does not parse as if it had no `paths`.
+This reader cannot tell that case from its own unsupported subset, so such a
+rule stays `unknown`. Non-UTF-8 rules are `not_utf8`.
+
+Brace groups expand up to 256 patterns per rule, and patterns without braces do
+not count. A rule past that bound, or with a pattern longer than 4096
+characters or of more than 64 path segments, is `blocked`. Brace groups are found
+in one linear scan, and matching walks the pattern segments iteratively, so it
+never exhausts the stack. Matching draws on one budget of 10,000,000 steps for
+the whole receipt, shared by every rule: one step per pattern checked and one
+per segment comparison. An unverified pattern is decided once and never paired
+with task paths, so it costs one step. When the budget runs
+out, the receipt is `blocked` with `match_budget_exceeded` and lists no rules,
+so many small hostile rules cannot add up to unbounded time. The documented
+runtime budget is 1000 patterns, so `blocked` means AHL did not evaluate the
+rule. It does not mean the runtime skips it. Matching follows the documented
+examples. Patterns are relative to the directory that contains the rule's
+`.claude` folder. A leading `/` anchors a pattern, a pattern without a slash
+matches at any depth, and `**` spans whole path segments. Other segments use
+`fnmatch`. The capability table marks
+dotfile, case, bracket and negation semantics `unverified`, so each pair is
+matched twice. A match counts only if it holds when wildcards never consume a
+dot-leading segment, and a miss counts only if it holds when `*` may consume
+one and case is ignored. Any other pair is unknown. A pattern with `[`, `]`,
+`\`, `!`, a brace left after expansion, a `.` or `..` segment, or a trailing
+`/` is never treated as a match or a miss.
+
+Each `RuleNode` gets one classification:
+
+- `skipped_setting_sources`: declared setting sources lack `project`, which the
+  runtime honours from 2.1.211.
+- `launch`: no `paths`, and the base directory is the checkout root or a
+  directory between it and `task_cwd`. Ancestors other than the root are
+  assumed by analogy with `CLAUDE.md` and are `unverified`.
+- `on_demand_subdirectory`: no `paths`, and the base directory is below
+  `task_cwd`.
+- `outside_task_scope`: no `paths`, and the base directory is neither an
+  ancestor of `task_cwd` nor below it, such as a sibling directory.
+- `conditional_matched` or `conditional_unmatched`: a declared task path below
+  the base directory matches, or none does.
+- `conditional_unknown`: no task paths were declared, or no match is certain
+  and the outcome of some pair rests on unverified pattern or glob semantics.
+- `unknown`: the frontmatter is unsupported, blocked or not UTF-8.
+
+Symbolic links in a rules tree, including a linked `.claude` or `rules`
+directory, are refused as `symlink_not_followed`. Claude Code follows them, so
+those rules stay out of the receipt. Hard-linked rules are refused as
+`hardlink_not_read` and special files as `special_file_not_read`. No rule is
+ever reported as loaded. `observed_loading` and `effective` are always
+`unknown`, and the document carries `loading_evidence: false`,
+`adoption_authority: false` and `publication_allowed: false`. Without declared
+setting sources, it records `setting_sources_origin: assumed_default`.
+
+The `path_rule` inventory parser records only `rule_base`, `rule_parse`,
+`rule_patterns` and `rule_loading`. `rule_loading` is `conditional_unknown` for
+any rule with `paths`, because the inventory profile declares no task paths.
+Codex `.rules` files have no parser. They get one bounded read and a SHA-256
+digest, with `parse_status: no_parser` and the declared project trust. They are
+never evaluated as Starlark, and no process is started. `codex execpolicy check`
+is the native validator, recorded in the capability table. Synthetic tests count
+the opens of the policy file and deny process creation and `exec`, `eval` and
+`compile`. Rule rewrites and adoption remain open in #283 and #285.
 
 ## ai-memory OKF project exports
 
