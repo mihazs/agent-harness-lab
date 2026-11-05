@@ -70,6 +70,14 @@ oracle correction/invalidation and protected certification remain separate work.
   lineage snapshot fsyncs, and private journal directory fsyncs, open their
   targets through the same walk. Platforms whose `os.open` lacks `dir_fd`
   support refuse these reads and fsyncs.
+- The final file is checked with `lstat` relative to its opened parent before
+  it is opened. A device node, Unix socket, FIFO or directory is refused with
+  the reader's label (`artifact must be a regular single-link file` for
+  artifact extraction, `input must be a bounded single-link regular file` for
+  other reads and fsyncs), so a leaf that is already special is never opened.
+  A leaf swapped for a special file between that check and the open is still
+  opened (non-blocking) and is then caught by the reader's `fstat` check; the
+  fsync paths have no such recheck.
 - A private journal opens its store once through that walk, creates its lock
   in the open store and publishes the store marker and events from that
   descriptor. Before each publication it walks the store path again and
