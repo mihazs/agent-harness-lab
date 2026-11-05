@@ -2009,11 +2009,26 @@ instructions are skipped; an unterminated one is refused).
 first bound exceeded: element count, depth, attributes per element and attribute
 key/value length. Finished elements are emptied and detached as parsing proceeds,
 so retained memory does not grow with element count. pytest JSON is screened
-before decoding: structural brackets outside strings are counted against
-`max_json_depth` and `max_json_containers`, because the decoder builds the whole
-tree first and empty containers amplify memory roughly 48-fold. The screen is a
-single linear pass with possessive quantifiers; a string that never closes is refused as
-`HostileReport` instead of being rescanned from every later quote. It is then decoded
+before decoding by the shared loader in `agent_harness_lab/sources/hardened.py`.
+One streaming pass skips each string whole, so commas, colons and brackets
+inside strings never count. Brackets are counted against `max_json_depth` and
+`max_json_containers`, and scalar values (strings, numbers, `true`, `false` and
+`null`, but not object keys) against `max_json_values`. The decoder builds the
+whole tree first. Measured with `tracemalloc`, an empty container costs up to
+about 150 bytes (roughly 48 times its input) and a scalar up to about 90 bytes.
+Per input byte the worst scalar is a one-character string outside Latin-1, such
+as `"Ā"`, at about 15 times its size; two-character ASCII strings reach about
+11 times and `1.5` floats about 9 times. Both budgets can fill in one document,
+so the bound is their sum: about 90 B × `max_json_values` plus 150 B ×
+`max_json_containers`, under about 360 MiB at these ceilings. A 15 MB document
+of `"Ā"` values and empty arrays that fills both budgets peaks at about 295 MiB.
+Residual: object keys are not counted, because each key has a counted value, so
+an object with many unique short keys passes every count. It peaks at about 20
+to 24 times its size, bounded only by `max_report_bytes`: about 350 MiB for a
+16 MiB report. The screen is a single linear pass whose string skip is
+possessive, so it holds one match at a time even for one long string of escapes;
+a string that never closes is refused there as `HostileReport` instead of being
+rescanned from every later quote. The document is then decoded
 strictly as UTF-8 with duplicate-key rejection and no `NaN`/`Infinity`, and the
 `tests` schema is validated before any record is made. Each report's bytes are
 released after parsing; the change check re-reads by streaming hash.
@@ -2032,6 +2047,7 @@ these bounds.
 | `max_attribute_length` | 4,096 characters |
 | `max_json_depth` | 64 |
 | `max_json_containers` | 1,000,000 |
+| `max_json_values` | 2,500,000 (100,000 tests of about 25 values) |
 
 `limits` may only lower these ceilings. Limitation: Python's `xml.etree` and
 `pyexpat` do not offer a supported switch that disables DTD processing. The
@@ -2192,11 +2208,20 @@ rejects.
 
 Malformed input rejects the whole capture: non-UTF-8 bytes, a byte-order mark,
 duplicate JSON keys, `NaN`/`Infinity`, a non-object envelope, a missing or
-non-list array, or a non-object row. Decoding reuses the hardened
-`load_json` from the test-result source: brackets are counted against
-`max_json_depth` and `max_json_containers` in one linear pass before the decoder
-runs, an unterminated string is refused there, and refusals raise `HostileReport`. A refused export imports nothing and leaves the
-previous checkpoint unchanged.
+non-list array, or a non-object row. Decoding reuses the hardened `load_json`
+in `agent_harness_lab/sources/hardened.py`, shared with the test-result source.
+Before the decoder runs, one linear pass counts brackets against
+`max_json_depth` and `max_json_containers`, and scalar values outside strings
+(object keys excluded) against `max_json_values`; an unterminated string is
+refused there. Refusals raise `HostileReport`. The same measured
+costs apply: up to about 90 bytes a value and 150 bytes a container, so a
+document that fills both budgets stays under about 490 MiB at these ceilings; a
+23 MB export of `"Ā"` values and empty arrays peaks at about 395 MiB. Object
+keys are not counted, so an export with many unique short keys peaks at about
+20 to 24 times its size, bounded only by `max_export_bytes`: about 700 MiB for
+a 32 MiB export. The export's bytes are released
+before rows are mapped. A refused export imports nothing and leaves the previous
+checkpoint unchanged.
 
 | Limit | Ceiling |
 | --- | --- |
@@ -2205,6 +2230,7 @@ previous checkpoint unchanged.
 | `max_fields` (per row) | 128 |
 | `max_json_depth` | 16 |
 | `max_json_containers` | 1,000,000 |
+| `max_json_values` | 4,000,000 (100,000 rows of about 40 fields) |
 
 `limits` may only lower these ceilings. `task test:sources:claude-mem` runs the
 synthetic controls: each claim type, summary/observation separation, search-hit

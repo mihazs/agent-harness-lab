@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.100.1
+
+### Patch Changes
+
+- 33617d5: Bound scalar values in hostile JSON exports before decoding. The shared screen for pytest JSON reports and Claude-Mem exports now also counts strings, numbers and literals outside object keys, in the same streaming pass that skips string contents, against a new `max_json_values` ceiling that a selection may only lower: 2,500,000 for pytest JSON and 4,000,000 for Claude-Mem. Measured with `tracemalloc`, a decoded value costs up to about 90 B and a container up to about 150 B, and both budgets can fill in one document, so the bound is their sum: under about 360 MiB for pytest JSON and 490 MiB for Claude-Mem at these ceilings. Object keys are not counted, because each key has a counted value, so an object of many unique short keys still peaks at about 20 to 24 times its size, bounded only by the byte limit (`max_report_bytes` or `max_export_bytes`). An unterminated string is now refused in one pass instead of being rescanned from every later quote. The loader, `limits` and `HostileReport` move to `agent_harness_lab/sources/hardened.py` and stay importable from `sources.test_results`, and both sources share one read, hash, re-hash and selection check.
+
 ## 0.100.0
 
 ### Minor Changes

@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from agent_harness_lab.cli import main
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
-from agent_harness_lab.sources import claude_mem
+from agent_harness_lab.sources import claude_mem, hardened
 from agent_harness_lab.sources.claude_mem import ClaudeMemExport, MemoryClaim
 from agent_harness_lab.sources.schema import SourceSpec, digest
 from agent_harness_lab.sources.test_results import HostileReport, LIMITS, screen_json
@@ -291,6 +291,20 @@ class ClaudeMemSourceTests(unittest.TestCase):
             with self.assertRaisesRegex(HostileReport, 'unterminated'): self.connector.read(self.source)
         # Escaped quotes and brackets inside a terminated string are still skipped, not counted.
         screen_json(b'{"a": "x\\"[[[{{{\\\\", "b": [1, {"c": "]"}]}', dict(LIMITS, max_json_depth=3), 'Claude-Mem export')
+
+    def test_scalar_values_are_bounded_before_decoding(self):
+        def leaves(value):
+            children = value.values() if isinstance(value, dict) else value if isinstance(value, list) else None
+            return 1 if children is None else sum(leaves(child) for child in children)
+        total = leaves(EXPORT)
+        # The screen counts exactly the decoded scalars, so the export's own count is the tightest admitted bound.
+        for bound, outcome in ((total-1, HostileReport), (total, AssertionError)):
+            with self.subTest(bound=bound):
+                self.write(EXPORT, limits=dict(max_json_values=bound))
+                with patch.object(hardened, 'unique_object', side_effect=AssertionError('decoded')):
+                    with self.assertRaises(outcome): self.connector.read(self.source)
+        self.assertEqual(len(self.read(EXPORT, limits=dict(max_json_values=total)).records), 10)
+        with self.assertRaisesRegex(ValueError, 'only lower'): self.read(EXPORT, limits=dict(max_json_values=10**9))
 
     def test_selection_paths_and_capture_changes_are_checked(self):
         (self.root/'exports/link.json').symlink_to(self.root/'exports/claude-mem.json')

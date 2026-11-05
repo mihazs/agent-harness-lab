@@ -2,12 +2,11 @@
 from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-import hashlib
 import string
 from agent_harness_lab.evaluation.integrity import contained, read_regular, regular_sha256, relative
 from .schema import Contract, EvidenceRecord, digest, fingerprint, label
 from .snapshot import LocalExport, Snapshot
-from .test_results import HostileReport, limits, load_json
+from .hardened import HostileReport, limits, load_json
 
 PROVIDER = 'claude-mem-export'
 SOURCE_VERSION = 'v1'
@@ -15,7 +14,7 @@ PROFILE = 'claude-mem-export-v1'
 # The one upstream release whose export shape this adapter models (thedotmack/claude-mem, tag v15.9.0).
 PINNED = {'15.9.0': 'd0968e5d136abc34dcfe1b78acf3726fa84978d8'}
 LIMITS = dict(max_export_bytes=32*1024*1024, max_rows=100000, max_fields=128, max_json_depth=16,
-              max_json_containers=1000000)
+              max_json_containers=1000000, max_json_values=4000000)
 CLAIMS = ('observation', 'generated_summary', 'user_prompt', 'memory_session', 'search_hit')
 # Export array -> claim type. A search hit is recorded separately for every query-selected row.
 KINDS = dict(observations='observation', summaries='generated_summary', prompts='user_prompt', sessions='memory_session')
@@ -154,14 +153,12 @@ class ClaudeMemExport(LocalExport):
         if not isinstance(version, str) or version not in PINNED: raise ValueError('unsupported Claude-Mem release')
         label(selection['instance']); relative(selection['export'])
         bounds = limits(selection.get('limits'), LIMITS)
-        path = contained(self.manifest.parent, selection['export'])
-        raw = read_regular(path, bounds['max_export_bytes'])
-        export_sha256 = hashlib.sha256(raw).hexdigest()
-        value = load_json(raw, bounds, 'Claude-Mem export')
-        del raw
-        self.claims, self.summary = parse(value, selection['instance'], version, bounds)
-        if regular_sha256(path, bounds['max_export_bytes']) != export_sha256: raise ValueError('Claude-Mem export changed during capture')
-        self.verify_selection(source, descriptor, selection)
+        decoded = []
+        def consume(position, raw, export_sha256): decoded.append(load_json(raw, bounds, 'Claude-Mem export'))
+        export_sha256, = self.capture(source, descriptor, selection, [contained(self.manifest.parent, selection['export'])],
+            bounds['max_export_bytes'], consume, 'Claude-Mem export changed during capture', read_regular, regular_sha256)
+        # The export's bytes are released before rows are mapped; the decoded tree is all that parse holds.
+        self.claims, self.summary = parse(decoded.pop(), selection['instance'], version, bounds)
         now = datetime.now(timezone.utc).isoformat()
         def record(kind, native, revision, provenance, original=None):
             return EvidenceRecord(source.source_key, native, revision, revision, 'contextual_assertion', kind, now,

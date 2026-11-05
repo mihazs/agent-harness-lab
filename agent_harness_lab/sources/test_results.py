@@ -3,12 +3,13 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
-import hashlib
-import json
 import math
 import re
 import xml.etree.ElementTree as ElementTree
 from agent_harness_lab.evaluation.integrity import contained, read_regular, regular_sha256, relative, unique_object
+from . import hardened
+# Re-exported: the hardened JSON loader started here and other modules still import it from this one.
+from .hardened import JSON_STRUCTURE, HostileReport, load_json, screen_json  # noqa: F401
 from .schema import Contract, EvidenceRecord, digest, label
 from .snapshot import LocalExport, Snapshot
 
@@ -21,7 +22,7 @@ FULL_SHA = re.compile('(?:[0-9a-f]{40}|[0-9a-f]{64})')
 # Hard ceilings; a selection may only lower them.
 LIMITS = dict(max_reports=64, max_report_bytes=16*1024*1024, max_cases=100000, max_elements=500000,
               max_depth=32, max_attributes=64, max_attribute_length=4096, max_json_depth=64,
-              max_json_containers=1000000)
+              max_json_containers=1000000, max_json_values=2500000)
 CHUNK = 64*1024
 JUNIT_STATUS = {'failure': 'failed', 'error': 'error', 'skipped': 'skipped'}
 JUNIT_IGNORED = ('system-out', 'system-err', 'properties')
@@ -34,13 +35,6 @@ PYTEST_KNOWN = ('passed', 'failed', 'error', 'skipped', 'xfailed', 'xpassed', 'r
 DECLARATION = re.compile(rb'\A(?:\xef\xbb\xbf)?<\?xml[ \t\r\n][^?>]*?encoding[ \t\r\n]*=[ \t\r\n]*["\']([^"\']*)["\']')
 # Any markup declaration (DOCTYPE, ENTITY, ELEMENT, ATTLIST, NOTATION, conditional sections) is refused.
 MARKUP_DECLARATION = re.compile(rb'<!(?!--|\[CDATA\[)')
-# JSON strings are skipped so only structural brackets are counted. Possessive quantifiers never backtrack, and a
-# quote the string branch cannot close matches the bare '"' and ends the scan: retrying from every later quote is quadratic.
-JSON_STRUCTURE = re.compile(rb'"[^"\\]*+(?:\\.[^"\\]*+)*+"|"|[\[{\]}]', re.S)
-
-
-class HostileReport(ValueError):
-    """A report was refused before or during bounded parsing; nothing from it is imported."""
 
 
 @dataclass(frozen=True)
@@ -80,14 +74,8 @@ def commit(value):
 
 
 def limits(value, ceilings=LIMITS):
-    """Selection limits may only lower a source's hard ceilings."""
-    if value is None: return dict(ceilings)
-    if not isinstance(value, dict) or set(value) - set(ceilings): raise ValueError('unsupported source limits')
-    result = dict(ceilings)
-    for key, bound in value.items():
-        if type(bound) is not int or not 1 <= bound <= ceilings[key]: raise ValueError('source limits may only lower ceilings')
-        result[key] = bound
-    return result
+    """Selection limits may only lower this source's hard ceilings."""
+    return hardened.limits(value, ceilings)
 
 
 def duration(value, warnings):
@@ -123,20 +111,6 @@ def tags(attributes):
     """Comments, CDATA, processing instructions, end tags and bounded start tags; a bare '<' is anything else."""
     return re.compile(rb'<!--.*?-->|<!\[CDATA\[.*?\]\]>|<\?.*?\?>|</|<[^\s/>!?<=]+'
         rb'(?:\s+[^\s=/>]+\s*=\s*(?:"[^"]*"|\'[^\']*\')){0,%d}\s*/?>|<' % attributes, re.S)
-
-
-def screen_json(raw, bounds, name='pytest JSON'):
-    """Bound nesting and container count before json.loads builds the tree (empty containers amplify ~48x)."""
-    depth = containers = 0
-    for token in JSON_STRUCTURE.finditer(raw):
-        mark = raw[token.start()]
-        if token.end() - token.start() == 1 and mark == ord('"'):
-            raise HostileReport(name+' string is unterminated')
-        if mark in b'[{':
-            depth += 1; containers += 1
-            if depth > bounds['max_json_depth']: raise HostileReport(name+' depth bound exceeded')
-            if containers > bounds['max_json_containers']: raise HostileReport(name+' container bound exceeded')
-        elif mark in b']}': depth -= 1
 
 
 def parse_junit(raw, bounds, warnings):
@@ -194,30 +168,8 @@ def parse_junit(raw, bounds, warnings):
     if elements == 0: raise ValueError('empty JUnit XML')
 
 
-def _constant(value):
-    raise ValueError('non-finite JSON numbers are unsupported')
-
-
-def load_json(raw, bounds, name):
-    """Screen, then strictly decode one bounded UTF-8 JSON document: no duplicate keys, NaN or deep nesting."""
-    screen_json(raw, bounds, name)
-    try:
-        value = json.loads(raw.decode('utf-8'), object_pairs_hook=unique_object, parse_constant=_constant)
-    except RecursionError:
-        raise HostileReport(name+' depth bound exceeded') from None
-    except UnicodeDecodeError:
-        raise ValueError(name+' is not valid UTF-8') from None
-    pending = [(value, 1)]
-    while pending:
-        item, depth = pending.pop()
-        if depth > bounds['max_json_depth']: raise HostileReport(name+' depth bound exceeded')
-        children = item.values() if isinstance(item, dict) else item if isinstance(item, list) else ()
-        pending.extend((child, depth+1) for child in children if isinstance(child, (dict, list)))
-    return value
-
-
 def parse_pytest(raw, bounds, warnings):
-    value = load_json(raw, bounds, 'pytest JSON')
+    value = load_json(raw, bounds, 'pytest JSON', unique_object)
     if not isinstance(value, dict) or not isinstance(value.get('tests'), list):
         raise ValueError('pytest JSON report requires a tests list')
     if len(value['tests']) > bounds['max_cases']: raise HostileReport('pytest JSON case bound exceeded')
@@ -267,16 +219,15 @@ class TestResultsExport(LocalExport):
         if len({r['path'] for r in reports}) != len(reports): raise ValueError('duplicate test report path')
         now = datetime.now(timezone.utc).isoformat()
         commit_sha256 = digest(sha)
-        records, results, captured, warnings, cases = [], [], [], set(), 0
+        records, results, warnings, cases = [], [], set(), 0
         declared = {}
         def record(kind, native, revision):
             return EvidenceRecord(source.source_key, native, revision, revision, 'development_artifact', kind, now,
                 provenance='native_field', capture_completeness='partial')
-        for report in reports:
-            path = contained(self.manifest.parent, report['path'])
-            raw = read_regular(path, bounds['max_report_bytes'])
-            report_sha256, path_sha256 = hashlib.sha256(raw).hexdigest(), digest(report['path'])
-            captured.append((path, report_sha256))
+        def consume(position, raw, report_sha256):
+            nonlocal cases
+            report = reports[position]
+            path_sha256 = digest(report['path'])
             parse = parse_junit if report['format'] == 'junit-xml' else parse_pytest
             seen = Counter()
             for suite, case, status, reported, seconds in parse(raw, bounds, warnings):
@@ -292,11 +243,8 @@ class TestResultsExport(LocalExport):
                 value = asdict(result)
                 records.append(record('test_case_result', digest(('test_case_result', sha, path_sha256, case_sha256, occurrence)), digest(value)))
             records.append(record('test_report', digest(('test_report', sha, path_sha256)), report_sha256))
-            del raw
-        # Re-read by streaming hash so only one report's bytes are held at a time.
-        for path, report_sha256 in captured:
-            if regular_sha256(path, bounds['max_report_bytes']) != report_sha256: raise ValueError('test report changed during capture')
-        self.verify_selection(source, descriptor, selection)
+        self.capture(source, descriptor, selection, [contained(self.manifest.parent, r['path']) for r in reports],
+            bounds['max_report_bytes'], consume, 'test report changed during capture', read_regular, regular_sha256)
         statuses = Counter(r.status for r in results)
         self.results, self.declared_cases = tuple(results), declared
         self.summary = dict(schema_version=1, profile=PROFILE, commit_sha256=commit_sha256, commit_binding='caller_declared',
