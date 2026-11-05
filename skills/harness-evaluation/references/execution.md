@@ -53,8 +53,12 @@ acceptance assertion from a grader bug. The runner does not sandbox grader comma
 Codex uses `workspace-write` and approval `never`. Claude Code uses `--print`,
 `--output-format stream-json`, `--verbose`, and `--no-session-persistence`, with
 prompts on stdin. It inherits permissions and sandbox settings; it does not enable
-`acceptEdits` or bypass permission checks. Both retain inherited configuration,
-authentication and hooks. Configure permissions needed for your trusted fixtures
+`acceptEdits` or bypass permission checks. Each trial requests project-only
+settings, no user MCP servers and no hooks for Claude Code, and a temporary
+`CODEX_HOME` for Codex. `results.json` records these as `inherited_unverified`
+until a native run confirms them. Claude Code keeps inherited authentication
+and managed layers; the Codex home holds no credentials, so Codex authenticates
+from its environment. Configure permissions needed for your trusted fixtures
 before running; do not loosen them to make a candidate pass. This is not network isolation or a hostile-agent security
 boundary. Do not provide tasks requiring live external mutations. A candidate must
 not change graders. Keep fixtures free of reference solutions; the parent manages

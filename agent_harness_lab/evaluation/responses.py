@@ -479,7 +479,7 @@ def _read_request(client,token=None,*,complete=False):
     return deepcopy(state[4])
 
 
-def run_role(client, backend, workspace, inputs, role, instructions, prompt, deadline,*,trial_id=None,trajectory=None):
+def run_role(client, backend, workspace, inputs, role, instructions, prompt, deadline,*,trial_id=None,trajectory=None,task_cwd=None):
     if _client_pid(client) != os.getpid() or client in _ROLE_SCOPES:
         raise ValueError('fresh issuing-process role scope required')
     try:
@@ -488,7 +488,8 @@ def run_role(client, backend, workspace, inputs, role, instructions, prompt, dea
         scope=(os.getpid(),client.actions.scope,role,trial_id)
         if _instruction_selected(client):
             from .instruction_context import prepare
-            scope=(*scope,prepare(client,backend,inputs,role,instructions,prompt,min(deadline,client.deadline)))
+            scope=(*scope,prepare(client,backend,inputs,role,instructions,prompt,min(deadline,client.deadline),task_cwd=task_cwd))
+        elif task_cwd is not None:raise ValueError('task cwd requires the controller instruction protocol')
         _ROLE_SCOPES[client] = scope
         return _run_role(client,backend,workspace,inputs,role,instructions,prompt,deadline)
     except BaseException:
@@ -558,12 +559,12 @@ def _run_role(client, backend, workspace, inputs, role, instructions, prompt, de
             {key:run[key] for key in ('status','exit_code','stdout','stderr')},allow_nan=False)))
 
 
-def run_trial(client, backend, workspace, harness, prompt, artifacts, destination, seconds,*,trial_id=None,trajectory=None):
+def run_trial(client, backend, workspace, harness, prompt, artifacts, destination, seconds,*,trial_id=None,trajectory=None,task_cwd=None):
     deadline = min(client.deadline,time.monotonic()+seconds)
     state,commands = run_role(client,backend,workspace,{'harness':harness},'executor',
         'Read and follow task guidance under /inputs/harness. '
         'Work only in /work using run(argv). Complete the supplied task and write its required artifacts. '
-        'Host credentials, network and other runs are unavailable; final claims do not supply a grade.',prompt,deadline,trial_id=trial_id,trajectory=trajectory)
+        'Host credentials, network and other runs are unavailable; final claims do not supply a grade.',prompt,deadline,trial_id=trial_id,trajectory=trajectory,task_cwd=task_cwd)
     exported = state.export(artifacts,destination,deadline)
     captured = dict(_trajectory_capture=client.actions.trajectory) if trajectory is not None else {}
     return dict(status='completed',exit_code=0,timeout=False,stdout='',stderr='',inputs_unchanged=True,

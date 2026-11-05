@@ -139,7 +139,7 @@ class SkillInvocationTests(unittest.TestCase):
         with patch.object(cli,'evaluator',return_value=runner),patch.object(runner,'execute',side_effect=observed):
             code,stdout,_=self.invoke(['skills','invoke',str(fixture.project),'--agent','codex','--codex',str(fixture.agent),'--timeout','30'])
         self.assertEqual((code,json.loads(stdout)['status']),(3,'inconclusive'))
-        marked=[(cwd,environment) for cwd,environment in calls if environment is not None]
+        marked=[(cwd,environment) for cwd,environment in calls if environment is not None and 'AHL_MANAGED_PREPARATION' in environment]
         self.assertEqual(len(marked),2)
         for cwd,environment in marked:
             context=json.loads((cwd/'context.json').read_text())['invocation']
@@ -147,7 +147,9 @@ class SkillInvocationTests(unittest.TestCase):
             self.assertLessEqual(context['remaining_seconds'],30)
             self.assertLessEqual(context['remaining_trials'],24)
             self.assertFalse(context['execution_authority'])
-        self.assertTrue(any(environment is None for _,environment in calls))
+        # Trial children get only their own temporary CODEX_HOME, never the preparation marker.
+        trials=[environment for _,environment in calls if environment is not None and 'AHL_MANAGED_PREPARATION' not in environment]
+        self.assertTrue(trials);self.assertTrue(all(Path(value['CODEX_HOME']).name=='codex-home' for value in trials))
 
     def test_forged_context_cannot_supply_configuration_or_public_receipt(self):
         fixture=self.fixture()

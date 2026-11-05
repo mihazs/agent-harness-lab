@@ -119,8 +119,9 @@ class ConfiguredEvaluationTests(OfflineFixture):
     def test_cooperative_runtime_uses_only_the_configured_executable(self):
         self.value.update(profile='cooperative', runtime={'name': 'codex', 'executable': sys.executable})
         self.write_config(); self.args.agent = 'codex'; self.args.codex = 'codex'
-        def fail_without_model(argv, *args):
+        def fail_without_model(argv, *args, env=None):
             self.assertEqual(argv[0], sys.executable)
+            if '--version' not in argv: self.assertEqual(Path(env['CODEX_HOME']).name, 'codex-home')
             return dict(exit_code=1, stdout='', stderr='', elapsed_seconds=0, timeout=False)
         with patch.object(self.runner, 'execute', side_effect=fail_without_model) as execute:
             self.assertEqual(self.runner.evaluate(self.args), 1)
