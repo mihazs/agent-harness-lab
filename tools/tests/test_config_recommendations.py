@@ -341,8 +341,24 @@ class ConfigRecommendationTests(unittest.TestCase):
                  'style subdirectory absent': (claude, fact('output_styles', 'subdirectory', KeyError)),
                  'style distance without shadowing': (claude, fact('output_styles', 'distance', None)),
                  'fact named twice': (claude, lambda rows: rows[0]['facts'].append(list(rows[0]['facts'][0])))}
+        (self.claude_home / 'output-styles').mkdir()
+        (self.claude_home / 'output-styles/solo.md').write_text(style('solo'))
+        styled = config.capture(self.checkout, CLAUDE, declared_roots=roots)
+        def restyle(layer, name, was_shadowed, **changes):  # a capture records distance and shadowing only for project styles
+            def mutate(rows):
+                row, = [r for r in rows if r['surface'] == 'output_styles' and r['layer'] == layer
+                        and dict(map(tuple, r['facts'])).get('name_sha256') == config.style_sha256(name)
+                        and dict(map(tuple, r['facts']))['shadowed'] is was_shadowed]
+                row['facts'] = sorted([pair for pair in row['facts'] if pair[0] not in changes]
+                                      + [[key, value] for key, value in changes.items()])
+            return mutate
+        cases.update({'user style with a distance': (styled, restyle('user', 'solo', None, distance=0, shadowed=False)),
+                      'project style without a distance':
+                          (styled, restyle('project', 'plain-coder', False, distance=None, shadowed=None)),
+                      'farther same-name style not shadowed': (styled, restyle('project', 'dup', True, shadowed=False))})
         for name, (document, mutate) in cases.items():
             with self.subTest(case=name), self.assertRaises(ValueError): advice.recommend(self.forge(document, mutate))
+        advice.recommend(styled)
 
     def test_user_layer_styles_with_unrecorded_precedence_are_never_verified(self):
         (self.claude_home / 'output-styles').mkdir()

@@ -153,9 +153,14 @@ def _consistent(rows):
     """Refuse rows that are each well formed but that no capture produces together, before any rule reads them.
 
     A capture writes one settings row per file and one row per server id per file, a Claude server carries its
-    scope's precedence, and a style records shadowing exactly when it records a folder distance.
+    scope's precedence, and only a project style records a folder distance and whether a closer same-name project
+    style shadows it.
     """
-    seen = set()
+    seen, closest = set(), {}
+    for row in rows:
+        facts = dict(row.facts)
+        if row.surface == 'output_styles' and type(facts.get('distance')) is int and _HEX.fullmatch(str(facts.get('name_sha256'))):
+            closest[facts['name_sha256']] = min(closest.get(facts['name_sha256'], facts['distance']), facts['distance'])
     for row in rows:
         facts, key = dict(row.facts), None
         digests = lambda *names: all(type(facts[n]) is str and _HEX.fullmatch(facts[n]) for n in names if n in facts)
@@ -174,8 +179,9 @@ def _consistent(rows):
         elif row.surface == 'output_styles' and 'name_sha256' in facts:
             distance, shadowed = facts.get('distance'), facts.get('shadowed', 'absent')
             if (not digests('name_sha256') or type(facts.get('subdirectory')) is not bool
+                    or (distance is None) != (row.layer == 'user')
                     or (shadowed is not None if distance is None
-                        else type(distance) is not int or distance < 0 or type(shadowed) is not bool)):
+                        else type(distance) is not int or distance < 0 or shadowed is not (distance > closest[facts['name_sha256']]))):
                 raise ValueError('output style facts differ from the captured shape')
         if key in seen: raise ValueError('config rows declare one file or server twice')
         if key is not None: seen.add(key)
@@ -256,7 +262,7 @@ def _styles(rows):
         # unrecognized keep-coding-instructions value (None) is not a known false.
         rivals = [other for peer, other in named if peer is not row and other['name_sha256'] == facts['name_sha256']]
         unresolved = bool(rivals) and (facts['shadowed'] is None or any(other.get('shadowed') is None for other in rivals))
-        known = facts['shadowed'] is False and not facts['subdirectory']
+        known = row.layer == 'project' and facts['shadowed'] is False and not facts['subdirectory']
         unverified = not known or unresolved or facts.get('keep_coding_instructions') is None
         yield _row('output_style_drops_coding_instructions', row, 'unverified' if unverified else 'verified',
                    name_sha256=facts['name_sha256'], shadowed=facts['shadowed'],

@@ -1916,16 +1916,18 @@ Git configuration is data, and only allowlisted read-only commands run. A
 checkout that fails a condition gets a `refused` receipt with reason
 `unpinned_checkout`, `dirty_checkout`, `stale_inventory`,
 `unsupported_checkout` (symlinks, submodules, alternates) or
-`checkout_bound_exceeded`. Nothing is written then. A worktree over one of the
-bounds below also gets the `checkout_bound_exceeded` receipt, never an error.
+`checkout_bound_exceeded`. Nothing is written then. A worktree over the file,
+byte or walk entry bound below also gets the `checkout_bound_exceeded` receipt,
+never an error. A worktree deeper than the harness inventory's 32 levels is
+refused earlier, as `inventory_blocked`.
 
 The bounds are checked before the input is read. The worktree holds at most
 5000 files and 64 MiB, and its walk visits at most 10000 entries, directories
-included, at most 64 levels deep. The committed tree is at most 64 levels deep
-and 10000 entries, counted per path, so a subtree named many times counts each
-time. In the Git directory, each configuration, `HEAD` and reference file is at
-most 4 MiB, everything read from it, the copied object store included, is at
-most 256 MiB, and its listing is at most 20000 entries. Each Git command's output is at most 4 MiB, 64 MiB in total,
+included. The committed tree is at most 64 levels deep and 10000 entries,
+counted per path, so a subtree named many times counts each time. In the Git
+directory, each configuration, `HEAD` and reference file is at most 4 MiB,
+everything read from it, the copied object store included, is at most 256 MiB,
+and its listing is at most 20000 entries. Each Git command's output is at most 4 MiB, 64 MiB in total,
 under a 1 GiB address-space limit. The tree walk checks the capture deadline.
 The `state` folder is refused when it contains `..`, crosses a symlink, or
 overlaps the project or a selected checkout, before or after resolution.
@@ -2063,7 +2065,9 @@ same report. Rows that are each valid but that no capture writes together are
 refused with `ValueError` too: two settings rows for one file, two rows for one
 server id in one file, a Claude server whose `precedence` is not its scope's, a
 settings digest list that is not a list, a style whose `shadowed` and
-`distance` facts disagree, or a fact named twice. A `blocked` or `unsupported`
+`distance` facts disagree, a user-layer style with a folder distance or a
+project style without one, a project style whose `shadowed` is not whether a
+closer same-name project style exists, or a fact named twice. A `blocked` or `unsupported`
 inventory gives no rows.
 
 Recommendation text and the suggested user command are fixed templates keyed

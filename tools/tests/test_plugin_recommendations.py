@@ -169,6 +169,16 @@ class PluginRecommendationTests(unittest.TestCase):
         self.assertEqual((receipt['status'], receipt['reason'], receipt['bundle']), ('refused', 'checkout_bound_exceeded', None))
         self.assertFalse(self.state.exists())
 
+    def test_a_worktree_deeper_than_the_inventory_depth_is_refused_as_inventory_blocked(self):
+        # The harness inventory walks the checkout first and stops at 32 levels, before the worktree walk runs.
+        deep = self.plugin
+        for _ in range(66): deep = deep / 'd'
+        deep.mkdir(parents=True)
+        self.assertEqual(self.plumbing('status', '--porcelain'), '')
+        receipt = self.bundle()
+        self.assertEqual((receipt['status'], receipt['reason'], receipt['bundle']), ('refused', 'inventory_blocked', None))
+        self.assertFalse(self.state.exists())
+
     def plumbing(self, *arguments, data=None):
         return subprocess.run(['/usr/bin/git', *arguments], cwd=self.plugin, env=ENV, input=data,
                               capture_output=True, check=True).stdout.strip().decode()
