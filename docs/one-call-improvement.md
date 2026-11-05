@@ -274,11 +274,14 @@ only when all of those hold, and `certification` stays `required`. When a
 candidate removes active guidance and the disposition is not `recommended`, the
 workflow records no recommendation and no change plan. Its reason is
 `instruction_removal_<disposition>`. Controlled runs record no
-`workspace_surfaces`, so a removal there stays `inconclusive`. Before
-recording a recommendation, the workflow runs the validation again. A changed
-project instruction file or a modified evaluated candidate invalidates the
-recommendation, and the project is left untouched. The validator never reads
-evaluation manifests, graders or held-out inputs.
+`workspace_surfaces`, so a removal there stays `inconclusive`. A fixed-bank
+run (`--experiment-request`) hands no trial records to this gate, so a removal
+there is `inconclusive` with reason `trial_records_unavailable`, and the
+workflow withholds the comparison's `review_candidate` recommendation. Before
+recording a recommendation on either path, the workflow runs the validation
+again. A changed project instruction file or a modified evaluated candidate
+invalidates the recommendation, and the project is left untouched. The validator
+never reads evaluation manifests, graders or held-out inputs.
 
 ## Independently verified format repair
 

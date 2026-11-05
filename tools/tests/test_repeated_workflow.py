@@ -1,5 +1,5 @@
 """Fresh fixed-bank public improvement; synthetic transport, actual opt-in kernel workers."""
-from contextlib import ExitStack,redirect_stdout
+from contextlib import ExitStack,redirect_stderr,redirect_stdout
 from copy import copy
 import gc
 import hashlib
@@ -142,6 +142,45 @@ class RepeatedWorkflowAdmissionTests(PublicFixture,unittest.TestCase):
         self.assertEqual((code,result['status']),(1,'incomplete'),result)
         self.assertNotIn('decision',result);self.assertEqual(len(self.calls),3)
         self.assertEqual(len(comparison_custody._STATES),0)
+
+    def supported_removal(self,drift=False):
+        """Drive the fixed-bank path with a candidate that removes the active root guidance and a supported comparison."""
+        (self.project/'app').mkdir()
+        plan=dict(schema_version=1,profile=dict(schema_version=1,runtime='codex',version='0.166.0',task_cwd='app',fallback_filenames=[]),required=[])
+        proposer=("from pathlib import Path\nimport json\nPath('candidate/AGENTS.md').write_text('good\\n')\n"
+            "Path('candidate/app').mkdir(exist_ok=True);Path('candidate/app/AGENTS.md').write_text('good\\n')\n"
+            "Path('proposal.json').write_text(json.dumps(dict(status='candidate',mechanisms=['synthetic'],falsifiers=['artifact'],"
+            "instruction_plan="+repr(plan)+")))\n")
+        helper=roles.ControlledWorkflowTests();helper.root=self.root;helper.roles=[]
+        backend=Mock(permission_audit=None);backend.capability.return_value=dict(status='available')
+        backend.run.side_effect=helper.execute
+        def execute(request,*args):
+            if drift:(self.project/'app/AGENTS.md').write_text('Synthetic drifted guidance.\n')
+            return dict(status='inconclusive',reason='certification_prerequisites_unverified',recommendation='review_candidate',
+                controller_run_id='synthetic-run',publication_allowed=False,automatic_promotion=False)
+        from agent_harness_lab.evaluation.repeated_workflow import Request
+        with patch.object(roles,'PROPOSER',proposer),patch.object(roles,'EXECUTOR',EXECUTOR),patch(
+                'agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=backend),patch.object(Request,'execute',execute):
+            return self.invoke(self.root/'image','a'*64,self.root/'output')
+
+    def test_fixed_bank_removal_candidate_withholds_the_recommendation(self):
+        code,result=self.supported_removal()
+        validation=json.loads(Path(result['instruction_validation']).read_text())
+        self.assertEqual((validation['status'],validation['removal']['required']),('valid',True))
+        self.assertEqual((result['instruction_removal']['disposition'],result['instruction_removal']['reason']),
+                         ('inconclusive','trial_records_unavailable'))
+        self.assertEqual((result['status'],result['reason'],result['instruction_removal_reason']),
+                         ('inconclusive','instruction_removal_inconclusive','trial_records_unavailable'),result)
+        self.assertNotIn('recommendation',result);self.assertEqual(result['changed_files'],[])
+        self.assertFalse((self.project/'app/AGENTS.md').exists())
+
+    def test_fixed_bank_instruction_context_drift_invalidates_the_recommendation(self):
+        errors=io.StringIO()
+        with redirect_stderr(errors),self.assertRaises(SystemExit) as stopped:self.supported_removal(drift=True)
+        self.assertEqual(stopped.exception.code,2)
+        self.assertIn('Instruction context changed during evaluation',errors.getvalue())
+        self.assertEqual((self.project/'app/AGENTS.md').read_text(),'Synthetic drifted guidance.\n')
+        self.assertFalse(list(self.root.rglob('change-plan.json')))
 
     def test_private_request_settings_credential_and_cache_cannot_be_in_runtime(self):
         image=self.root/'image';image.mkdir();request,settings=self.request,self.settings

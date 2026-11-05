@@ -429,9 +429,11 @@ def _faithful(trial, operations):
 
 def removal_disposition(document, trials):
     """Whether removing active guidance may be recommended: only when regression controls pass for both versions
-    in workspaces that staged each version faithfully. A recommendation still needs independent certification."""
+    in workspaces that staged each version faithfully. A recommendation still needs independent certification.
+    trials=None means the evaluation exposes no trial records to this gate, so a removal stays inconclusive."""
     removal = dict(document.get('removal') or dict(required=False), certification='required', observed_loading='unknown')
     if not removal.get('required'): return dict(removal, disposition='not_applicable', reason='no_active_guidance_removed')
+    if trials is None: return dict(removal, disposition='inconclusive', reason='trial_records_unavailable')
     controls = [t for t in trials if isinstance(t, dict) and t.get('split') == 'regression']
     versions = {version: [t for t in controls if t.get('version') == version] for version in ('baseline', 'candidate')}
     if not versions['baseline'] or not versions['candidate']:

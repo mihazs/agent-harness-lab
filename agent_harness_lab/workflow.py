@@ -676,6 +676,18 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             compared=repeated.execute(manifest_path,baseline,frozen,args,client,grading)
             if any(file_state(args.project/name)!=value for name,value in original.items()):
                 raise ValueError('project harness changed during fixed comparison')
+            if instruction is not None:
+                # The fixed-bank comparison hands no trial records to the removal gate; see removal_disposition.
+                result['instruction_removal'] = instruction_validation.removal_disposition(instruction, None)
+                if compared.get('recommendation') == 'review_candidate':
+                    if instruction_validation.current(instruction, proposal.get('instruction_plan'), baseline, frozen,
+                                                      project=args.project, deadline=started+args.timeout):
+                        raise ValueError('Instruction context changed during evaluation; recommendation is stale')
+                    removal = result['instruction_removal']
+                    if removal.get('required'):
+                        compared = {key: value for key, value in compared.items() if key != 'recommendation'}
+                        compared.update(status='inconclusive', reason='instruction_removal_'+removal['disposition'],
+                                        instruction_removal_reason=removal['reason'])
             result.update(compared)
             break
         progress('evaluation', attempt=attempt + 1)
