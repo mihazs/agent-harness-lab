@@ -27,7 +27,7 @@ The report has one row per dimension, always in this order:
 
 | Dimension | Inventory kinds | Checked facts |
 | --- | --- | --- |
-| `instructions` | `instruction` | empty file, launch skip size (Claude), default project-doc size (Codex), uncertain imports; a Claude `AGENTS.md` stays `unknown` (`instruction_files_setting_unknown`); a plugin-root `CLAUDE.md`, which the runtime never loads, stays `unknown` (`instruction_not_loaded_by_runtime`) |
+| `instructions` | `instruction` | empty file, launch skip size (Claude), default project-doc size and the [Codex project-doc budget](#codex-project-doc-budget) over the directory chain, uncertain imports; a Claude `AGENTS.md` stays `unknown` (`instruction_files_setting_unknown`); a plugin-root `CLAUDE.md`, which the runtime never loads, stays `unknown` (`instruction_not_loaded_by_runtime`) |
 | `rules` | `path_rule`, `exec_policy` | Claude rule frontmatter settles; Codex exec policy is not checked |
 | `hooks` | `hook` | unknown events, fields or handler types, a missing plugin `hooks` wrapper, skipped handlers, invalid `onFailure`; a file with no handlers is `unknown` (`no_hooks_declared`) |
 | `workflows` | `workflow` | the static workflow lint (`meta` first, no forbidden calls) |
@@ -56,6 +56,45 @@ report = audit.audit(plugins.checkouts[0].inventory)
 That report covers every dimension of the plugin checkout. A plugin-root
 `CLAUDE.md` is `unknown` (`instruction_not_loaded_by_runtime`) there, because
 the runtime does not load it, so no size or emptiness rule applies.
+
+## Codex project-doc budget
+
+Codex reads one file per directory from the project root to the task directory
+(`AGENTS.override.md`, else `AGENTS.md`) under a single `project_doc_max_bytes`
+budget, 32 KiB by default (`DEFAULT_PROJECT_DOC_MAX_BYTES` in
+[`codex-rs/config/src/config_toml.rs`](https://github.com/openai/codex/tree/d786ff91/codex-rs/config/src/config_toml.rs)).
+Following `read_agents_md` in
+[`codex-rs/core/src/agents_md.rs`](https://github.com/openai/codex/tree/d786ff91/codex-rs/core/src/agents_md.rs)
+at the pinned `openai/codex@d786ff91`, a file larger than the remaining budget
+is truncated to it, a file that is blank to Rust's `str::trim` uses no budget,
+and once the budget is spent every later file is skipped. Separators and the
+`CODEX_HOME` file use none of it.
+
+`run()` follows that chain for `task_cwd` and replaces the per-file verdict of
+each file the default budget cuts:
+
+- `instruction_chain_truncated_at_default_project_doc_bytes`: the file that
+  crosses the budget.
+- `instruction_chain_skipped_at_default_project_doc_bytes`: a non-blank file
+  after the budget is spent.
+
+Both are `nonconformant` with `evidence_kind: structural`, the remediation
+`shorten_the_instruction_chain_or_raise_project_doc_max_bytes` and `measures`
+`budget_bytes`, `loaded_bytes` and `dropped_bytes`, so the finding names the file
+and how much of it Codex drops. A chain that fits, even exactly, adds nothing.
+
+The chain is modelled only at the documented defaults: a 32 KiB budget, the
+`.git` project root marker and no fallback file names. A budget, marker or
+fallback list set in configuration is never read, and an unknown project trust is
+treated as trusted. The audit reports no budget outcome when it cannot settle
+one: when the checkout root has no `.git` (Codex would look above the checkout),
+when the project is `declared_untrusted` (Codex loads no project docs), or when
+`audit()` gets an inventory whose `task_cwd` it cannot recover from the listed
+paths. The walk stops at the first directory whose candidate was refused, such as
+a symlink Codex would follow, or was not parsed, and after a cut that ends inside
+a file's leading whitespace, where a split multi-byte character would change the
+outcome; files before that point keep their budget findings. The budget check
+never makes a file or dimension conformant.
 
 ## Statuses
 
@@ -89,8 +128,10 @@ partial pass.
 
 Each surface that is not conformant gives one finding with an `id`, its
 `dimension`, `status`, `reason`, checkout-relative `path` and `path_sha256`,
-inventory `kind`, `evidence_kind` (`count`, `lexical` or `structural`) and
-`source`. A nonconformant finding also has a fixed `remediation` label and a
+inventory `kind`, `evidence_kind` (`count`, `lexical` or `structural`),
+`source` and `measures`, sorted `(label, non-negative integer)` pairs that are
+empty unless a check counts something, such as the
+[Codex project-doc budget](#codex-project-doc-budget). A nonconformant finding also has a fixed `remediation` label and a
 `cost_class`: `deterministic_edit`, `content_edit` or
 `behavioral_evaluation_required`. Nonconformant findings come first, cheapest
 `cost_class` first, followed by unknown findings.
