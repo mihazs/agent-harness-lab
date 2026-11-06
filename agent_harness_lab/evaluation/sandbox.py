@@ -24,15 +24,59 @@ from .workspace import PrivateWorkspace, policy
 ROLES = {'proposer', 'evaluator_author', 'executor', 'grader'}
 # Runs on the host before bubblewrap: joining a new anonymous session keyring (KEYCTL_JOIN_SESSION_KEYRING, NULL name)
 # drops possession of the validator's session keyring, whose keys bubblewrap's namespaces would otherwise leave
-# readable. A kernel without keys (ENOSYS) has no keyring to leak; any other failure stops before bubblewrap runs.
+# readable. Possession is not enough: the sandbox keeps the validator's uid, so a key or keyring that grants its user
+# VIEW or READ stays reachable by the serial number /proc/keys lists. The trampoline therefore also installs a seccomp
+# filter, inherited by bubblewrap and everything it runs, that fails add_key, request_key and keyctl with ENOSYS, as a
+# kernel without keys would; a foreign ABI fails every call. /proc/keys stays mounted, since masking it would stop any
+# nested sandbox from mounting its own /proc, so a run still sees the type and description of keys its uid may view.
+# A kernel without keys (ENOSYS) has no keyring to leak; any other failure stops before bubblewrap runs.
 KEYRING_UNAVAILABLE, KEYRING_EXIT = 'ahl: keyring isolation unavailable', 125
-KEYRING_TRAMPOLINE = f'''import ctypes, errno, os, sys
-number = {{'x86_64': 250, 'aarch64': 219, 'riscv64': 219, 'loongarch64': 219}}.get(os.uname().machine)
+# (AUDIT_ARCH, add_key, request_key, keyctl) for each ABI a machine runs; the first is the native one.
+KEYRING_ABIS = {'x86_64': ((0xc000003e, 248, 249, 250), (0x40000003, 286, 287, 288)),
+                'aarch64': ((0xc00000b7, 217, 218, 219), (0x40000028, 309, 310, 311)),
+                'riscv64': ((0xc00000f3, 217, 218, 219),), 'loongarch64': ((0xc0000102, 217, 218, 219),)}
+KEYRING_TRAMPOLINE = f'''import ctypes, errno, os, struct, sys
+abis = {KEYRING_ABIS!r}.get(os.uname().machine)
 libc = ctypes.CDLL(None, use_errno=True); libc.syscall.restype = ctypes.c_long
-if number is None or (libc.syscall(number, 1, None) < 0 and ctypes.get_errno() != errno.ENOSYS):
+libc.prctl.argtypes = [ctypes.c_int] + [ctypes.c_ulong] * 4
+def refuse():
     sys.stderr.write({KEYRING_UNAVAILABLE!r} + '\\n'); sys.exit({KEYRING_EXIT})
+if abis is None or (libc.syscall(abis[0][3], 1, None) < 0 and ctypes.get_errno() != errno.ENOSYS):
+    refuse()
+deny, code = 0x50000 | errno.ENOSYS, [(0x20, 0, 0, 4)]
+for audit, *calls in abis:  # x32 numbers carry bit 30 on the native x86_64 ABI, so it is masked off
+    code += [(0x15, 0, 3 + 2 * len(calls), audit), (0x20, 0, 0, 0), (0x54, 0, 0, 0xbfffffff)]
+    code += [step for call in calls for step in ((0x15, 0, 1, call), (0x06, 0, 0, deny))] + [(0x06, 0, 0, 0x7fff0000)]
+code.append((0x06, 0, 0, deny))
+raw = ctypes.create_string_buffer(b''.join(struct.pack('HBBI', *step) for step in code))
+class Program(ctypes.Structure): _fields_ = [('len', ctypes.c_ushort), ('filter', ctypes.c_void_p)]  # sock_fprog
+program = Program(len(code), ctypes.addressof(raw))
+if libc.prctl(38, 1, 0, 0, 0) != 0 or libc.prctl(22, 2, ctypes.addressof(program), 0, 0) != 0:
+    refuse()  # PR_SET_NO_NEW_PRIVS, then PR_SET_SECCOMP with SECCOMP_MODE_FILTER
 os.execv(sys.argv[1], sys.argv[1:])
 '''
+
+
+class KeyringUnavailable(ValueError):
+    """The keyring trampoline refused to start bubblewrap."""
+
+
+def keyring_launcher():
+    """Host argv prefix that runs the next argument through KEYRING_TRAMPOLINE: every sandbox launch starts with it."""
+    if not sys.executable:
+        raise ValueError('no interpreter for the keyring trampoline')
+    return [sys.executable, '-I', '-S', '-c', KEYRING_TRAMPOLINE]
+
+
+def _keyring_refused(process):
+    """Whether a launch exited through the trampoline's refusal, which happens before bubblewrap starts."""
+    if process.returncode != KEYRING_EXIT or process.stderr is None:
+        return False
+    try:
+        os.set_blocking(process.stderr.fileno(), False)
+        return KEYRING_UNAVAILABLE.encode() in os.read(process.stderr.fileno(), 4096)
+    except (OSError, ValueError):
+        return False
 
 
 def _file_sha256(path):
@@ -149,6 +193,15 @@ class SandboxBackend:
             semantic_intent='unknown',automatic_promotion=False,publication_allowed=False)
 
     def command(self, argv, workspace, inputs, role):
+        """Host argv for one role run: bubblewrap_command() launched through KEYRING_TRAMPOLINE, so the run starts in a
+        new empty session keyring under a seccomp filter that fails every key syscall. It cannot search, describe or
+        read the validator's keys, even by serial number; /proc/keys still lists the keys its uid may view."""
+        sandboxed = self.bubblewrap_command(argv, workspace, inputs, role)
+        return keyring_launcher() + sandboxed
+
+    def bubblewrap_command(self, argv, workspace, inputs, role):
+        """The bubblewrap argv alone. Only nested or traced launches whose host process already went through the
+        trampoline use it directly; a host launch uses command()."""
         check_role(inputs,role)
         if role not in ROLES or not argv or not all(isinstance(a, str) for a in argv):
             raise ValueError('invalid role/command')
@@ -190,18 +243,17 @@ class SandboxBackend:
         """bubblewrap argv for one hook trial: no network, only env in the environment, the system directories and the
         runtime file read-only, the trial root read-only at its own path and only the listed trial folders writable.
         Nothing else of the host, its home and credential stores included, is mounted, and a host-side trampoline
-        (KEYRING_TRAMPOLINE) gives the run a new empty session keyring before bubblewrap starts."""
+        (KEYRING_TRAMPOLINE) gives the run a new empty session keyring and denies key syscalls before bubblewrap starts."""
         if not self.binary:
             raise ValueError('bubblewrap is unavailable')
-        if not sys.executable:
-            raise ValueError('no interpreter for the keyring trampoline')
+        launcher = keyring_launcher()
         if not argv or not all(isinstance(a, str) and '\0' not in a for a in argv):
             raise ValueError('invalid hook trial command')
         root, cwd, runtime = (Path(path).resolve(strict=True) for path in (root, cwd, runtime))
         if not cwd.is_relative_to(root) or not runtime.is_file():
             raise ValueError('hook trial command outside its trial')
-        command = [sys.executable, '-I', '-S', '-c', KEYRING_TRAMPOLINE, self.binary, '--unshare-all', '--unshare-user',
-                   '--unshare-net', '--die-with-parent', '--new-session', '--cap-drop', 'ALL', '--clearenv']
+        command = launcher + [self.binary, '--unshare-all', '--unshare-user', '--unshare-net', '--die-with-parent',
+                              '--new-session', '--cap-drop', 'ALL', '--clearenv']
         for key, value in sorted(env.items()):
             if not isinstance(key, str) or not isinstance(value, str) or not key or '=' in key or '\0' in key + value:
                 raise ValueError('invalid hook trial environment')
@@ -278,8 +330,12 @@ class SandboxBackend:
                 del self.permission_reports[checkpoint:]
             except TimeoutError:
                 return dict(status='unsupported', reason='namespace_probe_timeout', automatic_promotion=False)
+            except KeyringUnavailable:
+                return dict(status='unsupported', reason='keyring_isolation_unavailable', automatic_promotion=False)
             except (OSError, ValueError, subprocess.SubprocessError) as error:
                 return dict(status='unsupported', reason=_launch_failure(error), automatic_promotion=False)
+        if run['exit_code'] == KEYRING_EXIT and KEYRING_UNAVAILABLE in run['stderr']:
+            return dict(status='unsupported', reason='keyring_isolation_unavailable', automatic_promotion=False)
         available = run['exit_code'] == 0 and run['status'] == 'completed' and run['inputs_unchanged'] is True
         if self.permission_audit:
             observed=run['attestation']['permission_audit']
@@ -427,10 +483,13 @@ class SandboxBackend:
                     if audit:
                         audit_report=audit.result()
                         if audit_report['status']!='complete':reason=reason or 'permission_audit_unavailable'
-                except BaseException:
+                except BaseException as error:
                     try: os.killpg(process.pid, signal.SIGKILL)
                     except ProcessLookupError: pass
                     process.wait(timeout=2)
+                    # Before the storage handoff no role code has run, so this exit is the trampoline's own refusal.
+                    if isinstance(error, Exception) and scratch is not None and not scratch.verified and _keyring_refused(process):
+                        raise KeyringUnavailable(KEYRING_UNAVAILABLE) from error
                     raise
                 finally:
                     poll.close()

@@ -102,6 +102,16 @@ workspace and role-allowed read-only inputs; clears inherited environment; and
 requests separate network/process/user namespaces, capability removal, process
 session cleanup and CPU/address-space/process/file/output/time limits. Input
 integrity is rechecked. No host home/config/socket is mounted.
+Namespaces do not isolate kernel keyrings, and the sandbox keeps the validator's
+uid, so every role and grader launch, like a hook trial, goes through the same
+host-side trampoline. It joins a new empty session keyring, then installs a
+seccomp filter that fails `add_key`, `request_key` and `keyctl` with `ENOSYS`.
+A run therefore cannot search, describe or read the validator's keys, even by
+serial number. `/proc/keys` stays mounted, because masking it would stop nested
+sandboxes from mounting `/proc`, so a run can still see the type and description
+of keys the validator's uid may view. A kernel without key support proceeds; any
+other failure stops before bubblewrap starts, and `ahl sandbox-check` reports
+`keyring_isolation_unavailable`.
 Writable workspaces must be disjoint from every declared read-only input; nested
 mounts of the same host tree are rejected before execution. Captured stdout and
 stderr share one byte allowance. Timeout, interruption and selector-registration

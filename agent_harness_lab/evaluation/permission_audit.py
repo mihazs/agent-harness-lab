@@ -112,8 +112,11 @@ class Observation:
         self.raw=encoded(self.frame)
         if len(self.raw)>MAX_FRAME:
             self.close();raise ValueError('permission audit launch frame exceeds bound')
+        from .sandbox import keyring_launcher
+        launcher=keyring_launcher()
         self.reader,self.writer=os.pipe2(os.O_CLOEXEC|os.O_NONBLOCK)
-        self.command=[sys.executable,'-I','-S',str(Path(__file__).resolve()),str(self.writer),str(os.getpid())]
+        # The observer starts in a new empty session keyring, which the traced bubblewrap and role inherit.
+        self.command=[*launcher,sys.executable,'-I','-S',str(Path(__file__).resolve()),str(self.writer),str(os.getpid())]
         if source_ticket is not None:
             _CUSTODY[self]=dict(ticket=ref(source_ticket),raw=self.raw,launch=tuple(self.command),
                 reader=self.reader,writer=self.writer,reader_id=_fd_identity(self.reader),writer_id=_fd_identity(self.writer),
