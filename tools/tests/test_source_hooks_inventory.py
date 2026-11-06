@@ -171,6 +171,16 @@ class HookInventoryTests(unittest.TestCase):
         self.assertEqual(hooks.resolve('${CLAUDE_PROJECT_DIR}/x/y.sh', None, 'codex')[0], 'external_or_dynamic_command')
         self.assertEqual(hooks.resolve('node', ['tools/x.js'], 'claude-code')[1], 'tools/x.js')
 
+    def test_codex_commands_never_receive_the_project_dir_anchor(self):
+        # openai/codex@d786ff91 sets no project-root variable for config-layer hooks (#345).
+        for command in ('./.codex/hooks/x.sh', 'bash .codex/hooks/x.sh', '"$CLAUDE_PROJECT_DIR"/.codex/hooks/x.sh',
+                        '${PLUGIN_ROOT}/hooks/x.sh', '${CLAUDE_PLUGIN_ROOT}/hooks/x.sh', '$CODEX_PROJECT_DIR/x.sh',
+                        '"$(git rev-parse --show-toplevel)"/.codex/hooks/x.sh'):
+            with self.subTest(command=command):
+                resolution, _, anchor = hooks.resolve(command, None, 'codex')
+                self.assertIn((resolution, anchor), {('referenced_script', 'cwd_relative_unverified'),
+                                                     ('external_or_dynamic_command', None)})
+
     def test_interpreter_options_and_inline_code_never_become_a_script_path(self):
         for command, args in (('bash -ec "rm -rf tools/x"', None), ('bash -lc "tools/run.sh arg"', None),
                               ('node --eval "tools/x"', None), ('python3 -um tools/x', None), ('sh -xc tools/x', None),

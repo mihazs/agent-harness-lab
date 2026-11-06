@@ -9,7 +9,8 @@ surfaces.PINS); a regex matcher compiles with Python re, a proxy for the runtime
 checkout script that is not group- or world-writable, with no Windows command or shell override; a timeout is set
 within TIMEOUT_BOUNDS; and a network or credential word in the command line is a heuristic recommendation finding. The config bytes must equal promotion.journal.key_edit() of the before bytes,
 so every other settings key survives byte-identically. settings.local.json and managed layers are never written,
-and Codex trust state is never written: a Codex unit reports requires_user_trust_review. A passed verdict admits
+and Codex trust state is never written: a Codex unit reports requires_user_trust_review and is always
+blocked with codex_anchor_undocumented. A passed verdict admits
 the unit to the journal only when a caller passes it explicitly, and its digest binds the sha256 and mode of every
 member snapshot and referenced checkout script; it is not behavioral evidence, which stays inconclusive until a hook
 behavior evaluation exists.
@@ -201,6 +202,9 @@ def evaluate(project, before, after):
     if config is None: finding('blocked', 'one_config_member_required')
     elif config not in CONFIGS: finding('blocked', 'layer_never_written', config)
     runtime, form = CONFIGS.get(config, (None, None))
+    # Codex documents no project-root anchor (docs/source-contracts.md#codex-hook-command-anchor), so every Codex
+    # unit, including one that only removes or empties handlers, stays recommendation-only and is never applied.
+    if runtime == 'codex': finding('blocked', 'codex_anchor_undocumented', config)
     referenced, scripts = set(), {}
     if form:
         old, new = _raw(before.get(config)), _raw(after.get(config))
