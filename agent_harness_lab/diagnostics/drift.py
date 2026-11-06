@@ -8,10 +8,10 @@ minimum exposure, effects of interest and the per-channel alert budget.
 ``assess`` returns a ``drift-receipt-v1`` for one later window.
 
 The capture channel raises deterministic operational alerts (schema mismatch,
-conflicting duplicates, cursor gaps or collisions, untimed runs and coverage
-below the frozen rule). A run with partial or unknown capture, a missing
-required field, truncation, parse rejection, or unknown task root or harness
-identity is ineligible: it lowers capture coverage and never enters the task-mix
+conflicting duplicates, missing or non-integer cursors, cursor gaps or collisions,
+untimed runs and coverage below the frozen rule). A run with partial or unknown
+capture, a missing required field, truncation, parse rejection, or unknown task
+root or harness identity is ineligible: it lowers capture coverage and never enters the task-mix
 or performance denominators. Retries of one task root count once. The task-mix
 and performance channels report bounded descriptive exposure only; their
 statistical detectors are not implemented yet, so they always return
@@ -226,6 +226,7 @@ def _bounded(counter, value):
     if value not in counter and len(counter) >= MAX_CATEGORIES:
         value = OTHER
     counter[value] = counter.get(value, 0) + 1
+    return value
 
 
 def _channels(plan, roots):
@@ -237,14 +238,12 @@ def _channels(plan, roots):
         if state['stratum'] is None:
             unknown['stratum_roots'] += 1
             continue
-        _bounded(strata, state['stratum'])
-        if len(state['verified']) == 2:
-            unknown['mixed_outcome_roots'] += 1
+        stratum = _bounded(strata, state['stratum'])
+        if state['missing_label'] or state['unverified'] or len(state['verified']) != 1:
+            unknown['missing_label_roots' if state['missing_label'] else 'unverified_roots' if state['unverified']
+                    else 'mixed_outcome_roots'] += 1
             continue
-        if not state['verified']:
-            unknown['missing_label_roots' if state['missing_label'] else 'unverified_roots'] += 1
-            continue
-        cell = performance.setdefault(state['stratum'], dict(verified_roots=0, failures=0))
+        cell = performance.setdefault(stratum, dict(verified_roots=0, failures=0))
         cell['verified_roots'] += 1
         cell['failures'] += False in state['verified']
     return dict(roots=len(roots), strata=dict(sorted(strata.items())),
@@ -256,7 +255,8 @@ def _capture_reasons(plan, counts, reference_coverage=None):
     reasons = ['schema_mismatch'] if counts['ineligible'].get('schema_mismatch') else []
     reasons += [reason for reason, key in (('conflicting_duplicate_runs', 'conflicting_duplicates'),
                                            ('cursor_gap', 'cursor_gaps'), ('cursor_collision', 'cursor_collisions'),
-                                           ('untimed_runs', 'untimed_runs')) if counts[key]]
+                                           ('cursor_unknown', 'cursor_unknown'), ('untimed_runs', 'untimed_runs'))
+                if counts[key]]
     coverage = counts['coverage']
     if coverage is not None and coverage < plan['capture']['min_coverage']:
         reasons.append('coverage_below_minimum')
