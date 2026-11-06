@@ -152,6 +152,30 @@ journal. The receipt is:
 controller attempt, the controller harness-input digest, the `HarnessSnapshot`
 fingerprint, its captured HEAD fingerprint and the Git source key.
 
+### Binding in the live source receipt
+
+A Python caller can pass the same handle when it creates the sink:
+`SourceSink(cache, project_sha256, scope_sha256, harness_capture=collector.harness_capture)`.
+After each successful `finish`, the immediate live recheck report then carries
+`live_verification.harness_snapshot_binding`. This is exactly the receipt that
+`bind(attempt, harness_capture)` returns for that closed attempt, so the verified
+controller `session`, `attempt` and `grader_revision` and the harness snapshot
+comparison come from one live capability in one report. The binding's
+`controller_attempt_sha256` equals the verified `attempt` field, and its
+`controller_harness_input_sha256` equals `controller_harness_input.sha256`.
+One capture can serve every attempt of the sink. Each attempt is compared
+separately, so an attempt that began before the capture is `unknown`.
+
+Without a handle, the key is absent. A value other than an owned built-in handle
+(a `HarnessSnapshot`, a source snapshot, a dictionary or a constructed
+`HarnessCapture`) produces an `unknown` binding with reason
+`owned_harness_capture_required`; it never raises or becomes `verified`. When the
+attempt itself is incomplete, `source_capture.status` is `unknown` and no binding
+is reported. A `mismatch` or `unknown` binding does not change the source capture
+status. The binding exists only in that report: it is not imported, journaled or
+added as an `IdentityField`, so the journal and its records are unchanged and
+journal replay cannot recreate it. The evaluator CLI has no flag for it.
+
 Only one thing is established: the tree the controller checked before and after the
 executor equals the selected files of one captured snapshot. Those files' content
 equals the committed blobs at the captured HEAD of that checkout location. The
@@ -188,13 +212,15 @@ qualification remains explicitly opt-in. Run
 `task test:sources:permission-composition:kernel` for the actual audited
 worker/fresh-grader handoff and private-wire, argv and artifact controls.
 Run `task test:sources:harness-binding` for the synthetic Git harness binding,
-ownership, dirty/untracked, late-capture and location controls. The kernel task
-above also runs the binding through actual pinned executors and fresh graders.
+live-receipt projection, ownership, dirty/untracked, late-capture and location
+controls. The kernel task above also runs the binding, and its live-receipt
+projection, through actual pinned executors and fresh graders.
 Synthetic transport supplies the model
 responses in these controls; no real inference or native agent is launched.
 
 The full #42/#58 chain still requires supported effective configuration/memory/code
-receipts (the harness snapshot binding covers only the checked input tree), authenticated cross-source native identity, protected corpus lineage
+receipts (the harness snapshot binding, including its live-receipt projection,
+covers only the checked input tree), authenticated cross-source native identity, protected corpus lineage
 integration and a reviewed diagnostic-utility study. This slice does not complete
 those issues.
 

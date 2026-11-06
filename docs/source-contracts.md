@@ -79,6 +79,8 @@ expires with the live capability, and its journal still stores declarations.
 Its separate in-process [harness snapshot binding](controller-sources.md#owned-git-harness-snapshot-binding)
 can report that the executor's checked harness input tree equals one clean
 local-Git `HarnessSnapshot` captured earlier from the same checkout location.
+A sink created with that capture reports the binding inside the same immediate
+live recheck as `harness_snapshot_binding`.
 That receipt is not an `IdentityField`, cannot be imported and leaves
 `effective_harness` unknown.
 No receipt authorizes execution or grading.
