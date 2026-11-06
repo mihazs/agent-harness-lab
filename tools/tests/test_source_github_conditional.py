@@ -32,7 +32,7 @@ class GitHubConditionalTests(GitHubFixture, unittest.TestCase):
         self.folder = tempfile.TemporaryDirectory(); self.addCleanup(self.folder.cleanup)
         self.scope = dict(project_sha256=self.source.project_sha256, scope_sha256=self.source.scope_sha256)
         self.store = SourceStore(Path(self.folder.name)/'journal.json', **self.scope)
-        self.sent, self.tags, self.answered = [], {}, []
+        self.sent, self.tags, self.answered, self.links = [], {}, [], {}
 
     def respond(self):
         target = self.targets[-1]
@@ -44,9 +44,9 @@ class GitHubConditionalTests(GitHubFixture, unittest.TestCase):
         tag = self.tags.get(target, 'W/"'+digest(value)+'"')
         if validator is not None and validator == tag:
             self.answered.append((target, 304))
-            return Response(b'', status=304, headers={'ETag': tag})
+            return Response(b'', status=304, headers={'ETag': tag, **self.links.get(target, {})})
         self.answered.append((target, 200))
-        headers = dict(self.headers)
+        headers = dict(self.headers, **self.links.get(target, {}))
         if tag is not None: headers['ETag'] = tag
         return Response(value, headers=headers)
 
@@ -150,6 +150,23 @@ class GitHubConditionalTests(GitHubFixture, unittest.TestCase):
         self.assertEqual([v for t, v in self.sent if t == '/pulls/8'], ['W/"'+digest(self.pull)+'"'])
         self.capture(client)
         self.assertNotIn('/pulls/8', {t for t, _ in self.sent})
+
+    def test_304_link_header_updates_the_replayed_pagination(self):
+        first, second = '/pulls/8/reviews?per_page=100&page=1', '/pulls/8/reviews?per_page=100&page=2'
+        self.routes[first] = [dict(self.review, id=1000+i) for i in range(100)]
+        client = GitHubAPI(self.base, self.selection, conditional=True)
+        self.capture(client)
+        # Page 1's body and validator are unchanged, but its 304 now names a new next page.
+        self.routes[second] = [dict(self.review, id=2000)]
+        self.links[first] = {'Link': '<'+self.base+second+'>; rel="next"'}
+        plain = self.capture(GitHubAPI(self.base, self.selection))
+        conditional = self.capture(client)
+        self.assertIn((first, 304), self.answered)
+        self.assertIn((second, 200), self.answered)
+        self.assertEqual(conditional.sha256, plain.sha256)
+        self.capture(client)
+        self.assertIn((first, 304), self.answered)
+        self.assertIn((second, 304), self.answered)
 
     def test_validators_are_not_shared_between_reader_instances(self):
         self.capture(GitHubAPI(self.base, self.selection, conditional=True))

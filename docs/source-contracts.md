@@ -2863,7 +2863,9 @@ usable tag retires the older validator for that target.
 
 A `304 Not Modified` is accepted only for a request that sent a validator. Its
 `ETag`, when present, must equal the validator sent. The reader then replays the
-previously validated response, including its pagination links. The replay
+previously validated response. Headers the 304 sends, such as a new `Link`
+naming a next page, replace the stored ones (RFC 9111 section 4.3.4), so a page
+whose body is unchanged still follows newly added pages. The replay
 counts as a request and is charged its original byte count. If that charge
 exceeds the byte budget, the capture is rejected as a `200` of that size would
 be. A replayed capture therefore produces the same records, summary, coverage

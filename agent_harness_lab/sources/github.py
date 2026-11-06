@@ -216,7 +216,9 @@ class GitHubAPI:
         if metadata.get('etag', etag) != etag: raise TransportError('GitHub 304 names another validator')
         if self.transport.max_bytes is not None and state['used']+size > self.transport.max_bytes:
             raise TransportError('GitHub capture budget exhausted')
-        state['used'] += size; state['not_modified'] += 1; state['validators'][key] = cached
+        # RFC 9111 4.3.4: the 304's own headers (such as a new rel=next Link) update the stored ones.
+        headers = {**headers, **{k: v for k, v in metadata.items() if k != 'content-length'}}
+        state['used'] += size; state['not_modified'] += 1; state['validators'][key] = (etag, value, headers, size)
         return copy.deepcopy(value), dict(headers)
 
     def _graphql(self, query, variables, state):
