@@ -179,6 +179,10 @@ def test_reference_definitions_are_edges_but_footnotes_are_not():
     ('[x]: b.md "title" <https://example.invalid/after>', [('autolink', 'https://example.invalid/after')]),
     ('[x]: b.md "title"  \r', [('reference_definition', 'b.md')]),
     ("[x]: <b.md> 'title'", [('reference_definition', 'b.md')]),
+    ('[x]: <b.md>[[secret]]', [('wikilink', 'secret')]),
+    ('[x]: <b.md>[y](https://example.invalid/leak)', [('markdown', 'https://example.invalid/leak')]),
+    ('[x]: <b.md>junk', []),
+    ('[x]: <b.md', []),
 ])
 def test_definition_like_prefix_does_not_hide_later_links(body, expected):
     edges = links([('a.md', body), ('b.md', ''), ('Design.md', ''), ('secret.md', '')])

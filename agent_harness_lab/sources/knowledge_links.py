@@ -29,8 +29,9 @@ _FENCE = re.compile(r' {0,3}(`{3,}|~{3,})(.*)$')
 _WIKI = re.compile(r'(!?)\[\[([^\[\]\n]+)\]\]')
 _INLINE = re.compile(r'(!?)\[(?:[^\[\]\n]|\[[^\[\]\n]*\]){0,1000}\]\(')
 _TITLE = re.compile(r'"[^"\n]{0,1000}"|\'[^\'\n]{0,1000}\'|\([^()\n]{0,1000}\)')
-# A definition is the whole line: a destination, then at most a title.
-_DEFINITION = re.compile(r' {0,3}\[([^\[\]\n^][^\[\]\n]{0,998})\]:[ \t]*(<[^<>\n]*>|\S+)(?:[ \t]+(?:%s))?\s*$'
+# A definition is the whole line: a destination, then at most a title. A bare destination may not start with
+# '<', so `<dest>junk` is not a definition and the links after it are still read.
+_DEFINITION = re.compile(r' {0,3}\[([^\[\]\n^][^\[\]\n]{0,998})\]:[ \t]*(?:<([^<>\n]*)>|([^<\s]\S*))(?:[ \t]+(?:%s))?\s*$'
                          % _TITLE.pattern)
 _AUTOLINK = re.compile(r'<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*)>')
 _SCHEME = re.compile(r'[A-Za-z][A-Za-z0-9+.-]*:')
@@ -135,8 +136,8 @@ def _mask(line):
 def _line_links(line):
     definition = _DEFINITION.match(line)
     if definition:
-        target = definition.group(2)
-        yield 'reference_definition', target[1:-1] if target.startswith('<') else target
+        angle, bare = definition.group(2, 3)
+        yield 'reference_definition', bare if angle is None else angle
         return
     for match in _WIKI.finditer(line):
         yield 'wikilink_embed' if match.group(1) else 'wikilink', match.group(2)
