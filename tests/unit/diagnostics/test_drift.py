@@ -116,6 +116,13 @@ class TestReference:
         assert reference['capture']['ineligible'] == {'revision_outside_reference': 5}
         assert reference['roots'] == 195
 
+    def test_reference_without_cursors_is_refused(self, plan):
+        runs = synthetic_runs(0, 200, seed=1)
+        for run in runs:
+            del run['cursor']
+        with pytest.raises(ValueError, match='cursor_unknown'):
+            drift.freeze_reference(plan, runs)
+
     def test_reference_below_minimum_exposure_is_refused(self, plan):
         with pytest.raises(ValueError, match='minimum exposure'):
             drift.freeze_reference(plan, synthetic_runs(0, 10, seed=1))
@@ -171,6 +178,9 @@ class TestChannels:
         (lambda runs: runs[4].update(cursor=runs[5]['cursor']), 'cursor_collision'),
         (lambda runs: runs.append({**runs[0], 'outcome': not runs[0]['outcome']}), 'conflicting_duplicate_runs'),
         (lambda runs: runs[2].update(started=None), 'untimed_runs'),
+        (lambda runs: runs[6].pop('cursor'), 'cursor_unknown'),
+        (lambda runs: runs[6].update(cursor='6'), 'cursor_unknown'),
+        (lambda runs: [run.pop('cursor') for run in runs], 'cursor_unknown'),
     ])
     def test_operational_capture_defects_alert_in_the_capture_channel(self, plan, reference, mutate, reason):
         runs = synthetic_runs(100, 200, seed=2, prefix='c')
@@ -213,6 +223,32 @@ class TestChannels:
         assert performance['unknown']['missing_label_roots'] == 30
         assert performance['unknown']['unverified_roots'] == 20
         assert sum(cell['current']['verified_roots'] for cell in performance['strata'].values()) == 150
+
+    @pytest.mark.parametrize('retry, bucket', [
+        (dict(outcome=None), 'missing_label_roots'),
+        (dict(outcome=False, outcome_provenance='self_reported'), 'unverified_roots'),
+        (dict(outcome=True, outcome_provenance='self_reported'), 'unverified_roots'),
+    ])
+    @pytest.mark.parametrize('verified', [True, False])
+    def test_verified_outcome_never_hides_an_unlabelled_or_unverified_retry(self, plan, reference, retry,
+                                                                            bucket, verified):
+        runs = synthetic_runs(100, 200, seed=2, prefix='c')
+        for index in range(10):
+            runs[index]['outcome'] = verified
+            runs.append({**runs[index], 'run_id': f'retry{index}', 'cursor': 200 + index, **retry})
+        _, _, performance = channels(drift.assess(plan, reference, runs, 0))
+        assert performance['unknown'][bucket] == 10
+        assert sum(cell['current']['verified_roots'] for cell in performance['strata'].values()) == 190
+
+    def test_performance_strata_share_the_bounded_task_mix_keys(self, plan, reference):
+        families = tuple(f'family{index}' for index in range(100))
+        runs = synthetic_runs(100, 200, seed=2, prefix='c', families=families)
+        _, mix, performance = channels(drift.assess(plan, reference, runs, 0))
+        assert len(mix['current']) == drift.MAX_CATEGORIES + 1 and drift.OTHER in mix['current']
+        current = {key for key, cell in performance['strata'].items() if cell['current']['verified_roots']}
+        assert current <= set(mix['current']) and drift.OTHER in current
+        assert set(performance['strata']) <= set(mix['current']) | set(mix['reference'])
+        assert sum(cell['current']['verified_roots'] for cell in performance['strata'].values()) == 200
 
     def test_task_mix_change_stays_in_its_channel_with_new_and_absent_strata(self, plan, reference):
         runs = synthetic_runs(100, 200, seed=2, prefix='c', families=('docs',))

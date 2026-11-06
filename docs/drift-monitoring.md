@@ -53,13 +53,16 @@ must also be one of `reference_revisions_sha256`. An ineligible run lowers captu
 coverage. It never enters the task-mix or performance counts, so partial or unknown
 capture cannot appear as a performance change.
 
-Repeated runs of one task root (retries) count as one observation. A root whose
-verified outcomes disagree, whose label is missing, or whose outcome came from
-provenance other than `executable_grader` or `independent_review` is counted as
-unknown and stays out of the performance denominator. A root whose stratum values
-are empty or inconsistent is counted as an unknown stratum, never as a precise one.
+Repeated runs of one task root (retries) count as one observation. A root is
+counted as unknown and stays out of the performance denominator when any of its
+eligible runs has a missing label (`missing_label_roots`), otherwise when any
+outcome came from provenance other than `executable_grader` or
+`independent_review` (`unverified_roots`), otherwise when its verified outcomes
+disagree (`mixed_outcome_roots`). A verified run never hides an unlabelled or
+unverified retry. A root whose stratum values are empty or inconsistent is counted
+as an unknown stratum, never as a precise one.
 Each stratum and feature keeps at most 64 categories; the rest are counted as
-`other`.
+`other`. The performance cells use the same bounded stratum keys as the task mix.
 
 ## Reference and receipt
 
@@ -71,15 +74,16 @@ hash and the reference digest, then returns a `drift-receipt-v1`.
 
 | Channel | What it reports | States in this slice |
 | --- | --- | --- |
-| `capture` | Ineligible runs by reason, coverage against the reference, identical duplicates suppressed, conflicting duplicates, cursor gaps and collisions in the window, untimed runs | `alert`, `no_alert`, `insufficient_evidence` |
+| `capture` | Ineligible runs by reason, coverage against the reference, identical duplicates suppressed, conflicting duplicates, unknown cursors, cursor gaps and collisions in the window, untimed runs | `alert`, `no_alert`, `insufficient_evidence` |
 | `task_mix` | Eligible task roots per stratum and feature value in the reference and current window, new and absent strata, unknown strata | `insufficient_evidence` |
 | `performance` | Verified roots and failures per stratum on both sides, whether each stratum has `min_exposure` on both sides, and missing-label, unverified and mixed-outcome roots | `insufficient_evidence` |
 
 The capture channel raises an alert for a schema mismatch, a conflicting duplicate
-run, a cursor gap or collision, a run without a finite `started` time, coverage
-below `min_coverage`, or a coverage drop larger than `max_coverage_drop`. Duplicates
-and untimed runs are counted over all supplied runs, because a run without a
-trusted time cannot be placed in a window. A window with no runs, or fewer than
+run, a missing or non-integer cursor (`cursor_unknown`), a cursor gap or
+collision, a run without a finite `started` time, coverage below `min_coverage`,
+or a coverage drop larger than `max_coverage_drop`. Duplicates and untimed runs are
+counted over all supplied runs, because a run without a trusted time cannot be
+placed in a window. A window with no runs, or fewer than
 `min_exposure` runs, is `insufficient_evidence`.
 
 The task-mix and performance detectors are not implemented yet. Those channels
