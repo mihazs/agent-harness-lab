@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.116.0
+
+### Minor Changes
+
+- b897f84: Staging and adoption now cover nested `CLAUDE.md`, `.claude/CLAUDE.md`, `AGENTS.md` and `AGENTS.override.md` files, `.claude/rules/**/*.md`, `.claude/agents/**/*.md`, `.codex/agents/**/*.toml`, `.claude/commands/**/*.md` and nested `.claude/skills` or `.agents/skills` bundles, all through `surfaces.classify`. These rows are adoptable only when the caller confirms checkout containment, and only for non-executable paths they name. `candidate_states` checks a staged copy, and the promotion journal re-probes the project, so a file inside a nested repository stages but never adopts. Inventories and other lexical callers get the previous verdicts. Settings, `CLAUDE.local.md`, hooks, workflows, Codex `.rules`, MCP, memory and plugin checkouts stay non-adoptable. Default discovery still stages only root instructions and root skill bundles. Both proposer prompts list the allowed kinds from `surfaces.adoptable_surfaces()`. Configured `harness_paths` refuse `private_excluded` files. Change plans mark kinds without an adoptable row as unresolved, along with every hook-facet operation, so agent edits stay unresolved. The behavioral path still adopts nothing automatically.
+
+### Patch Changes
+
+- f02090e: Nested-surface adoption now checks what it writes, not only where. `candidate_states` and `Journal.prepare` classify a changed file with its execute bits, so an executable `.claude/rules/*.md` or a suffix-less script in a nested skill bundle needs the hook contract. An agent definition whose Claude frontmatter or Codex role file registers hooks also needs it, and an undecodable, escaped or unparsable definition fails closed. A rollback no longer breaks when a `.git` appears below the project after adoption, while a new promotion of the now-nested file is still refused.
+
 ## 0.115.0
 
 ### Minor Changes
