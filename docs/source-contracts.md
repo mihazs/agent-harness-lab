@@ -2570,10 +2570,59 @@ true or reviewed, that an agent retrieved it, or that it helps with a task.
 Synthetic fixtures establish this contract, not factual accuracy.
 
 Still open in #47: the readers do not yet map OKF, wiki, knowledge-graph or ADR
-fields to facets, resolve their links to `RecordRef`s, or store facets. Claim
+fields to facets, bind their [link edges](#knowledge-bundle-link-edges) to
+`RecordRef`s, or store facets. Claim
 identity across sources, project-scope compatibility checks, review provenance and
 `stale_after` handling in the resolver, contradiction detection between statements,
 a CLI and the #43/#58/#11 integrations are also still open.
+
+### Knowledge-bundle link edges
+
+`sources.knowledge_links.links(pages)` reads the links between the Markdown pages of
+one selected bundle: an OKF export (`(p.path, p.body) for p in OKFExport.pages(source)`),
+a Git-backed LLM wiki, a Markdown knowledge graph or an ADR directory. It is an
+offline Python API with no CLI exposure. The caller supplies `(path, body)` pairs it
+is already authorized to hold; paths must be distinct, normalized, bundle-relative
+POSIX `.md` paths, and bodies are the Markdown text after any frontmatter. The
+function opens no file, follows no link and fetches nothing. A bundle over 10,000
+pages, a page over 1 MiB of text or more than 10,000 links on one page raises
+`LinkLimit`; nothing is truncated.
+
+Each link becomes one `Edge` with the source page, line number, kind, raw target,
+status, reason and, when resolved, the target page path. Kinds are `wikilink`,
+`wikilink_embed` (`![[...]]`), `markdown`, `markdown_image`, `reference_definition`
+(`[label]: target`, not footnotes) and `autolink` (`<scheme:...>`). Links in fenced
+code blocks, one-line code spans and after a backslash-escaped bracket are not edges.
+
+| Status | Meaning |
+| --- | --- |
+| `resolved` | Exactly one bundle page matches; a same-page anchor or query resolves to the source page |
+| `missing` | No page matches (`no_page`), or only a page differing in letter case (`case_only_match`) |
+| `ambiguous` | Several pages share the wikilink's page name or path suffix (`several_pages`) |
+| `outside_bundle` | A relative link climbs above the bundle root (`parent_traversal`) |
+| `remote` | A URL scheme or `//host` reference; it stays an opaque reference |
+| `unknown` | A non-page target such as an image, a site-root `/path`, or a `./` or `../` wikilink whose base is not documented |
+| `invalid` | An empty target, malformed percent-encoding, a backslash or NUL, or a target over 2,048 characters |
+
+A wikilink `[[name]]`, `[[name|alias]]` or `[[name#heading]]` matches a page named
+`name.md` anywhere in the bundle; a target with `/` matches that bundle path or one
+unique path suffix. A Markdown link resolves relative to its page after one
+percent-decoding, ignoring its `#fragment` and `?query`. Matching is exact and
+case-sensitive. Page order, arrival order and similarity never choose between
+candidates. Destinations accept three levels of balanced parentheses, the CommonMark
+minimum.
+
+`summary(edges, pages=None)` reports counts only: links per status, kind and reason,
+pages with links, distinct resolved targets, self links and, given the page paths,
+pages that nothing links to. It carries profile `knowledge-links-v1`,
+`files_read`, `remote_fetched`, `link_text_included` and `truth_established` false,
+`authority: none` and `publication_allowed: false`, and `public_export_allowed`
+rejects that profile. A resolved edge records that one page names another; it does
+not make the target true, reviewed or independent of its source. HTML links,
+indented code blocks, multi-line code spans, reference-link usages, nested link
+text, site-root paths and links inside frontmatter are not read and are listed under
+`unsupported`. Synthetic bundles establish this contract
+(`tests/unit/sources/test_source_knowledge_links.py`).
 
 ## Shared HTTPS transport
 
