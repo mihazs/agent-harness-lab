@@ -14,7 +14,7 @@ else:
     from test_source_github import GitHubFixture
 
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
-from agent_harness_lab.sources.commit_join import join_commit
+from agent_harness_lab.sources.commit_join import join_commit, join_pull_commit
 from agent_harness_lab.sources.execution import CoverageManifest, ExecutionMetadata, RecordRef, ScanBound
 from agent_harness_lab.sources.git import GitExport
 from agent_harness_lab.sources.github import GitHubAPI, GitHubSelection
@@ -36,9 +36,13 @@ def record(source, kind, native, revision=None, state='present'):
 def git_commit(source, sha): return record(source, 'git_commit', ('git_commit', sha), digest(sha))
 def hub_commit(source, repo, sha): return record(source, 'github_commit', ('github_commit', repo, sha))
 def hub_repository(source, repo): return record(source, 'github_repository', ('github_repository', repo, repo))
+def hub_pull(source, repo, pull, head, **state): return record(source, 'github_pull', ('github_pull', repo, pull), digest(('pull', head)), **state)
+def ref(r): return RecordRef(r.source_sha256, r.native_id_sha256, r.revision_sha256)
+def edge(relation, left, right): return JoinReceipt(ref(left), ref(right), relation, 'github.native', 'github-claims-v1',
+    (ref(left), ref(right)), basis='native_fields')
 
 
-class CommitJoinTests(unittest.TestCase):
+class CommitJoinFixture:
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(); self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name)
@@ -57,7 +61,7 @@ class CommitJoinTests(unittest.TestCase):
     def store(self, source):
         return SourceStore(self.root/(source.source_key+'.json'), project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)
 
-    def capture(self, source, *records, truncated=False):
+    def capture(self, source, *records, truncated=False, joins=()):
         store = self.store(source)
         refs = tuple(RecordRef(r.source_sha256, r.native_id_sha256, r.revision_sha256) for r in records)
         metadata = None
@@ -67,7 +71,7 @@ class CommitJoinTests(unittest.TestCase):
                 reported_completeness='partial', limit_reached=True, truncated=True))
         store.ingest(source, records, cursor_before=store.status(source)['cursor_sha256'],
             snapshot_sha256=digest([r.to_dict() for r in records]), metadata=metadata,
-            graph=EvidenceGraph(source.source_key, source.project_sha256, source.scope_sha256, source.version, refs, ()))
+            graph=EvidenceGraph(source.source_key, source.project_sha256, source.scope_sha256, source.version, refs, tuple(joins)))
         return store
 
     def join(self, git=None, hub=None, repository_id=42, sha=SHA):
@@ -81,9 +85,12 @@ class CommitJoinTests(unittest.TestCase):
             self.assertIs(result[name], False, name)
         self.assertIsNone(result['independent_roots'])
         self.assertEqual(result['repository']['git'], 'caller_declared')
-        if status != 'matched': self.assertIsNone(result['receipt'])
+        if status != 'matched': self.assertFalse(result.get('receipt') or result.get('receipts'))
         self.assertNotIn(SHA, json.dumps(result)); self.assertNotIn(str(self.root), json.dumps(result))
 
+
+
+class CommitJoinTests(CommitJoinFixture, unittest.TestCase):
     def test_exact_sha_under_one_repository_identity_is_a_deterministic_candidate_only(self):
         self.capture(self.git, git_commit(self.git, SHA))
         self.capture(self.hub, hub_repository(self.hub, 42), hub_commit(self.hub, 42, SHA))
@@ -181,6 +188,120 @@ class CommitJoinTests(unittest.TestCase):
                 self.assertFalse(public_export_allowed([{**report, 'provenance': provenance}]))
 
 
+class PullCommitJoinTests(CommitJoinFixture, unittest.TestCase):
+    """Commit roles inside one GitHub PR; a moved head is superseded, never current."""
+    PULL = 81
+
+    def pull_join(self, git=None, hub=None, repository_id=42, pull_id=PULL, sha=SHA):
+        git, hub = git or self.git, hub or self.hub
+        return join_pull_commit(git, self.store(git), hub, self.store(hub), repository_id=repository_id, pull_id=pull_id, commit_sha=sha)
+
+    def capture_pull(self, source, head, members, repo=42, pull_id=PULL, relations=('pr_head_commit',), extra=(), **state):
+        pull = hub_pull(source, repo, pull_id, head, **state)
+        commits = {sha: hub_commit(source, repo, sha) for sha in dict.fromkeys((*members, *extra))}
+        joins = [edge('commit_on', commits[sha], pull) for sha in members]
+        joins += [edge(relation, pull, commits[head]) for relation in relations if head in commits]
+        return self.capture(source, hub_repository(source, repo), pull, *commits.values(), joins=joins)
+
+    def assertRoles(self, result, status, reason, *, none=False, **roles):
+        self.assertDescriptive(result, status, reason)
+        self.assertNotIn('receipt', result)
+        expected = dict(head='unobserved', base='unobserved', merge_result='unobserved', test_merge='unobserved', member='unobserved')
+        self.assertEqual(result['roles'], None if none else {**expected, **roles})
+        if status != 'matched': self.assertEqual(result['receipts'], [])
+        self.assertEqual(result['profile'], 'cross-journal-pull-commit-join-v1')
+
+    def test_current_head_and_membership_emit_candidate_receipts_only(self):
+        self.capture(self.git, git_commit(self.git, SHA))
+        self.capture_pull(self.hub, SHA, (SHA,))
+        journals = {p: p.read_bytes() for p in self.root.glob('*.json')}
+        result = self.pull_join()
+        self.assertRoles(result, 'matched', 'exact_pull_commit_role', head='current', member='current')
+        receipts = [JoinReceipt.parse(r) for r in result['receipts']]
+        self.assertEqual([r.relation for r in receipts], ['pr_head_commit', 'commit_on'])
+        for receipt in receipts:
+            self.assertEqual((receipt.status, receipt.basis, receipt.namespace), ('candidate', 'source_declaration', 'git-github.pull-commit'))
+            self.assertEqual({receipt.left.source_sha256, receipt.right.source_sha256}, {self.git.source_key, self.hub.source_key})
+        self.assertEqual(result['pull_id_sha256'], digest(('github_pull', 42, self.PULL)))
+        self.assertEqual(self.pull_join(), result)
+        self.assertEqual({p: p.read_bytes() for p in self.root.glob('*.json')}, journals)
+
+    def test_advanced_head_is_superseded_while_membership_stays_current(self):
+        self.capture(self.git, git_commit(self.git, SHA), git_commit(self.git, OTHER))
+        self.capture_pull(self.hub, SHA, (SHA,))
+        self.capture_pull(self.hub, OTHER, (SHA, OTHER))
+        result = self.pull_join()
+        self.assertRoles(result, 'matched', 'exact_pull_commit_role', head='superseded', member='current')
+        self.assertEqual([JoinReceipt.parse(r).relation for r in result['receipts']], ['commit_on'])
+        self.assertRoles(self.pull_join(sha=OTHER), 'matched', 'exact_pull_commit_role', head='current', member='current')
+
+    def test_force_pushed_head_is_stale_with_no_current_role(self):
+        self.capture(self.git, git_commit(self.git, SHA), git_commit(self.git, OTHER))
+        self.capture_pull(self.hub, SHA, (SHA,))
+        self.capture_pull(self.hub, OTHER, (OTHER,))
+        self.assertRoles(self.pull_join(), 'stale', 'not_in_current_checkpoint', head='superseded', member='superseded')
+        self.capture_pull(self.hub, OTHER, (OTHER,), extra=(SHA,))
+        self.assertRoles(self.pull_join(), 'stale', 'pull_role_superseded', head='superseded', member='superseded')
+
+    def test_merge_result_test_merge_and_base_roles_stay_distinct(self):
+        self.capture(self.git, git_commit(self.git, SHA))
+        for relation, role in (('pr_merge_commit', 'merge_result'), ('pr_test_merge_commit', 'test_merge'), ('pr_base_commit', 'base')):
+            with self.subTest(role=role):
+                hub = replace(self.hub, scope_sha256=digest(('scope', role)))
+                self.capture_pull(hub, SHA, (), relations=(relation,), extra=(SHA,))
+                result = self.pull_join(hub=hub)
+                self.assertRoles(result, 'matched', 'exact_pull_commit_role', **{role: 'current'})
+                self.assertEqual([JoinReceipt.parse(r).relation for r in result['receipts']], [relation])
+
+    def test_foreign_repository_and_other_pull_identities_never_join(self):
+        fork = self.hub_source(43)
+        self.capture(self.git, git_commit(self.git, SHA))
+        self.capture_pull(fork, SHA, (SHA,), repo=43)
+        self.assertRoles(self.pull_join(hub=fork), 'unlinked', 'repository_identity_not_shared', none=True)
+        self.capture_pull(self.hub, SHA, (SHA,))
+        self.assertRoles(self.pull_join(pull_id=82), 'unknown', 'pull_unobserved', none=True)
+        self.assertRoles(self.pull_join(repository_id=None), 'unknown', 'repository_identity_missing', none=True)
+        for pull_id in (0, -1, True, '81', 81.0, None):
+            with self.subTest(pull_id=pull_id), self.assertRaises(ValueError): self.pull_join(pull_id=pull_id)
+
+    def test_edges_of_another_pull_never_become_current_or_superseded_roles(self):
+        self.capture(self.git, git_commit(self.git, SHA))
+        def checkpoint(source, *pulls):
+            commits = {sha: hub_commit(source, 42, sha) for sha in (SHA, OTHER)}
+            records = {pull_id: hub_pull(source, 42, pull_id, head) for pull_id, head in pulls}
+            joins = [j for pull_id, head in pulls for j in (edge('pr_head_commit', records[pull_id], commits[head]),
+                edge('commit_on', commits[head], records[pull_id]))]
+            self.capture(source, hub_repository(source, 42), *records.values(), *commits.values(), joins=joins)
+        shared = replace(self.hub, scope_sha256=digest(('scope', 'shared')))
+        checkpoint(shared, (self.PULL, OTHER), (82, SHA))
+        self.assertRoles(self.pull_join(hub=shared), 'unknown', 'pull_role_unobserved')
+        self.assertRoles(self.pull_join(hub=shared, pull_id=82), 'matched', 'exact_pull_commit_role', head='current', member='current')
+        earlier = replace(self.hub, scope_sha256=digest(('scope', 'earlier')))
+        checkpoint(earlier, (82, SHA))
+        checkpoint(earlier, (self.PULL, OTHER))
+        self.assertRoles(self.pull_join(hub=earlier), 'unknown', 'pull_role_unobserved')
+
+    def test_missing_edges_dropped_and_ambiguous_pulls_remain_unknown_or_stale(self):
+        self.capture(self.git, git_commit(self.git, SHA))
+        self.capture_pull(self.hub, SHA, (), relations=(), extra=(SHA,))
+        self.assertRoles(self.pull_join(), 'unknown', 'pull_role_unobserved')
+        self.capture(self.hub, hub_repository(self.hub, 42), hub_commit(self.hub, 42, SHA))
+        self.assertRoles(self.pull_join(), 'stale', 'pull_not_in_current_checkpoint')
+        ambiguous = replace(self.hub, scope_sha256=digest(('scope', 'ambiguous')))
+        self.capture(ambiguous, hub_repository(ambiguous, 42), hub_commit(ambiguous, 42, SHA),
+            hub_pull(ambiguous, 42, self.PULL, SHA), hub_pull(ambiguous, 42, self.PULL, OTHER))
+        result = self.pull_join(hub=ambiguous)
+        self.assertDescriptive(result, 'unknown', 'ambiguous_pull_revision')
+        self.assertIsNone(result['roles'])
+
+    def test_pull_join_reports_are_private_even_with_public_provenance(self):
+        self.capture(self.git, git_commit(self.git, SHA))
+        self.capture_pull(self.hub, SHA, (SHA,))
+        provenance = dict(source_kind='synthetic', approved_publication=True, source_ref='fixture', derived_from_private=False)
+        for report in (self.pull_join(), dict(provenance=provenance, analysis=dict(profile='cross-journal-pull-commit-join-v1'))):
+            self.assertFalse(public_export_allowed([{**report, 'provenance': provenance}]))
+
+
 @unittest.skipUnless(Path('/usr/bin/git').is_file(), 'explicit system Git is required')
 class NativeCommitJoinTests(GitHubFixture, unittest.TestCase):
     def setUp(self):
@@ -227,6 +348,26 @@ class NativeCommitJoinTests(GitHubFixture, unittest.TestCase):
         self.assertEqual(join(repository_id=43)['status'], 'unlinked')
         self.assertEqual(join(commit_sha='0'*40)['status'], 'unknown')
         with self.assertRaises(ValueError): join(commit_sha=self.sha[:12])
+        self.assertNotIn(self.sha, json.dumps(result)); self.assertNotIn('SYNTHETIC_PRIVATE', json.dumps(result))
+
+    def test_built_in_reader_pull_edges_name_the_exact_head_commit(self):
+        self.selection = GitHubSelection(42, (), (8,), schema_version=5, details=('graph',), commits=(self.sha,))
+        self.source = replace(self.source, version=self.selection.source_version, scope_sha256=self.selection.sha256)
+        self.pull['head']['sha'] = self.sha
+        self.routes['/pulls/8/commits?per_page=100&page=1'] = [{**self.commit, 'sha': self.sha, 'url': self.base+'/commits/'+self.sha, 'parents': []}]
+        stores = {}
+        for source, connector in ((self.git, GitExport(self.root/'source.json')), (self.source, GitHubAPI(self.base, self.selection, max_pages=40))):
+            registry = Registry(); registry.register(Capability(source.kind, source.provider, source.version,
+                ('contextual_assertion', 'development_artifact')), connector)
+            stores[source.kind] = SourceStore(self.root/(source.kind+'.json'), project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)
+            registry.ingest(source, stores[source.kind], project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)
+        join = lambda **options: join_pull_commit(self.git, stores['local_git'], self.source, stores['api'],
+            **{'repository_id': 42, 'pull_id': self.pull['id'], 'commit_sha': self.sha, **options})
+        result = join()
+        self.assertEqual((result['status'], result['roles']['head'], result['roles']['member']), ('matched', 'current', 'current'))
+        self.assertEqual(sorted(JoinReceipt.parse(r).relation for r in result['receipts']), ['commit_on', 'pr_head_commit'])
+        self.assertEqual(join(pull_id=self.pull['id']+1)['reason'], 'pull_unobserved')
+        self.assertEqual(join(repository_id=43)['status'], 'unlinked')
         self.assertNotIn(self.sha, json.dumps(result)); self.assertNotIn('SYNTHETIC_PRIVATE', json.dumps(result))
 
 

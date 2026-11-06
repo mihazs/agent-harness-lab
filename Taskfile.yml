@@ -571,7 +571,7 @@ tasks:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_recheck.py" -v'
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_git.py" -k recheck -v'
   test:sources:commit-join:
-    desc: Run offline Git/GitHub commit-join negative controls with synthetic journals
+    desc: Run offline Git/GitHub commit and PR commit-role join negative controls with synthetic journals
     cmds:
       - '{{.PYTHON | shellQuote}} -m unittest discover -s tools/tests -p "test_source_commit_join.py" -v'
   test:sources:test-results:
