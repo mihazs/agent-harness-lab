@@ -16,6 +16,7 @@
 | Record comparisons and invalidate defective graders | [Controller oracle history](oracle-history.md) |
 | Bind private analysis to current controller evidence | [Decision receipts](decision-receipts.md) |
 | Render current private qualification and preservation evidence | [Controller history reports](history-reports.md) |
+| Audit non-alerted episodes with probability sampling | [Probability-sampled triage audits](audit-sampling.md) |
 | Review a baseline/candidate experiment pair by pair | [Side-by-side review model](side-by-side-reports.md) |
 | Search with current preservation evidence and fresh confirmation | [Guarded development search](guarded-search.md) |
 | Audit and review a proposed grader correction | [Frozen correction controls](grader-corrections.md) |
