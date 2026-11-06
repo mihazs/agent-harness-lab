@@ -81,6 +81,23 @@ class OKFAbsenceTests(unittest.TestCase):
             reobserved_after_sha256=tombstone['revision_sha256'])))
         self.assertEqual(self.ingest()[0].imported, 0)
 
+    def test_each_later_absence_gets_its_own_tombstone(self):
+        self.ingest(); original = self.gone.read_bytes()
+        for _ in range(3):
+            superseded = self.latest(self.gone)
+            self.gone.unlink()
+            receipt, summary = self.ingest()
+            self.assertEqual((receipt.imported, summary['absent_from_export']), (1, 1))
+            tombstone = self.latest(self.gone)
+            self.assertEqual(tombstone['state'], 'tombstone')
+            self.assertEqual(tombstone['revision_sha256'], digest(dict(kind='memory_page',
+                native_id_sha256=tombstone['native_id_sha256'], state='deleted_or_unobservable', basis=ABSENCE_BASIS,
+                deletion_confirmed=False, supersedes_revision_sha256=superseded['revision_sha256'])))
+            self.gone.write_bytes(original)
+            receipt, summary = self.ingest()
+            self.assertEqual((receipt.imported, summary['reappeared']), (1, 1))
+            self.assertEqual(self.latest(self.gone)['state'], 'present')
+
     def test_reverted_content_becomes_the_latest_revision(self):
         self.ingest(); original = self.keep.read_bytes()
         self.write(self.keep, 'two'); self.ingest()
