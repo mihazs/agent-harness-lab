@@ -5,14 +5,17 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
-import tempfile
-import unittest
 from unittest.mock import patch
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 SCANNER = ROOT/'node_modules/.bin/jscpd'
 IDENTITY = ('-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid')
 MANAGER = ROOT/'node_modules/.bin/lefthook'
+
+pytestmark = pytest.mark.skipif(not (SCANNER.is_file() and MANAGER.is_file() and shutil.which('task')),
+                                reason='Task and npm ci required for executable Lefthook/jscpd integration checks')
 
 
 def module(name):
@@ -28,11 +31,11 @@ def write_interpreter(path, target=None):
     path.chmod(0o755)
 
 
-@unittest.skipUnless(SCANNER.is_file() and MANAGER.is_file() and shutil.which('task'), 'Task and npm ci required for executable Lefthook/jscpd integration checks')
-class GitRepoCase(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
+class GitRepo:
+    """A fresh synthetic Git checkout carrying this repository's hook configuration."""
+
+    def __init__(self, root):
+        self.root = root
         subprocess.run(['git', 'init', '-q', str(self.root)], check=True)
         self.install = module('install_hooks').install
         (self.root/'node_modules/.bin').mkdir(parents=True)
@@ -46,106 +49,11 @@ class GitRepoCase(unittest.TestCase):
         return subprocess.run(['git', *args], cwd=self.root, capture_output=True, text=True)
 
 
-class HookInstallTests(GitRepoCase):
-    def test_install_is_local_and_idempotent(self):
-        self.install(self.root); self.install(self.root)
-        self.assertEqual(self.git('config', '--local', '--get', 'core.hooksPath').returncode, 1)
-        self.assertIn('call_lefthook', (self.root/'.git/hooks/pre-commit').read_text())
+class HookRepo(GitRepo):
+    """A committed source tree with installed hooks and a cloneable function."""
 
-    def test_owned_legacy_path_is_migrated_and_failure_restores_it(self):
-        self.git('config', '--local', 'core.hooksPath', '.githooks')
-        installer = module('install_hooks')
-        run = subprocess.run
-        def fail_install(argv, **kwargs):
-            if str(argv[0]).endswith('/lefthook'):
-                raise subprocess.CalledProcessError(1, argv)
-            return run(argv, **kwargs)
-        with patch.object(installer.subprocess, 'run', side_effect=fail_install):
-            with self.assertRaises(subprocess.CalledProcessError): installer.install(self.root)
-        self.assertEqual(self.git('config', '--get', 'core.hooksPath').stdout.strip(), '.githooks')
-        self.install(self.root)
-        self.assertEqual(self.git('config', '--get', 'core.hooksPath').returncode, 1)
-        self.assertTrue((self.root/'.git/hooks/pre-commit').is_file())
-
-    def test_foreign_hook_directory_is_preserved(self):
-        self.git('config', 'core.hooksPath', '.foreign-hooks')
-        with self.assertRaisesRegex(ValueError, 'retained'): self.install(self.root)
-        self.assertEqual(self.git('config', '--get', 'core.hooksPath').stdout.strip(), '.foreign-hooks')
-
-    def test_existing_default_hook_is_preserved(self):
-        hook = self.root/'.git/hooks/pre-commit'; hook.write_text('sentinel')
-        with self.assertRaisesRegex(ValueError, 'retained'): self.install(self.root)
-        self.assertEqual(hook.read_text(), 'sentinel')
-        self.assertEqual(self.git('config', '--local', '--get', 'core.hooksPath').returncode, 1)
-
-    def test_commit_msg_is_installed_with_pre_commit_and_checks_messages(self):
-        self.install(self.root)
-        hook = self.root/'.git/hooks/commit-msg'
-        self.assertIn('call_lefthook run "commit-msg" "$@"', hook.read_text())
-        script = self.root/'scripts/check_commit_message.py'; script.parent.mkdir()
-        shutil.copy2(ROOT/'scripts/check_commit_message.py', script)
-        message = self.root/'message'
-        for text, accepted in (('feat(hooks): check messages\n', True), ('Update things\n', False)):
-            message.write_text(text)
-            run = subprocess.run([str(hook), str(message)], cwd=self.root, capture_output=True, text=True)
-            self.assertEqual(run.returncode == 0, accepted, run.stdout + run.stderr)
-
-    def test_lefthook_pre_commit_only_checkout_gains_commit_msg(self):
-        subprocess.run([str(MANAGER), 'install', 'pre-commit'], cwd=self.root, check=True, capture_output=True)
-        self.assertFalse((self.root/'.git/hooks/commit-msg').exists())
-        self.install(self.root)
-        self.assertIn('call_lefthook run "commit-msg"', (self.root/'.git/hooks/commit-msg').read_text())
-
-    def test_foreign_commit_msg_hook_is_preserved_before_any_install(self):
-        hook = self.root/'.git/hooks/commit-msg'; hook.write_text('#!/bin/sh\nexit 0\n')
-        with self.assertRaisesRegex(ValueError, 'existing Git commit-msg retained'): self.install(self.root)
-        self.assertEqual(hook.read_text(), '#!/bin/sh\nexit 0\n')
-        self.assertFalse((self.root/'.git/hooks/pre-commit').exists())
-        hook.write_text('call_lefthook run "pre-commit" "$@"')  # Another hook's handler is still foreign.
-        with self.assertRaisesRegex(ValueError, 'retained'): self.install(self.root)
-
-    def test_linked_oversized_and_nonregular_commit_msg_hooks_are_preserved(self):
-        hook = self.root/'.git/hooks/commit-msg'
-        marker = 'call_lefthook run "commit-msg" "$@"'
-        sentinel = self.root/'sentinel'; sentinel.write_text(marker)
-        hook.symlink_to(sentinel)
-        with self.assertRaisesRegex(ValueError, 'linked'): self.install(self.root)
-        hook.unlink(); os.link(sentinel, hook)
-        with self.assertRaisesRegex(ValueError, 'non-regular or linked'): self.install(self.root)
-        hook.unlink(); os.mkfifo(hook)
-        with self.assertRaisesRegex(ValueError, 'non-regular or linked'): self.install(self.root)
-        hook.unlink(); hook.write_text(marker + '\n' + '#' * 65536)
-        with self.assertRaisesRegex(ValueError, 'non-regular or linked'): self.install(self.root)
-        self.assertTrue(hook.read_text().startswith(marker))
-        self.assertEqual(sentinel.read_text(), marker)
-        self.assertFalse((self.root/'.git/hooks/pre-commit').exists())
-
-    def test_npm_lifecycle_does_not_replace_a_foreign_hook(self):
-        hook = self.root/'.git/hooks/pre-commit'; hook.write_text('synthetic sentinel')
-        message_hook = self.root/'.git/hooks/commit-msg'; message_hook.write_text('message sentinel')
-        for name in ('package.json', 'package-lock.json', '.npmrc'):
-            shutil.copy2(ROOT/name, self.root/name)
-        run = subprocess.run(['npm', 'ci', '--offline', '--no-audit'], cwd=self.root,
-                             capture_output=True, text=True, timeout=60)
-        self.assertEqual(run.returncode, 0, run.stderr)
-        self.assertEqual(hook.read_text(), 'synthetic sentinel')
-        self.assertEqual(message_hook.read_text(), 'message sentinel')
-        with self.assertRaisesRegex(ValueError, 'retained'): self.install(self.root)
-
-    def test_linked_and_nonregular_hooks_are_preserved(self):
-        hook = self.root/'.git/hooks/pre-commit'
-        os.mkfifo(hook)
-        with self.assertRaises(ValueError): self.install(self.root)
-        hook.unlink()
-        sentinel = self.root/'sentinel'; sentinel.write_text('call_lefthook run "pre-commit" "$@"')
-        os.link(sentinel, hook)
-        with self.assertRaises(ValueError): self.install(self.root)
-        self.assertEqual(hook.read_bytes(), sentinel.read_bytes())
-
-
-class DuplicateHookTests(GitRepoCase):
-    def setUp(self):
-        super().setUp()
+    def __init__(self, root):
+        super().__init__(root)
         (self.root/'src').mkdir()
         self.source = '\n'.join(['def summarize(values):', '    result = []', '    total = 0',
             '    for value in values:', '        squared = value * value', '        total += squared',
@@ -161,92 +69,201 @@ class DuplicateHookTests(GitRepoCase):
             shutil.copy2(ROOT/name, target)
         self.git('add', '.')
         commit = self.git('-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '-qm', 'fixture')
-        self.assertEqual(commit.returncode, 0, commit.stderr)
+        assert commit.returncode == 0, commit.stderr
         self.install(self.root)
 
     def run_hook(self, env=None):
         return subprocess.run([str(self.root/'.git/hooks/pre-commit')], cwd=self.root, capture_output=True, text=True, env=env)
 
-    def test_ruff_blocks_staged_unused_import_even_when_working_copy_is_fixed(self):
-        target = self.root/'src/lint.py'; target.write_text('import os\n'); self.git('add', str(target))
-        staged = self.git('write-tree').stdout
+
+@pytest.fixture
+def repo(tmp_path):
+    return GitRepo(tmp_path/'repo')
+
+
+@pytest.fixture
+def hooked(tmp_path):
+    return HookRepo(tmp_path/'repo')
+
+
+class TestHookInstall:
+    def test_install_is_local_and_idempotent(self, repo):
+        repo.install(repo.root); repo.install(repo.root)
+        assert repo.git('config', '--local', '--get', 'core.hooksPath').returncode == 1
+        assert 'call_lefthook' in (repo.root/'.git/hooks/pre-commit').read_text()
+
+    def test_owned_legacy_path_is_migrated_and_failure_restores_it(self, repo):
+        repo.git('config', '--local', 'core.hooksPath', '.githooks')
+        installer = module('install_hooks')
+        run = subprocess.run
+        def fail_install(argv, **kwargs):
+            if str(argv[0]).endswith('/lefthook'):
+                raise subprocess.CalledProcessError(1, argv)
+            return run(argv, **kwargs)
+        with patch.object(installer.subprocess, 'run', side_effect=fail_install):
+            with pytest.raises(subprocess.CalledProcessError): installer.install(repo.root)
+        assert repo.git('config', '--get', 'core.hooksPath').stdout.strip() == '.githooks'
+        repo.install(repo.root)
+        assert repo.git('config', '--get', 'core.hooksPath').returncode == 1
+        assert (repo.root/'.git/hooks/pre-commit').is_file()
+
+    def test_foreign_hook_directory_is_preserved(self, repo):
+        repo.git('config', 'core.hooksPath', '.foreign-hooks')
+        with pytest.raises(ValueError, match='retained'): repo.install(repo.root)
+        assert repo.git('config', '--get', 'core.hooksPath').stdout.strip() == '.foreign-hooks'
+
+    def test_existing_default_hook_is_preserved(self, repo):
+        hook = repo.root/'.git/hooks/pre-commit'; hook.write_text('sentinel')
+        with pytest.raises(ValueError, match='retained'): repo.install(repo.root)
+        assert hook.read_text() == 'sentinel'
+        assert repo.git('config', '--local', '--get', 'core.hooksPath').returncode == 1
+
+    def test_commit_msg_is_installed_with_pre_commit_and_checks_messages(self, repo):
+        repo.install(repo.root)
+        hook = repo.root/'.git/hooks/commit-msg'
+        assert 'call_lefthook run "commit-msg" "$@"' in hook.read_text()
+        script = repo.root/'scripts/check_commit_message.py'; script.parent.mkdir()
+        shutil.copy2(ROOT/'scripts/check_commit_message.py', script)
+        message = repo.root/'message'
+        for text, accepted in (('feat(hooks): check messages\n', True), ('Update things\n', False)):
+            message.write_text(text)
+            run = subprocess.run([str(hook), str(message)], cwd=repo.root, capture_output=True, text=True)
+            assert (run.returncode == 0) == accepted, run.stdout + run.stderr
+
+    def test_lefthook_pre_commit_only_checkout_gains_commit_msg(self, repo):
+        subprocess.run([str(MANAGER), 'install', 'pre-commit'], cwd=repo.root, check=True, capture_output=True)
+        assert not (repo.root/'.git/hooks/commit-msg').exists()
+        repo.install(repo.root)
+        assert 'call_lefthook run "commit-msg"' in (repo.root/'.git/hooks/commit-msg').read_text()
+
+    def test_foreign_commit_msg_hook_is_preserved_before_any_install(self, repo):
+        hook = repo.root/'.git/hooks/commit-msg'; hook.write_text('#!/bin/sh\nexit 0\n')
+        with pytest.raises(ValueError, match='existing Git commit-msg retained'): repo.install(repo.root)
+        assert hook.read_text() == '#!/bin/sh\nexit 0\n'
+        assert not (repo.root/'.git/hooks/pre-commit').exists()
+        hook.write_text('call_lefthook run "pre-commit" "$@"')  # Another hook's handler is still foreign.
+        with pytest.raises(ValueError, match='retained'): repo.install(repo.root)
+
+    def test_linked_oversized_and_nonregular_commit_msg_hooks_are_preserved(self, repo):
+        hook = repo.root/'.git/hooks/commit-msg'
+        marker = 'call_lefthook run "commit-msg" "$@"'
+        sentinel = repo.root/'sentinel'; sentinel.write_text(marker)
+        hook.symlink_to(sentinel)
+        with pytest.raises(ValueError, match='linked'): repo.install(repo.root)
+        hook.unlink(); os.link(sentinel, hook)
+        with pytest.raises(ValueError, match='non-regular or linked'): repo.install(repo.root)
+        hook.unlink(); os.mkfifo(hook)
+        with pytest.raises(ValueError, match='non-regular or linked'): repo.install(repo.root)
+        hook.unlink(); hook.write_text(marker + '\n' + '#' * 65536)
+        with pytest.raises(ValueError, match='non-regular or linked'): repo.install(repo.root)
+        assert hook.read_text().startswith(marker)
+        assert sentinel.read_text() == marker
+        assert not (repo.root/'.git/hooks/pre-commit').exists()
+
+    def test_npm_lifecycle_does_not_replace_a_foreign_hook(self, repo):
+        hook = repo.root/'.git/hooks/pre-commit'; hook.write_text('synthetic sentinel')
+        message_hook = repo.root/'.git/hooks/commit-msg'; message_hook.write_text('message sentinel')
+        for name in ('package.json', 'package-lock.json', '.npmrc'):
+            shutil.copy2(ROOT/name, repo.root/name)
+        run = subprocess.run(['npm', 'ci', '--offline', '--no-audit'], cwd=repo.root,
+                             capture_output=True, text=True, timeout=60)
+        assert run.returncode == 0, run.stderr
+        assert hook.read_text() == 'synthetic sentinel'
+        assert message_hook.read_text() == 'message sentinel'
+        with pytest.raises(ValueError, match='retained'): repo.install(repo.root)
+
+    def test_linked_and_nonregular_hooks_are_preserved(self, repo):
+        hook = repo.root/'.git/hooks/pre-commit'
+        os.mkfifo(hook)
+        with pytest.raises(ValueError): repo.install(repo.root)
+        hook.unlink()
+        sentinel = repo.root/'sentinel'; sentinel.write_text('call_lefthook run "pre-commit" "$@"')
+        os.link(sentinel, hook)
+        with pytest.raises(ValueError): repo.install(repo.root)
+        assert hook.read_bytes() == sentinel.read_bytes()
+
+
+class TestDuplicateHook:
+    def test_ruff_blocks_staged_unused_import_even_when_working_copy_is_fixed(self, hooked):
+        target = hooked.root/'src/lint.py'; target.write_text('import os\n'); hooked.git('add', str(target))
+        staged = hooked.git('write-tree').stdout
         target.write_text('answer = 42\n')
-        before = self.git('rev-parse', 'HEAD').stdout
-        commit = self.git(*IDENTITY, 'commit', '-qm', 'feat(src): must fail')
-        self.assertNotEqual(commit.returncode, 0)
-        self.assertIn('F401', commit.stdout + commit.stderr)
-        self.assertEqual(self.git('rev-parse', 'HEAD').stdout, before)
-        self.assertEqual(self.git('write-tree').stdout, staged)
-        self.assertEqual(target.read_text(), 'answer = 42\n')
+        before = hooked.git('rev-parse', 'HEAD').stdout
+        commit = hooked.git(*IDENTITY, 'commit', '-qm', 'feat(src): must fail')
+        assert commit.returncode != 0
+        assert 'F401' in commit.stdout + commit.stderr
+        assert hooked.git('rev-parse', 'HEAD').stdout == before
+        assert hooked.git('write-tree').stdout == staged
+        assert target.read_text() == 'answer = 42\n'
 
-    def test_ruff_skips_staged_files_in_excluded_fixtures(self):
-        fixture = self.root/'agent_harness_lab/evaluation/fixtures/synthetic/frozen.py'
-        fixture.parent.mkdir(parents=True); fixture.write_text('import os\n'); self.git('add', str(fixture))
-        run = self.run_hook()
-        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+    def test_ruff_skips_staged_files_in_excluded_fixtures(self, hooked):
+        fixture = hooked.root/'agent_harness_lab/evaluation/fixtures/synthetic/frozen.py'
+        fixture.parent.mkdir(parents=True); fixture.write_text('import os\n'); hooked.git('add', str(fixture))
+        run = hooked.run_hook()
+        assert run.returncode == 0, run.stdout + run.stderr
 
-    def test_ruff_ignores_unstaged_unused_import(self):
-        target = self.root/'src/lint.py'; target.write_text('answer = 42\n'); self.git('add', str(target))
-        staged = self.git('write-tree').stdout
+    def test_ruff_ignores_unstaged_unused_import(self, hooked):
+        target = hooked.root/'src/lint.py'; target.write_text('answer = 42\n'); hooked.git('add', str(target))
+        staged = hooked.git('write-tree').stdout
         target.write_text('import os\n')
-        run = self.run_hook()
-        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
-        self.assertEqual(self.git('write-tree').stdout, staged)
-        self.assertEqual(target.read_text(), 'import os\n')
+        run = hooked.run_hook()
+        assert run.returncode == 0, run.stdout + run.stderr
+        assert hooked.git('write-tree').stdout == staged
+        assert target.read_text() == 'import os\n'
 
-    def test_ruff_falls_back_to_python3_and_reports_missing_ruff(self):
-        stubs = tempfile.TemporaryDirectory(); self.addCleanup(stubs.cleanup)
-        python3 = Path(stubs.name)/'python3'
-        write_interpreter(self.root/'.venv/bin/python')  # A .venv without ruff must not shadow python3.
+    def test_ruff_falls_back_to_python3_and_reports_missing_ruff(self, hooked, tmp_path):
+        stubs = tmp_path/'stubs'; stubs.mkdir()
+        python3 = stubs/'python3'
+        write_interpreter(hooked.root/'.venv/bin/python')  # A .venv without ruff must not shadow python3.
         write_interpreter(python3, sys.executable)
-        env = {**os.environ, 'PATH': f'{stubs.name}{os.pathsep}{os.environ["PATH"]}'}
-        target = self.root/'src/lint.py'; target.write_text('answer = 42\n'); self.git('add', str(target))
-        run = self.run_hook(env)
-        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        env = {**os.environ, 'PATH': f'{stubs}{os.pathsep}{os.environ["PATH"]}'}
+        target = hooked.root/'src/lint.py'; target.write_text('answer = 42\n'); hooked.git('add', str(target))
+        run = hooked.run_hook(env)
+        assert run.returncode == 0, run.stdout + run.stderr
         write_interpreter(python3)
-        run = self.run_hook(env)
-        self.assertNotEqual(run.returncode, 0)
-        self.assertIn('task setup:test', run.stdout + run.stderr)
+        run = hooked.run_hook(env)
+        assert run.returncode != 0
+        assert 'task setup:test' in run.stdout + run.stderr
 
-    def test_staged_clone_blocks_even_when_working_copy_is_fixed(self):
-        target = self.root/'src/copy.py'; target.write_text(self.source); self.git('add', str(target))
-        staged = self.git('write-tree').stdout
+    def test_staged_clone_blocks_even_when_working_copy_is_fixed(self, hooked):
+        target = hooked.root/'src/copy.py'; target.write_text(hooked.source); hooked.git('add', str(target))
+        staged = hooked.git('write-tree').stdout
         target.write_text('answer = 42\n')
-        before = self.git('rev-parse', 'HEAD').stdout
-        commit = self.git('-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '-qm', 'must fail')
-        self.assertNotEqual(commit.returncode, 0)
-        self.assertIn('clone', commit.stdout + commit.stderr)
-        self.assertEqual(self.git('rev-parse', 'HEAD').stdout, before)
-        self.assertEqual(self.git('write-tree').stdout, staged)
-        self.assertEqual(target.read_text(), 'answer = 42\n')
+        before = hooked.git('rev-parse', 'HEAD').stdout
+        commit = hooked.git('-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '-qm', 'must fail')
+        assert commit.returncode != 0
+        assert 'clone' in commit.stdout + commit.stderr
+        assert hooked.git('rev-parse', 'HEAD').stdout == before
+        assert hooked.git('write-tree').stdout == staged
+        assert target.read_text() == 'answer = 42\n'
 
-    def test_commit_msg_hook_blocks_nonconventional_commits(self):
-        target = self.root/'src/other.py'; target.write_text('answer = 42\n'); self.git('add', str(target))
+    def test_commit_msg_hook_blocks_nonconventional_commits(self, hooked):
+        target = hooked.root/'src/other.py'; target.write_text('answer = 42\n'); hooked.git('add', str(target))
         identity = ('-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid', 'commit', '-q')
-        before = self.git('rev-parse', 'HEAD').stdout
+        before = hooked.git('rev-parse', 'HEAD').stdout
         for subject in ('Add other module', 'Merge branch \'topic\'', 'feat: add other module.'):
-            commit = self.git(*identity, '-m', subject)
-            self.assertNotEqual(commit.returncode, 0, subject)
-            self.assertIn('commit message', commit.stdout + commit.stderr)
-            self.assertEqual(self.git('rev-parse', 'HEAD').stdout, before)
-        commit = self.git(*identity, '-m', 'feat(src): add other module', '-m', 'Body text.')
-        self.assertEqual(commit.returncode, 0, commit.stdout + commit.stderr)
-        self.assertEqual(self.git('log', '-1', '--format=%s').stdout.strip(), 'feat(src): add other module')
+            commit = hooked.git(*identity, '-m', subject)
+            assert commit.returncode != 0, subject
+            assert 'commit message' in commit.stdout + commit.stderr
+            assert hooked.git('rev-parse', 'HEAD').stdout == before
+        commit = hooked.git(*identity, '-m', 'feat(src): add other module', '-m', 'Body text.')
+        assert commit.returncode == 0, commit.stdout + commit.stderr
+        assert hooked.git('log', '-1', '--format=%s').stdout.strip() == 'feat(src): add other module'
 
-    def test_unstaged_clone_does_not_block_clean_staged_content(self):
-        target = self.root/'src/copy.py'; target.write_text('answer = 42\n'); self.git('add', str(target))
-        target.write_text(self.source)
-        staged = self.git('write-tree').stdout
-        run = self.run_hook()
-        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
-        self.assertEqual(self.git('write-tree').stdout, staged)
-        self.assertEqual(target.read_text(), self.source)
+    def test_unstaged_clone_does_not_block_clean_staged_content(self, hooked):
+        target = hooked.root/'src/copy.py'; target.write_text('answer = 42\n'); hooked.git('add', str(target))
+        target.write_text(hooked.source)
+        staged = hooked.git('write-tree').stdout
+        run = hooked.run_hook()
+        assert run.returncode == 0, run.stdout + run.stderr
+        assert hooked.git('write-tree').stdout == staged
+        assert target.read_text() == hooked.source
 
-    def test_excluded_test_fixture_and_missing_scanner(self):
-        fixture = self.root/'src/tests/test_copy.py'; fixture.parent.mkdir()
-        fixture.write_text(self.source); self.git('add', str(fixture))
-        self.assertEqual(self.run_hook().returncode, 0)
-        (self.root/'node_modules/.bin/jscpd').unlink()
-        run = self.run_hook()
-        self.assertNotEqual(run.returncode, 0)
-        self.assertIn('npm ci', run.stdout + run.stderr)
+    def test_excluded_test_fixture_and_missing_scanner(self, hooked):
+        fixture = hooked.root/'src/tests/test_copy.py'; fixture.parent.mkdir()
+        fixture.write_text(hooked.source); hooked.git('add', str(fixture))
+        assert hooked.run_hook().returncode == 0
+        (hooked.root/'node_modules/.bin/jscpd').unlink()
+        run = hooked.run_hook()
+        assert run.returncode != 0
+        assert 'npm ci' in run.stdout + run.stderr

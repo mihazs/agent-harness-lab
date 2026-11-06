@@ -9,6 +9,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
+import pytest
+
 import agent_harness_lab
 from agent_harness_lab.evaluation.grader_correction import CorrectionStore
 from agent_harness_lab.evaluation.integrity import digest
@@ -32,6 +34,13 @@ def grader(structural, version='v1'):
 
 
 class GraderCorrectionTests(unittest.TestCase):
+    """A proposed synthetic oracle correction beside its parent bank, controls and fake backend.
+
+    test_bank_corrections, test_correction_cohorts, test_grader_correction_cli and test_sandbox_kernel
+    instantiate this class and call setUp and doCleanups directly, so it keeps that TestCase
+    interface and holds no tests; the cases below receive it through the case fixture.
+    """
+
     emulate = control_tests.RegressionControlTests.emulate
 
     def setUp(self):
@@ -55,7 +64,7 @@ class GraderCorrectionTests(unittest.TestCase):
         self.task = task
         self.bank = self.root/'bank.json'
         self.bank.write_text(json.dumps(dict(schema_version=1,separate_by=['root_id'],tasks=[task])))
-        self.assertTrue(validate(self.bank)['contents_verified'])
+        assert validate(self.bank)['contents_verified']
         values = ['{"count":0,"label":"wrong"}','{"count":3}',expected,
                   '{ "label": "ok", "count": 3 }',expected]
         controls = []
@@ -85,7 +94,7 @@ class GraderCorrectionTests(unittest.TestCase):
 
     def audited(self):
         self.propose(); result = self.store.audit(self.case_id,self.backend)
-        self.assertEqual(result['state'],'audited',result)
+        assert result['state'] == 'audited', result
         return result
 
     def review_file(self, decision='reviewed', **overrides):
@@ -108,169 +117,201 @@ class GraderCorrectionTests(unittest.TestCase):
         self.spec_value['parent']['sha256'] = hashlib.sha256(self.bank.read_bytes()).hexdigest()
         self.write_spec()
 
-    def test_actual_old_defect_new_controls_and_separate_review_without_task_failure(self):
-        originals = {self.bank:self.bank.read_bytes(),self.spec:self.spec.read_bytes()}
-        result = self.audited()
-        self.assertEqual(result['old_audit_status'],'controls_failed')
-        self.assertEqual(result['replacement_audit_status'],'grader_controls_passed')
-        reports = [json.loads(p.read_text()) for p in self.store.root.rglob('review.json')]
-        self.assertEqual(len(reports),2)
-        for report in reports:
-            complete = next(c for c in report['checks'] if c['control']=='complete')
-            self.assertIs(complete['observed'],True)
-        replacement = next(r for r in reports if r['status']=='grader_controls_passed')
-        self.assertIs(next(c for c in replacement['checks'] if c['control']=='superficial')['observed'],False)
-        result = self.store.review(self.case_id,self.review_file())
-        self.assertEqual(result['state'],'reviewed')
-        self.assertEqual(result['oracle_approval'],'operator_attested')
-        for key in ('task_failure_verified','bank_replacement','automatic_promotion','publication_allowed'):
-            self.assertFalse(result[key])
-        self.assertEqual({p:p.read_bytes() for p in originals},originals)
-        self.assertEqual(self.store.root.stat().st_mode & 0o777,0o700)
 
-    def test_copied_sources_remain_frozen_after_original_source_edits(self):
-        self.propose()
-        (self.root/'neworacle/grade.py.txt').write_text('raise RuntimeError("changed source")\n')
-        (self.root/'alternative_valid/original.txt').write_text('damaged\n')
-        self.bank.write_text('{}'); self.spec.write_text('{}')
-        result = self.store.audit(self.case_id,self.backend)
-        self.assertEqual(result['state'],'audited',result)
+@pytest.fixture
+def case():
+    fixture = GraderCorrectionTests(); fixture.setUp()
+    yield fixture
+    fixture.doCleanups()
 
-    def test_noncanonical_spec_cannot_create_store_inside_a_selected_oracle(self):
-        alias = self.root/'alias'; alias.mkdir()
-        nested = self.root/'oldoracle'/'private-corrections'
-        with self.assertRaises(ValueError):
-            CorrectionStore(nested).propose(alias/'..'/'correction.json','synthetic-author')
-        self.assertFalse(nested.exists())
 
-    def test_positive_review_requires_current_head_evidence_and_separate_artifact_reviewer(self):
-        self.audited()
-        for field in ('expected_event_sha256','evidence_sha256'):
-            with self.assertRaises(ValueError): self.store.review(self.case_id,self.review_file(**{field:'f'*64}))
-        for field,value in [('identity','SYNTHETIC-AUTHOR'),('basis_kind','fresh_model_session')]:
-            path = self.review_file(); record = json.loads(path.read_text()); record['reviewer'][field] = value
-            path.write_text(json.dumps(record))
-            with self.assertRaises(ValueError): self.store.review(self.case_id,path)
-        self.assertEqual(self.store.show(self.case_id)['state'],'audited')
+def test_actual_old_defect_new_controls_and_separate_review_without_task_failure(case):
+    originals = {case.bank:case.bank.read_bytes(),case.spec:case.spec.read_bytes()}
+    result = case.audited()
+    assert result['old_audit_status'] == 'controls_failed'
+    assert result['replacement_audit_status'] == 'grader_controls_passed'
+    reports = [json.loads(p.read_text()) for p in case.store.root.rglob('review.json')]
+    assert len(reports) == 2
+    for report in reports:
+        complete = next(c for c in report['checks'] if c['control']=='complete')
+        assert complete['observed'] is True
+    replacement = next(r for r in reports if r['status']=='grader_controls_passed')
+    assert next(c for c in replacement['checks'] if c['control']=='superficial')['observed'] is False
+    result = case.store.review(case.case_id,case.review_file())
+    assert result['state'] == 'reviewed'
+    assert result['oracle_approval'] == 'operator_attested'
+    for key in ('task_failure_verified','bank_replacement','automatic_promotion','publication_allowed'):
+        assert not result[key]
+    assert {p:p.read_bytes() for p in originals} == originals
+    assert case.store.root.stat().st_mode & 0o777 == 0o700
 
-    def test_stored_final_review_payload_is_revalidated_before_reporting_approval(self):
-        self.audited()
-        self.assertEqual(self.store.review(self.case_id,self.review_file())['state'],'reviewed')
-        final = sorted((self.store.case(self.case_id)/'events').glob('*.json'))[-1]
-        original = json.loads(final.read_text())
-        for change in (lambda r:r['reviewer'].update(identity='SYNTHETIC-AUTHOR'),
-                       lambda r:r.update(expected_event_sha256='f'*64)):
-            with self.subTest(change=change):
-                event = json.loads(json.dumps(original)); change(event['payload']['review'])
-                final.write_text(json.dumps(event))
-                with self.assertRaises(ValueError): self.store.show(self.case_id)
 
-    def test_changed_sealed_report_cannot_gain_positive_review(self):
-        self.audited(); path = self.review_file()
-        report = next(self.store.root.rglob('review.json'))
-        report.write_text(report.read_text()+' ')
-        with self.assertRaises(ValueError): self.store.review(self.case_id,path)
+def test_copied_sources_remain_frozen_after_original_source_edits(case):
+    case.propose()
+    (case.root/'neworacle/grade.py.txt').write_text('raise RuntimeError("changed source")\n')
+    (case.root/'alternative_valid/original.txt').write_text('damaged\n')
+    case.bank.write_text('{}'); case.spec.write_text('{}')
+    result = case.store.audit(case.case_id,case.backend)
+    assert result['state'] == 'audited', result
 
-    def test_missing_old_dependency_is_grader_error_not_verified_task_failure(self):
-        self.update_parent('import synthetic_missing_dependency_734818\n')
-        result = self.audited()
-        self.assertEqual(result['old_audit_status'],'grader_error')
-        self.assertFalse(result['task_failure_verified'])
-        self.assertEqual(self.store.review(self.case_id,self.review_file())['state'],'reviewed')
 
-    def test_actual_old_version_mismatch_is_reviewable_grader_error(self):
-        self.update_parent(grader(False,'v0'))
-        result = self.audited()
-        self.assertEqual(result['old_audit_status'],'grader_error')
-        self.assertEqual(result['replacement_audit_status'],'grader_controls_passed')
-        self.assertFalse(result['task_failure_verified'])
-        self.assertEqual(self.store.review(self.case_id,self.review_file())['state'],'reviewed')
+def test_noncanonical_spec_cannot_create_store_inside_a_selected_oracle(case):
+    alias = case.root/'alias'; alias.mkdir()
+    nested = case.root/'oldoracle'/'private-corrections'
+    with pytest.raises(ValueError):
+        CorrectionStore(nested).propose(alias/'..'/'correction.json','synthetic-author')
+    assert not nested.exists()
 
-    def test_missing_new_dependency_quarantines_instead_of_approving(self):
-        (self.root/'neworacle/grade.py.txt').write_text('import synthetic_missing_dependency_734818\n')
-        self.spec_value['replacement']['sha256'] = digest(self.root/'neworacle'); self.write_spec()
-        self.propose(); result = self.store.audit(self.case_id,self.backend)
-        self.assertEqual(result['state'],'quarantined')
-        self.assertEqual(result['replacement_audit_status'],'grader_error')
-        self.assertFalse(result['task_failure_verified'])
-        with self.assertRaises(ValueError): self.store.review(self.case_id,self.review_file())
 
-    def test_tied_passing_oracles_do_not_demonstrate_a_reviewable_correction(self):
-        self.update_parent(grader(True,'v1'))
-        self.propose(); result = self.store.audit(self.case_id,self.backend)
-        self.assertEqual(result['old_audit_status'],'grader_controls_passed')
-        with self.assertRaises(ValueError): self.store.review(self.case_id,self.review_file())
+@pytest.mark.parametrize('field', [pytest.param('expected_event_sha256', id='stale-expected-event'),
+                                   pytest.param('evidence_sha256', id='stale-evidence')])
+def test_positive_review_requires_current_head_evidence(case, field):
+    case.audited()
+    with pytest.raises(ValueError): case.store.review(case.case_id,case.review_file(**{field:'f'*64}))
+    assert case.store.show(case.case_id)['state'] == 'audited'
 
-    def test_forged_success_return_without_controller_reports_cannot_advance(self):
-        self.propose()
-        with patch('agent_harness_lab.evaluation.grader_correction.audit_controls',
-                   return_value=dict(status='grader_controls_passed',checks=[])):
-            result = self.store.audit(self.case_id,self.backend)
-        self.assertNotIn(result['state'],('audited','reviewed'))
-        with self.assertRaises(ValueError): self.store.review(self.case_id,self.review_file())
 
-    def test_interrupted_audit_needs_explicit_abandonment_before_retry(self):
-        self.propose()
-        with patch('agent_harness_lab.evaluation.grader_correction.audit_controls',side_effect=KeyboardInterrupt):
-            with self.assertRaises(KeyboardInterrupt): self.store.audit(self.case_id,self.backend)
-        self.assertEqual(self.store.show(self.case_id)['state'],'auditing')
-        pending = self.store.show(self.case_id)['audit_attempt']
-        self.assertIsNotNone(pending)
-        self.assertTrue((self.store.case(self.case_id)/pending).is_dir())
-        with self.assertRaises(ValueError): self.store.audit(self.case_id,self.backend)
-        self.assertEqual(self.store.review(self.case_id,self.review_file('reported'))['state'],'reported')
-        self.assertEqual(self.store.audit(self.case_id,self.backend)['state'],'audited')
+@pytest.mark.parametrize('field,value', [pytest.param('identity','SYNTHETIC-AUTHOR', id='reviewer-is-author'),
+                                         pytest.param('basis_kind','fresh_model_session', id='model-session-basis')])
+def test_positive_review_requires_a_separate_artifact_reviewer(case, field, value):
+    case.audited()
+    path = case.review_file(); record = json.loads(path.read_text()); record['reviewer'][field] = value
+    path.write_text(json.dumps(record))
+    with pytest.raises(ValueError): case.store.review(case.case_id,path)
+    assert case.store.show(case.case_id)['state'] == 'audited'
 
-    def test_competing_positive_reviews_cannot_both_consume_same_head(self):
-        self.audited(); path = self.review_file()
-        def attempt():
-            try: return self.store.review(self.case_id,path)['state']
-            except (ValueError,BlockingIOError): return 'refused'
-        with ThreadPoolExecutor(max_workers=2) as executor: outcomes = list(executor.map(lambda _:attempt(),range(2)))
-        self.assertEqual(sorted(outcomes),['refused','reviewed'])
-        self.assertEqual(self.store.show(self.case_id)['state'],'reviewed')
 
-    def test_blocked_audit_is_retryable_without_fabricating_completed_evidence(self):
-        self.propose(); self.backend.capability.return_value = {'status':'unsupported'}
-        result = self.store.audit(self.case_id,self.backend)
-        self.assertEqual(result['state'],'reported')
-        self.assertIsNone(result['evidence_sha256'])
-        self.backend.run.assert_not_called()
-        self.backend.capability.return_value = {'status':'available'}
-        self.assertEqual(self.store.audit(self.case_id,self.backend)['state'],'audited')
+@pytest.mark.parametrize('change', [
+    pytest.param(lambda r:r['reviewer'].update(identity='SYNTHETIC-AUTHOR'), id='reviewer-is-author'),
+    pytest.param(lambda r:r.update(expected_event_sha256='f'*64), id='stale-expected-event'),
+])
+def test_stored_final_review_payload_is_revalidated_before_reporting_approval(case, change):
+    case.audited()
+    assert case.store.review(case.case_id,case.review_file())['state'] == 'reviewed'
+    final = sorted((case.store.case(case.case_id)/'events').glob('*.json'))[-1]
+    original = json.loads(final.read_text())
+    event = json.loads(json.dumps(original)); change(event['payload']['review'])
+    final.write_text(json.dumps(event))
+    with pytest.raises(ValueError): case.store.show(case.case_id)
 
-    def test_old_blocked_new_passing_is_retryable_with_both_statuses_retained(self):
-        self.propose()
-        self.backend.capability.side_effect = [{'status':'unsupported'},{'status':'available'}]
-        result = self.store.audit(self.case_id,self.backend)
-        self.assertEqual(result['state'],'reported')
-        self.assertEqual(result['old_audit_status'],'blocked')
-        self.assertEqual(result['replacement_audit_status'],'grader_controls_passed')
-        self.assertIsNone(result['evidence_sha256'])
-        self.backend.capability.side_effect = None
-        self.backend.capability.return_value = {'status':'available'}
-        self.assertEqual(self.store.audit(self.case_id,self.backend)['state'],'audited')
 
-    def test_sealing_latency_exhausts_shared_budget_as_retryable_not_invalid_grader(self):
-        from agent_harness_lab.evaluation import grader_correction as correction
-        self.propose(); clock = [0]; original = correction.sync_tree
-        def delayed(path):
-            original(path); clock[0] = 2
-        with patch.object(correction.time,'monotonic',side_effect=lambda:clock[0]), \
-                patch.object(correction,'sync_tree',side_effect=delayed):
-            result = self.store.audit(self.case_id,self.backend,budget_seconds=1)
-        self.assertEqual(result['state'],'reported')
-        self.assertIsNone(result['evidence_sha256'])
+def test_changed_sealed_report_cannot_gain_positive_review(case):
+    case.audited(); path = case.review_file()
+    report = next(case.store.root.rglob('review.json'))
+    report.write_text(report.read_text()+' ')
+    with pytest.raises(ValueError): case.store.review(case.case_id,path)
 
-    def test_malformed_hashes_control_sets_paths_and_empty_evidence_fail_before_workers(self):
-        original = json.loads(json.dumps(self.spec_value))
-        changes = [lambda s:s['parent'].update(sha256='f'*64),
-                   lambda s:s['replacement'].update(sha256='not-a-hash'),
-                   lambda s:s['controls'][-1].update(state='complete'),
-                   lambda s:s['controls'][-1].update(fixture='../escape'),
-                   lambda s:s.update(evidence_refs=[])]
-        for change in changes:
-            with self.subTest(change=change):
-                self.spec_value = json.loads(json.dumps(original)); change(self.spec_value); self.write_spec()
-                with self.assertRaises(ValueError): self.propose()
-                self.backend.run.assert_not_called()
+
+def test_missing_old_dependency_is_grader_error_not_verified_task_failure(case):
+    case.update_parent('import synthetic_missing_dependency_734818\n')
+    result = case.audited()
+    assert result['old_audit_status'] == 'grader_error'
+    assert not result['task_failure_verified']
+    assert case.store.review(case.case_id,case.review_file())['state'] == 'reviewed'
+
+
+def test_actual_old_version_mismatch_is_reviewable_grader_error(case):
+    case.update_parent(grader(False,'v0'))
+    result = case.audited()
+    assert result['old_audit_status'] == 'grader_error'
+    assert result['replacement_audit_status'] == 'grader_controls_passed'
+    assert not result['task_failure_verified']
+    assert case.store.review(case.case_id,case.review_file())['state'] == 'reviewed'
+
+
+def test_missing_new_dependency_quarantines_instead_of_approving(case):
+    (case.root/'neworacle/grade.py.txt').write_text('import synthetic_missing_dependency_734818\n')
+    case.spec_value['replacement']['sha256'] = digest(case.root/'neworacle'); case.write_spec()
+    case.propose(); result = case.store.audit(case.case_id,case.backend)
+    assert result['state'] == 'quarantined'
+    assert result['replacement_audit_status'] == 'grader_error'
+    assert not result['task_failure_verified']
+    with pytest.raises(ValueError): case.store.review(case.case_id,case.review_file())
+
+
+def test_tied_passing_oracles_do_not_demonstrate_a_reviewable_correction(case):
+    case.update_parent(grader(True,'v1'))
+    case.propose(); result = case.store.audit(case.case_id,case.backend)
+    assert result['old_audit_status'] == 'grader_controls_passed'
+    with pytest.raises(ValueError): case.store.review(case.case_id,case.review_file())
+
+
+def test_forged_success_return_without_controller_reports_cannot_advance(case):
+    case.propose()
+    with patch('agent_harness_lab.evaluation.grader_correction.audit_controls',
+               return_value=dict(status='grader_controls_passed',checks=[])):
+        result = case.store.audit(case.case_id,case.backend)
+    assert result['state'] not in ('audited','reviewed')
+    with pytest.raises(ValueError): case.store.review(case.case_id,case.review_file())
+
+
+def test_interrupted_audit_needs_explicit_abandonment_before_retry(case):
+    case.propose()
+    with patch('agent_harness_lab.evaluation.grader_correction.audit_controls',side_effect=KeyboardInterrupt):
+        with pytest.raises(KeyboardInterrupt): case.store.audit(case.case_id,case.backend)
+    assert case.store.show(case.case_id)['state'] == 'auditing'
+    pending = case.store.show(case.case_id)['audit_attempt']
+    assert pending is not None
+    assert (case.store.case(case.case_id)/pending).is_dir()
+    with pytest.raises(ValueError): case.store.audit(case.case_id,case.backend)
+    assert case.store.review(case.case_id,case.review_file('reported'))['state'] == 'reported'
+    assert case.store.audit(case.case_id,case.backend)['state'] == 'audited'
+
+
+def test_competing_positive_reviews_cannot_both_consume_same_head(case):
+    case.audited(); path = case.review_file()
+    def attempt():
+        try: return case.store.review(case.case_id,path)['state']
+        except (ValueError,BlockingIOError): return 'refused'
+    with ThreadPoolExecutor(max_workers=2) as executor: outcomes = list(executor.map(lambda _:attempt(),range(2)))
+    assert sorted(outcomes) == ['refused','reviewed']
+    assert case.store.show(case.case_id)['state'] == 'reviewed'
+
+
+def test_blocked_audit_is_retryable_without_fabricating_completed_evidence(case):
+    case.propose(); case.backend.capability.return_value = {'status':'unsupported'}
+    result = case.store.audit(case.case_id,case.backend)
+    assert result['state'] == 'reported'
+    assert result['evidence_sha256'] is None
+    case.backend.run.assert_not_called()
+    case.backend.capability.return_value = {'status':'available'}
+    assert case.store.audit(case.case_id,case.backend)['state'] == 'audited'
+
+
+def test_old_blocked_new_passing_is_retryable_with_both_statuses_retained(case):
+    case.propose()
+    case.backend.capability.side_effect = [{'status':'unsupported'},{'status':'available'}]
+    result = case.store.audit(case.case_id,case.backend)
+    assert result['state'] == 'reported'
+    assert result['old_audit_status'] == 'blocked'
+    assert result['replacement_audit_status'] == 'grader_controls_passed'
+    assert result['evidence_sha256'] is None
+    case.backend.capability.side_effect = None
+    case.backend.capability.return_value = {'status':'available'}
+    assert case.store.audit(case.case_id,case.backend)['state'] == 'audited'
+
+
+def test_sealing_latency_exhausts_shared_budget_as_retryable_not_invalid_grader(case):
+    from agent_harness_lab.evaluation import grader_correction as correction
+    case.propose(); clock = [0]; original = correction.sync_tree
+    def delayed(path):
+        original(path); clock[0] = 2
+    with patch.object(correction.time,'monotonic',side_effect=lambda:clock[0]), \
+            patch.object(correction,'sync_tree',side_effect=delayed):
+        result = case.store.audit(case.case_id,case.backend,budget_seconds=1)
+    assert result['state'] == 'reported'
+    assert result['evidence_sha256'] is None
+
+
+@pytest.mark.parametrize('change', [
+    pytest.param(lambda s:s['parent'].update(sha256='f'*64), id='parent-hash-mismatch'),
+    pytest.param(lambda s:s['replacement'].update(sha256='not-a-hash'), id='malformed-replacement-hash'),
+    pytest.param(lambda s:s['controls'][-1].update(state='complete'), id='duplicate-control-state'),
+    pytest.param(lambda s:s['controls'][-1].update(fixture='../escape'), id='escaping-control-path'),
+    pytest.param(lambda s:s.update(evidence_refs=[]), id='empty-evidence'),
+])
+def test_malformed_hashes_control_sets_paths_and_empty_evidence_fail_before_workers(case, change):
+    original = json.loads(json.dumps(case.spec_value))
+    case.spec_value = json.loads(json.dumps(original)); change(case.spec_value); case.write_spec()
+    with pytest.raises(ValueError): case.propose()
+    case.backend.run.assert_not_called()
