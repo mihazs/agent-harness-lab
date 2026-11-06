@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.118.5
+
+### Patch Changes
+
+- 80dfa8f: A frontmatter fence line that ends in spaces or tabs, such as `--- `, is now `unsupported_yaml` in every mode of the shared reader, not only in `texts()`. An agent definition whose opening fence is `--- ` was read as having no fence and labelled `skipped_silently`; it now stays `unknown` with reason `frontmatter_unsupported_yaml`, because whether the runtime trims the fence is not verified. Commands, skills, prompts and path rules keep their existing `frontmatter_unsupported` verdict for such a file. The docs now match the code in three more places. `docs/telemetry.md` no longer says every MCP call gains `loading_signal`: plugin MCP names (`mcp__plugin_...`) and names without exactly two `__` parts gain none. The Codex instruction docs say that a candidate that exists but is not a single-link regular file fails the capture closed, where Codex skips a non-file candidate. Multi-surface dispatch covers only the files in `harness_inventory.COMBINED`: `.claude/settings.json`, `.claude/settings.local.json` (private and never read) and `.codex/config.toml`.
+
 ## 0.118.4
 
 ### Patch Changes
