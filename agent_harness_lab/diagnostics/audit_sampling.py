@@ -7,11 +7,13 @@ targeted oversampling routes. Overlapping routes are combined into one draw per
 unit with inclusion probability ``1 - prod(1 - rate)``, so every eligible unit has
 a known positive probability and a unit reached by several routes is drawn once.
 
-Estimates are Horvitz-Thompson totals with the Poisson-design variance and normal
-95% intervals. The estimand is captured eligible units in the frame, never every
-real interaction. Missing reviews are not negatives: any pending or nonresponding
-draw makes the estimate ``inconclusive`` and only missing-label bounds are
-reported: the outer 95% limits of the all-negative and all-incident fills.
+Estimates are Horvitz-Thompson totals with the Poisson-design standard error.
+Their 95% intervals are exact binomial limits per stratum, combined across strata
+by MOVER, so small sampled counts keep nominal coverage. The estimand is captured
+eligible units in the frame, never every real interaction. Missing reviews are
+not negatives: any pending or nonresponding draw makes the estimate
+``inconclusive`` and only missing-label bounds are reported: the outer 95% limits
+of the all-negative and all-incident fills.
 Estimates with no sampled case carry a zero-event upper bound, not a zero-width
 interval. Alert-only counts and the unweighted review composition are reported
 separately and are never population estimates. Nothing here calls a model or a
@@ -34,8 +36,8 @@ FLAGS = TARGETED_ROUTES[1:]
 STATUSES = ('reviewed', 'pending', 'nonresponse')
 NO_INCIDENT = 'no_incident'
 MAX_UNITS, MAX_TEXT = 100_000, 256
-Z95 = 1.959963984540054
-LIMITATIONS = ('normal_approximation_intervals', 'unit_independence_declared_not_verified',
+COUNT_INTERVAL, RECALL_INTERVAL = 'exact_binomial_mover', 'exact_binomial_mover_log_ratio'
+LIMITATIONS = ('multi_stratum_intervals_approximate', 'unit_independence_declared_not_verified',
                'reviewer_labels_unauthenticated', 'capture_outside_frame_unknown', 'seed_selection_unverified')
 ALPHA = .05
 
@@ -240,16 +242,82 @@ def _labels(batch, receipt):
 
 
 def _total(rows, value):
-    """Horvitz-Thompson total, Poisson-design variance and a clipped normal 95% interval."""
+    """Horvitz-Thompson total and its Poisson-design variance."""
     total = sum(value(r) / r['inclusion_probability'] for r in rows)
     variance = sum((1 - r['inclusion_probability']) * value(r) ** 2 / r['inclusion_probability'] ** 2 for r in rows)
     return total, variance
 
 
-def _interval(total, variance, upper):
-    se = math.sqrt(variance)
-    return dict(estimate=total, standard_error=se, ci95=[max(0.0, total - Z95 * se), min(upper, total + Z95 * se)],
-                interval='normal')
+def _log_add(a, b):
+    high, low = max(a, b), min(a, b)
+    return high + math.log1p(math.exp(low - high))
+
+
+def _binomial_cdf(x, n, p):
+    """P(X <= x) for X ~ Binomial(n, p), summed in log space so a large stratum does not underflow."""
+    if x >= n:
+        return 1.0
+    if x < 0 or p >= 1:
+        return 0.0
+    term = total = n * math.log1p(-p)
+    odds = math.log(p) - math.log1p(-p)
+    for k in range(x):
+        term += math.log(n - k) - math.log(k + 1) + odds
+        total = _log_add(total, term)
+    return min(1.0, math.exp(total))
+
+
+def _exact_bounds(sampled, p, units):
+    """Exact 95% limits for a stratum count N when ``sampled`` of its cases were drawn, sampled ~ Binomial(N, p).
+
+    The binomial-index analogue of Clopper-Pearson: the smallest N with P(X >= sampled) >= ALPHA/2 and the
+    largest N with P(X <= sampled) >= ALPHA/2, searched over the integers from ``sampled`` to ``units``, so
+    each limit misses the true count with probability at most ALPHA/2."""
+    low, high = sampled, units
+    while low < high:
+        mid = (low + high) // 2
+        low, high = (low, mid) if 1 - _binomial_cdf(sampled - 1, mid, p) >= ALPHA / 2 else (mid + 1, high)
+    lower, low, high = low, sampled, units
+    while low < high:
+        mid = (low + high + 1) // 2
+        low, high = (mid, high) if _binomial_cdf(sampled, mid, p) >= ALPHA / 2 else (low, mid - 1)
+    return lower, low
+
+
+def _count_bounds(rows, value, design, holds):
+    """Count limits: exact per stratum, combined across strata by MOVER (Zou and Donner).
+
+    Every stratum that can hold the counted case enters. One with no sampled case contributes its
+    zero-event upper bound instead of a certain zero, so an unsampled stratum still widens the interval.
+    Each stratum's estimate is capped at its unit count, so the limits stay within the population.
+    With a single stratum this is the exact interval itself."""
+    counts = Counter(r['stratum'] for r in rows if value(r))
+    total, below, above = 0.0, 0.0, 0.0
+    for stratum in design['strata']:
+        sampled = counts[stratum['stratum']]
+        if not sampled and not holds(stratum):
+            continue
+        p, units = stratum['inclusion_probability'], stratum['units']
+        estimate = min(sampled / p, units)
+        low, high = _exact_bounds(sampled, p, units) if sampled else (0, _zero_event_upper(p, units))
+        total += estimate
+        below += max(0.0, estimate - low) ** 2
+        above += max(0.0, high - estimate) ** 2
+    return total - math.sqrt(below), total + math.sqrt(above)
+
+
+def _holds_any(stratum):
+    return True
+
+
+def _holds_missed(stratum):
+    """A stratum reached by the alerted route holds only alerted units, so it cannot hold a missed incident."""
+    return 'alerted' not in stratum['routes']
+
+
+def _scaled(total, se, ci95, scale, interval):
+    return dict(estimate=total / scale, standard_error=se / scale, ci95=[limit / scale for limit in ci95],
+                interval=interval)
 
 
 def _zero_event_upper(p_min, population):
@@ -266,33 +334,51 @@ def _zero_event(total, upper, scale):
     return dict(estimate=total / scale, standard_error=None, ci95=[0.0, upper / scale], interval='zero_event_upper_bound')
 
 
-def _count_estimate(rows, value, population, p_min):
-    """A zero-width Wald interval is replaced by a zero-event bound when no case was sampled."""
+def _count_estimate(rows, value, design, holds=_holds_any):
+    """Exact-per-stratum limits when a case was sampled, the zero-event bound when none was."""
     sampled = sum(1 for r in rows if value(r))
     total, variance = _total(rows, value)
+    population = design['population']
     if not sampled:
-        upper = _zero_event_upper(p_min, population)
+        upper = _zero_event_upper(design['p_min'], population)
         return dict(count=_zero_event(total, upper, 1), rate=_zero_event(total, upper, population), sampled=0)
-    count = _interval(total, variance, population)
-    rate = _interval(total / population, variance / population ** 2, 1.0)
-    return dict(count=count, rate=rate, sampled=sampled)
+    low, high = _count_bounds(rows, value, design, holds)
+    ci95, se = [low, min(float(population), high)], math.sqrt(variance)
+    return dict(count=_scaled(total, se, ci95, 1, COUNT_INTERVAL),
+                rate=_scaled(total, se, ci95, population, COUNT_INTERVAL), sampled=sampled)
 
 
-def _recall(rows, p_min, population):
+def _alerted_incident(row):
+    return row['incident'] and row['alerted']
+
+
+def _missed_incident(row):
+    return row['incident'] and not row['alerted']
+
+
+def _recall(rows, design):
     incidents, _ = _total(rows, lambda r: r['incident'])
     if not incidents:
         return None
-    alerted, _ = _total(rows, lambda r: r['incident'] and r['alerted'])
+    alerted, _ = _total(rows, _alerted_incident)
     missed = incidents - alerted
     if not alerted or not missed:
         # Every sampled incident falls on one side, so the linearized variance is exactly zero.
         # Plug the zero-event bound for the unsampled side into the ratio instead.
-        upper = _zero_event_upper(p_min, population)
+        upper = _zero_event_upper(design['p_min'], design['population'])
         ci95 = [alerted / (alerted + upper), 1.0] if alerted else [0.0, upper / (upper + missed)]
         return dict(estimate=alerted / incidents, standard_error=None, ci95=ci95, interval='zero_event_plug_in_bound')
     ratio = alerted / incidents
-    _, variance = _total(rows, lambda r: (r['incident'] and r['alerted']) - ratio * r['incident'])
-    return _interval(ratio, variance / incidents ** 2, 1.0)
+    _, variance = _total(rows, lambda r: _alerted_incident(r) - ratio * r['incident'])
+    # MOVER on log(missed / alerted) from the two exact count intervals; recall = 1 / (1 + missed / alerted).
+    # Both lower limits are at least the sampled count, so the logarithms are finite.
+    a_low, a_high = _count_bounds(rows, _alerted_incident, design, design['holds_alerted'])
+    m_low, m_high = _count_bounds(rows, _missed_incident, design, _holds_missed)
+    log_a, log_m = math.log(alerted), math.log(missed)
+    widest = log_m - log_a + math.hypot(max(0.0, math.log(m_high) - log_m), max(0.0, log_a - math.log(a_low)))
+    narrowest = log_m - log_a - math.hypot(max(0.0, log_m - math.log(m_low)), max(0.0, math.log(a_high) - log_a))
+    return dict(estimate=ratio, standard_error=math.sqrt(variance) / incidents,
+                ci95=[1 / (1 + math.exp(widest)), 1 / (1 + math.exp(narrowest))], interval=RECALL_INTERVAL)
 
 
 def _composition(receipt, rows, missing, outside):
@@ -321,7 +407,11 @@ def estimate(receipt, batch):
         else:
             missing.append(dict(item, status=status))
     population = receipt['frame']['eligible_units']
-    p_min = min(s['inclusion_probability'] for s in receipt['strata'])
+    # When the alerted route is declared, only its strata hold alerted units; otherwise any stratum can.
+    alerted_routed = 'alerted' in receipt['rates']
+    design = dict(population=population, strata=receipt['strata'],
+                  p_min=min(s['inclusion_probability'] for s in receipt['strata']),
+                  holds_alerted=lambda s: not alerted_routed or 'alerted' in s['routes'])
     reasons = [r for r, s in (('pending_labels', 'pending'), ('nonresponse', 'nonresponse')) if statuses[s]]
     reviewed_alerts = [r for r in rows if r['alerted']]
     report = dict(
@@ -340,18 +430,18 @@ def estimate(receipt, batch):
         # Lower 95% limit with every missing label as no_incident, upper 95% limit with every one as an incident.
         filled = rows + [dict(r, incident=True) for r in missing]
         bounds = None if not drawn else {
-            name: [_count_estimate(rows, value, population, p_min)['rate']['ci95'][0],
-                   _count_estimate(filled, value, population, p_min)['rate']['ci95'][1]]
-            for name, value in (('prevalence', lambda r: r['incident']),
-                                ('missed_incident_rate', lambda r: r['incident'] and not r['alerted']))}
+            name: [_count_estimate(rows, value, design, holds)['rate']['ci95'][0],
+                   _count_estimate(filled, value, design, holds)['rate']['ci95'][1]]
+            for name, value, holds in (('prevalence', lambda r: r['incident'], _holds_any),
+                                       ('missed_incident_rate', _missed_incident, _holds_missed))}
         return dict(report, status='inconclusive', reasons=reasons, estimates=None, missing_label_bounds=bounds)
     classes = sorted({r['label'] for r in rows if r['incident']})
-    recall = _recall(rows, p_min, population)
+    recall = _recall(rows, design)
     estimates = dict(
-        prevalence=_count_estimate(rows, lambda r: r['incident'], population, p_min),
-        missed_incidents=_count_estimate(rows, lambda r: r['incident'] and not r['alerted'], population, p_min),
-        missed_by_class={c: _count_estimate(rows, lambda r, c=c: r['label'] == c and not r['alerted'], population, p_min)
-                         for c in classes},
+        prevalence=_count_estimate(rows, lambda r: r['incident'], design),
+        missed_incidents=_count_estimate(rows, _missed_incident, design, _holds_missed),
+        missed_by_class={c: _count_estimate(rows, lambda r, c=c: r['label'] == c and not r['alerted'], design,
+                                            _holds_missed) for c in classes},
         triage_recall=recall)
     reasons = ['no_sampled_incidents'] if recall is None else []
     if not estimates['missed_incidents']['sampled']:
