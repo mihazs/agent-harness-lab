@@ -24,7 +24,10 @@ if p('context.json').exists():
    (evaluation/'proposal.json').write_text(json.dumps({'status':'no_change','reason':'No supported defect'}))
   else:
    if mode!='identical': (candidate/'AGENTS.md').write_text('worse' if mode=='refine' and c['attempt']==0 else 'good\n')
-   if mode=='escape': (candidate/'settings.json').write_text('forbidden')
+   escaped=('settings.json','.claude/settings.json','.claude/hooks/pre.sh','CLAUDE.local.md') if mode=='escape' else ()
+   nested=('app/CLAUDE.md','.claude/rules/style.md') if mode=='nested' else ()
+   if nested: p('proposer-prompt.txt').write_text(prompt)
+   for name in escaped+nested: (candidate/name).parent.mkdir(parents=True,exist_ok=True); (candidate/name).write_text('forbidden' if escaped else 'good\n')
    if mode=='concurrent': (project/'AGENTS.md').write_text('concurrent')
    (evaluation/'proposal.json').write_text(json.dumps({'status':'candidate','mechanisms':['synthetic'],'falsifiers':['artifact check']}))
  else:
@@ -109,8 +112,24 @@ class WorkflowTests(unittest.TestCase):
     def test_out_of_scope_candidate_is_never_applied(self):
         (self.project/'mode').write_text('escape')
         with self.assertRaises(ValueError): improve(self.args())
-        self.assertFalse((self.project/'settings.json').exists())
+        for name in ('settings.json','.claude/settings.json','.claude/hooks/pre.sh','CLAUDE.local.md'):
+            self.assertFalse((self.project/name).exists())
         self.assertEqual((self.project/'AGENTS.md').read_text(),'bad')
+
+    def test_nested_instruction_and_rule_candidates_are_staged_but_not_auto_adopted(self):
+        (self.project/'mode').write_text('nested')
+        result=improve(self.args())
+        self.assertEqual(result['status'],'inconclusive')
+        self.assertEqual(result['changed_files'],[])
+        evaluated=Path(result['output'])/'candidate-0'
+        self.assertEqual((evaluated/'app/CLAUDE.md').read_text(),'good\n')
+        self.assertEqual((evaluated/'.claude/rules/style.md').read_text(),'good\n')
+        self.assertFalse((self.project/'app/CLAUDE.md').exists())
+        self.assertFalse((self.project/'.claude').exists())
+        from agent_harness_lab.surfaces import adoptable_surfaces
+        prompt=' '.join((Path(result['output'])/'preparation/proposer-prompt.txt').read_text().split())
+        self.assertIn(f'modify only these project-owned surfaces in candidate: {adoptable_surfaces()}.',prompt)
+        self.assertIn('model settings, permissions, hooks or credentials',prompt)
 
     def test_concurrent_source_change_is_preserved(self):
         (self.project/'mode').write_text('concurrent')

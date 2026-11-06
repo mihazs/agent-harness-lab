@@ -1167,8 +1167,9 @@ included, is read.
 
 The surface inventory registers `instructions.parse_surface` for the
 `instruction` kind, and `surfaces.RULES` classifies nested `CLAUDE.md`,
-`AGENTS.md` and `AGENTS.override.md` files as `recommendation_only`
-instructions, so nothing can adopt them yet. Under Claude Code,
+`AGENTS.md` and `AGENTS.override.md` files as instructions that are
+`recommendation_only` until a caller confirms checkout containment (see
+[one-call improvement](one-call-improvement.md#staging-nested-instruction-rule-agent-and-command-files)). Under Claude Code,
 `CLAUDE.local.md` is `private_excluded` and its content is not read. Parser facts are
 labels and counts only: `checkout_relation` (`launch_ancestor`,
 `on_demand_subdirectory` or `outside_task_scope` for Claude Code;
@@ -1336,9 +1337,10 @@ keeps the bundle's writability. For `codex`, `.codex/rules/*.rules` is kind
 external root such as `$CODEX_HOME`. The inventory passes
 `external_root=True` only for those roots, so a checkout's own top-level
 `rules/` directory stays `unsupported`. Neither kind carries the `instruction`
-facet, and neither runtime classifies the other's files. `path_rule` stays
-non-writable until adoption is extended; `exec_policy` is `recommendation_only`,
-because it is permission policy.
+facet, and neither runtime classifies the other's files. `path_rule` is
+`adoptable` only after a caller confirms checkout containment and is otherwise
+`unsupported`; `exec_policy` is `recommendation_only`, because it is permission
+policy.
 
 The rules follow the public [Claude Code memory documentation](https://code.claude.com/docs/en/memory)
 and [Codex rules page](https://developers.openai.com/codex/rules), retrieved
@@ -1598,8 +1600,9 @@ definitions. It never loads, spawns or validates an agent with a runtime. The
 `hooks` or `skills`. They also classify the layer-relative
 `agents/**` of a caller-declared root, which is labelled
 `not_a_runtime_location` inside the checkout. Agent files can embed hooks, so
-every agent row also carries the hook contract facet. An agent edit is
-therefore never adoptable and stays in a plan's `unresolved_operations`.
+every agent row also carries the hook contract facet. A checkout agent file is
+`adoptable` only after containment is confirmed, and an agent edit always stays
+in a plan's `unresolved_operations`.
 `roles` maps an external root label to `claude_user`, `claude_plugin` or
 `codex_home`. A root without a role gives `undeclared_root_role`.
 
@@ -1713,9 +1716,10 @@ file.
   the `claude-command` row in `surfaces.RULES`, unless a skill bundle encloses the
   folder: a `<dir>` below `.claude/skills` or `.agents/skills`, or below a root
   `skills/` tree the caller owns. A `.claude/commands` folder below an ordinary
-  `skills/` directory, such as `packages/skills`, is still a command folder. Their writability stays
-  `unsupported`, and a harness change plan lists a created, edited or removed
-  command file under `unresolved_operations`, as it did before the row existed.
+  `skills/` directory, such as `packages/skills`, is still a command folder. They
+  are `adoptable` only after a caller confirms checkout containment and are
+  otherwise `unsupported`. A non-executable command edit is no longer listed under
+  `unresolved_operations`.
   A subdirectory becomes part of the id, so
   `.claude/commands/frontend/component.md` is `/frontend:component`. A command
   whose id matches a skill's id is flagged `shadowed_by_skill`, because the skill

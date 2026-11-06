@@ -9,6 +9,7 @@ import sys
 import uuid
 import stat
 from .evaluation.integrity import contained, open_directory_nofollow, relative, read_regular, unique_object
+from . import surfaces
 
 RESPONSE_PATHS=('inference_settings','cgroup_root','image_root')
 RESPONSE_OPTIONS=(*RESPONSE_PATHS,'image_sha256','disk_bytes','permission_audit')
@@ -88,6 +89,10 @@ def validate(value):
         relative(path)
         if len(path) > 4096 or any(ord(c) < 32 for c in path) or '.git' in Path(path).parts:
             raise ValueError('unsafe configured path')
+    # Any classified kind may be selected (staging re-classifies it); private files (local instructions, local
+    # settings, memory, caches) never are.
+    if any(surfaces.classify(path).writability == 'private_excluded' for path in paths):
+        raise ValueError('unsafe configured path')
     limits = value['limits']
     if not isinstance(limits, dict) or set(limits) != {'seconds', 'trials'}:
         raise ValueError('invalid configured resource caps')

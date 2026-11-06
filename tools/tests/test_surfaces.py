@@ -13,15 +13,21 @@ from agent_harness_lab.workflow import candidate_states, harness_files, skill_ro
 
 I, S, H = 'instruction', 'skill', 'hook_contract_required'
 A, P, C, R, U = 'adoptable', 'private_excluded', 'contract_required', 'recommendation_only', 'unsupported'
-# path, writability without/with a root skills/ folder, plan surface, facets at 0o644, facets once 0o755.
+# path, staged writability without/with a root skills/ folder, plan surface, facets at 0o644, facets once 0o755.
+# Staged means the caller observed checkout containment (candidate_states, journal.owned); UNCONFIRMED holds the
+# lexical verdict every other caller still receives for the rows that need that fact.
 GOLDEN = (
     ('AGENTS.md', A, A, 'instruction', (I,), (I, H)),
     ('CLAUDE.md', A, A, 'instruction', (I,), (I, H)),
-    ('sub/AGENTS.md', R, R, 'instruction', (I,), (I, H)),
-    ('sub/CLAUDE.md', R, R, 'instruction', (I,), (I, H)),
-    ('.claude/CLAUDE.md', R, R, 'instruction', (I,), (I, H)),
+    ('sub/AGENTS.md', A, A, 'instruction', (I,), (I, H)),
+    ('sub/CLAUDE.md', A, A, 'instruction', (I,), (I, H)),
+    ('app/CLAUDE.md', A, A, 'instruction', (I,), (I, H)),
+    ('.claude/CLAUDE.md', A, A, 'instruction', (I,), (I, H)),
     ('CLAUDE.local.md', P, P, 'instruction', (I,), (I, H)),
-    ('AGENTS.override.md', R, R, 'instruction', (I,), (I, H)),
+    ('AGENTS.override.md', A, A, 'instruction', (I,), (I, H)),
+    ('sub/AGENTS.override.md', A, A, 'instruction', (I,), (I, H)),
+    # A same-named instruction file under a hook folder is a hook first and keeps the hook contract.
+    ('.claude/hooks/CLAUDE.md', C, C, 'hook', (I, H), (I, H)),
     ('.agents/skills/demo/SKILL.md', A, A, 'skill', (S,), (S, H)),
     ('.claude/skills/demo/SKILL.md', A, A, 'skill', (S,), (S, H)),
     ('.claude/skills/demo/scripts/run.py', A, A, 'skill', (S, H), (S, H)),
@@ -33,10 +39,16 @@ GOLDEN = (
     ('skills/demo/__pycache__/m.pyc', P, P, 'skill', (S,), (S, H)),
     ('.claude/skills/demo/.git/config', P, P, 'skill', (S,), (S, H)),
     ('plugin/skills/demo/SKILL.md', U, U, 'skill', (S,), (S, H)),
+    ('pkg/.claude/skills/demo/SKILL.md', A, A, 'skill', (S,), (S, H)),
+    ('pkg/.agents/skills/demo/SKILL.md', A, A, 'skill', (S,), (S, H)),
+    ('pkg/.claude/skills/demo/scripts/run.py', C, C, 'skill', (S, H), (S, H)),
+    ('pkg/.claude/skills/SKILL.md', U, U, 'skill', (S,), (S, H)),
+    ('plugin/skills/demo/.claude/skills/x/SKILL.md', U, U, 'skill', (S,), (S, H)),
     ('my-skills/demo/SKILL.md', U, U, 'unsupported', (), (H,)),
-    ('.claude/rules/style.md', U, U, 'path_rule', (), (H,)),
-    ('.claude/rules/skills/style.md', U, U, 'path_rule', (S,), (S, H)),  # path_rule outranks a skills/ segment
-    ('plugin/skills/demo/.claude/rules/style.md', U, U, 'path_rule', (S,), (S, H)),
+    ('.claude/rules/style.md', A, A, 'path_rule', (), (H,)),
+    ('.claude/rules/skills/style.md', A, A, 'path_rule', (S,), (S, H)),  # path_rule outranks a skills/ segment
+    ('plugin/skills/demo/.claude/rules/style.md', A, A, 'path_rule', (S,), (S, H)),
+    ('.claude/rules/run.sh', U, U, 'unsupported', (H,), (H,)),
     ('.codex/rules/default.rules', 'recommendation_only', 'recommendation_only', 'exec_policy', (), (H,)),
     ('rules/x.rules', U, U, 'unsupported', (), (H,)),  # a checkout's own rules/ is not Codex policy
     ('.claude/hooks/pre.sh', C, C, 'hook', (H,), (H,)),
@@ -48,22 +60,22 @@ GOLDEN = (
     ('.claude/workflows/lib/helper.js', U, U, 'unsupported', (H,), (H,)),
     ('.claude/workflows/notes.md', U, U, 'unsupported', (), (H,)),
     # Agent definitions can embed hooks, so they carry the hook contract and stay unresolved in plans.
-    ('.claude/agents/reviewer.md', C, C, 'agent', (H,), (H,)),
-    ('src/.claude/agents/team/reviewer.md', C, C, 'agent', (H,), (H,)),
-    ('.codex/agents/reviewer.toml', C, C, 'agent', (H,), (H,)),
+    ('.claude/agents/reviewer.md', A, A, 'agent', (H,), (H,)),
+    ('src/.claude/agents/team/reviewer.md', A, A, 'agent', (H,), (H,)),
+    ('.codex/agents/reviewer.toml', A, A, 'agent', (H,), (H,)),
     ('agents/reviewer.md', C, C, 'agent', (H,), (H,)),
     # A hooks/ or skills/ folder inside an agents tree still holds agent definitions.
-    ('.claude/agents/hooks/guard.md', C, C, 'agent', (H,), (H,)),
-    ('.claude/agents/skills/helper.md', C, C, 'agent', (S, H), (S, H)),
-    ('.codex/agents/hooks/guard.toml', C, C, 'agent', (H,), (H,)),
+    ('.claude/agents/hooks/guard.md', A, A, 'agent', (H,), (H,)),
+    ('.claude/agents/skills/helper.md', A, A, 'agent', (S, H), (S, H)),
+    ('.codex/agents/hooks/guard.toml', A, A, 'agent', (H,), (H,)),
     ('agents/hook/guard.md', C, C, 'agent', (H,), (H,)),
     ('.claude/agents/notes.txt', U, U, 'unsupported', (), (H,)),
     ('.claude/agents.md', U, U, 'unsupported', (), (H,)),
-    ('.claude/commands/ship.md', U, U, 'command', (), (H,)),
-    ('.claude/commands/frontend/component.md', U, U, 'command', (), (H,)),
+    ('.claude/commands/ship.md', A, A, 'command', (), (H,)),
+    ('.claude/commands/frontend/component.md', A, A, 'command', (), (H,)),
     ('.claude/skills/demo/.claude/commands/x.md', A, A, 'skill', (S,), (S, H)),
-    ('packages/skills/.claude/commands/ship.md', U, U, 'command', (S,), (S, H)),
-    ('apps/.claude/skills/demo/.claude/commands/x.md', U, U, 'skill', (S,), (S, H)),
+    ('packages/skills/.claude/commands/ship.md', A, A, 'command', (S,), (S, H)),
+    ('apps/.claude/skills/demo/.claude/commands/x.md', A, A, 'skill', (S,), (S, H)),
     ('.claude/settings.json', C, C, 'hook', (H,), (H,)),
     ('.claude/settings.local.json', P, P, 'hook', (H,), (H,)),
     ('.codex/config.toml', C, C, 'hook', (H,), (H,)),
@@ -74,14 +86,26 @@ GOLDEN = (
     ('.claude/output-styles/terse.md', *('recommendation_only',) * 2, 'config', (), (H,)),
     ('.mcp.json', *('recommendation_only',) * 2, 'config', (), (H,)),
     # Runtime memory layouts of a declared home root never hide checkout folders that share their names.
-    ('memories/AGENTS.md', R, R, 'instruction', (I,), (I, H)),
+    ('memories/AGENTS.md', A, A, 'instruction', (I,), (I, H)),
     ('memories/hooks/pre.sh', C, C, 'hook', (H,), (H,)),
-    ('projects/api/memory/CLAUDE.md', R, R, 'instruction', (I,), (I, H)),
+    ('projects/api/memory/CLAUDE.md', A, A, 'instruction', (I,), (I, H)),
     ('.claude/agent-memory/hooks/pre.sh', P, P, 'hook', (H,), (H,)),
     ('.git/config', P, P, 'unsupported', (), (H,)),
     ('.git/hooks/pre-commit', P, P, 'hook', (H,), (H,)),
     ('__pycache__/m.pyc', P, P, 'unsupported', (), (H,)),
 )
+UNCONFIRMED = {
+    **dict.fromkeys(('sub/AGENTS.md', 'sub/CLAUDE.md', 'app/CLAUDE.md', '.claude/CLAUDE.md', 'AGENTS.override.md',
+                     'sub/AGENTS.override.md', 'memories/AGENTS.md', 'projects/api/memory/CLAUDE.md'), R),
+    **dict.fromkeys(('pkg/.claude/skills/demo/SKILL.md', 'pkg/.agents/skills/demo/SKILL.md',
+                     'pkg/.claude/skills/demo/scripts/run.py', '.claude/rules/style.md', '.claude/rules/skills/style.md',
+                     'plugin/skills/demo/.claude/rules/style.md', '.claude/commands/ship.md',
+                     '.claude/commands/frontend/component.md', 'packages/skills/.claude/commands/ship.md',
+                     'apps/.claude/skills/demo/.claude/commands/x.md'), U),
+    **dict.fromkeys(('.claude/agents/reviewer.md', 'src/.claude/agents/team/reviewer.md', '.codex/agents/reviewer.toml',
+                     '.claude/agents/hooks/guard.md', '.claude/agents/skills/helper.md',
+                     '.codex/agents/hooks/guard.toml'), C),
+}
 SHA = 'a' * 64
 
 
@@ -94,7 +118,9 @@ class CallerCharacterization(unittest.TestCase):
 
     def candidate(self, name, root_skills):
         folder = Path(tempfile.mkdtemp(dir=self.root))
-        (folder / name).parent.mkdir(parents=True, exist_ok=True); (folder / name).write_text('synthetic')
+        # A changed agent role is parsed, so a TOML path holds valid synthetic TOML.
+        (folder / name).parent.mkdir(parents=True, exist_ok=True)
+        (folder / name).write_text('name = "synthetic"\n' if name.endswith('.toml') else 'synthetic')
         original = {'skills/other/SKILL.md': None} if root_skills else {}
         try: return list(candidate_states(folder, original)) == [name]
         except ValueError as error:
@@ -154,11 +180,14 @@ class SurfaceClassifierTests(unittest.TestCase):
         for name, off, on, surface, plain, executable in GOLDEN:
             for root_skills, verdict in ((False, off), (True, on)):
                 with self.subTest(name=name, root_skills=root_skills):
+                    staged = classify(name, None, 0o644, root_skills=root_skills, in_checkout=True)
+                    self.assertEqual((staged.writability, staged.kind), (verdict, surface))
                     found = classify(name, None, 0o644, root_skills=root_skills)
-                    self.assertEqual((found.writability, found.kind), (verdict, surface))
+                    self.assertEqual((found.writability, found.kind), (UNCONFIRMED.get(name, verdict), surface))
                     self.assertEqual(tuple(f for f in found.facets if f in (I, S, H)), plain)
                     self.assertEqual(found.executable, name.endswith(('.py', '.sh', '.js', '.ts')))
-                    self.assertEqual(classify(name, None, 0o755, root_skills=root_skills).writability, verdict)
+                    self.assertEqual(classify(name, None, 0o755, root_skills=root_skills).writability,
+                                     UNCONFIRMED.get(name, verdict))
 
     def test_scope_runtime_and_input_validation(self):
         from agent_harness_lab.surfaces import classify, RUNTIMES
@@ -195,15 +224,29 @@ class SurfaceClassifierTests(unittest.TestCase):
         self.assertEqual(classify('skills/demo/SKILL.md', None, None, root_skills=probe).writability, A)
         self.assertEqual(calls, [1])
 
+    def test_checkout_containment_is_probed_only_for_a_gated_row_that_names_the_path(self):
+        from agent_harness_lab.surfaces import classify
+        calls = []
+        probe = lambda: calls.append(1) or True
+        for name, verdict in (('AGENTS.md', A), ('.claude/skills/demo/SKILL.md', A), ('.claude/hooks/CLAUDE.md', C)):
+            self.assertEqual(classify(name, None, None, in_checkout=probe).writability, verdict)
+        self.assertEqual(calls, [])
+        self.assertEqual(classify('.claude/rules/x.md', None, None, in_checkout=probe).writability, A)
+        self.assertEqual(calls, [1])
+        self.assertEqual(classify('.claude/rules/x.md', None, None, in_checkout=lambda: False).writability, U)
+        self.assertEqual(classify('app/CLAUDE.md', None, None, in_checkout=True, origin='external_repository').writability, R)
+
     def test_an_added_table_row_reaches_every_caller(self):
         from agent_harness_lab import surfaces
-        row = surfaces.Rule('synthetic-rules', 'rule', 1, A, lambda path, parts, ctx: parts[:2] == ('.claude', 'rules'))
+        row = surfaces.Rule('synthetic-notes', 'note', 1, A, lambda path, parts, ctx: parts[:2] == ('.claude', 'notes'),
+                            label='synthetic notes')
         with patch.object(surfaces, 'RULES', (*surfaces.RULES, row)):
-            self.assertEqual(surfaces.classify('.claude/rules/style.md', None, None).kind, 'rule')
-            self.assertTrue(CallerCharacterization.candidate(self.caller(), '.claude/rules/style.md', False))
-            self.assertTrue(CallerCharacterization.owned(self.caller(), '.claude/rules/style.md', False))
-            self.assertEqual(_operation('.claude/rules/style.md', None, (SHA, 0o644)).surface, 'rule')
-        self.assertFalse(CallerCharacterization.candidate(self.caller(), '.claude/rules/style.md', False))
+            self.assertEqual(surfaces.classify('.claude/notes/style.md', None, None).kind, 'note')
+            self.assertTrue(CallerCharacterization.candidate(self.caller(), '.claude/notes/style.md', False))
+            self.assertTrue(CallerCharacterization.owned(self.caller(), '.claude/notes/style.md', False))
+            self.assertEqual(_operation('.claude/notes/style.md', None, (SHA, 0o644)).surface, 'note')
+            self.assertTrue(surfaces.adoptable_surfaces().endswith('; synthetic notes'))
+        self.assertFalse(CallerCharacterization.candidate(self.caller(), '.claude/notes/style.md', False))
 
     def caller(self):
         helper = CallerCharacterization('test_symlinks_are_refused_by_candidate_and_journal'); helper.setUp()
@@ -212,7 +255,11 @@ class SurfaceClassifierTests(unittest.TestCase):
     def test_rows_reject_unknown_writability_and_runtime(self):
         from agent_harness_lab.surfaces import Rule
         with self.assertRaises(ValueError): Rule('x', 'skill', 1, 'writable', lambda *a: True)
-        with self.assertRaises(ValueError): Rule('x', 'skill', 1, A, lambda *a: True, runtimes=frozenset({'other'}))
+        with self.assertRaises(ValueError): Rule('x', 'skill', 1, A, lambda *a: True, runtimes=frozenset({'other'}), label='x')
+        # Every adoptable row names itself for the proposer prompts; a gated verdict must be a non-adoptable one.
+        with self.assertRaisesRegex(ValueError, 'label'): Rule('x', 'skill', 1, A, lambda *a: True)
+        with self.assertRaisesRegex(ValueError, 'unconfirmed'): Rule('x', 'skill', 1, A, lambda *a: True, label='x', unconfirmed=A)
+        with self.assertRaisesRegex(ValueError, 'unconfirmed'): Rule('x', 'skill', 1, R, lambda *a: True, unconfirmed=U)
 
 
 class CapabilityTableTests(unittest.TestCase):
@@ -289,9 +336,72 @@ class SurfaceOwnershipTests(unittest.TestCase):
         self.assertEqual(results[0], results[1])
         self.assertEqual(results[0].kind, 'alpha')
 
+    def test_construction_proposer_lists_adoptable_surfaces_from_the_classifier(self):
+        from agent_harness_lab import surfaces
+        from agent_harness_lab.evaluation import construction
+        listed = surfaces.adoptable_surfaces()
+        for label in ('root AGENTS.md or CLAUDE.md', 'a nested CLAUDE.md, including .claude/CLAUDE.md',
+                      'a nested AGENTS.md or an AGENTS.override.md', 'files in an existing skills/<name>/ bundle',
+                      '.claude/rules/**/*.md path rules', '.claude/agents/**/*.md agent definitions',
+                      '.codex/agents/**/*.toml agent roles', '.claude/commands/**/*.md commands'):
+            self.assertIn(label, listed)
+        for absent in ('settings', 'hook', 'workflow', 'mcp', '.rules', 'memory', 'local'):
+            self.assertNotIn(absent, listed)
+        seen = []
+        def capture(client, backend, workspace, inputs, role, instructions, *rest):
+            seen.append(instructions); raise RuntimeError('captured')
+        with patch.object(construction, 'run_role', capture), self.assertRaisesRegex(RuntimeError, 'captured'):
+            construction.propose(None, None, Path('/nonexistent'), Path('/nonexistent'), None, None, 0)
+        self.assertIn(f'Modify only these project-owned surfaces under candidate: {listed}.', seen[0])
+        self.assertIn('Never modify settings, permissions, hooks or credentials.', seen[0])
+
     def test_telemetry_skill_prefixes_come_from_the_classifier(self):
         from pathlib import PurePosixPath
         from agent_harness_lab import surfaces
         from agent_harness_lab.telemetry import claude_native
         self.assertEqual(claude_native.SKILL_BUNDLE_PREFIXES,
                          tuple(PurePosixPath(root).parts for root in surfaces.skill_prefixes()))
+
+
+class EmbeddedHookTests(unittest.TestCase):
+    def test_agent_hook_detection_fails_closed(self):
+        from agent_harness_lab.surfaces import adoption, embeds_hooks
+        cases = (('a.md', b'---\nname: a\ndescription: d\n---\nMention hooks in the body only.\n', False),
+                 ('a.md', b'No fence, so Claude skips the file.\nhooks: x\n', False),
+                 ('a.md', b'\xef\xbb\xbf---\nhooks: {}\n---\n', True),
+                 ('a.md', b'---\nname: a\nHOOKS: {}\n', True),
+                 ('a.md', b'---\n"\\u0068ooks": {}\n---\n', True),
+                 ('a.md', b'\xff\xfe', True),
+                 ('a.toml', b'name = "a"\n[nested]\nlist = [{hooks = 1}]\n', True),
+                 ('a.toml', b'"\\u0068ooks" = 1\n', True),
+                 ('a.toml', b'name = "a"\ndeveloper_instructions = "hooks are fine in prose"\n', False),
+                 ('a.toml', b'[unterminated\n', True))
+        for name, raw, expected in cases:
+            with self.subTest(raw=raw): self.assertEqual(embeds_hooks(name, raw), expected)
+        hooked = b'---\nhooks: {}\n---\n'
+        self.assertEqual(adoption('.claude/agents/a.md', 0o644, hooked, in_checkout=True).writability, C)
+        self.assertEqual(adoption('.claude/agents/a.md', 0o644, None, in_checkout=True).writability, A)
+        # Only agent definitions are read; an instruction file may discuss hooks freely.
+        self.assertEqual(adoption('app/CLAUDE.md', 0o644, hooked, in_checkout=True).writability, A)
+        self.assertEqual(adoption('.claude/rules/x.md', 0o755, b'x', in_checkout=True).writability, C)
+
+    def test_every_claude_frontmatter_surface_refuses_hooks_permissions_and_mcp(self):
+        from agent_harness_lab.surfaces import adoption
+        hooked = b'---\ndescription: x\nhooks:\n  PreToolUse:\n    - hooks:\n        - type: command\n' \
+                 b'          command: ./synthetic.sh\n---\n'
+        for name in ('.claude/commands/deploy.md', 'pkg/.claude/skills/x/SKILL.md', '.claude/skills/x/SKILL.md',
+                     '.claude/rules/r.md', '.claude/agents/a.md'):
+            with self.subTest(name=name):
+                self.assertEqual(adoption(name, 0o644, hooked, in_checkout=True).writability, C)
+        for key in (b'permissionMode: bypassPermissions', b'mcpServers:\n  s:\n    command: /bin/sh',
+                    b'PERMISSIONMODE: bypassPermissions', b'allowed-tools: Bash(*)'):
+            with self.subTest(key=key):
+                raw = b'---\nname: a\ndescription: b\n' + key + b'\n---\nbody\n'
+                self.assertEqual(adoption('.claude/agents/a.md', 0o644, raw, in_checkout=True).writability, C)
+                self.assertEqual(adoption('.claude/commands/c.md', 0o644, raw, in_checkout=True).writability, C)
+        plain = b'---\nname: a\ndescription: b\n---\nhooks in the body only\n'
+        for name in ('.claude/commands/c.md', 'pkg/.claude/skills/x/SKILL.md', '.claude/agents/a.md',
+                     'pkg/.claude/skills/x/reference.md'):
+            with self.subTest(name=name): self.assertEqual(adoption(name, 0o644, plain, in_checkout=True).writability, A)
+        # A bundle file that is not SKILL.md is not parsed as frontmatter.
+        self.assertEqual(adoption('pkg/.claude/skills/x/reference.md', 0o644, hooked, in_checkout=True).writability, A)
