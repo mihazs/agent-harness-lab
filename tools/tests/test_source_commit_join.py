@@ -264,6 +264,23 @@ class PullCommitJoinTests(CommitJoinFixture, unittest.TestCase):
         for pull_id in (0, -1, True, '81', 81.0, None):
             with self.subTest(pull_id=pull_id), self.assertRaises(ValueError): self.pull_join(pull_id=pull_id)
 
+    def test_edges_of_another_pull_never_become_current_or_superseded_roles(self):
+        self.capture(self.git, git_commit(self.git, SHA))
+        def checkpoint(source, *pulls):
+            commits = {sha: hub_commit(source, 42, sha) for sha in (SHA, OTHER)}
+            records = {pull_id: hub_pull(source, 42, pull_id, head) for pull_id, head in pulls}
+            joins = [j for pull_id, head in pulls for j in (edge('pr_head_commit', records[pull_id], commits[head]),
+                edge('commit_on', commits[head], records[pull_id]))]
+            self.capture(source, hub_repository(source, 42), *records.values(), *commits.values(), joins=joins)
+        shared = replace(self.hub, scope_sha256=digest(('scope', 'shared')))
+        checkpoint(shared, (self.PULL, OTHER), (82, SHA))
+        self.assertRoles(self.pull_join(hub=shared), 'unknown', 'pull_role_unobserved')
+        self.assertRoles(self.pull_join(hub=shared, pull_id=82), 'matched', 'exact_pull_commit_role', head='current', member='current')
+        earlier = replace(self.hub, scope_sha256=digest(('scope', 'earlier')))
+        checkpoint(earlier, (82, SHA))
+        checkpoint(earlier, (self.PULL, OTHER))
+        self.assertRoles(self.pull_join(hub=earlier), 'unknown', 'pull_role_unobserved')
+
     def test_missing_edges_dropped_and_ambiguous_pulls_remain_unknown_or_stale(self):
         self.capture(self.git, git_commit(self.git, SHA))
         self.capture_pull(self.hub, SHA, (), relations=(), extra=(SHA,))
