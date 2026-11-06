@@ -1565,8 +1565,10 @@ starts below the root or in a linked worktree. `resolve()` keeps such a path
 `cwd_relative_unverified`, and the hook contract blocks it with
 `script_anchor_unverified`. `${CLAUDE_PROJECT_DIR}`, plugin root variables and
 command substitutions are `external_or_dynamic_command` for Codex. An absolute
-path names one machine, not a checkout file. AHL can propose a Codex hook change,
-but the contract admits no Codex unit until Codex documents an anchor.
+path names one machine, not a checkout file. Every Codex unit, including one that
+only removes or empties handlers, is also blocked with `codex_anchor_undocumented`.
+AHL can propose a Codex hook change, but the contract admits no Codex unit until
+Codex documents an anchor.
 
 ### Static Claude workflow script lint
 

@@ -194,7 +194,7 @@ class HookContractTests(unittest.TestCase):
             before, after, contract = self.unit(value, {'.codex/hooks/stop.sh': (self.script, 0o700)}, '.codex/config.toml')
         # Codex has no verified project-root anchor, so the unit stays blocked and still names the trust review.
         self.assertEqual((contract.status, contract.trust_review), ('blocked', 'requires_user_trust_review'))
-        self.assertEqual({row[1] for row in contract.findings}, {'script_anchor_unverified'})
+        self.assertEqual({row[1] for row in contract.findings}, {'codex_anchor_undocumented', 'script_anchor_unverified'})
         with self.assertRaisesRegex(ValueError, 'did not pass'): self.journal.prepare(before, after, hook_contract=contract)
         staged = base64.b64decode(after['.codex/config.toml']['content'])
         self.assertIn(b'[hooks.state.a1]\ntrusted_hash = "sha256:synthetic"\n', staged)
@@ -236,11 +236,29 @@ class HookContractTests(unittest.TestCase):
                 scripts = {script: (self.script, 0o700)} if code == 'script_anchor_unverified' else {}
                 before, after, contract = self.unit(value, scripts, '.codex/hooks.json')
                 self.assertEqual((contract.status, contract.trust_review), ('blocked', 'requires_user_trust_review'))
-                self.assertEqual({row[1] for row in contract.findings}, {code})
+                self.assertEqual({row[1] for row in contract.findings}, {'codex_anchor_undocumented', code})
                 with self.assertRaisesRegex(ValueError, 'did not pass'):
                     self.journal.prepare(before, after, hook_contract=contract)
         self.assertFalse(self.sentinel.exists())
         self.assertFalse((self.project / '.codex/hooks.json').exists())
+
+    def test_a_handler_free_codex_unit_is_blocked_so_no_codex_hook_change_is_applied(self):
+        # Removing or emptying a Codex guard hook is a Codex hook change too; it must not pass with zero findings (#345).
+        guard = {'PreToolUse': [{'matcher': 'shell', 'hooks': [{'type': 'command', 'command': './.codex/hooks/guard.sh',
+                                                                'timeout': 10}]}]}
+        hooks_json = self.project / '.codex/hooks.json'; hooks_json.parent.mkdir()
+        hooks_json.write_text(json.dumps({'hooks': guard}) + '\n')
+        config = self.project / '.codex/config.toml'; config.write_bytes(CODEX)
+        original = {path: path.read_bytes() for path in (hooks_json, config)}
+        for name in ('.codex/hooks.json', '.codex/config.toml'):
+            for value in ({}, {'PreToolUse': []}, {'PreToolUse': [{'matcher': 'shell', 'hooks': []}]}):
+                with self.subTest(config=name, value=value), no_execution():
+                    before, after, contract = self.unit(value, {}, name)
+                    self.assertEqual((contract.status, contract.trust_review), ('blocked', 'requires_user_trust_review'))
+                    self.assertEqual(contract.findings, (('blocked', 'codex_anchor_undocumented', name),))
+                    with self.assertRaisesRegex(ValueError, 'did not pass'):
+                        self.journal.prepare(before, after, hook_contract=contract)
+        self.assertEqual({path: path.read_bytes() for path in original}, original)
 
     def test_codex_recommendation_only_finding_cites_the_pinned_source(self):
         root = Path(__file__).resolve().parents[2]
@@ -250,12 +268,14 @@ class HookContractTests(unittest.TestCase):
         self.assertIn('Codex hook changes stay recommendation-only', section)
         self.assertIn('openai/codex@d786ff91fad8e7ddab8653ee07bc6313a6fcb03d', section)
         for citation in ('hooks/src/engine/command_runner.rs', 'command.current_dir(cwd)', 'core/src/hook_runtime.rs',
-                         'hooks/src/engine/discovery.rs', 'config/src/loader/mod.rs', '`script_anchor_unverified`'):
+                         'hooks/src/engine/discovery.rs', 'config/src/loader/mod.rs', '`script_anchor_unverified`',
+                         '`codex_anchor_undocumented`'):
             with self.subTest(citation=citation): self.assertIn(citation, section)
         guide = ' '.join((root / 'docs/one-call-improvement.md').read_text().split())
         self.assertIn('Codex hook changes stay recommendation-only', guide)
         self.assertIn('(source-contracts.md#codex-hook-command-anchor)', guide)
         self.assertNotIn('Codex has no verified root anchor yet', guide)
+        self.assertIn('blocked with `codex_anchor_undocumented`, including one that only removes or empties handlers', guide)
 
     def test_group_or_world_writable_scripts_are_blocked(self):
         for mode in (0o777, 0o775, 0o666):

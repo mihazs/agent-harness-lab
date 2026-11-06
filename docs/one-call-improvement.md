@@ -264,9 +264,10 @@ login shell in the session working directory and gives it no project-root
 variable (see [Codex hook command anchor](source-contracts.md#codex-hook-command-anchor)).
 The working directory can be a nested folder or a linked worktree of the
 project, so no command form names one checkout script. Every Codex unit is
-therefore blocked, with `script_anchor_unverified` or
-`command_not_a_checkout_script`, and AHL can propose a Codex hook change but
-never apply one.
+therefore blocked with `codex_anchor_undocumented`, including one that only
+removes or empties handlers, and a command handler also gets
+`script_anchor_unverified` or `command_not_a_checkout_script`. AHL can propose
+a Codex hook change but never apply one.
 
 `Journal.prepare(..., hook_contract=verdict)` is the explicit authorization. The
 journal evaluates the unit again and admits its `contract_required` hook members
