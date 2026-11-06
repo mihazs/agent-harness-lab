@@ -7,7 +7,11 @@ from agent_harness_lab.sources import harness_inventory as inventory
 from agent_harness_lab.sources.schema import digest
 from agent_harness_lab.telemetry import claude_native
 from agent_harness_lab.telemetry.schema import verified_outcome
-from tools.tests import harness_surface_fixture as fixture
+
+if __package__:
+    from . import harness_surface_fixture as fixture
+else:
+    import harness_surface_fixture as fixture
 
 CLAUDE = dict(schema_version=1, runtime='claude-code', version='2.1.317', task_cwd='.')
 RULE = '---\npaths: ["src/**"]\n---\nSYNTHETIC_RULE_TEXT\n'
