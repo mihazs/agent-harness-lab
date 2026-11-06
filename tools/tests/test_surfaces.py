@@ -115,6 +115,9 @@ class CallerCharacterization(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
+        # Hermetic: a git work tree enclosing the host's TMPDIR must not lend these projects its ignore rules.
+        ignored = patch('agent_harness_lab.promotion.journal.ignored', return_value=False)
+        ignored.start(); self.addCleanup(ignored.stop)
 
     def candidate(self, name, root_skills):
         folder = Path(tempfile.mkdtemp(dir=self.root))
@@ -405,3 +408,90 @@ class EmbeddedHookTests(unittest.TestCase):
             with self.subTest(name=name): self.assertEqual(adoption(name, 0o644, plain, in_checkout=True).writability, A)
         # A bundle file that is not SKILL.md is not parsed as frontmatter.
         self.assertEqual(adoption('pkg/.claude/skills/x/reference.md', 0o644, hooked, in_checkout=True).writability, A)
+
+
+class VendoredTreeTests(unittest.TestCase):
+    """Third-party and generated trees hold no .git of their own, yet they are never project-owned surfaces."""
+    VENDORED = ('node_modules/pkg/CLAUDE.md', 'node_modules/pkg/.claude/rules/x.md', 'node_modules/AGENTS.md',
+                '.venv/lib/python3/site-packages/pkg/AGENTS.md', '.venv/.claude/rules/x.md',
+                'vendor/lib/.claude/skills/demo/SKILL.md', 'app/node_modules/pkg/.claude/agents/r.md')
+
+    def test_vendored_paths_keep_their_kind_but_are_never_adoptable(self):
+        from agent_harness_lab.surfaces import VENDORED_FACET, classify
+        for name in self.VENDORED:
+            with self.subTest(name=name):
+                lexical = classify(name)
+                verdict = classify(name, None, 0o644, in_checkout=True, root_skills=True)
+                self.assertEqual(verdict.writability, U)
+                self.assertNotEqual(verdict.kind, 'unsupported')  # inventories still list it as its surface
+                self.assertIn(VENDORED_FACET, verdict.facets)
+                self.assertEqual((lexical.writability, lexical.kind), (U, verdict.kind))
+                self.assertEqual(classify(name, origin='external_repository', in_checkout=True).writability, U)
+                self.assertFalse(CallerCharacterization.candidate(self.caller(), name, False))
+                self.assertFalse(CallerCharacterization.owned(self.caller(), name, False))
+        # Stricter verdicts stay: VCS metadata inside a vendored tree is still private_excluded.
+        self.assertEqual(classify('node_modules/pkg/.git/config').writability, P)
+        self.assertEqual(classify('node_modules/pkg/.claude/hooks/run.sh').writability, U)
+        # Only directories count, and only exact names: project folders and files keep their verdicts.
+        for name in ('vendor.md', 'my_node_modules/CLAUDE.md', 'src/vendored/CLAUDE.md'):
+            with self.subTest(name=name):
+                self.assertNotIn(VENDORED_FACET, classify(name, in_checkout=True).facets)
+        self.assertEqual(classify('src/vendored/CLAUDE.md', in_checkout=True).writability, A)
+
+    def test_ignore_rules_are_probed_only_for_an_otherwise_adoptable_nested_path(self):
+        from agent_harness_lab.surfaces import VENDORED_FACET, classify
+        calls = []
+        probe = lambda: calls.append(1) or True
+        for name, verdict in (('AGENTS.md', A), ('CLAUDE.md', A), ('.claude/hooks/pre.sh', C), ('lefthook.yml', R),
+                              ('CLAUDE.local.md', P), ('node_modules/pkg/CLAUDE.md', U)):
+            self.assertEqual(classify(name, None, None, in_checkout=True, ignored=probe).writability, verdict)
+        # Root harness folders stay the project's own even when ignore rules keep them local.
+        for name in ('.claude/rules/x.md', '.claude/skills/demo/SKILL.md', '.claude/CLAUDE.md', '.agents/skills/a/SKILL.md',
+                     '.codex/agents/r.toml', '.claude/commands/ship.md'):
+            with self.subTest(name=name):
+                self.assertEqual(classify(name, None, None, in_checkout=True, ignored=probe).writability, A)
+        self.assertEqual(classify('skills/demo/SKILL.md', None, None, root_skills=True, in_checkout=True,
+                                  ignored=probe).writability, A)
+        self.assertEqual(calls, [])
+        for name in ('dist/CLAUDE.md', 'generated/.claude/rules/x.md', 'app/.claude/skills/demo/SKILL.md'):
+            with self.subTest(name=name):
+                verdict = classify(name, None, None, in_checkout=True, ignored=probe)
+                self.assertEqual((verdict.writability, VENDORED_FACET in verdict.facets), (U, True))
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(classify('dist/CLAUDE.md', None, None, in_checkout=True, ignored=lambda: False).writability, A)
+
+    def test_a_skill_or_agent_named_like_a_vendored_tree_is_still_project_owned(self):
+        from agent_harness_lab.surfaces import VENDORED_FACET, classify
+        for name in ('.claude/skills/vendor/SKILL.md', '.claude/skills/venv/SKILL.md', '.agents/skills/vendor/SKILL.md',
+                     'skills/node_modules/SKILL.md', 'app/.claude/skills/vendor/SKILL.md', '.claude/agents/vendor/r.md'):
+            with self.subTest(name=name):
+                verdict = classify(name, None, 0o644, root_skills=True, in_checkout=True)
+                self.assertEqual((verdict.writability, VENDORED_FACET in verdict.facets), (A, False))
+        # A plugin skill so named stays a recommendation; the bundle's own installed dependencies stay vendored.
+        self.assertEqual(classify('skills/vendor/SKILL.md', origin='external_repository').writability, R)
+        for name in ('.claude/skills/vendor/node_modules/lib/README.md', '.claude/skills/tools/.venv/AGENTS.md',
+                     'vendor/skills/demo/SKILL.md', 'app/skills/x/node_modules/pkg/CLAUDE.md'):
+            with self.subTest(name=name):
+                verdict = classify(name, None, 0o644, root_skills=True, in_checkout=True)
+                self.assertEqual((verdict.writability, VENDORED_FACET in verdict.facets), (U, True))
+
+    def test_skill_bundles_named_vendor_or_holding_dependencies_stage_without_their_dependencies(self):
+        import shutil
+        from agent_harness_lab.workflow import snapshot
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder); project = root / 'project'
+            for name in ('AGENTS.md', '.claude/skills/vendor/SKILL.md', '.claude/skills/venv/SKILL.md',
+                         '.claude/skills/tools/SKILL.md', '.claude/skills/tools/node_modules/lib/index.js',
+                         '.claude/skills/tools/.venv/lib/site.py'):
+                (project / name).parent.mkdir(parents=True, exist_ok=True); (project / name).write_text('synthetic')
+            self.assertEqual([str(p.relative_to(project)) for p in harness_files(project)],
+                             ['.claude/skills/tools/SKILL.md', '.claude/skills/vendor/SKILL.md',
+                              '.claude/skills/venv/SKILL.md', 'AGENTS.md'])
+            original = snapshot(project, root / 'baseline')
+            shutil.copytree(root / 'baseline', root / 'candidate')
+            (root / 'candidate/.claude/skills/vendor/SKILL.md').write_text('after')
+            self.assertEqual(sorted(candidate_states(root / 'candidate', original)), sorted(original))
+
+    def caller(self):
+        helper = CallerCharacterization('test_symlinks_are_refused_by_candidate_and_journal'); helper.setUp()
+        self.addCleanup(helper.doCleanups); return helper

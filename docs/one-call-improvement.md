@@ -83,6 +83,35 @@ nothing. A verdict does not show that any runtime loads the file.
 selected plugin checkout: every such path is `recommendation_only` unless it is
 `private_excluded`.
 
+Vendored and generated trees have no `.git` of their own, so containment alone
+would treat them as project folders. A path with a directory component in
+`surfaces.VENDORED_DIRECTORIES` (`node_modules`, `.venv`, `venv`, `vendor`,
+`bower_components`, `jspm_packages`, `site-packages`, `__pypackages__`, `.tox`,
+`.nox`) keeps its kind but is at most `unsupported`, for every caller and origin,
+and carries the `vendored` facet. `private_excluded` still wins. The folder
+right below a `skills/` or `agents/` directory of a skill or agent path is a name
+the project chose, so a skill bundle called `vendor` or `venv` keeps its verdict,
+while that bundle's own `node_modules` or `.venv` stays vendored. Skill discovery
+skips those dependency trees, so they are never staged as candidate files.
+Generated output is found through the project's ignore rules instead:
+`classify(..., ignored=...)` takes the caller's observed fact that those rules
+exclude the path, and evaluates it only for a nested path that would otherwise
+be `adoptable`. Root harness folders (`.claude/`, `.agents/`, `.codex/` and a
+root `skills/` tree) are never probed, so a project that keeps `.claude/` local
+through ignore rules still adopts its root rules and skills. `Journal.owned`
+passes `promotion.journal.ignored`, which runs a read-only
+`git check-ignore --no-index` on the path's folder, with fsmonitor disabled,
+the user's global excludes file unset and no inherited `GIT_*` variables, so a
+hook's `GIT_DIR` cannot answer for it. Only directory-level rules decide: a
+file-name pattern such as `CLAUDE.md` or `AGENTS.md` keeps instruction files
+local and does not make `app/CLAUDE.md` foreign. For an ignored folder it then
+runs a read-only `git ls-files --error-unmatch` on the path, so a tracked,
+force-added file is not reported as ignored. A project with no `.git` at or
+above it has no ignore rules, so git is never started for it. A missing git
+binary, a timeout or any answer other than "not ignored" fails closed. An ignored folder's `CLAUDE.md`, `.claude/rules` or
+skill bundle therefore stages but never adopts. A root file has no enclosing
+folder and is not probed.
+
 Each classifier row stands alone. When several rows match a path, the strongest
 writability wins, in the order `private_excluded`, `adoptable`,
 `contract_required`, `recommendation_only`, `unsupported`. The matching row with
@@ -122,14 +151,15 @@ the frontmatter of an agent definition, a command, a path rule and a `SKILL.md`:
 depth of a Codex role file, and fails closed on undecodable bytes, a YAML escape
 or unparsable TOML. Such a file needs the hook contract and is never adopted. An
 unchanged staged file is never written, so these checks skip it. The containment
-probe runs when a promotion is prepared and again before its first write.
-Loading a recorded transaction, previewing it and rolling it back take
-containment as observed when it was prepared, so a `.git` created later below
-the project cannot strand a rollback. A new promotion of that file is still
-refused, and so is rolling back that rollback, which re-applies the promotion's
-content and is therefore probed and checked like a new promotion. Along a chain
-of rollbacks, each one that restores the original content is taken as observed,
-and each one that re-applies the promotion's content is probed and checked.
+probe runs when a promotion is prepared and again before its first write,
+together with the ignore-rule probe. Loading a recorded transaction, previewing
+it and rolling it back take containment and ignore rules as observed when it was
+prepared, so a `.git` or `.gitignore` created later below the project cannot
+strand a rollback. A new promotion of that file is still refused, and so is
+rolling back that rollback, which re-applies the promotion's content and is
+therefore probed and checked like a new promotion. Along a chain of rollbacks,
+each one that restores the original content is taken as observed, and each one
+that re-applies the promotion's content is probed and checked.
 
 `CLAUDE.local.md`, `settings*.json`, `.codex/config.toml`, hooks, workflows,
 Codex `.rules`, `.mcp.json`, memory and plugin checkouts

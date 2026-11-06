@@ -249,3 +249,18 @@ def _failing(path, raw, profile): raise ValueError('synthetic parser refusal')
 
 
 if __name__ == '__main__': unittest.main()
+
+
+class VendoredInventoryTests(unittest.TestCase):
+    def test_vendored_trees_are_listed_and_labelled_vendored(self):
+        with tempfile.TemporaryDirectory() as folder:
+            checkout = Path(folder)
+            for name in ('CLAUDE.md', 'node_modules/pkg/CLAUDE.md', 'node_modules/pkg/.claude/rules/x.md',
+                         '.venv/lib/AGENTS.md'):
+                (checkout / name).parent.mkdir(parents=True, exist_ok=True); (checkout / name).write_text('synthetic')
+            profile = dict(schema_version=1, runtime='claude-code', version='2.1.317', task_cwd='.')
+            nodes = {node.path: node for node in inventory.capture(checkout, profile).nodes}
+        self.assertEqual({path: dict(node.facts).get('vendored') for path, node in nodes.items()},
+                         {'CLAUDE.md': None, 'node_modules/pkg/CLAUDE.md': True,
+                          'node_modules/pkg/.claude/rules/x.md': True, '.venv/lib/AGENTS.md': True})
+        self.assertEqual(nodes['node_modules/pkg/.claude/rules/x.md'].kind, 'path_rule')
