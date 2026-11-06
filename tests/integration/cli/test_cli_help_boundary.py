@@ -5,8 +5,8 @@ import re
 import stat
 import subprocess
 import sys
-import tempfile
-import unittest
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -75,82 +75,93 @@ def flat(text):
     return ' '.join(text.split())
 
 
-class HelpBoundaryTests(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.outputs = {}
-        with tempfile.TemporaryDirectory() as folder:
-            base = Path(folder)
-            work, home, bin_dir = base / 'work', base / 'home', base / 'bin'
-            for path in (work, home, bin_dir):
-                path.mkdir()
-            marker = base / 'agent-started'
-            # Fake agent runtimes record any invocation; help must start none.
-            for name in ('codex', 'claude'):
-                fake = bin_dir / name
-                fake.write_text(f'#!/bin/sh\necho "$0" >> {marker}\n')
-                fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
-            env = {**os.environ, 'PYTHONPATH': str(ROOT), 'HOME': str(home), 'XDG_STATE_HOME': str(home / 'state'),
-                   'PATH': str(bin_dir) + os.pathsep + os.environ.get('PATH', ''), 'COLUMNS': '100'}
-            for route in ((), ('improve',), ('watch',)):
-                run = subprocess.run([sys.executable, '-m', 'agent_harness_lab', *route, '--help'], cwd=work, env=env,
-                                     capture_output=True, text=True, timeout=30)
-                cls.outputs[route[0] if route else 'top'] = run
-            cls.side_effects = dict(agent=marker.exists(), work=os.listdir(work), home=os.listdir(home))
-
-    def test_help_exits_zero_without_starting_an_agent_or_writing_state(self):
-        for name, run in self.outputs.items():
-            with self.subTest(command=name):
-                self.assertEqual(run.returncode, 0, run.stderr)
-                self.assertEqual(run.stderr, '')
-        self.assertEqual(self.side_effects, dict(agent=False, work=[], home=[]))
-
-    def test_top_level_help_snapshot_states_the_boundary_and_keeps_every_subcommand(self):
-        text = self.outputs['top'].stdout
-        self.assertIn(TOP_DESCRIPTION, text)
-        for name, summary in SUMMARIES.items():
-            self.assertRegex(flat(text), re.escape(name) + r' ' + re.escape(flat(summary)))
-        choices = re.search(r'\{([a-z,-]+)\}', text).group(1).split(',')
-        self.assertEqual(tuple(choices), SUBCOMMANDS)
-
-    def test_command_help_snapshot_states_what_changes_and_never_changes(self):
-        for name in ('improve', 'watch'):
-            with self.subTest(command=name):
-                text = self.outputs[name].stdout
-                self.assertIn('\n' + SUMMARIES[name] + '\n', text)
-                self.assertIn('\n\n' + BOUNDARIES[name] + 'Output: ', text)
-
-    def test_command_help_keeps_every_option(self):
-        for name, expected in OPTIONS.items():
-            with self.subTest(command=name):
-                options = re.findall(r'^  (?:-h, )?(--[a-z0-9-]+)', self.outputs[name].stdout, re.M)
-                self.assertEqual(tuple(options), expected)
-
-    def test_help_never_implies_behavioral_auto_adoption(self):
-        for name, run in self.outputs.items():
-            text = flat(run.stdout).lower()
-            for phrase in FORBIDDEN:
-                with self.subTest(command=name, phrase=phrase):
-                    self.assertNotIn(phrase, text)
-
-    def test_help_and_docs_promise_only_what_ahl_itself_writes(self):
-        texts = {name: run.stdout for name, run in self.outputs.items()}
-        for doc in ('README.md', 'docs/cli-help.md', 'docs/workflows.md'):
-            texts[doc] = (ROOT / doc).read_text(encoding='utf-8')
-        for name, text in texts.items():
-            for phrase in UNQUALIFIED:
-                with self.subTest(source=name, phrase=phrase):
-                    self.assertFalse(phrase in flat(text).lower(), f'{name} states an unqualified {phrase!r}')
-        for name in ('improve', 'watch'):
-            with self.subTest(command=name):
-                self.assertIn('read-only project access is instructed, not enforced', flat(texts[name]))
-
-    def test_readme_states_the_same_boundary_for_improve_and_watch(self):
-        readme = flat((ROOT / 'README.md').read_text(encoding='utf-8'))
-        for claim in README_BOUNDARY:
-            with self.subTest(claim=claim[:40]):
-                self.assertIn(claim, readme)
+COMMANDS = ('top', 'improve', 'watch')
+DOCS = ('README.md', 'docs/cli-help.md', 'docs/workflows.md')
 
 
-if __name__ == '__main__':
-    unittest.main()
+@pytest.fixture(scope='module')
+def captured(tmp_path_factory):
+    outputs = {}
+    base = tmp_path_factory.mktemp('help-boundary')
+    work, home, bin_dir = base / 'work', base / 'home', base / 'bin'
+    for path in (work, home, bin_dir):
+        path.mkdir()
+    marker = base / 'agent-started'
+    # Fake agent runtimes record any invocation; help must start none.
+    for name in ('codex', 'claude'):
+        fake = bin_dir / name
+        fake.write_text(f'#!/bin/sh\necho "$0" >> {marker}\n')
+        fake.chmod(fake.stat().st_mode | stat.S_IXUSR)
+    env = {**os.environ, 'PYTHONPATH': str(ROOT), 'HOME': str(home), 'XDG_STATE_HOME': str(home / 'state'),
+           'PATH': str(bin_dir) + os.pathsep + os.environ.get('PATH', ''), 'COLUMNS': '100'}
+    for route in ((), ('improve',), ('watch',)):
+        run = subprocess.run([sys.executable, '-m', 'agent_harness_lab', *route, '--help'], cwd=work, env=env,
+                             capture_output=True, text=True, timeout=30)
+        outputs[route[0] if route else 'top'] = run
+    side_effects = dict(agent=marker.exists(), work=os.listdir(work), home=os.listdir(home))
+    return outputs, side_effects
+
+
+@pytest.fixture(scope='module')
+def outputs(captured):
+    return captured[0]
+
+
+@pytest.mark.parametrize('name', [pytest.param(name, id=name) for name in COMMANDS])
+def test_help_exits_zero(outputs, name):
+    run = outputs[name]
+    assert run.returncode == 0, run.stderr
+    assert run.stderr == ''
+
+
+def test_help_starts_no_agent_and_writes_no_state(captured):
+    outputs, side_effects = captured
+    assert tuple(outputs) == COMMANDS
+    assert side_effects == dict(agent=False, work=[], home=[])
+
+
+def test_top_level_help_snapshot_states_the_boundary_and_keeps_every_subcommand(outputs):
+    text = outputs['top'].stdout
+    assert TOP_DESCRIPTION in text
+    for name, summary in SUMMARIES.items():
+        assert re.search(re.escape(name) + r' ' + re.escape(flat(summary)), flat(text))
+    choices = re.search(r'\{([a-z,-]+)\}', text).group(1).split(',')
+    assert tuple(choices) == SUBCOMMANDS
+
+
+@pytest.mark.parametrize('name', [pytest.param(name, id=name) for name in ('improve', 'watch')])
+def test_command_help_snapshot_states_what_changes_and_never_changes(outputs, name):
+    text = outputs[name].stdout
+    assert '\n' + SUMMARIES[name] + '\n' in text
+    assert '\n\n' + BOUNDARIES[name] + 'Output: ' in text
+
+
+@pytest.mark.parametrize('name,expected', [pytest.param(name, expected, id=name) for name, expected in OPTIONS.items()])
+def test_command_help_keeps_every_option(outputs, name, expected):
+    options = re.findall(r'^  (?:-h, )?(--[a-z0-9-]+)', outputs[name].stdout, re.M)
+    assert tuple(options) == expected
+
+
+@pytest.mark.parametrize('name,phrase', [pytest.param(name, phrase, id=f'{name}-{phrase}')
+                                         for name in COMMANDS for phrase in FORBIDDEN])
+def test_help_never_implies_behavioral_auto_adoption(outputs, name, phrase):
+    text = flat(outputs[name].stdout).lower()
+    assert phrase not in text
+
+
+@pytest.mark.parametrize('name,phrase', [pytest.param(name, phrase, id=f'{name}-{phrase}')
+                                         for name in (*COMMANDS, *DOCS) for phrase in UNQUALIFIED])
+def test_help_and_docs_promise_only_what_ahl_itself_writes(outputs, name, phrase):
+    text = outputs[name].stdout if name in outputs else (ROOT / name).read_text(encoding='utf-8')
+    assert not (phrase in flat(text).lower()), f'{name} states an unqualified {phrase!r}'
+
+
+@pytest.mark.parametrize('name', [pytest.param(name, id=name) for name in ('improve', 'watch')])
+def test_command_help_states_the_cooperative_agent_boundary(outputs, name):
+    assert 'read-only project access is instructed, not enforced' in flat(outputs[name].stdout)
+
+
+@pytest.mark.parametrize('claim', [pytest.param(claim, id=claim[:40]) for claim in README_BOUNDARY])
+def test_readme_states_the_same_boundary_for_improve_and_watch(claim):
+    readme = flat((ROOT / 'README.md').read_text(encoding='utf-8'))
+    assert claim in readme
