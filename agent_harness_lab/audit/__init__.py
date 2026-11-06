@@ -208,7 +208,7 @@ def audit(inventory, *, task_cwd=None):
                 verdict, reason = _judge(node, kind, status, facts, runtime, table[kind])
                 dimension, surface, evidence, _ = table[kind]
                 measures, cited = (), None
-                if kind == 'instruction' and verdict != 'unknown' and node.path in budget:  # the chain outranks one file
+                if kind == 'instruction' and verdict != 'unknown' and node.origin == 'checkout' and node.path in budget:  # the chain outranks one file
                     verdict, evidence, cited, (reason, measures) = 'nonconformant', 'structural', chain.SOURCE, budget[node.path]
                 record(dimension, verdict, reason, node.path, kind, evidence, surface, measures, cited)
         for refusal in inventory.refusals:

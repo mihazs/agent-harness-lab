@@ -63,10 +63,17 @@ def codex(inventory, task_cwd=None):
             if not blank: found[selected.path] = (SKIPPED, _measures(0, size))
             continue
         if size > remaining:
-            if not blank: found[selected.path] = (TRUNCATED, _measures(remaining, size - remaining))
             # A prefix that ends inside the leading whitespace run is blank and uses no budget unless it cuts a
-            # multi-byte character, which the facts do not record, so the later files are not settled.
-            if remaining <= leading: return found
+            # multi-byte character, which the facts do not record, so its loaded bytes and later files are unsettled.
+            if remaining < leading:
+                if not blank: found[selected.path] = (TRUNCATED, (('budget_bytes', CODEX_DEFAULT_BYTES),))
+                return found
+            # A prefix that is exactly the whitespace run ends on a character boundary: blank, so Codex loads none of
+            # the file and the budget carries on unchanged.
+            if remaining == leading:
+                found[selected.path] = (TRUNCATED, _measures(0, size))
+                continue
+            found[selected.path] = (TRUNCATED, _measures(remaining, size - remaining))
             remaining = 0
         elif not blank: remaining -= size
     return found

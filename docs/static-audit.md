@@ -82,6 +82,11 @@ Both are `nonconformant` with `evidence_kind: structural`, the remediation
 `shorten_the_instruction_chain_or_raise_project_doc_max_bytes` and `measures`
 `budget_bytes`, `loaded_bytes` and `dropped_bytes`, so the finding names the file
 and how much of it Codex drops. A chain that fits, even exactly, adds nothing.
+Only checkout files are matched against the chain: a same-named file in a
+caller-declared external root, such as `CODEX_HOME`, keeps its per-file verdict.
+When the cut ends exactly where a file's leading whitespace ends, the loaded
+prefix is blank, so the file is reported truncated with `loaded_bytes` 0 and all
+of its bytes dropped, and the budget carries on unchanged to later files.
 
 The chain is modelled only at the documented defaults: a 32 KiB budget, the
 `.git` project root marker and no fallback file names. A budget, marker or
@@ -93,7 +98,9 @@ when the project is `declared_untrusted` (Codex loads no project docs), or when
 paths. The walk stops at the first directory whose candidate was refused, such as
 a symlink Codex would follow, or was not parsed, and after a cut that ends inside
 a file's leading whitespace, where a split multi-byte character would change the
-outcome; files before that point keep their budget findings. The budget check
+outcome. That file is still reported truncated, but with `budget_bytes` alone,
+since its loaded and dropped bytes are not settled; files before it keep their
+budget findings. The budget check
 never makes a file or dimension conformant.
 
 ## Statuses

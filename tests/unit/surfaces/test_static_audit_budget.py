@@ -93,10 +93,20 @@ def test_an_override_shadows_its_directorys_agents_md_from_the_budget(checkout):
     assert budget_findings(audit.run(root, 'codex', task_cwd='src')) == {}
 
 
-def test_a_blank_file_uses_no_budget_and_loses_nothing(checkout):
+def test_a_blank_file_after_exhaustion_loses_nothing(checkout):
     root = checkout({'AGENTS.md': text(BUDGET), 'a/AGENTS.md': b' \n\t\n', 'a/b/AGENTS.md': text(64)})
     found = budget_findings(audit.run(root, 'codex', task_cwd='a/b'))
     assert {path: row.reason for path, row in found.items()} == {'a/b/AGENTS.md': SKIPPED}
+
+
+def test_a_blank_file_before_exhaustion_uses_no_budget(checkout):
+    root = checkout({'AGENTS.md': text(BUDGET - 100), 'a/AGENTS.md': b' ' * 50, 'a/b/AGENTS.md': text(100)})
+    assert budget_findings(audit.run(root, 'codex', task_cwd='a/b')) == {}
+
+
+def test_a_blank_file_larger_than_the_remaining_budget_gets_no_finding(checkout):
+    root = checkout({'AGENTS.md': text(BUDGET - 10), 'a/AGENTS.md': b' ' * 50, 'a/b/AGENTS.md': text(64)})
+    assert budget_findings(audit.run(root, 'codex', task_cwd='a/b')) == {}  # a split character would settle a/b
 
 
 def test_separator_characters_are_content_to_codex_and_use_the_budget(checkout):
@@ -106,10 +116,20 @@ def test_separator_characters_are_content_to_codex_and_use_the_budget(checkout):
     assert {path: row.reason for path, row in budget_findings(report).items()} == {'src/AGENTS.md': SKIPPED}
 
 
-def test_a_cut_inside_leading_whitespace_settles_that_file_but_not_later_ones(checkout):
+def test_a_cut_inside_leading_whitespace_leaves_the_loaded_bytes_and_later_files_unsettled(checkout):
     root = checkout({'AGENTS.md': text(BUDGET - 10), 'a/AGENTS.md': text(400, lead=b' ' * 200), 'a/b/AGENTS.md': text(64)})
     found = budget_findings(audit.run(root, 'codex', task_cwd='a/b'))
-    assert {path: dict(row.measures)['dropped_bytes'] for path, row in found.items()} == {'a/AGENTS.md': 390}
+    assert {path: (row.reason, dict(row.measures)) for path, row in found.items()} == {
+        'a/AGENTS.md': (TRUNCATED, {'budget_bytes': BUDGET})}
+
+
+def test_a_cut_at_the_end_of_leading_whitespace_loads_nothing_and_keeps_the_budget(checkout):
+    root = checkout({'AGENTS.md': text(BUDGET - 30), 'a/AGENTS.md': text(400, lead=b' ' * 30), 'a/b/AGENTS.md': text(31)})
+    found = budget_findings(audit.run(root, 'codex', task_cwd='a/b'))
+    assert {path: (row.reason, dict(row.measures)) for path, row in found.items()} == {
+        'a/AGENTS.md': (TRUNCATED, {'budget_bytes': BUDGET, 'loaded_bytes': 0, 'dropped_bytes': 400}),
+        'a/b/AGENTS.md': (TRUNCATED, {'budget_bytes': BUDGET, 'loaded_bytes': 30, 'dropped_bytes': 1}),
+    }
 
 
 def test_without_a_root_marker_in_the_checkout_the_chain_is_not_judged(checkout):
@@ -141,6 +161,20 @@ def test_audit_recovers_task_cwd_from_the_inventory_or_rejects_a_mismatch(checko
     assert set(budget_findings(audit.audit(inventory))) == {'src/AGENTS.md'}
     with pytest.raises(ValueError):
         audit.audit(inventory, task_cwd='.')
+
+
+def test_a_same_named_file_in_an_external_root_uses_no_budget(checkout, tmp_path):
+    root = checkout({'AGENTS.md': text(BUDGET + 100)})
+    home = tmp_path / 'codex_home'
+    home.mkdir()
+    (home / 'AGENTS.md').write_bytes(text(100))
+    inventory = harness_inventory.capture(root, dict(schema_version=1, runtime='codex', version='0.166.0', task_cwd='.'),
+                                          external_roots={'codex_home': str(home)})
+    assert {node.origin for node in inventory.nodes if node.path == 'AGENTS.md'} == {'checkout', 'caller_declared_external'}
+    report = audit.audit(inventory, task_cwd='.')
+    budget = [row for row in report.findings if row.reason in (TRUNCATED, SKIPPED)]
+    assert [(row.path, dict(row.measures)['dropped_bytes']) for row in budget] == [('AGENTS.md', 100)]
+    assert len({row.id for row in report.findings}) == len(report.findings)
 
 
 def test_claude_code_has_no_codex_budget(checkout):
