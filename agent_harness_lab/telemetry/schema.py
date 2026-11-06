@@ -11,7 +11,8 @@ TEXT = {'case_id', 'event_id', 'activity', 'root_case_id', 'task_id', 'call_id',
         'outcome', 'outcome_provenance', 'missing_reason', 'reviewer_id', 'outcome_ref', 'lineage_source', 'requested_model_fingerprint',
         'native_turn_fingerprint', 'native_root_turn_fingerprint', 'native_response_fingerprint',
         'native_parent_thread_fingerprint', 'native_fork_parent_fingerprint', 'native_parent_message_fingerprint', 'native_message_fingerprint',
-        'reported_model_fingerprint', 'native_stop_reason_fingerprint'}
+        'reported_model_fingerprint', 'native_stop_reason_fingerprint',
+        'loading_signal', 'loading_evidence', 'loading_path_sha256', 'loading_content_sha256', 'agent_name_sha256', 'mcp_server_sha256'}
 BOOL = {'lineage_verified', 'contract_violation', 'mutation', 'capture_complete'}
 NUMERIC = {'elapsed_seconds', 'input_tokens', 'output_tokens'}
 # A declared within-record subordinal: (segment, capture_order, suborder) under a pinned profile.

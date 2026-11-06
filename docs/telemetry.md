@@ -269,6 +269,47 @@ and installed wheel/archive checks include them. Broader Claude discovery, optio
 sidecar-parent resolution, source-journal receipts and live runtime validation
 remain open in #44; none of the synthetic checks establish agent-performance gains.
 
+### Declared loading signals
+
+The pinned profile also records which harness files a capture names, as
+`loading_signal` metadata. `claude_native.CAPABILITY` declares
+`loading_signal: observed_pattern` and `effective_loading: False`.
+
+| Native shape | Event | Added fields |
+| --- | --- | --- |
+| `attachment` entry, `attachment.type: nested_memory`, absolute `attachment.path` | `context` | `loading_signal: observed_attachment`, `loading_evidence: observed_pattern`; `loading_path_sha256` when the path is exactly below `PROJECT`; `loading_content_sha256` when `attachment.content.content` is a string |
+| `attachment` entry, `attachment.type` `hook_success`, `hook_additional_context`, `hook_non_blocking_error` or `hook_blocking_error` | `context` | `loading_signal: observed_hook_output`, `loading_evidence: observed_pattern` |
+| `Agent` or `Task` call with a nonempty string `input.subagent_type` | `tool_call` | `loading_signal: declared_agent_invocation`, `agent_name_sha256` |
+| `mcp__<server>__<tool>` call | `tool_call` | `loading_signal: declared_mcp_invocation`, `mcp_server_sha256` |
+
+`loading_path_sha256` is `schema.digest` of the project-relative path, the same
+value as an inventory node's `path_sha256`. The path follows the exact-spelling
+rule of [declared skill signals](#declared-skill-signals). A path outside
+`PROJECT`, such as a user memory file, keeps the signal without a path digest.
+`loading_content_sha256` is the SHA-256 of the attached text encoded as UTF-8.
+`agent_name_sha256` is `digest(name)`, the `name_sha256` that the agent inventory
+records. `mcp_server_sha256` comes from `config_inventory.telemetry_server_sha256`,
+and the MCP tool name stays an opaque `tool:` digest. Paths, text, hook names and
+prompts are never copied.
+
+**Assumption.** The pinned SDK reference names the `attachment` entry type but not
+its payload. These shapes are unverified and supported only by synthetic fixtures.
+A rule file is expected as a `nested_memory` attachment with its own path. Every
+other attachment type, a relative path or a `content.path` that differs from
+`path` stays `unsupported_native_entry`. Claude Code 2.1.317 captures are not
+supported, because no documented attachment shape is pinned for that version.
+
+**Not established.** An attachment shows that the runtime named a file in its
+context, not that the model followed it. An agent or MCP request is a model
+request. Hook output carries no file path, so it cannot name a hook file. No
+signal sets an outcome, skill activation or independence label. Captures without
+these shapes keep their events, identities and fingerprints. An `Agent` or `Task`
+call with `subagent_type` and every MCP call gain the fields above, so their
+fingerprints change. The pinned Codex rollout records no loading evidence:
+`codex_rollout.LOADING_SIGNAL` is `no_native_loading_signal`, and its events are
+unchanged. [Native loading attribution](source-contracts.md#native-loading-attribution)
+joins these signals to inventory nodes.
+
 ## Explicit Codex 0.166.0 rollout profile
 
 ```sh

@@ -1,7 +1,9 @@
 """Content-free Claude Code 2.1.316 records; native claims are not execution proofs."""
+import hashlib
 from pathlib import Path, PurePosixPath
 from .native import guarded, jsonl, number, text, timestamp
 from .schema import SOURCE_ORDER, event
+from ..sources.config_inventory import telemetry_server_sha256
 from ..sources.schema import digest
 from ..surfaces import skill_prefixes
 
@@ -17,12 +19,59 @@ KNOWN_TOOLS = ('Bash', 'Read', 'Write', 'Edit', 'MultiEdit', 'Glob', 'Grep', 'Ag
 SKILL_BUNDLE_PREFIXES = tuple(PurePosixPath(root).parts for root in skill_prefixes())
 # Assumed native inputs (not pinned by the SDK wire reference): Skill `skill` names a skill; Read `file_path` is
 # absolute and `offset`/`limit`/`pages` select a window. Signals are declared requests, never observed activation.
-CAPABILITY = dict(version=VERSION, call_ids=True, outcome=False, skill_activation=False, skill_signal='observed_declared')
+CAPABILITY = dict(version=VERSION, call_ids=True, outcome=False, skill_activation=False, skill_signal='observed_declared',
+    loading_signal='observed_pattern', effective_loading=False)
+# Assumed attachment payloads, absent from the pinned SDK reference and verified only against synthetic fixtures:
+# nested_memory carries an absolute `path` and optionally `content.content` text (a rule file arrives the same way);
+# hook output attachments carry no file path. Any other attachment type stays unsupported_native_entry.
+MEMORY_ATTACHMENT = 'nested_memory'
+HOOK_ATTACHMENTS = ('hook_success', 'hook_additional_context', 'hook_non_blocking_error', 'hook_blocking_error')
+AGENT_TOOLS = ('Agent', 'Task')
 
 
 def skill_fingerprint(name):
     """Pseudonymous label shared by a declared Skill name and a bundle directory name; not anonymization."""
     return digest(('claude-skill-name-v1', name))
+
+
+def project_parts(project, path):
+    """Parts of an exact absolute path below project, else None; no normalization, so no equivalent spelling matches."""
+    if not isinstance(path, str) or not path: return None
+    candidate = PurePosixPath(path)
+    if str(candidate) != path or not candidate.is_absolute() or '..' in candidate.parts: return None
+    try: return candidate.relative_to(PurePosixPath(str(project))).parts
+    except ValueError: return None
+
+
+def attachment_signal(project, attachment):
+    """Content-free observed_pattern metadata for an assumed attachment shape; None keeps the entry unsupported.
+
+    loading_path_sha256 is schema.digest of the project-relative path, the inventory path_sha256, and
+    loading_content_sha256 hashes the attached text; neither proves the runtime applied the file.
+    """
+    if not isinstance(attachment, dict): return None
+    kind, signal = attachment.get('type'), dict(loading_evidence='observed_pattern')
+    if kind in HOOK_ATTACHMENTS: return dict(signal, loading_signal='observed_hook_output')
+    path, content = attachment.get('path'), attachment.get('content')
+    if kind != MEMORY_ATTACHMENT or not isinstance(path, str) or not PurePosixPath(path).is_absolute(): return None
+    if content is not None and (not isinstance(content, dict) or content.get('path', path) != path): return None
+    signal['loading_signal'] = 'observed_attachment'
+    parts = project_parts(project, path)
+    if parts: signal['loading_path_sha256'] = digest(PurePosixPath(*parts).as_posix())
+    body = content.get('content') if content is not None else None
+    if isinstance(body, str):
+        signal['loading_content_sha256'] = hashlib.sha256(body.encode('utf-8', 'surrogatepass')).hexdigest()
+    return signal
+
+
+def invocation_signal(tool, arguments):
+    """Declared agent or MCP server request digests; the MCP tool itself stays an opaque tool digest."""
+    server = telemetry_server_sha256(tool)
+    if server is not None: return dict(loading_signal='declared_mcp_invocation', mcp_server_sha256=server)
+    name = arguments.get('subagent_type') if tool in AGENT_TOOLS and isinstance(arguments, dict) else None
+    if not isinstance(name, str) or not name: return None
+    # agents_inventory records name_sha256 = digest(name) for a declared agent, so the two digests can meet.
+    return dict(loading_signal='declared_agent_invocation', agent_name_sha256=digest(name))
 
 
 def skill_signal(project, tool, arguments):
@@ -32,14 +81,8 @@ def skill_signal(project, tool, arguments):
         name = arguments.get('skill')
         if not isinstance(name, str) or not name: return None
         return dict(skill_signal='declared_invocation', skill_id=skill_fingerprint(name), skill_signal_confidence='declared_name')
-    path = arguments.get('file_path') if tool == 'Read' else None
-    if not isinstance(path, str) or not path: return None
-    candidate = PurePosixPath(path)
-    # No normalization: an equivalent spelling, a parent step or a relative path is not an exact bundle path.
-    if str(candidate) != path or not candidate.is_absolute() or '..' in candidate.parts: return None
-    try: parts = candidate.relative_to(PurePosixPath(str(project))).parts
-    except ValueError: return None
-    if len(parts) < 3 or parts[-1] != 'SKILL.md' or parts[:-2] not in SKILL_BUNDLE_PREFIXES: return None
+    parts = project_parts(project, arguments.get('file_path') if tool == 'Read' else None)
+    if parts is None or len(parts) < 3 or parts[-1] != 'SKILL.md' or parts[:-2] not in SKILL_BUNDLE_PREFIXES: return None
     partial = any(arguments.get(key) is not None for key in ('offset', 'limit', 'pages'))
     return dict(skill_signal='file_read', skill_id=skill_fingerprint(parts[-2]),
         skill_signal_confidence='partial_read_request' if partial else 'full_read_request')
@@ -130,6 +173,7 @@ class Projection:
                 elif block_type == 'tool_use' and kind == 'assistant':
                     name = text(block.get('name')); metadata = dict(tool_name=name if name in KNOWN_TOOLS else 'tool:'+digest(name))
                     metadata.update(skill_signal(self.project, name, block.get('input')) or {})
+                    metadata.update(invocation_signal(name, block.get('input')) or {})
                     if block.get('id') is not None: metadata['call_id'] = self.scoped(self.session, writer, text(block['id']))
                     else: metadata['missing_reason'] = 'native_call_id_unavailable'
                     emit('tool_call', index, **metadata)
@@ -144,6 +188,8 @@ class Projection:
                 else:
                     self.unsupported += 1; emit('capture_coverage', index, missing_reason='unsupported_native_block')
             if not content: emit('capture_coverage', missing_reason='empty_native_message')
+        elif kind == 'attachment' and (loading := attachment_signal(self.project, row.get('attachment'))) is not None:
+            emit('context', **loading)
         else:
             self.unsupported += 1; emit('capture_coverage', missing_reason='unsupported_native_entry')
         signature = digest(dict(events=[{k: v for k, v in e.items() if k not in UNORDERED} for e in observations], usage=usage, stop=stop))

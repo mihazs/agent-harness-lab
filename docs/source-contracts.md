@@ -1287,6 +1287,43 @@ declarations, never evidence that a runtime enabled or loaded a plugin.
 Agent role tables in a Codex config are not dispatched, because the `agent`
 parser reads role files and no config row offers the `agent` facet.
 
+### Native loading attribution
+
+`harness_inventory.join_loading(inventory, events)` overlays the
+[declared loading signals](telemetry.md#declared-loading-signals) of a pinned
+Claude capture on a declared inventory. It returns one row per node, in node
+order, with `path_sha256`, root, kind, `observed_loading`, `effective`, and
+counts of exact attachments, path-only attachments and declared invocations. The
+nodes themselves are unchanged and still reject any loading claim.
+
+- `observed_loading` becomes `observed_pattern` only when an attachment's
+  `loading_path_sha256` equals a checkout node's `path_sha256` and its
+  `loading_content_sha256` equals the node's `content_sha256`. A path match
+  without equal content, for example text the runtime changed before
+  attaching it, counts as `path_only_attachments` and stays `unknown`.
+- An `Agent` or `Task` invocation counts on the one agent definition whose
+  `name_sha256` matches and whose precedence is
+  `selected_by_declared_precedence` for the checkout root. A name with no such
+  definition, for example a file skipped as not a definition, a shadowed file
+  or an ambiguous read order, is unattributed.
+- Hook outputs carry no path and MCP server digests match no inventory node, so
+  both are always unattributed. A caller can match `mcp_server_sha256` against
+  config inventory rows.
+- Evidence for a path or name the inventory lacks is counted under
+  `unattributed` and never adds a node. Records from another source version,
+  or with an unknown `loading_signal`, count as `ignored_records`.
+
+`effective`, `outcome` and `independence` are always `unknown`, and
+`publication_allowed` is `false`. The caller pairs the capture with the
+checkout; the join cannot verify that pairing. Without a capture the status is
+`no_capture` and every node stays `unknown`. A Codex inventory gets
+`no_native_loading_signal`. An inventory with a `task_cwd` other than `.` gets
+`task_cwd_not_checkout_root`, because capture paths are relative to the
+session directory. A blocked or unsupported inventory keeps its status. The
+capture pin is `claude-jsonl-2.1.316` and the inventory pin is `2.1.317`, so
+`version_alignment` is `unverified` until both pins name one version. Attachment
+shapes are recorded as `unverified_fixture_only`.
+
 ### Declared Claude Code path-scoped rules and Codex exec policy
 
 `surfaces.classify` names two rule kinds that never mix. For `claude-code`,

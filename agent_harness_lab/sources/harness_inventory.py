@@ -333,6 +333,60 @@ def capture(checkout, profile, *, external_roots=None, harness_sha256=None, walk
     return HarnessInventory(**identity, status='declared', nodes=tuple(walk.nodes), refusals=tuple(walk.refusals))
 
 
+LOADING_PROFILE = 'ahl-loading-attribution-v1'
+_UNATTRIBUTED = dict(observed_attachment='attachment', observed_hook_output='hook_output',
+    declared_agent_invocation='agent', declared_mcp_invocation='mcp')
+
+
+def join_loading(inventory, events=None):
+    """Overlay native loading evidence on declared nodes by exact identity; the nodes stay declarations.
+
+    A node's observed_loading becomes 'observed_pattern' only when a pinned Claude attachment names its
+    path_sha256 and the attached text hashes to its content_sha256. A path-only match, an agent invocation,
+    a hook output or an MCP request never sets it, and effective is always 'unknown'. An agent invocation
+    counts only on the definition the declared precedence selects. Evidence for a path the inventory lacks,
+    or for a name with no selected definition, is counted as unattributed and never becomes a node. The
+    caller pairs the capture with this checkout; that pairing, independence and every outcome stay unknown.
+    """
+    from agent_harness_lab.telemetry import claude_native, codex_rollout
+    from agent_harness_lab.telemetry.schema import event
+    if type(inventory) is not HarnessInventory: raise ValueError('loading attribution needs a harness inventory')
+    rows = [dict(path_sha256=node.path_sha256, root=node.root, kind=node.kind, observed_loading='unknown', effective='unknown',
+        exact_attachments=0, path_only_attachments=0, declared_invocations=0) for node in inventory.nodes]
+    unattributed, ignored = dict.fromkeys(('attachment', 'hook_output', 'agent', 'mcp'), 0), 0
+    status = (inventory.status if inventory.status != 'declared' else codex_rollout.LOADING_SIGNAL if inventory.runtime == 'codex'
+              else 'no_capture' if events is None
+              else 'task_cwd_not_checkout_root' if inventory.task_cwd_sha256 != digest('.') else 'joined')
+    if status == 'joined':
+        paths = {node.path_sha256: index for index, node in enumerate(inventory.nodes) if node.origin == 'checkout'}
+        from agent_harness_lab.sources import agents_inventory
+        nodes = {(node.root, node.path_sha256): index for index, node in enumerate(inventory.nodes)}
+        agents = {}  # only the definition the declared precedence selects; shadowed or skipped files never count
+        for row in agents_inventory.definitions(inventory, '.'):
+            if row.precedence == 'selected_by_declared_precedence':  # implies a declared definition
+                agents[row.name_sha256] = nodes[(row.root, row.path_sha256)]  # at most one per name
+        for record in map(event, events):
+            signal = record.get('loading_signal')
+            if signal is None: continue
+            if record.get('source_version') != claude_native.VERSION or signal not in _UNATTRIBUTED: ignored += 1
+            elif signal == 'observed_attachment' and record.get('loading_path_sha256') in paths:
+                row = rows[paths[record['loading_path_sha256']]]
+                content = inventory.nodes[paths[record['loading_path_sha256']]].content_sha256
+                exact = content is not None and record.get('loading_content_sha256') == content
+                row['exact_attachments' if exact else 'path_only_attachments'] += 1
+                if exact: row['observed_loading'] = 'observed_pattern'
+            elif signal == 'declared_agent_invocation' and record.get('agent_name_sha256') in agents:
+                rows[agents[record['agent_name_sha256']]]['declared_invocations'] += 1
+            else: unattributed[_UNATTRIBUTED[signal]] += 1  # absent path, no selected agent, or no path at all
+    joined = status == 'joined'
+    return dict(profile=LOADING_PROFILE, status=status, harness_inventory_sha256=inventory.sha256, runtime=inventory.runtime,
+        inventory_version=inventory.version, capture_version=claude_native.VERSION if joined else None,
+        version_alignment='exact' if joined and claude_native.VERSION.endswith('-' + inventory.version) else 'unverified',
+        nodes=tuple(rows), unattributed=unattributed, ignored_records=ignored, loading_evidence='observed_pattern',
+        attachment_shapes='unverified_fixture_only', effective='unknown', outcome='unknown', independence='unknown',
+        publication_allowed=False)
+
+
 def state_directory(checkout):
     from agent_harness_lab.workflow import identity, state_root
     return state_root() / 'inventories' / identity(os.path.abspath(checkout))
