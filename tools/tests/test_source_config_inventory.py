@@ -2,6 +2,7 @@
 from dataclasses import replace
 import json
 import os
+import re
 from pathlib import Path
 import sys
 import tempfile
@@ -262,6 +263,33 @@ class ConfigInventoryTests(unittest.TestCase):
         # The private local settings file is never read by the walk, so the config parser lists no reader for it.
         self.assertEqual(config.parse('.claude/settings.local.json', b'{}', CLAUDE), ('not_parsed', {}))
         self.assertEqual(claude['.mcp.json'].kind, 'config')
+
+    def test_changelog_config_inventory_entry_names_each_surface_walk_kind_the_classifier_gives(self):
+        text = (Path(__file__).resolve().parents[2] / 'CHANGELOG.md').read_text()
+        start = text.index('## 0.113.0\n')
+        entry = ' '.join(text[start:text.index('\n## ', start + 1)].split())
+        walk = entry[entry.index('surface walk'):]  # the claim about walk node kinds (#336)
+        for path, runtime in (('.mcp.json', 'claude-code'), ('.claude/settings.json', 'claude-code'),
+                              ('.codex/config.toml', 'codex')):
+            with self.subTest(path=path):
+                self.assertIn(f'`{path}`', walk)
+                named = re.search(r'`(config|hook)`', walk[walk.index(f'`{path}`'):])
+                self.assertEqual(named.group(1), surfaces.classify(path, runtime).kind)
+        local = '.claude/settings.local.json'
+        self.assertEqual(surfaces.classify(local, 'claude-code').writability, 'private_excluded')
+        self.assertIn(f'`{local}` is presence-only and is never read', walk)
+
+    def test_changelog_config_inventory_entry_gives_each_rules_row_family_its_classifier_verdict(self):
+        text = (Path(__file__).resolve().parents[2] / 'CHANGELOG.md').read_text()
+        start = text.index('## 0.113.0\n')
+        entry = ' '.join(text[start:text.index('\n## ', start + 1)].split())
+        rules = entry[entry.index('`surfaces.RULES`'):]
+        rules = rules[:rules.index('. ') + 1]  # the sentence naming the rows 0.113.0 added (review of #337)
+        self.assertEqual(surfaces.classify('.mcp.json', 'claude-code').writability, 'recommendation_only')
+        self.assertIn('`recommendation_only` config rows for the config files', rules)
+        memory = surfaces.classify('.claude/agent-memory/MEMORY.md', 'claude-code')
+        self.assertEqual((memory.kind, memory.writability), ('unsupported', 'private_excluded'))
+        self.assertIn('`private_excluded` rows for memory stores', rules)
 
     def test_checkout_memories_folder_is_read_but_a_declared_codex_home_memories_folder_is_not(self):
         (self.checkout / 'memories').mkdir(); (self.checkout / 'memories/AGENTS.md').write_text('synthetic\n')
