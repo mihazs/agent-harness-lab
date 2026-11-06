@@ -6,6 +6,7 @@
 | Install or troubleshoot | [Installation](installation.md) |
 | Check readiness or initialize config | [Offline doctor and safe init](onboarding.md) |
 | Analyze a project, improve or monitor | [Workflows and CLI reference](workflows.md) |
+| Check harness conventions without traces or a model | [Static harness audit](static-audit.md) |
 | Understand capture formats and provenance | [Telemetry](telemetry.md) |
 | Build explicit source adapters | [Source evidence contracts](source-contracts.md) |
 | Understand evaluation and safety gates | [Evaluation foundation](evaluation-foundation.md) |
