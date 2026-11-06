@@ -34,6 +34,8 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: python3 scripts/check_commit_message.py --range "origin/$BASE_REF..$HEAD_SHA"
       - run: task setup:test
+      - name: Lint with ruff
+        run: task lint
       - name: Run the suite and stop at the first failure
         env:
           PYTEST_ADDOPTS: --maxfail=1

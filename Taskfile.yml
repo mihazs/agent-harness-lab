@@ -213,9 +213,17 @@ tasks:
     cmds:
       - '{{.PYTHON | shellQuote}} -m pip install "agent-harness-lab[test]=={{.PACKAGE_VERSION}}"'
   setup:test:
-    desc: Install pinned test tools into the selected Python environment
+    desc: Install pinned test and lint tools into the selected Python environment
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pip install -e ".[test]"'
+      - '{{.PYTHON | shellQuote}} -m pip install -e ".[test,lint]"'
+  lint:
+    desc: Lint the repository with the pinned ruff (pyflakes and syntax errors)
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m ruff check .'
+  lint:fix:
+    desc: Apply ruff's safe fixes, then lint again
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m ruff check --fix .'
   test:tools:
     desc: Run application and tooling unittest cases
     cmds:

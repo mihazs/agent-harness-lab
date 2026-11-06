@@ -5,6 +5,10 @@ pre-commit:
   jobs:
     - name: zero-clones
       run: task duplication:check
+    - name: ruff
+      glob: "*.py"
+      # Lints only the staged Python files; --force-exclude keeps the pyproject excludes for explicit paths.
+      run: '"$(test -x .venv/bin/python && echo .venv/bin/python || echo python3)" -m ruff check --force-exclude {staged_files}'
 commit-msg:
   jobs:
     - name: conventional-commits

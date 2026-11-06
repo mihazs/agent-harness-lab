@@ -7,6 +7,7 @@ dependencies = []
 
 [project.optional-dependencies]
 test = ["pytest==9.2.0", "pytest-xdist==3.8.0"]
+lint = ["ruff==0.17.2"]
 okf = ["PyYAML==6.0.3"]
 ml = ["scikit-learn>=1.3", "sentence-transformers>=3", "transformers>=4.40", "torch>=2", "sentencepiece>=0.2"]
 
@@ -14,6 +15,16 @@ ml = ["scikit-learn>=1.3", "sentence-transformers>=3", "transformers>=4.40", "to
 testpaths = ["tools/tests", "skills/harness-evaluation/scripts"]
 python_files = ["test_*.py"]
 addopts = "--strict-config --strict-markers"
+
+[tool.ruff]
+target-version = "py311"
+# Frozen fixtures and grader bundles are held-out inputs and must never be rewritten.
+extend-exclude = ["agent_harness_lab/evaluation/fixtures", "fixtures", "dist", "artifacts", "node_modules"]
+
+[tool.ruff.lint]
+# Pyflakes and syntax errors: unused or undefined names, redefinitions and invalid code. Formatting rules
+# are deliberately not selected; the compact house style is not reformatted.
+select = ["F", "E9"]
 
 [build-system]
 requires = ["setuptools>=68"]
