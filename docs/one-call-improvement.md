@@ -261,8 +261,10 @@ admitted, and only when its snapshots are the exact reversal of that committed
 deployment's. A change plan resolves a `contract_required` operation only through a
 passed contract (`hook_contracts`), and `ahl improve . --repair-contracts` drops
 `hooks` from its deferred surfaces only when every hook unit in the run passed.
-No CLI path stages a hook unit yet. A passed contract is not behavioral evidence,
-which stays inconclusive until hook behavior is evaluated.
+No CLI path stages a hook unit yet. A passed contract is not behavioral evidence.
+Behavior comes only from `ahl evaluate hooks`, which runs the unit beside a nonce
+canary inside an isolated trial workspace
+([hook canary validation](../skills/harness-evaluation/references/execution.md#hook-canary-validation)).
 
 The module also holds the frozen `CAPABILITIES` table. It has one row per surface,
 runtime and documented item, pinned to Claude Code 2.1.317 and Codex 0.166.0

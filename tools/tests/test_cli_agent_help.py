@@ -15,7 +15,7 @@ from agent_harness_lab import cli
 ROOT=Path(__file__).resolve().parents[2]
 ROUTES=((),('rollback',),('update',),('sources',),('sources','lineage'),('sources','inventory'),
     ('regression-review',),('bank-review',),('bank-interchange',),('experiment-history',),('grader-correction',),
-    ('doctor',),('research-simulate',),('bank',),('mine',),('evaluate',),('diagnose',),('benchmark',),('skills',))
+    ('doctor',),('research-simulate',),('bank',),('mine',),('evaluate',),('evaluate','hooks'),('diagnose',),('benchmark',),('skills',))
 SCRIPTS=('scripts/sync_project.py','scripts/build_release.py','scripts/check_commit_message.py','install.py')
 PARSER_FILES={
     'agent_harness_lab/'+name for name in ('cli.py','onboarding.py','one_call.py','updater.py','experiments/cli.py',

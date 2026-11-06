@@ -291,12 +291,13 @@ class CapabilityTableTests(unittest.TestCase):
         from agent_harness_lab.surfaces import CAPABILITIES
         unverified = [r for r in CAPABILITIES if r.status == 'unverified']
         self.assertEqual({(r.surface, r.runtime) for r in unverified}, self.UNVERIFIED)
-        self.assertEqual(len(unverified), 18)
+        self.assertEqual(len(unverified), 19)
         items = ' '.join(r.item for r in unverified)
         for phrase in ('size limit', 'version gates', 'static validator', 'load timing', 'custom prompts', 'description limit',
                        'cache subpath', 'plugin agents', 'validate command', 'memories layout', 'managed settings',
                        'claudeMdExcludes', 'dotfile', 'between the root and the cwd',
-                       '--setting-sources', '--strict-mcp-config', 'disableAllHooks', 'temporary CODEX_HOME'):
+                       '--setting-sources', '--strict-mcp-config', 'disableAllHooks', 'temporary CODEX_HOME',
+                       '--dangerously-bypass-hook-trust'):
             self.assertIn(phrase, items)
 
     def test_a_row_without_doc_url_pin_or_status_is_rejected(self):

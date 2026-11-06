@@ -540,5 +540,6 @@ CAPABILITIES = (
     _row('settings', 'claude-code', '--setting-sources project CLI flag', _CLAUDE + 'cli-reference', 'unverified'),
     _row('mcp', 'claude-code', '--strict-mcp-config with an explicit --mcp-config', _CLAUDE + 'cli-reference', 'unverified'),
     _row('hooks', 'claude-code', 'disableAllHooks through --settings', _CLAUDE + 'settings', 'unverified'),
+    _row('hooks', 'codex', '--dangerously-bypass-hook-trust inside a temporary CODEX_HOME', _CODEX + 'hooks', 'unverified'),
     _row('settings', 'codex', 'temporary CODEX_HOME with model, effort and one workspace trust entry', _CODEX + 'config-reference', 'unverified'),
 )

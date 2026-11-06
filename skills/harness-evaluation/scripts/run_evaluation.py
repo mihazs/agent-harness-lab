@@ -841,6 +841,47 @@ def _evaluate(args):
     return 0 if (permission_audit is None or results['isolation_qualification']['qualification']=='qualified') and results['inputs_unchanged'] and all(t['status'] == 'passed' for t in results['trials']) else 1
 
 
+def hook_main(argv):
+    """Hook evaluation mode: one staged hook unit and a nonce canary in a NEW isolated trial workspace only."""
+    application_modules()
+    from agent_harness_lab import hooks_validation
+    parser = argparse.ArgumentParser(prog='run_evaluation.py hooks', formatter_class=argparse.RawDescriptionHelpFormatter,
+        description='Validate one staged hook unit beside a harmless nonce canary inside a NEW private trial workspace.\n'
+        'Hooks run only there, never in the candidate, fixture or project, with no credentials in the environment.',
+        epilog='The candidate hooks key must pass hook_contract_v1 or nothing executes (unsupported).\n'
+        'A real runtime runs only with --native-canary (one short model call); --runtime-trace reads a synthetic\n'
+        'fake runtime and is never native evidence. Codex stays inconclusive while --dangerously-bypass-hook-trust is unverified.\n'
+        'Writes hook-validation.json in --output. Exit 0: effective candidate or clean observed canary; 1: executed but\n'
+        'failed, disabled or unmatched; 2: setup error; 3: skipped, unsupported or inconclusive.')
+    parser.add_argument('--runtime', choices=('claude-code', 'codex'), required=True,
+                        help='Native runtime whose hook configuration layer is validated')
+    parser.add_argument('--candidate', type=Path, help='Existing candidate directory with one hook configuration and its scripts; omit for a canary-only run')
+    parser.add_argument('--fixture', type=Path, help='Existing fixture directory copied into the trial; its configuration is the before state')
+    parser.add_argument('--output', type=Path, required=True, help='New private directory outside every Git checkout and input; holds the trial and results')
+    parser.add_argument('--binary', help='Runtime executable name or path (default: claude or codex)')
+    parser.add_argument('--native-canary', action='store_true', help='Opt in to executing the real runtime once inside the trial workspace')
+    parser.add_argument('--runtime-trace', choices=(hooks_validation.FAKE_TRACE,), help='Read per-handler execution records from a synthetic fake runtime; not native evidence')
+    parser.add_argument('--timeout', type=float, default=120, help='Runtime deadline in seconds for the single trial run (default: %(default)s)')
+    args = parser.parse_args(argv)
+    try:
+        if args.native_canary and args.runtime_trace: raise ValueError('--native-canary and --runtime-trace are exclusive')
+        if not 0 < args.timeout <= 1800: raise ValueError('timeout must be within (0, 1800] seconds')
+        inputs = [path for path in (args.candidate, args.fixture) if path is not None]
+        if any(not path.is_dir() or path.is_symlink() for path in inputs): raise ValueError('inputs must be existing directories')
+        digests = {str(path): digest(path) for path in inputs}
+        unit = None if args.candidate is None else hooks_validation.candidate_unit(args.runtime, args.candidate, args.fixture)
+        root, document = hooks_validation.validate(
+            args.output, args.runtime, execute, unit=unit, project=args.fixture or args.candidate, fixture=args.fixture,
+            binary=args.binary, native=args.native_canary, trace=args.runtime_trace, timeout=args.timeout,
+            protected=inputs)
+        if any(digest(Path(path)) != value for path, value in digests.items()): raise ValueError('hook trial inputs changed')
+    except (ValueError, OSError, KeyError, TypeError) as exc:
+        parser.exit(2, f'hook evaluation setup error: {exc}\n')
+    print(json.dumps(dict(candidate=document['candidate']['status'], canary=document['canary']['status'],
+                          results=str(root / hooks_validation.RESULTS))))
+    return hooks_validation.exit_status(document)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='Requires a JSON task manifest and separate existing baseline/candidate harness directories.\n'
@@ -850,9 +891,12 @@ def main():
         'offline/Responses require supported Linux isolation.\n'
         'Read results.json for machine output; passing trials never authorize promotion. Exit 0: passing trials or supported/rejected sequential decision;\n'
         '1: failed/incomplete execution; 2: setup/input error; 3: blocked/inconclusive sequential analysis.\n'
-        'Example: ahl evaluate --manifest tasks.json --baseline baseline --candidate candidate --output /tmp/ahl-evaluation')
+        'Example: ahl evaluate --manifest tasks.json --baseline baseline --candidate candidate --output /tmp/ahl-evaluation\n'
+        'Hook mode: ahl evaluate hooks --help validates one staged hook unit and a nonce canary in a trial workspace only.')
     if 'AHL_MANAGED_PREPARATION' in os.environ:
         parser.exit(3,'evaluation: managed preparation cannot start nested trials\n')
+    if sys.argv[1:2] == ['hooks']:
+        return hook_main(sys.argv[2:])
     for name in ('manifest', 'baseline', 'candidate', 'output'):
         parser.add_argument('--' + name, required=True, help={
             'manifest':'Existing JSON task manifest with tasks and fixture/grader references resolved relative to its directory',
