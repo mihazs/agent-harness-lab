@@ -103,6 +103,38 @@ class SandboxBackend:
             command += ['--remount-ro', '/inputs']
         return command + ['--remount-ro', '/', '--chdir', '/work', '--', *argv]
 
+    def hook_trial_command(self, argv, root, *, writable, cwd, env, runtime):
+        """bubblewrap argv for one hook trial: no network, only env in the environment, the system directories and the
+        runtime file read-only, the trial root read-only at its own path and only the listed trial folders writable.
+        Nothing else of the host, its home and credential stores included, is mounted."""
+        if not self.binary:
+            raise ValueError('bubblewrap is unavailable')
+        if not argv or not all(isinstance(a, str) and '\0' not in a for a in argv):
+            raise ValueError('invalid hook trial command')
+        root, cwd, runtime = (Path(path).resolve(strict=True) for path in (root, cwd, runtime))
+        if not cwd.is_relative_to(root) or not runtime.is_file():
+            raise ValueError('hook trial command outside its trial')
+        command = [self.binary, '--unshare-all', '--unshare-user', '--unshare-net', '--die-with-parent',
+                   '--new-session', '--cap-drop', 'ALL', '--clearenv']
+        for key, value in sorted(env.items()):
+            if not isinstance(key, str) or not isinstance(value, str) or not key or '=' in key or '\0' in key + value:
+                raise ValueError('invalid hook trial environment')
+            command += ['--setenv', key, value]
+        systems = [system for system in ('/usr', '/bin', '/lib', '/lib64') if Path(system).exists()]
+        for system in systems:
+            command += ['--ro-bind', system, system]
+        command += ['--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--ro-bind', str(root), str(root)]
+        for folder in writable:
+            if Path(folder).is_symlink() or not Path(folder).is_dir():
+                raise ValueError('a writable hook trial folder must be a directory')
+            folder = Path(folder).resolve()
+            if folder == root or not folder.is_relative_to(root):
+                raise ValueError('a writable hook trial folder must lie inside the trial')
+            command += ['--bind', str(folder), str(folder)]
+        if not any(runtime.is_relative_to(Path(system).resolve()) for system in systems):
+            command += ['--ro-bind', str(runtime), str(runtime)]
+        return command + ['--remount-ro', '/', '--chdir', str(cwd), '--', str(runtime), *argv[1:]]
+
     def capability(self, *, seconds=3):
         Limits(seconds=seconds).validate()
         if sys.platform != 'linux' or not self.binary:

@@ -138,9 +138,30 @@ registration, a matched event and execution for that group.
 
 The runtime runs once with the workspace as its working directory. `HOME` and
 `TMPDIR` point inside the trial, and the environment keeps only `PATH` and locale
-variables, so no credentials are in the environment. There is no host isolation
-(`host_isolation: none`): hooks run as the invoking user, and the host filesystem
-and network remain reachable. On Linux the validator is a child subreaper for the
+variables, so no credentials are in the environment.
+
+By default (`--sandbox bubblewrap`) the run goes through the same bubblewrap
+backend as offline evaluation, after that backend's namespace probe passes. Inside
+it there is no network, the environment holds only those variables, and only the
+system directories, the runtime executable and the trial root are mounted, the
+trial read-only at its own path. Only the trial `home`, `tmp`, `codex-home` and
+`workspace/.ahl-canary` folders are writable, so a hook cannot write the
+workspace, and nothing else of the host is visible, the user's home and
+credential stores included. Results then report `host_isolation: bubblewrap` and
+a `sandbox` block with the writable folders. When bubblewrap or unprivileged user
+namespaces are unavailable, or the probe fails (it applies the backend's
+per-user process limit, so a busy host can fail it), the run is `inconclusive`
+(`sandbox_unavailable`), nothing executes, and nothing ever falls back to the
+host. Without network a native runtime cannot reach its model, so a
+`--native-canary` run inside the sandbox can stop before any hook fires.
+`--sandbox none` runs on the host without isolation (`host_isolation: none`):
+hooks run as the invoking user, and the host filesystem and network remain
+reachable. The library entry point (`hooks_validation.validate`) runs on the
+host unless it is given a `SandboxBackend`. Any other sandbox object reports
+`host_isolation: unverified`, with its network, home and workspace boundary
+`unverified` too.
+
+On Linux the validator is a child subreaper for the
 run and kills and reaps every process the run leaves behind before the post-run
 snapshot (`lingering_processes`); without that containment, or where `/proc`
 cannot show the run's processes (`lingering_processes: null`), the run is
