@@ -2020,6 +2020,51 @@ JSON and TOML share one nesting bound of 64, so a deeply nested
 walk's pruning of memory directories under declared roots, and profile-scoped
 Codex keys remain open in #281.
 
+### Recommendation-only configuration report
+
+`agent_harness_lab.config_recommendations.recommend(config_document,
+harness_document=None)` turns a config inventory document into recommendation
+rows. A Codex harness surface inventory document can also be passed to cover
+`.rules` exec policy. The function reads only these two documents. It opens no
+file or directory, starts no process and writes nothing. Each document must
+carry its pinned profile and a digest that matches its rows, and both must
+name the same runtime and version. The digest does not cover `version` or the
+digest fields, so each is checked before it reaches the report: `version` must
+be a label, a `declared` inventory must carry the `surfaces.PINS` version, and
+a recorded digest must be a SHA-256 value. Every row is rebuilt through `ConfigRow` or
+`InventoryNode`, so a forged string is refused and a JSON round trip gives the
+same report. A `blocked` or `unsupported` inventory gives no rows.
+
+Recommendation text and the suggested user command are fixed templates keyed
+by a code. No inventory value is interpolated into them. Row facts hold only
+vocabulary labels, booleans and SHA-256 digests, so command, argument, URL, env,
+header and token values cannot appear. Each row cites the `surfaces.CAPABILITIES`
+item and public doc URL it relies on. When that item, or the condition behind
+the row, is unverified, the row's `compatibility` is `unverified`.
+
+| Code | Emitted when |
+| :- | :- |
+| `mcp_server_shadowed` | A Claude Code server name is also declared at a higher-precedence scope (local 1, project 2, user 3). The whole entry from that scope is used. When the winner is a `.mcp.json` server, `winner_approval` records whether inventoried settings approve it, and the row is `verified` only when user settings approve it without any rejection. A rejected, unapproved or only trust-dependent winner makes the row `unverified`. |
+| `mcp_server_duplicate` | Two Codex config layers declare the same server id. Which one wins is not recorded, so the row is `unverified`. |
+| `mcp_project_server_unapproved` | No inventoried settings layer rejects a `.mcp.json` server, and no user settings approve it by name or with `enableAllProjectMcpServers`. `approval` is `trust_dependent` when only project or local settings approve it, because those approvals apply only in a trusted folder. Otherwise it is `none`. A refused (linked) or `parse_failed` settings file may approve or reject the server. While one exists, a name no readable layer rejects and no readable user settings approve has `approval: unknown` and the row is `unverified`. An unread file can only add a rejection to a server readable user settings approve, so that server gets no row, and as a shadowing winner it has `winner_approval: approved_unless_unread_rejects` and an `unverified` `mcp_server_shadowed` row. `user_settings_declared` counts only user settings that were read and parsed. |
+| `codex_server_untrusted_layer` | A server sits in the project `.codex` layer and the project is not declared trusted. |
+| `output_style_drops_coding_instructions` | A style is not shadowed and does not set `keep-coding-instructions: true`. On the full system prompt it leaves out the coding instructions. Styles in subdirectories are `unverified`. So is a style whose `keep-coding-instructions` value is neither `true` nor `false`, and a style whose name another style shares while user-versus-project precedence is unrecorded (`precedence: not_recorded`). |
+| `exec_policy_check_suggested` | A `.rules` file is present. The row suggests `codex execpolicy check --pretty --rules <rules file> -- <command to test>` for the user to run. AHL never runs or evaluates it. |
+| `memory_present_excluded` | A memory location is present (`refused_excluded` when it is a link). These rows are `private_excluded` and carry no content facts. |
+
+The rules follow the public [Claude Code MCP](https://code.claude.com/docs/en/mcp),
+[output styles](https://code.claude.com/docs/en/output-styles) and
+[Codex rules](https://developers.openai.com/codex/rules) documentation, retrieved
+2026-11-05 for the `surfaces.PINS` versions. Every row and the report carry
+`adoption_authority: false` and `publication_allowed: false`. `observed_loading`
+and `effective` stay `unknown`. The report lists in `not_inventoried` what no
+inventory shows: Claude local-scope servers, interactive approval choices,
+folder trust, plugin and connector servers, the system prompt variant, and
+Codex layer precedence. Without a harness document, `exec_policy` is
+`not_inventoried`. The harness surface walk still lists checkout memory
+directories, though it never reads their files. Use the config inventory alone
+when memory must stay unlisted. Adoption of these surfaces is out of scope.
+
 ### Surface-faithful trial workspaces
 
 A cooperative Claude Code or Codex trial copies the fixture, then each

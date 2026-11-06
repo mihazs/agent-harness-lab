@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.118.0
+
+### Minor Changes
+
+- 81556a3: Add `agent_harness_lab/config_recommendations.py`, a recommendation-only report built from config inventory and harness inventory documents. It flags shadowed Claude MCP servers, duplicate Codex servers (precedence `unverified`), `.mcp.json` servers that no user settings approve, Codex servers in a project layer that is not declared trusted, and output styles without `keep-coding-instructions: true`. For each Codex `.rules` file it suggests a `codex execpolicy check` command for the user to run. Memory locations are reported only as present and excluded. The report opens no file, runs nothing and writes nothing. Text comes from fixed templates and facts are only labels and digests, so no secret value can appear. Every row has `adoption_authority: false` and `publication_allowed: false`.
+
+### Patch Changes
+
+- efd8662: Config recommendations now refuse an inventory whose `version` is not a label, a `declared` inventory whose version differs from `surfaces.PINS`, and a digest field that is not a SHA-256 value. No digest covers these fields, so a forged value could previously reach the report. `mcp_server_shadowed` now records `winner_approval` and is `unverified` when the winning `.mcp.json` server is rejected or not approved by user settings. The memory exclusion test now records `dir_fd`-relative opens, with a positive control.
+
 ## 0.117.0
 
 ### Minor Changes
