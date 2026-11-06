@@ -1533,6 +1533,41 @@ construction rejects any other value. Configuration presence is not evidence
 that a hook ran. Skill and agent frontmatter hooks, a CLI, and loading or
 execution attribution remain open in #276, #278 and #282.
 
+#### Codex hook command anchor
+
+Codex has no project-root anchor for hook commands, so Codex hook changes stay
+recommendation-only. The finding is pinned to the public
+`openai/codex@d786ff91fad8e7ddab8653ee07bc6313a6fcb03d` source, read on
+2026-11-06 (paths are under `codex-rs/`):
+
+- Working directory. `hooks/src/engine/command_runner.rs` lines 280-281 build
+  the command and call `command.current_dir(cwd)`. Lines 450-470 run the command
+  line through `$SHELL -lc` (fallback `/bin/sh`, line 504). The `cwd` is the turn's
+  working directory: `core/src/hook_runtime.rs` line 162 (`SessionStart`) passes
+  `turn_context.cwd`, and lines 264-268 pass the local environment cwd, or
+  `turn.cwd`, for tool hooks. `core/tests/suite/hooks_cwd_tests.rs` lines 54-59
+  and 137 assert that the hook process cwd is the session cwd.
+- Variables. A hook process gets the session environment snapshot plus the
+  source's `env` map (`command_runner.rs` lines 484-495). Only plugin sources
+  fill that map, with `PLUGIN_ROOT`, `CLAUDE_PLUGIN_ROOT`, `PLUGIN_DATA` and
+  `CLAUDE_PLUGIN_DATA` (`hooks/src/engine/discovery.rs` lines 311-319), and
+  `${NAME}` is replaced only from that map (lines 714-716). Config-layer hooks
+  from `.codex/hooks.json` and `[hooks]` get `env: HashMap::new()` (lines
+  196-215). No project-directory variable is set.
+- Layer reach. `config/src/loader/mod.rs` lines 1861-1874 load a `.codex`
+  layer from every ancestor of the cwd up to the project root, so the root
+  layer's hooks also run when the session starts in a nested folder. Lines
+  1163-1172 load a linked worktree's hooks from the main checkout's `.codex`
+  folder.
+
+A cwd-relative command therefore names a different file whenever the session
+starts below the root or in a linked worktree. `resolve()` keeps such a path
+`cwd_relative_unverified`, and the hook contract blocks it with
+`script_anchor_unverified`. `${CLAUDE_PROJECT_DIR}`, plugin root variables and
+command substitutions are `external_or_dynamic_command` for Codex. An absolute
+path names one machine, not a checkout file. AHL can propose a Codex hook change,
+but the contract admits no Codex unit until Codex documents an anchor.
+
 ### Static Claude workflow script lint
 
 `sources.workflows_inventory.capture(checkout, profile, personal=None, plugins=None)`

@@ -223,6 +223,40 @@ class HookContractTests(unittest.TestCase):
             HarnessChangePlan.parse(dict(document, hook_contracts=[[*row[:3], 'skipped'] for row in document['hook_contracts']]))
         self.assertFalse(self.sentinel.exists())
 
+    def test_no_codex_command_form_is_admitted_without_a_documented_anchor(self):
+        # openai/codex@d786ff91 runs project hooks in the session cwd with no project-root variable (#345).
+        script = '.codex/hooks/stop.sh'
+        cases = {f'./{script}': 'script_anchor_unverified', script: 'script_anchor_unverified',
+                 f'"$CLAUDE_PROJECT_DIR"/{script}': 'command_not_a_checkout_script',
+                 f'${{PLUGIN_ROOT}}/{script}': 'command_not_a_checkout_script',
+                 f'"$(git rev-parse --show-toplevel)"/{script}': 'command_not_a_checkout_script'}
+        for command, code in cases.items():
+            with self.subTest(command=command), no_execution():
+                value = {'Stop': [{'hooks': [{'type': 'command', 'command': command, 'timeout': 10}]}]}
+                scripts = {script: (self.script, 0o700)} if code == 'script_anchor_unverified' else {}
+                before, after, contract = self.unit(value, scripts, '.codex/hooks.json')
+                self.assertEqual((contract.status, contract.trust_review), ('blocked', 'requires_user_trust_review'))
+                self.assertEqual({row[1] for row in contract.findings}, {code})
+                with self.assertRaisesRegex(ValueError, 'did not pass'):
+                    self.journal.prepare(before, after, hook_contract=contract)
+        self.assertFalse(self.sentinel.exists())
+        self.assertFalse((self.project / '.codex/hooks.json').exists())
+
+    def test_codex_recommendation_only_finding_cites_the_pinned_source(self):
+        root = Path(__file__).resolve().parents[2]
+        contracts = ' '.join((root / 'docs/source-contracts.md').read_text().split())
+        start = contracts.index('#### Codex hook command anchor')
+        section = contracts[start:contracts.index('### ', start + 5)]
+        self.assertIn('Codex hook changes stay recommendation-only', section)
+        self.assertIn('openai/codex@d786ff91fad8e7ddab8653ee07bc6313a6fcb03d', section)
+        for citation in ('hooks/src/engine/command_runner.rs', 'command.current_dir(cwd)', 'core/src/hook_runtime.rs',
+                         'hooks/src/engine/discovery.rs', 'config/src/loader/mod.rs', '`script_anchor_unverified`'):
+            with self.subTest(citation=citation): self.assertIn(citation, section)
+        guide = ' '.join((root / 'docs/one-call-improvement.md').read_text().split())
+        self.assertIn('Codex hook changes stay recommendation-only', guide)
+        self.assertIn('(source-contracts.md#codex-hook-command-anchor)', guide)
+        self.assertNotIn('Codex has no verified root anchor yet', guide)
+
     def test_group_or_world_writable_scripts_are_blocked(self):
         for mode in (0o777, 0o775, 0o666):
             with self.subTest(staged=oct(mode)):

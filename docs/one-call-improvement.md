@@ -243,8 +243,7 @@ duplicate key, root `hooks.*` dotted keys, an inline `hooks` table) is refused.
 A unit is `blocked` when the event is not in the pinned list, a regex matcher
 does not compile with Python `re`, a handler is not a `command` naming a regular,
 non-symlink checkout script through `"$CLAUDE_PROJECT_DIR"/` (a cwd-relative path
-is `script_anchor_unverified`, and Codex has no verified root anchor yet, so a
-Codex unit stays blocked), a handler sets `commandWindows`, `command_windows` or
+is `script_anchor_unverified`), a handler sets `commandWindows`, `command_windows` or
 `shell`, a referenced script is group- or world-writable, its timeout is not set
 within 1 to 600 seconds, a member is unreferenced, or the config bytes are not
 exactly `key_edit` of the before bytes. Python `re` stands in for the runtimes' JavaScript and Rust engines,
@@ -258,6 +257,16 @@ which the change plan lists in its `hook_contracts` rows and `required_reviews`.
 A hook in agent frontmatter, or a root `hooks` key in `SKILL.md` frontmatter,
 makes that file `contract_required` too; a skill description that only mentions
 hooks stays adoptable. Without a frontmatter key edit such a unit stays blocked.
+
+Codex hook changes stay recommendation-only. At the pinned
+`openai/codex@d786ff91` source, Codex runs a project hook command through the
+login shell in the session working directory and gives it no project-root
+variable (see [Codex hook command anchor](source-contracts.md#codex-hook-command-anchor)).
+The working directory can be a nested folder or a linked worktree of the
+project, so no command form names one checkout script. Every Codex unit is
+therefore blocked, with `script_anchor_unverified` or
+`command_not_a_checkout_script`, and AHL can propose a Codex hook change but
+never apply one.
 
 `Journal.prepare(..., hook_contract=verdict)` is the explicit authorization. The
 journal evaluates the unit again and admits its `contract_required` hook members
