@@ -9,7 +9,7 @@ model. Existing cooperative evaluation remains recommendation-only.
 | Issue | Implemented and tested | Still required before issue closure |
 | --- | --- | --- |
 | #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral; bounded admission of proposer `mechanisms`/`falsifiers` JSON as unverified records with per-entry rejection reasons; pure planned route dispositions | Attach admission and dispositions to the `ahl improve` receipt and queue; integrate real proposal sessions and versioned evidence; evaluate composed repairs |
-| #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, approved procedure hypothesis API; pinned Claude 2.1.316 declared `Skill` names and exact project `SKILL.md` read requests as content-free `declared_invocation`/`file_read` signals with confidence labels (`observed_declared`, never activation) | Observed activation evidence, Codex skill signals, shadowing/effective-path detection, wiring signals into trial records and reports, independently graded routing/transfer pack, live utility and compiler evaluation |
+| #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, paired skill-present/absent transfer report under a predeclared target/control policy (`paired_transfer`), approved procedure hypothesis API; pinned Claude 2.1.316 declared `Skill` names and exact project `SKILL.md` read requests as content-free `declared_invocation`/`file_read` signals with confidence labels (`observed_declared`, never activation) | Observed activation evidence, Codex skill signals, shadowing/effective-path detection, wiring signals into trial records and reports, independently graded routing/transfer pack, live utility and compiler evaluation |
 | #12 search | Candidate identity/scope/hash checks, deduplication, hard safety feasibility, Pareto frontier, bounded development callbacks, final reserve, durable state, single final callback, conflict-checked composition | Version-verified reflective CLI proposer, actual inference resource accounting, full resume/recovery and algorithm comparisons; optional halving is not implemented |
 | #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting | An actually supported tool proxy/interception runtime and independently graded adapter effectiveness; no runtime flags are invented |
 | #14 retrieval | Approved reviewed local lexical index, bounded context, stable corpus revision, explicit abstention without calibration | Reviewed incident corpus, calibration/OOD evaluation, optional TF-IDF/embeddings comparisons and downstream utility tests |
@@ -71,7 +71,25 @@ estimates are development selection, not a causal or confidence claim.
 
 Skill injection is availability evidence, not activation. Missing runtime signals
 remain unknown; natural routing, preload, negative routing and transfer are separate
-conditions. The procedure compiler returns a bounded project hypothesis and never
+conditions. `evaluation.skills.paired_transfer(records, policy=...)` compares the
+`present` and `absent` arms over task roots matched by task and root identity.
+The policy must declare its target conditions, its unrelated control conditions
+and `max_control_loss` (0 to 1); its SHA-256 is reported. Preload can only be a
+diagnostic condition. Repeats are averaged within a root, so the root is the unit.
+Only boolean outcomes from an executable grader count. Unverified, unidentified
+and single-arm records are counted as excluded or unmatched, never as failures,
+and their regression or activation flags are ignored. A critical regression or a
+mean control loss beyond the tolerance rejects the skill, even when its target
+tasks improve. An observed activation in the absent arm, such as a shadowed copy,
+makes the comparison inconclusive, as do missing matched target or control roots
+and any unmatched or excluded record in a declared condition, because attrition
+in one arm can hide negative transfer. Otherwise the report stays `uncertified` until a
+frozen paired experiment runs through the evaluation gate. The main contrast never
+filters on activation. Activation counts as observed only for `activated: true`
+with an evidence reference; `activated: false`, an injected hash or a bare label
+stays unknown. Observed activations on controls are reported as false activations.
+Success among observed activations is reported as descriptive, not causal.
+The procedure compiler returns a bounded project hypothesis and never
 installs globally. The typed adapter preserves an exact original tool envelope and
 adds presentation metadata only. It cannot call a tool, retry an action, expand
 network/filesystem authority or turn an error into success. Runtime integration
