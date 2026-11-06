@@ -280,6 +280,18 @@ class ClaudeNativeTests(unittest.TestCase):
         self.assertNotIn('SYNTHETIC_SECRET', json.dumps(rows)); self.assertTrue(all(verified_outcome(r) is None for r in rows))
         self.assertEqual(summary['parent_session'], 'unknown')
 
+    def test_only_plain_two_part_mcp_names_gain_a_declared_mcp_signal(self):
+        # #312: plugin MCP names and names with more or fewer '__' parts keep no loading_signal.
+        self.rows = [self.row('assistant', 'a', None, dict(role='assistant', content=[
+            dict(type='tool_use', id='p', name='mcp__plugin_kit_srv__tool', input={}),
+            dict(type='tool_use', id='n', name='mcp__a__b__c', input={}),
+            dict(type='tool_use', id='e', name='mcp____tool', input={}),
+            dict(type='tool_use', id='s', name='mcp__srv__tool', input={})]))]
+        self.write(); rows, _, _ = self.capture()
+        calls = [r for r in rows if r['activity'] == 'tool_call']
+        self.assertEqual([r.get('loading_signal') for r in calls], [None, None, None, 'declared_mcp_invocation'])
+        self.assertEqual(['mcp_server_sha256' in r for r in calls], [False, False, False, True])
+
     def test_attachment_and_invocation_shapes_become_content_free_loading_patterns(self):
         from agent_harness_lab.sources.schema import digest
         memory = str(self.project/'pkg'/'CLAUDE.md')

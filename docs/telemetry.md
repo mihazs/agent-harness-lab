@@ -280,7 +280,7 @@ The pinned profile also records which harness files a capture names, as
 | `attachment` entry, `attachment.type: nested_memory`, absolute `attachment.path` | `context` | `loading_signal: observed_attachment`, `loading_evidence: observed_pattern`; `loading_path_sha256` when the path is exactly below `PROJECT`; `loading_content_sha256` when `attachment.content.content` is a string |
 | `attachment` entry, `attachment.type` `hook_success`, `hook_additional_context`, `hook_non_blocking_error` or `hook_blocking_error` | `context` | `loading_signal: observed_hook_output`, `loading_evidence: observed_pattern` |
 | `Agent` or `Task` call with a nonempty string `input.subagent_type` | `tool_call` | `loading_signal: declared_agent_invocation`, `agent_name_sha256` |
-| `mcp__<server>__<tool>` call | `tool_call` | `loading_signal: declared_mcp_invocation`, `mcp_server_sha256` |
+| `mcp__<server>__<tool>` call with exactly two non-empty parts and a `<server>` not starting with `plugin_` | `tool_call` | `loading_signal: declared_mcp_invocation`, `mcp_server_sha256` |
 
 `loading_path_sha256` is `schema.digest` of the project-relative path, the same
 value as an inventory node's `path_sha256`. The path follows the exact-spelling
@@ -289,7 +289,9 @@ rule of [declared skill signals](#declared-skill-signals). A path outside
 `loading_content_sha256` is the SHA-256 of the attached text encoded as UTF-8.
 `agent_name_sha256` is `digest(name)`, the `name_sha256` that the agent inventory
 records. `mcp_server_sha256` comes from `config_inventory.telemetry_server_sha256`,
-and the MCP tool name stays an opaque `tool:` digest. Paths, text, hook names and
+and the MCP tool name stays an opaque `tool:` digest. A plugin MCP name
+(`mcp__plugin_...`) or a name with more or fewer `__` parts gains no
+`loading_signal`, because its server id cannot be read from it unambiguously. Paths, text, hook names and
 prompts are never copied.
 
 **Assumption.** The pinned SDK reference names the `attachment` entry type but not
@@ -304,8 +306,8 @@ context, not that the model followed it. An agent or MCP request is a model
 request. Hook output carries no file path, so it cannot name a hook file. No
 signal sets an outcome, skill activation or independence label. Captures without
 these shapes keep their events, identities and fingerprints. An `Agent` or `Task`
-call with `subagent_type` and every MCP call gain the fields above, so their
-fingerprints change. The pinned Codex rollout records no loading evidence:
+call with `subagent_type` and an MCP call whose name matches the row above gain
+the fields above, so their fingerprints change; other MCP calls are unchanged. The pinned Codex rollout records no loading evidence:
 `codex_rollout.LOADING_SIGNAL` is `no_native_loading_signal`, and its events are
 unchanged. [Native loading attribution](source-contracts.md#native-loading-attribution)
 joins these signals to inventory nodes.

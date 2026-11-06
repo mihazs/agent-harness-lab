@@ -3,6 +3,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
+from agent_harness_lab.sources import agents_inventory as agents
+from agent_harness_lab.sources import claude_rules as rules
 from agent_harness_lab.sources import commands_inventory as commands
 from agent_harness_lab.sources import frontmatter
 if __package__:
@@ -41,6 +43,26 @@ class TextsModeTests(unittest.TestCase):
         for raw in (b'--- \nname: a\n---\n', b'---\nname: a\n---\t\n', b'\xef\xbb\xbf---  \nname: a\n---\n'):
             with self.subTest(raw=raw):
                 self.assertEqual(reason(frontmatter.texts, raw), 'unsupported_yaml')
+
+    def test_no_mode_reads_a_whitespace_ended_fence_as_no_fence(self):
+        # #312: a fence line ending in spaces or tabs is never judged in any mode, and never read as unfenced.
+        for raw in (b'--- \nname: a\n---\n', b'---\nname: a\n---\t\nbody', b'---\t \r\nname: a\r\n---\r\n'):
+            with self.subTest(raw=raw):
+                self.assertEqual(reason(frontmatter.read, raw), 'unsupported_yaml')
+                self.assertEqual(reason(frontmatter.texts, raw), 'unsupported_yaml')
+        self.assertEqual(frontmatter.read(b'---\r\nname: a\r\n---\r\n'), dict(name='a'))  # only '\r' is dropped
+        self.assertEqual(frontmatter.texts(b'---\nd: |\n  --- \n---\n'), dict(d='---'))  # an indented '---' is no fence
+        for text in ('--- \npaths:\n  - a\n---\n', '---\npaths:\n  - a\n--- \n---\n'):
+            with self.subTest(text=text), self.assertRaises(frontmatter.Unsupported) as caught:
+                frontmatter.string_lists(text, ('paths',))
+            self.assertEqual(caught.exception.reason, 'unsupported_yaml')
+        rule = b'--- \npaths:\n  - src/**\n---\nbody'
+        self.assertEqual(rules.declaration(rule), ('frontmatter_unsupported', None))
+        self.assertEqual(rules.classify('.', *rules.declaration(rule), ('.',), ['docs/a.md'], None), 'unknown')
+        for raw in (b'--- \nname: rev\ndescription: d\n---\nbody', b'---\nname: rev\ndescription: d\n--- \n---\nbody'):
+            with self.subTest(raw=raw):
+                facts = agents.parse('.claude/agents/rev.md', raw, CLAUDE)[1]
+                self.assertEqual((facts['disposition'], facts['reason']), ('unknown', 'frontmatter_unsupported_yaml'))
 
     def test_texts_has_the_shared_bounds_and_error_reasons(self):
         for raw, expected in CASES:

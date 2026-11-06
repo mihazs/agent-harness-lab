@@ -18,8 +18,11 @@ Unsupported, so a construct a real YAML parser might read differently is never g
 
 texts() is read() for callers that need text values, such as the command, skill and prompt inventory: a leading
 BOM is dropped, a file without a leading fence is None, an empty value is '' and a list or nested mapping is None,
-since it is not text. A fence line with trailing blanks is 'unsupported_yaml': whether a runtime trims it is not
-verified, so such a block is never judged. Bounds and the other error reasons are those of read().
+since it is not text. Bounds and error reasons are those of read().
+
+In every mode a fence line may end only in '\r'. An opening fence, or a fence line before the closing one, that
+ends in spaces or tabs, such as '--- ', is 'unsupported_yaml': whether a runtime trims it is not verified, so
+such a block is never judged and the file is never read as unfenced.
 """
 from dataclasses import dataclass
 import re
@@ -60,21 +63,11 @@ def read(raw, *, max_bytes=MAX_BYTES, max_lines=MAX_LINES):
 def texts(raw, *, max_bytes=MAX_BYTES, max_lines=MAX_LINES):
     """{key: str, or None for a list or mapping} of a leading block, None without one; else FrontmatterError."""
     raw = raw.removeprefix(b'\xef\xbb\xbf')
-    if _padded_fence(raw, max_lines): raise FrontmatterError('unsupported_yaml')
     try: fields = read(raw, max_bytes=max_bytes, max_lines=max_lines)
     except FrontmatterError as error:
         if error.reason == 'no_leading_fence': return None
         raise
     return {key: '' if value is None else value if isinstance(value, str) else None for key, value in fields.items()}
-
-
-def _padded_fence(raw, max_lines):
-    """Whether the opening fence, or a fence line before the closing one, carries trailing blanks."""
-    for number, line in enumerate(raw.split(b'\n', max_lines + 2)[:max_lines + 2]):
-        line = line.rstrip(b'\r')
-        if line != b'---' and line.rstrip(b' \t') == b'---': return True
-        if (line == b'---') == bool(number): return False  # no opening fence, or the block closed
-    return False
 
 
 def string_lists(text, keys, *, max_lines=LIST_MAX_LINES, max_items=MAX_ITEMS):
@@ -92,6 +85,7 @@ def string_lists(text, keys, *, max_lines=LIST_MAX_LINES, max_items=MAX_ITEMS):
 
 def _fields(text, max_bytes, max_lines, strict):
     lines = text.split('\n', max_lines + 2)
+    if _padded(lines[0]): raise FrontmatterError('unsupported_yaml')
     if lines[0].rstrip('\r') != '---':
         # In strict mode a BOM, trailing blanks or leading blank lines before a delimiter may still open a block
         # for the runtime, so they are unsupported rather than no block.
@@ -101,10 +95,17 @@ def _fields(text, max_bytes, max_lines, strict):
     size = len(lines[0]) + 1
     for number, line in enumerate(lines[1:], 1):
         if line.rstrip('\r') == '---': break
+        if _padded(line): raise FrontmatterError('unsupported_yaml')  # e.g. a closing '--- '
         size += len(line.encode()) + 1
         if number > max_lines or size > max_bytes: raise FrontmatterError('too_large')
     else: raise FrontmatterError('unterminated')
     return _mapping([line.rstrip('\r') for line in lines[1:number]], strict)
+
+
+def _padded(line):
+    """Whether a line is a '---' fence followed by spaces or tabs, which a runtime may or may not trim."""
+    line = line.rstrip('\r')
+    return line != '---' and line.rstrip(' \t') == '---'
 
 
 def _mapping(lines, strict):
