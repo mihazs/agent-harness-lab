@@ -12,7 +12,7 @@ model. Existing cooperative evaluation remains recommendation-only.
 | #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, paired skill-present/absent transfer report under a predeclared target/control policy (`paired_transfer`), approved procedure hypothesis API; pinned Claude 2.1.316 declared `Skill` names and exact project `SKILL.md` read requests as content-free `declared_invocation`/`file_read` signals with confidence labels (`observed_declared`, never activation) | Observed activation evidence, Codex skill signals, shadowing/effective-path detection, wiring signals into trial records and reports, independently graded routing/transfer pack, live utility and compiler evaluation |
 | #12 search | Candidate identity/scope/hash checks, deduplication, hard safety feasibility, Pareto frontier, bounded development callbacks, final reserve, durable state, single final callback, conflict-checked composition | Version-verified reflective CLI proposer, actual inference resource accounting, full resume/recovery and algorithm comparisons; optional halving is not implemented |
 | #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting; declarative `AdapterSpec` capability contract with a non-executing candidate review (`review_candidate_spec`) that rejects expanded authority | An actually supported tool proxy/interception runtime and independently graded adapter effectiveness; no runtime flags are invented |
-| #14 retrieval | Approved reviewed local lexical index, bounded context, stable corpus revision, explicit abstention without calibration | Reviewed incident corpus, calibration/OOD evaluation, optional TF-IDF/embeddings comparisons and downstream utility tests |
+| #14 retrieval | Approved reviewed local lexical index, bounded context, stable corpus revision, contrastive supporting/contradicting/control groups, explicit abstention without calibration | Reviewed incident corpus, calibration/OOD evaluation, optional TF-IDF/embeddings comparisons and downstream utility tests |
 | #15 promotion | Private write-ahead snapshots, exact hashes/modes, owned-path transactions, manual preview/rollback, partial-write recovery, version-attributed fixed-window observation | Crash/power-loss hardening across every boundary, monitor-to-watch integration, authenticated outcome lineage and any explicitly configured automatic rollback policy |
 | #16 benchmarks | Within-pair runtime validation, separate model strata, missing-setting reporting, measured-cost API with supplied dated prices, private/mixed export rejection, escaped HTML/Markdown summaries, credential-free package CI | Trusted live workflow with broker-scoped credentials and resource enforcement, public task evidence and complete reports of per-task intervals/exposure |
 | #17 bandit research | Seeded Beta-Bernoulli baseline, approved read-only arms, delayed-reward attribution, idempotent updates, missing rewards, bounded simulation, five strategy comparisons, drift/sparse/delayed/harmful scenarios, identifiability refusal | Preregistered independently graded coding-task study, final uncertainty analysis, explicit pilot budget and training/privacy/license/access review |
@@ -146,6 +146,29 @@ samples. No calibrated diagnosis is produced by the new API: without an implemen
 independently assessed calibration protocol it always abstains. Existing optional
 classifier experiments remain diagnostic experiments, not promotion oracles.
 
+### Contrastive incident retrieval
+
+`LexicalIndex.contrast(text, hypothesis, control_labels=(), top_k=None)` groups
+the same lexical matches around one label hypothesis instead of returning a single
+ranked list. `supporting` matches carry the hypothesis label, `contradicting`
+matches carry other labels, `controls` carry a caller-declared successful-control
+label, and `unresolved` matches are unlabeled or labeled `unknown`/`ambiguous`.
+Those two labels are reserved and cannot be a hypothesis or control. `top_k`
+bounds each group separately, so close supporting matches cannot crowd out
+counterexamples. Each group reports its match count and distinct roots; the report
+also counts roots shared by supporting and contradicting matches, hypothesis-labeled
+incidents that did not match, and unmatched corpus records.
+
+Each result carries the incident ID, a SHA-256 of its root ID (never the raw ID),
+labels, evidence references, score, provenance, sampling and source kind. Summaries
+from `private` records are withheld (`summary: null`,
+`summary_withheld: "private_source"`). `evidence_state` is `no_lexical_support`,
+`mixed` or `supporting_only`; it describes lexical neighbours only. The report
+always states `diagnosis: "hypothesis_only"`, `causal_claim: false`,
+`prevalence: "not_estimable_from_lexical_neighbours"` and
+`promotion_authority: false`: similarity does not establish a shared cause, and
+a neighbour count is not a prevalence estimate or a calibrated probability.
+
 ## Transactions and monitoring
 
 The direct `adopt` API now records exact before/after bytes and modes before writing.
@@ -207,6 +230,9 @@ semantics from arbitrary commands or import unverified traces as controller data
   the output lists the missing trajectories, held-out benefit and access/budget.
 - `ahl incident-search --input APPROVED.json --query TEXT` searches a bounded
   local corpus. Private summaries/results must remain private.
+  `--hypothesis LABEL` (with optional repeatable `--control-label LABEL`) returns
+  an `incident-contrast-v1` report instead; see
+  [contrastive retrieval](#contrastive-incident-retrieval).
 - `ahl benchmark-report --input RESULTS.json --output NEW_DIRECTORY` writes a
   private local report. `--public` requires explicitly approved synthetic/public
   provenance for every input and rejects all private-derived aggregates. It creates

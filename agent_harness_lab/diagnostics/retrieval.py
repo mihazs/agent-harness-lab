@@ -42,17 +42,20 @@ class LexicalIndex:
         self.tokens=[Counter(re.findall(r'[a-z0-9_]+',i.summary.lower())) for i in incidents]
         self.revision=hashlib.sha256(json.dumps([i.__dict__ for i in incidents],sort_keys=True).encode()).hexdigest()
 
-    def query(self, text, top_k=None, max_context=None):
-        if (not isinstance(text,str)
-                or any(value is not None and (type(value) is not int or value<1) for value in (top_k,max_context))):
-            raise ValueError('invalid retrieval query or explicit limit')
+    def _ranked(self, text):
         query=set(re.findall(r'[a-z0-9_]+',text.lower()))
         scores=[]
         for incident,tokens in zip(self.incidents,self.tokens):
             score=sum(math.log1p(tokens[token]) for token in query if token in tokens)
             if score: scores.append((score,incident.incident_id,incident))
+        return sorted(scores,key=lambda row:(-row[0],row[1]))
+
+    def query(self, text, top_k=None, max_context=None):
+        if (not isinstance(text,str)
+                or any(value is not None and (type(value) is not int or value<1) for value in (top_k,max_context))):
+            raise ValueError('invalid retrieval query or explicit limit')
         selected,total=[],0
-        for score,_,incident in sorted(scores,key=lambda row:(-row[0],row[1]))[:top_k]:
+        for score,_,incident in self._ranked(text)[:top_k]:
             if max_context is not None and total+len(incident.summary)>max_context: continue
             total+=len(incident.summary)
             selected.append(dict(incident_id=incident.incident_id,summary=incident.summary,
@@ -60,6 +63,69 @@ class LexicalIndex:
                                  authority='untrusted_evidence_only'))
         return dict(revision=self.revision,results=selected,source='local_lexical',
                     calibration='not_a_correctness_oracle',private=any(i.source_kind=='private' for i in self.incidents))
+
+    def contrast(self, text, hypothesis, control_labels=(), top_k=None):
+        """Group lexical neighbours of one label hypothesis into evidence and counterexamples.
+
+        ``top_k`` bounds each group separately, so supporting matches can never
+        crowd out contradicting cases or controls. Private summaries are
+        withheld; similarity is reported as a hypothesis, never a shared cause.
+        """
+        controls=tuple(control_labels)
+        if (not isinstance(text,str) or not _label(hypothesis)
+                or not all(_label(label) for label in controls) or hypothesis in controls
+                or hypothesis in UNRESOLVED_LABELS or set(controls)&set(UNRESOLVED_LABELS)
+                or (top_k is not None and (type(top_k) is not int or top_k<1))):
+            raise ValueError('invalid contrast query, hypothesis, control labels or explicit limit')
+        groups={name:[] for name in CONTRAST_GROUPS}
+        for score,_,incident in self._ranked(text):
+            labels=set(incident.labels)
+            name=('unresolved' if not labels or labels&set(UNRESOLVED_LABELS)
+                  else 'supporting' if hypothesis in labels
+                  else 'controls' if labels&set(controls) else 'contradicting')
+            groups[name].append((score,incident))
+        matched={incident.incident_id for rows in groups.values() for _,incident in rows}
+        labelled=[i for i in self.incidents if hypothesis in i.labels]
+        report={}
+        for name,rows in groups.items():
+            report[name]=dict(matches=len(rows),distinct_roots=len({i.root_id for _,i in rows}),
+                              results=[_contrast_row(score,incident) for score,incident in rows[:top_k]])
+        support,against=groups['supporting'],groups['contradicting']
+        shared={i.root_id for _,i in support}&{i.root_id for _,i in against}
+        state=('no_lexical_support' if not support else 'mixed' if against else 'supporting_only')
+        return dict(profile=CONTRAST_PROFILE,revision=self.revision,source='local_lexical',
+                    hypothesis=hypothesis,control_labels=sorted(controls),evidence_state=state,
+                    groups=report,shared_roots_supporting_and_contradicting=len(shared),
+                    uncovered=dict(hypothesis_labelled=len(labelled),
+                                   hypothesis_labelled_unmatched=sum(i.incident_id not in matched for i in labelled),
+                                   unmatched_corpus=len(self.incidents)-len(matched)),
+                    sampling=sorted({i.sampling for _,rows in groups.items() for _,i in rows}),
+                    prevalence='not_estimable_from_lexical_neighbours',
+                    diagnosis='hypothesis_only',causal_claim=False,
+                    calibration='not_a_correctness_oracle',promotion_authority=False,
+                    private=any(i.source_kind=='private' for i in self.incidents),
+                    private_summaries='withheld')
+
+
+CONTRAST_PROFILE='incident-contrast-v1'
+CONTRAST_GROUPS=('supporting','contradicting','controls','unresolved')
+UNRESOLVED_LABELS=('unknown','ambiguous')
+
+
+def _label(value):
+    return isinstance(value,str) and bool(value) and value==value.strip()
+
+
+def _contrast_row(score, incident):
+    """Provenance-bearing match; raw root IDs and private summaries never leave the index."""
+    private=incident.source_kind=='private'
+    return dict(incident_id=incident.incident_id,
+                root_sha256=hashlib.sha256(incident.root_id.encode()).hexdigest(),
+                labels=sorted(incident.labels),evidence_refs=list(incident.evidence_refs),score=score,
+                summary=None if private else incident.summary,
+                summary_withheld='private_source' if private else None,
+                provenance=incident.provenance,sampling=incident.sampling,source_kind=incident.source_kind,
+                authority='untrusted_evidence_only')
 
 
 def triage_without_calibration(label_scores, calibration=None):
