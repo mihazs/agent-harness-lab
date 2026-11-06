@@ -14,7 +14,7 @@ harness performs better or worse, and no aggregate score is emitted.
 from dataclasses import asdict, dataclass
 import importlib
 from agent_harness_lab import surfaces
-from agent_harness_lab.sources import harness_inventory
+from agent_harness_lab.sources import agents_inventory, harness_inventory
 from agent_harness_lab.sources.schema import digest, fingerprint, label
 
 PROFILE = 'ahl-static-audit-v1'
@@ -148,19 +148,25 @@ def _judge(node, kind, status, facts, runtime, row):
     if source(surface, runtime) is None: return 'unknown', 'no_pinned_capability'
     if status != 'parsed': return 'unknown', status
     if reference is None: return 'unknown', 'not_checked'
+    if kind == 'agent': facts = dict(facts, layer=agents_inventory._layer(node, runtime, {})[0])  # where it would load
     verdict, reason = _resolve(reference)(facts, runtime)
     if verdict not in STATUSES or verdict == 'nonconformant' and reason not in REMEDIATIONS: raise ValueError('invalid check result')
     return verdict, reason
 
 
+# The harness folders each runtime reads; another runtime's folder is never one of its surfaces.
+HARNESS_FOLDERS = {'claude-code': ('.claude',), 'codex': ('.codex', '.agents')}
+
+
 def _refused(refusal, runtime, table):
-    """Dimensions a refused entry would belong to: its classified kinds, or every dimension inside a harness folder."""
+    """Dimensions a refused entry would belong to: its classified kinds, or every dimension inside a harness folder
+    of the audited runtime."""
     found = surfaces.classify(refusal.path, runtime)
     if surfaces.VENDORED_FACET in found.facets: return ()
     dimensions = tuple(dict.fromkeys(table[kind][0] for kind in found.facets if kind in table))
     if dimensions: return dimensions
     parts = refusal.path.split('/')
-    return DIMENSIONS if any(part in surfaces.ROOT_HARNESS_FOLDERS for part in parts) else ()
+    return DIMENSIONS if any(part in HARNESS_FOLDERS[runtime] for part in parts) else ()
 
 
 def audit(inventory):

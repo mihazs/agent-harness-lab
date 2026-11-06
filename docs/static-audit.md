@@ -27,13 +27,13 @@ The report has one row per dimension, always in this order:
 
 | Dimension | Inventory kinds | Checked facts |
 | --- | --- | --- |
-| `instructions` | `instruction` | empty file, launch skip size (Claude), default project-doc size (Codex), uncertain imports |
+| `instructions` | `instruction` | empty file, launch skip size (Claude), default project-doc size (Codex), uncertain imports; a Claude `AGENTS.md` stays `unknown` (`instruction_files_setting_unknown`) |
 | `rules` | `path_rule`, `exec_policy` | Claude rule frontmatter settles; Codex exec policy is not checked |
-| `hooks` | `hook` | unknown events, fields or handler types, a missing plugin `hooks` wrapper, skipped handlers, invalid `onFailure` |
+| `hooks` | `hook` | unknown events, fields or handler types, a missing plugin `hooks` wrapper, skipped handlers, invalid `onFailure`; a file with no handlers is `unknown` (`no_hooks_declared`) |
 | `workflows` | `workflow` | the static workflow lint (`meta` first, no forbidden calls) |
-| `agents` | `agent` | a definition the runtime skips or rejects, unknown fields, fields above the version pin |
+| `agents` | `agent` | in a project `.claude/agents` or `.codex/agents` folder: a definition the runtime skips or rejects, unknown fields, fields above the version pin; elsewhere `unknown` (`agent_layer_not_modelled`) |
 | `commands` | `command`, `skill` | ignored `name` or `paths` keys in commands; skill bundles are not checked yet |
-| `plugins` | `plugin` and the plugin part of settings | a manifest without `name`, a marketplace without a `plugins` list |
+| `plugins` | `plugin` and the plugin part of settings | settings that declare no plugin or marketplace are `unknown` (`no_plugins_declared`); a manifest without `name` and a marketplace without a `plugins` list are checked only in a plugin checkout inventory passed to `audit()` |
 | `config` | `config` and the configuration part of settings | the allowlisted reader decodes the file; values are not judged |
 
 A settings file the inventory reads for several surfaces, such as
@@ -42,6 +42,16 @@ A settings file the inventory reads for several surfaces, such as
 `conformant`, `nonconformant` and `unknown`, the sorted `reasons` that were not
 conformant, and `source`, the first public documentation row at the pin for that
 surface.
+
+`run()` never inventories plugin manifests or marketplaces in the checkout. To
+check them, pass the inventory of a selected plugin checkout to `audit()`:
+
+```python
+from agent_harness_lab.sources import plugins_inventory
+
+plugins = plugins_inventory.capture(checkout, profile, plugin_checkouts={'name@market': '/path/to/plugin'})
+report = audit.audit(plugins.checkouts[0].inventory)
+```
 
 ## Statuses
 
@@ -59,8 +69,10 @@ not parsed (`not_parsed`, such as skill files and hook scripts), failed to parse
 (`no_parser`), has no check yet (`not_checked`) or no capability row at the pin
 (`no_pinned_capability`). An entry the inventory refused, such as a symlink or
 hardlink, is `unknown` with `refused_<reason>` in each dimension its path would
-belong to, and in every dimension when it lies inside a `.claude`, `.agents` or
-`.codex` folder but has no kind of its own. Refusals that belong to no dimension
+belong to, and in every dimension when it lies inside a harness folder of the
+audited runtime (`.claude` for Claude Code, `.codex` or `.agents` for Codex) but
+has no kind of its own. An entry in the other runtime's folder is not a surface
+of the audited one. Refusals that belong to no dimension
 are counted in `unattributed_refusals`. Vendored trees are counted in
 `vendored_surfaces` and left out of the dimensions.
 

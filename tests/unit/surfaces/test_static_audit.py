@@ -10,7 +10,7 @@ import unittest
 from unittest.mock import patch
 
 from agent_harness_lab import audit, surfaces
-from agent_harness_lab.sources import harness_inventory
+from agent_harness_lab.sources import harness_inventory, plugins_inventory
 from tests.support import harness_surface_fixture as fixture
 
 SETTINGS = {'hooks': {'PreToolUse': [{'matcher': 'Bash', 'hooks': [{'type': 'command', 'command': 'true'}]}]},
@@ -94,7 +94,7 @@ class StaticAuditTests(unittest.TestCase):
     def test_documented_violations_are_nonconformant_with_cheapest_remediation_first(self):
         report = audit.run(self.build(dict(WELL_FORMED, **NONCONFORMANT)), 'claude-code')
         expected = dict.fromkeys(audit.DIMENSIONS, 'nonconformant')
-        expected.update(rules='conformant', plugins='conformant', config='conformant')  # settings with no plugins still parse
+        expected.update(rules='conformant', plugins='unknown', config='conformant')  # settings with no plugins: absence
         self.assertEqual(self.statuses(report), expected)
         reasons = [(row.dimension, row.reason) for row in report.findings if row.status == 'nonconformant']
         self.assertEqual(sorted(reasons), sorted([('instructions', 'instruction_empty'), ('hooks', 'hook_unknown_event'),
@@ -148,6 +148,59 @@ class StaticAuditTests(unittest.TestCase):
         report = audit.run(checkout, 'claude-code')
         self.assertEqual(set(self.statuses(report).values()), {'unknown'})
         self.assertIn('refused_symlink', next(row for row in report.dimensions if row.dimension == 'instructions').reasons)
+
+    def test_a_refused_entry_in_another_runtimes_folder_is_unattributed(self):
+        checkout = self.build({'CLAUDE.md': '# Synthetic\n', 'AGENTS.md': '# Synthetic\n',
+                               '.claude/agents/r.md': '---\nname: r\ndescription: Reviews\n---\nReview.\n'})
+        (checkout / '.codex/agents').mkdir(parents=True); (checkout / '.codex/agents/x.toml').symlink_to('../../AGENTS.md')
+        report = audit.run(checkout, 'claude-code')
+        statuses = self.statuses(report)
+        self.assertEqual((statuses['instructions'], statuses['agents']), ('unknown', 'conformant'))  # AGENTS.md: setting
+        self.assertEqual(report.unattributed_refusals, 1)
+        self.assertNotIn('.codex/agents/x.toml', {row.path for row in report.findings})
+        # A dual-runtime .claude/CLAUDE.md link is not a Codex surface either.
+        checkout = self.build({'AGENTS.md': '# Synthetic\n'}, name='codex')
+        (checkout / '.claude').mkdir(); (checkout / '.claude/CLAUDE.md').symlink_to('../AGENTS.md')
+        report = audit.run(checkout, 'codex')
+        self.assertEqual(self.statuses(report)['instructions'], 'conformant')
+        self.assertEqual((report.unattributed_refusals, report.findings), (1, ()))
+
+    def test_settings_that_declare_no_hooks_or_plugins_leave_them_unknown(self):
+        files = {'CLAUDE.md': '# Synthetic\n', '.claude/settings.json': json.dumps({'permissions': {'allow': []}})}
+        report = audit.run(self.build(files), 'claude-code')
+        reasons = {row.dimension: (row.status, row.reasons) for row in report.dimensions}
+        self.assertEqual(reasons['hooks'], ('unknown', ('no_hooks_declared',)))
+        self.assertEqual(reasons['plugins'], ('unknown', ('no_plugins_declared',)))
+        self.assertEqual(reasons['config'], ('conformant', ()))
+
+    def test_an_agent_outside_a_project_agents_folder_is_not_judged_by_its_disposition(self):
+        files = {'.claude-plugin/plugin.json': json.dumps({'name': 'p'}), 'agents/a.md': '---\ndescription: d\n---\n'}
+        report = audit.run(self.build(files), 'claude-code')
+        row = next(row for row in report.dimensions if row.dimension == 'agents')
+        self.assertEqual((row.status, row.reasons), ('unknown', ('agent_layer_not_modelled',)))
+        self.assertFalse([row for row in report.findings if row.status == 'nonconformant'])
+
+    def test_a_claude_code_agents_md_depends_on_an_unknown_setting(self):
+        report = audit.run(self.build({'AGENTS.md': '# Synthetic\n'}), 'claude-code')
+        row = next(row for row in report.dimensions if row.dimension == 'instructions')
+        self.assertEqual((row.status, row.reasons), ('unknown', ('instruction_files_setting_unknown',)))
+
+    def test_plugin_manifest_checks_apply_to_a_plugin_checkout_inventory(self):
+        files = {'CLAUDE.md': '# Synthetic\n', '.claude/settings.json': json.dumps({'enabledPlugins': {'p@m': True}})}
+        project, plugin = self.build(files), self.base / 'plugin'
+        for name, text in {'.claude-plugin/plugin.json': json.dumps({'version': '1'}),
+                           '.claude-plugin/marketplace.json': json.dumps({'name': 'm'})}.items():
+            (plugin / name).parent.mkdir(parents=True, exist_ok=True); (plugin / name).write_text(text)
+        (plugin / '.git/refs/heads').mkdir(parents=True); (plugin / '.git/HEAD').write_text('ref: refs/heads/main\n')
+        (plugin / '.git/refs/heads/main').write_text('c0ffee' + 'a' * 34 + '\n')
+        profile = dict(schema_version=1, runtime='claude-code', version=surfaces.PINS['claude-code'], task_cwd='.')
+        checkout, = plugins_inventory.capture(project, profile, plugin_checkouts={'p@m': str(plugin)}).checkouts
+        report = audit.audit(checkout.inventory)
+        self.assertEqual(self.statuses(report)['plugins'], 'nonconformant')
+        self.assertEqual(sorted(row.reason for row in report.findings if row.dimension == 'plugins'),
+                         ['plugin_manifest_name_missing', 'plugin_marketplace_entries_missing'])
+        # audit.run() over a checkout never inventories manifests, so the same files there are no plugin surface.
+        self.assertEqual(next(row for row in audit.run(plugin, 'claude-code').dimensions if row.dimension == 'plugins').surfaces, 0)
 
     def test_a_bound_overflow_is_blocked_never_a_truncated_pass(self):
         checkout = self.build(WELL_FORMED)
