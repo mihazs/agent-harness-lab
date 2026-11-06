@@ -256,9 +256,12 @@ def parse_surface(path, raw, profile):
     text = raw.decode('utf-8')
     facts = dict(bytes=len(raw), empty=not text.strip())
     if runtime == 'codex':
+        # The leading Rust-whitespace run in bytes: Codex drops the file as blank when it spans every byte, and a
+        # prefix longer than it is never blank, which is what the static audit needs to follow the project-doc budget.
+        leading = len(raw) - len(text.lstrip(RUST_WHITESPACE).encode('utf-8'))
         return 'parsed', dict(facts, checkout_relation='directory_chain' if scope in chain else 'below_task_cwd_not_loaded'
             if below else 'outside_task_scope', project_trust=profile.get('project_trust', 'unknown'),
-            exceeds_default_project_doc_max_bytes=len(raw) > CODEX_DEFAULT_BYTES)
+            exceeds_default_project_doc_max_bytes=len(raw) > CODEX_DEFAULT_BYTES, codex_leading_blank_bytes=leading)
     found = imports(text)
     facts.update(checkout_relation='launch_ancestor' if scope in chain else ON_DEMAND if below else 'outside_task_scope',
                  import_tokens=sum(u is None for _, u in found), uncertain_import_tokens=sum(u is not None for _, u in found))

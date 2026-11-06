@@ -1287,8 +1287,11 @@ labels and counts only: `checkout_relation` (`launch_ancestor`,
 `on_demand_subdirectory` or `outside_task_scope` for Claude Code;
 `directory_chain`, `below_task_cwd_not_loaded` or `outside_task_scope` for
 Codex), import token counts, `loading_trigger`, `subdirectory_size_limit:
-unverified`, `instruction_files_setting: instruction_files_setting_unknown` and
-`exceeds_default_project_doc_max_bytes`. `checkout_relation` assumes a
+unverified`, `instruction_files_setting: instruction_files_setting_unknown`,
+`exceeds_default_project_doc_max_bytes` and, for Codex,
+`codex_leading_blank_bytes`, the byte length of the leading run of Rust
+whitespace, which tells the [static audit](static-audit.md#codex-project-doc-budget)
+whether Codex drops a file, or a truncated prefix of it, as blank. `checkout_relation` assumes a
 checkout path; the node's origin and root mark a declared external root. None
 of these facts is loading evidence or a task outcome.
 

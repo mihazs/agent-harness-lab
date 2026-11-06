@@ -475,6 +475,7 @@ CAPABILITIES = (
     _row('instructions', 'claude-code', 'claudeMdExcludes absolute-path globs matched against checkout-relative paths', _CLAUDE + 'memory', 'unverified'),
     _row('instructions', 'codex', 'CODEX_HOME AGENTS.override.md then AGENTS.md, first non-empty, outside the project budget', _CODEX_SOURCE + '/codex-home/src/instructions/mod.rs'),
     _row('instructions', 'codex', 'project_root_markers default .git, [] or no marker means the cwd only; untrusted projects load no project docs', _CODEX_SOURCE + '/core/src/agents_md.rs'),
+    _row('instructions', 'codex', 'project_doc_max_bytes, default 32 KiB, is one budget for the directory chain: the file that crosses it is truncated, later files are skipped', _CODEX_SOURCE + '/core/src/agents_md.rs'),
     _row('path_rules', 'claude-code', '.claude/rules/**/*.md with optional paths globs', _CLAUDE + 'memory'),
     _row('path_rules', 'claude-code', 'project rules skipped without the project setting source', _CLAUDE + 'memory', gate='>=2.1.211'),
     _row('path_rules', 'codex', 'no path-scoped instruction rules; .rules files are exec policy', _CODEX + 'rules'),
