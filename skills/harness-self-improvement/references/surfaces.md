@@ -73,8 +73,12 @@ order `private_excluded`, `adoptable`, `contract_required`, `recommendation_only
 - **recommendation** (`recommendation_only`): the change is reported, never
   written. Every path in another repository takes this route unless it is
   `private_excluded`.
-- **excluded** (`private_excluded` or `unsupported`): the file is never read,
-  hashed or changed.
+- **excluded** (`private_excluded`): the inventory lists the file but never
+  reads, hashes or changes it.
+- **unsupported** (`unsupported`): the file is never adopted or written, but the
+  inventory may still read and hash it when its kind is recognized, for example
+  a `.claude/rules` file whose containment is not confirmed. Change plans keep
+  such a surface deferred.
 
 A file can hold several surfaces. Only the `hooks` key of `.claude/settings.json`,
 `.codex/hooks.json` or `.codex/config.toml` goes through the hook contract; every
@@ -97,8 +101,9 @@ Per-file details that the matrix does not show:
 
 Change plans list what they leave for later in `deferred_surfaces`: the
 controller's own pending work first, then `surfaces.deferred(resolved)`, every
-surface not resolved by that plan except one that every runtime excludes. Memory
-is excluded for both runtimes, so it is never deferred.
+surface not resolved by that plan except one that every runtime routes to
+excluded. Memory is excluded for both runtimes, so it is never deferred; an
+unsupported surface stays deferred.
 
 - `ahl improve .` (behavioral candidate): resolves the surfaces some runtime
   routes to adopt (`surfaces.adopted()`: `instructions`, `path_rules`,
@@ -114,8 +119,9 @@ The research is pinned to Claude Code 2.1.317 and Codex 0.166.0 (source
 `openai/codex@d786ff91`), retrieved on 2026-11-05. Each `surfaces.CAPABILITIES`
 row cites public documentation under `https://code.claude.com/docs/en/` or
 `https://developers.openai.com/codex/`, or the pinned Codex source tree. An
-inventory for any other version is `unsupported`. `verified` means documented at
-the pin; it never means AHL observed a runtime loading the surface.
+inventory for any other version is `unsupported` and prints no surface matrix.
+`verified` means documented at the pin; it never means AHL observed a runtime
+loading the surface.
 
 Version-gated Claude Code items: `AGENTS.md` read only without a `CLAUDE.md`
 (>=2.1.277), project rules skipped without the project setting source

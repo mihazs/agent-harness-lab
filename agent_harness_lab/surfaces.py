@@ -572,9 +572,11 @@ MATRIX = (
     ('settings', {'claude-code': ('.claude/settings.json', 'config'), 'codex': ('.codex/config.toml', 'config')}),
 )
 # Where the single-run controller routes a surface. An adoptable path whose edits carry the hook facet (an agent
-# definition) is a contract route: change plans keep it unresolved until a passed hook contract names it.
+# definition) is a contract route: change plans keep it unresolved until a passed hook contract names it. Only
+# private_excluded is excluded (listed, never read); an unsupported path may still be read and hashed by the
+# inventory, so it keeps its own route and is never adopted or written.
 ROUTES = {'adoptable': 'adopt', 'contract_required': 'contract', 'recommendation_only': 'recommendation',
-          'private_excluded': 'excluded', 'unsupported': 'excluded'}
+          'private_excluded': 'excluded', 'unsupported': 'unsupported'}
 
 
 def _cell(runtime, entry):
@@ -607,7 +609,8 @@ def adopted():
 
 def deferred(resolved):
     """Surfaces a change plan leaves for later, in SURFACES order: every surface not in resolved, except one that every
-    runtime excludes (memory is never read or changed, so it is never deferred)."""
+    runtime routes to excluded (private_excluded, such as memory, is never read or changed, so it is never deferred).
+    An unsupported route is still deferred: the inventory may read it, so it never silently drops out."""
     if not set(resolved) <= set(SURFACES): raise ValueError('unknown resolved surface')
     return tuple(row['surface'] for row in matrix() if row['surface'] not in resolved
                  and set(row['route'].values()) - {'excluded', None})

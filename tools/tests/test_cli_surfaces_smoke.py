@@ -1,4 +1,8 @@
-"""CLI smoke of the generic surface matrix on a synthetic checkout, and controller deferred lists derived from it."""
+"""CLI smoke of the generic surface matrix on a synthetic checkout, and controller deferred lists derived from it.
+
+The matrix is checkout-independent: it is one synthetic path per surface and runtime. Per-node writability and
+routes in the analyze and improve outputs are not covered here; #292 tracks them.
+"""
 import json
 import os
 import re
@@ -41,13 +45,42 @@ class SurfaceMatrixCLISmoke(unittest.TestCase):
         self.checkout = fixture.build(self.base / 'checkout', hostile=False)
         self.before = fixture.tree_state(self.checkout)
 
-    def run_cli(self, runtime):
+    def run_cli(self, runtime, version=None, code=0, checkout=None):
         environment = dict(os.environ, XDG_STATE_HOME=str(self.base / 'state'), PYTHONPATH=str(ROOT))
-        completed = subprocess.run([sys.executable, '-m', 'agent_harness_lab', 'sources', 'inventory', str(self.checkout),
-                                    '--runtime', runtime, '--version', surfaces.PINS[runtime]],
+        completed = subprocess.run([sys.executable, '-m', 'agent_harness_lab', 'sources', 'inventory',
+                                    str(checkout or self.checkout), '--runtime', runtime,
+                                    '--version', version or surfaces.PINS[runtime]],
                                    capture_output=True, text=True, env=environment, cwd=self.base, timeout=60)
-        self.assertEqual((completed.returncode, completed.stderr), (0, ''))
+        self.assertEqual((completed.returncode, completed.stderr), (code, ''))
         return completed.stdout, json.loads(completed.stdout)
+
+    def test_unpinned_version_prints_no_matrix(self):
+        # The matrix rests on research at the pins; an unsupported version must not present it as fact.
+        for runtime in surfaces.RUNTIMES:
+            with self.subTest(runtime=runtime):
+                _, result = self.run_cli(runtime, version='9.9.9', code=3)
+                self.assertEqual((result['status'], result['nodes'], result['surfaces']), ('unsupported', 0, []))
+
+    def test_only_private_excluded_files_go_unread(self):
+        # An unsupported verdict with a known kind is read and hashed; only private_excluded stays unread.
+        checkout = self.base / 'boundary'
+        for relative in ('.claude/rules/style.md', 'CLAUDE.local.md'):
+            (checkout / relative).parent.mkdir(parents=True, exist_ok=True)
+            (checkout / relative).write_text('synthetic\n')
+        self.assertEqual(surfaces.classify('.claude/rules/style.md', 'claude-code').writability, 'unsupported')
+        self.assertEqual(surfaces.classify('CLAUDE.local.md', 'claude-code').writability, 'private_excluded')
+        _, result = self.run_cli('claude-code', checkout=checkout)
+        nodes = {node['path']: node for node in json.loads(Path(result['output']).read_text())['nodes']}
+        self.assertIsNotNone(nodes['.claude/rules/style.md']['content_sha256'])
+        self.assertEqual(nodes['CLAUDE.local.md']['parse_status'], 'not_read')
+        self.assertIsNone(nodes['CLAUDE.local.md']['content_sha256'])
+        self.assertEqual(surfaces.ROUTES['private_excluded'], 'excluded')
+        self.assertNotEqual(surfaces.ROUTES['unsupported'], 'excluded')
+        for relative in ('README.md', 'skills/harness-self-improvement/references/surfaces.md'):
+            with self.subTest(document=relative):
+                text = ' '.join((ROOT / relative).read_text().split())
+                self.assertNotIn('`unsupported`): the file is never read', text)
+                self.assertNotIn('*excluded* files are never read', text)
 
     def test_inventory_cli_prints_all_eleven_rows_with_expected_writability(self):
         for runtime in surfaces.RUNTIMES:
@@ -104,6 +137,17 @@ class DeferredSurfacesFromMatrix(unittest.TestCase):
         class Blocked: status = 'blocked'
         self.assertNotIn('hooks', one_call.deferred_surfaces((Passed(),)))
         self.assertIn('hooks', one_call.deferred_surfaces((Passed(), Blocked())))
+
+    def test_a_surface_every_runtime_leaves_unsupported_stays_deferred(self):
+        # The inventory may read an unsupported path, so it must not drop out of deferred_surfaces like memory does.
+        cell = surfaces._cell
+        def unsupported(runtime, entry):
+            if entry == dict(surfaces.MATRIX)['memory'][runtime]:
+                return dict(writability='unsupported', route=surfaces.ROUTES['unsupported'])
+            return cell(runtime, entry)
+        with patch.object(surfaces, '_cell', unsupported):
+            self.assertIn('memory', surfaces.deferred(surfaces.adopted()))
+        self.assertNotIn('memory', surfaces.deferred(surfaces.adopted()))
 
     def test_a_new_matrix_route_changes_the_deferred_lists(self):
         changed = dict(surfaces.ROUTES, recommendation_only='excluded')
