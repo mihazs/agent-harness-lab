@@ -102,6 +102,11 @@ workspace and role-allowed read-only inputs; clears inherited environment; and
 requests separate network/process/user namespaces, capability removal, process
 session cleanup and CPU/address-space/process/file/output/time limits. Input
 integrity is rechecked. No host home/config/socket is mounted.
+Namespaces do not isolate kernel keyrings, so every role and grader launch, like a
+hook trial, first joins a new empty session keyring through the same host-side
+trampoline and cannot search or read keys of the validator's session keyring. A
+kernel without key support proceeds; any other failure stops before bubblewrap
+starts, and `ahl sandbox-check` reports `keyring_isolation_unavailable`.
 Writable workspaces must be disjoint from every declared read-only input; nested
 mounts of the same host tree are rejected before execution. Captured stdout and
 stderr share one byte allowance. Timeout, interruption and selector-registration

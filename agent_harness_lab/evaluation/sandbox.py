@@ -35,6 +35,28 @@ os.execv(sys.argv[1], sys.argv[1:])
 '''
 
 
+class KeyringUnavailable(ValueError):
+    """The keyring trampoline refused to start bubblewrap."""
+
+
+def keyring_launcher():
+    """Host argv prefix that runs the next argument through KEYRING_TRAMPOLINE: every sandbox launch starts with it."""
+    if not sys.executable:
+        raise ValueError('no interpreter for the keyring trampoline')
+    return [sys.executable, '-I', '-S', '-c', KEYRING_TRAMPOLINE]
+
+
+def _keyring_refused(process):
+    """Whether a launch exited through the trampoline's refusal, which happens before bubblewrap starts."""
+    if process.returncode != KEYRING_EXIT or process.stderr is None:
+        return False
+    try:
+        os.set_blocking(process.stderr.fileno(), False)
+        return KEYRING_UNAVAILABLE.encode() in os.read(process.stderr.fileno(), 4096)
+    except (OSError, ValueError):
+        return False
+
+
 def _file_sha256(path):
     with Path(path).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
@@ -149,6 +171,14 @@ class SandboxBackend:
             semantic_intent='unknown',automatic_promotion=False,publication_allowed=False)
 
     def command(self, argv, workspace, inputs, role):
+        """Host argv for one role run: bubblewrap_command() launched through KEYRING_TRAMPOLINE, so the run starts in a
+        new empty session keyring and cannot search or read keys of the validator's session keyring."""
+        sandboxed = self.bubblewrap_command(argv, workspace, inputs, role)
+        return keyring_launcher() + sandboxed
+
+    def bubblewrap_command(self, argv, workspace, inputs, role):
+        """The bubblewrap argv alone. Only nested or traced launches whose host process already went through the
+        trampoline use it directly; a host launch uses command()."""
         check_role(inputs,role)
         if role not in ROLES or not argv or not all(isinstance(a, str) for a in argv):
             raise ValueError('invalid role/command')
@@ -193,15 +223,14 @@ class SandboxBackend:
         (KEYRING_TRAMPOLINE) gives the run a new empty session keyring before bubblewrap starts."""
         if not self.binary:
             raise ValueError('bubblewrap is unavailable')
-        if not sys.executable:
-            raise ValueError('no interpreter for the keyring trampoline')
+        launcher = keyring_launcher()
         if not argv or not all(isinstance(a, str) and '\0' not in a for a in argv):
             raise ValueError('invalid hook trial command')
         root, cwd, runtime = (Path(path).resolve(strict=True) for path in (root, cwd, runtime))
         if not cwd.is_relative_to(root) or not runtime.is_file():
             raise ValueError('hook trial command outside its trial')
-        command = [sys.executable, '-I', '-S', '-c', KEYRING_TRAMPOLINE, self.binary, '--unshare-all', '--unshare-user',
-                   '--unshare-net', '--die-with-parent', '--new-session', '--cap-drop', 'ALL', '--clearenv']
+        command = launcher + [self.binary, '--unshare-all', '--unshare-user', '--unshare-net', '--die-with-parent',
+                              '--new-session', '--cap-drop', 'ALL', '--clearenv']
         for key, value in sorted(env.items()):
             if not isinstance(key, str) or not isinstance(value, str) or not key or '=' in key or '\0' in key + value:
                 raise ValueError('invalid hook trial environment')
@@ -278,8 +307,12 @@ class SandboxBackend:
                 del self.permission_reports[checkpoint:]
             except TimeoutError:
                 return dict(status='unsupported', reason='namespace_probe_timeout', automatic_promotion=False)
+            except KeyringUnavailable:
+                return dict(status='unsupported', reason='keyring_isolation_unavailable', automatic_promotion=False)
             except (OSError, ValueError, subprocess.SubprocessError) as error:
                 return dict(status='unsupported', reason=_launch_failure(error), automatic_promotion=False)
+        if run['exit_code'] == KEYRING_EXIT and KEYRING_UNAVAILABLE in run['stderr']:
+            return dict(status='unsupported', reason='keyring_isolation_unavailable', automatic_promotion=False)
         available = run['exit_code'] == 0 and run['status'] == 'completed' and run['inputs_unchanged'] is True
         if self.permission_audit:
             observed=run['attestation']['permission_audit']
@@ -427,10 +460,13 @@ class SandboxBackend:
                     if audit:
                         audit_report=audit.result()
                         if audit_report['status']!='complete':reason=reason or 'permission_audit_unavailable'
-                except BaseException:
+                except BaseException as error:
                     try: os.killpg(process.pid, signal.SIGKILL)
                     except ProcessLookupError: pass
                     process.wait(timeout=2)
+                    # Before the storage handoff no role code has run, so this exit is the trampoline's own refusal.
+                    if isinstance(error, Exception) and scratch is not None and not scratch.verified and _keyring_refused(process):
+                        raise KeyringUnavailable(KEYRING_UNAVAILABLE) from error
                     raise
                 finally:
                     poll.close()

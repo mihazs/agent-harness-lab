@@ -120,10 +120,13 @@ class PrivateWorkspace:
         self.export_fingerprints = None
         self.boundary_contract=runtime_boundary.contract(backend,inputs,role,limits,deadline,self.policy)
         self.boundary_observation=self.boundary_work_identity=None
-        self.command = self.layout(backend.command(['/usr/bin/python3', '-I', '-c', BOOTSTRAP], workspace, inputs, role), bootstrap=True)
+        # A permission audit launches its observer through the keyring trampoline, so the traced exec chain still starts
+        # at bubblewrap; the nested bubblewrap inherits the outer run's empty session keyring.
+        outer = backend.bubblewrap_command if getattr(backend, 'permission_audit', None) else backend.command
+        self.command = self.layout(outer(['/usr/bin/python3', '-I', '-c', BOOTSTRAP], workspace, inputs, role), bootstrap=True)
         inner_argv = ['/usr/bin/python3', '-I', '-c', VERIFY, json.dumps(self.policy), json.dumps(argv)]
         if self.boundary_contract is not None:inner_argv.append(json.dumps(self.boundary_contract))
-        inner = backend.command(inner_argv, workspace, inputs, role)
+        inner = backend.bubblewrap_command(inner_argv, workspace, inputs, role)
         inner[0] = '/usr/bin/bwrap'
         for index, value in enumerate(inner):
             if value == '--ro-bind':
@@ -154,7 +157,8 @@ class PrivateWorkspace:
             self.filter_fd, self.filter_policy = (sealed_filter(permission_audit=True)
                 if getattr(self.backend,'permission_audit',None) else sealed_filter())
             self.receiver, self.sender = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
-            self.command[1:1] = ['--seccomp', str(self.filter_fd)]
+            index = self.command.index('--unshare-all')  # bubblewrap's first option, after any trampoline prefix
+            self.command[index:index] = ['--seccomp', str(self.filter_fd)]
             return self
         except BaseException:
             self.__exit__()
