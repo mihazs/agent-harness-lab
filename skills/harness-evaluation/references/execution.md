@@ -229,6 +229,9 @@ For aggregate memory/process caps and CPU bandwidth controls, explicitly add
 and pristine grader use separate cgroup v2 children under that subtree. Missing
 delegation blocks execution; no controllers or privileged permissions are changed.
 Use `ahl sandbox-check --cgroup-root ...` to probe the exact requested boundary.
+Without a cgroup the process cap applies inside the sandbox's own user namespace
+(Linux 5.14+); each attestation's `process_bound` records the enforced scope or
+`enforced: false`, and a full host process table reports `process_limit_exhausted`.
 See the [resource contract](../../../docs/evaluation-foundation.md#offline-sandbox-and-threat-model)
 for prerequisites, kernel-test limits and remaining certification safeguards.
 

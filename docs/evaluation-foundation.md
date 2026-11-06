@@ -109,6 +109,17 @@ failures trigger process-group cleanup, including children remaining in the grou
 after their parent exits. Host process-control tests establish that behavior separately from the
 namespace containment tests, which still require a supported host.
 
+The process bound counts only the sandbox's processes, never the invoking user's
+others. With `--cgroup-root` it is the worker cgroup's `pids.max`. Without one,
+on Linux 5.14 or later, bubblewrap holds the sandbox's first process in its new
+user namespace (`--info-fd`, `--block-fd`) while the controller sets
+`RLIMIT_NPROC` on it; that kernel counts the limit per user namespace, so the
+real UID keeps its host limit. Otherwise, or when that cap cannot be set and read
+back, the run continues without a process bound. Each attestation's
+`process_bound` names the enforced `scope` (`cgroup` or `user_namespace`) and
+limit, or `enforced: false` with a reason, and `ahl sandbox-check` then lists
+`no sandbox process bound` among its limitations.
+
 An explicit `--cgroup-root` on `ahl sandbox-check` or `ahl evaluate --agent offline`
 opts into aggregate Linux cgroup v2 controls. The caller must supply an existing
 unprivileged delegated subtree with cpu, memory and pids controllers already
@@ -147,8 +158,9 @@ are synthetic. Checks cover role/file/environment/network boundaries, readonly
 inputs, artifact links, forged grades, process-session escape, OOM, output limits,
 timeouts, interruption cleanup and both arms of all seven offline starter tasks.
 
-The default probe can fail on a busy shared account because its `RLIMIT_NPROC`
-is per real user, not per trial. A successful bare namespace command does not
+A probe whose bubblewrap clone fails with `EAGAIN` reports
+`process_limit_exhausted`: the host or the user's own process limit is full,
+which is not a missing namespace. A successful bare namespace command does not
 establish that requested resource policy. The delegated canary command exercises
 the cgroup policy without raising the default limit or adding a runtime fallback.
 
