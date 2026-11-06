@@ -149,6 +149,12 @@ class TestDiagnosticAndAdapter:
         assert (row['provenance'],row['sampling'],row['source_kind'],row['labels'],row['evidence_refs']) == ('reviewed_annotation','signal_enriched','synthetic',['tool_timeout'],['synthetic:e1'])
         assert row['authority'] == 'untrusted_evidence_only'
 
+    def test_contrast_top_k_caps_each_group_separately(self):
+        result=LexicalIndex(self.contrast_corpus()).contrast('tool timeout','tool_timeout',control_labels=('success',),top_k=1)
+        groups=result['groups']
+        assert {name:(group['matches'],[row['incident_id'] for row in group['results']]) for name,group in groups.items()} == \
+            dict(supporting=(2,['s1']),contradicting=(2,['c1']),controls=(1,['ok']),unresolved=(1,['u1']))
+
     def test_contrast_withholds_private_summaries_and_raw_root_ids(self):
         result=LexicalIndex(self.contrast_corpus()).contrast('tool timeout','tool_timeout')
         text=json.dumps(result)
