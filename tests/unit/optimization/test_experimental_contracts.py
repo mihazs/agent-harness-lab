@@ -307,6 +307,8 @@ def test_changed_bytes_with_rollback_lineage_and_narrower_scope_are_admissible(a
     pytest.param(dict(runtime='other-runtime'), 'changed_runtime', id='runtime-swap'),
     pytest.param(dict(runtime_version='1'), 'changed_runtime_version', id='runtime-version-swap'),
     pytest.param(dict(content_digest='0' * 64), 'missing_rollback_lineage', id='new-bytes-without-lineage'),
+    pytest.param(dict(previous_digest=sha256(b'unreviewed')), 'changed_rollback_lineage',
+                 id='unchanged-bytes-with-rewritten-rollback-target'),
 ])
 def test_candidate_that_expands_or_rewrites_the_contract_is_rejected(authorized, authorization, changes, reason):
     review = review_candidate_spec(authorized, spec_mapping(**changes), authorization)
@@ -329,3 +331,17 @@ def test_authorized_spec_must_fit_the_project_authorization(authorized):
         review_candidate_spec(authorized, spec_mapping(), narrower)
     with pytest.raises(TypeError):
         review_candidate_spec(spec_mapping(), spec_mapping(), narrower)
+
+
+def test_new_bytes_whose_lineage_names_the_spec_digest_are_rejected(authorized, authorization):
+    review = review_candidate_spec(authorized, spec_mapping(), authorization)
+    assert review['authorized_content_digest'] == authorized.content_digest != review['authorized_digest']
+    candidate = spec_mapping(content_digest=sha256(NEW_ADAPTER_BYTES), previous_digest=review['authorized_digest'])
+    review = review_candidate_spec(authorized, candidate, authorization)
+    assert (review['status'], review['reasons']) == ('rejected', ['missing_rollback_lineage'])
+
+
+def test_authorized_adapter_must_be_authorized_by_the_project(authorized):
+    other_adapter = Authorization('project', ('read', 'search'), ('other-adapter',), 'v1')
+    with pytest.raises(ValueError, match='exceeds the project authorization'):
+        review_candidate_spec(authorized, spec_mapping(), other_adapter)

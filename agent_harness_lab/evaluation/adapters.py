@@ -172,6 +172,7 @@ def review_candidate_spec(authorized, candidate, authorization):
     if authorized.adapter_id not in authorization.adapter_ids or not set(authorized.tools) <= set(authorization.tools):
         raise ValueError('authorized spec exceeds the project authorization')
     result = dict(schema=SPEC_SCHEMA, authorized_digest=authorized.digest,
+                  authorized_content_digest=authorized.content_digest,
                   authorization_digest=authorization.digest, executes_adapter_code=False,
                   automatic_promotion=False,
                   runtime=runtime_capability(authorized.runtime, authorized.runtime_version))
@@ -188,7 +189,10 @@ def review_candidate_spec(authorized, candidate, authorization):
             reasons.append(f'expanded_{name}')
     ceilings = dict(authorized.limits)
     reasons += [f'expanded_limit_{name}' for name, value in spec.limits if value > ceilings[name]]
-    if spec.content_digest != authorized.content_digest and spec.previous_digest != authorized.content_digest:
+    if spec.content_digest == authorized.content_digest:
+        if spec.previous_digest != authorized.previous_digest:
+            reasons.append('changed_rollback_lineage')
+    elif spec.previous_digest != authorized.content_digest:
         reasons.append('missing_rollback_lineage')
     return dict(result, status='rejected' if reasons else 'within_authorized_capabilities',
                 reasons=reasons, candidate_digest=spec.digest)

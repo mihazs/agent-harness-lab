@@ -130,7 +130,10 @@ and so are limits above 64 KiB of input, 128 KiB of output or 10 seconds.
 untrusted candidate with the controller-owned spec without model judgment. It
 rejects a candidate that adds a tool, transform or grant, raises a limit, renames
 the adapter or changes its contracts or runtime. New implementation bytes are
-admissible only when `previous_digest` names the authorized digest. The verdict
+admissible only when `previous_digest` equals the authorized spec's
+`content_digest` (the implementation SHA-256, reported as
+`authorized_content_digest`), not the spec digest `authorized_digest`. With
+unchanged bytes, `previous_digest` must stay as authorized. The verdict
 `within_authorized_capabilities` means only that the candidate stays inside the
 declared authority. The review never executes adapter code, never promotes, and
 reports the runtime as unsupported. `verify_adapter_bytes` rechecks bytes against
