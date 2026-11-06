@@ -1,0 +1,5 @@
+---
+"agent-harness-lab": minor
+---
+
+Add `diagnostics.audit_sampling`, an offline probability-sampled audit of alerted and non-alerted episodes (#75). A frozen frame records capture status and exclusions for one window and scope. A plan bound to its hash declares a mandatory random route plus optional alerted, severe, uncertain and out-of-distribution oversampling, and refuses zero or invalid rates and budget overruns. `draw` replays a seeded Poisson sample in which overlapping routes combine into one draw with a known inclusion probability, and seals a receipt before labels exist. `estimate` reports Horvitz-Thompson prevalence, missed-incident and triage-recall estimates with Poisson-design normal intervals. Pending or nonresponding reviews make the result inconclusive with assumption-free bounds instead of counting as negatives. Alert-only counts and the unweighted review composition are kept separate and marked as non-population figures. Receipts and reports carry unit hashes only and are refused for public export.
