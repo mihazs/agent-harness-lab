@@ -286,7 +286,7 @@ class NestedSurfaceAdoptionTests(unittest.TestCase):
         self.assertFalse((self.project/'.claude/agents').exists()); self.assertFalse((self.project/'.codex').exists())
         import shutil; shutil.rmtree(self.root/'baseline'); shutil.rmtree(self.root/'candidate')
         plain={'.claude/agents/ok.md':'---\nname: ok\ndescription: reviews synthetic diffs\n---\nRead only.\n',
-               '.codex/agents/ok.toml':'name = "ok"\ndeveloper_instructions = "Review synthetic diffs."\n'}
+               '.codex/agents/ok.toml':'name = "ok"\ndescription = "d"\ndeveloper_instructions = "Review synthetic diffs."\n'}
         original,states=self.stage_files(plain)
         self.assertEqual(self.adopt(original,states()),sorted(plain))
 
