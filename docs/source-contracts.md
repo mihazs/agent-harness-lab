@@ -1277,6 +1277,14 @@ parser error. The fact bound counts the namespaced facts too, and a
 `private_excluded` file such as `.claude/settings.local.json` is still not read
 by any parser.
 
+A combined file larger than `harness_inventory.MAX_CONFIG_BYTES` (1 MiB) is
+refused once, in dispatch, before any parser decodes it: the node records
+`parse_failed` with only `<kind>.parse_status` set to `parse_failed` for each
+extra kind. No TOML or JSON decoder runs on its bytes. The `config`, `hook` and
+`plugin` parsers also check this shared bound themselves before decoding, so a
+direct caller gets the same refusal, and an `.mcp.json` node over it is
+`parse_failed` from the `config` parser.
+
 For a settings file the `plugin` parser records counts only: `plugin_file`
 (`claude_settings` or `codex_config`), `plugins_declared`,
 `marketplaces_declared`, and `plugins_content_not_selected`,

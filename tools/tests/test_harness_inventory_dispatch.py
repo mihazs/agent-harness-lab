@@ -2,11 +2,12 @@
 import json
 from pathlib import Path
 import tempfile
+import tomllib
 import unittest
 from unittest.mock import patch
 
 from agent_harness_lab import surfaces
-from agent_harness_lab.sources import harness_inventory as inventory
+from agent_harness_lab.sources import config_inventory, harness_inventory as inventory, hooks_inventory, plugins_inventory
 if __package__:
     from . import harness_surface_fixture as fixture
 else:
@@ -149,6 +150,86 @@ class MultiSurfaceDispatchTests(unittest.TestCase):
         (self.checkout / '.claude/settings.local.json').write_text(json.dumps(SETTINGS))
         local = self.node(CLAUDE, '.claude/settings.local.json')
         self.assertEqual((local.declared_state, local.parse_status, local.facts), ('present_content_not_read', 'not_read', ()))
+
+
+# Synthetic oversized but well-formed documents: each is one byte past the shared config bound.
+BOUND = inventory.MAX_CONFIG_BYTES
+OVERSIZED = {'.codex/config.toml': CONFIG_TOML + '#' + 'x' * BOUND + '\n',
+             '.claude/settings.json': json.dumps(dict(SETTINGS, model='x' * BOUND))}
+FACET_PARSERS = (hooks_inventory.parse, config_inventory.parse, plugins_inventory.parse_manifest)
+
+
+class ConfigByteBoundTests(unittest.TestCase):
+    """#308: dispatch keeps the shared byte bound in front of every TOML and JSON decoder of a combined file."""
+
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory(prefix='ahl-config-bound-'); self.addCleanup(temp.cleanup)
+        self.checkout = fixture.build(Path(temp.name).resolve() / 'checkout', OVERSIZED, hostile=False)
+
+    def decoded(self, target, call):
+        """Run call with target's decoder recorded; returns the call's value and every decoded length."""
+        lengths, original = [], target.loads
+        def recording(text, *args, **kwargs): lengths.append(len(text)); return original(text, *args, **kwargs)
+        with patch.object(target, 'loads', recording): value = call()
+        return value, lengths
+
+    def test_the_oversized_files_exceed_only_the_config_bound(self):
+        for path, text in OVERSIZED.items():
+            with self.subTest(path=path):
+                self.assertLess(BOUND, len(text.encode()), inventory.MAX_BYTES // 4)
+                self.assertTrue(tomllib.loads(text) if path.endswith('.toml') else json.loads(text))
+
+    def test_an_oversized_codex_config_is_refused_before_tomllib_runs_for_any_facet(self):
+        value, lengths = self.decoded(tomllib, lambda: inventory.capture(self.checkout, CODEX))
+        self.assertEqual(value.status, 'declared')
+        self.assertFalse([length for length in lengths if length > BOUND])
+        node = next(node for node in value.nodes if node.path == '.codex/config.toml')
+        self.assertEqual((node.kind, node.parse_status, node.facts), ('hook', 'parse_failed', (
+            ('config.parse_status', 'parse_failed'), ('plugin.parse_status', 'parse_failed'))))
+
+    def test_an_oversized_claude_settings_file_is_refused_before_json_decoding(self):
+        value, lengths = self.decoded(json, lambda: inventory.capture(self.checkout, CLAUDE))
+        self.assertFalse([length for length in lengths if length > BOUND])
+        node = next(node for node in value.nodes if node.path == '.claude/settings.json')
+        self.assertEqual((node.parse_status, dict(node.facts)), ('parse_failed', {
+            'config.parse_status': 'parse_failed', 'plugin.parse_status': 'parse_failed'}))
+
+    def test_every_facet_parser_refuses_an_oversized_config_before_decoding(self):
+        for profile, path, target in ((CODEX, '.codex/config.toml', tomllib), (CLAUDE, '.claude/settings.json', json)):
+            raw = OVERSIZED[path].encode()
+            for parser in FACET_PARSERS:
+                with self.subTest(path=path, parser=parser.__module__):
+                    def call():
+                        with self.assertRaises(ValueError): parser(path, raw, profile)
+                    _, lengths = self.decoded(target, call)
+                    self.assertEqual(lengths, [])
+
+    def test_dispatch_refuses_an_oversized_combined_file_before_any_parser_is_called(self):
+        # A parser with no size check of its own stands in for a future facet parser that leaves out the bound, so
+        # only the dispatch refusal can keep it from seeing the oversized bytes; at the bound it must still be called.
+        at_bound = CONFIG_TOML + '#' * (BOUND - len(CONFIG_TOML.encode()) - 1) + '\n'
+        for profile, path, text in ((CODEX, '.codex/config.toml', None), (CLAUDE, '.claude/settings.json', None),
+                                    (CODEX, '.codex/config.toml', at_bound)):
+            if text is not None: (self.checkout / path).write_text(text)
+            calls = []
+            def unbounded(target, raw, _profile): calls.append(target); return 'parsed', {}
+            with self.subTest(path=path, at_bound=text is not None), patch.object(inventory, '_resolve', lambda _: unbounded):
+                node = next(node for node in inventory.capture(self.checkout, profile).nodes if node.path == path)
+                if text is None:
+                    self.assertNotIn(path, calls)
+                    self.assertEqual(node.parse_status, 'parse_failed')
+                else:
+                    self.assertEqual(calls.count(path), 3)  # hook, config and plugin each see the bytes once
+                    self.assertEqual(node.parse_status, 'parsed')
+
+    def test_a_config_at_the_bound_is_still_parsed_by_every_facet(self):
+        text = CONFIG_TOML + '#' * (BOUND - len(CONFIG_TOML.encode()) - 1) + '\n'
+        self.assertEqual(len(text.encode()), BOUND)
+        (self.checkout / '.codex/config.toml').write_text(text)
+        node = next(node for node in inventory.capture(self.checkout, CODEX).nodes if node.path == '.codex/config.toml')
+        facts = dict(node.facts)
+        self.assertEqual((node.parse_status, facts['config.parse_status'], facts['plugin.parse_status']),
+                         ('parsed', 'parsed', 'parsed'))
 
 
 if __name__ == '__main__': unittest.main()
