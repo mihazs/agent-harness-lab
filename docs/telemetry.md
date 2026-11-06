@@ -159,10 +159,11 @@ reject. A sidechain also requires `agentId`; optional `teamName` participates in
 writer scoping. Metadata without a supported envelope contributes visible coverage
 gaps, not fabricated events. Incompatible provided versions or project labels
 reject. No directory name, timestamp, prompt text or filename establishes identity.
-The existing `claude-jsonl-v1` synthetic adapter remains supported. `ahl analyze`
-root/session selection is currently the separate pinned Codex facility; bounded
-Claude project-root selection exists only as the `2.1.316-v2` source-journal
-profile in [source contracts](source-contracts.md#explicit-bounded-claude-project-root-journal).
+The existing `claude-jsonl-v1` synthetic adapter remains supported. `ahl analyze
+--source-root` selects a bounded Claude `projects` directory with this pinned
+version (see [bounded Claude project-root selection](#bounded-claude-project-root-selection)),
+through the reader of the `2.1.316-v2` source-journal profile in
+[source contracts](source-contracts.md#explicit-bounded-claude-project-root-journal).
 Claude never falls back to a home scan when this explicit version is selected.
 
 Replay approved observations in physical file order, including branches, parallel
@@ -386,8 +387,8 @@ ahl analyze PROJECT --source-root NATIVE_ROOT --format codex \
 The root is an explicitly authorized directory, including any selected active and
 archive subdirectories. It is mutually exclusive with `--events`; `--session`
 requires the root and matches an exact native thread `id`, not a root-session ID
-or filename. Omit it to include matching project captures within the bounds. Root
-selection requires the pinned Codex profile and never falls back to home discovery.
+or filename. Omit it to include matching project captures within the bounds. Codex
+root selection requires the pinned Codex profile and never falls back to home discovery.
 Only uncompressed `rollout-*.jsonl` files qualify. Prompt indexes such as
 `history.jsonl` and compressed captures are not treated as transcripts.
 
@@ -440,3 +441,41 @@ Unlimited selection does not remove host constraints. Each JSONL record must fit
 the host JSON decoder and memory, and normalized events and correlation state are
 retained in memory. File I/O streams records instead of loading a whole capture;
 filesystem access, scope, stable-read and provenance checks still apply.
+
+### Bounded Claude project-root selection
+
+```sh
+ahl analyze PROJECT --source-root CLAUDE_PROJECTS_DIR --format claude \
+  --source-version claude-jsonl-2.1.316 --session NATIVE_SESSION_UUID \
+  --max-captures 100 --max-capture-scan 2000 --max-events 100000
+```
+
+The pinned Claude profile accepts one explicitly authorized directory with the
+layout of a Claude `projects` directory. It reuses the reader of the
+[bounded Claude project-root journal](source-contracts.md#explicit-bounded-claude-project-root-journal):
+only the directories that `PROJECT`'s sanitized path maps to are listed and read,
+the main `<session-uuid>.jsonl` and its `<session-uuid>/subagents/**/agent-*.jsonl`
+transcripts are candidates, and each candidate's first attributable envelope
+(`version`, `cwd`, `sessionId`, `isSidechain`, `agentId`) must agree with its
+location before the whole file is replayed. Other project directories are never
+opened; a colliding project's file in the mapped directory is rejected by record
+scope. There is no home, `CLAUDE_CONFIG_DIR` or account discovery, and this
+selection never falls back to default discovery. `--session` requires the root and
+an exact native session UUID; it selects that session's main and subagent
+transcripts. `--max-captures`, `--max-capture-scan` and `--max-events` map to the
+journal's `max_files`, `max_scan_files` and `max_records`; omitted limits are
+unlimited.
+
+Main and subagent writers remain separate cases; sidechain owners, parent
+sessions, independence and outcomes stay unknown, and parent pointers are not
+traversed. Copies of one writer in the selected directories merge by native UUID.
+The private source summary keeps per-file receipts, digests, counts and reached
+limits as fingerprints. A reached file, scan or subagent-tree limit, an
+unattributable, unsupported, mislocated or unrecognized-layout file, or a skipped
+unsafe entry adds an incomplete-history caveat; a missing or empty mapped directory
+adds the unknown-coverage caveat instead of an empty success. A partial last line
+is omitted with its caveat. Hard read, record and stability violations abort before
+any ledger event. Only one root is accepted here; an archive or backup copy is
+analyzed separately or declared as an additional root in the source-journal
+profile. Analysis advances no source cursor, and the closed-input and bank
+requalification domains still accept only the pinned Codex root.

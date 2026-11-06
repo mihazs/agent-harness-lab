@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+import shutil
 import socket
 import tempfile
 import unittest
@@ -95,7 +96,7 @@ class ClaudeNativeTests(unittest.TestCase):
             for options in (dict(source_format='claude', source_version=VERSION),
                     dict(events=self.path, source_format='codex', source_version=VERSION),
                     dict(events=self.path, source_format='claude', source_version='future'),
-                    dict(source_root=self.root, source_format='claude', source_version=VERSION),
+                    dict(source_root=self.root, source_format='claude'),
                     dict(events=self.path, source_format='claude', source_version=VERSION, session='synthetic-session')):
                 with self.assertRaises(ValueError): collect(self.project, **options)
 
@@ -317,3 +318,116 @@ class ClaudeNativeTests(unittest.TestCase):
         self.assertEqual(sum(r.get('missing_reason') == 'unsupported_native_entry' for r in rows), 3)
         self.assertTrue(all(verified_outcome(r) is None and r['outcome'] == 'unknown' for r in rows))
         self.assertNotIn('SYNTHETIC_SECRET', json.dumps(rows)); self.assertNotIn(str(self.project), json.dumps(rows))
+
+
+SESSION = '00000000-0000-4000-8000-000000000001'
+OTHER = '00000000-0000-4000-8000-000000000002'
+
+
+class ClaudeRootAnalysisTests(unittest.TestCase):
+    """`ahl analyze --source-root` over one synthetic Claude `projects` directory."""
+    def setUp(self):
+        from agent_harness_lab.telemetry.claude_discovery import directory_names
+        self.f = ClaudeNativeTests(); self.f.setUp(); self.addCleanup(self.f.doCleanups)
+        for row in self.f.rows:
+            if 'sessionId' in row: row['sessionId'] = SESSION
+        self.projects = self.f.root/'claude'/'projects'; self.projects.mkdir(parents=True)
+        self.name = directory_names(self.f.project.resolve())[0]
+        self.write(SESSION+'.jsonl')
+
+    def write(self, name, rows=None, directory=None):
+        path = self.projects/(directory or self.name)/name; path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(''.join(json.dumps(row)+'\n' for row in (self.f.rows if rows is None else rows)))
+        return path
+
+    def sidechain(self, session=SESSION, agent='a1'):
+        rows = deepcopy(self.f.rows[1:6])
+        for row in rows: row.update(sessionId=session, isSidechain=True, agentId=agent)
+        return rows
+
+    def collect(self, **options):
+        return collect(self.f.project, source_root=self.projects, source_format='claude', source_version=VERSION, **options)
+
+    def discovery(self, result): return result['sources'][0]['native_coverage']['discovery']
+
+    def private(self, value):
+        text = json.dumps(value)
+        for secret in ('SYNTHETIC_SECRET', SESSION, OTHER, self.name, str(self.projects), str(self.f.project)):
+            self.assertNotIn(secret, text)
+
+    def test_root_analysis_reads_only_the_mapped_project_directory_and_keeps_writers_separate(self):
+        self.write(SESSION+'/subagents/agent-a1.jsonl', self.sidechain())
+        foreign = self.projects/'-synthetic-foreign'/(OTHER+'.jsonl'); foreign.parent.mkdir()
+        foreign.write_bytes(b'{}\n'); foreign.open('ab').truncate(64*1024*1024)
+        before = {p: p.read_bytes() for p in self.projects.rglob('*.jsonl') if p != foreign}
+        events = []
+        with patch('agent_harness_lab.evidence._capture_candidates', side_effect=AssertionError('no implicit discovery')), \
+                patch.object(socket, 'socket', side_effect=AssertionError('no network')), \
+                patch('subprocess.Popen', side_effect=AssertionError('no runtime')):
+            result = self.collect(event_sink=events.append)
+        discovery = self.discovery(result)
+        self.assertEqual((discovery['selected_directories'], discovery['accepted_files']), (1, 2))
+        self.assertLess(discovery['bytes_read'], 1024*1024)
+        self.assertEqual(len(events), 12+7); self.assertEqual(result['analysis']['cases'], 2)
+        self.assertEqual(len({e['case_id'] for e in events}), 2)
+        self.assertTrue(all(not e['lineage_verified'] and verified_outcome(e) is None for e in events))
+        self.assertEqual(result['evaluation_outcomes'], []); self.assertEqual(result['sources'][0]['format'], 'claude')
+        self.assertEqual({p: p.read_bytes() for p in before}, before)
+        self.assertNotIn('No matching native capture was found; completeness remains unknown.', result['caveats'])
+        self.private((result, events))
+
+    def test_exact_session_selection_and_invalid_session_values(self):
+        other = deepcopy(self.f.rows)
+        for row in other:
+            if 'sessionId' in row: row['sessionId'] = OTHER
+        self.write(OTHER+'.jsonl', other); self.write(OTHER+'/subagents/agent-a1.jsonl', self.sidechain(OTHER))
+        self.assertEqual(self.discovery(self.collect())['accepted_files'], 3)
+        selected = self.collect(session=OTHER)
+        self.assertEqual(self.discovery(selected)['accepted_files'], 2); self.assertEqual(selected['analysis']['cases'], 2)
+        self.assertEqual(selected['analysis']['events'], 12+7)
+        for session in ('synthetic-session', OTHER+'.jsonl', '../'+OTHER, ''):
+            with self.assertRaises(ValueError): self.collect(session=session)
+
+    def test_unattributable_unrecognized_partial_and_limited_scans_stay_visible_caveats(self):
+        incomplete = 'Native discovery reached limits or skipped unsupported/unsafe inputs; history is incomplete.'
+        self.assertNotIn(incomplete, self.collect()['caveats'])
+        self.write(OTHER+'.jsonl', [dict(type='queue-operation', content='SYNTHETIC_SECRET')])
+        self.assertIn(incomplete, self.collect()['caveats'])
+        (self.projects/self.name/(OTHER+'.jsonl')).unlink()
+        self.write('notes.jsonl', self.f.rows[:2])
+        self.assertIn(incomplete, self.collect()['caveats'])
+        (self.projects/self.name/'notes.jsonl').unlink()
+        self.write(OTHER+'.jsonl', [row if 'sessionId' not in row else dict(row, sessionId=OTHER) for row in self.f.rows])
+        limited = self.collect(max_files=1)
+        self.assertIn('accepted_files', self.discovery(limited)['reached_limits']); self.assertIn(incomplete, limited['caveats'])
+        primary = self.projects/self.name/(SESSION+'.jsonl'); primary.write_bytes(primary.read_bytes().rstrip(b'\n'))
+        self.assertIn('Native capture has an uncommitted final line; only the complete prefix was projected.', self.collect()['caveats'])
+
+    def test_missing_project_directory_is_unknown_coverage_not_an_empty_success(self):
+        shutil.rmtree(self.projects/self.name)
+        result = self.collect()
+        self.assertEqual(result['analysis']['events'], 0); self.assertEqual(self.discovery(result)['missing_project_directories'], 1)
+        self.assertIn('No matching native capture was found; completeness remains unknown.', result['caveats'])
+
+    def test_root_selection_still_requires_the_pinned_profile_and_excludes_events(self):
+        with patch('agent_harness_lab.evidence._capture_candidates', side_effect=AssertionError('no implicit discovery')):
+            for options in (dict(source_root=self.projects, source_format='claude'),
+                    dict(source_root=self.projects, source_format='claude', source_version='claude-jsonl-v1'),
+                    dict(source_root=self.projects, events=self.f.path, source_format='claude', source_version=VERSION),
+                    dict(session=SESSION, source_format='claude', source_version=VERSION),
+                    dict(source_root=self.projects/(SESSION+'.jsonl'), source_format='claude', source_version=VERSION)):
+                with self.assertRaises(ValueError): collect(self.f.project, **options)
+
+    def test_cli_explicit_claude_root_session_and_limits_write_only_private_metadata(self):
+        self.write(SESSION+'/subagents/agent-a1.jsonl', self.sidechain())
+        output = self.f.root/'analysis'; stdout, stderr = io.StringIO(), io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            try:
+                code = main(['analyze', str(self.f.project), '--source-root', str(self.projects), '--session', SESSION,
+                    '--format', 'claude', '--source-version', VERSION, '--max-captures', '5', '--max-capture-scan', '10',
+                    '--max-events', '100', '--output', str(output)])
+            except SystemExit as error: code = error.code
+        self.assertEqual(code, 0, stderr.getvalue())
+        ledger = output/'events.v2.jsonl'; self.assertEqual(len(ledger.read_text().splitlines()), 12+7)
+        self.assertEqual(ledger.stat().st_mode & 0o777, 0o600)
+        for written in (ledger, output/'analysis.json', output/'report.md'): self.private(written.read_text())

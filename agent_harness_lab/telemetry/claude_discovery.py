@@ -108,6 +108,13 @@ def scope(folder, name, project, expected, limits):
     return 'unknown', 'native_scope_unavailable', None
 
 
+def scan(roots, project, *, session=None, max_files=None, max_scan_files=None, max_records=None, **limits):
+    """Telemetry view of the bounded project-root capture; every admitted file stays stable through verification."""
+    with capture(roots, project, session=session, max_files=max_files, max_scan_files=max_scan_files,
+            max_records=max_records, **limits) as (records, summary, sha256, _, _):
+        return records, summary, sha256
+
+
 @contextmanager
 def capture(roots, project, *, session=None, revisions=None, deadline=None,
             max_files=None, max_scan_files=None, max_records=None, max_bytes=None, max_line_bytes=None):
