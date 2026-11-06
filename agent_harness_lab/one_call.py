@@ -151,8 +151,11 @@ DEFERRED=('behavioral optimization','skill lifecycle and routing','instructions'
 
 
 def deferred_surfaces(hook_contracts):
-    """'hooks' leaves the deferred list only when the run has hook units and every hook_contract_v1 verdict passed."""
-    passed=bool(hook_contracts) and all(row.status=='passed' for row in hook_contracts)
+    """'hooks' leaves the deferred list only when the run has hook units and every hook_contract_v1 verdict passed;
+    a workflow_contract_v1 verdict is not a hook unit."""
+    from .hooks_contract import PROFILE
+    units=[row for row in hook_contracts if row.profile==PROFILE]
+    passed=bool(units) and all(row.status=='passed' for row in units)
     return [name for name in DEFERRED if not (passed and name=='hooks')]
 
 

@@ -18,6 +18,8 @@ WRITABILITY = ('private_excluded', 'adoptable', 'contract_required', 'recommenda
 ROOT_INSTRUCTIONS = ('AGENTS.md', 'CLAUDE.md')
 EXECUTABLE_SUFFIXES = ('.py', '.sh', '.js', '.ts')
 HOOK_FACET = 'hook_contract_required'
+# Kinds a passed executable contract (hooks_contract: hook_contract_v1, workflow_contract_v1) can admit to the journal.
+CONTRACT_KINDS = ('hook', 'workflow')
 # Where a path lives. Another repository is never edited in place, so every external_repository path is at most
 # recommendation_only; a private_excluded verdict still wins because it is stricter.
 ORIGINS = ('project', 'external_repository')
