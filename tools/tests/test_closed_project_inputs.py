@@ -1,5 +1,4 @@
 """Observed project inputs stay bounded independently of unread checkout size."""
-import os
 from pathlib import Path
 import tempfile
 import time

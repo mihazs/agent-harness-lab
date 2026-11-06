@@ -1,7 +1,6 @@
 """Public synthetic managed diagnostics; cooperative attestations are not containment proof."""
 from contextlib import contextmanager, redirect_stdout
 from copy import deepcopy
-from dataclasses import replace
 import io
 import json
 import os

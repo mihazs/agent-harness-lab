@@ -82,7 +82,7 @@ class RegressionReplayTests(unittest.TestCase):
             return replay(self.source, self.draft, self.spec, self.output, self.backend, **kwargs)
 
     def bind(self):
-        value = json.loads(self.source.read_text()); descriptor = json.loads(self.draft.read_text())
+        json.loads(self.source.read_text()); descriptor = json.loads(self.draft.read_text())
         descriptor['proposal_sha256'] = hashlib.sha256(self.source.read_bytes()).hexdigest()
         descriptor['task']['fixture_digest'] = digest(self.root/'fixture')
         self.draft.write_text(json.dumps(descriptor))

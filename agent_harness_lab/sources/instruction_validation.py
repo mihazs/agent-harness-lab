@@ -464,7 +464,7 @@ def bind(document, plan, manifest, *, cwd_honored=False):
     declared = scope['task_path_scope']
     dirs = [d for d in scope['instruction_dirs'] if d not in declared['instruction_dirs']]
     rules = [r for r in scope['rules'] if r not in declared['rules']]
-    runtime, fallback = scope['runtime'], tuple(scope['fallback_filenames'])
+    runtime = scope['runtime']
     for operation in document.get('operations', ()):
         name, kind = operation['path'], operation['kind']
         if (kind == 'instruction' and _scope(name, runtime) in declared['instruction_dirs']

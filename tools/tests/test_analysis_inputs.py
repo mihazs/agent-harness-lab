@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 from agent_harness_lab import workflow
 from agent_harness_lab.cli import main
-from agent_harness_lab.evaluation import working_state,construction,responses
+from agent_harness_lab.evaluation import working_state,responses
 from agent_harness_lab.evaluation.sandbox import SandboxBackend
 import test_sandbox_construction as fixture
 import test_sandbox_inference as wire

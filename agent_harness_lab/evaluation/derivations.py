@@ -153,7 +153,7 @@ def _source(store,source_run,source_derivation,task_ids,deadline):
             if key in task: selected[-1][key]=task[key]
         for source_path,target in ((fixture,'fixtures/'+ident),(bundle,'oracles/'+ident)):
             metadata=tree(source_path); copies.append((source_path,target,digest(source_path),metadata))
-    base=tree(baseline,max_files=100,max_bytes=1024*1024)
+    tree(baseline,max_files=100,max_bytes=1024*1024)  # bounds check only
     if 1+sum(len(value[3]) for value in copies)>100 or sum(regular_size(p/rel,1024*1024) for p,_,_,metadata in copies for rel in metadata)>1024*1024:
         raise ValueError('selected source exceeds existing working-state input bounds')
     view=dict(skills=[],harness_paths=[],tasks=selected,grader_bundles={t['id']:dict(path='oracles/'+t['id']) for t in tasks})

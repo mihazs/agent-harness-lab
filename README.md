@@ -217,11 +217,15 @@ change, run `task setup` and `task changeset`; see [release conventions](CONTRIB
 Use `task setup:test` in a virtual environment, then `task test` to collect both
 native suites once and distribute tests across CPU cores. Reusable commands belong
 in `Taskfile.yml`; existing unittest cases are collected directly by pytest.
+`task setup:test` also installs the pinned [ruff](https://docs.astral.sh/ruff/) linter.
+`task lint` checks the tree (pyflakes and syntax errors, configured in `pyproject.toml`),
+and the lefthook pre-commit hook runs it on staged Python files.
 
 ```sh
 python3 -m venv .venv
 task setup:test PYTHON=.venv/bin/python
 task test PYTHON=.venv/bin/python
+task lint PYTHON=.venv/bin/python
 ```
 
 Set `TEST_WORKERS=4` to select a worker count, or `TEST_WORKERS=0` for debugging.

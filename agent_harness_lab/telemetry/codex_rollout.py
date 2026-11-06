@@ -1,7 +1,7 @@
 """Content-free projection of the pinned Codex 0.166.0 rollout wire format."""
 from pathlib import Path
 from .schema import event
-from .native import text, number, timestamp, invalid_constant, jsonl, correlated, guarded
+from .native import text, number, timestamp, invalid_constant, jsonl, correlated, guarded  # noqa: F401 - re-exported for existing importers
 from ..sources.schema import digest
 
 VERSION = 'codex-rollout-0.166.0'

@@ -1,7 +1,6 @@
 """Public synthetic controller constraints; no hosted inference or native identity proof."""
 from copy import deepcopy
 import json
-from pathlib import Path
 import subprocess
 import sys
 import unittest

@@ -1,4 +1,4 @@
-from dataclasses import asdict, replace
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 from agent_harness_lab.evaluation.plan import ExperimentSpec, schedule
 from agent_harness_lab.evaluation.statistics import TrialRecord, analyze
-from agent_harness_lab.evaluation.task_bank import CertificationLedger, TaskSpec, validate
+from agent_harness_lab.evaluation.task_bank import CertificationLedger, validate
 from agent_harness_lab.evaluation.integrity import artifacts, digest
 from agent_harness_lab.evaluation.sandbox import SandboxBackend, Limits
 from agent_harness_lab.promotion.policy import decide

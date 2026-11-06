@@ -151,7 +151,7 @@ class HindsightArchive(LocalExport):
             if records[0] > bounds['max_rows']: raise HostileReport('Hindsight row bound exceeded')
         hashes = self.capture(source, descriptor, selection, [path(n) for n in names], bounds['max_file_bytes'], consume,
             'Hindsight archive changed during capture', read_regular, regular_sha256)
-        del first
+        first = None  # release the manifest bytes; consume() is not called again
         self.claims, self.summary = parse(dict(zip(names, decoded)), selection, version, bounds)
         archive_sha256 = digest(dict(zip(names, hashes)))
         rows = [('hindsight_'+c.claim_type, c.native_id_sha256, digest(asdict(c)), PROVENANCE[c.claim_type], c.recorded_at)

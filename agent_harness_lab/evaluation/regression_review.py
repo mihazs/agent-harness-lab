@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import time
 from agent_harness_lab.monitoring.state import atomic_json
-from agent_harness_lab.private_journal import MAX_EVENTS, MAX_METADATA, PrivateJournal, encoded, record, sync_directory, write_bytes
+from agent_harness_lab.private_journal import MAX_EVENTS, PrivateJournal, encoded, record, sync_directory, write_bytes
 from .bank_tools import materialize_sources
 from .integrity import artifacts_digest, contained, copy_frozen, digest, open_nofollow, read_regular, regular_sha256, tree
 from .regression_controls import containment, read_draft

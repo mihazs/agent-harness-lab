@@ -4,12 +4,14 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 SCANNER = ROOT/'node_modules/.bin/jscpd'
+IDENTITY = ('-c', 'user.name=Synthetic', '-c', 'user.email=synthetic@example.invalid')
 MANAGER = ROOT/'node_modules/.bin/lefthook'
 
 
@@ -17,6 +19,13 @@ def module(name):
     spec = importlib.util.spec_from_file_location(name, ROOT/'scripts'/f'{name}.py')
     result = importlib.util.module_from_spec(spec); spec.loader.exec_module(result)
     return result
+
+
+def write_interpreter(path, target=None):
+    """Write an executable interpreter stub: a wrapper around target, or one that always fails."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('#!/bin/sh\n' + (f'exec "{target}" "$@"\n' if target else 'exit 1\n'))
+    path.chmod(0o755)
 
 
 @unittest.skipUnless(SCANNER.is_file() and MANAGER.is_file() and shutil.which('task'), 'Task and npm ci required for executable Lefthook/jscpd integration checks')
@@ -30,6 +39,8 @@ class GitRepoCase(unittest.TestCase):
         (self.root/'node_modules/.bin/lefthook').symlink_to(MANAGER)
         shutil.copy2(ROOT/'lefthook.yml', self.root/'lefthook.yml')
         shutil.copy2(ROOT/'Taskfile.yml', self.root/'Taskfile.yml')
+        # The ruff job prefers .venv/bin/python; point it at the interpreter that runs these tests.
+        write_interpreter(self.root/'.venv/bin/python', sys.executable)
 
     def git(self, *args):
         return subprocess.run(['git', *args], cwd=self.root, capture_output=True, text=True)
@@ -141,7 +152,8 @@ class DuplicateHookTests(GitRepoCase):
             '        if squared > 10:', '            result.append(squared)', '        else:',
             '            result.append(value)', '    result.sort()', '    return result, total', ''])
         (self.root/'src/original.py').write_text(self.source)
-        (self.root/'.gitignore').write_text('node_modules/\n')
+        (self.root/'.gitignore').write_text('node_modules/\n.venv/\n')
+        shutil.copy2(ROOT/'pyproject.toml', self.root/'pyproject.toml')
         (self.root/'.jscpd.json').write_text('{"path":["src"],"format":["python"],"minLines":5,"minTokens":50,"ignore":["**/tests/**"],"reporters":["silent"]}')
         (self.root/'node_modules/.bin/jscpd').symlink_to(SCANNER)
         for name in ('scripts/check_duplicates.py', 'scripts/check_commit_message.py'):
@@ -152,8 +164,49 @@ class DuplicateHookTests(GitRepoCase):
         self.assertEqual(commit.returncode, 0, commit.stderr)
         self.install(self.root)
 
-    def run_hook(self):
-        return subprocess.run([str(self.root/'.git/hooks/pre-commit')], cwd=self.root, capture_output=True, text=True)
+    def run_hook(self, env=None):
+        return subprocess.run([str(self.root/'.git/hooks/pre-commit')], cwd=self.root, capture_output=True, text=True, env=env)
+
+    def test_ruff_blocks_staged_unused_import_even_when_working_copy_is_fixed(self):
+        target = self.root/'src/lint.py'; target.write_text('import os\n'); self.git('add', str(target))
+        staged = self.git('write-tree').stdout
+        target.write_text('answer = 42\n')
+        before = self.git('rev-parse', 'HEAD').stdout
+        commit = self.git(*IDENTITY, 'commit', '-qm', 'feat(src): must fail')
+        self.assertNotEqual(commit.returncode, 0)
+        self.assertIn('F401', commit.stdout + commit.stderr)
+        self.assertEqual(self.git('rev-parse', 'HEAD').stdout, before)
+        self.assertEqual(self.git('write-tree').stdout, staged)
+        self.assertEqual(target.read_text(), 'answer = 42\n')
+
+    def test_ruff_skips_staged_files_in_excluded_fixtures(self):
+        fixture = self.root/'agent_harness_lab/evaluation/fixtures/synthetic/frozen.py'
+        fixture.parent.mkdir(parents=True); fixture.write_text('import os\n'); self.git('add', str(fixture))
+        run = self.run_hook()
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+
+    def test_ruff_ignores_unstaged_unused_import(self):
+        target = self.root/'src/lint.py'; target.write_text('answer = 42\n'); self.git('add', str(target))
+        staged = self.git('write-tree').stdout
+        target.write_text('import os\n')
+        run = self.run_hook()
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        self.assertEqual(self.git('write-tree').stdout, staged)
+        self.assertEqual(target.read_text(), 'import os\n')
+
+    def test_ruff_falls_back_to_python3_and_reports_missing_ruff(self):
+        stubs = tempfile.TemporaryDirectory(); self.addCleanup(stubs.cleanup)
+        python3 = Path(stubs.name)/'python3'
+        write_interpreter(self.root/'.venv/bin/python')  # A .venv without ruff must not shadow python3.
+        write_interpreter(python3, sys.executable)
+        env = {**os.environ, 'PATH': f'{stubs.name}{os.pathsep}{os.environ["PATH"]}'}
+        target = self.root/'src/lint.py'; target.write_text('answer = 42\n'); self.git('add', str(target))
+        run = self.run_hook(env)
+        self.assertEqual(run.returncode, 0, run.stdout + run.stderr)
+        write_interpreter(python3)
+        run = self.run_hook(env)
+        self.assertNotEqual(run.returncode, 0)
+        self.assertIn('task setup:test', run.stdout + run.stderr)
 
     def test_staged_clone_blocks_even_when_working_copy_is_fixed(self):
         target = self.root/'src/copy.py'; target.write_text(self.source); self.git('add', str(target))

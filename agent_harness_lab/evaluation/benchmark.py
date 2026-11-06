@@ -4,7 +4,7 @@ from datetime import date
 import html
 import json
 import math
-from .history_report import summary as history_summary
+from .history_report import summary as history_summary  # noqa: F401 - re-exported for existing importers
 
 MATCH_FIELDS=('provider','runtime','model_revision','reasoning','task_bank_revision',
               'sandbox_image','permissions','controller_version')

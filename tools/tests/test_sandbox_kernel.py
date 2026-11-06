@@ -1,6 +1,5 @@
 """Opt-in real kernel boundaries; synthetic fixtures, no inference or credentials."""
 from contextlib import contextmanager
-import errno
 import hashlib
 import os
 import json
@@ -18,7 +17,7 @@ from unittest.mock import patch
 
 import agent_harness_lab
 from agent_harness_lab.evaluation.bank_tools import regrade_artifacts
-from agent_harness_lab.evaluation.cgroup import Cgroup, delegated
+from agent_harness_lab.evaluation.cgroup import delegated
 from agent_harness_lab.evaluation.integrity import artifacts, digest
 from agent_harness_lab.evaluation.sandbox import Limits, SandboxBackend
 from agent_harness_lab.evaluation.image import MOUNT_DIRS, scan
@@ -803,7 +802,7 @@ class TrajectoryKernelTests(KernelFixture):
     def test_live_controller_sources_reject_swaps_mutations_loss_and_replay(self):
         from copy import copy
         from agent_harness_lab.evaluation import controller_receipts as owned
-        from agent_harness_lab.sources.controller import ControllerCapture, SourceSink, recheck
+        from agent_harness_lab.sources.controller import ControllerCapture, SourceSink
         from agent_harness_lab.sources.execution import ExecutionIdentity, ExecutionMetadata, IdentityField
         from agent_harness_lab.sources.schema import digest as source_digest
         runtime=self.root/'runtime'; frozen=pinned_runtime(runtime)

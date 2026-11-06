@@ -7,7 +7,7 @@ import tempfile
 import unittest
 
 from agent_harness_lab.diagnostics.corpus import CorpusStore, incident
-from agent_harness_lab.private_journal import encoded, record
+from agent_harness_lab.private_journal import record
 
 
 def sample(name='synthetic-incident',partition='development'):
