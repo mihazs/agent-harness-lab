@@ -14,9 +14,10 @@ environment that carries no credentials. Without a sandbox there is no host isol
 and can still read the host filesystem and reach the network (host_isolation='none'). With the shipped bubblewrap
 backend (evaluation.sandbox.SandboxBackend) the run has no network and sees only the system directories, the runtime
 file and the trial root, read-only at its own path; only home, tmp, codex-home and the canary folder stay writable,
-and nothing else of the host, its home and credential stores included, is mounted (host_isolation='bubblewrap'). The
-backend's namespace probe runs first: when bubblewrap or user namespaces are unavailable the run is inconclusive and
-nothing executes, never unsandboxed. Any other sandbox object reports host_isolation='unverified'. On Linux the
+and nothing else of the host, its home and credential stores included, is mounted; the run also gets a new empty
+session keyring (host_isolation='bubblewrap'). The backend's hook trial probe runs that same command first: when
+bubblewrap or user namespaces are unavailable the run is inconclusive and nothing executes, never unsandboxed. A
+sandboxed 126/127 exit is inconclusive (sandbox_dependency_unmounted), since the tool may only be outside the mounts. Any other sandbox object reports host_isolation='unverified'. On Linux the
 validator is a child subreaper for the run, so every process the run leaves behind is killed and reaped before the
 post-run snapshot; elsewhere the run is inconclusive. Claude Code keeps the I13 project-only setting source and
 strict empty MCP requests but not disableAllHooks. Codex gets the I13 temporary CODEX_HOME and
@@ -385,11 +386,13 @@ def _trace(stdout):
     return rows
 
 
-def _decisions(record):
-    """(failures, disqualifiers) of one traced execution's exit status and decision output."""
+def _decisions(record, sandboxed=False):
+    """(failures, disqualifiers) of one traced execution's exit status and decision output.
+
+    Sandboxed, a 126/127 exit may only mean the sandbox does not mount a host tool, so it is no failure here."""
     failures, disqualifiers, code = set(), set(), record['exit_code']
     if record['timed_out']: failures.add('timeout')
-    elif code in (126, 127): failures.add('missing_executable')
+    elif code in (126, 127): failures.add('sandbox_dependency_unmounted' if sandboxed else 'missing_executable')
     elif code is not None and code != 0: failures.add('nonzero_status')
     if code == 2: disqualifiers.add('blocks_required_work')  # exit 2 is the runtimes' blocking error
     if record['cancelled']: failures.add('cancellation')
@@ -458,8 +461,10 @@ def _sandbox(sandbox, status, reason=None, **facts):
 
 
 def _probe(sandbox):
-    """(available, reason, limitations) of the sandbox's own namespace probe; a failing probe is never available."""
-    try: capability = sandbox.capability(seconds=SANDBOX_PROBE_SECONDS)
+    """(available, reason, limitations) of the sandbox's hook trial probe; a failing or absent probe is never available."""
+    probe = getattr(sandbox, 'hook_trial_capability', None)
+    if not callable(probe): return False, 'sandbox_probe_unavailable', []
+    try: capability = probe(seconds=SANDBOX_PROBE_SECONDS)
     except (OSError, ValueError, TimeoutError): return False, 'sandbox_probe_error', []
     if not isinstance(capability, dict): return False, 'sandbox_probe_failed', []
     if capability.get('status') == 'available':
@@ -561,10 +566,14 @@ def run(root, marker, executor, *, binary, native=False, trace=None, timeout=60,
         rows = None if traced is None else traced.get((event, group, index), [])
         if rows:
             for record in rows:
-                more, worse = _decisions(record); failures |= more; disqualifiers |= worse
+                more, worse = _decisions(record, sandbox is not None); failures |= more; disqualifiers |= worse
             if len({record['payload_sha256'] for record in rows}) < len(rows): failures.add('duplicate_events')
+        # A host tool the sandbox does not mount is a sandbox-scope gap, never a candidate failure.
+        unmounted = 'sandbox_dependency_unmounted' in failures
+        failures.discard('sandbox_dependency_unmounted')
         if marker['disabled']: status = 'disabled'
         elif failures and (matched or rows): status = 'failed'
+        elif unmounted: status, reason = 'inconclusive', 'sandbox_dependency_unmounted'
         elif canary['status'] != 'observed': status = 'inconclusive'
         elif not matched and incomplete: status, reason = 'inconclusive', incomplete[0]
         elif not matched and _event_slot(event) not in fired: status, reason = 'inconclusive', 'event_not_observed'
