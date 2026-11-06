@@ -14,6 +14,9 @@ from agent_harness_lab.sources import instruction_validation as iv
 CLAUDE = dict(schema_version=1, runtime='claude-code', version='2.1.317', task_cwd='src')
 CODEX = dict(schema_version=1, runtime='codex', version='0.166.0', task_cwd='src', fallback_filenames=[])
 TASK = 'src/app/view.ts'
+# Evaluation manifests the proposer does not author: tasks that run in src, and tasks that declare no cwd (root).
+IN_SRC = dict(tasks=[dict(id='edit', cwd='src'), dict(id='control', cwd='src')])
+AT_ROOT, MIXED = dict(tasks=[dict(id='edit')]), dict(tasks=[dict(id='edit', cwd='src'), dict(id='control')])
 FILES = {
     'CLAUDE.md': 'Synthetic root guidance.\n',
     'src/CLAUDE.md': 'Synthetic source guidance.\nAlways run the synthetic tests.\n',
@@ -68,7 +71,11 @@ class InstructionImprovementTests(unittest.TestCase):
         self.assertEqual((document['status'], document['reasons']), ('valid', []))
         self.assertEqual(document['scope']['instruction_dirs'], ['src'])
         self.assertEqual(document['scope']['rules'], ['.claude/rules/ts.md'])
-        self.assertEqual(document['scope']['source'], 'proposer_declared_plan')  # not bound to the evaluated tasks
+        self.assertEqual(document['scope']['source'], 'proposer_declared_plan')  # provisional until bound
+        bound = iv.bind(document, self.plan(), MIXED)
+        self.assertEqual((bound['status'], bound['reasons']), ('valid', []))
+        self.assertEqual((bound['scope']['source'], bound['scope']['task_cwds']), ('evaluation_manifest_task_cwds', ['.', 'src']))
+        self.assertEqual(bound['scope']['instruction_dirs'], document['scope']['instruction_dirs'])
         self.assertEqual([(o['path'], o['operation']) for o in document['operations']], [('src/CLAUDE.md', 'update')])
         self.assertEqual((document['observed_loading'], document['effective'], document['adoption_authority']),
                          ('unknown', 'unknown', False))
@@ -173,7 +180,7 @@ class InstructionImprovementTests(unittest.TestCase):
     def test_stale_baseline_or_changed_candidate_invalidates(self):
         self.write(self.candidate, 'src/CLAUDE.md', FILES['src/CLAUDE.md'] + 'Check the synthetic build.\n')
         plan = self.plan()
-        document = self.validate(plan)
+        document = iv.bind(self.validate(plan), plan, IN_SRC)
         self.assertEqual(iv.current(document, plan, self.baseline, self.candidate, project=self.project), [])
         self.write(self.project, 'src/app/CLAUDE.md', 'Synthetic concurrent guidance.\n')
         self.assertEqual(iv.current(document, plan, self.baseline, self.candidate, project=self.project), ['stale_baseline'])
@@ -231,6 +238,37 @@ class InstructionImprovementTests(unittest.TestCase):
         shutil.rmtree(self.candidate); shutil.copytree(self.baseline, self.candidate)
         self.write(self.candidate, 'src/AGENTS.override.md', 'Synthetic Codex-only file.\n')
         self.assertEqual(self.validate()['reasons'], ['not_a_runtime_instruction_surface'])
+
+    def test_an_unrelated_declared_task_cwd_cannot_reach_a_sibling_instruction_or_rule(self):
+        # The proposer declares task_cwd docs, which no evaluated task runs in, to make docs/CLAUDE.md governing.
+        self.write(self.candidate, 'docs/CLAUDE.md', 'Synthetic unrelated rewrite.\n')
+        plan = self.plan(dict(CLAUDE, task_cwd='docs'), task_paths=['docs/guide.md'], required=[])
+        document = self.validate(plan)
+        self.assertEqual((document['status'], document['scope']['source']), ('valid', 'proposer_declared_plan'))
+        self.assertIn('docs', document['scope']['instruction_dirs'])
+        self.assertEqual(iv.current(document, plan, self.baseline, self.candidate, project=self.project), ['scope_unbound'])
+        for manifest in (IN_SRC, AT_ROOT):
+            with self.subTest(manifest=manifest):
+                refused = iv.bind(document, plan, manifest)
+                self.assertEqual((refused['status'], refused['scope']['source']), ('blocked', 'evaluation_manifest_task_cwds'))
+                self.assertEqual(refused['reasons'], ['task_cwd_not_evaluated'] + (['task_path_not_evaluated'] if manifest is IN_SRC else []))
+                self.assertIn(dict(reason='task_cwd_not_evaluated', path='docs'), refused['findings'])
+                self.assertEqual(iv.current(refused, plan, self.baseline, self.candidate, project=self.project), ['not_valid'])
+        # A sibling rule reached through a task path outside every evaluated cwd is refused as well.
+        shutil.rmtree(self.candidate); shutil.copytree(self.baseline, self.candidate)
+        self.write(self.candidate, '.claude/rules/docs.md', FILES['.claude/rules/docs.md'] + 'More synthetic docs.\n')
+        plan = self.plan(task_paths=[TASK, 'docs/guide.md'])
+        document = self.validate(plan)
+        self.assertEqual(document['status'], 'valid')
+        self.assertIn('.claude/rules/docs.md', document['scope']['rules'])
+        refused = iv.bind(document, plan, IN_SRC)
+        self.assertEqual((refused['status'], refused['reasons']), ('blocked', ['task_path_not_evaluated']))
+        self.assertEqual(refused['findings'], [dict(reason='task_path_not_evaluated', path='docs/guide.md')])
+        # Binding never relaxes a blocked document, and a manifest without tasks binds nothing.
+        blocked = dict(document, status='blocked', reasons=['import_cycle'])
+        self.assertIs(iv.bind(blocked, plan, IN_SRC), blocked)
+        for manifest in ({}, dict(tasks=[]), dict(tasks=[dict(id='edit', cwd='../outside')])):
+            with self.assertRaises(ValueError): iv.bind(document, plan, manifest)
 
     def test_check_scope_rejects_an_unrelated_same_name_file(self):
         original = {name: (hashlib.sha256(text.encode()).hexdigest(), 0o644) for name, text in FILES.items()}

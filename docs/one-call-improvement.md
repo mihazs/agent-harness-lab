@@ -392,11 +392,32 @@ candidate in these cases:
 `one_call.check_scope(args, proposed, original)` enforces the same scope. It
 rejects a changed instruction or rule file outside the validated scope. Without a
 validated scope it rejects any changed nested file the frozen baseline does not
-already hold. The validated scope comes from the plan's `task_cwd` and
-`task_paths`, which the proposer declares, and nothing yet binds them to the
-evaluated tasks. The report marks this as `scope.source:
-"proposer_declared_plan"`. The scope keeps an edit consistent with the declared
-task; it does not prove that the task is the one evaluated.
+already hold.
+
+The validated scope starts from the plan's `task_cwd` and `task_paths`, which
+the proposer declares, so the first validation report marks it `scope.source:
+"proposer_declared_plan"`. Once the evaluation manifest is frozen and validated,
+and before any baseline or candidate trial runs, `instruction_validation.bind`
+checks the plan against the directories the evaluated tasks run in. Those are
+each task's `cwd`, or the
+checkout root `.` for a task that declares none. The proposer does not author
+them: the configured bank, the fixed comparison or the separate evaluation
+author does. A plan whose `task_cwd` is not one of them is refused
+(`task_cwd_not_evaluated`). A plan with a task path below none of them is refused
+too (`task_path_not_evaluated`). Either way the run stops as
+`instruction_validation_blocked` before those trials. The rewritten
+`instruction-validation-<attempt>.json` records `scope.source:
+"evaluation_manifest_task_cwds"` and `scope.task_cwds`, and `check_scope`
+enforces that bound scope from then on. `current` reports `scope_unbound` for a
+document that was never bound, so a recommendation never rests on a
+proposer-declared scope alone. For example, a proposer cannot declare
+`task_cwd: "docs"` to make `docs/CLAUDE.md` governing when every evaluated task
+runs in `src` or at the root. The command-line agents, the configured bank and
+the fixed comparison run every task at the root, so there a plan must declare
+`task_cwd: "."`, and a Codex `app/AGENTS.md`, which loads only from `app`, stays
+outside the scope. A task that runs at the root contains every task path, so for
+those tasks the binding constrains `task_cwd` but not which paths below the root
+the plan names.
 
 A shorter file is not automatically better. The report gives active-context bytes
 (`utf8-bytes-v1`) for both versions as a secondary measurement only. A reduction
