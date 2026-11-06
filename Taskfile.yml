@@ -206,12 +206,12 @@ tasks:
     cmds:
       - '{{.PYTHON | shellQuote}} -m pytest -n {{.TEST_WORKERS | shellQuote}} --dist worksteal'
   setup:test:installed:
-    desc: Install test extras for the already installed release without replacing it
+    desc: Install test and lint extras for the already installed release without replacing it
     vars:
       PACKAGE_VERSION:
         sh: '{{.PYTHON | shellQuote}} -m agent_harness_lab --version'
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pip install "agent-harness-lab[test]=={{.PACKAGE_VERSION}}"'
+      - '{{.PYTHON | shellQuote}} -m pip install "agent-harness-lab[test,lint]=={{.PACKAGE_VERSION}}"'
   setup:test:
     desc: Install pinned test and lint tools into the selected Python environment
     cmds:
