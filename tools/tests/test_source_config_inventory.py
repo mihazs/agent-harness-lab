@@ -279,6 +279,18 @@ class ConfigInventoryTests(unittest.TestCase):
         self.assertEqual(surfaces.classify(local, 'claude-code').writability, 'private_excluded')
         self.assertIn(f'`{local}` is presence-only and is never read', walk)
 
+    def test_changelog_config_inventory_entry_gives_each_rules_row_family_its_classifier_verdict(self):
+        text = (Path(__file__).resolve().parents[2] / 'CHANGELOG.md').read_text()
+        start = text.index('## 0.113.0\n')
+        entry = ' '.join(text[start:text.index('\n## ', start + 1)].split())
+        rules = entry[entry.index('`surfaces.RULES`'):]
+        rules = rules[:rules.index('. ') + 1]  # the sentence naming the rows 0.113.0 added (review of #337)
+        self.assertEqual(surfaces.classify('.mcp.json', 'claude-code').writability, 'recommendation_only')
+        self.assertIn('`recommendation_only` config rows for the config files', rules)
+        memory = surfaces.classify('.claude/agent-memory/MEMORY.md', 'claude-code')
+        self.assertEqual((memory.kind, memory.writability), ('unsupported', 'private_excluded'))
+        self.assertIn('`private_excluded` rows for memory stores', rules)
+
     def test_checkout_memories_folder_is_read_but_a_declared_codex_home_memories_folder_is_not(self):
         (self.checkout / 'memories').mkdir(); (self.checkout / 'memories/AGENTS.md').write_text('synthetic\n')
         (self.codex_home / 'memories/AGENTS.md').write_text('canary-memory-body\n')
