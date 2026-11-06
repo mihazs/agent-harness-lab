@@ -1,6 +1,7 @@
 """Explicit GitHub Actions runs and jobs per attempt; green CI and reruns are never task grades or new trials."""
 from dataclasses import replace
 import json
+import re
 import unittest
 
 from tests.unit.sources.test_source_github import GitHubFixture
@@ -127,9 +128,18 @@ class GitHubActionsTests(GitHubFixture, unittest.TestCase):
         self.routes[jobs(2101, 1, 2)] = dict(total_count=2, jobs=[later])
         client, _ = self.read()
         self.assertEqual(len(self.nodes(client, 'github_workflow_job')), 3)
-        self.routes[RUNS] = Response(dict(total_count=2, workflow_runs=[self.run]), headers={**self.headers,
-            'Link': '<'+self.base+'/actions/runs?per_page=100&page=2>; rel="next"'})
-        with self.assertRaises(TransportError): self.read()
+        second = {**self.run, 'id': 2102, 'url': self.base+'/actions/runs/2102', 'run_attempt': 1}
+        self.routes.update({jobs(2101, 1): dict(total_count=1, jobs=[self.failed]),
+            RUNS[:-1]+'2': dict(total_count=2, workflow_runs=[second]),
+            jobs(2102, 1): dict(total_count=1, jobs=[{**self.job(2501, 1, 'success', []), 'run_id': 2102}])})
+        for query, kept in (('head_sha='+HEAD+'&per_page=100&page=2', True), ('per_page=100&page=2', False)):
+            self.targets.clear()
+            self.routes[RUNS] = Response(dict(total_count=2, workflow_runs=[self.run]), headers={**self.headers,
+                'Link': '<'+self.base+'/actions/runs?'+query+'>; rel="next"'})
+            with self.subTest(head_filter_kept=kept):
+                if kept: self.assertEqual(self.read()[0].summary['actions']['workflow_runs'], 2)
+                else: self.assertRaises(TransportError, self.read)
+                self.assertEqual(RUNS[:-1]+'2' in self.targets, kept)
 
     def test_only_fixed_run_and_job_listings_are_requested(self):
         self.read()
@@ -137,7 +147,17 @@ class GitHubActionsTests(GitHubFixture, unittest.TestCase):
         self.assertEqual(actions, [RUNS, jobs(2101, 1), jobs(2101, 2)])
         self.assertFalse(any(word in t for t in self.targets for word in ('/logs', '/artifacts', '/annotations', '/rerun', '/dispatches')))
         self.run['run_attempt'] = 10**6
+        attempt = re.compile(r'/actions/runs/2101/attempts/([0-9]+)/jobs\?per_page=100&page=1')
+
+        class EveryAttempt(dict):
+            def __missing__(routes, target):
+                number = int(attempt.fullmatch(target)[1])
+                return dict(total_count=1, jobs=[{**self.job(3000+number, number, 'success', []), 'check_run_url': None}])
+        self.routes = EveryAttempt(self.routes); self.targets.clear()
         with self.assertRaises(TransportError): self.read(max_pages=20)
+        # The shared request budget, not a missing fixture route, stops the unbounded attempt loop.
+        self.assertEqual(len(self.targets), 20)
+        self.assertIsNotNone(attempt.fullmatch(self.targets[-1]))
 
     def test_job_links_to_its_captured_check_run_and_graph_profile_accepts_the_relations(self):
         self.selection = GitHubSelection(42, (7,), (8,), schema_version=7, details=('actions', 'checks', 'graph'))
