@@ -2,7 +2,6 @@
 import json
 import os
 from pathlib import Path
-import shutil
 from types import SimpleNamespace
 import subprocess
 import tempfile
@@ -12,6 +11,9 @@ from unittest.mock import patch
 from agent_harness_lab.cli import evaluator
 from agent_harness_lab.evaluation.bank_tools import export_manifest
 from agent_harness_lab.evaluation.sandbox import SandboxBackend
+# The standard-library bank-qualification runner imports SOLVER and OfflineFixture from here without pytest.
+from tests.support.optional_pytest import pytest
+from tests.support.unittest_cleanups import run_cleanups
 
 BANK = Path(__file__).resolve().parents[3]/'agent_harness_lab/evaluation/fixtures/starter-v1/bank.json'
 SOLVER = '''import json,pathlib
@@ -64,142 +66,159 @@ class OfflineFixture(unittest.TestCase):
                     attestation={'backend': 'test-only-cooperative', 'role': role})
 
 
-class OfflineEvaluationTests(OfflineFixture):
-    def test_storage_policy_passes_declared_artifacts_to_executors_only(self):
-        self.args.cgroup_root, self.args.disk_bytes = self.root/'delegation', 65536
-        def execute(*args, **kwargs):
-            if args[3] == 'executor':
-                self.assertEqual(set(kwargs), {'artifact_allowlist'})
-                self.assertIn(kwargs['artifact_allowlist'], [t['artifacts'] for t in self.manifest['tasks']])
-            else: self.assertEqual(kwargs, {})
-            return self.emulate(*args)
-        with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend', autospec=True) as backend:
-            backend.return_value.capability.return_value = {'status': 'available'}
-            backend.return_value.run.side_effect = execute
-            self.assertEqual(self.runner.evaluate(self.args), 1)
-        backend.assert_called_once_with(cgroup_root=self.args.cgroup_root, disk_bytes=65536)
-        self.assertEqual(backend.return_value.run.call_count, 28)
-        self.args.agent = 'codex'
-        with self.assertRaisesRegex(ValueError, 'require the offline executor'): self.runner.evaluate(self.args)
+@pytest.fixture
+def offline():
+    fixture = OfflineFixture(); fixture.setUp()
+    yield fixture
+    run_cleanups(fixture)
 
-    def test_runtime_image_flags_reach_both_roles_and_missing_pins_are_rejected(self):
-        self.args.image_root, self.args.image_sha256 = self.root/'runtime', 'a'*64
-        with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend', autospec=True) as backend:
-            backend.return_value.capability.return_value = {'status': 'available'}
-            backend.return_value.run.side_effect = self.emulate
-            self.assertEqual(self.runner.evaluate(self.args), 1)
-        backend.assert_called_once_with(cgroup_root=None, image_root=self.args.image_root, image_sha256='a'*64)
-        self.args.image_sha256 = None
-        with self.assertRaisesRegex(ValueError, 'supplied together'): self.runner.evaluate(self.args)
 
-    def test_child_preparation_failure_remains_an_executor_or_grader_error(self):
-        for role in ('executor', 'grader'):
-            with self.subTest(role=role):
-                if (self.root/'output').exists(): shutil.rmtree(self.root/'output')
-                def execute(*args, **kwargs):
-                    if args[3] == role: raise subprocess.SubprocessError('synthetic pre-exec failure')
-                    return self.emulate(*args, **kwargs)
-                with patch.object(SandboxBackend, 'capability', return_value={'status': 'available'}), \
-                        patch.object(SandboxBackend, 'run', side_effect=execute):
-                    self.assertEqual(self.runner.evaluate(self.args), 1)
-                expected = 'execution_error' if role == 'executor' else 'grader_error'
-                self.assertTrue(all(t['status'] == expected for t in self.results()['trials']))
-                self.assertEqual(len(self.results()['trials']), 14)
+def test_storage_policy_passes_declared_artifacts_to_executors_only(offline):
+    offline.args.cgroup_root, offline.args.disk_bytes = offline.root/'delegation', 65536
+    def execute(*args, **kwargs):
+        if args[3] == 'executor':
+            assert set(kwargs) == {'artifact_allowlist'}
+            assert kwargs['artifact_allowlist'] in [t['artifacts'] for t in offline.manifest['tasks']]
+        else: assert kwargs == {}
+        return offline.emulate(*args)
+    with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend', autospec=True) as backend:
+        backend.return_value.capability.return_value = {'status': 'available'}
+        backend.return_value.run.side_effect = execute
+        assert offline.runner.evaluate(offline.args) == 1
+    backend.assert_called_once_with(cgroup_root=offline.args.cgroup_root, disk_bytes=65536)
+    assert backend.return_value.run.call_count == 28
+    offline.args.agent = 'codex'
+    with pytest.raises(ValueError, match='require the offline executor'): offline.runner.evaluate(offline.args)
 
-    def test_explicit_resource_subtree_is_shared_by_executor_and_pristine_grader(self):
-        self.args.cgroup_root = self.root/'synthetic-delegation'
-        with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend', autospec=True) as backend:
-            backend.return_value.capability.return_value = {'status': 'available'}
-            backend.return_value.run.side_effect = self.emulate
-            self.assertEqual(self.runner.evaluate(self.args), 1)
-        backend.assert_called_once_with(cgroup_root=self.args.cgroup_root)
-        self.assertEqual({call.args[3] for call in backend.return_value.run.call_args_list}, {'executor', 'grader'})
-        self.assertEqual(backend.return_value.run.call_count, 28)
 
-    def test_missing_resource_delegation_blocks_offline_and_cannot_claim_agent_isolation(self):
-        self.args.cgroup_root = self.root/'missing-delegation'
-        with patch('agent_harness_lab.evaluation.sandbox.subprocess.Popen') as launch:
-            self.assertEqual(self.runner.evaluate(self.args), 3)
-        launch.assert_not_called()
-        self.assertEqual(self.results()['status'], 'blocked')
-        self.assertEqual(self.results()['trials'], [])
-        self.args.agent = 'codex'
-        with self.assertRaisesRegex(ValueError, 'require the offline executor'):
-            self.runner.evaluate(self.args)
+def test_runtime_image_flags_reach_both_roles_and_missing_pins_are_rejected(offline):
+    offline.args.image_root, offline.args.image_sha256 = offline.root/'runtime', 'a'*64
+    with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend', autospec=True) as backend:
+        backend.return_value.capability.return_value = {'status': 'available'}
+        backend.return_value.run.side_effect = offline.emulate
+        assert offline.runner.evaluate(offline.args) == 1
+    backend.assert_called_once_with(cgroup_root=None, image_root=offline.args.image_root, image_sha256='a'*64)
+    offline.args.image_sha256 = None
+    with pytest.raises(ValueError, match='supplied together'): offline.runner.evaluate(offline.args)
 
-    def test_both_arms_are_executed_and_regraded_without_model_calls(self):
-        with patch.object(SandboxBackend, 'capability', return_value={'status': 'available'}), \
-                patch.object(SandboxBackend, 'run', side_effect=self.emulate) as launch, \
-                patch.object(self.runner, 'execute') as host:
-            self.assertEqual(self.runner.evaluate(self.args), 1)
-        host.assert_not_called()
-        self.assertEqual(launch.call_count, 28)
-        results = self.results()
-        self.assertEqual(len(results['trials']), 14)
-        self.assertTrue(results['inputs_unchanged'])
-        self.assertFalse(results['automatic_promotion'])
-        self.assertFalse(results['runtime']['model_inference'])
-        for trial in results['trials']:
-            self.assertEqual(trial['status'], 'passed' if trial['version'] == 'candidate' else 'failed')
-            self.assertEqual(trial['grader']['outcome'], trial['version'] == 'candidate')
-            self.assertIsNone(trial['usage'])
-        for task in self.manifest['tasks']:
-            self.assertFalse((self.root/'export'/task['fixture']/'result.json').exists())
 
-    def test_unsupported_backend_blocks_without_any_executor_or_grader(self):
-        with patch.object(SandboxBackend, 'capability', return_value={'status': 'unsupported'}), \
-                patch.object(SandboxBackend, 'run') as launch, patch.object(self.runner, 'execute') as host:
-            self.assertEqual(self.runner.evaluate(self.args), 3)
-        launch.assert_not_called(); host.assert_not_called()
-        result = self.results()
-        self.assertEqual(result['status'], 'blocked')
-        self.assertEqual(result['trials'], [])
-        self.assertFalse(result['automatic_promotion'])
+@pytest.mark.parametrize('role', [pytest.param('executor', id='executor'), pytest.param('grader', id='grader')])
+def test_child_preparation_failure_remains_an_executor_or_grader_error(offline, role):
+    def execute(*args, **kwargs):
+        if args[3] == role: raise subprocess.SubprocessError('synthetic pre-exec failure')
+        return offline.emulate(*args, **kwargs)
+    with patch.object(SandboxBackend, 'capability', return_value={'status': 'available'}), \
+            patch.object(SandboxBackend, 'run', side_effect=execute):
+        assert offline.runner.evaluate(offline.args) == 1
+    expected = 'execution_error' if role == 'executor' else 'grader_error'
+    assert all(t['status'] == expected for t in offline.results()['trials'])
+    assert len(offline.results()['trials']) == 14
 
-    def test_missing_unsafe_or_unsupported_contracts_fail_before_probe(self):
-        original = json.loads(json.dumps(self.manifest))
-        changes = [lambda m: m['tasks'][0].pop('offline_executor'),
-                   lambda m: m['tasks'][0].update(artifacts=['../secret']),
-                   lambda m: m['tasks'][0].update(artifacts=['result.json', 'result.json']),
-                   lambda m: m.update(grader_bundles={}),
-                   lambda m: m['tasks'][0].update(grader=['/usr/bin/true'])]
-        for change in changes:
-            self.manifest = json.loads(json.dumps(original)); change(self.manifest); self.write_manifest()
-            with patch.object(SandboxBackend, 'capability') as probe:
-                with self.assertRaises(ValueError): self.runner.evaluate(self.args)
-            probe.assert_not_called()
-            self.assertFalse((self.root/'output').exists())
 
-    def test_forged_worker_grade_does_not_hide_invalid_artifacts(self):
-        (self.root/'candidate/solve.py').write_text("import os; os.symlink('/usr/bin/true','result.json'); print('{\"outcome\":true}')")
-        with patch.object(SandboxBackend, 'capability', return_value={'status': 'available'}), \
-                patch.object(SandboxBackend, 'run', side_effect=self.emulate):
-            self.assertEqual(self.runner.evaluate(self.args), 1)
-        candidates = [t for t in self.results()['trials'] if t['version'] == 'candidate']
-        self.assertTrue(all(t['status'] == 'grader_error' for t in candidates))
+def test_explicit_resource_subtree_is_shared_by_executor_and_pristine_grader(offline):
+    offline.args.cgroup_root = offline.root/'synthetic-delegation'
+    with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend', autospec=True) as backend:
+        backend.return_value.capability.return_value = {'status': 'available'}
+        backend.return_value.run.side_effect = offline.emulate
+        assert offline.runner.evaluate(offline.args) == 1
+    backend.assert_called_once_with(cgroup_root=offline.args.cgroup_root)
+    assert {call.args[3] for call in backend.return_value.run.call_args_list} == {'executor', 'grader'}
+    assert backend.return_value.run.call_count == 28
 
-    def test_timeout_or_input_change_cannot_reach_grader(self):
-        for status, unchanged in (('timeout', True), ('completed', False), ('completed', 'false')):
-            if (self.root/'output').exists(): shutil.rmtree(self.root/'output')
-            def execute(*args, **kwargs):
-                self.assertEqual(args[3], 'executor')
-                return dict(status=status, exit_code=0, stdout='', stderr='', inputs_unchanged=unchanged)
-            with patch.object(SandboxBackend, 'capability', return_value={'status': 'available'}), \
-                    patch.object(SandboxBackend, 'run', side_effect=execute) as launch:
-                self.assertEqual(self.runner.evaluate(self.args), 1)
-            self.assertEqual(launch.call_count, 14)
-            self.assertTrue(all(t['status'] == 'execution_error' for t in self.results()['trials']))
 
-    def test_live_offline_roles_when_namespace_backend_is_supported(self):
-        if SandboxBackend().capability()['status'] != 'available':
-            self.skipTest('namespace backend unavailable; no containment evidence')
-        (self.root/'host-secret').write_text('synthetic-canary')
-        canaries = ("import os,pathlib\nassert 'AHL_TEST_HOST_SECRET' not in os.environ\n"
-                    "assert not pathlib.Path('/inputs/oracle').exists()\n"
-                    f"assert not pathlib.Path({str(self.root/'host-secret')!r}).exists()\n"
-                    f"assert not pathlib.Path({str(self.root/'export/graders')!r}).exists()\n")
-        (self.root/'candidate/solve.py').write_text(canaries+SOLVER)
-        with patch.dict(os.environ, AHL_TEST_HOST_SECRET='synthetic-canary'):
-            self.assertEqual(self.runner.evaluate(self.args), 1)
-        for trial in self.results()['trials']:
-            self.assertEqual(trial['status'], 'passed' if trial['version'] == 'candidate' else 'failed')
+def test_missing_resource_delegation_blocks_offline_and_cannot_claim_agent_isolation(offline):
+    offline.args.cgroup_root = offline.root/'missing-delegation'
+    with patch('agent_harness_lab.evaluation.sandbox.subprocess.Popen') as launch:
+        assert offline.runner.evaluate(offline.args) == 3
+    launch.assert_not_called()
+    assert offline.results()['status'] == 'blocked'
+    assert offline.results()['trials'] == []
+    offline.args.agent = 'codex'
+    with pytest.raises(ValueError, match='require the offline executor'):
+        offline.runner.evaluate(offline.args)
+
+
+def test_both_arms_are_executed_and_regraded_without_model_calls(offline):
+    with patch.object(SandboxBackend, 'capability', return_value={'status': 'available'}), \
+            patch.object(SandboxBackend, 'run', side_effect=offline.emulate) as launch, \
+            patch.object(offline.runner, 'execute') as host:
+        assert offline.runner.evaluate(offline.args) == 1
+    host.assert_not_called()
+    assert launch.call_count == 28
+    results = offline.results()
+    assert len(results['trials']) == 14
+    assert results['inputs_unchanged']
+    assert not results['automatic_promotion']
+    assert not results['runtime']['model_inference']
+    for trial in results['trials']:
+        assert trial['status'] == ('passed' if trial['version'] == 'candidate' else 'failed')
+        assert trial['grader']['outcome'] == (trial['version'] == 'candidate')
+        assert trial['usage'] is None
+    for task in offline.manifest['tasks']:
+        assert not (offline.root/'export'/task['fixture']/'result.json').exists()
+
+
+def test_unsupported_backend_blocks_without_any_executor_or_grader(offline):
+    with patch.object(SandboxBackend, 'capability', return_value={'status': 'unsupported'}), \
+            patch.object(SandboxBackend, 'run') as launch, patch.object(offline.runner, 'execute') as host:
+        assert offline.runner.evaluate(offline.args) == 3
+    launch.assert_not_called(); host.assert_not_called()
+    result = offline.results()
+    assert result['status'] == 'blocked'
+    assert result['trials'] == []
+    assert not result['automatic_promotion']
+
+
+@pytest.mark.parametrize('change', [
+    pytest.param(lambda m: m['tasks'][0].pop('offline_executor'), id='missing-offline-executor'),
+    pytest.param(lambda m: m['tasks'][0].update(artifacts=['../secret']), id='escaping-artifact'),
+    pytest.param(lambda m: m['tasks'][0].update(artifacts=['result.json', 'result.json']), id='duplicate-artifact'),
+    pytest.param(lambda m: m.update(grader_bundles={}), id='missing-grader-bundles'),
+    pytest.param(lambda m: m['tasks'][0].update(grader=['/usr/bin/true']), id='unsupported-grader'),
+])
+def test_missing_unsafe_or_unsupported_contracts_fail_before_probe(offline, change):
+    change(offline.manifest); offline.write_manifest()
+    with patch.object(SandboxBackend, 'capability') as probe:
+        with pytest.raises(ValueError): offline.runner.evaluate(offline.args)
+    probe.assert_not_called()
+    assert not (offline.root/'output').exists()
+
+
+def test_forged_worker_grade_does_not_hide_invalid_artifacts(offline):
+    (offline.root/'candidate/solve.py').write_text("import os; os.symlink('/usr/bin/true','result.json'); print('{\"outcome\":true}')")
+    with patch.object(SandboxBackend, 'capability', return_value={'status': 'available'}), \
+            patch.object(SandboxBackend, 'run', side_effect=offline.emulate):
+        assert offline.runner.evaluate(offline.args) == 1
+    candidates = [t for t in offline.results()['trials'] if t['version'] == 'candidate']
+    assert all(t['status'] == 'grader_error' for t in candidates)
+
+
+@pytest.mark.parametrize('status, unchanged', [
+    pytest.param('timeout', True, id='timeout'),
+    pytest.param('completed', False, id='inputs-changed'),
+    pytest.param('completed', 'false', id='inputs-unchanged-not-boolean'),
+])
+def test_timeout_or_input_change_cannot_reach_grader(offline, status, unchanged):
+    def execute(*args, **kwargs):
+        assert args[3] == 'executor'
+        return dict(status=status, exit_code=0, stdout='', stderr='', inputs_unchanged=unchanged)
+    with patch.object(SandboxBackend, 'capability', return_value={'status': 'available'}), \
+            patch.object(SandboxBackend, 'run', side_effect=execute) as launch:
+        assert offline.runner.evaluate(offline.args) == 1
+    assert launch.call_count == 14
+    assert all(t['status'] == 'execution_error' for t in offline.results()['trials'])
+
+
+def test_live_offline_roles_when_namespace_backend_is_supported(offline):
+    if SandboxBackend().capability()['status'] != 'available':
+        pytest.skip('namespace backend unavailable; no containment evidence')
+    (offline.root/'host-secret').write_text('synthetic-canary')
+    canaries = ("import os,pathlib\nassert 'AHL_TEST_HOST_SECRET' not in os.environ\n"
+                "assert not pathlib.Path('/inputs/oracle').exists()\n"
+                f"assert not pathlib.Path({str(offline.root/'host-secret')!r}).exists()\n"
+                f"assert not pathlib.Path({str(offline.root/'export/graders')!r}).exists()\n")
+    (offline.root/'candidate/solve.py').write_text(canaries+SOLVER)
+    with patch.dict(os.environ, AHL_TEST_HOST_SECRET='synthetic-canary'):
+        assert offline.runner.evaluate(offline.args) == 1
+    for trial in offline.results()['trials']:
+        assert trial['status'] == ('passed' if trial['version'] == 'candidate' else 'failed')
