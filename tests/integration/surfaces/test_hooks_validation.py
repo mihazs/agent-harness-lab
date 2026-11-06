@@ -1,6 +1,7 @@
 """hook_validation_v1 with a scenario-driven fake runtime; synthetic directories only, never a real runtime or project."""
 import base64
 from dataclasses import replace
+import errno
 import importlib.util
 import json
 import os
@@ -115,6 +116,51 @@ def runner():
 def hooks(event='PreToolUse', matcher='Bash', **fields):
     handler = dict(dict(type='command', command=f'"$CLAUDE_PROJECT_DIR"/{SCRIPT}', timeout=30), **fields)
     return {event: [{'matcher': matcher, 'hooks': [{k: v for k, v in handler.items() if v is not None}]}]}
+
+
+class Gate:
+    """A FIFO that a run's background child holds open and blocks on, so the test decides when the child may act.
+
+    A write-only non-blocking open of a FIFO fails with ENXIO exactly when no process holds it open for reading, so
+    held() tells whether the child is still alive without waiting on a clock."""
+    def __init__(self, path):
+        os.mkfifo(path)
+        self.path = path
+
+    def hook(self, then=''):
+        """A hook body whose background child holds the gate open from the moment it forks, then blocks on it."""
+        return f'exec 3<>"{self.path}"; (read go <&3{then}) </dev/null >/dev/null 2>&1 & exit 0'
+
+    def _open(self):
+        try: return os.open(self.path, os.O_WRONLY | os.O_NONBLOCK)
+        except OSError as error:
+            if error.errno == errno.ENXIO: return None
+            raise
+
+    def held(self):
+        fd = self._open()
+        if fd is None: return False
+        os.close(fd)
+        return True
+
+    def release(self):
+        """Let a holder go on; whether one was still alive to do so."""
+        fd = self._open()
+        if fd is None: return False
+        with os.fdopen(fd, 'w') as stream: stream.write('go\n')
+        return True
+
+    def drain(self):
+        """Release any holder and wait for it to exit, so nothing it does races the trial directory's cleanup."""
+        return self.release() and self.wait_closed()
+
+    def wait_closed(self, seconds=10):
+        """Wait until no process holds the gate; whether that happened within the bound."""
+        deadline = time.monotonic() + seconds
+        while self.held():
+            if time.monotonic() >= deadline: return False
+            time.sleep(0.01)
+        return True
 
 
 class FakeRuntimeCase(unittest.TestCase):
@@ -381,10 +427,19 @@ class FakeRuntimeTests(FakeRuntimeCase):
         self.assertTrue(hooks_validation.CONFIG_WRITE.search('codex-home/config.toml'))
 
     def test_processes_the_run_leaves_behind_are_killed_before_the_snapshot(self):
-        root, document = self.check('(sleep 1; echo tampered > "$CLAUDE_PROJECT_DIR/notes.txt") </dev/null >/dev/null 2>&1 & exit 0')
+        gate, snapshot, held_at_snapshot = Gate(self.root / 'gate'), hooks_validation.snapshot, []
+        self.addCleanup(gate.drain)  # never leave a surviving child blocked on the gate
+
+        def probed(path):
+            held_at_snapshot.append(gate.held())
+            return snapshot(path)
+
+        with patch.object(hooks_validation, 'snapshot', side_effect=probed):
+            root, document = self.check(gate.hook(then='; echo tampered > "$CLAUDE_PROJECT_DIR/notes.txt"'))
         self.assertEqual(document['workspace_diff']['process_containment'], 'subreaper')
         self.assertGreaterEqual(document['workspace_diff']['lingering_processes'], 1)
-        time.sleep(1.5)
+        self.assertEqual(held_at_snapshot, [False, False], 'a process the run left behind was alive at the post-run snapshot')
+        self.assertFalse(gate.release(), 'a process the run left behind outlived the trial')
         self.assertEqual((root / 'workspace/notes.txt').read_text(), 'synthetic fixture\n')
         with patch.object(hooks_validation, '_subreaper', return_value=None):
             _, document = self.check()
@@ -393,20 +448,24 @@ class FakeRuntimeTests(FakeRuntimeCase):
         self.assert_not_effective(document)
 
     def test_unreadable_process_state_is_never_a_completed_sweep(self):
-        listdir, body = os.listdir, '(sleep 1; echo tampered > "$CLAUDE_PROJECT_DIR/notes.txt") </dev/null >/dev/null 2>&1 & exit 0'
+        listdir = os.listdir
 
         def hidden(path='.'):
             if path == '/proc': raise PermissionError(path)
             return listdir(path)
 
         real = hooks_validation._descendants()
-        for name, fake in {'proc unlisted': None, 'self unlisted': real}.items():
+        for index, (name, fake) in enumerate({'proc unlisted': None, 'self unlisted': real}.items()):
             with self.subTest(case=name):
+                gate = Gate(self.root / f'gate{index}')
+                self.addCleanup(gate.drain)
                 patcher = (patch.object(hooks_validation.os, 'listdir', side_effect=hidden) if fake is None else
                            patch.object(hooks_validation.os, 'getpid', return_value=max(real | {os.getpid()}) + 10 ** 6))
                 with patcher:
-                    _, document = self.check(body)
-                time.sleep(1.5)  # the stray writer cannot be seen, so let it finish before the trial is cleaned up
+                    _, document = self.check(gate.hook())
+                # The sweep cannot see the stray child, so it survives the trial; release it and wait for it to exit.
+                self.assertTrue(gate.release())
+                self.assertTrue(gate.wait_closed())
                 self.assertEqual(document['workspace_diff']['process_containment'], 'unavailable')
                 self.assertIsNone(document['workspace_diff']['lingering_processes'])
                 self.assertIn('process_containment_unavailable', document['findings'])
