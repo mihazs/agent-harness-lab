@@ -343,6 +343,27 @@ class FakeRuntimeTests(unittest.TestCase):
         self.assertEqual(document['candidate']['status'], 'inconclusive')
         self.assert_not_effective(document)
 
+    def test_unreadable_process_state_is_never_a_completed_sweep(self):
+        listdir, body = os.listdir, '(sleep 1; echo tampered > "$CLAUDE_PROJECT_DIR/notes.txt") </dev/null >/dev/null 2>&1 & exit 0'
+
+        def hidden(path='.'):
+            if path == '/proc': raise PermissionError(path)
+            return listdir(path)
+
+        real = hooks_validation._descendants()
+        for name, fake in {'proc unlisted': None, 'self unlisted': real}.items():
+            with self.subTest(case=name):
+                patcher = (patch.object(hooks_validation.os, 'listdir', side_effect=hidden) if fake is None else
+                           patch.object(hooks_validation.os, 'getpid', return_value=max(real | {os.getpid()}) + 10 ** 6))
+                with patcher:
+                    _, document = self.check(body)
+                time.sleep(1.5)  # the stray writer cannot be seen, so let it finish before the trial is cleaned up
+                self.assertEqual(document['workspace_diff']['process_containment'], 'unavailable')
+                self.assertIsNone(document['workspace_diff']['lingering_processes'])
+                self.assertIn('process_containment_unavailable', document['findings'])
+                self.assertEqual(document['candidate']['status'], 'inconclusive')
+                self.assert_not_effective(document)
+
     def test_results_state_the_host_is_not_isolated(self):
         _, document = self.check()
         self.assertEqual(document['host_isolation'], 'none')

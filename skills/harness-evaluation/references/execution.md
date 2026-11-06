@@ -142,7 +142,8 @@ variables, so no credentials are in the environment. There is no host isolation
 (`host_isolation: none`): hooks run as the invoking user, and the host filesystem
 and network remain reachable. On Linux the validator is a child subreaper for the
 run and kills and reaps every process the run leaves behind before the post-run
-snapshot (`lingering_processes`); without that containment the run is
+snapshot (`lingering_processes`); without that containment, or where `/proc`
+cannot show the run's processes (`lingering_processes: null`), the run is
 `inconclusive` (`process_containment_unavailable`). Claude Code keeps the project-only setting
 source and the strict empty MCP request, but not `disableAllHooks`. Codex gets the
 temporary `CODEX_HOME` and `--dangerously-bypass-hook-trust` only inside it. That

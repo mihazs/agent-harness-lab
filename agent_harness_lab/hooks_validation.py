@@ -307,16 +307,17 @@ def _subreaper(value):
 
 
 def _descendants():
-    """Every live or zombie descendant of this process, from /proc; an empty set where /proc is unreadable."""
+    """Every live or zombie descendant of this process, from /proc; None where /proc cannot show this process."""
     parents = {}
     try: entries = os.listdir('/proc')
-    except OSError: return set()
+    except OSError: return None
     for entry in entries:
         if not entry.isdigit(): continue
         try: text = Path('/proc', entry, 'stat').read_text()
         except OSError: continue
         fields = text.rsplit(')', 1)[-1].split()
         if len(fields) > 1 and fields[1].isdigit(): parents[int(entry)] = int(fields[1])
+    if os.getpid() not in parents: return None  # an unlisted self means the table cannot be trusted to hold its children
     found, frontier = set(), {os.getpid()}
     while frontier:
         frontier = {pid for pid, parent in parents.items() if parent in frontier and pid not in found}
@@ -325,17 +326,21 @@ def _descendants():
 
 
 def _sweep(existing):
-    """SIGKILL and reap every descendant the run left behind; (lingering count, swept to none)."""
+    """SIGKILL and reap every descendant the run left behind; (lingering count, swept to none).
+
+    Unreadable process state is never a sweep: the count is None and swept is False."""
     lingering, deadline = None, time.monotonic() + SWEEP_SECONDS
-    while time.monotonic() < deadline:
-        stray = _descendants() - existing
+    while existing is not None and time.monotonic() < deadline:
+        current = _descendants()
+        if current is None: return lingering, False
+        stray = current - existing
         if lingering is None: lingering = len(stray)
         if not stray: return lingering, True
         for pid in stray:
             with contextlib.suppress(ProcessLookupError, PermissionError): os.kill(pid, signal.SIGKILL)
             with contextlib.suppress(ChildProcessError): os.waitpid(pid, os.WNOHANG)
         time.sleep(0.01)
-    return lingering or 0, False
+    return lingering, False
 
 
 def _canary_records(path, marker):
