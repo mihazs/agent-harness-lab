@@ -2585,13 +2585,14 @@ offline Python API with no CLI exposure. The caller supplies `(path, body)` pair
 is already authorized to hold; paths must be distinct, normalized, bundle-relative
 POSIX `.md` paths, and bodies are the Markdown text after any frontmatter. The
 function opens no file, follows no link and fetches nothing. A bundle over 10,000
-pages, a page over 1 MiB of text or more than 10,000 links on one page raises
-`LinkLimit`; nothing is truncated.
+pages, a page over 1 MiB of text, more than 10,000 links on one page or more than
+1,000,000 links in the bundle raises `LinkLimit`; nothing is truncated.
 
 Each link becomes one `Edge` with the source page, line number, kind, raw target,
 status, reason and, when resolved, the target page path. Kinds are `wikilink`,
 `wikilink_embed` (`![[...]]`), `markdown`, `markdown_image`, `reference_definition`
-(`[label]: target`, not footnotes) and `autolink` (`<scheme:...>`). Links in fenced
+(`[label]: target` with at most a title after it on its line, not footnotes) and
+`autolink` (`<scheme:...>`). Links in fenced
 code blocks, one-line code spans and after a backslash-escaped bracket are not edges.
 
 | Status | Meaning |
@@ -2601,7 +2602,7 @@ code blocks, one-line code spans and after a backslash-escaped bracket are not e
 | `ambiguous` | Several pages share the wikilink's page name or path suffix (`several_pages`) |
 | `outside_bundle` | A relative link climbs above the bundle root (`parent_traversal`) |
 | `remote` | A URL scheme or `//host` reference; it stays an opaque reference |
-| `unknown` | A non-page target such as an image, a site-root `/path`, or a `./` or `../` wikilink whose base is not documented |
+| `unknown` | A non-page target such as an image (a wikilink whose extension is letters and digits, so `[[v1.2 release]]` stays a page name), a site-root `/path`, or a `./` or `../` wikilink whose base is not documented |
 | `invalid` | An empty target, malformed percent-encoding, a backslash or NUL, or a target over 2,048 characters |
 
 A wikilink `[[name]]`, `[[name|alias]]` or `[[name#heading]]` matches a page named
