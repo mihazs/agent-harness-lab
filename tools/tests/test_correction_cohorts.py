@@ -2,7 +2,8 @@
 from copy import deepcopy
 import hashlib
 import json
-import unittest
+
+import pytest
 
 from agent_harness_lab.evaluation.correction_rerun import request_value
 from agent_harness_lab.evaluation.grader_correction import CorrectionStore
@@ -17,45 +18,49 @@ else:
     import test_grader_correction as correction_tests
 
 
-class CohortRerunRequestTests(unittest.TestCase):
-    def request(self):
-        return dict(schema_version=2,case_id='a'*64,expected_event_sha256='b'*64,
-            evidence_sha256='c'*64,bank_sha256='d'*64,revision_sha256='e'*64,
-            history_store='/synthetic/history',
-            prior=dict(run_id='1'*64,event_sha256='2'*64,inputs_sha256='3'*64,
-                plan_sha256='4'*64,evidence_sha256='5'*64),
-            operator=dict(identity='synthetic-operator',source='operator_attestation',
-                provenance='synthetic explicit operator',basis='fresh corrected comparison'),
-            reason='synthetic qualification request',qualification=dict(
-                protocol=dict(path='/synthetic/protocol.json',sha256='6'*64),
-                review=dict(identity='synthetic-reviewer',source='operator_attestation',
-                    basis_kind='independent_artifact_review',
-                    evidence_refs=[dict(ref='synthetic:protocol-review',sha256='6'*64)])))
+def cohort_request():
+    return dict(schema_version=2,case_id='a'*64,expected_event_sha256='b'*64,
+        evidence_sha256='c'*64,bank_sha256='d'*64,revision_sha256='e'*64,
+        history_store='/synthetic/history',
+        prior=dict(run_id='1'*64,event_sha256='2'*64,inputs_sha256='3'*64,
+            plan_sha256='4'*64,evidence_sha256='5'*64),
+        operator=dict(identity='synthetic-operator',source='operator_attestation',
+            provenance='synthetic explicit operator',basis='fresh corrected comparison'),
+        reason='synthetic qualification request',qualification=dict(
+            protocol=dict(path='/synthetic/protocol.json',sha256='6'*64),
+            review=dict(identity='synthetic-reviewer',source='operator_attestation',
+                basis_kind='independent_artifact_review',
+                evidence_refs=[dict(ref='synthetic:protocol-review',sha256='6'*64)])))
 
+
+class TestCohortRerunRequest:
     def test_v2_requires_exact_reviewed_protocol_and_v1_remains_compatible(self):
-        value = self.request(); request_value(value,'a'*64)
+        value = cohort_request(); request_value(value,'a'*64)
         value.pop('qualification'); value['schema_version']=1; request_value(value,'a'*64)
         value['schema_version']=2
-        with self.assertRaises(ValueError): request_value(value,'a'*64)
+        with pytest.raises(ValueError): request_value(value,'a'*64)
 
-    def test_unknown_fields_boolean_schema_and_unbound_review_rejected(self):
-        original = self.request()
-        changes = [lambda v:v.update(schema_version=True),lambda v:v.update(extra='unknown'),
-            lambda v:v['qualification'].update(extra='unknown'),
-            lambda v:v['qualification']['protocol'].update(path='relative.json'),
-            lambda v:v['qualification']['review'].update(source='verified'),
-            lambda v:v['qualification']['review'].update(evidence_refs=[]),
-            lambda v:v['qualification']['review']['evidence_refs'][0].update(sha256='7'*64),
-            lambda v:v['qualification']['review'].update(identity='x'*129)]
-        for change in changes:
-            value = deepcopy(original); change(value)
-            with self.subTest(value=value), self.assertRaises(ValueError): request_value(value,'a'*64)
+    @pytest.mark.parametrize('change',[
+        pytest.param(lambda v:v.update(schema_version=True),id='boolean-schema'),
+        pytest.param(lambda v:v.update(extra='unknown'),id='extra-field'),
+        pytest.param(lambda v:v['qualification'].update(extra='unknown'),id='extra-qualification-field'),
+        pytest.param(lambda v:v['qualification']['protocol'].update(path='relative.json'),id='relative-protocol'),
+        pytest.param(lambda v:v['qualification']['review'].update(source='verified'),id='review-source'),
+        pytest.param(lambda v:v['qualification']['review'].update(evidence_refs=[]),id='no-evidence'),
+        pytest.param(lambda v:v['qualification']['review']['evidence_refs'][0].update(sha256='7'*64),id='unbound-evidence'),
+        pytest.param(lambda v:v['qualification']['review'].update(identity='x'*129),id='long-identity')])
+    def test_unknown_fields_boolean_schema_and_unbound_review_rejected(self,change):
+        original = cohort_request()
+        value = deepcopy(original); change(value)
+        with pytest.raises(ValueError): request_value(value,'a'*64)
 
 
-class CorrectedCohortWorkflowTests(unittest.TestCase):
-    def setUp(self):
+class TestCorrectedCohortWorkflow:
+    @pytest.fixture(autouse=True)
+    def requalification(self):
         self.fixture = qualification_tests.RequalificationFixture(); self.fixture.setUp()
-        self.addCleanup(self.fixture.doCleanups)
+        yield
+        self.fixture.doCleanups()
 
     def correct(self,accept_before=False):
         f = self.fixture; application = f.application; correction = application.fixture
@@ -82,7 +87,7 @@ class CorrectedCohortWorkflowTests(unittest.TestCase):
 
     def request(self):
         f = self.fixture; current = self.store.show(self.case_id)
-        value = CohortRerunRequestTests().request()
+        value = cohort_request()
         value.update(case_id=self.case_id,expected_event_sha256=current['event_sha256'],
             evidence_sha256=current['evidence_sha256'],bank_sha256=self.applied['bank_manifest_sha256'],
             revision_sha256=self.applied['revision_sha256'],history_store=str(f.history.root),
@@ -95,35 +100,35 @@ class CorrectedCohortWorkflowTests(unittest.TestCase):
         f = self.fixture
         with f.workers():
             result = self.store.rerun(self.case_id,self.request(),f.baseline,f.candidate,**f.profile())
-        self.assertEqual(result['rerun_status'],'completed',result)
-        self.assertEqual(f.worker.call_count,12)
+        assert result['rerun_status'] == 'completed', result
+        assert f.worker.call_count == 12
         observed = f.history.historical_plan(result['new_run_id'])
-        self.assertNotEqual(observed['plan']['grader_hash'],f.prior['plan']['grader_hash'])
-        self.assertNotEqual(observed['plan']['cohort_manifest_sha256'],f.prior['plan']['cohort_manifest_sha256'])
+        assert observed['plan']['grader_hash'] != f.prior['plan']['grader_hash']
+        assert observed['plan']['cohort_manifest_sha256'] != f.prior['plan']['cohort_manifest_sha256']
         attempt = self.store.case(self.case_id)/result['rerun_attempt']
         binding = record(attempt/'qualification.json',1024*1024)[0]
-        self.assertEqual(binding['review'],f.review)
+        assert binding['review'] == f.review
         runs = [observed]+[f.history.historical_plan(phase['run_id']) for phase in binding['phases']]
-        self.assertEqual(len({run['run_id'] for run in runs}),3)
+        assert len({run['run_id'] for run in runs}) == 3
         old_runs = {f.prior['run_id']}|{phase['source_run_id'] for phase in binding['phases']}
-        self.assertTrue(old_runs.isdisjoint(run['run_id'] for run in runs))
+        assert old_runs.isdisjoint(run['run_id'] for run in runs)
         trial_sets = [{row['trial_id'] for row in schedule(ExperimentSpec.parse(run['plan']))} for run in runs]
-        self.assertEqual(sum(map(len,trial_sets)),len(set.union(*trial_sets)))
-        self.assertFalse(result['automatic_promotion']); self.assertFalse(result['publication_allowed'])
+        assert sum(map(len,trial_sets)) == len(set.union(*trial_sets))
+        assert not result['automatic_promotion']; assert not result['publication_allowed']
         correction = f.application.fixture
         self.store.review(self.case_id,correction.review_file('quarantined'))
         historical = self.store.show(self.case_id)
-        self.assertEqual(historical['rerun_status'],'completed')
-        self.assertFalse(historical['current_eligible'])
+        assert historical['rerun_status'] == 'completed'
+        assert not historical['current_eligible']
 
     def test_corrected_before_arm_now_passes_blocks_comparison_without_relabelling(self):
         self.correct(accept_before=True); f = self.fixture
         with f.workers():
             result = self.store.rerun(self.case_id,self.request(),f.baseline,f.candidate,**f.profile())
-        self.assertEqual(result['rerun_status'],'incomplete',result)
-        self.assertIsNone(result['new_run_id']); self.assertEqual(f.worker.call_count,8)
+        assert result['rerun_status'] == 'incomplete', result
+        assert result['new_run_id'] is None; assert f.worker.call_count == 8
         attempt = self.store.case(self.case_id)/result['rerun_attempt']
-        self.assertFalse((attempt/'export').exists())
+        assert not (attempt/'export').exists()
         starts = list((attempt/'qualification').rglob('started-run.json'))
-        self.assertEqual(len(starts),2)
-        self.assertEqual({f.history.historical_plan(record(path)[0]['run_id'])['state'] for path in starts},{'sealed'})
+        assert len(starts) == 2
+        assert {f.history.historical_plan(record(path)[0]['run_id'])['state'] for path in starts} == {'sealed'}
