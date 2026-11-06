@@ -188,21 +188,44 @@ def test_triage_recall_intervals_keep_two_sided_coverage_with_few_sampled_misses
     assert_two_sided_coverage(outcomes, RECALL_ALERTED / (RECALL_ALERTED + missed))
 
 
-def test_an_unsampled_stratum_widens_the_interval_instead_of_claiming_certainty():
+@pytest.mark.parametrize('name', ['missed_incidents', 'prevalence'])
+def test_an_unsampled_stratum_widens_the_interval_instead_of_claiming_certainty(name):
     """Severe units are always drawn and plain units at .05: 3 severe and 20 plain missed incidents.
 
     With no plain incident sampled, the severe incidents alone have zero design variance, yet the
-    plain stratum can still hold unsampled misses."""
+    plain stratum can still hold unsampled misses. No unit is alerted, so prevalence counts the same
+    incidents through its own stratum predicate."""
     value = frame([unit(f's{i:02d}', flags=['severe']) for i in range(20)] + [unit(f'p{i:04d}') for i in range(980)])
     receipt = audit.draw(value, plan(value, rates=dict(random=.05, severe=1)))
     severe = [d['unit_sha256'] for d in receipt['draws'] if d['inclusion_probability'] == 1]
     plain = [d['unit_sha256'] for d in receipt['draws'] if d['inclusion_probability'] < 1]
     assert len(severe) == 20 and len(plain) >= 20
-    counts = [audit.estimate(receipt, reviewed(receipt, {*severe[:3], *plain[:x]}))['estimates']['missed_incidents']
-              ['count'] for x in range(21)]
+    estimates = [audit.estimate(receipt, reviewed(receipt, {*severe[:3], *plain[:x]}))['estimates'][name]
+                 for x in range(21)]
+    counts, rates = [e['count'] for e in estimates], [e['rate'] for e in estimates]
     assert {count['interval'] for count in counts} == {'exact_binomial_mover'}
-    assert counts[0]['estimate'] == 3 and counts[0]['ci95'][1] > 23
+    assert counts[0]['estimate'] == 3 and counts[0]['ci95'][1] > 23 and rates[0]['ci95'][1] > 23 / 1000
     assert_two_sided_coverage([(binomial_pmf(x, 20, .05), count['ci95']) for x, count in enumerate(counts)], 23)
+    assert_two_sided_coverage([(binomial_pmf(x, 20, .05), rate['ci95']) for x, rate in enumerate(rates)], 23 / 1000)
+
+
+def test_intervals_stay_within_the_population_when_every_unit_is_drawn():
+    """4 plain units at .5 and 4 severe units at .75, all drawn and all incidents.
+
+    The weighted stratum estimates (8 and 5.33) exceed their 4 units each, so an uncapped combination
+    puts the lower limit above the population of 8."""
+    value = frame([unit(f'p{i}') for i in range(4)] + [unit(f's{i}', flags=['severe']) for i in range(4)])
+    receipt = next(r for r in (audit.draw(value, plan(value, seed=s, rates=dict(random=.5, severe=.5), budget=8))
+                               for s in range(200)) if r['drawn'] == 8)
+    hashes = {d['unit_sha256'] for d in receipt['draws']}
+    estimates = audit.estimate(receipt, reviewed(receipt, hashes))['estimates']
+    for name in ('prevalence', 'missed_incidents'):
+        assert 0 <= estimates[name]['count']['ci95'][0] <= estimates[name]['count']['ci95'][1] <= 8, name
+        assert 0 <= estimates[name]['rate']['ci95'][0] <= estimates[name]['rate']['ci95'][1] <= 1, name
+    batch = reviewed(receipt, hashes)
+    batch['labels'][0].update(status='pending', label=None)
+    bounds = audit.estimate(receipt, batch)['missing_label_bounds']
+    assert all(0 <= low <= high <= 1 for low, high in bounds.values()), bounds
 
 
 def test_missing_label_bounds_carry_sampling_error_and_stay_in_range():

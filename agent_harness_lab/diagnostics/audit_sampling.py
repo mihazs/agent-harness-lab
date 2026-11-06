@@ -289,6 +289,7 @@ def _count_bounds(rows, value, design, holds):
 
     Every stratum that can hold the counted case enters. One with no sampled case contributes its
     zero-event upper bound instead of a certain zero, so an unsampled stratum still widens the interval.
+    Each stratum's estimate is capped at its unit count, so the limits stay within the population.
     With a single stratum this is the exact interval itself."""
     counts = Counter(r['stratum'] for r in rows if value(r))
     total, below, above = 0.0, 0.0, 0.0
@@ -297,7 +298,7 @@ def _count_bounds(rows, value, design, holds):
         if not sampled and not holds(stratum):
             continue
         p, units = stratum['inclusion_probability'], stratum['units']
-        estimate = sampled / p
+        estimate = min(sampled / p, units)
         low, high = _exact_bounds(sampled, p, units) if sampled else (0, _zero_event_upper(p, units))
         total += estimate
         below += max(0.0, estimate - low) ** 2
