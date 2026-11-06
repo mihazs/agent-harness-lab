@@ -3,6 +3,8 @@
 audit() turns a sources.harness_inventory.HarnessInventory into one row per DIMENSIONS entry. Each inventory node,
 and each facet a COMBINED runtime file also holds (the config and plugin parts of .claude/settings.json), is one
 surface: CHECKS names the check its kind gets, which reads only the facts the inventory parser already recorded.
+For Codex, chain.codex() follows the project-doc budget across the AGENTS.md directory chain from the same facts
+and replaces the verdict of each file the default budget truncates or skips; it never adds a pass.
 Nothing is reread, executed, loaded, written or sent to a model. A surface is 'unknown' when it was not read
 (private_excluded), not parsed, failed to parse, has no check or no capability at the pin; a refused entry
 (link, special file, hardlink) is 'unknown' in the dimension it would belong to. A dimension is 'nonconformant'
@@ -14,6 +16,7 @@ harness performs better or worse, and no aggregate score is emitted.
 from dataclasses import asdict, dataclass
 import importlib
 from agent_harness_lab import surfaces
+from agent_harness_lab.audit import chain
 from agent_harness_lab.sources import agents_inventory, harness_inventory
 from agent_harness_lab.sources.schema import digest, fingerprint, label
 
@@ -53,6 +56,8 @@ REMEDIATIONS = {
     'hook_unknown_event': ('deterministic_edit', 'rename_or_remove_the_undocumented_event'),
     'hook_unknown_field': ('deterministic_edit', 'remove_undocumented_hook_fields'),
     'hook_unknown_handler_type': ('deterministic_edit', 'use_a_documented_handler_type'),
+    chain.SKIPPED: ('content_edit', 'shorten_the_instruction_chain_or_raise_project_doc_max_bytes'),
+    chain.TRUNCATED: ('content_edit', 'shorten_the_instruction_chain_or_raise_project_doc_max_bytes'),
     'instruction_empty': ('content_edit', 'add_instructions_or_remove_the_empty_file'),
     'instruction_exceeds_launch_bytes': ('content_edit', 'shorten_or_split_the_instruction_file'),
     'instruction_exceeds_project_doc_bytes': ('content_edit', 'shorten_or_split_the_instruction_file'),
@@ -94,9 +99,16 @@ class Finding:
     remediation: str | None = None
     source: str | None = None
     notice: str = NOTICE
+    measures: tuple = ()  # sorted (label, non-negative int) pairs, such as the bytes a budget drops
 
     def __post_init__(self):
         label(self.reason); label(self.kind); fingerprint(self.path_sha256); fingerprint(self.id)
+        if type(self.measures) is not tuple or any(type(row) is not tuple or len(row) != 2 or type(row[1]) is not int
+                or row[1] < 0 for row in self.measures):
+            raise ValueError('invalid audit finding measures')
+        for key, _ in self.measures: label(key)
+        if [row[0] for row in self.measures] != sorted({row[0] for row in self.measures}):
+            raise ValueError('audit finding measures must be sorted and unique')
         if (self.dimension not in DIMENSIONS or self.status not in ('nonconformant', 'unknown')
                 or self.evidence_kind not in EVIDENCE or self.notice != NOTICE
                 or (self.status == 'nonconformant') != (self.cost_class is not None)
@@ -169,19 +181,24 @@ def _refused(refusal, runtime, table):
     return DIMENSIONS if any(part in HARNESS_FOLDERS[runtime] for part in parts) else ()
 
 
-def audit(inventory):
-    """One conformance row per dimension over a declared inventory; blocked or unsupported is unknown everywhere."""
+def audit(inventory, *, task_cwd=None):
+    """One conformance row per dimension over a declared inventory; blocked or unsupported is unknown everywhere.
+
+    task_cwd, which must match the inventory's digest, settles the Codex project-doc chain; without it the chain is
+    recovered from the listed paths or left unjudged."""
     if type(inventory) is not harness_inventory.HarnessInventory: raise ValueError('audit needs a harness inventory')
+    if task_cwd is not None and digest(task_cwd) != inventory.task_cwd_sha256: raise ValueError('task_cwd differs from the inventory')
     table, runtime = registry(), inventory.runtime
+    budget = chain.codex(inventory, task_cwd)
     rows = {dimension: [] for dimension in DIMENSIONS}  # (status, reason) per surface
     findings, vendored, unattributed = [], 0, 0
 
-    def record(dimension, verdict, reason, path, kind, evidence, surface):
+    def record(dimension, verdict, reason, path, kind, evidence, surface, measures=(), cited=None):
         rows[dimension].append((verdict, reason))
         if verdict == 'conformant': return
         cost, remediation = REMEDIATIONS[reason] if verdict == 'nonconformant' else (None, None)
         findings.append(Finding(digest([dimension, path, kind, reason]), dimension, verdict, reason, path, digest(path), kind,
-            evidence, cost, remediation, source(surface, runtime)))
+            evidence, cost, remediation, cited or source(surface, runtime), measures=measures))
 
     if inventory.status == 'declared':
         for node in inventory.nodes:
@@ -190,7 +207,10 @@ def audit(inventory):
                 if kind not in table: continue
                 verdict, reason = _judge(node, kind, status, facts, runtime, table[kind])
                 dimension, surface, evidence, _ = table[kind]
-                record(dimension, verdict, reason, node.path, kind, evidence, surface)
+                measures, cited = (), None
+                if kind == 'instruction' and verdict != 'unknown' and node.origin == 'checkout' and node.path in budget:  # the chain outranks one file
+                    verdict, evidence, cited, (reason, measures) = 'nonconformant', 'structural', chain.SOURCE, budget[node.path]
+                record(dimension, verdict, reason, node.path, kind, evidence, surface, measures, cited)
         for refusal in inventory.refusals:
             if refusal.reason == 'vcs_metadata': continue  # .git is never a harness surface
             dimensions = _refused(refusal, runtime, table)
@@ -255,4 +275,4 @@ def run(checkout, runtime, *, task_cwd='.', project_trust='unknown'):
     if runtime not in surfaces.RUNTIMES: raise ValueError('unknown audit runtime')
     profile = dict(schema_version=1, runtime=runtime, version=surfaces.PINS[runtime], task_cwd=task_cwd)
     if project_trust != 'unknown': profile['project_trust'] = project_trust
-    return audit(harness_inventory.capture(checkout, profile))
+    return audit(harness_inventory.capture(checkout, profile), task_cwd=task_cwd)
