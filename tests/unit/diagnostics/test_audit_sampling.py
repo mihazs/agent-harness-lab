@@ -15,6 +15,9 @@ COMMON, RARE = 'tool_misuse', 'silent_drift'
 # lower limit only for conservative zero-event and missing-label bounds) and bias
 # within four standard errors.
 REPLICATIONS, NOMINAL = 200, .95
+TOLERANCE = 3 * math.sqrt(NOMINAL * (1 - NOMINAL) / REPLICATIONS)
+# Small-count checks enumerate every sample outcome, so their coverage is exact, not simulated.
+SMALL_COUNT_RATES, EXPECTED_SAMPLED, MAX_SAMPLED, RECALL_ALERTED = (.05, .2), range(1, 6), 25, 10
 
 
 def unit(uid, alerted=False, flags=(), capture='captured', eligible=True):
@@ -55,6 +58,56 @@ def labels(receipt, truth, status=None):
     for row, value in zip(rows, status or ()):
         row.update(status=value, label=None)
     return dict(receipt_sha256=receipt['receipt_sha256'], labels=rows)
+
+
+def binomial_pmf(k, n, p):
+    return math.comb(n, k) * p ** k * (1 - p) ** (n - k)
+
+
+def reviewed(receipt, incidents):
+    """Review every draw: hashes in ``incidents`` as the rare class, every other draw as no_incident."""
+    return dict(receipt_sha256=receipt['receipt_sha256'], labels=[
+        dict(unit_sha256=d['unit_sha256'], status='reviewed',
+             label=RARE if d['unit_sha256'] in incidents else audit.NO_INCIDENT) for d in receipt['draws']])
+
+
+def assert_two_sided_coverage(outcomes, truth):
+    """``outcomes`` pairs each enumerated sample outcome's probability with its interval, or None.
+
+    Mass outside the enumeration or without an interval is held against both sides."""
+    covered = sum(q for q, ci in outcomes if ci and ci[0] <= truth <= ci[1])
+    unresolved = 1 - sum(q for q, ci in outcomes if ci)
+    assert unresolved < 1e-3
+    assert NOMINAL - TOLERANCE <= covered and covered + unresolved <= NOMINAL + TOLERANCE, (covered, unresolved)
+
+
+@pytest.fixture(scope='module')
+def missed_count_intervals():
+    """Missed-incident intervals by sampled count, from one draw of 1000 non-alerted units per random rate.
+
+    In a one-stratum design the interval depends only on the sampled count, so labelling the first x
+    draws as incidents gives the interval of every sample with x sampled missed incidents."""
+    intervals = {}
+    for rate in SMALL_COUNT_RATES:
+        value = frame([unit(f'm{i:04d}') for i in range(1000)])
+        receipt = audit.draw(value, plan(value, rates=dict(random=rate)))
+        draws = [d['unit_sha256'] for d in receipt['draws']]
+        assert len(draws) > MAX_SAMPLED
+        intervals[rate] = {x: audit.estimate(receipt, reviewed(receipt, set(draws[:x])))['estimates']['missed_incidents']
+                           ['count'] for x in range(MAX_SAMPLED + 1)}
+    return intervals
+
+
+@pytest.fixture(scope='module')
+def recall_intervals():
+    """Recall intervals for every (sampled alerted, sampled missed) incident outcome of one two-stratum draw."""
+    value = frame([unit(f'a{i:04d}', alerted=True) for i in range(200)] + [unit(f'n{i:04d}') for i in range(1000)])
+    receipt = audit.draw(value, plan(value, rates=dict(random=.05, alerted=.5)))
+    alerted = [d['unit_sha256'] for d in receipt['draws'] if d['alerted']]
+    plain = [d['unit_sha256'] for d in receipt['draws'] if not d['alerted']]
+    assert len(alerted) > RECALL_ALERTED and len(plain) > MAX_SAMPLED
+    return {(a, m): audit.estimate(receipt, reviewed(receipt, {*alerted[:a], *plain[:m]}))['estimates']['triage_recall']
+            for a in range(RECALL_ALERTED + 1) for m in range(MAX_SAMPLED + 1)}
 
 
 def test_rare_class_missed_by_classifier_is_exposed_by_non_alert_reviews(population):
@@ -115,6 +168,41 @@ def test_unsampled_missed_incidents_get_a_zero_event_bound_not_certainty():
             assert missed['count']['ci95'][1] >= 10 and recall['ci95'][0] <= 20 / 30 < recall['ci95'][1]
     assert zero > REPLICATIONS / 4
     assert covered / REPLICATIONS >= NOMINAL - tolerance
+
+
+@pytest.mark.parametrize('rate', SMALL_COUNT_RATES)
+@pytest.mark.parametrize('expected', EXPECTED_SAMPLED)
+def test_missed_incident_intervals_keep_two_sided_coverage_with_few_sampled(missed_count_intervals, rate, expected):
+    """Exact coverage when 1 to 5 missed incidents are sampled on average, X ~ Binomial(missed, rate)."""
+    missed = round(expected / rate)
+    outcomes = [(binomial_pmf(x, missed, rate), count['ci95']) for x, count in missed_count_intervals[rate].items()]
+    assert_two_sided_coverage(outcomes, missed)
+
+
+@pytest.mark.parametrize('expected', EXPECTED_SAMPLED)
+def test_triage_recall_intervals_keep_two_sided_coverage_with_few_sampled_misses(recall_intervals, expected):
+    """10 alerted incidents drawn at .525 and 1 to 5 expected sampled missed incidents drawn at .05."""
+    missed, alerted_rate = round(expected / .05), 1 - .95 * .5
+    outcomes = [(binomial_pmf(a, RECALL_ALERTED, alerted_rate) * binomial_pmf(m, missed, .05), recall and recall['ci95'])
+                for (a, m), recall in recall_intervals.items()]
+    assert_two_sided_coverage(outcomes, RECALL_ALERTED / (RECALL_ALERTED + missed))
+
+
+def test_an_unsampled_stratum_widens_the_interval_instead_of_claiming_certainty():
+    """Severe units are always drawn and plain units at .05: 3 severe and 20 plain missed incidents.
+
+    With no plain incident sampled, the severe incidents alone have zero design variance, yet the
+    plain stratum can still hold unsampled misses."""
+    value = frame([unit(f's{i:02d}', flags=['severe']) for i in range(20)] + [unit(f'p{i:04d}') for i in range(980)])
+    receipt = audit.draw(value, plan(value, rates=dict(random=.05, severe=1)))
+    severe = [d['unit_sha256'] for d in receipt['draws'] if d['inclusion_probability'] == 1]
+    plain = [d['unit_sha256'] for d in receipt['draws'] if d['inclusion_probability'] < 1]
+    assert len(severe) == 20 and len(plain) >= 20
+    counts = [audit.estimate(receipt, reviewed(receipt, {*severe[:3], *plain[:x]}))['estimates']['missed_incidents']
+              ['count'] for x in range(21)]
+    assert {count['interval'] for count in counts} == {'exact_binomial_mover'}
+    assert counts[0]['estimate'] == 3 and counts[0]['ci95'][1] > 23
+    assert_two_sided_coverage([(binomial_pmf(x, 20, .05), count['ci95']) for x, count in enumerate(counts)], 23)
 
 
 def test_missing_label_bounds_carry_sampling_error_and_stay_in_range():
