@@ -172,11 +172,11 @@ def main(argv=None):
         command.add_argument('project', nargs='?', type=Path, default=Path.cwd(),help='Existing project directory whose exact harness scope is selected (default: current directory)')
         selection = command.add_mutually_exclusive_group()
         selection.add_argument('--events', type=Path, help='Existing authorized capture file instead of home discovery; its JSONL schema is selected by --format/--source-version')
-        selection.add_argument('--source-root', type=Path, help='Explicit native rollout directory; requires a pinned Codex profile')
+        selection.add_argument('--source-root', type=Path, help='Explicit native Codex rollout or Claude projects directory; requires a pinned Codex or Claude profile')
         if name == 'analyze':
             selection.add_argument('--memory-manifest', type=Path, help='Explicit scoped ai-memory session-observation manifest with pinned server/tool schema; read-only network retrieval, no atomic snapshot guarantee')
             command.add_argument('--authorization-file', type=Path, help='Existing private authorization header file for --memory-manifest; never printed or discovered automatically')
-        command.add_argument('--session', help='Exact native thread ID within --source-root')
+        command.add_argument('--session', help='Exact native Codex thread ID or Claude session UUID within --source-root')
         command.add_argument('--max-captures', type=int, help='Optional positive matching-capture limit after project filtering; default: unlimited')
         command.add_argument('--max-capture-scan', type=int, help='Optional positive discovery-file limit before project filtering; default: unlimited')
         command.add_argument('--max-events', type=int, help='Optional positive event limit; exceeding it fails explicitly; default: unlimited')

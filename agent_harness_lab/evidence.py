@@ -179,8 +179,8 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
         validate_fingerprint(source_identity)
         if events is None or pinned:
             raise ValueError('logical source identity requires an explicit unpinned event input')
-    if source_root is not None and (not codex_pinned or events is not None) or session is not None and source_root is None:
-        raise ValueError('native source-root/session requires the explicit pinned Codex profile and excludes --events')
+    if source_root is not None and (not pinned or events is not None) or session is not None and source_root is None:
+        raise ValueError('native source-root/session requires an explicit pinned Codex or Claude profile and excludes --events')
     if source_version is not None and (events is None and source_root is None or not pinned and source_version != CAPABILITIES.get(source_format, {}).get('version')):
         raise ValueError('source version requires an explicit supported capture')
     caveats, sources, errors = [], [], []
@@ -252,6 +252,11 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                     from .telemetry.codex_rollout import read
                 try:
                     if source_root is None: records, coverage, native_digest = read(path, project, max_records=max_events)
+                    elif source_format == 'claude':
+                        # The root is one Claude `projects` directory; only the project's mapped directories are read.
+                        from .telemetry.claude_discovery import scan
+                        records, coverage, native_digest = scan([path], project, session=session, max_files=max_files,
+                            max_scan_files=max_scan_files, max_records=max_events)
                     else:
                         from .telemetry.codex_discovery import scan
                         records, coverage, native_digest = scan(path, project, session=session, max_files=max_files,
@@ -262,11 +267,13 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                 records = drained(deque(records))
                 source.update(native_coverage=coverage)
                 if coverage['partial_tail']: _warn(caveats, 'Native capture has an uncommitted final line; only the complete prefix was projected.')
-                if coverage['unsupported_records'] or coverage['inherited_records_skipped']:
+                # Claude root summaries carry no inherited-record count: subagent transcripts are separate files.
+                if coverage['unsupported_records'] or coverage.get('inherited_records_skipped'):
                     _warn(caveats, 'Native capture contains unsupported or inherited records; coverage is partial.')
                 if source_root is not None:
                     discovery = coverage['discovery']
-                    if discovery['reached_limits'] or discovery['unsupported_headers'] or discovery['unsafe_entries_skipped']:
+                    if (discovery['reached_limits'] or discovery['unsupported_headers'] or discovery['unsafe_entries_skipped']
+                            or discovery.get('unrecognized_files')):
                         _warn(caveats, 'Native discovery reached limits or skipped unsupported/unsafe inputs; history is incomplete.')
                     if not discovery['accepted_files']:
                         _warn(caveats, 'No matching native capture was found; completeness remains unknown.')

@@ -659,8 +659,9 @@ descriptor reject the operation. Recheck uses the same exact built-in reader.
 **Not established.** Git worktree aggregation, `CLAUDE_CONFIG_DIR`/home
 resolution, session files outside the documented layout (not descended), `history.jsonl`, sidecar
 or subagent parent resolution, compressed or relocated histories, incremental byte
-cursors, `ahl analyze --source-root` for Claude, live CLI wire validation and
-cross-source execution joins remain open in #42/#44/#58.
+cursors, live CLI wire validation and cross-source execution joins remain open in
+#42/#44/#58. `ahl analyze --source-root` reuses this reader for one selected root;
+see [bounded Claude project-root selection](telemetry.md#bounded-claude-project-root-selection).
 
 ## Offline Git and selected harness metadata
 
