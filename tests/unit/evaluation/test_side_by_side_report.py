@@ -90,6 +90,23 @@ def test_mismatched_pairs_are_shown_but_not_comparable(change, reason):
     assert pair(report, 't')['arms']['candidate'][0]['outcome'] is True
 
 
+def test_a_lone_arm_with_foreign_hashes_is_not_comparable_rather_than_missing():
+    report = sbs.build(experiment([trial('t', 'baseline', True, harness_hash=CAND, grader_hash='d' * 64)]))
+    assert verdicts(report) == {('t', 0): ('not_comparable', ['harness_hash_mismatch', 'grader_hash_mismatch'])}
+
+
+def test_a_trial_from_another_experiment_is_not_comparable_and_kept_out_of_usage_totals():
+    foreign = trial('t', 'candidate', True, experiment_id='exp-2', usage=dict(duration_ms=1, input_tokens=999, output_tokens=1))
+    report = sbs.build(experiment([trial('t', 'baseline', False), foreign] + ab('u', False, True)))
+    assert verdicts(report)[('t', 0)] == ('not_comparable', ['invalid_record'])
+    assert pair(report, 't')['arms']['candidate'][0]['problems'] == ['experiment_mismatch']
+    usage = report['summary']['usage']
+    assert usage['candidate']['input_tokens'] == dict(known_total=5, known_records=1, unknown_records=0, total=5,
+                                                      excluded_records=1)
+    assert usage['baseline']['input_tokens'] == dict(known_total=5, known_records=1, unknown_records=0, total=5,
+                                                     excluded_records=1)
+
+
 def test_duplicate_unplanned_and_invalid_records_are_preserved():
     trials = (ab('dup', False, True) + [trial('dup', 'candidate', False, trial_id='dup-extra')]
               + [trial('twin', 'baseline', False, trial_id='shared'), trial('twin', 'candidate', True),
@@ -109,6 +126,8 @@ def test_duplicate_unplanned_and_invalid_records_are_preserved():
     assert report['invalid_records'] == [dict(index=12, reason='unknown_arm'), dict(index=13, reason='invalid_pair_identity'),
                                          dict(index=14, reason='invalid_pair_identity')]
     assert (report['summary']['unplanned_pairs'], report['summary']['trials_received']) == (1, 15)
+    assert report['summary']['usage']['candidate']['input_tokens'] == dict(
+        known_total=0, known_records=0, unknown_records=0, total=None, excluded_records=6)
 
 
 def timeline(report, task='t'):
@@ -144,6 +163,29 @@ def test_conflicting_or_unresolvable_mappings_are_rejected_and_listed():
                                           dict(index=2, reason='invalid_mapping')]
 
 
+def mapped(base_ids, cand_ids, pairs):
+    events = lambda ids: [dict(event_id=value, kind='tool_call') for value in ids]
+    mappings = [dict(ident('t'), baseline_event_id=source, candidate_event_id=target) for source, target in pairs]
+    report = sbs.build(experiment([trial('t', 'baseline', True, events=events(base_ids)),
+                                   trial('t', 'candidate', True, events=events(cand_ids))], event_mappings=mappings))
+    return timeline(report), [item['index'] for item in report['invalid_mappings']]
+
+
+@pytest.mark.parametrize('base_ids, cand_ids, pairs, rows', [
+    pytest.param(['a'], ['x', 'y'], [('a', 'x'), ('a', 'y')],
+                 [('baseline_only', 'a', None), ('candidate_only', None, 'x'), ('candidate_only', None, 'y')], id='one-source'),
+    pytest.param(['a', 'b'], ['c'], [('a', 'c'), ('b', 'c')],
+                 [('baseline_only', 'a', None), ('baseline_only', 'b', None), ('candidate_only', None, 'c')], id='one-target'),
+])
+def test_every_mapping_in_a_conflict_is_rejected_whatever_its_order(base_ids, cand_ids, pairs, rows):
+    assert mapped(base_ids, cand_ids, pairs) == mapped(base_ids, cand_ids, pairs[::-1]) == (rows, [0, 1])
+
+
+def test_a_mapping_onto_a_shared_candidate_id_is_rejected_and_exact_duplicates_are_one_mapping():
+    assert mapped(['x', 'y'], ['x'], [('y', 'x')]) == ([('stable_id', 'x', 'x'), ('baseline_only', 'y', None)], [0])
+    assert mapped(['a'], ['b'], [('a', 'b'), ('a', 'b')]) == ([('explicit_mapping', 'a', 'b')], [])
+
+
 def test_duplicate_event_ids_refuse_alignment():
     events = [dict(event_id='e', kind='tool_call'), dict(event_id='e', kind='tool_result')]
     report = sbs.build(experiment([trial('t', 'baseline', True, events=events), trial('t', 'candidate', True, events=events[:1])]))
@@ -164,6 +206,14 @@ def test_trace_bodies_never_reach_the_report():
     assert (record['omitted_event_fields'], record['invalid_events'], report['trace_bodies']) == (3, 2, 'omitted_metadata_only')
 
 
+@pytest.mark.parametrize('field', ['arm', 'harness_hash', 'grader_hash', 'runtime_stratum'])
+@pytest.mark.parametrize('value', [CANARY + '\x00' + 'x' * 300, dict(transcript=CANARY)], ids=['long-text', 'object'])
+def test_rejected_trial_fields_are_not_copied_into_the_report(field, value):
+    report = sbs.build(experiment([dict(trial('t', 'baseline', False), **{field: value}), trial('t', 'candidate', True)]))
+    assert 'CANARY' not in json.dumps(report)
+    assert pair(report, 't')['verdict'] == 'not_comparable'
+
+
 def test_unknown_capture_and_usage_stay_unknown():
     trials = [trial('t', 'baseline', False), trial('t', 'candidate', True, usage=dict(duration_ms=7))]
     del trials[0]['capture']
@@ -173,7 +223,7 @@ def test_unknown_capture_and_usage_stay_unknown():
     assert (pair(report, 't')['coverage_gap'], pair(report, 'u')['coverage_gap']) == (True, False)
     assert report['summary']['coverage_gaps'] == 1
     tokens = report['summary']['usage']['candidate']['input_tokens']
-    assert tokens == dict(known_total=5, known_records=1, unknown_records=1, total=None)
+    assert tokens == dict(known_total=5, known_records=1, unknown_records=1, total=None, excluded_records=0)
     assert report['summary']['usage']['baseline']['duration_ms']['total'] == 20
 
 

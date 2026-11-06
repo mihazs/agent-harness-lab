@@ -34,12 +34,14 @@ pair gets one verdict:
   not graded (`ungraded_*`, for example an infrastructure error or cancellation).
   Missing data is never a failure.
 - `not_comparable` for unplanned pairs, duplicate arm records or trial IDs,
-  invalid records, and harness, grader or runtime mismatches. These pairs stay in
-  the report for investigation, with every record, and are excluded from the
-  comparable count.
+  invalid records, and harness, grader or runtime mismatches. A lone arm is still
+  checked against the experiment's hashes. These pairs stay in the report for
+  investigation, with every record, and are excluded from the comparable count
+  and usage totals.
 
 Records without a valid identity, and records with an unknown arm, are listed in
-`invalid_records` by input index. A recorded tool error does not change a verdict;
+`invalid_records` by input index. A rejected arm, hash or runtime stratum is
+reported as `null` with its problem code, never copied. A recorded tool error does not change a verdict;
 only the graded outcome does.
 
 ## Timelines
@@ -52,8 +54,10 @@ Events with an unknown kind or malformed metadata are counted in `invalid_events
 Events align when both arms carry the same `event_id` (`stable_id`) or when an
 explicit mapping links them (`explicit_mapping`). Everything else is
 `baseline_only` or `candidate_only`, even with the same name at the same
-position. A mapping that names a missing event, reuses an event or overrides a
-shared ID is rejected and listed in `invalid_mappings`. Duplicate event IDs in an
+position. A mapping that names a missing event or overrides a shared ID is
+rejected and listed in `invalid_mappings`. When two mappings name the same event,
+every mapping in that conflict is rejected, whatever the input order; exact
+duplicates count as one mapping. Duplicate event IDs in an
 arm refuse alignment for that pair. Alignment is display, not causal attribution.
 
 ## Unknowns, bounds and authority
@@ -61,7 +65,8 @@ arm refuse alignment for that pair. Alignment is display, not causal attribution
 A missing or unrecognized `capture` is `unknown`; any pair without `complete`
 capture in both arms is a coverage gap. Missing usage stays `null`: each usage
 total reports its known sum, known and unknown record counts, and a `total` that
-is `null` whenever any record is unknown.
+is `null` whenever any record is unknown. Records in `not_comparable` pairs are
+left out of these sums and counted in `excluded_records`.
 
 Bounds: 5000 planned pairs, trials and mappings each, refused when exceeded; 200
 events per trial, truncated visibly with `events_total` and `events_truncated`;

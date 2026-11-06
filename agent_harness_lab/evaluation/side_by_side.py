@@ -59,15 +59,17 @@ def _usage(raw):
 
 
 def _trial(raw, experiment):
-    """Projected arm record; `problems` lists why it cannot support a comparison."""
-    problems = []
-    if raw.get('arm') not in ARMS: problems.append('unknown_arm')
+    """Projected arm record; `problems` lists why it cannot support a comparison. Rejected values become None."""
+    problems, kept = [], {}
+    kept['arm'] = raw.get('arm') if raw.get('arm') in ARMS else None
+    if kept['arm'] is None: problems.append('unknown_arm')
     if not _text(raw.get('trial_id')): problems.append('invalid_trial_id')
     if raw.get('experiment_id') != experiment['experiment_id']: problems.append('experiment_mismatch')
     for name in ('harness_hash', 'grader_hash'):
-        try: sha256(raw.get(name))
-        except ValueError: problems.append('invalid_' + name)
-    if not _text(raw.get('runtime_stratum')): problems.append('invalid_runtime_stratum')
+        try: sha256(raw.get(name)); kept[name] = raw[name]
+        except ValueError: problems.append('invalid_' + name); kept[name] = None
+    kept['runtime_stratum'] = raw.get('runtime_stratum') if _text(raw.get('runtime_stratum')) else None
+    if kept['runtime_stratum'] is None: problems.append('invalid_runtime_stratum')
     status, outcome = raw.get('status'), raw.get('outcome')
     if not _text(status): problems.append('invalid_status'); status = None
     if outcome is not None and type(outcome) is not bool: problems.append('invalid_outcome'); outcome = None
@@ -81,9 +83,9 @@ def _trial(raw, experiment):
         if event is None: invalid += 1; continue
         events.append(dict(event, position=position)); omitted += dropped
     capture = raw.get('capture') if raw.get('capture') in CAPTURES else 'unknown'
-    return dict(trial_id=raw.get('trial_id') if _text(raw.get('trial_id')) else None, arm=raw.get('arm'),
-                status=status, outcome=outcome, grader_hash=raw.get('grader_hash'), harness_hash=raw.get('harness_hash'),
-                runtime_stratum=raw.get('runtime_stratum'), capture=capture, usage=usage, events=events,
+    return dict(trial_id=raw.get('trial_id') if _text(raw.get('trial_id')) else None, arm=kept['arm'],
+                status=status, outcome=outcome, grader_hash=kept['grader_hash'], harness_hash=kept['harness_hash'],
+                runtime_stratum=kept['runtime_stratum'], capture=capture, usage=usage, events=events,
                 events_total=len(raw_events), events_truncated=len(raw_events) > MAX_EVENTS,
                 invalid_events=invalid, omitted_event_fields=omitted, problems=problems)
 
@@ -96,13 +98,14 @@ def _verdict(key, arms, planned, experiment, duplicate_ids):
     records = [record for records in arms.values() for record in records]
     if any(record['problems'] for record in records): reasons.append('invalid_record')
     if any(record['trial_id'] in duplicate_ids for record in records): reasons.append('duplicate_trial_id')
-    if not reasons and all(len(arms[arm]) == 1 for arm in ARMS):
-        baseline, candidate = arms['baseline'][0], arms['candidate'][0]
-        if baseline['harness_hash'] != experiment['baseline_hash'] or candidate['harness_hash'] != experiment['candidate_hash']:
+    if not reasons:  # each arm now holds at most one valid record; a lone arm is checked against the experiment too
+        present = {arm: arms[arm][0] for arm in ARMS if arms[arm]}
+        if any(record['harness_hash'] != experiment[arm + '_hash'] for arm, record in present.items()):
             reasons.append('harness_hash_mismatch')
-        if {baseline['grader_hash'], candidate['grader_hash']} != {experiment['grader_hash']}:
+        if any(record['grader_hash'] != experiment['grader_hash'] for record in present.values()):
             reasons.append('grader_hash_mismatch')
-        if baseline['runtime_stratum'] != candidate['runtime_stratum']: reasons.append('runtime_mismatch')
+        if len(present) == 2 and present['baseline']['runtime_stratum'] != present['candidate']['runtime_stratum']:
+            reasons.append('runtime_mismatch')
     if reasons: return 'not_comparable', reasons
     for arm in ARMS:
         if not arms[arm]: reasons.append('missing_' + arm)
@@ -122,12 +125,14 @@ def _timeline(arms, mappings):
     if any(len(set(values)) != len(values) for values in ids.values()):
         return dict(alignment='not_aligned', reason='duplicate_event_ids',
                     rows=rows_of(baseline, 'baseline_only', 'baseline') + rows_of(candidate, 'candidate_only', 'candidate')), list(mappings)
-    shared, explicit, rejected = set(ids['baseline']) & set(ids['candidate']), {}, []
-    for mapping in mappings:
-        source, target = mapping['baseline_event_id'], mapping['candidate_event_id']
+    shared, explicit, rejected, links = set(ids['baseline']) & set(ids['candidate']), {}, [], {}
+    for mapping in mappings:  # exact duplicates are one link; any event named by two links rejects all of them
+        links.setdefault((mapping['baseline_event_id'], mapping['candidate_event_id']), []).append(mapping)
+    sources, targets = Counter(source for source, _ in links), Counter(target for _, target in links)
+    for (source, target), group in links.items():
         if (source not in ids['baseline'] or target not in ids['candidate'] or source in shared or target in shared
-                or source in explicit or target in explicit.values()):
-            rejected.append(mapping)
+                or sources[source] > 1 or targets[target] > 1):
+            rejected += group
         else: explicit[source] = target
     by_id, used, rows = {event['event_id']: event for event in candidate}, set(), []
     for event in baseline:
@@ -140,15 +145,17 @@ def _timeline(arms, mappings):
 
 
 def _usage_summary(pairs):
+    """Usage of records in pairs that can be compared or are unknown; not_comparable records are only counted."""
     result = {}
     for arm in ARMS:
-        records = [record for pair in pairs for record in pair['arms'][arm]]
+        records = [record for pair in pairs if pair['verdict'] != 'not_comparable' for record in pair['arms'][arm]]
+        excluded = sum(len(pair['arms'][arm]) for pair in pairs if pair['verdict'] == 'not_comparable')
         result[arm] = {}
         for name in USAGE_FIELDS:
             known = [record['usage'][name] for record in records if record['usage'][name] is not None]
             unknown = len(records) - len(known)
             result[arm][name] = dict(known_total=sum(known), known_records=len(known), unknown_records=unknown,
-                                     total=sum(known) if records and not unknown else None)
+                                     total=sum(known) if records and not unknown else None, excluded_records=excluded)
     return result
 
 
