@@ -307,6 +307,38 @@ class InstructionInventoryTests(unittest.TestCase):
         self.assertEqual(state(rooted, 'AGENTS.md'), ('out_of_scope', 'outside_project_root'))
         self.assertEqual(state(rooted, 'src/task/AGENTS.md'), ('declared_applicable', 'directory_precedence'))
 
+    def unknown_marker_budget(self, override, limit):
+        """A large root AGENTS.md behind the given override, with no root marker in the checkout."""
+        self.write('AGENTS.override.md', override); self.write('AGENTS.md', 'SYNTHETIC_LARGE_'*256)
+        self.write('src/task/AGENTS.md', 'LEAF!')
+        self.profile.update(project_doc_max_bytes=limit, project_root_markers=['.absent-marker'])
+        receipt = self.read(); nodes = self.nodes(receipt)
+        for path in ('AGENTS.override.md', 'AGENTS.md'):
+            self.assertEqual((nodes[digest(path)].presence, nodes[digest(path)].applicability, nodes[digest(path)].reason),
+                             ('present', 'unknown', 'project_root_marker_not_found_in_checkout'))
+        leaf = nodes[digest('src/task/AGENTS.md')]
+        return leaf.applicability, leaf.reason, receipt.resolution_status
+
+    def test_empty_selection_in_an_unknown_marker_scope_keeps_a_large_file_off_the_budget(self):
+        # The first existing candidate is selected by existence. An empty one adds no bytes, yet it still stops the
+        # scope's later candidates from being charged, so only the 5-byte leaf counts toward project_doc_max_bytes.
+        for override in ('', ' \n\t'):
+            with self.subTest(override=override):
+                self.assertEqual(self.unknown_marker_budget(override, 5),
+                                 ('declared_applicable', 'directory_precedence', 'declared'))
+                self.assertEqual(self.unknown_marker_budget(override, 4),
+                                 ('unknown', 'byte_limit_requires_native_resolution', 'blocked'))
+
+    def test_non_empty_selection_in_an_unknown_marker_scope_is_charged_instead_of_the_large_file(self):
+        # Information separators are content to Codex's Rust trim, so that selection is charged like any text.
+        for override in ('SYNTHETIC', '\x1c\x1d\x1e\x1f'):
+            with self.subTest(override=override):
+                charged = len(override.encode())+2+5  # the selection, a separator and the leaf
+                self.assertEqual(self.unknown_marker_budget(override, charged),
+                                 ('declared_applicable', 'directory_precedence', 'declared'))
+                self.assertEqual(self.unknown_marker_budget(override, charged-1),
+                                 ('unknown', 'byte_limit_requires_native_resolution', 'blocked'))
+
     def test_inventory_parser_reports_relations_and_never_reads_local_files(self):
         root = self.root/'project'
         for name, text in (('CLAUDE.md', 'SYNTHETIC_ROOT @a.md'), ('src/task/deep/CLAUDE.md', 'SYNTHETIC_DEEP'),
