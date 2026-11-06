@@ -30,12 +30,15 @@ def main(argv):
     bank.add_argument('--export',type=Path,help='Create a new descriptive manifest directory without running agents')
     bank.add_argument('--max-trials',type=int,default=24,help='Explicit export trial ceiling; default 24')
     bank.add_argument('--list', action='store_true',help='Include task IDs, roots, families, partitions and review status in the JSON result; does not execute tasks')
-    experiment = commands.add_parser('experiment', help='Analyze a frozen repeated paired experiment',description='Read an ExperimentSpec JSON object plus either recorded TrialRecord JSON rows or --preflight. Analysis of supplied records remains unverified for oracle validity and automatic promotion.',epilog='Examples: ahl experiment --spec experiment.json --preflight; ahl experiment --spec experiment.json --records trials.json. --preflight exits 0 only when feasible; descriptive recorded analysis exits 3.')
+    experiment = commands.add_parser('experiment', help='Analyze a frozen repeated paired experiment',description='Read an ExperimentSpec JSON object plus recorded TrialRecord JSON rows, --preflight or --power-model. Analysis of supplied records remains unverified for oracle validity and automatic promotion.',epilog='Examples: ahl experiment --spec experiment.json --preflight; ahl experiment --spec experiment.json --power-model model.json --simulations 200; ahl experiment --spec experiment.json --records trials.json. --preflight exits 0 only when feasible; a completed power simulation exits 0 and never authorizes promotion; descriptive recorded analysis exits 3.')
     experiment.add_argument('--spec', type=Path, required=True,help='Existing JSON ExperimentSpec containing the frozen design, input hashes, schedule and analysis policy')
     experiment_mode=experiment.add_mutually_exclusive_group(required=True)
     experiment_mode.add_argument('--records', type=Path,help='Existing JSON array of TrialRecord objects to analyze; cannot be combined with --preflight')
     experiment_mode.add_argument('--preflight',action='store_true',help='Compute exact frozen-plan precision without running workers or models')
+    experiment_mode.add_argument('--power-model',type=Path,help='Existing JSON synthetic outcome model; simulate fixed-analysis disposition rates without running workers or models')
     experiment.add_argument('--cohorts',type=Path,help='Exact raw frozen preservation manifest; preflight only')
+    experiment.add_argument('--simulations',type=int,help='Number of seeded power simulations, 1 to 10000 (default 200); requires --power-model')
+    experiment.add_argument('--simulation-seed',type=int,help='Integer seed for the power simulation, separate from the plan scheduling seed (default 0); requires --power-model')
     regression = commands.add_parser('regression', help='Validate declarations, audit draft graders or replay frozen snapshots; no bank admission',description='Validate a regression proposal JSON declaration. Supplying --draft explicitly runs frozen grader controls; adding --replay runs matched recorded/minimized snapshots. Execution requires all pinned runtime options and a new private --output.',epilog='Example (declaration only): ahl regression --proposal proposal.json. JSON stdout does not admit a case to a task bank. Exit 0 means validation or requested replay/control completion; 1 means failed execution; 3 means blocked/unsupported.')
     regression.add_argument('--proposal', type=Path, required=True,help='Existing regression proposal JSON declaration; validation alone performs no replay')
     regression.add_argument('--draft', type=Path, help='Explicit frozen unreviewed TaskSpec/control descriptor to audit offline')
@@ -103,7 +106,19 @@ def main(argv):
             from .plan import ExperimentSpec
             from .statistics import TrialRecord, analyze
             from agent_harness_lab.promotion.policy import decide
-            if args.preflight:
+            if args.power_model is None and (args.simulations is not None or args.simulation_seed is not None):
+                raise ValueError('--simulations and --simulation-seed require --power-model')
+            if args.power_model is not None:
+                if args.cohorts:raise ValueError('--cohorts requires --preflight')
+                from agent_harness_lab.private_journal import record
+                from .cohorts import MAX_BYTES
+                from .power import simulate
+                spec=ExperimentSpec.parse(record(args.spec,MAX_BYTES)[0])
+                result=simulate(spec,record(args.power_model,MAX_BYTES)[0],
+                    simulations=200 if args.simulations is None else args.simulations,
+                    seed=0 if args.simulation_seed is None else args.simulation_seed)
+                code=0
+            elif args.preflight:
                 from agent_harness_lab.private_journal import record
                 from .precision import preflight
                 from .integrity import read_regular
