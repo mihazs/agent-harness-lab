@@ -192,8 +192,8 @@ that re-applies the promotion's content is probed and checked.
 
 `CLAUDE.local.md`, `settings*.json`, `.codex/config.toml`, hooks, workflows,
 Codex `.rules`, `.mcp.json`, memory and plugin checkouts
-(`origin="external_repository"`) stay non-adoptable. Only a hook unit that passes
-the hook contract below reaches the journal, and only when a caller passes it. Default discovery is also
+(`origin="external_repository"`) stay non-adoptable. Only a hook or workflow unit
+that passes its contract below reaches the journal, and only when a caller passes it. Default discovery is also
 unchanged: a snapshot without configured `harness_paths` still stages only root
 instructions and root skill bundles, so a same-named file elsewhere never becomes
 writable through discovery. A nested file reaches the baseline only when
@@ -265,6 +265,47 @@ No CLI path stages a hook unit yet. A passed contract is not behavioral evidence
 Behavior comes only from `ahl evaluate hooks`, which runs the unit beside a nonce
 canary inside a private trial workspace with no credentials in its environment
 ([hook canary validation](../skills/harness-evaluation/references/execution.md#hook-canary-validation)).
+
+## Workflow contract
+
+`workflow_contract_v1` applies the same executable contract to Claude Code
+workflow scripts. A unit is one or more direct `*.js` children of a checkout
+`.claude/workflows/` folder, the `contract_required` `workflow` kind.
+`hooks_contract.stage_workflows(project, {path: (bytes, mode)})` builds the
+journal snapshots without writing the project, and `evaluate` returns a workflow
+verdict when every member is a workflow script. A transaction that mixes hook and
+workflow files is no single unit and stays blocked; `contracts_for` returns one
+hook unit and one workflow unit for such a change.
+
+The [static workflow lint](source-contracts.md#static-claude-workflow-script-lint)
+of every candidate is a hard gate. A unit is `blocked` when `meta` is not the
+first literal statement (`meta_not_first_literal`), when the script uses
+`import(`, `Date.now()`, `Math.random()`, a no-argument `new Date()` or a static
+`import`, when the lint is inconclusive (`workflow_lint_inconclusive`), when a
+member is removed, is group- or world-writable or lies in a nested repository.
+The document records `lint: static_lint_not_runtime_validation`. A passed unit is
+admitted by `Journal.prepare(..., hook_contract=verdict)` exactly as a hook unit
+is, and `surfaces.CONTRACT_KINDS` names the two kinds an admission can cover. A
+workflow unit never lifts the deferred `hooks` surface.
+
+Analysis never runs a workflow script. `hooks_contract.trial_request(verdict,
+side, project, trial, args)` only describes one native run of a passed unit: the
+caller's runner executes it inside `trial/workspace`, an I13 trial copy that must
+hold the side's bytes (`baseline` before, `candidate` after) and must lie outside
+the project, so no project `.claude/workflows/` on the cwd-to-root path can load.
+The request adds `CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS` capped at 2 (gated
+at Claude Code >=2.1.269 in `CAPABILITIES`) and a canonical JSON args fixture of
+at most 2048 bytes. AHL pins no CLI form that starts a workflow, so the request
+says `invocation: caller_runner_unverified`.
+
+`hooks_contract.outcome(verdict, before, after, runs=None)` labels the unit and
+attaches a unified-diff `patch`. A blocked unit is `blocked`. Without runs the
+result is `recommendation_only`. Runs must be a `passed` or `failed` grade for
+both a baseline and a candidate request made for this unit with the same args
+fixture and within the cap; anything else is `inconclusive`. Only such runs give
+`improved` (the baseline failed and the candidate passed) or `not_improved`. The
+label is never adoption authority. Codex has no workflow loader at the pinned
+source, which every workflow document records.
 
 The module also holds the frozen `CAPABILITIES` table. It has one row per surface,
 runtime and documented item, pinned to Claude Code 2.1.317 and Codex 0.166.0

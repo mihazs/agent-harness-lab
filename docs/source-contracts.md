@@ -1608,6 +1608,10 @@ still carry the same name, so a leader it could outrank or tie is
 `clash_unresolved`, not `precedence_winner`. A `meta_not_first_literal` script,
 which the page says drops out of `/`, is left out of that doubt. Clashes with
 bundled workflows are not modelled.
+
+The same lint is the hard gate of `workflow_contract_v1`, which stages a changed
+project workflow script for the journal and never runs it; see the
+[workflow contract](one-call-improvement.md#workflow-contract).
 `observed_loading` is always `unknown`, and documents carry `executed: false`,
 `loading_evidence: false` and `publication_allowed: false`. Symlinked, special
 and multiply linked scripts are refused. Harness inventory bounds block the

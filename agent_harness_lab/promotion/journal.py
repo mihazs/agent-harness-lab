@@ -17,7 +17,7 @@ import subprocess
 import tomllib
 import uuid
 from agent_harness_lab.evaluation.integrity import contained, relative
-from agent_harness_lab.surfaces import adoption
+from agent_harness_lab.surfaces import CONTRACT_KINDS, adoption
 from agent_harness_lab.monitoring.state import atomic_json
 
 
@@ -295,9 +295,9 @@ class Journal:
         metadata=record.get('metadata') or {}
         contract=metadata.get('hook_contract')
         if contract is None: return frozenset()
-        from agent_harness_lab.hooks_contract import PROFILE,unit_snapshots
+        from agent_harness_lab.hooks_contract import PROFILES,unit_snapshots
         names=sorted(record['before'].keys()|record['after'].keys())
-        if not isinstance(contract,dict) or contract.get('profile')!=PROFILE or contract.get('status')!='passed' \
+        if not isinstance(contract,dict) or contract.get('profile') not in PROFILES or contract.get('status')!='passed' \
                 or contract.get('members')!=names:
             raise ValueError('invalid hook contract admission')
         if record.get('kind')=='rollback':
@@ -346,9 +346,9 @@ class Journal:
 
     def owned(self,name,target=None,*,probe=True,admitted=frozenset()):
         """Resolve an owned path. target is a snapshot about to be written (its mode and bytes are checked);
-        probe False takes containment and ignore rules as observed when the transaction was prepared. admitted holds
-        the members of a deployment unit a passed hook contract admitted; only such a member may be a
-        contract_required hook."""
+        probe False takes containment and ignore rules as observed when the transaction was prepared. admitted
+        holds the members of a deployment unit a passed executable contract admitted; only such a member may be a
+        contract_required hook or workflow (surfaces.CONTRACT_KINDS)."""
         relative(name)
         raw=None if target is None else base64.b64decode(target['content'],validate=True)
         # The root skills/, containment and ignore probes run only for a path whose verdict needs them.
@@ -357,7 +357,8 @@ class Journal:
                          in_checkout=(lambda:in_checkout(self.project,name)) if probe else True,
                          ignored=(lambda:ignored(self.project,name)) if probe else False)
         if verdict.writability!='adoptable' and not (
-                name in admitted and verdict.writability=='contract_required' and 'hook' in verdict.facets):
+                name in admitted and verdict.writability=='contract_required'
+                and any(kind in verdict.facets for kind in CONTRACT_KINDS)):
             raise ValueError('transaction outside owned harness surface')
         return contained(self.project,name)
 
