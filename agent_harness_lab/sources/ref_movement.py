@@ -34,7 +34,8 @@ def _side(state, key, cursor):
     graph = EvidenceGraph.parse(envelope['graph']) if envelope is not None and envelope['graph'] is not None else None
     metadata = envelope['metadata'] if envelope is not None else None
     coverage = ExecutionMetadata.parse(metadata).coverage if metadata is not None else None
-    return dict(checkpoint_sha256=cursor, graph=graph, capture_truncated=bool(coverage is not None and coverage.truncated))
+    truncated = None if coverage is None else bool(coverage.truncated)
+    return dict(checkpoint_sha256=cursor, graph=graph, capture_truncated=truncated)
 
 
 def _ancestry(graph, start, kinds):
@@ -99,18 +100,18 @@ def ref_movement(source, store, *, ref_name, before=None, after=None):
     for entry in state['records']:
         record = EvidenceRecord.parse(entry['record'])
         if record.source_sha256 == key: kinds[(key, record.native_id_sha256, record.revision_sha256)] = record.record_type
+    missing = dict(checkpoint_sha256=None, graph=None, capture_truncated=None)
+    old, new = (_side(state, key, c) if c is not None else missing for c in (before, after))
     if after is None or before is None:
         status, reason = 'unknown', 'no_checkpoint' if after is None else 'no_earlier_checkpoint'
-        sides = [dict(checkpoint_sha256=c, target='unavailable', capture_truncated=False) for c in (before, after)]
     else:
-        old, new = _side(state, key, before), _side(state, key, after)
         status, reason = _classify(old, new, kinds, key, ref_name)
-        sides = []
-        for side in (old, new):
-            target = _target(side['graph'], key, ref_name) if side['graph'] is not None else None
-            sides.append(dict(checkpoint_sha256=side['checkpoint_sha256'], capture_truncated=side['capture_truncated'],
-                target='unavailable' if side['graph'] is None else 'absent' if target is None
-                else {'git_commit': 'captured_commit', 'git_object_reference': 'reference_only'}.get(kinds.get(target.key), 'unknown')))
+    sides = []
+    for side in (old, new):
+        target = _target(side['graph'], key, ref_name) if side['graph'] is not None else None
+        sides.append(dict(checkpoint_sha256=side['checkpoint_sha256'], capture_truncated=side['capture_truncated'],
+            target='unavailable' if side['graph'] is None else 'absent' if target is None
+            else {'git_commit': 'captured_commit', 'git_object_reference': 'reference_only'}.get(kinds.get(target.key), 'unknown')))
     return dict(schema_version=1, profile=PROFILE, resolver_version=RESOLVER_VERSION, status=status, reason=reason,
         source_sha256=key, ref_sha256=digest(ref_name), before=sides[0], after=sides[1],
         cause='unknown', ancestry_basis='captured_native_parent_edges', repository_identity='caller_declared',

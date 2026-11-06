@@ -120,6 +120,21 @@ class RefMovementTests(unittest.TestCase):
         self.assertMovement(result, 'fast_forward', 'earlier_target_is_captured_ancestor')
         self.assertTrue(result['after']['capture_truncated'])
 
+    def test_single_truncated_capture_reports_its_real_later_side(self):
+        self.selection['max_commits'] = 1; self.declare()
+        self.commit('SYNTHETIC_NEXT'); only = self.capture()
+        result = self.movement()
+        self.assertMovement(result, 'unknown', 'no_earlier_checkpoint')
+        self.assertEqual(result['after'], dict(checkpoint_sha256=only, capture_truncated=True, target='captured_commit'))
+        self.assertIsNone(result['before']['capture_truncated'])
+
+    def test_annotated_tag_moved_to_a_descendant_commit_stays_unknown(self):
+        self.git('tag', '-a', 'synthetic-release', '-m', 'SYNTHETIC_TAG'); self.capture()
+        self.commit('SYNTHETIC_NEXT'); self.git('tag', '-f', 'synthetic-release'); self.capture()
+        result = self.movement('refs/tags/synthetic-release')
+        self.assertMovement(result, 'unknown', 'earlier_target_not_captured_commit')
+        self.assertEqual((result['before']['target'], result['after']['target']), ('reference_only', 'captured_commit'))
+
     def test_unchanged_appeared_disappeared_and_uncaptured_targets_stay_descriptive(self):
         self.git('branch', 'side'); self.git('branch', 'gone'); first = self.capture()
         self.git('branch', '-D', 'gone'); self.git('tag', '-a', 'synthetic-tag', '-m', 'SYNTHETIC_TAG')
@@ -143,11 +158,15 @@ class RefMovementTests(unittest.TestCase):
         self.assertEqual(self.movement(after=second)['before']['checkpoint_sha256'], first)
 
     def test_single_checkpoint_invalid_inputs_and_v1_sources_are_refused_or_unknown(self):
-        self.assertMovement(self.movement(), 'unknown', 'no_checkpoint')
+        empty = self.movement()
+        self.assertMovement(empty, 'unknown', 'no_checkpoint')
+        for side in ('before', 'after'):
+            self.assertEqual((empty[side]['target'], empty[side]['capture_truncated']), ('unavailable', None))
         first = self.capture()
         result = self.movement()
         self.assertMovement(result, 'unknown', 'no_earlier_checkpoint')
-        self.assertIsNone(result['before']['checkpoint_sha256'])
+        self.assertEqual(result['before'], dict(checkpoint_sha256=None, capture_truncated=None, target='unavailable'))
+        self.assertEqual(result['after'], dict(checkpoint_sha256=first, capture_truncated=False, target='captured_commit'))
         self.commit('SYNTHETIC_NEXT'); second = self.capture()
         for arguments, message in ((dict(ref_name='main'), 'invalid Git reference'),
                 (dict(ref_name='refs/heads/../x'), 'invalid Git reference'),

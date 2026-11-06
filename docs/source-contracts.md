@@ -861,14 +861,15 @@ recreated branch all look the same here, so `cause` stays `unknown`. The checkou
 repository membership stays `caller_declared`. The report does not check remote
 state or intent. The report has profile `git-ref-movement-v1` and holds fingerprints
 only. `ref_sha256` uses the same `digest(name)` as the Git summary's ref
-`name_sha256`. Each side reports its checkpoint, a `capture_truncated` flag and the
-target kind (`captured_commit`, `reference_only`, `unknown`, `absent` or `unavailable`). It
+`name_sha256`. Each side reports its checkpoint, a `capture_truncated` flag (`null`
+when that checkpoint or its capture metadata is unavailable) and the target kind (`captured_commit`, `reference_only`, `unknown`, `absent` or `unavailable`). It
 carries `publication_allowed: false` and false execution, outcome, source-read and
 network fields. Public benchmark export rejects the profile even if that flag is changed. It does not read GitHub
 force-push events or map squashed commits. `task test:sources:ref-movement` runs
 synthetic native controls: a fast-forward, a reset-and-recommit rewrite, a history
 ceiling, a branch outside HEAD history, deleted and new refs, an unchanged annotated
-tag, explicit checkpoints and refused inputs.
+tag, an annotated tag moved to a descendant, a truncated single capture, explicit
+checkpoints and refused inputs.
 
 ### Offline Git/GitHub commit join
 
