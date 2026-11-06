@@ -377,10 +377,12 @@ def embeds_hooks(relative_path, raw):
 # Claude Code shell pre-execution, pinned to the public skills docs (_CLAUDE + 'skills', "Inject dynamic context"):
 # an inline !`command` whose ! starts a line or follows whitespace, and a fenced block opened with ```!. The command
 # runs when a skill or command is invoked, before Claude sees the body, so it is hook-equivalent. Variants the docs
-# do not confirm fail closed: a ! after any other character, blanks between ! and the backtick, an indented, longer
-# or tilde fence, and blanks before the fence's !. A plain fenced code block is not excluded, because the docs never
-# say Claude skips one, and the frontmatter is scanned too, because substitution runs over the original file.
-_SHELL_PREEXECUTION = re.compile(r'![ \t]*`|^[ \t]*(?:`{3,}|~{3,})[ \t]*!', re.MULTILINE)
+# do not confirm fail closed: a ! after any other character, blanks between ! and the backtick, a longer or tilde
+# fence, blanks before the fence's !, and a fence anywhere in the text, since Claude Code's own block matcher has no
+# line anchor (a list item, a blockquote, mid-line, after a bare CR). A plain fenced code block is not excluded,
+# because the docs never say Claude skips one, and the frontmatter is scanned too, because substitution runs over
+# the original file.
+_SHELL_PREEXECUTION = re.compile(r'![ \t]*`|(?:`{3,}|~{3,})[ \t]*!')
 
 
 def embeds_shell(raw):

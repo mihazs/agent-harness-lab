@@ -438,6 +438,13 @@ class ShellPreExecutionTests(unittest.TestCase):
         for body in (b'KEY=!`cmd`\n', b'!``cmd``\n', b'! `cmd`\n', b'  ```!\ncmd\n```\n', b'````!\ncmd\n````\n',
                      b'~~~!\ncmd\n~~~\n', b'``` !\ncmd\n```\n', b'text\r\n!`cmd`\r\n', b'\xff\xfe!'):
             with self.subTest(body=body): self.assertEqual(self.verdict('.claude/commands/c.md', body), C)
+        # Claude Code matches ```! anywhere, so a fence after other text on the line fails closed too.
+        for body in (b'> ```!\n> node -v\n> ```\n', b'>```!\nid\n```\n', b'- ```!\n  node -v\n  ```\n',
+                     b'1. ```!\n   node -v\n   ```\n', b'Env: ```!\nnode -v\n```\n', b'Use ```!date``` here.\n',
+                     b'|```!id```|\n', b'\xc2\xa0```!\nid\n```\n', b'text\r```!\rnode -v\r```\r',
+                     b'x\r```!\nid\n```\n', 'intro\u2028```!\nid\n```\n'.encode()):
+            for name in self.RENDERED:
+                with self.subTest(name=name, body=body): self.assertEqual(self.verdict(name, body), C)
         # Even prose that quotes the marker, as in `!`, holds ! before a backtick and therefore fails closed.
         self.assertEqual(self.verdict('.claude/commands/c.md', b'Use the `!` prefix.\n'), C)
         # Substitution runs over the original file, so the frontmatter is scanned as well.

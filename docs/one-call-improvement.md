@@ -164,8 +164,11 @@ the docs do not confirm fail closed:
 - a `!` right before a backtick after any other character, as in
   `` KEY=!`cmd` ``, or in prose that quotes `` `!` ``;
 - blanks between the `!` and the backtick;
-- an indented fence, a fence of four or more backticks, a tilde fence, and blanks
-  between the fence and its `!`;
+- a fence of four or more backticks, a tilde fence, and blanks between the fence
+  and its `!`;
+- a fence anywhere in the text, not only at the start of a line: indented, in a
+  list item or blockquote, mid-line as in `` Env: ```!cmd``` ``, or after a bare
+  CR, because Claude Code's block matcher has no line anchor;
 - undecodable bytes.
 
 A plain fenced code block is not excluded: an inline form inside it still counts.
