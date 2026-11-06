@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
+from agent_harness_lab.sources import knowledge_links
 from agent_harness_lab.sources.knowledge_links import (KINDS, MAX_LINKS_PER_PAGE, MAX_PAGES, PROFILE, STATUSES,
     LinkLimit, links, summary)
 
@@ -43,6 +44,14 @@ def test_edges_keep_line_and_kind_provenance():
     assert (edge.status, edge.reason) == ('unknown', 'non_page_target')
 
 
+@pytest.mark.parametrize('target', ['v1.2 release', 'ADR 1.0', 'v2.0', 'Mr. Smith'])
+def test_missing_dotted_page_names_are_missing_not_files(target):
+    edge, = links([('a.md', f'[[{target}]]')])
+    assert (edge.status, edge.reason) == ('missing', 'no_page')
+    edge, = links([('a.md', f'[[{target}]]'), (f'{target}.md', '')])
+    assert (edge.status, edge.resolved) == ('resolved', f'{target}.md')
+
+
 @pytest.mark.parametrize('target, expected', [
     ('../outside.md', ('outside_bundle', 'parent_traversal')),
     ('a/../../../outside.md', ('outside_bundle', 'parent_traversal')),
@@ -70,6 +79,13 @@ def test_remote_links_are_opaque_and_never_fetched(monkeypatch):
     edges = links([('page.md', 'See <https://example.invalid/x> and [y](http://example.invalid/y).\n')])
     assert [(e.kind, e.status) for e in edges] == [('markdown', 'remote'), ('autolink', 'remote')]
     assert summary(edges)['remote_fetched'] is False
+
+
+def test_angle_destination_with_a_scheme_is_one_edge_not_an_extra_autolink():
+    edges = links([('a.md', '[x](<https://example.invalid/y> "<https://example.invalid/t>") <https://example.invalid/z>')])
+    assert [(e.kind, e.target) for e in edges] == [
+        ('markdown', 'https://example.invalid/y'), ('autolink', 'https://example.invalid/z')]
+    assert summary(edges)['kinds']['autolink'] == 1
 
 
 def test_percent_encoded_space_resolves_once_without_double_decoding():
@@ -156,6 +172,19 @@ def test_reference_definitions_are_edges_but_footnotes_are_not():
         ('reference_definition', 'notes/a.md'), ('reference_definition', 'notes/b c.md')]
 
 
+@pytest.mark.parametrize('body, expected', [
+    ('[Status]: see [[Design]] later', [('wikilink', 'Design')]),
+    ('[Note]: read [the design](b.md) first', [('markdown', 'b.md')]),
+    ('[x]: b.md [[secret]] [y](https://example.invalid/leak)', [('wikilink', 'secret'), ('markdown', 'https://example.invalid/leak')]),
+    ('[x]: b.md "title" <https://example.invalid/after>', [('autolink', 'https://example.invalid/after')]),
+    ('[x]: b.md "title"  \r', [('reference_definition', 'b.md')]),
+    ("[x]: <b.md> 'title'", [('reference_definition', 'b.md')]),
+])
+def test_definition_like_prefix_does_not_hide_later_links(body, expected):
+    edges = links([('a.md', body), ('b.md', ''), ('Design.md', ''), ('secret.md', '')])
+    assert [(e.kind, e.target) for e in edges] == expected
+
+
 def test_loops_and_self_links_are_counted_not_collapsed():
     pages = [('a.md', '[[b]] [self](a.md) [anchor](#top)'), ('b.md', '[[a]]'), ('orphan.md', '')]
     edges = links(pages)
@@ -206,8 +235,27 @@ def test_bounds_refuse_instead_of_truncating():
         links([('a.md', '[[b]]' * (MAX_LINKS_PER_PAGE + 1))])
     with pytest.raises(LinkLimit, match='large'):
         links([('a.md', 'x' * ((1 << 20) + 1))])
-    edge, = links([('a.md', '[x](' + 'a' * 3000 + '.md)')])
-    assert (edge.status, edge.reason) == ('invalid', 'target_too_long')
+    for body in ('[x](' + 'a' * 3000 + '.md)', '[[' + 'a' * 3000 + ']]', '![[' + 'a' * 3000 + ']]',
+                 '[x](<' + 'a' * 3000 + '.md>)', '[r]: <' + 'a' * 3000 + '.md>'):
+        edge, = links([('a.md', body)])
+        assert (edge.status, edge.reason) == ('invalid', 'target_too_long')
+
+
+def test_bundle_link_total_refuses_before_collecting_more(monkeypatch):
+    assert MAX_LINKS_PER_PAGE <= knowledge_links.MAX_LINKS <= 1_000_000
+    monkeypatch.setattr(knowledge_links, 'MAX_LINKS', 15)
+    assert len(links([('a.md', '[[x]]' * 10), ('b.md', '[[x]]' * 5)])) == 15
+    with pytest.raises(LinkLimit, match='bundle'):
+        links([('a.md', '[[x]]' * 10), ('b.md', '[[x]]' * 6)])
+
+
+def test_wikilink_resolution_does_not_scan_the_bundle_per_link():
+    pages = [(f'd{i % 100}/p{i}.md', '') for i in range(MAX_PAGES - 1)]
+    pages.append(('index.md', '[[missing]]' * 4000 + '[[x/missing]]' * 4000 + '[[d7/p7]]' * 2000))
+    started = time.perf_counter()
+    edges = links(pages)
+    assert time.perf_counter() - started < 5
+    assert summary(edges)['statuses']['missing'] == 8000 and summary(edges)['statuses']['resolved'] == 2000
 
 
 @pytest.mark.parametrize('body', [

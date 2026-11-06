@@ -9,6 +9,7 @@ reported instead of dropped or guessed. summary() keeps only counts; link text a
 """
 from collections import Counter, deque
 from dataclasses import dataclass
+from itertools import islice
 import posixpath
 import re
 from urllib.parse import unquote
@@ -19,20 +20,26 @@ STATUSES = ('resolved', 'missing', 'ambiguous', 'outside_bundle', 'remote', 'unk
 MAX_PAGES = 10_000
 MAX_PAGE_CHARS = 1 << 20
 MAX_LINKS_PER_PAGE = 10_000
+MAX_LINKS = 1_000_000
 MAX_TARGET_CHARS = 2048
 UNSUPPORTED = ('html_links', 'indented_code_blocks', 'multiline_code_spans', 'reference_link_usages',
                'nested_link_text', 'site_root_paths', 'frontmatter_links')
 _FENCE = re.compile(r' {0,3}(`{3,}|~{3,})(.*)$')
-_WIKI = re.compile(r'(!?)\[\[([^\[\]\n]{1,%d})\]\]' % MAX_TARGET_CHARS)
+# Wikilink and angle bodies are unbounded so an overlong target is reported as invalid instead of dropped.
+_WIKI = re.compile(r'(!?)\[\[([^\[\]\n]+)\]\]')
 _INLINE = re.compile(r'(!?)\[(?:[^\[\]\n]|\[[^\[\]\n]*\]){0,1000}\]\(')
-_DEFINITION = re.compile(r' {0,3}\[([^\[\]\n^][^\[\]\n]{0,998})\]:[ \t]*(<[^<>\n]*>|\S+)')
+_TITLE = re.compile(r'"[^"\n]{0,1000}"|\'[^\'\n]{0,1000}\'|\([^()\n]{0,1000}\)')
+# A definition is the whole line: a destination, then at most a title.
+_DEFINITION = re.compile(r' {0,3}\[([^\[\]\n^][^\[\]\n]{0,998})\]:[ \t]*(<[^<>\n]*>|\S+)(?:[ \t]+(?:%s))?\s*$'
+                         % _TITLE.pattern)
 _AUTOLINK = re.compile(r'<([A-Za-z][A-Za-z0-9+.-]{1,31}:[^\s<>]*)>')
 _SCHEME = re.compile(r'[A-Za-z][A-Za-z0-9+.-]*:')
 _ESCAPED = re.compile(r'\\[\[\]!<`]')
-_ANGLE = re.compile(r'<([^<>\n]{0,%d})>' % MAX_TARGET_CHARS)
+_ANGLE = re.compile(r'<([^<>\n]*)>')
+# A wikilink extension of letters and digits names a file such as an image; `v1.2 release` is a page name.
+_EXTENSION = re.compile(r'\.[A-Za-z0-9]*[A-Za-z][A-Za-z0-9]*')
 # CommonMark requires at least three levels of balanced parentheses in a bare destination.
 _BARE = re.compile(r'(?:[^\s()]|\((?:[^\s()]|\((?:[^\s()]|\([^\s()]*\))*\))*\))*')
-_TITLE = re.compile(r'"[^"\n]{0,1000}"|\'[^\'\n]{0,1000}\'|\([^()\n]{0,1000}\)')
 
 
 class LinkLimit(ValueError):
@@ -62,8 +69,9 @@ def links(pages):
         if not isinstance(body, str): raise ValueError('page body must be text')
         if len(body) > MAX_PAGE_CHARS: raise LinkLimit('page too large')
         paths.add(path)
-        occurrences = list(_occurrences(body))
+        occurrences = list(islice(_occurrences(body), min(MAX_LINKS_PER_PAGE, MAX_LINKS - len(found)) + 1))
         if len(occurrences) > MAX_LINKS_PER_PAGE: raise LinkLimit('too many links on one page')
+        if len(found) + len(occurrences) > MAX_LINKS: raise LinkLimit('too many links in the bundle')
         found.extend((path, *occurrence) for occurrence in occurrences)
     index = _Index(paths)
     return tuple(Edge(source, line, kind, target, *index.resolve(source, kind, target))
@@ -133,16 +141,23 @@ def _line_links(line):
     for match in _WIKI.finditer(line):
         yield 'wikilink_embed' if match.group(1) else 'wikilink', match.group(2)
     line = _WIKI.sub(lambda m: ' ' * len(m.group()), line)
-    position = 0
+    position, spans = 0, []
     while (match := _INLINE.search(line, position)) is not None:
         position = match.start() + len(match.group(1)) + 1  # an image inside link text is read on its own
-        target = _destination(line, match.end())
-        if target is not None: yield 'markdown_image' if match.group(1) else 'markdown', target
-    for match in _AUTOLINK.finditer(line): yield 'autolink', match.group(1)
+        destination = _destination(line, match.end())
+        if destination is not None:
+            target, end = destination
+            spans.append((match.end(), end))
+            yield 'markdown_image' if match.group(1) else 'markdown', target
+    pieces, kept = [], 0
+    for start, end in sorted(spans):  # a consumed destination is not read again as an autolink
+        start = max(start, kept)
+        if end > start: pieces += [line[kept:start], ' ' * (end - start)]; kept = end
+    for match in _AUTOLINK.finditer(''.join(pieces) + line[kept:]): yield 'autolink', match.group(1)
 
 
 def _destination(line, start):
-    """The destination of an inline link whose '(' ends at start, or None when the text is not a link."""
+    """(destination, end of the closing ')') of an inline link whose '(' ends at start, or None when not a link."""
     index = start
     while index < len(line) and line[index] in ' \t': index += 1
     if line[index:index + 1] == '<':
@@ -159,15 +174,38 @@ def _destination(line, start):
         if title is None: return None
         index = title.end()
         while index < len(line) and line[index] in ' \t': index += 1
-    return target if line[index:index + 1] == ')' else None
+    return (target, index + 1) if line[index:index + 1] == ')' else None
+
+
+class _Suffixes:
+    """Paths by '/'-separated suffix in a reversed-segment trie: building is linear in the total path length
+    and a lookup costs one dict probe per segment, so resolution never scans the bundle per link."""
+    def __init__(self, paths):
+        self.children, self.count, self.first = {}, [0], [None]
+        for path in paths:
+            node = 0
+            for segment in reversed(path.split('/')):
+                child = self.children.get((node, segment))
+                if child is None:
+                    child = self.children[node, segment] = len(self.count)
+                    self.count.append(0); self.first.append(path)
+                node = child; self.count[node] += 1
+
+    def find(self, name):
+        """(number of paths equal to or ending with '/' + name, that path when the number is one)."""
+        node = 0
+        for segment in reversed(name.split('/')):
+            node = self.children.get((node, segment))
+            if node is None: return 0, None
+        return self.count[node], self.first[node]
 
 
 class _Index:
     def __init__(self, paths):
         self.paths = paths
         self.folded = {path.casefold() for path in paths}
-        self.names = {}
-        for path in paths: self.names.setdefault(posixpath.basename(path), []).append(path)
+        self.suffixes = _Suffixes(paths)
+        self.folded_suffixes = _Suffixes(self.folded)
 
     def resolve(self, source, kind, target):
         """(status, reason, resolved path or None) of one raw target."""
@@ -185,18 +223,13 @@ class _Index:
         if name.startswith('/'): return 'unknown', 'root_relative_path', None
         if any(part in ('.', '..', '') for part in parts): return 'unknown', 'relative_wikilink', None
         wanted = name if name.endswith('.md') else name + '.md'
-        if '/' in name:
-            if wanted in self.paths: return 'resolved', 'bundle_path', wanted
-            candidates = sorted(path for path in self.paths if path.endswith('/' + wanted))
-        else:
-            candidates = sorted(self.names.get(wanted, ()))
-        if len(candidates) == 1: return 'resolved', 'path_suffix' if '/' in name else 'page_name', candidates[0]
-        if candidates: return 'ambiguous', 'several_pages', None
-        if any(path.casefold() == wanted.casefold() or path.casefold().endswith('/' + wanted.casefold())
-               for path in self.paths):
-            return 'missing', 'case_only_match', None
-        if posixpath.splitext(posixpath.basename(name))[1] not in ('', '.md'):
-            return 'unknown', 'non_page_target', None
+        if '/' in name and wanted in self.paths: return 'resolved', 'bundle_path', wanted
+        count, path = self.suffixes.find(wanted)  # an exact path was matched above, so these are proper suffixes
+        if count == 1: return 'resolved', 'path_suffix' if '/' in name else 'page_name', path
+        if count: return 'ambiguous', 'several_pages', None
+        if self.folded_suffixes.find(wanted.casefold())[0]: return 'missing', 'case_only_match', None
+        extension = posixpath.splitext(posixpath.basename(name))[1]
+        if extension != '.md' and _EXTENSION.fullmatch(extension): return 'unknown', 'non_page_target', None
         return 'missing', 'no_page', None
 
     def _markdown(self, source, target):
