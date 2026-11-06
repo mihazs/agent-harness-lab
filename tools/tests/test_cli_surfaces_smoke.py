@@ -17,7 +17,7 @@ if __package__:
     from . import harness_surface_fixture as fixture
 else:
     import harness_surface_fixture as fixture
-from agent_harness_lab import one_call, surfaces
+from agent_harness_lab import hooks_contract, one_call, surfaces
 
 ROOT = Path(__file__).resolve().parents[2]
 # Expected (writability, route) per runtime; written out so a classifier change shows up here, not only in docs.
@@ -133,10 +133,12 @@ class DeferredSurfacesFromMatrix(unittest.TestCase):
         self.assertEqual(one_call.deferred_surfaces(()),
                          ['behavioral optimization', 'skill lifecycle and routing', *surface_part])
 
-        class Passed: status = 'passed'
-        class Blocked: status = 'blocked'
+        class Passed: status, profile = 'passed', hooks_contract.PROFILE
+        class Blocked: status, profile = 'blocked', hooks_contract.PROFILE
+        class Workflow: status, profile = 'passed', hooks_contract.WORKFLOW_PROFILE
         self.assertNotIn('hooks', one_call.deferred_surfaces((Passed(),)))
         self.assertIn('hooks', one_call.deferred_surfaces((Passed(), Blocked())))
+        self.assertIn('hooks', one_call.deferred_surfaces((Workflow(),)))  # a workflow unit is no hook unit
 
     def test_a_surface_every_runtime_leaves_unsupported_stays_deferred(self):
         # The inventory may read an unsupported path, so it must not drop out of deferred_surfaces like memory does.

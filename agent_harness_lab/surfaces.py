@@ -554,6 +554,8 @@ CAPABILITIES = (
 
 # The generic surface matrix: per SURFACES row and runtime, one synthetic checkout-relative path and the classifier
 # kind that owns the surface there (None for the kind-free memory rows); None means the runtime has no file surface.
+# A third item names the declared root the path lies beneath instead of the checkout (Codex memory lives only in
+# a runtime home such as CODEX_HOME, never in the checkout).
 # A shared file answers per surface: the hooks key of .claude/settings.json is a hook, its plugin enablement a plugin
 # and its other keys settings. Writability is the RULES verdict for that kind inside the checkout, never restated.
 MATRIX = (
@@ -568,7 +570,7 @@ MATRIX = (
     ('plugins', {'claude-code': ('.claude/settings.json', 'plugin'), 'codex': ('.codex/config.toml', 'plugin')}),
     ('mcp', {'claude-code': ('.mcp.json', 'config'), 'codex': ('.codex/config.toml', 'config')}),
     ('output_styles', {'claude-code': ('.claude/output-styles/terse.md', 'config'), 'codex': ('.codex/config.toml', 'config')}),
-    ('memory', {'claude-code': ('.claude/agent-memory/reviewer/MEMORY.md', None), 'codex': ('memories/notes.md', None)}),
+    ('memory', {'claude-code': ('.claude/agent-memory/reviewer/MEMORY.md', None), 'codex': ('memories/notes.md', None, 'CODEX_HOME')}),
     ('settings', {'claude-code': ('.claude/settings.json', 'config'), 'codex': ('.codex/config.toml', 'config')}),
 )
 # Where the single-run controller routes a surface. An adoptable path whose edits carry the hook facet (an agent
@@ -581,10 +583,10 @@ ROUTES = {'adoptable': 'adopt', 'contract_required': 'contract', 'recommendation
 
 def _cell(runtime, entry):
     if entry is None: return None
-    path, kind = entry
-    parts, context = PurePosixPath(path).parts, _Context(False, in_checkout=True)
+    path, kind, root = (*entry, None)[:3]
+    parts, context = PurePosixPath(path).parts, _Context(False, declared_root=root, in_checkout=True)
     matched = [row for row in RULES if runtime in row.runtimes and row.kind in (kind, None) and row.match(path, parts, context)]
-    full = classify(path, runtime, in_checkout=True)
+    full = classify(path, runtime, declared_root=root, in_checkout=True)
     writability = _writability(matched, (kind,), full.executable, context)
     route = 'contract' if writability == 'adoptable' and HOOK_FACET in full.facets else ROUTES[writability]
     return dict(writability=writability, route=route)
