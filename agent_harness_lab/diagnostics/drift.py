@@ -1,0 +1,355 @@
+"""Frozen drift plans and receipts that keep capture, task-mix and verified-performance drift apart.
+
+A ``drift-plan-v1`` freezes, before any monitored window is read, the reference
+revisions, stream, strata, observable task features, the independent task-root
+unit, the capture eligibility rule, a non-overlapping fixed-window schedule,
+minimum exposure, effects of interest and the per-channel alert budget.
+``freeze_reference`` summarizes the reference window as counts only, and
+``assess`` returns a ``drift-receipt-v1`` for one later window.
+
+The capture channel raises deterministic operational alerts (schema mismatch,
+conflicting duplicates, cursor gaps or collisions, untimed runs and coverage
+below the frozen rule). A run with partial or unknown capture, a missing
+required field, truncation, parse rejection, or unknown task root or harness
+identity is ineligible: it lowers capture coverage and never enters the task-mix
+or performance denominators. Retries of one task root count once. The task-mix
+and performance channels report bounded descriptive exposure only; their
+statistical detectors are not implemented yet, so they always return
+``insufficient_evidence``. No receipt sets a regression label, establishes a
+cause, or grants promotion or rollback authority. Pure: nothing is read,
+written or charged.
+"""
+import hashlib
+import json
+import math
+import re
+
+from agent_harness_lab.diagnostics.coverage import CAPTURE_STATES
+from agent_harness_lab.diagnostics.triage_policy import _number, _sha, policy_sha256, root_sha256
+
+PLAN_PROFILE = 'drift-plan-v1'
+REFERENCE_PROFILE = 'drift-reference-v1'
+RECEIPT_PROFILE = 'drift-receipt-v1'
+STATES = ('alert', 'no_alert', 'insufficient_evidence', 'evidence_of_noninferiority')
+STRATUM_FIELDS = ('task_family', 'runtime', 'effective_model_version')
+VERIFIED_PROVENANCE = ('executable_grader', 'independent_review')
+ACTIONS = ('observe', 'review')
+STATISTICAL_CHANNELS = ('task_mix', 'performance')
+UNKNOWN = 'unknown'
+OTHER = 'other'
+MAX_CATEGORIES = 64
+RESERVED = frozenset(('run_id', 'task_root', 'cursor', 'started', 'schema_version', 'capture', 'truncated',
+                      'parse_rejected', 'harness_revision', 'outcome', 'outcome_provenance',
+                      'requested_model', *STRATUM_FIELDS))
+PLAN_FIELDS = frozenset(('schema_version', 'profile', 'stream_sha256', 'reference_revisions_sha256',
+                         'source_schema_version', 'unit', 'strata', 'features', 'required_fields', 'capture',
+                         'method', 'reference_window', 'window_length', 'max_windows', 'min_exposure',
+                         'effect_size', 'alert_budget', 'multiplicity', 'reset_policy', 'action'))
+EFFECTS = ('task_mix_total_variation', 'failure_rate_increase')
+LIMITATIONS = ('channel_alerts_are_not_causal_regressions', 'statistical_detectors_not_implemented',
+               'root_independence_unverified', 'label_authority_unverified')
+_NAME = re.compile(r'[a-z][a-z0-9_]{0,63}')
+_ALIAS = 'requested model aliases cannot become precise strata or features'
+
+
+def _names(value, what, *, allow_empty=True, allowed=None):
+    if not isinstance(value, list) or (not value and not allow_empty) or len(set(value)) != len(value):
+        raise ValueError(f'{what} must be a list of unique field names')
+    for name in value:
+        if name == 'requested_model':
+            raise ValueError(_ALIAS)
+        if not isinstance(name, str) or not _NAME.fullmatch(name) or (allowed and name not in allowed):
+            raise ValueError(f'invalid {what} field name')
+    return value
+
+
+def _finite(value):
+    return type(value) in (int, float) and math.isfinite(value)
+
+
+def _positive_int(value):
+    return type(value) is int and value > 0
+
+
+def check_plan(plan):
+    """Validate a frozen ``drift-plan-v1`` and return its SHA-256."""
+    if not isinstance(plan, dict) or set(plan) != PLAN_FIELDS:
+        raise ValueError('invalid drift plan v1 schema')
+    if type(plan['schema_version']) is not int or plan['schema_version'] != 1 or plan['profile'] != PLAN_PROFILE:
+        raise ValueError('invalid drift plan v1 schema')
+    if not _sha(plan['stream_sha256']):
+        raise ValueError('stream identity must be a SHA-256')
+    revisions = plan['reference_revisions_sha256']
+    if not isinstance(revisions, list) or not revisions or not all(map(_sha, revisions)) \
+            or len(set(revisions)) != len(revisions):
+        raise ValueError('reference revisions must be unique SHA-256 hashes')
+    if not _positive_int(plan['source_schema_version']):
+        raise ValueError('source schema version must be a positive integer')
+    if plan['unit'] != 'task_root':
+        raise ValueError('the drift unit is the independent task root')
+    strata = _names(plan['strata'], 'strata', allow_empty=False, allowed=STRATUM_FIELDS)
+    features = _names(plan['features'], 'feature')
+    required = _names(plan['required_fields'], 'required')
+    if set(features) & RESERVED:
+        raise ValueError('features must be observable task fields, not run metadata or strata')
+    if set(strata) - set(required):
+        raise ValueError('every stratum field must be a required field')
+    capture = plan['capture']
+    if not isinstance(capture, dict) or set(capture) != {'min_coverage', 'max_coverage_drop'} \
+            or not _number(capture['min_coverage']) or capture['min_coverage'] == 0 \
+            or not _number(capture['max_coverage_drop']):
+        raise ValueError('invalid capture eligibility rule')
+    if plan['method'] != 'fixed_window':
+        raise ValueError('only non-overlapping fixed windows are supported')
+    window = plan['reference_window']
+    if not isinstance(window, list) or len(window) != 2 or not all(map(_finite, window)) or window[1] <= window[0]:
+        raise ValueError('invalid reference window')
+    if not _finite(plan['window_length']) or plan['window_length'] <= 0:
+        raise ValueError('invalid window length')
+    if not _positive_int(plan['max_windows']) or not _positive_int(plan['min_exposure']):
+        raise ValueError('maximum windows and minimum exposure must be positive integers')
+    effect = plan['effect_size']
+    if not isinstance(effect, dict) or set(effect) != set(EFFECTS) \
+            or not all(_number(effect[k]) and effect[k] > 0 for k in EFFECTS):
+        raise ValueError('invalid effect sizes of interest')
+    budget = plan['alert_budget']
+    if not isinstance(budget, dict) or set(budget) != set(STATISTICAL_CHANNELS) \
+            or not all(_number(budget[k]) and budget[k] > 0 for k in STATISTICAL_CHANNELS) \
+            or sum(budget.values()) >= 1:
+        raise ValueError('alert budget must allocate a positive false-alert rate to each statistical channel')
+    if plan['multiplicity'] != 'bonferroni_windows_and_strata':
+        raise ValueError('unsupported multiplicity family')
+    if plan['reset_policy'] != 'new_plan_retains_history':
+        raise ValueError('a reset must be a new plan that retains history and spent error')
+    if plan['action'] not in ACTIONS:
+        raise ValueError('drift action must be observe or review')
+    return policy_sha256(plan)
+
+
+def _digest(body):
+    return hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest()
+
+
+def _category(value):
+    if isinstance(value, bool) or (isinstance(value, (str, int)) and len(str(value)) <= 128 and str(value)):
+        return json.dumps(value)
+    return UNKNOWN
+
+
+def _stratum(plan, run):
+    values = [run.get(name) for name in plan['strata']]
+    if not all(isinstance(value, str) and value and len(value) <= 128 for value in values):
+        return None
+    return json.dumps(values)
+
+
+def _issues(plan, run, revisions):
+    """Return why a timed in-window run is ineligible; an empty list means complete capture."""
+    issues = []
+    if run.get('schema_version') != plan['source_schema_version'] or type(run.get('schema_version')) is not int:
+        issues.append('schema_mismatch')
+    if run.get('capture') != 'complete':
+        issues.append('capture_' + (run.get('capture') if run.get('capture') in CAPTURE_STATES else UNKNOWN))
+    if run.get('truncated') is not False:
+        issues.append('truncated')
+    if run.get('parse_rejected') is not False:
+        issues.append('parse_rejected')
+    if any(run.get(name) is None for name in plan['required_fields']):
+        issues.append('missing_required_fields')
+    if not isinstance(run.get('task_root'), str) or not run['task_root']:
+        issues.append('unknown_task_root')
+    revision = run.get('harness_revision')
+    if not isinstance(revision, str) or not revision:
+        issues.append('unknown_harness_identity')
+    elif revisions is not None and root_sha256(revision) not in revisions:
+        issues.append('revision_outside_reference')
+    return issues
+
+
+def _summarize(plan, runs, start, end, revisions=None):
+    """One bounded pass over ``runs``; only counts and per-root state are retained."""
+    counts = dict(runs=0, eligible_runs=0, duplicates_suppressed=0, conflicting_duplicates=0, untimed_runs=0,
+                  outside_window=0, cursor_unknown=0, cursor_gaps=0, cursor_collisions=0)
+    issues, seen, cursors, roots = {}, {}, set(), {}
+    for run in runs:
+        if not isinstance(run, dict) or not isinstance(run.get('run_id'), str) or not run['run_id']:
+            raise ValueError('every run requires a run_id')
+        signature = hashlib.sha256(json.dumps(run, sort_keys=True, default=repr).encode()).hexdigest()
+        key = root_sha256(run['run_id'])
+        if key in seen:
+            counts['conflicting_duplicates' if seen[key] != signature else 'duplicates_suppressed'] += 1
+            continue
+        seen[key] = signature
+        if not _finite(run.get('started')):
+            counts['untimed_runs'] += 1
+            continue
+        if not start <= run['started'] < end:
+            counts['outside_window'] += 1
+            continue
+        counts['runs'] += 1
+        cursor = run.get('cursor')
+        if type(cursor) is not int:
+            counts['cursor_unknown'] += 1
+        elif cursor in cursors:
+            counts['cursor_collisions'] += 1
+        else:
+            cursors.add(cursor)
+        found = _issues(plan, run, revisions)
+        for issue in found:
+            issues[issue] = issues.get(issue, 0) + 1
+        if found:
+            continue
+        counts['eligible_runs'] += 1
+        state = roots.setdefault(root_sha256(run['task_root']), dict(
+            stratum=_stratum(plan, run), features={name: _category(run.get(name)) for name in plan['features']},
+            verified=set(), missing_label=False, unverified=False))
+        if state['stratum'] != _stratum(plan, run):
+            state['stratum'] = None
+        for name in plan['features']:
+            if state['features'][name] != _category(run.get(name)):
+                state['features'][name] = UNKNOWN
+        outcome = run.get('outcome')
+        if type(outcome) is not bool:
+            state['missing_label'] = True
+        elif run.get('outcome_provenance') in VERIFIED_PROVENANCE:
+            state['verified'].add(outcome)
+        else:
+            state['unverified'] = True
+    if cursors:
+        counts['cursor_gaps'] = max(cursors) - min(cursors) + 1 - len(cursors)
+    counts['ineligible'] = dict(sorted(issues.items()))
+    counts['coverage'] = counts['eligible_runs'] / counts['runs'] if counts['runs'] else None
+    return counts, _channels(plan, roots)
+
+
+def _bounded(counter, value):
+    if value not in counter and len(counter) >= MAX_CATEGORIES:
+        value = OTHER
+    counter[value] = counter.get(value, 0) + 1
+
+
+def _channels(plan, roots):
+    strata, features, performance = {}, {name: {} for name in plan['features']}, {}
+    unknown = dict(stratum_roots=0, missing_label_roots=0, unverified_roots=0, mixed_outcome_roots=0)
+    for state in roots.values():
+        for name, value in state['features'].items():
+            _bounded(features[name], value)
+        if state['stratum'] is None:
+            unknown['stratum_roots'] += 1
+            continue
+        _bounded(strata, state['stratum'])
+        if len(state['verified']) == 2:
+            unknown['mixed_outcome_roots'] += 1
+            continue
+        if not state['verified']:
+            unknown['missing_label_roots' if state['missing_label'] else 'unverified_roots'] += 1
+            continue
+        cell = performance.setdefault(state['stratum'], dict(verified_roots=0, failures=0))
+        cell['verified_roots'] += 1
+        cell['failures'] += False in state['verified']
+    return dict(roots=len(roots), strata=dict(sorted(strata.items())),
+                features={k: dict(sorted(v.items())) for k, v in features.items()},
+                performance=dict(sorted(performance.items())), unknown=unknown)
+
+
+def _capture_reasons(plan, counts, reference_coverage=None):
+    reasons = ['schema_mismatch'] if counts['ineligible'].get('schema_mismatch') else []
+    reasons += [reason for reason, key in (('conflicting_duplicate_runs', 'conflicting_duplicates'),
+                                           ('cursor_gap', 'cursor_gaps'), ('cursor_collision', 'cursor_collisions'),
+                                           ('untimed_runs', 'untimed_runs')) if counts[key]]
+    coverage = counts['coverage']
+    if coverage is not None and coverage < plan['capture']['min_coverage']:
+        reasons.append('coverage_below_minimum')
+    if coverage is not None and reference_coverage is not None \
+            and reference_coverage - coverage > plan['capture']['max_coverage_drop']:
+        reasons.append('coverage_drop_above_maximum')
+    return reasons
+
+
+def freeze_reference(plan, runs):
+    """Summarize the plan's reference window as counts; refuse a reference with a capture alert."""
+    plan_sha = check_plan(plan)
+    start, end = plan['reference_window']
+    counts, channels = _summarize(plan, runs, start, end, set(plan['reference_revisions_sha256']))
+    reasons = _capture_reasons(plan, counts)
+    if reasons:
+        raise ValueError('reference window has capture alerts: ' + ', '.join(reasons))
+    if channels['roots'] < plan['min_exposure']:
+        raise ValueError('reference window has fewer eligible task roots than the minimum exposure')
+    body = dict(schema_version=1, profile=REFERENCE_PROFILE, plan_sha256=plan_sha, window=[start, end],
+                capture=counts, **channels, publication_allowed=False)
+    body['sha256'] = _digest(body)
+    return body
+
+
+def _check_reference(reference, plan_sha):
+    if not isinstance(reference, dict) or reference.get('profile') != REFERENCE_PROFILE \
+            or reference.get('schema_version') != 1:
+        raise ValueError('drift reference v1 required')
+    if reference.get('plan_sha256') != plan_sha:
+        raise ValueError('reference was frozen under a different plan')
+    body = {k: v for k, v in reference.items() if k != 'sha256'}
+    if reference.get('sha256') != _digest(body):
+        raise ValueError('reference digest does not match its content')
+
+
+def _statistical(plan, name, capture_state, current, extra):
+    reasons = ['statistical_detector_not_implemented']
+    if capture_state == 'alert':
+        reasons.append('capture_alert_in_window')
+    if current['roots'] < plan['min_exposure']:
+        reasons.append('exposure_below_minimum')
+    return dict(state='insufficient_evidence', reasons=reasons, tested=False,
+                per_window_alpha=plan['alert_budget'][name] / plan['max_windows'],
+                effect_size=plan['effect_size']['task_mix_total_variation' if name == 'task_mix'
+                                                else 'failure_rate_increase'], **extra)
+
+
+def _performance(plan, current, reference):
+    strata = {}
+    for key in sorted(set(current['performance']) | set(reference['performance'])):
+        cells = {side: dict(source['performance'].get(key, dict(verified_roots=0, failures=0)))
+                 for side, source in (('reference', reference), ('current', current))}
+        for cell in cells.values():
+            cell['failure_rate'] = cell['failures'] / cell['verified_roots'] if cell['verified_roots'] else None
+        cells['comparable'] = all(cell['verified_roots'] >= plan['min_exposure'] for cell in cells.values())
+        strata[key] = cells
+    return dict(strata=strata, unknown=current['unknown'],
+                comparable_strata=sum(cell['comparable'] for cell in strata.values()))
+
+
+def assess(plan, reference, runs, window_index):
+    """Return the ``drift-receipt-v1`` for monitored window ``window_index`` after the reference."""
+    plan_sha = check_plan(plan)
+    _check_reference(reference, plan_sha)
+    if type(window_index) is not int or not 0 <= window_index < plan['max_windows']:
+        raise ValueError('window outside the frozen schedule; a reset needs a new plan that retains history')
+    start = plan['reference_window'][1] + window_index * plan['window_length']
+    end = start + plan['window_length']
+    counts, current = _summarize(plan, runs, start, end)
+    reasons = _capture_reasons(plan, counts, reference['capture']['coverage'])
+    if reasons:
+        capture_state = 'alert'
+    else:
+        capture_state = 'insufficient_evidence' if counts['runs'] < plan['min_exposure'] else 'no_alert'
+        reasons = ['no_runs_in_window'] if not counts['runs'] else ['exposure_below_minimum'] if \
+            capture_state == 'insufficient_evidence' else []
+    capture = dict(state=capture_state, reasons=reasons, reference_coverage=reference['capture']['coverage'],
+                   **counts)
+    mix = dict(reference=reference['strata'], current=current['strata'],
+               new_strata=sorted(set(current['strata']) - set(reference['strata'])),
+               absent_strata=sorted(set(reference['strata']) - set(current['strata'])),
+               unknown_stratum_roots=current['unknown']['stratum_roots'],
+               features=dict(reference=reference['features'], current=current['features']))
+    channels = dict(capture=capture,
+                    task_mix=_statistical(plan, 'task_mix', capture_state, current, mix),
+                    performance=_statistical(plan, 'performance', capture_state, current,
+                                             _performance(plan, current, reference)))
+    alerted = any(channel['state'] == 'alert' for channel in channels.values())
+    body = dict(schema_version=1, profile=RECEIPT_PROFILE, plan_sha256=plan_sha, reference_sha256=reference['sha256'],
+                window=dict(index=window_index, start=start, end=end, max_windows=plan['max_windows']),
+                unit='task_root', channels=channels, action=plan['action'] if alerted else 'observe',
+                regression_label='not_established', causal_claim=False, automatic_rollback=False,
+                promotion_authority='none', publication_allowed=False, limitations=list(LIMITATIONS))
+    body['sha256'] = _digest(body)
+    return body
