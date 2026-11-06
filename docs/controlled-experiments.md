@@ -77,11 +77,13 @@ The policy must declare its target conditions, its unrelated control conditions
 and `max_control_loss` (0 to 1); its SHA-256 is reported. Preload can only be a
 diagnostic condition. Repeats are averaged within a root, so the root is the unit.
 Only boolean outcomes from an executable grader count. Unverified, unidentified
-and single-arm records are counted as excluded or unmatched, never as failures.
-A critical regression or a mean control loss beyond the tolerance rejects the
-skill, even when its target tasks improve. An observed activation in the absent
-arm, such as a shadowed copy, makes the comparison inconclusive, as do missing
-matched target or control roots. Otherwise the report stays `uncertified` until a
+and single-arm records are counted as excluded or unmatched, never as failures,
+and their regression or activation flags are ignored. A critical regression or a
+mean control loss beyond the tolerance rejects the skill, even when its target
+tasks improve. An observed activation in the absent arm, such as a shadowed copy,
+makes the comparison inconclusive, as do missing matched target or control roots
+and any unmatched or excluded record in a declared condition, because attrition
+in one arm can hide negative transfer. Otherwise the report stays `uncertified` until a
 frozen paired experiment runs through the evaluation gate. The main contrast never
 filters on activation. Activation counts as observed only for `activated: true`
 with an evidence reference; `activated: false`, an injected hash or a bare label

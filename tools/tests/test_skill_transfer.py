@@ -152,3 +152,56 @@ def test_the_policy_must_be_fully_declared(policy, message):
 def test_records_must_name_a_known_condition_and_arm(record, message):
     with pytest.raises(ValueError, match=message):
         paired_transfer([record], policy=POLICY)
+
+
+def harmless_base():
+    return pairs('natural', [False], [True], 't') + pairs('negative_routing', [True], [True], 'c')
+
+
+@pytest.mark.parametrize('extra', [
+    pytest.param(trial('negative_routing', 'present', 'c9', True, provenance='model_hypothesis', critical_regression=True),
+                 id='unverified-critical-regression'),
+    pytest.param(dict(condition='natural', arm='present', critical_regression=True), id='unidentified-critical-regression'),
+    pytest.param(dict(condition='natural', arm='absent', outcome=True, outcome_provenance='executable_grader',
+                      activated=True, activation_evidence='e'), id='unidentified-absent-activation'),
+    pytest.param(trial('negative_routing', 'present', 'c0', None, activated=True, activation_evidence='e'),
+                 id='unverified-control-activation'),
+])
+def test_excluded_records_never_decide_rejection_or_activation(extra):
+    report = paired_transfer(harmless_base() + [extra], policy=POLICY)
+    assert sum(report['excluded'].values()) == 1
+    assert (report['disposition'], report['reason']) == ('inconclusive', 'unmatched_or_unverified_roots')
+    for group in report['conditions'].values():
+        assert (group['critical_regressions'], group['absent_observed_activations'], group['present_observed_activations']) == (0, 0, 0)
+    assert report['false_activations'] == 0
+
+
+def test_an_excluded_diagnostic_critical_regression_does_not_reject():
+    extra = trial('preload', 'present', 'p', True, provenance='model_hypothesis', critical_regression=True)
+    report = paired_transfer(harmless_base() + [extra], policy=POLICY)
+    assert (report['disposition'], report['reason']) == ('uncertified', 'requires_frozen_paired_experiment')
+
+
+@pytest.mark.parametrize('drop', [pytest.param(False, id='ungraded-present-arm'), pytest.param(True, id='missing-present-arm')])
+def test_arm_specific_control_attrition_is_inconclusive_not_uncertified(drop):
+    rows = pairs('natural', [False] * 4, [True] * 4, 't') + pairs('negative_routing', [True] * 4, [True] + [None] * 3, 'c')
+    if drop:
+        rows = [r for r in rows if r['outcome'] is not None]
+    report = paired_transfer(rows, policy=POLICY)
+    assert (report['disposition'], report['reason']) == ('inconclusive', 'unmatched_or_unverified_roots')
+    assert report['conditions']['negative_routing']['unmatched_roots'] == 3
+
+
+def test_a_target_only_activation_is_not_a_false_activation():
+    rows = [dict(r, activated=True, activation_evidence='e') if r['arm'] == 'present' and r['task_id'] == 'target0' else r
+            for r in helpful_but_harmful()]
+    report = paired_transfer(rows, policy=POLICY)
+    assert report['conditions']['natural']['present_observed_activations'] == 1
+    assert report['false_activations'] == 0
+
+
+def test_target_loss_with_harmless_controls_is_not_negative_transfer():
+    rows = pairs('natural', [True] * 3, [False] * 3, 't') + pairs('negative_routing', [True] * 3, [True] * 3, 'c')
+    report = paired_transfer(rows, policy=POLICY)
+    assert report['conditions']['natural']['mean_delta'] == -1.0
+    assert (report['disposition'], report['reason']) == ('uncertified', 'requires_frozen_paired_experiment')

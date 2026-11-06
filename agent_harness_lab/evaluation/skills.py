@@ -97,19 +97,20 @@ def paired_transfer(records, *, policy):
         group = groups.setdefault(condition, dict(
             role=role.get(condition, 'diagnostic' if condition == 'preload' else 'undeclared'),
             matched_roots=0, unmatched_roots=0, improved_roots=0, unchanged_roots=0, harmed_roots=0,
-            mean_delta=None, present_observed_activations=0, present_unknown_activations=0,
+            mean_delta=None, excluded_records=0, present_observed_activations=0, present_unknown_activations=0,
             absent_observed_activations=0, critical_regressions=0))
+        # Excluded records never reach the counters that decide the disposition.
+        task, root = record.get('task_id'), record.get('root_id')
+        if not (isinstance(task, str) and task and isinstance(root, str) and root):
+            excluded['unknown_identity_records'] += 1; group['excluded_records'] += 1; continue
+        outcome = record.get('outcome')
+        if type(outcome) is not bool or record.get('outcome_provenance') != 'executable_grader':
+            excluded['unverified_records'] += 1; group['excluded_records'] += 1; continue
         if arm == 'present':
             group['present_observed_activations' if _observed(record) else 'present_unknown_activations'] += 1
             group['critical_regressions'] += record.get('critical_regression') is True
         else:
             group['absent_observed_activations'] += _observed(record)
-        task, root = record.get('task_id'), record.get('root_id')
-        if not (isinstance(task, str) and task and isinstance(root, str) and root):
-            excluded['unknown_identity_records'] += 1; continue
-        outcome = record.get('outcome')
-        if type(outcome) is not bool or record.get('outcome_provenance') != 'executable_grader':
-            excluded['unverified_records'] += 1; continue
         roots.setdefault((condition, task, root), {}).setdefault(arm, []).append(outcome)
         if arm == 'present' and _observed(record):
             activated['records'] += 1; activated['successes'] += outcome
@@ -135,6 +136,9 @@ def paired_transfer(records, *, policy):
         disposition, reason = 'inconclusive', 'no_matched_target_roots'
     elif not all(c in deltas for c in declared['control_conditions']):
         disposition, reason = 'inconclusive', 'no_matched_control_roots'
+    elif any(groups[c]['unmatched_roots'] or groups[c]['excluded_records'] for c in role if c in groups):
+        # Arm-specific attrition (a crashed or ungraded present arm) could hide negative transfer.
+        disposition, reason = 'inconclusive', 'unmatched_or_unverified_roots'
     else:
         disposition, reason = 'uncertified', 'requires_frozen_paired_experiment'
     digest = hashlib.sha256(json.dumps(declared, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
