@@ -96,8 +96,8 @@ and matching CLI/skill receipts are tracked in [#77](https://github.com/mihazs/a
 ## Harness surfaces
 
 AHL inventories eleven harness surfaces of Claude Code 2.1.317 and Codex 0.166.0
-read-only: it never executes a hook, workflow or script while analyzing, and it never
-edits another repository in place. `agent_harness_lab/surfaces.py` owns each verdict.
+read-only: it never executes a hook, workflow or script while analyzing, and it
+recommends changes to another repository instead of editing it in place. `agent_harness_lab/surfaces.py` owns each verdict.
 For a synthetic path inside the checkout, the writability and the route a change gets:
 
 | Surface | Claude Code | Codex |
@@ -117,9 +117,12 @@ For a synthetic path inside the checkout, the writability and the route a change
 A candidate may change an *adopt* surface in its staged copy; application still
 follows the policy above. A *contract* change stays unresolved until a passed hook
 contract names it; agent definitions take this route because their frontmatter can
-register hooks. A *recommendation* is reported, never written. *Excluded*
-(`private_excluded`) files are listed but never read or hashed; an *unsupported*
-path is never adopted or written, yet the inventory may still read and hash it.
+register hooks. A *recommendation* is reported, never written. The inventory never
+reads, hashes or changes an *excluded* (`private_excluded`) file. It lists one as
+`not_read` only when its kind is recognized, such as `CLAUDE.local.md`; memory and
+cache paths are skipped and never listed, so a missing memory node does not show
+that no memory file exists. An *unsupported* path is never adopted or written, yet
+the inventory may still read and hash it.
 Change plans list the surfaces they leave for later as deferred.
 `ahl sources inventory CHECKOUT --runtime RUNTIME --version VERSION` prints this
 matrix for the declared runtime, and none for a version other than the pin.

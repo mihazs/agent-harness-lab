@@ -73,8 +73,11 @@ order `private_excluded`, `adoptable`, `contract_required`, `recommendation_only
 - **recommendation** (`recommendation_only`): the change is reported, never
   written. Every path in another repository takes this route unless it is
   `private_excluded`.
-- **excluded** (`private_excluded`): the inventory lists the file but never
-  reads, hashes or changes it.
+- **excluded** (`private_excluded`): the inventory never reads, hashes or
+  changes the file. It lists the file as `not_read` only when its kind is
+  recognized, for example `CLAUDE.local.md` or `.claude/settings.local.json`.
+  Memory and cache paths are skipped and never listed, so a missing memory node
+  does not show that no memory file exists.
 - **unsupported** (`unsupported`): the file is never adopted or written, but the
   inventory may still read and hash it when its kind is recognized, for example
   a `.claude/rules` file whose containment is not confirmed. Change plans keep
