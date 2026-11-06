@@ -1,14 +1,19 @@
-"""hook_validation_v1: run one staged hook unit beside a harmless canary, inside one isolated trial workspace only.
+"""hook_validation_v1: run one staged hook unit beside a harmless canary, inside one private trial workspace only.
 
 validate() never touches the project. It re-evaluates hook_contract_v1 over the unit and executes nothing unless the
 verdict passed. It creates a NEW private trial directory outside every Git checkout and every declared input, copies
-the fixture to trial/workspace, writes the unit's after-bytes (each checked against the contract's sha256 binding) and
-appends canary matcher groups to the same hooks key: one per candidate matcher group, with the same event and
-matcher, plus a SessionStart probe. The canary appends one JSON line holding the trial nonce to
-workspace/.ahl-canary/, so a record proves registration, a matched event and execution for that matcher group.
+the fixture to trial/workspace, writes the unit's after-bytes and the contract's checkout scripts (each checked
+against the contract's sha256 and mode binding before anything is created) and replaces the hooks key with the
+candidate's groups plus canary groups: one per candidate matcher group, with the same event and matcher, one
+unfiltered group per candidate event and a SessionStart probe. A canary-only run stages no fixture hooks. The canary
+appends one JSON line holding the trial nonce to workspace/.ahl-canary/, so a record proves registration, a matched
+event and execution for that group.
 
 The runtime runs once through the supplied executor with cwd=workspace, HOME and TMPDIR inside the trial and an
-environment that carries no credentials. Claude Code keeps the I13 project-only setting source and strict empty MCP
+environment that carries no credentials. There is no host isolation: hooks run as the invoking user and can still
+read the host filesystem and reach the network (host_isolation='none'). On Linux the validator is a child subreaper
+for the run, so every process the run leaves behind is killed and reaped before the post-run snapshot; elsewhere the
+run is inconclusive. Claude Code keeps the I13 project-only setting source and strict empty MCP
 requests but not disableAllHooks. Codex gets the I13 temporary CODEX_HOME and --dangerously-bypass-hook-trust only
 while that capability row is verified; otherwise the run is inconclusive and nothing executes. A native runtime runs
 only when the caller opts in. The ahl-fake-hook-trace-v1 protocol of a synthetic runtime is the only source of
@@ -16,13 +21,16 @@ per-handler execution facts, so a native run reports handler execution as unknow
 
 Outcomes are bounded and truthful. Canary evidence is observed, skipped or inconclusive, reported separately for
 native and fake runtimes. A handler is effective only when its group's canary fired and its traced execution exited 0
-with no failure class. Disabled, unmatched and unsupported handlers never are. Out-of-scope writes come from a
-trial-root diff; writes outside the trial stay unobserved. Hiding errors, blocking required work and changing
+with no failure class. Disabled, unmatched and unsupported handlers never are; unmatched needs the event's unfiltered
+canary to have fired, otherwise the handler is inconclusive. Out-of-scope writes come from a trial-root diff; writes
+outside the trial stay unobserved. Hiding errors, blocking required work and changing
 permissions disqualify a candidate from any improvement claim, and no result authorizes promotion.
 """
 import base64
 import collections
+import contextlib
 import copy
+import ctypes
 import hashlib
 import json
 import os
@@ -31,7 +39,10 @@ import re
 import secrets
 import shlex
 import shutil
+import signal
 import stat
+import sys
+import time
 
 from . import surfaces
 from .evaluation import trial_surfaces
@@ -56,9 +67,16 @@ PROMPT = 'Reply with the single word OK.\n'
 PASSED_ENV = ('PATH', 'LANG', 'LC_ALL', 'TZ', 'TERM')
 CANARY_TIMEOUT = 10
 SNAPSHOT_LIMIT, RECORD_LIMIT, RECORD_BYTES, REPORTED_PATHS = 20000, 4096, 1024 * 1024, 64
-# A write to a configuration layer can grant permissions, so it disqualifies as well as being out of scope.
+# A write to a configuration layer can grant permissions, so it disqualifies wherever it lands in the trial, the
+# runtime homes included: a real session's HOME is the user's own.
 CONFIG_WRITE = re.compile(r'(^|/)(\.claude/settings(\.local)?\.json|\.codex/(config\.toml|hooks\.json|requirements\.toml)'
-                          r'|\.mcp\.json)$')
+                          r'|\.mcp\.json)$|^codex-home/(config\.toml|hooks\.json|requirements\.toml)$|^home/\.claude\.json$')
+# The runtime itself writes home/.claude.json, so that file disqualifies only when it holds a grant.
+RUNTIME_CONFIG, GRANT_KEYS = 'home/.claude.json', ('permissions', 'allowedTools', 'hooks', 'mcpServers', 'enabledMcpjsonServers',
+                                                   'enableAllProjectMcpServers', 'bypassPermissionsModeAccepted')
+# Findings that leave the run's observations incomplete: no label can rest on what was not observed.
+INCOMPLETE = ('runtime_timeout', 'snapshot_unavailable', 'process_containment_unavailable')
+PR_SET_CHILD_SUBREAPER, PR_GET_CHILD_SUBREAPER, SWEEP_SECONDS = 36, 37, 5
 CANARY = '''import hashlib, json, os, sys
 raw = sys.stdin.buffer.read(1048576)
 try:
@@ -138,24 +156,43 @@ def _copy_fixture(fixture, workspace):
     shutil.copytree(fixture, workspace)
 
 
-def prepare(output, runtime, config, after, *, fixture=None, protected=()):
-    """Create the trial: workspace copy, verified unit bytes, canary groups and runtime homes; returns (root, marker)."""
-    root = guard(output, protected)
-    root.mkdir(mode=0o700)
-    workspace, nonce = root / 'workspace', secrets.token_hex(16)
-    _copy_fixture(fixture, workspace)
+def _bound(after, scripts, project):
+    """{path: (bytes, mode)} to stage: the unit's after-bytes and the contract's checkout scripts, each re-hashed."""
+    staged = {}
     for name, record in sorted(after.items()):
         if record is None: continue
         raw = base64.b64decode(record['content'], validate=True)
         if hashlib.sha256(raw).hexdigest() != record['sha256']: raise ValueError('unit bytes differ from the contract binding')
+        staged[name] = (raw, record['mode'])
+    for name, mode, source, sha256 in scripts:
+        if source != 'checkout' or name in staged: continue
+        record = file_record(contained(project, name)) if project is not None else None
+        if record is None or record['sha256'] != sha256 or record['mode'] != mode:
+            raise ValueError('checkout script differs from the contract binding')
+        staged[name] = (base64.b64decode(record['content'], validate=True), mode)
+    return staged
+
+
+def prepare(output, runtime, config, after, *, fixture=None, protected=(), scripts=(), project=None):
+    """Create the trial: workspace copy, verified unit bytes, canary groups and runtime homes; returns (root, marker).
+
+    scripts are the contract's (path, mode, source, sha256) bindings; every checkout script is staged from project with
+    exactly the bound bytes, so the fixture's copy never runs in its place. Without a unit (after is empty) the
+    fixture's own hooks are dropped: only hook_contract_v1-checked handlers ever execute."""
+    root = guard(output, protected)
+    staged = _bound(after, scripts, project)
+    root.mkdir(mode=0o700)
+    workspace, nonce = root / 'workspace', secrets.token_hex(16)
+    _copy_fixture(fixture, workspace)
+    for name, (raw, mode) in sorted(staged.items()):
         path = contained(workspace, name)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(raw)
-        path.chmod(record['mode'])
+        path.chmod(mode)
     form, path = CONFIGS[config][1], contained(workspace, config)
     raw = path.read_bytes() if path.is_file() else None
     hooks = read_hooks(raw, form) if raw else None
-    candidate = copy.deepcopy(hooks or {})
+    candidate = copy.deepcopy(hooks or {}) if after else {}
     folder = '.claude/hooks' if runtime == 'claude-code' else '.codex/hooks'
     script = f'{folder}/ahl-canary-{nonce[:12]}.py'
     (workspace / CANARY_DIR).mkdir(mode=0o700)
@@ -166,7 +203,10 @@ def prepare(output, runtime, config, after, *, fixture=None, protected=()):
     anchor = '"$CLAUDE_PROJECT_DIR"/' if runtime == 'claude-code' else ''
     slots, merged = {}, copy.deepcopy(candidate)
     groups = sorted({(event, group) for event, group, _, _ in _handlers(candidate)})
-    for slot, (event, group) in [('probe', ('SessionStart', None)), *((f'{e}:{g}', (e, g)) for e, g in groups)]:
+    # One unfiltered group per candidate event tells "the event never happened" apart from "the matcher missed".
+    events = sorted({event for event, _ in groups} - {'SessionStart'})
+    for slot, (event, group) in [('probe', ('SessionStart', None)), *((_event_slot(e), (e, None)) for e in events),
+                                 *((f'{e}:{g}', (e, g)) for e, g in groups)]:
         handler = dict(type='command', command=f'python3 {anchor}{script} {shlex.quote(slot)}', timeout=CANARY_TIMEOUT)
         entry = {'hooks': [handler]}
         if group is not None and 'matcher' in candidate[event][group]: entry['matcher'] = candidate[event][group]['matcher']
@@ -184,6 +224,11 @@ def prepare(output, runtime, config, after, *, fixture=None, protected=()):
                             for e, g, i, h in _handlers(candidate)])
     _private(root / MARKER, json.dumps(marker, sort_keys=True) + '\n')
     return root, marker
+
+
+def _event_slot(event):
+    """The canary slot of the event's unfiltered group; the SessionStart probe is SessionStart's."""
+    return 'probe' if event == 'SessionStart' else f'{event}:*'
 
 
 def environment(root, runtime, environ):
@@ -225,13 +270,72 @@ def snapshot(root):
 
 def classify_diff(before, after, nonce):
     """Changed trial paths split into the canary record, runtime state folders and everything out of scope."""
-    canary, state, outside = 0, 0, []
+    canary, state, outside, configs = 0, 0, [], []
     for name in sorted(name for name in before.keys() | after.keys() if before.get(name) != after.get(name)):
         if name == f'workspace/{CANARY_DIR}/{nonce}.jsonl' and after.get(name, ('',))[0] == 'file': canary += 1
         elif name.startswith(RUNTIME_STATE): state += 1
         else: outside.append(name)
+        if CONFIG_WRITE.search(name): configs.append(name)
     return dict(canary=canary, runtime_state=state, out_of_scope=outside[:REPORTED_PATHS], out_of_scope_count=len(outside),
-                outside_trial_writes='unobserved')
+                config_writes=configs[:REPORTED_PATHS], outside_trial_writes='unobserved')
+
+
+def _grants(path):
+    """True unless the runtime-owned state file is valid JSON holding no permission, hook or MCP grant."""
+    try:
+        if path.is_symlink() or not path.is_file(): return path.is_symlink()
+        if path.stat().st_size > RECORD_BYTES: return True
+        document = json.loads(path.read_bytes())
+    except (OSError, ValueError):
+        return True
+    if not isinstance(document, dict): return True
+    projects = document.get('projects') if isinstance(document.get('projects'), dict) else {}
+    scopes = [document, *projects.values()]
+    return any(not isinstance(scope, dict) or scope.get(key) for scope in scopes for key in GRANT_KEYS)
+
+
+def _subreaper(value):
+    """Set this process's child-subreaper flag; the previous value, or None where prctl is unavailable."""
+    if sys.platform != 'linux': return None
+    try:
+        libc, previous = ctypes.CDLL(None, use_errno=True), ctypes.c_int(0)
+        if libc.prctl(PR_GET_CHILD_SUBREAPER, ctypes.byref(previous), 0, 0, 0) != 0: return None
+        if libc.prctl(PR_SET_CHILD_SUBREAPER, int(value), 0, 0, 0) != 0: return None
+    except (OSError, AttributeError):
+        return None
+    return previous.value
+
+
+def _descendants():
+    """Every live or zombie descendant of this process, from /proc; an empty set where /proc is unreadable."""
+    parents = {}
+    try: entries = os.listdir('/proc')
+    except OSError: return set()
+    for entry in entries:
+        if not entry.isdigit(): continue
+        try: text = Path('/proc', entry, 'stat').read_text()
+        except OSError: continue
+        fields = text.rsplit(')', 1)[-1].split()
+        if len(fields) > 1 and fields[1].isdigit(): parents[int(entry)] = int(fields[1])
+    found, frontier = set(), {os.getpid()}
+    while frontier:
+        frontier = {pid for pid, parent in parents.items() if parent in frontier and pid not in found}
+        found |= frontier
+    return found
+
+
+def _sweep(existing):
+    """SIGKILL and reap every descendant the run left behind; (lingering count, swept to none)."""
+    lingering, deadline = None, time.monotonic() + SWEEP_SECONDS
+    while time.monotonic() < deadline:
+        stray = _descendants() - existing
+        if lingering is None: lingering = len(stray)
+        if not stray: return lingering, True
+        for pid in stray:
+            with contextlib.suppress(ProcessLookupError, PermissionError): os.kill(pid, signal.SIGKILL)
+            with contextlib.suppress(ChildProcessError): os.waitpid(pid, os.WNOHANG)
+        time.sleep(0.01)
+    return lingering or 0, False
 
 
 def _canary_records(path, marker):
@@ -356,16 +460,27 @@ def run(root, marker, executor, *, binary, native=False, trace=None, timeout=60,
     if runtime == 'codex' and not Path(env['CODEX_HOME']).is_relative_to(root): raise ValueError('Codex trust bypass outside the trial')
     missing = {(e, g, i) for e, g, i, text in marker['handlers'] if isinstance(text, str) and _missing(workspace, runtime, text, env.get('PATH', ''))}
     before = snapshot(root)
-    executed = executor(command(root, runtime, binary), workspace, timeout, PROMPT, env=env)
+    # As child subreaper this process inherits every orphan of the run, so nothing the run started outlives it or
+    # writes after the post-run snapshot.
+    existing, previous = _descendants(), _subreaper(1)
+    try:
+        executed = executor(command(root, runtime, binary), workspace, timeout, PROMPT, env=env)
+    finally:
+        lingering, swept = _sweep(existing)
+        if previous is not None: _subreaper(previous)
     try: diff = classify_diff(before, snapshot(root), marker['nonce'])
-    except (OSError, ValueError): diff = dict(canary=0, runtime_state=0, out_of_scope=[], out_of_scope_count=None, outside_trial_writes='unobserved')
+    except (OSError, ValueError): diff = dict(canary=0, runtime_state=0, out_of_scope=[], out_of_scope_count=None, config_writes=[],
+                                              outside_trial_writes='unobserved')
+    diff.update(process_containment='subreaper' if previous is not None and swept else 'unavailable',
+                lingering_processes=lingering)
     records, malformed = _canary_records(workspace / CANARY_DIR / (marker['nonce'] + '.jsonl'), marker)
     traced = _trace(executed.get('stdout')) if kind == 'fake' else {}
     findings = set()
     if executed.get('timeout'): findings.add('runtime_timeout')  # the run's deadline, not a handler timeout
+    if diff['process_containment'] != 'subreaper': findings.add('process_containment_unavailable')
     if diff['out_of_scope_count'] is None: findings.add('snapshot_unavailable')
     elif diff['out_of_scope_count']: findings.add('out_of_scope_write')
-    if any(CONFIG_WRITE.search(name) for name in diff['out_of_scope']): findings.add('changes_permissions')
+    if any(name != RUNTIME_CONFIG or _grants(root / name) for name in diff['config_writes']): findings.add('changes_permissions')
     if any(record['event'] != marker['slots'][record['slot']] for record in records): findings.add('malformed_event')
     deliveries = collections.Counter((record['slot'], record['payload_sha256']) for record in records)
     if any(count > 1 for count in deliveries.values()): findings.add('duplicate_events')
@@ -383,9 +498,9 @@ def run(root, marker, executor, *, binary, native=False, trace=None, timeout=60,
     other = 'fake_runtime' if kind == 'native' else 'native_runtime'
     evidence = {('native' if kind == 'native' else 'fake_runtime'): canary,
                 ('fake_runtime' if kind == 'native' else 'native'): _summary('skipped', other)}
-    handlers = []
+    handlers, incomplete = [], sorted(findings & set(INCOMPLETE))
     for event, group, index, _ in marker['handlers']:
-        failures, disqualifiers = set(), set()
+        failures, disqualifiers, reason = set(), set(), None
         if (event, group, index) in missing: failures.add('missing_executable')
         matched = f'{event}:{group}' in fired
         rows = None if traced is None else traced.get((event, group, index), [])
@@ -396,11 +511,16 @@ def run(root, marker, executor, *, binary, native=False, trace=None, timeout=60,
         if marker['disabled']: status = 'disabled'
         elif failures and (matched or rows): status = 'failed'
         elif canary['status'] != 'observed': status = 'inconclusive'
+        elif not matched and incomplete: status, reason = 'inconclusive', incomplete[0]
+        elif not matched and _event_slot(event) not in fired: status, reason = 'inconclusive', 'event_not_observed'
         elif not matched: status = 'unmatched'
         elif kind == 'native' or traced is None: status = 'inconclusive'
+        elif not rows and incomplete: status, reason = 'inconclusive', incomplete[0]
         elif not rows: status = 'not_executed'
+        elif any(record['exit_code'] is None and not record['timed_out'] for record in rows):
+            status, reason = 'inconclusive', 'exit_status_unknown'
         else: status = 'effective'
-        handlers.append(dict(event=event, group=group, handler=index, status=status, failures=sorted(failures),
+        handlers.append(dict(event=event, group=group, handler=index, status=status, reason=reason, failures=sorted(failures),
                              disqualifiers=sorted(disqualifiers),
                              registration='observed' if matched else 'unknown', matched_event='observed' if matched else 'unknown',
                              execution='observed' if rows else 'not_observed' if rows == [] and kind == 'fake' else 'unknown',
@@ -412,7 +532,7 @@ def run(root, marker, executor, *, binary, native=False, trace=None, timeout=60,
 
 
 def _unresolved(marker, status):
-    return [dict(event=e, group=g, handler=i, status=status, failures=[], disqualifiers=[], registration='unknown',
+    return [dict(event=e, group=g, handler=i, status=status, reason=None, failures=[], disqualifiers=[], registration='unknown',
                  matched_event='unknown', execution='unknown', trace='not_run') for e, g, i, _ in marker['handlers']]
 
 
@@ -428,7 +548,8 @@ def verdict(contract, observed):
     if not handlers: status = 'unsupported'
     elif 'disabled' in statuses: status = 'disabled'
     elif 'failed' in statuses or (run_failures and observed['executed']): status = 'failed'
-    elif statuses == {'effective'} and not findings: status = 'effective'
+    elif findings & set(INCOMPLETE): status = 'inconclusive'
+    elif statuses == {'effective'} and not findings - set(DISQUALIFIERS): status = 'effective'
     elif 'unmatched' in statuses and statuses <= {'unmatched', 'effective'}: status = 'unmatched'
     else: status = 'inconclusive'
     effective = status == 'effective'
@@ -457,11 +578,12 @@ def validate(output, runtime, executor, *, unit=None, project=None, fixture=None
                         evidence=_skip('contract_not_passed'), canary=_summary('skipped', 'contract_not_passed'),
                         handlers=[], findings=[])
     else:
-        root, marker = prepare(output, runtime, config, after, fixture=fixture, protected=inputs)
+        root, marker = prepare(output, runtime, config, after, fixture=fixture, protected=inputs, project=project,
+                               scripts=() if contract is None else contract.scripts)
         observed = run(root, marker, executor, binary=binary or ('claude' if runtime == 'claude-code' else 'codex'),
                        native=native, trace=trace, timeout=timeout, environ=environ)
     document = dict(profile=PROFILE, runtime=runtime, pinned_version=surfaces.PINS[runtime], executed_in='trial_workspace',
-                    credentials='not_staged', inherited_hooks='managed_and_system_layers_unverified', **observed,
+                    credentials='not_staged', host_isolation='none', inherited_hooks='managed_and_system_layers_unverified', **observed,
                     contract=None if contract is None else dict(status=contract.status, sha256=contract.sha256,
                                                                findings=[list(row[:2]) for row in contract.findings]),
                     candidate=verdict(contract, observed), automatic_promotion=False, publication_allowed=False)
@@ -473,5 +595,7 @@ def exit_status(document):
     """0 effective candidate or observed clean canary; 1 executed but not effective; 3 skipped, unsupported or inconclusive."""
     candidate, canary = document['candidate']['status'], document['canary']['status']
     if candidate == 'absent':
+        if any(row['status'] == 'failed' for row in document['handlers']): return 1
+        if set(document['findings']) & set(INCOMPLETE): return 3
         return 0 if canary == 'observed' and not document['findings'] else 1 if canary == 'observed' else 3
     return {'effective': 0, 'failed': 1, 'disabled': 1, 'unmatched': 1}.get(candidate, 3)

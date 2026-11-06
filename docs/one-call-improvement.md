@@ -263,7 +263,7 @@ passed contract (`hook_contracts`), and `ahl improve . --repair-contracts` drops
 `hooks` from its deferred surfaces only when every hook unit in the run passed.
 No CLI path stages a hook unit yet. A passed contract is not behavioral evidence.
 Behavior comes only from `ahl evaluate hooks`, which runs the unit beside a nonce
-canary inside an isolated trial workspace
+canary inside a private trial workspace with no credentials in its environment
 ([hook canary validation](../skills/harness-evaluation/references/execution.md#hook-canary-validation)).
 
 The module also holds the frozen `CAPABILITIES` table. It has one row per surface,

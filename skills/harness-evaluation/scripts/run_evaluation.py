@@ -842,12 +842,13 @@ def _evaluate(args):
 
 
 def hook_main(argv):
-    """Hook evaluation mode: one staged hook unit and a nonce canary in a NEW isolated trial workspace only."""
+    """Hook evaluation mode: one staged hook unit and a nonce canary in a NEW private trial workspace only."""
     application_modules()
     from agent_harness_lab import hooks_validation
     parser = argparse.ArgumentParser(prog='run_evaluation.py hooks', formatter_class=argparse.RawDescriptionHelpFormatter,
         description='Validate one staged hook unit beside a harmless nonce canary inside a NEW private trial workspace.\n'
-        'Hooks run only there, never in the candidate, fixture or project, with no credentials in the environment.',
+        'Hooks run only there, never in the candidate, fixture or project, with no credentials in the environment.\n'
+        'The host is not isolated: hooks run as you and can still read host files and reach the network.',
         epilog='The candidate hooks key must pass hook_contract_v1 or nothing executes (unsupported).\n'
         'A real runtime runs only with --native-canary (one short model call); --runtime-trace reads a synthetic\n'
         'fake runtime and is never native evidence. Codex stays inconclusive while --dangerously-bypass-hook-trust is unverified.\n'

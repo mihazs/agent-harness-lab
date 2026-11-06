@@ -126,15 +126,24 @@ never run in the candidate, the fixture or a project checkout. The candidate's
 `hooks` key is applied over the fixture's configuration and must pass
 `hook_contract_v1` again; otherwise nothing executes and the result is
 `unsupported`. The output must be new and outside every Git checkout and input.
-The fixture is copied to `OUTPUT/workspace`, the unit's bytes are checked against
-the contract binding, and a harmless canary is appended to the same `hooks` key: a
-`SessionStart` probe plus one group per candidate matcher group with the same event
-and matcher. Each canary run appends a nonce record under `workspace/.ahl-canary/`,
-so a record shows registration, a matched event and execution for that group.
+The unit's bytes and every checkout script the contract bound are checked against
+that binding before the trial exists; checkout scripts are staged from the project
+with the bound bytes, never from the fixture. The fixture is then copied to
+`OUTPUT/workspace` and a harmless canary is appended to the same `hooks` key: a
+`SessionStart` probe, one unfiltered group per candidate event, and one group per
+candidate matcher group with the same event and matcher. A canary-only run drops
+the fixture's own hooks, so only contract-checked handlers execute. Each canary run
+appends a nonce record under `workspace/.ahl-canary/`, so a record shows
+registration, a matched event and execution for that group.
 
 The runtime runs once with the workspace as its working directory. `HOME` and
 `TMPDIR` point inside the trial, and the environment keeps only `PATH` and locale
-variables, so no credentials reach it. Claude Code keeps the project-only setting
+variables, so no credentials are in the environment. There is no host isolation
+(`host_isolation: none`): hooks run as the invoking user, and the host filesystem
+and network remain reachable. On Linux the validator is a child subreaper for the
+run and kills and reaps every process the run leaves behind before the post-run
+snapshot (`lingering_processes`); without that containment the run is
+`inconclusive` (`process_containment_unavailable`). Claude Code keeps the project-only setting
 source and the strict empty MCP request, but not `disableAllHooks`. Codex gets the
 temporary `CODEX_HOME` and `--dangerously-bypass-hook-trust` only inside it. That
 flag is an unverified capability row, so Codex runs report `inconclusive` and run
@@ -152,11 +161,15 @@ check or exit 126/127), `nonzero_status`, `timeout`, `cancellation`, `reentrancy
 `duplicate_events` (the same payload delivered twice) and `out_of_scope_write`,
 which comes from a diff of the whole trial. Writes outside the trial stay
 `unobserved`. A handler is `effective` only when its group's canary fired and
-its traced execution exited 0 with no failure class. Handlers disabled by
-`disableAllHooks`, unmatched handlers and unsupported units are never effective.
-A runtime deadline is `inconclusive`. `suppressOutput` (`hides_errors`), exit 2,
-`deny`, `block` or `continue: false` (`blocks_required_work`), and permission
-decisions or configuration writes (`changes_permissions`) make the candidate
+its traced execution exited 0 with no failure class; an unknown exit status is
+`inconclusive`. A handler is `unmatched` only when its event's unfiltered canary
+fired; when the event never happened it is `inconclusive` (`event_not_observed`).
+Handlers disabled by `disableAllHooks`, unmatched handlers and unsupported units
+are never effective. A runtime deadline or an unavailable snapshot is
+`inconclusive`. `suppressOutput` (`hides_errors`), exit 2, `deny`, `block` or
+`continue: false` (`blocks_required_work`), and permission decisions or
+configuration writes anywhere in the trial, the trial `HOME` and `CODEX_HOME`
+included (`changes_permissions`), make the candidate
 ineligible for any improvement claim. No result authorizes promotion. Managed and
 system hook layers remain an unresolved confound. Exit 0 means an effective
 candidate, or a clean observed canary-only run. Exit 1 means it ran but failed or
