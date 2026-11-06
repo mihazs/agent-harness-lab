@@ -1,19 +1,19 @@
 import importlib.util
 from pathlib import Path
-import tempfile
-import unittest
 from unittest.mock import patch
+
+import pytest
 
 spec = importlib.util.spec_from_file_location('link_skills', Path(__file__).resolve().parents[3] / 'tools/link_skills.py')
 links = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(links)
 
 
-class LinkTests(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.root = Path(self.tmp.name)
+class SkillTrees:
+    """Source and destination skill directories, each holding every owned skill."""
+
+    def __init__(self, root):
+        self.root = root
         self.source, self.dest, self.backups = [self.root / p for p in ('source', 'dest', 'backups')]
         for name in links.NAMES:
             (self.source / name).mkdir(parents=True)
@@ -21,44 +21,49 @@ class LinkTests(unittest.TestCase):
             (self.dest / name).mkdir(parents=True)
             (self.dest / name / 'SKILL.md').write_text('old')
 
-    def test_links_keep_originals_and_rerun_is_noop(self):
-        backup = links.install(self.source, self.dest, self.backups)
-        for name in links.NAMES:
-            self.assertEqual((backup / name / 'SKILL.md').read_text(), 'old')
-            self.assertEqual((self.dest / name).resolve(), self.source / name)
-        self.assertIsNone(links.install(self.source, self.dest, self.backups))
 
-    def test_claude_cli_installs_both_skills_without_touching_codex(self):
-        with patch.object(Path, 'home', return_value=self.root), patch('builtins.print'):
-            links.main(['--agent', 'claude'])
-        for name in links.NAMES:
-            link = self.root / '.claude/skills' / name
-            self.assertTrue(link.is_symlink())
-            self.assertTrue((link / 'SKILL.md').is_file())
-        self.assertFalse((self.root / '.agents').exists())
-
-    def test_foreign_link_rejected_before_any_mutation(self):
-        name = links.NAMES[-1]
-        (self.dest / name / 'SKILL.md').unlink()
-        (self.dest / name).rmdir()
-        (self.dest / name).symlink_to(self.root / 'elsewhere')
-        with self.assertRaises(ValueError):
-            links.install(self.source, self.dest, self.backups)
-        self.assertEqual((self.dest / links.NAMES[0] / 'SKILL.md').read_text(), 'old')
-        self.assertFalse(self.backups.exists())
-
-    def test_partial_install_failure_restores_both_directories(self):
-        original = Path.symlink_to
-        def fail_second(path, *args, **kwargs):
-            if path.name == links.NAMES[-1]:
-                raise OSError('synthetic link failure')
-            return original(path, *args, **kwargs)
-        with patch.object(Path, 'symlink_to', fail_second), self.assertRaises(OSError):
-            links.install(self.source, self.dest, self.backups)
-        for name in links.NAMES:
-            self.assertFalse((self.dest / name).is_symlink())
-            self.assertEqual((self.dest / name / 'SKILL.md').read_text(), 'old')
+@pytest.fixture
+def trees(tmp_path):
+    return SkillTrees(tmp_path)
 
 
-if __name__ == '__main__':
-    unittest.main()
+def test_links_keep_originals_and_rerun_is_noop(trees):
+    backup = links.install(trees.source, trees.dest, trees.backups)
+    for name in links.NAMES:
+        assert (backup / name / 'SKILL.md').read_text() == 'old'
+        assert (trees.dest / name).resolve() == trees.source / name
+    assert links.install(trees.source, trees.dest, trees.backups) is None
+
+
+def test_claude_cli_installs_both_skills_without_touching_codex(trees):
+    with patch.object(Path, 'home', return_value=trees.root), patch('builtins.print'):
+        links.main(['--agent', 'claude'])
+    for name in links.NAMES:
+        link = trees.root / '.claude/skills' / name
+        assert link.is_symlink()
+        assert (link / 'SKILL.md').is_file()
+    assert not (trees.root / '.agents').exists()
+
+
+def test_foreign_link_rejected_before_any_mutation(trees):
+    name = links.NAMES[-1]
+    (trees.dest / name / 'SKILL.md').unlink()
+    (trees.dest / name).rmdir()
+    (trees.dest / name).symlink_to(trees.root / 'elsewhere')
+    with pytest.raises(ValueError):
+        links.install(trees.source, trees.dest, trees.backups)
+    assert (trees.dest / links.NAMES[0] / 'SKILL.md').read_text() == 'old'
+    assert not trees.backups.exists()
+
+
+def test_partial_install_failure_restores_both_directories(trees):
+    original = Path.symlink_to
+    def fail_second(path, *args, **kwargs):
+        if path.name == links.NAMES[-1]:
+            raise OSError('synthetic link failure')
+        return original(path, *args, **kwargs)
+    with patch.object(Path, 'symlink_to', fail_second), pytest.raises(OSError):
+        links.install(trees.source, trees.dest, trees.backups)
+    for name in links.NAMES:
+        assert not (trees.dest / name).is_symlink()
+        assert (trees.dest / name / 'SKILL.md').read_text() == 'old'

@@ -6,10 +6,10 @@ import hashlib
 import io
 import json
 from pathlib import Path
-import tempfile
 import tracemalloc
-import unittest
 from unittest.mock import patch
+
+import pytest
 
 STAMP = '2026-01-01T00:00:00Z'
 SESSIONS = tuple(f'00000000-0000-4000-8000-00000000000{n}' for n in range(1, 5))
@@ -107,11 +107,10 @@ def telemetry_outputs(root, project):
     return result
 
 
-def digests(calls=CALLS):
-    """Recompute EXPECTED; run against a previous implementation to refresh the reference."""
-    with tempfile.TemporaryDirectory() as temp:
-        fixture(Path(temp), FIXED_PROJECT, calls)
-        return {name: fingerprint(value) for name, value in telemetry_outputs(Path(temp), FIXED_PROJECT).items()}
+def digests(root, calls=CALLS):
+    """Recompute EXPECTED under an empty root; run against a previous implementation to refresh the reference."""
+    fixture(root, FIXED_PROJECT, calls)
+    return {name: fingerprint(value) for name, value in telemetry_outputs(root, FIXED_PROJECT).items()}
 
 
 @contextmanager
@@ -135,13 +134,16 @@ SOURCES = {
 }
 
 
-class NativePeakTests(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name).resolve(); self.project = self.root/'project'; self.project.mkdir()
+def test_telemetry_outputs_match_the_reference_computed_before_draining(tmp_path):
+    assert digests(tmp_path) == EXPECTED
 
-    def test_telemetry_outputs_match_the_reference_computed_before_draining(self):
-        self.assertEqual(digests(), EXPECTED)
+
+class Tree:
+    """A synthetic project beside native captures holding the given number of calls."""
+
+    def __init__(self, root, calls):
+        self.root = root.resolve(); self.project = self.root/'project'; self.project.mkdir()
+        fixture(self.root, self.project, calls)
 
     def declare(self, key):
         from agent_harness_lab.sources.schema import SourceSpec, digest
@@ -168,7 +170,7 @@ class NativePeakTests(unittest.TestCase):
                 with redirect_stdout(out), redirect_stderr(io.StringIO()):
                     code = main(['sources', 'import', '--manifest', str(manifest), '--project-sha256', source.project_sha256,
                         '--scope-sha256', source.scope_sha256, '--cache', str(cache)])
-                self.assertEqual(code, 0)
+                assert code == 0
                 result['journal_'+key] = cache.read_bytes(), out.getvalue()
         for name, options in (('codex', dict(events=self.root/'codex.jsonl', source_format='codex', source_version='codex-rollout-0.166.0')),
                 ('codex_root', dict(source_root=self.root/'captures', source_format='codex', source_version='codex-rollout-0.166.0')),
@@ -177,70 +179,105 @@ class NativePeakTests(unittest.TestCase):
             result['collect_'+name] = fingerprint((collect(self.project, event_sink=sink.append, **options), sink))
         return result
 
-    def test_snapshots_journal_bytes_and_collection_match_undrained_reference(self):
-        fixture(self.root, self.project, 120)
-        with undrained(): reference = self.source_outputs('reference')
-        candidate = self.source_outputs('candidate')
-        self.assertEqual(candidate.keys(), reference.keys())
-        for name in reference:
-            with self.subTest(name): self.assertEqual(candidate[name], reference[name])
 
-    def test_draining_preserves_correlation_of_lists_tuples_and_deques(self):
-        from collections import deque
-        from agent_harness_lab.telemetry.adapters import correlate
-        from agent_harness_lab.telemetry.native import correlated
-        from agent_harness_lab.telemetry.schema import event
-        common = dict(case_id='case', root_case_id='root', lineage_verified=False, capture_complete=False,
-            source_format='codex', source_version='codex-rollout-0.166.0', runtime_fingerprint='f'*64)
-        activities = ('tool_call', 'tool_result', 'user_message')
-        for seed in range(40):
-            rows = tuple(event(dict(common, event_id=str(i), capture_order=i, activity=activities[(i*seed+i//3) % 3],
-                call_id=f'c{(i*7+seed) % 5}')) for i in range(seed % 17 + 1))
-            # Former contract: a bounded pending queue sized by the materialized capture.
-            expected = [event({**common, **row}) for row in correlate(rows, max_pending=len(rows))]
-            for value in (list(rows), rows, deque(rows)):
-                self.assertEqual(list(correlated(value, lambda: None)), expected)
-            self.assertEqual(expected, [event({**common, **row}) for row in correlate(iter(rows))])
-        drained = deque(rows); list(correlated(drained, lambda: None)); self.assertFalse(drained)
+SOURCE_OUTPUTS = (*(f'{kind}_{key}' for key in SOURCES for kind in ('snapshot', 'journal')),
+                  'collect_codex', 'collect_codex_root', 'collect_claude')
 
-    def peak(self, operation):
-        tracemalloc.start()
-        try:
-            base = tracemalloc.get_traced_memory()[0]; value = operation()
-            current, peak = tracemalloc.get_traced_memory()
-        finally: tracemalloc.stop()
-        del value
-        return peak-base, current-base
 
-    def test_native_reads_hold_one_copy_of_decoded_events_at_peak(self):
-        from agent_harness_lab.evidence import collect
-        from agent_harness_lab.sources.codex import CodexCapture
-        from agent_harness_lab.telemetry import claude_discovery, codex_discovery, codex_rollout
-        fixture(self.root, self.project, 3000)
-        def claude_scan():
-            with claude_discovery.capture([self.root/'claude/projects', self.root/'archive/projects'], self.project) as captured:
-                return captured[0]
-        # Peak over the retained events. Holding decoder rows beside the events measured 1.42-1.64 before
-        # draining and 1.12-1.25 after, stable from 1.5k to 20k calls; bounds sit between the two.
-        bounds = dict(codex_read=(lambda: codex_rollout.read(self.root/'codex.jsonl', self.project), 1.27),
-            codex_discovery=(lambda: codex_discovery.scan(self.root/'captures', self.project), 1.43),
-            claude_discovery=(claude_scan, 1.25))
-        for name, (operation, bound) in bounds.items():
-            with self.subTest(name):
-                peak, retained = self.peak(operation)
-                self.assertLess(peak/retained, bound, (name, peak, retained))
-        events = self.peak(bounds['codex_read'][0])[1]
-        with self.subTest('collect'):
-            peak, _ = self.peak(lambda: collect(self.project, events=self.root/'codex.jsonl', source_format='codex',
-                source_version='codex-rollout-0.166.0'))
-            # Former peak: the admitted tuple plus normalized and analysed copies (1.64 of the events).
-            self.assertLess(peak/events, 1.35, (peak, events))
-        with self.subTest('snapshot'):
-            source, manifest = self.declare('codex_v1')
-            with undrained(): before, _ = self.peak(lambda: CodexCapture(manifest).read(source))
-            after, _ = self.peak(lambda: CodexCapture(manifest).read(source))
-            # snapshot() dominates; releasing decoder rows before it removes about 10% of the peak.
-            self.assertLess(after, 0.95*before, (before, after))
+@pytest.fixture(scope='module')
+def drained_outputs(tmp_path_factory):
+    """Each source output computed once with undrained rows (the reference) and once as implemented."""
+    tree = Tree(tmp_path_factory.mktemp('drained'), 120)
+    with undrained(): reference = tree.source_outputs('reference')
+    return reference, tree.source_outputs('candidate')
 
-if __name__ == '__main__':
-    unittest.main()
+
+def test_snapshots_journal_bytes_and_collection_cover_the_same_outputs(drained_outputs):
+    reference, candidate = drained_outputs
+    assert candidate.keys() == reference.keys()
+    assert sorted(reference) == sorted(SOURCE_OUTPUTS)
+
+
+@pytest.mark.parametrize('name', SOURCE_OUTPUTS)
+def test_snapshots_journal_bytes_and_collection_match_undrained_reference(drained_outputs, name):
+    reference, candidate = drained_outputs
+    assert candidate[name] == reference[name]
+
+
+def test_draining_preserves_correlation_of_lists_tuples_and_deques():
+    from collections import deque
+    from agent_harness_lab.telemetry.adapters import correlate
+    from agent_harness_lab.telemetry.native import correlated
+    from agent_harness_lab.telemetry.schema import event
+    common = dict(case_id='case', root_case_id='root', lineage_verified=False, capture_complete=False,
+        source_format='codex', source_version='codex-rollout-0.166.0', runtime_fingerprint='f'*64)
+    activities = ('tool_call', 'tool_result', 'user_message')
+    for seed in range(40):
+        rows = tuple(event(dict(common, event_id=str(i), capture_order=i, activity=activities[(i*seed+i//3) % 3],
+            call_id=f'c{(i*7+seed) % 5}')) for i in range(seed % 17 + 1))
+        # Former contract: a bounded pending queue sized by the materialized capture.
+        expected = [event({**common, **row}) for row in correlate(rows, max_pending=len(rows))]
+        for value in (list(rows), rows, deque(rows)):
+            assert list(correlated(value, lambda: None)) == expected
+        assert expected == [event({**common, **row}) for row in correlate(iter(rows))]
+    drained = deque(rows); list(correlated(drained, lambda: None)); assert not drained
+
+
+def peak(operation):
+    tracemalloc.start()
+    try:
+        base = tracemalloc.get_traced_memory()[0]; value = operation()
+        current, peak = tracemalloc.get_traced_memory()
+    finally: tracemalloc.stop()
+    del value
+    return peak-base, current-base
+
+
+@pytest.fixture(scope='module')
+def large(tmp_path_factory):
+    return Tree(tmp_path_factory.mktemp('large'), 3000)
+
+
+def claude_scan(tree):
+    from agent_harness_lab.telemetry import claude_discovery
+    with claude_discovery.capture([tree.root/'claude/projects', tree.root/'archive/projects'], tree.project) as captured:
+        return captured[0]
+
+
+def codex_read(tree):
+    from agent_harness_lab.telemetry import codex_rollout
+    return codex_rollout.read(tree.root/'codex.jsonl', tree.project)
+
+
+def codex_scan(tree):
+    from agent_harness_lab.telemetry import codex_discovery
+    return codex_discovery.scan(tree.root/'captures', tree.project)
+
+
+# Peak over the retained events. Holding decoder rows beside the events measured 1.42-1.64 before
+# draining and 1.12-1.25 after, stable from 1.5k to 20k calls; bounds sit between the two.
+@pytest.mark.parametrize(('name', 'operation', 'bound'), [
+    pytest.param('codex_read', codex_read, 1.27, id='codex_read'),
+    pytest.param('codex_discovery', codex_scan, 1.43, id='codex_discovery'),
+    pytest.param('claude_discovery', claude_scan, 1.25, id='claude_discovery')])
+def test_native_reads_hold_one_copy_of_decoded_events_at_peak(large, name, operation, bound):
+    peak_bytes, retained = peak(lambda: operation(large))
+    assert peak_bytes/retained < bound, (name, peak_bytes, retained)
+
+
+def test_native_collection_holds_fewer_copies_than_the_former_peak(large):
+    from agent_harness_lab.evidence import collect
+    events = peak(lambda: codex_read(large))[1]
+    peak_bytes, _ = peak(lambda: collect(large.project, events=large.root/'codex.jsonl', source_format='codex',
+        source_version='codex-rollout-0.166.0'))
+    # Former peak: the admitted tuple plus normalized and analysed copies (1.64 of the events).
+    assert peak_bytes/events < 1.35, (peak_bytes, events)
+
+
+def test_native_snapshot_releases_decoder_rows_before_the_snapshot(large):
+    from agent_harness_lab.sources.codex import CodexCapture
+    source, manifest = large.declare('codex_v1')
+    with undrained(): before, _ = peak(lambda: CodexCapture(manifest).read(source))
+    after, _ = peak(lambda: CodexCapture(manifest).read(source))
+    # snapshot() dominates; releasing decoder rows before it removes about 10% of the peak.
+    assert after < 0.95*before, (before, after)
