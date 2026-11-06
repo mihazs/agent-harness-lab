@@ -9,6 +9,9 @@ from agent_harness_lab.evaluation.benchmark import public_export_allowed
 from agent_harness_lab.optimization.budget import Budget
 from agent_harness_lab.optimization.router import run_queue
 
+PROVENANCE = dict(source_kind='synthetic', approved_publication=True, source_ref='synthetic:fixture',
+                  derived_from_private=False)
+
 
 def record(name, component='instruction', severity='normal', **changes):
     value = MechanismRecord(name, 'synthetic symptom ' + name, ['synthetic:' + name], 'evidence-1', 'component-1',
@@ -106,6 +109,26 @@ class MechanismCoverageTests(unittest.TestCase):
         self.assertEqual(list(result['multiple_versions']), ['a'])
         self.assertEqual(len(result['multiple_versions']['a']), 2)
 
+    def test_conflicting_dispositions_for_one_key_keep_coverage_open_in_any_order(self):
+        def resolved():
+            return record('a').transition('rejected', 'tie')
+
+        def deferred():
+            return record('a').transition('deferred', 'parent_budget_or_final_reserve_exhausted')
+        for order in ([resolved(), deferred()], [deferred(), resolved()]):
+            result = report(order, capture='complete')
+            self.assertFalse(result['coverage_complete'])
+            self.assertEqual(result['entries'][0]['coverage'], 'open')
+            self.assertIn('conflicting_dispositions_for_key', result['entries'][0]['limitations'])
+            self.assertIn('conflicting_dispositions_for_key', result['limitations'])
+            self.assertEqual(result['totals']['duplicates_suppressed'], 1)
+            self.assertTrue(result['duplicates'][0]['conflict'])
+            self.assertEqual(result['duplicates'][0]['disposition'], order[1].disposition)
+        exact = report([resolved(), resolved()], capture='complete')
+        self.assertTrue(exact['coverage_complete'])
+        self.assertFalse(exact['duplicates'][0]['conflict'])
+        self.assertNotIn('conflicting_dispositions_for_key', exact['limitations'])
+
     def test_report_is_pure_deterministic_private_and_accepts_queue_output(self):
         records = [record('a', exposure=None), record('b', 'skill')]
         before = deepcopy([r.as_dict() for r in records])
@@ -117,6 +140,7 @@ class MechanismCoverageTests(unittest.TestCase):
         self.assertIn('exposure_denominator_unknown', by_id(first)['a']['limitations'])
         self.assertIs(first['publication_allowed'], False)
         self.assertFalse(public_export_allowed([first]))
+        self.assertFalse(public_export_allowed([dict(first, publication_allowed=True, provenance=PROVENANCE)]))
         with self.assertRaises(ValueError):
             report(records, capture='assumed')
         with self.assertRaises(ValueError):

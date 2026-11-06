@@ -17,6 +17,7 @@ CLAIM_LEVELS = ('none', 'observed_pattern', 'supported_diagnosis', 'development_
                 'validated_improvement')
 COVERAGE_STATES = ('resolved', 'awaiting_certification', 'open', 'unknown_capture')
 _RESOLVED = frozenset({'validated', 'rejected', 'already_covered', 'outside_scope'})
+_CONFLICT = 'conflicting_dispositions_for_key'
 _CLAIMED = {'validated': 'validated_improvement', 'recommended': 'development_recommendation'}
 
 
@@ -86,28 +87,42 @@ def report(mechanisms, *, capture='unknown'):
     """Return the private ``mechanism-coverage-v1`` JSON report for ``mechanisms``.
 
     ``mechanisms`` are records or their ``as_dict`` mappings (as ``run_queue``
-    returns). Identical keys are suppressed and listed; one mechanism ID under
+    returns). Repeats of a key with the same disposition, reason and history
+    are suppressed and listed; a repeat that disagrees is listed as a conflict
+    and keeps that key open (``conflicting_dispositions_for_key``). One mechanism ID under
     several evidence/component versions stays separate entries, listed as
     ``multiple_versions``. ``capture`` is the controller's declaration for the
     run. Pure: nothing is evaluated, charged or mutated.
     """
     if capture not in CAPTURE_STATES:
         raise ValueError('capture must be complete, partial or unknown')
-    entries, duplicates, keys, versions = [], [], set(), {}
+    entries, duplicates, kept, versions = [], [], {}, {}
     for value in mechanisms:
         mechanism = _record(value)
-        if mechanism.key in keys:
-            duplicates.append(dict(mechanism_id=mechanism.mechanism_id, key=mechanism.key))
+        state = (mechanism.disposition, mechanism.reason, mechanism.history)
+        if mechanism.key in kept:
+            entry, first = kept[mechanism.key]
+            # Only an exact repeat is suppressed; a disagreeing review keeps the key open whatever the order.
+            conflict = state != first
+            duplicates.append(dict(mechanism_id=mechanism.mechanism_id, key=mechanism.key,
+                                   disposition=mechanism.disposition, reason=mechanism.reason, conflict=conflict))
+            if conflict and _CONFLICT not in entry['limitations']:
+                entry['limitations'].append(_CONFLICT)
+                if entry['coverage'] != 'unknown_capture':
+                    entry['coverage'] = 'open'
             continue
-        keys.add(mechanism.key)
+        entry = _entry(mechanism)
+        kept[mechanism.key] = (entry, state)
         versions.setdefault(mechanism.mechanism_id, []).append(mechanism.key)
-        entries.append(_entry(mechanism))
+        entries.append(entry)
     entries.sort(key=lambda e: (SEVERITIES.index(e['severity']), e['mechanism_id'], e['key']))
     limitations = ['taxonomy_and_routes_are_hypotheses_not_causal_proof']
     if not entries:
         limitations.append('no_mechanisms_recorded')
     if capture != 'complete':
         limitations.append('capture_' + capture + '_unseen_mechanisms_possible')
+    if any(duplicate['conflict'] for duplicate in duplicates):
+        limitations.append(_CONFLICT)
     totals = dict(mechanisms=len(entries), duplicates_suppressed=len(duplicates),
                   coverage=_counts(entries, 'coverage', COVERAGE_STATES),
                   claim_level=_counts(entries, 'claim_level', CLAIM_LEVELS),
