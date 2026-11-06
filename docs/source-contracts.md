@@ -2338,8 +2338,10 @@ Journal imports retain only source/page/revision/content fingerprints, normalize
 timestamps and contextual-assertion records. Raw text, paths, native IDs and parsed
 frontmatter are not persisted. Parsed metadata is available through the reader API;
 it is not yet stored as structured journal facets. History includes revisions
-observed through successive imports; Git history and native session correlation
-remain open in #43. Declared handoff/workstream links are described
+observed through successive imports; the default reader never reconciles pages
+missing from a later bundle, and the opt-in reader [below](#okf-absence-reconciliation)
+does. Git history and native session correlation remain open in #43. Declared
+handoff/workstream links are described
 [below](#declared-handoff-and-workstream-provenance). A separate explicit
 [selected MCP page capture](memory-page-capture.md) now supports hash-only journals.
 
@@ -2351,6 +2353,39 @@ ordinary note using a monthly-ledger filename is also excluded in this first sli
 Coverage remains unknown. Use an extracted static export for stable input; this is
 not an atomic snapshot of a concurrently edited wiki. Tests use synthetic bundles
 and do not read real memories or call models.
+
+### OKF absence reconciliation
+
+`sources.okf.ReconcilingOKFExport` is an opt-in Python subclass of `OKFExport`.
+`ahl sources import` keeps the default reader. Registered with the same
+`local_file/ai-memory-okf/0.2` capability, it declares `reconciles_absence`, so
+`Registry.ingest` hands it the selected journal's committed revisions of that source.
+It applies every check of the default reader, then compares page paths by their
+fingerprint:
+
+| Journal state of a path | Bundle | Emitted record |
+| --- | --- | --- |
+| Latest revision present | Path missing | One `tombstone` revision whose fingerprint binds the superseded latest revision and basis `absent_from_project_okf_export`; it keeps that revision's `original_at` |
+| Latest revision is a tombstone | Path still missing | Nothing; one absence yields one tombstone |
+| Latest revision is a tombstone, or present with other bytes | Bytes equal an earlier committed revision | A new present revision `digest({content_sha256, reobserved_after_sha256})` bound to the latest revision, with the page's content fingerprint |
+| Any other | Path present | The default page record |
+
+The journal's latest revision of each path therefore matches the last reconciled
+bundle, and reimporting an unchanged bundle imports nothing. The default reader
+skips bytes that were committed earlier, so a reverted or reappearing page keeps a
+stale latest revision there. The checkpoint fingerprint stays `okf.bundle_sha256(pages)`,
+so declared provenance binding still matches a reconciled checkpoint. The tombstone
+basis text is fingerprinted, never stored.
+
+Absence is not deletion evidence: the page may have been deleted, renamed, moved
+into `_pending`, renamed to a reserved ledger name, or left out of the export. A rename is a tombstone plus
+a new path; no rename is inferred. The reader summary adds `absence_reconciliation`
+(`journal_compared` on ingest, `not_attempted` on preview, which has no journal),
+`absent_from_export`, `reappeared`, `reverted`, `deletion_confirmed: false`,
+`rename_detection: false` and the warning `absence_is_not_deletion_evidence`.
+Records stay contextual assertions with unknown coverage. Nothing is written
+outside the selected journal, and no ai-memory command, database or server is used.
+Synthetic bundles establish this contract (`tools/tests/test_source_okf_absence.py`).
 
 ### Declared handoff and workstream provenance
 
@@ -2433,7 +2468,9 @@ native session, that its content is true, or that linked records are independent
 `task test:sources:memory-provenance` runs synthetic bundles only. Still open in
 #43: native session correlation across journals without duplicate roots, the
 upstream database or MCP handoff and workstream surfaces, delivery and injection
-evidence, persisted links and lineage components, and deletion reconciliation.
+evidence, and persisted links and lineage components. Pages missing from a later
+bundle are reconciled only by the opt-in
+[absence reader](#okf-absence-reconciliation); upstream deletion stays unconfirmed.
 
 ### Declared validity as of an instant
 
