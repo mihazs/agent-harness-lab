@@ -304,6 +304,33 @@ class InstructionImprovementTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'governing scope'):
             check_scope(args, dict(original, **{'docs/CLAUDE.md': ('0' * 64, 0o644)}), original)
 
+    def test_a_declared_task_path_cannot_turn_a_root_removal_into_not_applicable(self):
+        # Root tasks lose guidance that only an on-demand docs file, or a rule that stops loading at launch, still
+        # holds; declaring a docs task path must not hide that loss from the removal gate.
+        docs_line = 'Synthetic unrelated docs guidance.\n'
+        git_rule = '.claude/rules/git.md'
+        for root in (self.project, self.baseline, self.candidate):
+            self.write(root, git_rule, 'Synthetic launch git rule.\n')
+        cases = (('root_line_kept_only_on_demand', {'CLAUDE.md': FILES['CLAUDE.md'] + docs_line}, {}),
+                 ('launch_rule_made_conditional', {}, {git_rule: '---\npaths:\n  - "docs/**"\n---\nSynthetic launch git rule.\n'}))
+        for name, baseline, candidate in cases:
+            with self.subTest(name):
+                shutil.rmtree(self.candidate); shutil.copytree(self.baseline, self.candidate)
+                for path, text in baseline.items():
+                    for root in (self.project, self.baseline, self.candidate): self.write(root, path, text)
+                if name == 'root_line_kept_only_on_demand': self.write(self.candidate, 'CLAUDE.md', FILES['CLAUDE.md'])
+                for path, text in candidate.items(): self.write(self.candidate, path, text)
+                for task_paths in ([], ['docs/guide.md']):
+                    plan = self.plan(dict(CLAUDE, task_cwd='.'), task_paths=task_paths, required=[])
+                    bound = iv.bind(self.validate(plan), plan, AT_ROOT)
+                    self.assertEqual(bound['status'], 'valid')
+                    self.assertEqual(iv.current(bound, plan, self.baseline, self.candidate, project=self.project), [])
+                    self.assertEqual((bound['removal']['required'], bound['removal']['disposition']),
+                                     (True, 'requires_behavioral_controls'), task_paths)
+                    self.assertEqual(bound['measurements']['credited_reduction_bytes'], 0, task_paths)
+                for path, text in baseline.items():
+                    for root in (self.project, self.baseline): self.write(root, path, FILES[path])
+
     def test_each_task_path_must_lie_below_the_plans_own_task_cwd(self):
         # Tasks run in src and docs; a plan for src may not name a docs path to make docs guidance governing.
         self.write(self.candidate, 'src/CLAUDE.md', FILES['src/CLAUDE.md'] + 'Check the synthetic build.\n')

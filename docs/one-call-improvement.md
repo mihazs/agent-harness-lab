@@ -434,7 +434,10 @@ A shorter file is not automatically better. The report gives active-context byte
 (`utf8-bytes-v1`) for both versions as a secondary measurement only. A reduction
 earns `credited_reduction_bytes` only after subtracting the lines that moved out
 of the active context into another file, and `selects_winner` is always `false`.
-When a removed file's active lines all stay active for the same task paths, the
+Every measurement covers the task's own launch context at `task_cwd` as well as
+each declared task path, so declaring a task path never takes the evaluated
+task's own context out of the lost lines, the removal or the credited bytes.
+When a removed file's active lines all stay active in the same contexts, the
 operation is `consolidate`. Otherwise it is `remove`. Any active line that leaves
 the context sets `removal.disposition` to `requires_behavioral_controls`. After
 evaluation, `removal_disposition` reads the trial records. It returns `rejected`

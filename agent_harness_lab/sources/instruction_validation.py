@@ -239,7 +239,9 @@ class _View:
         unresolved = {(n.path_sha256, n.reason) for n in self.inventory.nodes if n.path_sha256 not in paths}
         self.unresolved = {(source, reason) for source in files for reason in {r for _, r in unresolved}
                            if (digest(['unresolved_imports', source, reason]), reason) in unresolved}
-        self.contexts = plan['task_paths'] or ('.',)
+        # '.' is the task's own launch context at task_cwd. It is always measured, so a declared task path can add
+        # contexts but never drop the evaluated task's own from lost lines, removal or credited bytes (#339).
+        self.contexts = ('.', *(path for path in plan['task_paths'] if path != '.'))
         chain = claude_rules.chain(self.cwd)
         self.matched, self.launch = {}, set()
         for node in (self.rules.nodes if self.rules is not None and self.rules.status == 'declared' else ()):
