@@ -11,7 +11,8 @@ from .schema import digest
 RESOLVER_VERSION = 'github-native-recheck-v1'
 NATIVE_KINDS = ('github_repository', 'github_issue', 'github_pull', 'github_issue_comment',
     'github_review_comment', 'github_review', 'github_review_thread', 'github_commit',
-    'github_commit_detail', 'github_commit_comment', 'github_check_run', 'github_commit_status', 'github_timeline_event')
+    'github_commit_detail', 'github_commit_comment', 'github_check_run', 'github_commit_status', 'github_timeline_event',
+    'github_workflow_run', 'github_workflow_job')
 GIT_KINDS = ('git_commit', 'git_ref', 'harness_file', 'harness_snapshot', 'instruction_inventory')
 
 

@@ -2753,7 +2753,8 @@ v6 window profile below records absence tombstones; earlier profiles infer none.
 
 Version 1 leaves thread resolution/outdated state unknown without native GraphQL
 evidence and does not read timelines or CI/checks; the explicit profile below adds
-those reads. Later profiles add commit detail and bounded comment windows.
+those reads. Later profiles add commit detail, bounded comment windows and
+GitHub Actions runs and jobs.
 Explicit conditional (ETag) requests are described below; incremental requests
 remain open in #45/#42. An omitted comment is not proof of deletion or no defect.
 Readbacks limit head inconsistency but do not make multiple REST calls an atomic
@@ -3026,6 +3027,61 @@ unchanged content, and readbacks answered 304 rely on that claim. Synthetic
 fixtures cover the request headers, replay, budget charging, rejected 304s,
 validator lifetime and checkpoint stability. They do not establish GitHub's
 live validator semantics or rate-limit accounting.
+
+### Selected GitHub Actions runs and jobs
+
+`GitHubSelection(..., schema_version=7, details=("actions",))` adds read-only
+GitHub Actions evidence for each selected PR's captured full head SHA. Version 7
+accepts every earlier detail flag and explicit commit selection. Its comment
+window is optional: leave both `since` and `until` null for no window, or set both
+under the version 6 rules. Use `selection.source_version` (`2026-03-10-v7`). The
+flag enters the scope fingerprint, and versions 1–6 keep their serialization,
+fingerprints and requests, so upgrading the package enables no new reads.
+
+The reader lists [workflow runs](https://docs.github.com/en/rest/actions/workflow-runs#list-workflow-runs-for-a-repository)
+filtered by `head_sha`, then the [jobs of every attempt](https://docs.github.com/en/rest/actions/workflow-jobs#list-jobs-for-a-workflow-run-attempt)
+from 1 to the run's `run_attempt`. The `head_sha` filter must survive every
+pagination link, and envelope totals must stay stable and match the listed items.
+Every run and job must name the requested head, its run, its attempt and a
+canonical URL in the selected repository. A run for another head (a detached
+or force-pushed PR head), a job reported under the wrong run or attempt, an unknown
+status or conclusion, duplicate step numbers, a foreign check reference and an
+incomplete or over-budget listing all reject the capture. No partial snapshot is
+returned, and the checkpoint does not advance. Unknown states are never relabelled
+as passes or failures. All reads share the request, byte and deadline budgets.
+
+A `github_workflow_run` record keeps fingerprints of the workflow, name, path and
+check suite, the trigger event, status, conclusion, attempt count and timestamps.
+Its status and conclusion describe the latest attempt only (`state_scope:
+latest_attempt`). Each `github_workflow_job` record keeps its run, attempt, name
+fingerprint, status, conclusion, timestamps, the fingerprint of its native check
+run and its ordered steps with number, name fingerprint, status, conclusion and
+timing. A failed job and its failing step therefore stay bound to the exact head
+and attempt. That binding is CI process evidence. It does not say a model caused
+the failure. Native conclusions such as `skipped`, `cancelled`, `timed_out`,
+`action_required` and an unfinished null stay distinct. Runner names, labels,
+logs, artifacts and check annotations are not read or stored.
+
+Relations `workflow_run_on` (run to PR), `job_of` (job to run) and, when the
+`checks` flag captured the same check run for that head, `job_check_run` join the
+records. The v5 `graph` flag persists them as candidate claims, and the native
+recheck accepts the run and job kinds. Rerun attempts are correlated replicates
+of one run, never independent trials. The summary's `actions` block reports runs,
+attempts, rerun attempts and jobs, with `independent_trials: null`,
+`task_outcomes_verified: false` and false `logs_captured`, `artifacts_captured`
+and `annotations_captured`. Warnings `run_state_latest_attempt_only`,
+`workflow_reruns_not_independent`, `workflow_logs_not_captured`,
+`workflow_artifacts_not_captured` and `check_annotations_not_captured` mark the
+coverage gaps. A green workflow remains development-artifact process evidence,
+not a grader reference or a verified task outcome.
+
+The reader sends only these fixed GET listings. It never re-runs, cancels or
+dispatches a workflow, follows a log or artifact URL, or reads secrets. Runs for
+explicitly selected commits outside a PR, artifact metadata, annotations and
+authorized structured test artifacts remain open in #53. Synthetic fixtures cover
+a flaky rerun, a failing step, skipped and cancelled jobs, a detached head, foreign
+references, pagination and budget exhaustion. They do not establish live Actions
+API compatibility.
 
 ### Explicit GitHub CLI configuration and native recheck
 
