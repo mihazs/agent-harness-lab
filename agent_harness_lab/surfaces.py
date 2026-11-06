@@ -21,6 +21,9 @@ HOOK_FACET = 'hook_contract_required'
 # Where a path lives. Another repository is never edited in place, so every external_repository path is at most
 # recommendation_only; a private_excluded verdict still wins because it is stricter.
 ORIGINS = ('project', 'external_repository')
+# Selected plugin checkouts are rooted at plugin:<name>:<marketplace> labels; a path below one names that external
+# checkout, never a project folder, so it is external_repository whatever origin the caller passed.
+PLUGIN_ROOT_PREFIX = 'plugin:'
 
 
 @dataclass(frozen=True)
@@ -291,6 +294,7 @@ def classify(relative_path, runtime=None, mode=None, *, root_skills=False, exter
     if rank(writability) > rank('adoptable'):
         writability = min((writability, *(_verdict(row, kinds, executable, context) for row in matched
                                           if row.unconfirmed is not None)), key=rank)
+    if parts[0].startswith(PLUGIN_ROOT_PREFIX): origin = 'external_repository'
     if origin == 'external_repository' and writability != 'private_excluded': writability = 'recommendation_only'
     return SurfaceClass(kinds[0] if kinds else 'unsupported', str(scope), executable, writability, facets)
 
