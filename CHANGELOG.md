@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.121.0
+
+### Minor Changes
+
+- 1a881cb: Add `hook_contract_v1` (`agent_harness_lab/hooks_contract.py`), a static contract for one hook deployment unit: the `hooks` key of `.claude/settings.json`, `.codex/hooks.json` or `.codex/config.toml` plus the checkout scripts its handlers reference. `promotion.journal.key_edit` rewrites only the `hooks` key of JSON or TOML, so `permissions`, `env` and every other key keep their bytes through create, update and rollback. The contract blocks unknown events, matchers that do not compile (Python `re` as an unverified proxy), non-command handlers, missing or symlinked scripts and unset timeouts, and marks network or credential references recommendation-only. It never writes `settings.local.json`, managed layers or Codex trust state, and Codex units list `requires_user_trust_review`. The journal admits a unit only when a caller passes a contract that it re-evaluates as passed. A partial config-and-script write resumes or recovers as one deployment, and a concurrent edit is a conflict that keeps the user's work. Change plans resolve `contract_required` operations only through a passed contract, and the one-call path drops `hooks` from its deferred surfaces only then. Nothing is executed. Skill frontmatter that registers hooks now needs the contract, as agent frontmatter already did.
+
 ## 0.120.0
 
 ### Minor Changes

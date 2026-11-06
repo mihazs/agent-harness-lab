@@ -147,6 +147,15 @@ def structural_candidate(raw, directory):
     return raw[3:]
 
 
+DEFERRED=('behavioral optimization','skill lifecycle and routing','instructions','hooks')
+
+
+def deferred_surfaces(hook_contracts):
+    """'hooks' leaves the deferred list only when the run has hook units and every hook_contract_v1 verdict passed."""
+    passed=bool(hook_contracts) and all(row.status=='passed' for row in hook_contracts)
+    return [name for name in DEFERRED if not (passed and name=='hooks')]
+
+
 def contracts(args):
     """One-call deterministic contract path; invoked only by explicit CLI option."""
     from .workflow import (output_dir, snapshot, candidate_states, file_state,
@@ -180,16 +189,19 @@ def contracts(args):
             before_sha256=hashlib.sha256(raw).hexdigest(), after_sha256=hashlib.sha256(repaired).hexdigest()))
     proposed = candidate_states(candidate, original)
     from .harness_change_plan import produce,attach
+    from .hooks_contract import contracts_for
+    changed=[name for name in original.keys()|proposed.keys() if original.get(name)!=proposed.get(name)]
+    hook_contracts=contracts_for(args.project,{name:file_record(baseline/name) if name in original else None for name in changed},
+        {name:file_record(candidate/name) if name in proposed else None for name in changed})
+    deferred=deferred_surfaces(hook_contracts)
     common_plan=produce(args,original,proposed,analysis=dict(kind='deterministic_contract_inventory'),evidence=operations,
         diagnosis=dict(contract='minimal-agent-skill-header-without-bom-v1'),
         falsifiers=['outside_strict_header_contract','candidate_not_exact_bom_removal'],
-        controls=['independent_frozen_structural_candidate_check'],
-        deferred=['behavioral optimization','skill lifecycle and routing','instructions','hooks'])
+        controls=['independent_frozen_structural_candidate_check'],deferred=deferred,contracts=hook_contracts)
     plan = dict(schema_version=1, kind='deterministic_contract', operations=operations,
                 profile='one-call-improvement-v1', publication_allowed=False,
                 configuration_sha256=getattr(args, 'configuration_sha256', None),
-                behavioral_certification=False, runtime_activation='unknown',
-                deferred=['behavioral optimization', 'skill lifecycle and routing', 'instructions', 'hooks'])
+                behavioral_certification=False, runtime_activation='unknown', deferred=deferred)
     attach(plan,common_plan)
     write_json(output/'change-plan.json', plan)
     result = dict(status='no_change', output=str(output), changed_files=[], plan=str(output/'change-plan.json'),
@@ -198,6 +210,9 @@ def contracts(args):
     if operations:
         if common_plan.unresolved_operations:
             result.update(status='blocked',reason='unresolved_operation_requires_hook_contract')
+        elif hook_contracts:
+            # A passed hook contract resolves the plan, but adoption still needs explicit authorization.
+            result.update(status='inconclusive',reason='hook_adoption_requires_explicit_authorization')
         elif settings and settings['recommendation_only']:
             result.update(status='inconclusive', reason='configuration_requires_recommendation_only')
         elif time.monotonic()-started >= args.timeout:
