@@ -11,7 +11,7 @@ model. Existing cooperative evaluation remains recommendation-only.
 | #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral; bounded admission of proposer `mechanisms`/`falsifiers` JSON as unverified records with per-entry rejection reasons; pure planned route dispositions; private `mechanism-coverage-v1` JSON/Markdown coverage report separating observed patterns, supported diagnoses, development recommendations and validated improvements | Attach admission, dispositions and the coverage report to the `ahl improve` receipt and queue; integrate real proposal sessions and versioned evidence; evaluate composed repairs |
 | #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, paired skill-present/absent transfer report under a predeclared target/control policy (`paired_transfer`), approved procedure hypothesis API; pinned Claude 2.1.316 declared `Skill` names and exact project `SKILL.md` read requests as content-free `declared_invocation`/`file_read` signals with confidence labels (`observed_declared`, never activation) | Observed activation evidence, Codex skill signals, shadowing/effective-path detection, wiring signals into trial records and reports, independently graded routing/transfer pack, live utility and compiler evaluation |
 | #12 search | Candidate identity/scope/hash checks, deduplication, hard safety feasibility, Pareto frontier, bounded development callbacks, final reserve, durable state, single final callback, conflict-checked composition | Version-verified reflective CLI proposer, actual inference resource accounting, full resume/recovery and algorithm comparisons; optional halving is not implemented |
-| #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting | An actually supported tool proxy/interception runtime and independently graded adapter effectiveness; no runtime flags are invented |
+| #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting; declarative `AdapterSpec` capability contract with a non-executing candidate review (`review_candidate_spec`) that rejects expanded authority | An actually supported tool proxy/interception runtime and independently graded adapter effectiveness; no runtime flags are invented |
 | #14 retrieval | Approved reviewed local lexical index, bounded context, stable corpus revision, explicit abstention without calibration | Reviewed incident corpus, calibration/OOD evaluation, optional TF-IDF/embeddings comparisons and downstream utility tests |
 | #15 promotion | Private write-ahead snapshots, exact hashes/modes, owned-path transactions, manual preview/rollback, partial-write recovery, version-attributed fixed-window observation | Crash/power-loss hardening across every boundary, monitor-to-watch integration, authenticated outcome lineage and any explicitly configured automatic rollback policy |
 | #16 benchmarks | Within-pair runtime validation, separate model strata, missing-setting reporting, measured-cost API with supplied dated prices, private/mixed export rejection, escaped HTML/Markdown summaries, credential-free package CI | Trusted live workflow with broker-scoped credentials and resource enforcement, public task evidence and complete reports of per-task intervals/exposure |
@@ -116,6 +116,28 @@ installs globally. The typed adapter preserves an exact original tool envelope a
 adds presentation metadata only. It cannot call a tool, retry an action, expand
 network/filesystem authority or turn an error into success. Runtime integration
 currently reports unsupported.
+
+`AdapterSpec` (`ahl.adapter-spec.v1`) is the opt-in capability contract for one
+presentation adapter: ID, version, implementation SHA-256, target tools, the
+`tool-envelope-v1` input and `presented-envelope-v1` output contracts, the
+`identity` and `structured-error-v1` transforms, side effects, filesystem,
+network, credential and nested-tool grants, resource limits, the rollback digest
+and the declared runtime. It is data and never runs. `AdapterSpec.from_mapping`
+rejects unknown and missing fields instead of ignoring them. A spec with any side
+effect or any filesystem, network, credential or nested-tool grant is rejected,
+and so are limits above 64 KiB of input, 128 KiB of output or 10 seconds.
+`review_candidate_spec(authorized, candidate, authorization)` compares an
+untrusted candidate with the controller-owned spec without model judgment. It
+rejects a candidate that adds a tool, transform or grant, raises a limit, renames
+the adapter or changes its contracts or runtime. New implementation bytes are
+admissible only when `previous_digest` equals the authorized spec's
+`content_digest` (the implementation SHA-256, reported as
+`authorized_content_digest`), not the spec digest `authorized_digest`. With
+unchanged bytes, `previous_digest` must stay as authorized. The verdict
+`within_authorized_capabilities` means only that the candidate stays inside the
+declared authority. The review never executes adapter code, never promotes, and
+reports the runtime as unsupported. `verify_adapter_bytes` rechecks bytes against
+the declared digest. Nothing calls these APIs by default.
 
 Lexical retrieval accepts only approved reviewed summaries, retains sampling
 provenance and returns untrusted evidence, including any injection text. It never
