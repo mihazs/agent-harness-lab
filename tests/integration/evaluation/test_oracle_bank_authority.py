@@ -10,6 +10,8 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
+import pytest
+
 from agent_harness_lab.cli import evaluator
 from agent_harness_lab.private_journal import encoded
 from agent_harness_lab.evaluation.bank_tools import export_manifest
@@ -24,6 +26,11 @@ from tests.integration.evaluation import test_oracle_history as histories
 
 
 class OracleBankAuthorityTests(unittest.TestCase):
+    """A one-task controlled bank admitted through RegressionAdmissionTests, with simulated attested workers.
+
+    test_derivation and test_preservation_cohorts instantiate this class and call setUp and doCleanups, so it
+    keeps that TestCase interface and holds no tests.
+    """
     image_hash = 'e'*64
     emulate = offline.OfflineFixture.emulate
     execute = histories.OracleHistoryTests.execute
@@ -74,174 +81,202 @@ class OracleBankAuthorityTests(unittest.TestCase):
         fixture = self.admission.fixture
         fixture.store.review(fixture.case_id,fixture.review_file('quarantined'))
 
-    def assert_not_current(self, operation):
-        try: result = operation()
-        except (ValueError,OSError): return
-        self.assertNotEqual(result['oracle_validity'],'current')
 
-    def test_controlled_export_and_actual_bound_run_seal_exact_v2_authority(self):
-        authority = self.manifest['bank_authority']
-        self.assertEqual(authority['bank_path'],str(self.bank))
-        result,calls = self.run_history()
-        self.assertEqual(calls,8)
-        self.assertEqual(result['bank_authority'],'current_eligible')
-        self.assertEqual(self.store.analyze(result['run_id'])['bank_authority'],'current_eligible')
-        inputs = json.loads((self.store.case(result['run_id'])/'inputs.json').read_text())
-        self.assertEqual(inputs['schema_version'],2)
-        self.assertEqual(inputs['bank_authority'],authority)
-        self.assertEqual(set(inputs['bank_tasks']),{t['id'] for t in self.manifest['tasks']})
+@pytest.fixture
+def fixture():
+    value = OracleBankAuthorityTests(); value.setUp()
+    yield value
+    value.doCleanups()
 
-    def test_malformed_v2_incomplete_records_cannot_claim_current_bank_authority(self):
-        result,_ = self.run_history(); case = self.store.case(result['run_id'])
-        (case/'events/0001.json').unlink()
-        path = case/'inputs.json'; original = json.loads(path.read_text())
-        event_path = case/'events/0000.json'; event = json.loads(event_path.read_text())
-        changes = [lambda v:v.update(bank_authority=None),lambda v:v.update(bank_tasks=None),
-                   lambda v:v.update(bank_tasks={}),lambda v:v.update(bank_tasks=[]),
-                   lambda v:next(iter(v['bank_tasks'].values())).update(materialized_sha256='bad')]
-        for change in changes:
-            with self.subTest(change=change):
-                value = json.loads(json.dumps(original)); change(value); raw = encoded(value); path.write_bytes(raw)
-                event['payload']['inputs_sha256'] = hashlib.sha256(raw).hexdigest()
-                event_path.write_bytes(encoded(event))
-                with self.assertRaises(ValueError): self.store.show(result['run_id'])
 
-    def test_forged_authority_and_selected_policy_reject_before_any_worker(self):
-        original = json.loads(json.dumps(self.manifest))
-        changes = [lambda m:m['bank_authority'].update(bank_sha256='f'*64),
-                   lambda m:m['bank_authority'].update(revision_sha256='f'*64),
-                   lambda m:m['bank_authority'].update(schema_version=True),
-                   lambda m:m['bank_authority'].update(extra='not allowed'),
-                   lambda m:m.pop('bank_authority'),
-                   lambda m:m['tasks'][0].update(root='forged-root'),
-                   lambda m:m['tasks'][0].update(artifacts=['result.json'])]
-        for change in changes:
-            with self.subTest(change=change):
-                self.manifest = json.loads(json.dumps(original)); change(self.manifest); self.write_manifest()
-                with patch.object(SandboxBackend,'run',side_effect=AssertionError('must not dispatch')):
-                    with self.assertRaises(ValueError): self.run_history(execute=lambda *a,**kw:self.fail('must not dispatch'))
-                self.assertFalse(self.store.root.exists())
+def assert_not_current(operation):
+    try: result = operation()
+    except (ValueError,OSError): return
+    assert result['oracle_validity'] != 'current'
 
-    def test_operator_approved_development_bank_cannot_run_as_certification(self):
-        self.manifest['experiment'].update(profile='certification',partition='certification')
-        self.write_manifest()
-        with self.assertRaisesRegex(ValueError,'certification'): self.run_history()
-        self.assertFalse(self.store.root.exists())
 
-    def test_export_authority_can_be_validated_before_adding_experiment_plan(self):
-        from agent_harness_lab.evaluation.oracle_history import bank_authority
-        self.manifest.pop('experiment')
-        bindings = bank_authority(self.manifest,export_root=self.export)
-        self.assertEqual(set(bindings),{t['id'] for t in self.manifest['tasks']})
-        self.manifest['experiment'] = None
-        with self.assertRaises(ValueError): bank_authority(self.manifest,export_root=self.export)
+def test_controlled_export_and_actual_bound_run_seal_exact_v2_authority(fixture):
+    authority = fixture.manifest['bank_authority']
+    assert authority['bank_path'] == str(fixture.bank)
+    result,calls = fixture.run_history()
+    assert calls == 8
+    assert result['bank_authority'] == 'current_eligible'
+    assert fixture.store.analyze(result['run_id'])['bank_authority'] == 'current_eligible'
+    inputs = json.loads((fixture.store.case(result['run_id'])/'inputs.json').read_text())
+    assert inputs['schema_version'] == 2
+    assert inputs['bank_authority'] == authority
+    assert set(inputs['bank_tasks']) == {t['id'] for t in fixture.manifest['tasks']}
 
-    def test_final_authority_validation_cannot_seal_after_the_original_deadline(self):
-        clock=[time.monotonic()]; validations=[0]; original=controller.bank_authority
-        def validate(*args,**kwargs):
-            result=original(*args,**kwargs); validations[0]+=1
-            if validations[0]==4: clock[0]+=61
-            return result
-        with patch.object(controller,'time',SimpleNamespace(monotonic=lambda:clock[0])), \
-                patch.object(controller,'bank_authority',side_effect=validate):
-            result,calls=self.run_history()
-        self.assertEqual(calls,8)
-        self.assertEqual(result['state'],'incomplete')
 
-    def test_materialized_fixture_is_compared_to_original_bank_not_export_claims(self):
-        task = next(t for t in self.manifest['tasks'] if (self.export/t['fixture']/'app').is_dir())
-        (self.export/task['fixture']/'app/injected.py').write_text('raise RuntimeError("synthetic mutation")\n')
-        with self.assertRaisesRegex(ValueError,'materialized'): self.run_history()
-        self.assertFalse(self.store.root.exists())
+@pytest.mark.parametrize('change', [
+    pytest.param(lambda v:v.update(bank_authority=None), id='null-authority'),
+    pytest.param(lambda v:v.update(bank_tasks=None), id='null-tasks'),
+    pytest.param(lambda v:v.update(bank_tasks={}), id='empty-tasks'),
+    pytest.param(lambda v:v.update(bank_tasks=[]), id='list-tasks'),
+    pytest.param(lambda v:next(iter(v['bank_tasks'].values())).update(materialized_sha256='bad'), id='bad-materialized-digest'),
+])
 
-    def test_actual_typed_grader_version_must_match_authoritative_task_version(self):
-        def execute(*args,**kwargs):
-            result = self.execute(*args,**kwargs)
-            if args[3]=='grader':
-                envelope = json.loads(result['stdout']); envelope['grader_version'] = 'synthetic-stale-v0'
-                result['stdout'] = json.dumps(envelope)
-            return result
-        result,_ = self.run_history(execute=execute)
-        self.assertEqual(result['state'],'incomplete')
-        self.assert_not_current(lambda:self.store.analyze(result['run_id']))
 
-    def test_bound_reads_need_live_bank_but_not_old_export_or_harness_directories(self):
-        result,_ = self.run_history()
-        for folder in (self.export,self.baseline,self.candidate): shutil.rmtree(folder)
-        self.assertEqual(self.store.show(result['run_id'])['bank_authority'],'current_eligible')
-        self.revoke()
-        self.assert_not_current(lambda:self.store.analyze(result['run_id']))
+def test_malformed_v2_incomplete_records_cannot_claim_current_bank_authority(fixture, change):
+    result,_ = fixture.run_history(); case = fixture.store.case(result['run_id'])
+    (case/'events/0001.json').unlink()
+    path = case/'inputs.json'; original = json.loads(path.read_text())
+    event_path = case/'events/0000.json'; event = json.loads(event_path.read_text())
+    value = json.loads(json.dumps(original)); change(value); raw = encoded(value); path.write_bytes(raw)
+    event['payload']['inputs_sha256'] = hashlib.sha256(raw).hexdigest()
+    event_path.write_bytes(encoded(event))
+    with pytest.raises(ValueError): fixture.store.show(result['run_id'])
 
-    def test_later_revocation_or_missing_authority_blocks_guarded_reads(self):
-        result,_ = self.run_history(); self.revoke()
-        self.assert_not_current(lambda:self.store.show(result['run_id']))
-        self.assert_not_current(lambda:self.store.analyze(result['run_id']))
-        self.bank.rename(self.bank.with_name('removed-bank.json'))
-        self.assert_not_current(lambda:self.store.show(result['run_id']))
 
-    def test_revocation_during_execution_cannot_seal_a_current_result(self):
-        revoked = [False]
-        def execute(*args,**kwargs):
-            result = self.execute(*args,**kwargs)
-            if not revoked[0]: self.revoke(); revoked[0] = True
-            return result
-        self.assert_not_current(lambda:self.run_history(execute=execute)[0])
-        records = list(self.store.root.rglob('inputs.json')); self.assertEqual(len(records),1)
-        history = self.store.history(records[0].parent)
-        self.assertEqual(history[-1][0]['state'],'incomplete')
+@pytest.mark.parametrize('change', [
+    pytest.param(lambda m:m['bank_authority'].update(bank_sha256='f'*64), id='bank-digest'),
+    pytest.param(lambda m:m['bank_authority'].update(revision_sha256='f'*64), id='revision-digest'),
+    pytest.param(lambda m:m['bank_authority'].update(schema_version=True), id='boolean-schema-version'),
+    pytest.param(lambda m:m['bank_authority'].update(extra='not allowed'), id='extra-field'),
+    pytest.param(lambda m:m.pop('bank_authority'), id='missing-authority'),
+    pytest.param(lambda m:m['tasks'][0].update(root='forged-root'), id='forged-root'),
+    pytest.param(lambda m:m['tasks'][0].update(artifacts=['result.json']), id='selected-artifacts'),
+])
 
-    def test_revocation_during_sealing_cannot_commit_current_evidence(self):
-        from agent_harness_lab.evaluation import bank_revisions
-        sync = bank_revisions.sync_tree
-        def revoke_during_sync(path):
-            sync(path)
-            if Path(path).name=='execution': self.revoke()
-        with patch.object(bank_revisions,'sync_tree',side_effect=revoke_during_sync):
-            self.assert_not_current(lambda:self.run_history()[0])
-        records = list(self.store.root.rglob('inputs.json')); self.assertEqual(len(records),1)
-        self.assertEqual(self.store.history(records[0].parent)[-1][0]['state'],'incomplete')
 
-    def test_revoked_inherited_admission_invalidates_descendant_bank_authority(self):
-        second = self.admission.second_reviewed()
-        parent_revision = self.bank.parent.name
-        self.admission.parent,self.admission.case_id = self.bank,second
-        accepted = self.admission.accept(parent_revision_sha256=parent_revision)
-        self.bank = self.admission.bank(accepted); self.export_bank()
-        result,_ = self.run_history()
-        self.revoke()
-        self.assert_not_current(lambda:self.store.show(result['run_id']))
-        self.assert_not_current(lambda:self.store.analyze(result['run_id']))
+def test_forged_authority_and_selected_policy_reject_before_any_worker(fixture, change):
+    change(fixture.manifest); fixture.write_manifest()
+    with patch.object(SandboxBackend,'run',side_effect=AssertionError('must not dispatch')):
+        with pytest.raises(ValueError): fixture.run_history(execute=lambda *a,**kw:pytest.fail('must not dispatch'))
+    assert not fixture.store.root.exists()
 
-    def test_history_root_cannot_overlap_authority_before_any_write(self):
-        nested = self.bank.parent/'new-history'
-        with self.assertRaisesRegex(ValueError,'overlap'): self.run_history(store=HistoryStore(nested))
-        self.assertFalse(nested.exists())
 
-    def test_existing_unbound_v1_history_retains_exact_schema_and_read_behavior(self):
-        self.manifest.pop('bank_authority'); self.write_manifest()
-        # Simulate a historical v1 controller, which did not bind exported bank authority.
+def test_operator_approved_development_bank_cannot_run_as_certification(fixture):
+    fixture.manifest['experiment'].update(profile='certification',partition='certification')
+    fixture.write_manifest()
+    with pytest.raises(ValueError, match='certification'): fixture.run_history()
+    assert not fixture.store.root.exists()
+
+
+def test_export_authority_can_be_validated_before_adding_experiment_plan(fixture):
+    from agent_harness_lab.evaluation.oracle_history import bank_authority
+    fixture.manifest.pop('experiment')
+    bindings = bank_authority(fixture.manifest,export_root=fixture.export)
+    assert set(bindings) == {t['id'] for t in fixture.manifest['tasks']}
+    fixture.manifest['experiment'] = None
+    with pytest.raises(ValueError): bank_authority(fixture.manifest,export_root=fixture.export)
+
+
+def test_final_authority_validation_cannot_seal_after_the_original_deadline(fixture):
+    clock=[time.monotonic()]; validations=[0]; original=controller.bank_authority
+    def validate(*args,**kwargs):
+        result=original(*args,**kwargs); validations[0]+=1
+        if validations[0]==4: clock[0]+=61
+        return result
+    with patch.object(controller,'time',SimpleNamespace(monotonic=lambda:clock[0])), \
+            patch.object(controller,'bank_authority',side_effect=validate):
+        result,calls=fixture.run_history()
+    assert calls == 8
+    assert result['state'] == 'incomplete'
+
+
+def test_materialized_fixture_is_compared_to_original_bank_not_export_claims(fixture):
+    task = next(t for t in fixture.manifest['tasks'] if (fixture.export/t['fixture']/'app').is_dir())
+    (fixture.export/task['fixture']/'app/injected.py').write_text('raise RuntimeError("synthetic mutation")\n')
+    with pytest.raises(ValueError, match='materialized'): fixture.run_history()
+    assert not fixture.store.root.exists()
+
+
+def test_actual_typed_grader_version_must_match_authoritative_task_version(fixture):
+    def execute(*args,**kwargs):
+        result = fixture.execute(*args,**kwargs)
+        if args[3]=='grader':
+            envelope = json.loads(result['stdout']); envelope['grader_version'] = 'synthetic-stale-v0'
+            result['stdout'] = json.dumps(envelope)
+        return result
+    result,_ = fixture.run_history(execute=execute)
+    assert result['state'] == 'incomplete'
+    assert_not_current(lambda:fixture.store.analyze(result['run_id']))
+
+
+def test_bound_reads_need_live_bank_but_not_old_export_or_harness_directories(fixture):
+    result,_ = fixture.run_history()
+    for folder in (fixture.export,fixture.baseline,fixture.candidate): shutil.rmtree(folder)
+    assert fixture.store.show(result['run_id'])['bank_authority'] == 'current_eligible'
+    fixture.revoke()
+    assert_not_current(lambda:fixture.store.analyze(result['run_id']))
+
+
+def test_later_revocation_or_missing_authority_blocks_guarded_reads(fixture):
+    result,_ = fixture.run_history(); fixture.revoke()
+    assert_not_current(lambda:fixture.store.show(result['run_id']))
+    assert_not_current(lambda:fixture.store.analyze(result['run_id']))
+    fixture.bank.rename(fixture.bank.with_name('removed-bank.json'))
+    assert_not_current(lambda:fixture.store.show(result['run_id']))
+
+
+def test_revocation_during_execution_cannot_seal_a_current_result(fixture):
+    revoked = [False]
+    def execute(*args,**kwargs):
+        result = fixture.execute(*args,**kwargs)
+        if not revoked[0]: fixture.revoke(); revoked[0] = True
+        return result
+    assert_not_current(lambda:fixture.run_history(execute=execute)[0])
+    records = list(fixture.store.root.rglob('inputs.json')); assert len(records) == 1
+    history = fixture.store.history(records[0].parent)
+    assert history[-1][0]['state'] == 'incomplete'
+
+
+def test_revocation_during_sealing_cannot_commit_current_evidence(fixture):
+    from agent_harness_lab.evaluation import bank_revisions
+    sync = bank_revisions.sync_tree
+    def revoke_during_sync(path):
+        sync(path)
+        if Path(path).name=='execution': fixture.revoke()
+    with patch.object(bank_revisions,'sync_tree',side_effect=revoke_during_sync):
+        assert_not_current(lambda:fixture.run_history()[0])
+    records = list(fixture.store.root.rglob('inputs.json')); assert len(records) == 1
+    assert fixture.store.history(records[0].parent)[-1][0]['state'] == 'incomplete'
+
+
+def test_revoked_inherited_admission_invalidates_descendant_bank_authority(fixture):
+    second = fixture.admission.second_reviewed()
+    parent_revision = fixture.bank.parent.name
+    fixture.admission.parent,fixture.admission.case_id = fixture.bank,second
+    accepted = fixture.admission.accept(parent_revision_sha256=parent_revision)
+    fixture.bank = fixture.admission.bank(accepted); fixture.export_bank()
+    result,_ = fixture.run_history()
+    fixture.revoke()
+    assert_not_current(lambda:fixture.store.show(result['run_id']))
+    assert_not_current(lambda:fixture.store.analyze(result['run_id']))
+
+
+def test_history_root_cannot_overlap_authority_before_any_write(fixture):
+    nested = fixture.bank.parent/'new-history'
+    with pytest.raises(ValueError, match='overlap'): fixture.run_history(store=HistoryStore(nested))
+    assert not nested.exists()
+
+
+def test_existing_unbound_v1_history_retains_exact_schema_and_read_behavior(fixture):
+    fixture.manifest.pop('bank_authority'); fixture.write_manifest()
+    # Simulate a historical v1 controller, which did not bind exported bank authority.
+    with patch('agent_harness_lab.evaluation.oracle_history.bank_authority',return_value=None):
+        result,_ = fixture.run_history()
+    path = fixture.store.case(result['run_id'])/'inputs.json'; inputs = json.loads(path.read_text())
+    assert path.read_bytes() == encoded(inputs)
+    assert set(inputs) == set('schema_version run_id source_manifest_sha256 plan_sha256 oracle_sha256 dependencies versions image_sha256'.split())
+    assert inputs['schema_version'] == 1
+    fixture.revoke()
+    assert fixture.store.show(result['run_id'])['oracle_validity'] == 'current'
+    assert 'bank_authority' not in fixture.store.show(result['run_id'])
+
+
+def test_frozen_baseline_v1_input_bytes_match_candidate(fixture):
+    baseline = Path(__file__).resolve().parents[3]/'artifacts/history-bank-authority/baseline/agent_harness_lab/evaluation/oracle_history.py'
+    if not baseline.is_file(): pytest.skip('requires explicitly captured ignored baseline source')
+    spec = importlib.util.spec_from_file_location('agent_harness_lab.evaluation._oracle_history_baseline',baseline)
+    module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
+    fixture.manifest.pop('bank_authority'); fixture.write_manifest()
+    old = module.HistoryStore(fixture.root/'baseline-history')
+    with patch('agent_harness_lab.evaluation.oracle_history.secrets.token_hex',return_value='1'*64), \
+            patch('agent_harness_lab.private_journal.datetime') as clock:
+        clock.now.return_value.isoformat.return_value = '2026-01-01T00:00:00+00:00'
+        previous,_ = fixture.run_history(store=old)
         with patch('agent_harness_lab.evaluation.oracle_history.bank_authority',return_value=None):
-            result,_ = self.run_history()
-        path = self.store.case(result['run_id'])/'inputs.json'; inputs = json.loads(path.read_text())
-        self.assertEqual(path.read_bytes(),encoded(inputs))
-        self.assertEqual(set(inputs),set('schema_version run_id source_manifest_sha256 plan_sha256 oracle_sha256 dependencies versions image_sha256'.split()))
-        self.assertEqual(inputs['schema_version'],1)
-        self.revoke()
-        self.assertEqual(self.store.show(result['run_id'])['oracle_validity'],'current')
-        self.assertNotIn('bank_authority',self.store.show(result['run_id']))
-
-    def test_frozen_baseline_v1_input_bytes_match_candidate(self):
-        baseline = Path(__file__).resolve().parents[3]/'artifacts/history-bank-authority/baseline/agent_harness_lab/evaluation/oracle_history.py'
-        if not baseline.is_file(): self.skipTest('requires explicitly captured ignored baseline source')
-        spec = importlib.util.spec_from_file_location('agent_harness_lab.evaluation._oracle_history_baseline',baseline)
-        module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
-        self.manifest.pop('bank_authority'); self.write_manifest()
-        old = module.HistoryStore(self.root/'baseline-history')
-        with patch('agent_harness_lab.evaluation.oracle_history.secrets.token_hex',return_value='1'*64), \
-                patch('agent_harness_lab.private_journal.datetime') as clock:
-            clock.now.return_value.isoformat.return_value = '2026-01-01T00:00:00+00:00'
-            previous,_ = self.run_history(store=old)
-            with patch('agent_harness_lab.evaluation.oracle_history.bank_authority',return_value=None):
-                current,_ = self.run_history()
-        self.assertEqual((old.case(previous['run_id'])/'inputs.json').read_bytes(),
-                         (self.store.case(current['run_id'])/'inputs.json').read_bytes())
+            current,_ = fixture.run_history()
+    assert (old.case(previous['run_id'])/'inputs.json').read_bytes() == (fixture.store.case(current['run_id'])/'inputs.json').read_bytes()

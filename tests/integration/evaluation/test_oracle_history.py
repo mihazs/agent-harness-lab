@@ -9,9 +9,16 @@ from agent_harness_lab.evaluation.plan import ExperimentSpec
 from agent_harness_lab.evaluation.sandbox import SandboxBackend
 from agent_harness_lab.evaluation.oracle_history import HistoryStore
 from tests.integration.evaluation.test_offline_evaluation import OfflineFixture
+# derivation_raw_assessment.py, run with python -m unittest, imports OracleHistoryTests from here.
+from tests.support.optional_pytest import pytest
 
 
 class OracleHistoryTests(OfflineFixture):
+    """A two-task offline plan with a HistoryStore and synthetic attested workers.
+
+    Many evaluation, optimization and sandbox modules instantiate this class and call setUp, its helpers and
+    doCleanups, so it keeps that TestCase interface and holds no tests.
+    """
     image_hash = 'e'*64
 
     def setUp(self):
@@ -63,98 +70,6 @@ class OracleHistoryTests(OfflineFixture):
         path = self.root/'quarantine.json'; path.write_text(json.dumps(record))
         return path,record
 
-    def assert_not_current(self, operation):
-        try: result = operation()
-        except (ValueError,OSError): return
-        self.assertIn(result['oracle_validity'],('invalidated','incomplete'))
-
-    def test_complete_controller_run_and_analysis_are_current(self):
-        result,calls = self.run_history()
-        self.assertEqual(calls,8)
-        self.assertEqual(result['oracle_validity'],'current')
-        self.assertEqual(result['execution_coverage'],'sealed_fixed_schedule')
-        self.assertEqual(result['planned_trials'],4)
-        self.assertEqual(result['sealed_result_trials'],4)
-        self.assertEqual(self.store.show(result['run_id'])['oracle_validity'],'current')
-        self.assertEqual(self.store.analyze(result['run_id'])['oracle_validity'],'current')
-        self.assertEqual(self.store.oracle(self.bundle_hash())['bundle_sha256'],self.bundle_hash())
-        realized=self.store.historical_plan(result['run_id'])['realized_schedule']
-        self.assertEqual(realized['status'],'unknown')
-        self.assertIsNone(realized['trials'])
-        self.assertIsNone(realized['schedule_sha256'])
-        self.assertFalse(realized['publication_allowed'])
-        (self.store.case(result['run_id'])/'realized-schedule.json').write_text('{"trials": ["forged"]}')
-        self.assertEqual(self.store.historical_plan(result['run_id'])['realized_schedule'],realized)
-
-    def test_noncanonical_input_cannot_create_history_inside_a_worker_view(self):
-        alias = self.root/'alias'; alias.mkdir()
-        nested = self.root/'baseline'/'private-history'
-        store = HistoryStore(nested)
-        with self.assertRaises(ValueError):
-            store.run(self.args.manifest,alias/'..'/'baseline',self.args.candidate,
-                cgroup_root=self.root/'delegation',image_root=self.root/'image',
-                image_sha256=self.image_hash,disk_bytes=64*1024*1024)
-        self.assertFalse(nested.exists())
-
-    def test_quarantine_preserves_raw_reports_but_invalidates_old_analysis(self):
-        result,_ = self.run_history()
-        reports = {p:p.read_bytes() for p in self.store_root.rglob('results.json')}
-        self.assertTrue(reports)
-        path,_ = self.quarantine_record(); self.store.quarantine(path)
-        self.assertEqual({p:p.read_bytes() for p in reports},reports)
-        summary=self.store.show(result['run_id'])
-        self.assertEqual(summary['oracle_validity'],'invalidated')
-        self.assertEqual(summary['execution_coverage'],'sealed_fixed_schedule')
-        self.assertEqual(summary['sealed_result_trials'],summary['planned_trials'])
-        self.assertFalse(summary['automatic_promotion'])
-        self.assert_not_current(lambda:self.store.analyze(result['run_id']))
-
-    def test_shared_bundle_invalidates_different_task_subset_plans(self):
-        first,second = self.all_tasks
-        self.all_bundles[second['id']] = dict(self.all_bundles[first['id']])
-        second['grader'] = list(first['grader'])
-        self.install_plan([first]); a,_ = self.run_history()
-        self.install_plan([second]); b,_ = self.run_history()
-        path,_ = self.quarantine_record(); self.store.quarantine(path)
-        for run in (a,b):
-            self.assertEqual(self.store.show(run['run_id'])['oracle_validity'],'invalidated')
-            self.assert_not_current(lambda:self.store.analyze(run['run_id']))
-
-    def test_future_quarantined_dependency_rejects_before_dispatch(self):
-        self.run_history(); path,_ = self.quarantine_record(); self.store.quarantine(path)
-        def forbidden(*args, **kwargs): raise AssertionError('must not dispatch')
-        with self.assertRaises(ValueError): self.run_history(execute=forbidden)
-
-    def test_quarantine_during_execution_cannot_leave_a_current_comparison(self):
-        changed = False
-        def execute(*args, **kwargs):
-            nonlocal changed
-            if not changed:
-                changed = True
-                path,_ = self.quarantine_record(); self.store.quarantine(path)
-            return self.execute(*args, **kwargs)
-        result,calls = self.run_history(execute=execute)
-        self.assertEqual(calls,8)
-        self.assertEqual(result['state'],'sealed')
-        self.assertEqual(result['oracle_validity'],'invalidated')
-        self.assertEqual(self.store.analyze(result['run_id'])['reason'],'oracle_quarantined')
-
-    def test_stale_cas_and_incomplete_operator_records_reject_without_revocation(self):
-        result,_ = self.run_history(); path,record = self.quarantine_record()
-        for change in (lambda r:r.update(expected_event_sha256='0'*64),
-                       lambda r:r.update(evidence_refs=[]),
-                       lambda r:r['operator'].pop('basis'),
-                       lambda r:r['operator'].update(source='verified')):
-            value = json.loads(json.dumps(record)); change(value); path.write_text(json.dumps(value))
-            with self.subTest(record=value):
-                with self.assertRaises(ValueError): self.store.quarantine(path)
-                self.assertEqual(self.store.show(result['run_id'])['oracle_validity'],'current')
-
-    def test_unattested_worker_results_cannot_be_sealed_current(self):
-        result,_ = self.run_history(execute=lambda *a,**kw:self.emulate(*a))
-        self.assertNotEqual(result['oracle_validity'],'current')
-        self.assert_not_current(lambda:self.store.analyze(result['run_id']))
-
     def run_altered_result(self, change):
         original = self.runner.evaluate
         def altered(args):
@@ -167,67 +82,202 @@ class OracleHistoryTests(OfflineFixture):
                 patch.object(self.runner,'evaluate',side_effect=altered):
             return self.run_history()[0]
 
-    def test_one_arm_or_forged_outcome_cannot_seal_current(self):
-        changes = [lambda r:r.update(trials=[t for t in r['trials'] if t['version']=='candidate']),
-                   lambda r:r['trials'][0]['grader'].update(outcome='true'),
-                   lambda r:r.update(inputs_unchanged=False)]
-        for change in changes:
-            with self.subTest(change=change):
-                result = self.run_altered_result(change)
-                self.assertEqual(result['oracle_validity'],'incomplete')
-                self.assert_not_current(lambda:self.store.analyze(result['run_id']))
 
-    def test_nonzero_grader_execution_cannot_certify_passed_grade(self):
-        for patch_run in (dict(exit_code=9,status='failed'),dict(exit_code=False),dict(inputs_unchanged=False)):
-            with self.subTest(execution=patch_run):
-                def change(value):
-                    for row in value['trials']:
-                        if row['grader']['outcome'] is True:
-                            row['grader']['execution'].update(patch_run)
-                result = self.run_altered_result(change)
-                self.assertEqual(result['oracle_validity'],'incomplete')
+@pytest.fixture
+def history():
+    value = OracleHistoryTests(); value.setUp()
+    yield value
+    value.doCleanups()
 
-    def test_interrupted_run_is_persisted_incomplete_and_not_reused(self):
-        def interrupted(*args, **kwargs): raise KeyboardInterrupt('synthetic interruption')
-        with self.assertRaises(KeyboardInterrupt): self.run_history(execute=interrupted)
-        run_ids = [p.parent.name for p in self.store_root.rglob('inputs.json')]
-        self.assertEqual(len(run_ids),1)
-        unsealed=self.store.case(run_ids[0])/'execution'/'results.json'
-        for raw in (None,'{"trials": [{"outcome": true}]}','{"trials":'):
-            with self.subTest(unsealed_result=raw):
-                if raw is not None:
-                    unsealed.write_text(raw)
-                summary=self.store.show(run_ids[0])
-                self.assertEqual(summary['oracle_validity'],'incomplete')
-                self.assertEqual(summary['execution_coverage'],'unknown')
-                self.assertEqual(summary['planned_trials'],4)
-                self.assertIsNone(summary['sealed_result_trials'])
-                self.assertFalse(summary['controller_observed'])
-                self.assertFalse(summary['automatic_promotion'])
-        self.assert_not_current(lambda:self.store.analyze(run_ids[0]))
-        fresh,calls = self.run_history()
-        self.assertEqual(calls,8)
-        self.assertNotEqual(fresh['run_id'],run_ids[0])
-        self.assertEqual(fresh['oracle_validity'],'current')
 
-    def test_tampered_actual_result_tree_cannot_be_analyzed_current(self):
-        result,_ = self.run_history()
-        report = next(self.store_root.rglob('results.json'))
-        data = json.loads(report.read_text()); data['trials'] = data['trials'][:1]
-        report.write_text(json.dumps(data))
-        self.assert_not_current(lambda:self.store.analyze(result['run_id']))
+def assert_not_current(operation):
+    try: result = operation()
+    except (ValueError,OSError): return
+    assert result['oracle_validity'] in ('invalidated','incomplete')
 
-    def test_changed_oracle_needs_new_plan_and_fresh_both_arm_execution(self):
-        old,_ = self.run_history(); old_bundle = self.bundle_hash()
-        path,_ = self.quarantine_record(); self.store.quarantine(path)
-        bundle = self.all_bundles[self.all_tasks[0]['id']]
-        folder = self.root/'export'/bundle['path']
-        (folder/'synthetic-correction.txt').write_text('synthetic corrected reference\n')
-        bundle['digest'] = digest(folder)
-        self.install_plan(self.all_tasks)
-        new,calls = self.run_history()
-        self.assertEqual(calls,8)
-        self.assertNotEqual(old['run_id'],new['run_id'])
-        self.assertNotEqual(old_bundle,self.bundle_hash())
-        self.assertEqual(new['oracle_validity'],'current')
-        self.assertEqual(self.store.show(old['run_id'])['oracle_validity'],'invalidated')
+
+def test_complete_controller_run_and_analysis_are_current(history):
+    result,calls = history.run_history()
+    assert calls == 8
+    assert result['oracle_validity'] == 'current'
+    assert result['execution_coverage'] == 'sealed_fixed_schedule'
+    assert result['planned_trials'] == 4
+    assert result['sealed_result_trials'] == 4
+    assert history.store.show(result['run_id'])['oracle_validity'] == 'current'
+    assert history.store.analyze(result['run_id'])['oracle_validity'] == 'current'
+    assert history.store.oracle(history.bundle_hash())['bundle_sha256'] == history.bundle_hash()
+    realized=history.store.historical_plan(result['run_id'])['realized_schedule']
+    assert realized['status'] == 'unknown'
+    assert realized['trials'] is None
+    assert realized['schedule_sha256'] is None
+    assert not realized['publication_allowed']
+    (history.store.case(result['run_id'])/'realized-schedule.json').write_text('{"trials": ["forged"]}')
+    assert history.store.historical_plan(result['run_id'])['realized_schedule'] == realized
+
+
+def test_noncanonical_input_cannot_create_history_inside_a_worker_view(history):
+    alias = history.root/'alias'; alias.mkdir()
+    nested = history.root/'baseline'/'private-history'
+    store = HistoryStore(nested)
+    with pytest.raises(ValueError):
+        store.run(history.args.manifest,alias/'..'/'baseline',history.args.candidate,
+            cgroup_root=history.root/'delegation',image_root=history.root/'image',
+            image_sha256=history.image_hash,disk_bytes=64*1024*1024)
+    assert not nested.exists()
+
+
+def test_quarantine_preserves_raw_reports_but_invalidates_old_analysis(history):
+    result,_ = history.run_history()
+    reports = {p:p.read_bytes() for p in history.store_root.rglob('results.json')}
+    assert reports
+    path,_ = history.quarantine_record(); history.store.quarantine(path)
+    assert {p:p.read_bytes() for p in reports} == reports
+    summary=history.store.show(result['run_id'])
+    assert summary['oracle_validity'] == 'invalidated'
+    assert summary['execution_coverage'] == 'sealed_fixed_schedule'
+    assert summary['sealed_result_trials'] == summary['planned_trials']
+    assert not summary['automatic_promotion']
+    assert_not_current(lambda:history.store.analyze(result['run_id']))
+
+
+def test_shared_bundle_invalidates_different_task_subset_plans(history):
+    first,second = history.all_tasks
+    history.all_bundles[second['id']] = dict(history.all_bundles[first['id']])
+    second['grader'] = list(first['grader'])
+    history.install_plan([first]); a,_ = history.run_history()
+    history.install_plan([second]); b,_ = history.run_history()
+    path,_ = history.quarantine_record(); history.store.quarantine(path)
+    for run in (a,b):
+        assert history.store.show(run['run_id'])['oracle_validity'] == 'invalidated'
+        assert_not_current(lambda:history.store.analyze(run['run_id']))
+
+
+def test_future_quarantined_dependency_rejects_before_dispatch(history):
+    history.run_history(); path,_ = history.quarantine_record(); history.store.quarantine(path)
+    def forbidden(*args, **kwargs): raise AssertionError('must not dispatch')
+    with pytest.raises(ValueError): history.run_history(execute=forbidden)
+
+
+def test_quarantine_during_execution_cannot_leave_a_current_comparison(history):
+    changed = False
+    def execute(*args, **kwargs):
+        nonlocal changed
+        if not changed:
+            changed = True
+            path,_ = history.quarantine_record(); history.store.quarantine(path)
+        return history.execute(*args, **kwargs)
+    result,calls = history.run_history(execute=execute)
+    assert calls == 8
+    assert result['state'] == 'sealed'
+    assert result['oracle_validity'] == 'invalidated'
+    assert history.store.analyze(result['run_id'])['reason'] == 'oracle_quarantined'
+
+
+@pytest.mark.parametrize('change', [
+    pytest.param(lambda r:r.update(expected_event_sha256='0'*64), id='stale-event'),
+    pytest.param(lambda r:r.update(evidence_refs=[]), id='no-evidence'),
+    pytest.param(lambda r:r['operator'].pop('basis'), id='no-basis'),
+    pytest.param(lambda r:r['operator'].update(source='verified'), id='unsupported-source'),
+])
+
+
+def test_stale_cas_and_incomplete_operator_records_reject_without_revocation(history, change):
+    result,_ = history.run_history(); path,record = history.quarantine_record()
+    value = json.loads(json.dumps(record)); change(value); path.write_text(json.dumps(value))
+    with pytest.raises(ValueError): history.store.quarantine(path)
+    assert history.store.show(result['run_id'])['oracle_validity'] == 'current'
+
+
+def test_unattested_worker_results_cannot_be_sealed_current(history):
+    result,_ = history.run_history(execute=lambda *a,**kw:history.emulate(*a))
+    assert result['oracle_validity'] != 'current'
+    assert_not_current(lambda:history.store.analyze(result['run_id']))
+
+
+@pytest.mark.parametrize('change', [
+    pytest.param(lambda r:r.update(trials=[t for t in r['trials'] if t['version']=='candidate']), id='one-arm'),
+    pytest.param(lambda r:r['trials'][0]['grader'].update(outcome='true'), id='string-outcome'),
+    pytest.param(lambda r:r.update(inputs_unchanged=False), id='inputs-changed'),
+])
+
+
+def test_one_arm_or_forged_outcome_cannot_seal_current(history, change):
+    result = history.run_altered_result(change)
+    assert result['oracle_validity'] == 'incomplete'
+    assert_not_current(lambda:history.store.analyze(result['run_id']))
+
+
+@pytest.mark.parametrize('patch_run', [
+    pytest.param(dict(exit_code=9,status='failed'), id='failed-exit'),
+    pytest.param(dict(exit_code=False), id='boolean-exit'),
+    pytest.param(dict(inputs_unchanged=False), id='inputs-changed'),
+])
+
+
+def test_nonzero_grader_execution_cannot_certify_passed_grade(history, patch_run):
+    def change(value):
+        for row in value['trials']:
+            if row['grader']['outcome'] is True:
+                row['grader']['execution'].update(patch_run)
+    result = history.run_altered_result(change)
+    assert result['oracle_validity'] == 'incomplete'
+
+
+@pytest.mark.parametrize('raw', [pytest.param(None, id='no-result'),
+                                 pytest.param('{"trials": [{"outcome": true}]}', id='forged-result'),
+                                 pytest.param('{"trials":', id='truncated-result')])
+
+
+def test_interrupted_run_is_persisted_incomplete_and_not_reused(history, raw):
+    def interrupted(*args, **kwargs): raise KeyboardInterrupt('synthetic interruption')
+    with pytest.raises(KeyboardInterrupt): history.run_history(execute=interrupted)
+    run_ids = [p.parent.name for p in history.store_root.rglob('inputs.json')]
+    assert len(run_ids) == 1
+    unsealed=history.store.case(run_ids[0])/'execution'/'results.json'
+    if raw is not None:
+        unsealed.write_text(raw)
+    summary=history.store.show(run_ids[0])
+    assert summary['oracle_validity'] == 'incomplete'
+    assert summary['execution_coverage'] == 'unknown'
+    assert summary['planned_trials'] == 4
+    assert summary['sealed_result_trials'] is None
+    assert not summary['controller_observed']
+    assert not summary['automatic_promotion']
+
+
+def test_interrupted_run_is_never_current_and_a_fresh_run_replaces_it(history):
+    def interrupted(*args, **kwargs): raise KeyboardInterrupt('synthetic interruption')
+    with pytest.raises(KeyboardInterrupt): history.run_history(execute=interrupted)
+    run_ids = [p.parent.name for p in history.store_root.rglob('inputs.json')]
+    assert len(run_ids) == 1
+    unsealed=history.store.case(run_ids[0])/'execution'/'results.json'
+    unsealed.write_text('{"trials":')
+    assert_not_current(lambda:history.store.analyze(run_ids[0]))
+    fresh,calls = history.run_history()
+    assert calls == 8
+    assert fresh['run_id'] != run_ids[0]
+    assert fresh['oracle_validity'] == 'current'
+
+
+def test_tampered_actual_result_tree_cannot_be_analyzed_current(history):
+    result,_ = history.run_history()
+    report = next(history.store_root.rglob('results.json'))
+    data = json.loads(report.read_text()); data['trials'] = data['trials'][:1]
+    report.write_text(json.dumps(data))
+    assert_not_current(lambda:history.store.analyze(result['run_id']))
+
+
+def test_changed_oracle_needs_new_plan_and_fresh_both_arm_execution(history):
+    old,_ = history.run_history(); old_bundle = history.bundle_hash()
+    path,_ = history.quarantine_record(); history.store.quarantine(path)
+    bundle = history.all_bundles[history.all_tasks[0]['id']]
+    folder = history.root/'export'/bundle['path']
+    (folder/'synthetic-correction.txt').write_text('synthetic corrected reference\n')
+    bundle['digest'] = digest(folder)
+    history.install_plan(history.all_tasks)
+    new,calls = history.run_history()
+    assert calls == 8
+    assert old['run_id'] != new['run_id']
+    assert old_bundle != history.bundle_hash()
+    assert new['oracle_validity'] == 'current'
+    assert history.store.show(old['run_id'])['oracle_validity'] == 'invalidated'
