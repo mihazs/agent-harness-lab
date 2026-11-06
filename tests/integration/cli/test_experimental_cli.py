@@ -35,6 +35,33 @@ def test_local_retrieval_cli_and_explicit_limit(tmp_path):
     assert exit.value.code == 2
 
 
+def test_local_retrieval_cli_contrasts_a_hypothesis_with_counterexamples(tmp_path):
+    path=tmp_path/'incidents.json'
+    incident=Incident('i','r','synthetic timeout',('tool',),('event',),'review','reviewed_annotation','random','synthetic',True)
+    path.write_text(json.dumps([asdict(incident),
+        asdict(incident)|dict(incident_id='g',labels=['grader'],summary='timeout private-canary',source_kind='private'),
+        asdict(incident)|dict(incident_id='i2'),
+        asdict(incident)|dict(incident_id='ok',labels=['success'])]))
+    with patch('builtins.print') as output:
+        assert main(['incident-search','--input',str(path),'--query','timeout',
+                     '--hypothesis','tool','--control-label','success']) == 0
+    text=output.call_args.args[0]
+    data=json.loads(text)
+    assert data['profile'] == 'incident-contrast-v1'
+    assert {name:[row['incident_id'] for row in group['results']] for name,group in data['groups'].items()} == \
+        dict(supporting=['i','i2'],contradicting=['g'],controls=['ok'],unresolved=[])
+    assert 'private-canary' not in text
+    with patch('builtins.print') as output:
+        assert main(['incident-search','--input',str(path),'--query','timeout','--top-k','1',
+                     '--hypothesis','tool','--control-label','success']) == 0
+    groups=json.loads(output.call_args.args[0])['groups']
+    assert {name:(group['matches'],[row['incident_id'] for row in group['results']]) for name,group in groups.items()} == \
+        dict(supporting=(2,['i']),contradicting=(1,['g']),controls=(1,['ok']),unresolved=(0,[]))
+    with pytest.raises(SystemExit) as exit:
+        main(['incident-search','--input',str(path),'--query','timeout','--control-label','success'])
+    assert exit.value.code == 2
+
+
 def test_benchmark_report_end_to_end_and_private_export_refusal(tmp_path):
     def record(source='synthetic'):
         runtime=dict(provider='local',runtime='fake',model_revision='synthetic',reasoning='none',

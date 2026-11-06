@@ -114,6 +114,69 @@ class TestDiagnosticAndAdapter:
         with pytest.raises(ValueError): index.query('timeout',top_k=0)
         with pytest.raises(ValueError): index.query('timeout',max_context=0)
 
+    def contrast_corpus(self):
+        base=Incident('s1','root-a','tool timeout timeout timeout during read',('tool_timeout',),('synthetic:e1',),
+            'synthetic-review','reviewed_annotation','signal_enriched','synthetic',True)
+        return [base,
+            replace(base,incident_id='s2',summary='tool timeout timeout while writing'),
+            replace(base,incident_id='c1',root_id='root-a',summary='tool timeout from stale grader fixture',
+                    labels=('grader_defect',),evidence_refs=('synthetic:e2',)),
+            replace(base,incident_id='ok',root_id='root-b',summary='tool timeout then recovered and passed',
+                    labels=('success',),sampling='random'),
+            replace(base,incident_id='u1',root_id='root-c',summary='timeout of unclear origin',labels=('unknown',)),
+            replace(base,incident_id='p1',root_id='root-d',summary='tool timeout secret-canary-1234',
+                    labels=('grader_defect',),source_kind='private'),
+            replace(base,incident_id='far',root_id='root-e',summary='permission denied on install')]
+
+    def test_contrast_keeps_counterexamples_controls_and_unresolved_beside_supporting_matches(self):
+        index=LexicalIndex(self.contrast_corpus())
+        # The ranked query lets supporting matches crowd out every counterexample.
+        assert [row['incident_id'] for row in index.query('tool timeout',top_k=2)['results']] == ['s1','s2']
+        result=index.contrast('tool timeout','tool_timeout',control_labels=('success',),top_k=2)
+        groups=result['groups']
+        assert [row['incident_id'] for row in groups['supporting']['results']] == ['s1','s2']
+        assert [row['incident_id'] for row in groups['contradicting']['results']] == ['c1','p1']
+        assert [row['incident_id'] for row in groups['controls']['results']] == ['ok']
+        assert [row['incident_id'] for row in groups['unresolved']['results']] == ['u1']
+        assert groups['contradicting']['distinct_roots'] == 2
+        assert result['evidence_state'] == 'mixed'
+        assert result['shared_roots_supporting_and_contradicting'] == 1
+        assert result['uncovered'] == dict(hypothesis_labelled=3,hypothesis_labelled_unmatched=1,unmatched_corpus=1)
+        assert result['sampling'] == ['random','signal_enriched']
+        assert (result['diagnosis'],result['causal_claim'],result['promotion_authority']) == ('hypothesis_only',False,False)
+        assert result['prevalence'] == 'not_estimable_from_lexical_neighbours'
+        row=groups['supporting']['results'][0]
+        assert (row['provenance'],row['sampling'],row['source_kind'],row['labels'],row['evidence_refs']) == ('reviewed_annotation','signal_enriched','synthetic',['tool_timeout'],['synthetic:e1'])
+        assert row['authority'] == 'untrusted_evidence_only'
+
+    def test_contrast_top_k_caps_each_group_separately(self):
+        result=LexicalIndex(self.contrast_corpus()).contrast('tool timeout','tool_timeout',control_labels=('success',),top_k=1)
+        groups=result['groups']
+        assert {name:(group['matches'],[row['incident_id'] for row in group['results']]) for name,group in groups.items()} == \
+            dict(supporting=(2,['s1']),contradicting=(2,['c1']),controls=(1,['ok']),unresolved=(1,['u1']))
+
+    def test_contrast_withholds_private_summaries_and_raw_root_ids(self):
+        result=LexicalIndex(self.contrast_corpus()).contrast('tool timeout','tool_timeout')
+        text=json.dumps(result)
+        assert 'secret-canary-1234' not in text
+        assert 'root-a' not in text
+        private=[row for rows in result['groups'].values() for row in rows['results'] if row['source_kind']=='private']
+        assert [(row['summary'],row['summary_withheld']) for row in private] == [(None,'private_source')]
+        assert result['private']
+
+    def test_contrast_without_supporting_match_reports_no_lexical_support(self):
+        index=LexicalIndex(self.contrast_corpus())
+        result=index.contrast('stale grader fixture','tool_timeout')
+        assert result['evidence_state'] == 'no_lexical_support'
+        assert result['groups']['supporting']['matches'] == 0
+        assert result['groups']['contradicting']['matches'] == 1
+        assert result['uncovered']['hypothesis_labelled_unmatched'] == 3
+        assert index.contrast('tool timeout','success')['evidence_state'] == 'mixed'
+        for args,kwargs in ((('timeout',''),{}),(('timeout','unknown'),{}),(('timeout','x'),dict(control_labels=('x',))),
+                            (('timeout','x'),dict(control_labels=('ambiguous',))),(('timeout','x'),dict(top_k=0)),
+                            ((None,'x'),{}),(('timeout',' x'),{})):
+            with pytest.raises(ValueError): index.contrast(*args,**kwargs)
+
     def test_mechanism_text_is_not_truncated_or_rejected_by_length(self):
         value=mechanism(name='synthetic mechanism '*100)
         value.symptom='synthetic symptom '*1000
