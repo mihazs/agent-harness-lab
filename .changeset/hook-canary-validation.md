@@ -1,5 +1,0 @@
----
-"agent-harness-lab": minor
----
-
-Add `ahl evaluate hooks` (`hook_validation_v1`, `agent_harness_lab/hooks_validation.py`). It runs one staged hook unit beside a harmless nonce canary, and only inside a new private trial workspace outside every Git checkout and input. The environment carries no credentials, and `HOME`, `TMPDIR` and `CODEX_HOME` all point inside the trial. The host is not isolated: hooks run as the invoking user and can still reach the host filesystem and network. The unit must pass `hook_contract_v1` again, or nothing executes. Canary evidence is reported as observed, skipped or inconclusive, separately for native and fake runtimes. A real runtime runs only with `--native-canary`. Codex stays inconclusive while `--dangerously-bypass-hook-trust` is an unverified capability row. Malformed events and results, missing executables, nonzero status, timeouts, cancellation, reentrancy, duplicate events and out-of-scope writes (found by a trial diff) are bounded failure classes. Disabled, unmatched and unsupported handlers are never effective. A hook that hides errors, blocks required work or changes permissions cannot qualify as an improvement.
