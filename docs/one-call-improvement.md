@@ -392,17 +392,52 @@ candidate in these cases:
 `one_call.check_scope(args, proposed, original)` enforces the same scope. It
 rejects a changed instruction or rule file outside the validated scope. Without a
 validated scope it rejects any changed nested file the frozen baseline does not
-already hold. The validated scope comes from the plan's `task_cwd` and
-`task_paths`, which the proposer declares, and nothing yet binds them to the
-evaluated tasks. The report marks this as `scope.source:
-"proposer_declared_plan"`. The scope keeps an edit consistent with the declared
-task; it does not prove that the task is the one evaluated.
+already hold.
+
+The validated scope starts from the plan's `task_cwd` and `task_paths`, which
+the proposer declares, so the first validation report marks it `scope.source:
+"proposer_declared_plan"`. Once the evaluation manifest is frozen and validated,
+and before any baseline or candidate trial runs, `instruction_validation.bind`
+checks the plan against the directories the evaluated tasks run in. A task runs
+at the checkout root `.` unless it declares a `cwd` and the trial runner honors
+it. Only the controlled Responses executor does: it passes the task `cwd` to the
+trial, which loads the root-to-cwd `AGENTS.md` chain. The command-line agents,
+the configured bank on those agents and the fixed comparison run every trial at
+the workspace root, so `bind` refuses a manifest that declares a task `cwd` there.
+The proposer does not author these directories: the configured bank, the fixed
+comparison or the separate evaluation author does. A plan whose `task_cwd` is not
+one of them is refused (`task_cwd_not_evaluated`). A task path must lie below the
+plan's own `task_cwd` and below an evaluated directory, or the plan is refused
+(`task_path_not_evaluated`).
+
+Nothing the proposer does not author declares a task path, so a task path stays
+a proposer declaration (`scope.task_paths_source: "proposer_declared"`). The
+validation report lists in `scope.task_path_scope` what only the declared task
+paths make governing: an instruction directory below the `task_cwd` chain, such
+as an on-demand Claude `docs/CLAUDE.md`, and every path rule that does not load
+at launch. The bound scope drops those, and an edit to one of them is refused
+(`task_path_scope_unbound`). Any refusal stops the run as
+`instruction_validation_blocked` before those trials. The rewritten
+`instruction-validation-<attempt>.json` records `scope.source:
+"evaluation_manifest_task_cwds"` and `scope.task_cwds`, and `check_scope`
+enforces that bound scope from then on. `current` reports `scope_unbound` for a
+document that was never bound, so a recommendation never rests on a
+proposer-declared scope alone. For example, a proposer cannot declare
+`task_cwd: "docs"` to make `docs/CLAUDE.md` governing when every evaluated task
+runs in `src` or at the root. With every task at the root, declaring the task
+path `docs/guide.md` does not make `docs/CLAUDE.md` or a `docs/**` rule writable
+either. A plan for root tasks must declare `task_cwd: "."`, and only the root
+instructions and the rules that load at launch are in its bound scope; a Codex
+`app/AGENTS.md`, which loads only from `app`, stays outside it.
 
 A shorter file is not automatically better. The report gives active-context bytes
 (`utf8-bytes-v1`) for both versions as a secondary measurement only. A reduction
 earns `credited_reduction_bytes` only after subtracting the lines that moved out
 of the active context into another file, and `selects_winner` is always `false`.
-When a removed file's active lines all stay active for the same task paths, the
+Every measurement covers the task's own launch context at `task_cwd` as well as
+each declared task path, so declaring a task path never takes the evaluated
+task's own context out of the lost lines, the removal or the credited bytes.
+When a removed file's active lines all stay active in the same contexts, the
 operation is `consolidate`. Otherwise it is `remove`. Any active line that leaves
 the context sets `removal.disposition` to `requires_behavioral_controls`. After
 evaluation, `removal_disposition` reads the trial records. It returns `rejected`

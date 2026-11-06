@@ -226,6 +226,22 @@ def candidate_states(folder, original):
     return states
 
 
+def bind_instruction(args, instruction, proposal, states, manifest_path, record, result, *, cwd_honored):
+    """Bind a validated instruction scope to the frozen evaluation's task cwds (#339) before any trial runs.
+    The bound scope replaces the proposer-declared one that check_scope enforces on (proposed, original) states;
+    a refused plan blocks the run. cwd_honored says whether the trial runner honors a task cwd."""
+    from .one_call import check_scope
+    from .sources import instruction_validation
+    bound = instruction_validation.bind(instruction, proposal.get('instruction_plan'), json.loads(manifest_path.read_text()),
+                                        cwd_honored=cwd_honored)
+    args._instruction_scope = bound['scope']
+    write_json(record, bound)
+    if bound['status'] != 'valid':
+        result.update(status='blocked', reason='instruction_validation_blocked', instruction_reasons=bound['reasons'])
+    else: check_scope(args, *states)
+    return bound
+
+
 def bounded_fixture(folder, runner):
     total = count = 0
     for file in folder.rglob('*'):
@@ -677,6 +693,11 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             if validated is None:
                 result.update(status='requires_intervention',reason='permission_qualification_not_met')
                 break
+            if instruction is not None:
+                # The fixed comparison runs every task at the root, so it honors no task cwd.
+                instruction = bind_instruction(args, instruction, proposal, (proposed, original), manifest_path,
+                                               output/f'instruction-validation-{attempt}.json', result, cwd_honored=False)
+                if instruction['status'] != 'valid': break
             args._prerequisite_scope.bind(manifest_path,baseline,frozen)
             if permission_audit is not None and grading.permission_qualification()['qualification']!='qualified':
                 result.update(status='requires_intervention',reason='permission_qualification_not_met')
@@ -763,6 +784,11 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         validation_options = dict(grader_backend=grading)
         if bank is not None: validation_options['bank_sha256'] = args.project_settings['bank']['sha256']
         (validate_manifest if access is None else access.validate_manifest)(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, **validation_options)
+        if instruction is not None:
+            # Only the controlled Responses executor runs a trial in its task cwd (run_evaluation passes task_cwd).
+            instruction = bind_instruction(args, instruction, proposal, (proposed, original), manifest_path,
+                                           output/f'instruction-validation-{attempt}.json', result, cwd_honored=controlled)
+            if instruction['status'] != 'valid': break
 
         prerequisite_scope=getattr(args,'_prerequisite_scope',None)
         if prerequisite_scope is not None:prerequisite_scope.bind(manifest_path,baseline,frozen)

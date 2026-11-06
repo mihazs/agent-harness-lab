@@ -143,18 +143,20 @@ class RepeatedWorkflowAdmissionTests(PublicFixture,unittest.TestCase):
         self.assertNotIn('decision',result);self.assertEqual(len(self.calls),3)
         self.assertEqual(len(comparison_custody._STATES),0)
 
-    def supported_removal(self,drift=False):
+    def supported_removal(self,drift=False,task_cwd='.'):
         """Drive the fixed-bank path with a candidate that removes the active root guidance and a supported comparison."""
-        (self.project/'app').mkdir()
-        plan=dict(schema_version=1,profile=dict(schema_version=1,runtime='codex',version='0.166.0',task_cwd='app',fallback_filenames=[]),required=[])
-        proposer=("from pathlib import Path\nimport json\nPath('candidate/AGENTS.md').write_text('good\\n')\n"
-            "Path('candidate/app').mkdir(exist_ok=True);Path('candidate/app/AGENTS.md').write_text('good\\n')\n"
+        # Bank tasks declare no cwd, so only a plan for the root declares a task the fixed comparison evaluates.
+        (self.project/'app').mkdir();self.compared=False
+        plan=dict(schema_version=1,profile=dict(schema_version=1,runtime='codex',version='0.166.0',task_cwd=task_cwd,fallback_filenames=[]),required=[])
+        nested="Path('candidate/app').mkdir(exist_ok=True);Path('candidate/app/AGENTS.md').write_text('good\\n')\n" if task_cwd!='.' else ''
+        proposer=("from pathlib import Path\nimport json\nPath('candidate/AGENTS.md').write_text('good\\n')\n"+nested+
             "Path('proposal.json').write_text(json.dumps(dict(status='candidate',mechanisms=['synthetic'],falsifiers=['artifact'],"
             "instruction_plan="+repr(plan)+")))\n")
         helper=roles.ControlledWorkflowTests();helper.root=self.root;helper.roles=[]
         backend=Mock(permission_audit=None);backend.capability.return_value=dict(status='available')
         backend.run.side_effect=helper.execute
         def execute(request,*args):
+            self.compared=True
             if drift:(self.project/'app/AGENTS.md').write_text('Synthetic drifted guidance.\n')
             return dict(status='inconclusive',reason='certification_prerequisites_unverified',recommendation='review_candidate',
                 controller_run_id='synthetic-run',publication_allowed=False,automatic_promotion=False)
@@ -172,6 +174,15 @@ class RepeatedWorkflowAdmissionTests(PublicFixture,unittest.TestCase):
         self.assertEqual((result['status'],result['reason'],result['instruction_removal_reason']),
                          ('inconclusive','instruction_removal_inconclusive','trial_records_unavailable'),result)
         self.assertNotIn('recommendation',result);self.assertEqual(result['changed_files'],[])
+        self.assertFalse((self.project/'app/AGENTS.md').exists())
+
+    def test_fixed_bank_plan_for_a_task_cwd_no_bank_task_runs_in_is_refused(self):
+        code,result=self.supported_removal(task_cwd='app')
+        self.assertEqual((result['status'],result['reason'],result['instruction_reasons']),
+                         ('blocked','instruction_validation_blocked',['task_cwd_not_evaluated']),result)
+        validation=json.loads(Path(result['instruction_validation']).read_text())
+        self.assertEqual((validation['scope']['source'],validation['scope']['task_cwds']),('evaluation_manifest_task_cwds',['.']))
+        self.assertFalse(self.compared);self.assertNotIn('recommendation',result)
         self.assertFalse((self.project/'app/AGENTS.md').exists())
 
     def test_fixed_bank_instruction_context_drift_invalidates_the_recommendation(self):
