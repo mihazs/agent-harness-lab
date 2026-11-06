@@ -1,19 +1,26 @@
 import json
-import unittest
 import os
 import agent_harness_lab
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 import test_construction_access as fixtures
 from agent_harness_lab.evaluation import construction_access as access
 
 
-class ConstructionConsumerTests(unittest.TestCase):
-    def setUp(self):
-        fixtures.ConstructionAccessTests.setUp(self)
-        expected=os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
-        if expected:self.assertTrue(Path(agent_harness_lab.__file__).resolve().is_relative_to(Path(expected).resolve()))
+class TestConstructionConsumers(fixtures.ConstructionAccessHarness):
+    @pytest.fixture(autouse=True)
+    def harness(self):
+        try:
+            self.setUp()
+            expected=os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
+            if expected:assert Path(agent_harness_lab.__file__).resolve().is_relative_to(Path(expected).resolve())
+            yield
+        finally:
+            self.doCleanups()
+
     def test_author_destination_cannot_diverge_from_owned_snapshot(self):
         author = access.WorkflowAccess.author
         changed = []
@@ -25,10 +32,10 @@ class ConstructionConsumerTests(unittest.TestCase):
             path.write_text(json.dumps(source))
             changed.append(True)
             return result
-        with patch.object(access.WorkflowAccess,'author',mutate),self.assertRaisesRegex(ValueError,'published canonical output differs'):
+        with patch.object(access.WorkflowAccess,'author',mutate),pytest.raises(ValueError, match='published canonical output differs'):
             self.f.run_controlled()
-        self.assertEqual(changed,[True])
-        self.assertNotIn('synthetic destination rewrite',json.dumps(self.f.histories))
+        assert changed == [True]
+        assert 'synthetic destination rewrite' not in json.dumps(self.f.histories)
 
     def test_proposal_read_cannot_replace_owned_output_after_publication(self):
         original = access.record
@@ -41,9 +48,9 @@ class ConstructionConsumerTests(unittest.TestCase):
                 path.write_text(json.dumps(value))
                 changed.append(True)
             return original(path,*args,**kwargs)
-        with patch.object(access,'record',side_effect=mutate),self.assertRaisesRegex(ValueError,'published proposal differs'):
+        with patch.object(access,'record',side_effect=mutate),pytest.raises(ValueError, match='published proposal differs'):
             self.f.run_controlled()
-        self.assertEqual(changed,[True])
+        assert changed == [True]
 
     def test_candidate_rewrite_after_proposer_cannot_be_frozen_as_owned(self):
         propose=access.WorkflowAccess.propose
@@ -53,10 +60,10 @@ class ConstructionConsumerTests(unittest.TestCase):
             (result[1]/'AGENTS.md').write_text('synthetic foreign candidate')
             changed.append(True)
             return result
-        with patch.object(access.WorkflowAccess,'propose',mutate),self.assertRaisesRegex(ValueError,'published canonical output differs'):
+        with patch.object(access.WorkflowAccess,'propose',mutate),pytest.raises(ValueError, match='published canonical output differs'):
             self.f.run_controlled()
-        self.assertEqual(changed,[True])
-        self.assertNotIn('evaluator_author',self.f.roles)
+        assert changed == [True]
+        assert 'evaluator_author' not in self.f.roles
 
     def test_oracle_capture_aba_during_validation_cannot_be_freshly_pinned(self):
         from agent_harness_lab.evaluation import integrity
@@ -70,6 +77,6 @@ class ConstructionConsumerTests(unittest.TestCase):
                 try:return digest(path,**limits)
                 finally:expected.write_bytes(before)
             return digest(path,**limits)
-        with patch.object(integrity,'digest',side_effect=mutate),self.assertRaisesRegex(ValueError,'grader capture differs from actual author output'):
+        with patch.object(integrity,'digest',side_effect=mutate),pytest.raises(ValueError, match='grader capture differs from actual author output'):
             self.f.run_controlled()
-        self.assertEqual(changed,[True])
+        assert changed == [True]

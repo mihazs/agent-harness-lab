@@ -1,18 +1,24 @@
 """Synthetic Responses and grader routing; no provider, credential read or native agent."""
+from contextlib import ExitStack
 import json
 import time
-import unittest
 from unittest.mock import patch
+
+import pytest
 
 from agent_harness_lab.evaluation import permission_audit, responses
 
 
-class ControlledGraderAuditTests(unittest.TestCase):
+class TestControlledGraderAudit:
+    @pytest.fixture(autouse=True)
+    def cleanups(self):
+        with ExitStack() as self.cleanups: yield
+
     def evaluate(self, observed):
         import test_sandbox_inference as fixtures
         fixture = fixtures.ResponsesEvaluationTests()
         fixture.setUp()
-        self.addCleanup(fixture.doCleanups)
+        self.cleanups.callback(fixture.doCleanups)
         (fixture.root/'baseline/solve.py').write_bytes((fixture.root/'candidate/solve.py').read_bytes())
         fixture.args.permission_audit = permission_audit.PROFILE
         fixture.backend.permission_audit = permission_audit.PROFILE
@@ -37,33 +43,32 @@ class ControlledGraderAuditTests(unittest.TestCase):
                 patch.object(fixture.runner, 'execute', side_effect=AssertionError('no native CLI')):
             code = fixture.runner.evaluate(fixture.args)
         result = fixture.fixture.results()
-        self.assertFalse(result['automatic_promotion'])
-        self.assertFalse(result['isolation']['full_certification'])
-        self.assertTrue(result['inputs_unchanged'])
-        self.assertNotIn('SYNTHETIC_CONTROLLER_KEY', json.dumps(result))
+        assert not result['automatic_promotion']
+        assert not result['isolation']['full_certification']
+        assert result['inputs_unchanged']
+        assert 'SYNTHETIC_CONTROLLER_KEY' not in json.dumps(result)
         return fixture, client, code, result
 
-    def test_unqualified_grader_aborts_remaining_inference_without_rewriting_artifact_grade(self):
-        for observed in ('violated', 'unknown'):
-            with self.subTest(observed=observed):
-                fixture, client, code, result = self.evaluate(observed)
-                self.assertEqual(code, 1)
-                self.assertEqual((fixture.requests, fixture.commands, fixture.grades), (2, 1, 1))
-                self.assertTrue(client.poisoned)
-                self.assertTrue(result['runtime']['inference']['further_requests_blocked'])
-                self.assertEqual(result['isolation_qualification']['qualification'], observed)
-                self.assertEqual(len(result['trials']), 14)
-                first, *remaining = result['trials']
-                self.assertEqual(first['status'], 'passed')
-                self.assertTrue(first['grader']['outcome'])
-                self.assertEqual(first['isolation_qualification'], observed)
-                self.assertTrue(all(t['status']=='not_executed' for t in remaining))
-                self.assertTrue(all('grader' not in t and 'execution' not in t for t in remaining))
+    @pytest.mark.parametrize('observed', ['violated', 'unknown'])
+    def test_unqualified_grader_aborts_remaining_inference_without_rewriting_artifact_grade(self, observed):
+        fixture, client, code, result = self.evaluate(observed)
+        assert code == 1
+        assert (fixture.requests, fixture.commands, fixture.grades) == (2, 1, 1)
+        assert client.poisoned
+        assert result['runtime']['inference']['further_requests_blocked']
+        assert result['isolation_qualification']['qualification'] == observed
+        assert len(result['trials']) == 14
+        first, *remaining = result['trials']
+        assert first['status'] == 'passed'
+        assert first['grader']['outcome']
+        assert first['isolation_qualification'] == observed
+        assert all(t['status']=='not_executed' for t in remaining)
+        assert all('grader' not in t and 'execution' not in t for t in remaining)
 
     def test_qualified_grader_preserves_the_full_paired_schedule(self):
         fixture, client, code, result = self.evaluate('qualified')
-        self.assertEqual(code, 0)
-        self.assertEqual((fixture.requests, fixture.commands, fixture.grades), (28, 14, 14))
-        self.assertFalse(client.poisoned)
-        self.assertTrue(all(t['status']=='passed' for t in result['trials']))
-        self.assertEqual(result['isolation_qualification']['qualification'], 'qualified')
+        assert code == 0
+        assert (fixture.requests, fixture.commands, fixture.grades) == (28, 14, 14)
+        assert not client.poisoned
+        assert all(t['status']=='passed' for t in result['trials'])
+        assert result['isolation_qualification']['qualification'] == 'qualified'

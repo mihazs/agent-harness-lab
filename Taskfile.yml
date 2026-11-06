@@ -86,7 +86,7 @@ tasks:
           LAYOUT_DIR: '{{.LAYOUT_DIR}}'
           EXPECTED_PACKAGE_ROOT: '{{.EXPECTED_PACKAGE_ROOT}}'
           REPEATED_TEST_PATTERN: test_configured_responses_native.py
-          KERNEL_TEST_FILTER: ConfiguredResponsesKernelTests
+          KERNEL_TEST_FILTER: TestConfiguredResponsesKernel
   test:workflow:repeated:
     desc: Run fixed-bank workflow admission and opt-in native tests
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -332,7 +332,7 @@ tasks:
   test:evaluation:history-identity:
     desc: Check read-only history identity inside an existing controller lock
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tools/tests/test_construction_access.py -k HistoryIdentityTests -v'
+      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tools/tests/test_construction_access.py -k TestHistoryIdentity -v'
   test:evaluation:construction-access:
     desc: Verify canonical same-store construction, feedback custody and honest unmanaged boundaries
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'

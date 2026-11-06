@@ -3,8 +3,8 @@ import json
 from pathlib import Path
 import subprocess
 import sys
-import tempfile
-import unittest
+
+import pytest
 
 spec = importlib.util.spec_from_file_location('diagnose', Path(__file__).parents[1] / 'diagnose.py')
 d = importlib.util.module_from_spec(spec)
@@ -15,54 +15,52 @@ def event(case, ident, **extra):
     return dict(case_id=case, event_id=str(ident), activity='tool_result', **extra)
 
 
-class DiagnosisTests(unittest.TestCase):
-    def test_existing_output_directory_is_refused_with_fresh_path_guidance(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            events = root / 'events.jsonl'
-            events.write_text(json.dumps(event('a', 1)) + '\n')
-            output = root / 'existing'
-            output.mkdir()
-            sentinel = output / 'sentinel.txt'
-            sentinel.write_text('keep')
-            proc = subprocess.run([sys.executable, str(Path(__file__).parents[1] / 'diagnose.py'),
-                '--events', str(events), '--output', str(output)], capture_output=True, text=True)
-            self.assertEqual(proc.returncode, 2, msg=proc.stderr)
-            self.assertIn('fresh', proc.stderr, msg=proc.stderr)
-            self.assertNotIn('Traceback', proc.stderr)
-            self.assertEqual(sorted(p.name for p in output.iterdir()), ['sentinel.txt'])
-            self.assertEqual(sentinel.read_text(), 'keep')
+class TestDiagnosis:
+    def test_existing_output_directory_is_refused_with_fresh_path_guidance(self, tmp_path):
+        events = tmp_path / 'events.jsonl'
+        events.write_text(json.dumps(event('a', 1)) + '\n')
+        output = tmp_path / 'existing'
+        output.mkdir()
+        sentinel = output / 'sentinel.txt'
+        sentinel.write_text('keep')
+        proc = subprocess.run([sys.executable, str(Path(__file__).parents[1] / 'diagnose.py'),
+            '--events', str(events), '--output', str(output)], capture_output=True, text=True)
+        assert proc.returncode == 2, proc.stderr
+        assert 'fresh' in proc.stderr, proc.stderr
+        assert 'Traceback' not in proc.stderr
+        assert sorted(p.name for p in output.iterdir()) == ['sentinel.txt']
+        assert sentinel.read_text() == 'keep'
 
     def test_duplicate_observation_requires_state_and_is_not_waste(self):
         signature = dict(tool_name='read', input_fingerprint='i', result_fingerprint='r', state_revision='s')
         result = d.analyze([event('a', 1, **signature), event('a', 2, **signature)])
-        self.assertEqual(result['findings'][0]['status'], 'observed_pattern')
+        assert result['findings'][0]['status'] == 'observed_pattern'
         signature['state_revision'] = 'new'
-        self.assertEqual(d.analyze([event('a', 1), event('a', 2, **signature)])['findings'], [])
+        assert d.analyze([event('a', 1), event('a', 2, **signature)])['findings'] == []
 
     def test_related_cases_do_not_inflate_support(self):
         rows = [event(str(i), j, root_case_id='root') for i in range(4) for j in range(3)]
-        self.assertEqual(d.analyze(rows)['recurring_sequences'], [])
+        assert d.analyze(rows)['recurring_sequences'] == []
 
     def test_invalid_duplicate_and_limits_fail(self):
         for rows in ([None], [{}], [event('a', 1), event('a', 1)]):
-            with self.assertRaises(ValueError): d.analyze(rows)
-        with self.assertRaises(ValueError): d.analyze([event('a', 1), event('a', 2)], 1)
+            with pytest.raises(ValueError): d.analyze(rows)
+        with pytest.raises(ValueError): d.analyze([event('a', 1), event('a', 2)], 1)
 
     def test_native_normalization_does_not_export_bodies(self):
         rows = list(d.normalize([dict(kind='stop', body='SECRET', session_id='s')], 'ai-memory', 'default/project'))
-        self.assertNotIn('SECRET', str(rows))
-        self.assertEqual(rows[0]['activity'], 'turn_stop')
-        self.assertEqual(d.analyze(rows)['findings'], [])
+        assert 'SECRET' not in str(rows)
+        assert rows[0]['activity'] == 'turn_stop'
+        assert d.analyze(rows)['findings'] == []
 
     def test_native_session_metadata_preserves_case_identity(self):
         rows = list(d.normalize([{'type': 'session_meta', 'payload': {'id': 's'}},
                                {'type': 'response_item', 'payload': {'type': 'function_call', 'name': 'read'}}], 'codex', 'default/project'))
-        self.assertTrue(all(r['case_id'] == 's' for r in rows))
-        self.assertEqual(rows[1]['tool_name'], 'read')
+        assert all(r['case_id'] == 's' for r in rows)
+        assert rows[1]['tool_name'] == 'read'
 
     def test_interleaving_does_not_create_sequences(self):
-        self.assertEqual(d.analyze([event('a', 1), event('b', 1)])['recurring_sequences'], [])
+        assert d.analyze([event('a', 1), event('b', 1)])['recurring_sequences'] == []
 
     def test_claude_tools_are_linked_without_content_or_thinking(self):
         rows = [dict(type='assistant', uuid='a', sessionId='session', message={'content':[
@@ -72,12 +70,12 @@ class DiagnosisTests(unittest.TestCase):
             {'type':'tool_result','tool_use_id':'call','content':'PRIVATE','is_error':True}]}),
             dict(type='assistant',uuid='c',sessionId='other',message={'content':'PRIVATE'})]
         normalized=list(d.normalize(rows,'claude','synthetic'))
-        self.assertEqual([e['activity'] for e in normalized], ['tool_call','tool_result','assistant'])
-        self.assertEqual([e['call_id'] for e in normalized[:2]], ['call','call'])
-        self.assertEqual(normalized[0]['event_id'], 'a:1')
-        self.assertNotIn('PRIVATE', str(normalized))
-        self.assertEqual(d.analyze(normalized)['cases'], 2)
-        self.assertEqual(d.analyze(normalized)['findings'], [])
+        assert [e['activity'] for e in normalized] == ['tool_call','tool_result','assistant']
+        assert [e['call_id'] for e in normalized[:2]] == ['call','call']
+        assert normalized[0]['event_id'] == 'a:1'
+        assert 'PRIVATE' not in str(normalized)
+        assert d.analyze(normalized)['cases'] == 2
+        assert d.analyze(normalized)['findings'] == []
 
     def test_result_call_result_and_interleaved_readonly_tools(self):
         sig = dict(tool_name='read', input_fingerprint='i', result_fingerprint='r', state_revision='s')
@@ -85,8 +83,8 @@ class DiagnosisTests(unittest.TestCase):
                 call_id='c', tool_effect='read_only', state_revision='s'),
                 event('b', 1, **sig), event('a', 3, call_id='c', **sig)]
         finding = d.analyze(rows)['findings'][0]
-        self.assertEqual([e['event_id'] for e in finding['evidence']], ['1', '3'])
-        self.assertEqual(finding['kind'], 'duplicate_observation')
+        assert [e['event_id'] for e in finding['evidence']] == ['1', '3']
+        assert finding['kind'] == 'duplicate_observation'
 
     def test_revision_aba_unknown_calls_and_concurrency_invalidate(self):
         sig = dict(tool_name='read', input_fingerprint='i', result_fingerprint='r', state_revision='A')
@@ -96,8 +94,8 @@ class DiagnosisTests(unittest.TestCase):
             [dict(case_id='a', event_id='m', activity='metadata', mutation=True)],
             [event('a', 'm', call_id='unmatched', **sig)],
         ):
-            self.assertEqual(d.analyze([event('a', 1, **sig), *middle,
-                event('a', 3, **sig)])['findings'], [])
+            assert (d.analyze([event('a', 1, **sig), *middle,
+                event('a', 3, **sig)])['findings']) == []
 
     def test_cache_eviction_is_bounded_and_deterministic(self):
         from tools.observations import ObservationCache
@@ -105,8 +103,8 @@ class DiagnosisTests(unittest.TestCase):
         for i in range(10000):
             cache.observe(event(str(i % 11), i, tool_name='read', input_fingerprint=str(i),
                                 result_fingerprint='r', state_revision='s'), i)
-            self.assertLessEqual(len(cache.entries), 5)
-            self.assertLessEqual(len(cache.cases), 5)
+            assert len(cache.entries) <= 5
+            assert len(cache.cases) <= 5
         sig = dict(tool_name='read', input_fingerprint='i', result_fingerprint='r', state_revision='s')
         rows = [event('a', 1, **sig), dict(case_id='a', event_id='2', activity='metadata'), event('a', 3, **sig)]
-        self.assertEqual(d.analyze(rows, observation_max_age=1)['findings'], [])
+        assert d.analyze(rows, observation_max_age=1)['findings'] == []

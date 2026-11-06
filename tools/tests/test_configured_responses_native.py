@@ -3,9 +3,13 @@ from contextlib import redirect_stderr,redirect_stdout
 import hashlib
 import io
 import json
-import unittest
+import os
+from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
+import agent_harness_lab
 from agent_harness_lab import cli,config,workflow
 from agent_harness_lab.evaluation import responses
 from agent_harness_lab.evaluation.instruction_context import MARKER,PROFILE
@@ -23,8 +27,20 @@ Path('result.json').write_text(json.dumps(dict(complete=good or task['split']=='
 '''
 
 
-@unittest.skipUnless(kernel.ENABLED,'explicit delegated kernel profile required')
-class ConfiguredResponsesKernelTests(kernel.KernelFixture):
+@pytest.fixture(scope='class')
+def cgroup_root():
+    expected=os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
+    if expected and not Path(agent_harness_lab.__file__).resolve().is_relative_to(Path(expected).resolve()):
+        raise AssertionError('kernel canaries imported the wrong package layout')
+    with kernel.kernel_subtree() as root: yield root
+
+
+@pytest.mark.skipif(not kernel.ENABLED,reason='explicit delegated kernel profile required')
+class TestConfiguredResponsesKernel:
+    @pytest.fixture(autouse=True)
+    def kernel_root(self,cgroup_root,tmp_path):
+        self.cgroup_root=cgroup_root;self.root=tmp_path
+
     def configure(self):
         project=self.root/'project';project.mkdir();(project/'AGENTS.md').write_text('bad')
         key=self.root/'synthetic-key';key.write_text('SYNTHETIC_CONTROLLER_KEY');key.chmod(0o600)
@@ -50,12 +66,12 @@ class ConfiguredResponsesKernelTests(kernel.KernelFixture):
         with patch.object(workflow,'state_root',return_value=state),patch.object(workflow,'collect',return_value=self.evidence()), \
                 patch.object(responses,'request',side_effect=lambda *unused:calls.append(True)), \
                 patch.object(responses,'read_credential',side_effect=swapped),redirect_stdout(io.StringIO()), \
-                redirect_stderr(io.StringIO()),self.assertRaises(SystemExit) as stopped:
+                redirect_stderr(io.StringIO()),pytest.raises(SystemExit) as stopped:
             cli.main(['improve',str(project)])
         result=json.loads(next(state.glob('runs/*/run-*/workflow.json')).read_bytes())
-        self.assertEqual(calls,[]);self.assertEqual(stopped.exception.code,2)
-        self.assertEqual((result['status'],result['error_type']),('invalid_input','ValueError'))
-        self.assertEqual(result['changed_files'],[]);self.assertEqual((project/'AGENTS.md').read_text(),'bad')
+        assert calls == [];assert stopped.value.code == 2
+        assert (result['status'],result['error_type']) == ('invalid_input','ValueError')
+        assert result['changed_files'] == [];assert (project/'AGENTS.md').read_text() == 'bad'
 
     def test_configure_once_then_plain_improve_reaches_real_protocol_trials(self):
         project,key,image=self.configure()
@@ -65,28 +81,28 @@ class ConfiguredResponsesKernelTests(kernel.KernelFixture):
 
         def output():
             paths=list(state.glob('runs/*/run-*'))
-            self.assertEqual(len(paths),1)
+            assert len(paths) == 1
             return paths[0]
 
         def transport(credential,body,*unused):
-            self.assertEqual(credential,'SYNTHETIC_CONTROLLER_KEY');self.assertNotIn(credential,body.decode())
+            assert credential == 'SYNTHETIC_CONTROLLER_KEY';assert credential not in body.decode()
             value=json.loads(body);bodies.append(value);ident=str(len(bodies))
             checkpoint=json.loads((output()/'inference.json').read_bytes())
             receipt=checkpoint['request_binding']['instruction_binding']
-            self.assertEqual(checkpoint['configured_response_references_sha256'],receipt['configuration_references_sha256'])
-            self.assertNotIn('SYNTHETIC_CONTROLLER_KEY',json.dumps(checkpoint))
-            self.assertEqual(receipt['body_sha256'],hashlib.sha256(body).hexdigest())
-            self.assertEqual(receipt['project_configuration_sha256'],configuration_pin)
+            assert checkpoint['configured_response_references_sha256'] == receipt['configuration_references_sha256']
+            assert 'SYNTHETIC_CONTROLLER_KEY' not in json.dumps(checkpoint)
+            assert receipt['body_sha256'] == hashlib.sha256(body).hexdigest()
+            assert receipt['project_configuration_sha256'] == configuration_pin
             developer=value['input'][0]['content']
             if 'You are the proposer' in developer:
-                self.assertNotIn(MARKER,developer)
+                assert MARKER not in developer
                 argv=['/usr/bin/python3','-c',roles.PROPOSER,'good']
             elif 'You are the evaluator author' in developer:
-                self.assertNotIn(MARKER,developer);self.assertNotIn('SYNTHETIC_CANDIDATE_SECRET',developer)
+                assert MARKER not in developer;assert 'SYNTHETIC_CANDIDATE_SECRET' not in developer
                 argv=['/usr/bin/python3','-c',roles.AUTHOR,'1','complete']
             else:
                 context=json.loads(developer.split(MARKER,1)[1]);instructions.append(context)
-                self.assertEqual(context['profile'],PROFILE);self.assertEqual(context['membership'],'present')
+                assert context['profile'] == PROFILE;assert context['membership'] == 'present'
                 argv=['/usr/bin/python3','-c',EXECUTOR,'good' if context['content'].startswith('good') else 'bad']
             if any(row.get('type')=='function_call_output' for row in value['input']):
                 return roles.wire.reply([roles.wire.message('final-'+ident)])
@@ -106,26 +122,24 @@ class ConfiguredResponsesKernelTests(kernel.KernelFixture):
                 patch.object(SandboxBackend,'run',observed),patch.object(SandboxBackend,'capability',probe),redirect_stdout(io.StringIO()):
             code=cli.main(['improve',str(project)])
         result=json.loads((output()/'workflow.json').read_bytes())
-        self.assertEqual(code,3,result);self.assertEqual(result['status'],'inconclusive',result)
-        self.assertEqual(result['recommendation'],'candidate_requires_independent_certification')
-        self.assertEqual(initial_probes,[True]);self.assertEqual(read_key.call_count,1)
-        self.assertEqual(len(bodies),16);self.assertEqual(result['inference']['request_attempts'],len(bodies))
-        self.assertEqual(len(instructions),12)
-        self.assertEqual({item['content'].startswith('good') for item in instructions},{False,True})
+        assert code == 3, result;assert result['status'] == 'inconclusive', result
+        assert result['recommendation'] == 'candidate_requires_independent_certification'
+        assert initial_probes == [True];assert read_key.call_count == 1
+        assert len(bodies) == 16;assert result['inference']['request_attempts'] == len(bodies)
+        assert len(instructions) == 12
+        assert {item['content'].startswith('good') for item in instructions} == {False,True}
         observed=result['implementation_prerequisites']
-        self.assertEqual(set(observed['coverage']['roles']),{'proposer','evaluator_author','executor','grader'})
-        self.assertEqual(observed['controlled_instruction_protocol']['status'],'qualified',observed)
-        self.assertTrue(all(row['status']=='unverified' for row in observed['mandatory_certification'].values()))
-        self.assertFalse(observed['adoption_authority']);self.assertFalse(result['automatic_promotion'])
-        self.assertEqual([role for role,_ in workers].count('proposer'),1)
-        self.assertEqual([role for role,_ in workers].count('evaluator_author'),1)
-        self.assertEqual([role for role,_ in workers].count('executor'),6)
+        assert set(observed['coverage']['roles']) == {'proposer','evaluator_author','executor','grader'}
+        assert observed['controlled_instruction_protocol']['status'] == 'qualified', observed
+        assert all(row['status']=='unverified' for row in observed['mandatory_certification'].values())
+        assert not observed['adoption_authority'];assert not result['automatic_promotion']
+        assert [role for role,_ in workers].count('proposer') == 1
+        assert [role for role,_ in workers].count('evaluator_author') == 1
+        assert [role for role,_ in workers].count('executor') == 6
         for _,run in workers:
-            self.assertTrue(run['inputs_unchanged'])
-            self.assertTrue(run['attestation']['cgroup_v2']['empty_after_cleanup'])
-            self.assertEqual(run['attestation']['runtime_image']['sha256'],image)
-        self.assertEqual((project/'AGENTS.md').read_text(),'bad');self.assertEqual(result['changed_files'],[])
-        self.assertEqual(config.load(project/'ahl.json')[1],configuration_pin)
+            assert run['inputs_unchanged']
+            assert run['attestation']['cgroup_v2']['empty_after_cleanup']
+            assert run['attestation']['runtime_image']['sha256'] == image
+        assert (project/'AGENTS.md').read_text() == 'bad';assert result['changed_files'] == []
+        assert config.load(project/'ahl.json')[1] == configuration_pin
 
-
-if __name__=='__main__':unittest.main()
