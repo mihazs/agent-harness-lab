@@ -4,6 +4,7 @@ Each row runs one real fixture in a pytest subprocess with its helper's setUp (a
 synthetic one that registers a failing cleanup, so a leaked temp dir, patch or cgroup surfaces as an error.
 """
 from pathlib import Path
+import os
 import subprocess
 import sys
 
@@ -67,9 +68,11 @@ def source(module, fixture, classes):
 
 
 def pytest_run(root, names):
+    # Each row must error, so an inherited PYTEST_ADDOPTS such as CI's --maxfail=1 would hide later rows.
+    env = {key: value for key, value in os.environ.items() if key != 'PYTEST_ADDOPTS'}
     return subprocess.run([sys.executable, '-m', 'pytest', '-c', str(REPO/'pyproject.toml'), '--rootdir', str(root),
                            '-q', '-rE', '-p', 'no:cacheprovider', '-p', 'no:xdist', *(str(root/name) for name in names)],
-                          cwd=REPO, capture_output=True, text=True, timeout=600)
+                          cwd=REPO, env=env, capture_output=True, text=True, timeout=600)
 
 
 def test_manually_driven_unittest_cleanup_failures_fail_the_fixture(tmp_path):
