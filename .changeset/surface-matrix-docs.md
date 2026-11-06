@@ -1,5 +1,0 @@
----
-"agent-harness-lab": minor
----
-
-Add the generic harness surface matrix. `surfaces.matrix()` gives each of the eleven surfaces (instructions, path rules, hooks, workflows, agents, commands and skills, plugins, MCP, output styles, memory and settings) its Claude Code and Codex writability and the route a change gets (`adopt`, `contract`, `recommendation` or `excluded`), computed from the classifier rows for one synthetic path per runtime. `ahl sources inventory` prints the declared runtime's column as path-free `surfaces` rows. The change-plan deferred lists of `ahl improve .` and `ahl improve . --repair-contracts` now come from `surfaces.deferred()`: the behavioral candidate defers every surface no runtime routes to adopt, and the contract path defers every surface but skill headers (and `hooks` until every hook contract passes). Memory is excluded, never deferred. The README, a new harness-self-improvement surfaces reference and a new harness-evaluation trial isolation reference document the matrix, the version pins and the unverified items.
