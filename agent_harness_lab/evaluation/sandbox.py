@@ -1,6 +1,7 @@
 """Optional offline Linux role isolation. Never falls back to host execution."""
 from dataclasses import asdict, dataclass, replace
 from contextlib import ExitStack, nullcontext
+import errno
 import hashlib
 import json
 import math
@@ -51,6 +52,11 @@ INFO_BYTES = 4096
 def _namespaced_nproc(release=None):
     numbers = re.match(r'(\d+)\.(\d+)', release if release is not None else os.uname().release)
     return bool(numbers) and tuple(map(int, numbers.groups())) >= NAMESPACED_NPROC_KERNEL
+
+
+def _launch_failure(error):
+    """A launch that fails before bubblewrap runs: the controller's own fork EAGAIN is the user's process limit."""
+    return 'process_limit_exhausted' if getattr(error, 'errno', None) == errno.EAGAIN else 'resource_boundary_unavailable'
 
 
 def _unbounded(reason):
@@ -233,8 +239,8 @@ class SandboxBackend:
                                        capture_output=True, timeout=seconds)
             except subprocess.TimeoutExpired:
                 return dict(status='unsupported', reason='namespace_probe_timeout', automatic_promotion=False)
-            except (OSError, ValueError, subprocess.SubprocessError):
-                return dict(status='unsupported', reason='resource_boundary_unavailable', automatic_promotion=False)
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                return dict(status='unsupported', reason=_launch_failure(error), automatic_promotion=False)
         if probe.returncode == 0:
             return dict(status='available', reason=None, automatic_promotion=False,
                         limitations=['full isolation certification not established', 'no resource limits',
@@ -272,8 +278,8 @@ class SandboxBackend:
                 del self.permission_reports[checkpoint:]
             except TimeoutError:
                 return dict(status='unsupported', reason='namespace_probe_timeout', automatic_promotion=False)
-            except (OSError, ValueError, subprocess.SubprocessError):
-                return dict(status='unsupported', reason='resource_boundary_unavailable', automatic_promotion=False)
+            except (OSError, ValueError, subprocess.SubprocessError) as error:
+                return dict(status='unsupported', reason=_launch_failure(error), automatic_promotion=False)
         available = run['exit_code'] == 0 and run['status'] == 'completed' and run['inputs_unchanged'] is True
         if self.permission_audit:
             observed=run['attestation']['permission_audit']

@@ -1,6 +1,7 @@
 """The sandbox process bound counts the sandbox, never the invoking user's whole real UID (#361).
 
 Synthetic bubblewrap stand-ins and bounded fork loops only; nothing here forks without a fixed iteration count."""
+import errno
 import json
 import os
 from pathlib import Path
@@ -33,7 +34,8 @@ pid = os.fork()
 if pid == 0:
     os.close(info); os.read(block, 1); os.close(block); os.execv(command[0], command)
 os.close(block)
-os.write(info, json.dumps({'child-pid': pid}).encode()); os.close(info)
+# 'foreign' names a process that is not bubblewrap's child: the controller itself.
+os.write(info, json.dumps({'child-pid': os.getppid() if MODE == 'foreign' else pid}).encode()); os.close(info)
 sys.exit(os.waitstatus_to_exitcode(os.waitpid(pid, 0)[1]))
 '''
 BOUNDED_FORKS = '''import os, time
@@ -47,6 +49,17 @@ for pid in children: os.waitpid(pid, 0)
 print(len(children))
 '''
 EAGAIN = 'bwrap: Creating new namespace failed: Resource temporarily unavailable\n'
+# Runs the controller in its own process, so a regression that caps the reported pid lowers only that process's limit.
+FOREIGN_CONTROLLER = '''import json, resource, sys
+from unittest.mock import patch
+from agent_harness_lab.evaluation import sandbox
+before = resource.getrlimit(resource.RLIMIT_NPROC)
+with patch.object(sandbox, '_namespaced_nproc', return_value=True):
+    run = sandbox.SandboxBackend(sys.argv[1]).run([sys.executable, '-I', '-c', 'pass'], sys.argv[2], {}, 'grader',
+                                                  sandbox.Limits(seconds=5, processes=7))
+print(json.dumps(dict(status=run['status'], bound=run['attestation']['process_bound'], before=before,
+                      after=resource.getrlimit(resource.RLIMIT_NPROC))))
+'''
 
 
 def host_limit():
@@ -77,6 +90,22 @@ class ProcessBoundTests(unittest.TestCase):
         self.assertEqual(json.loads(run['stdout']), [7, 7])
         self.assertEqual(run['attestation']['process_bound'],
                          dict(enforced=True, scope='user_namespace', limit=7, reason=None))
+        with patch.object(sandbox, '_namespaced_nproc', return_value=True):
+            capability = self.fake().capability()
+        self.assertTrue(capability['process_bound']['enforced'])
+        self.assertNotIn('no sandbox process bound', capability['limitations'])
+
+    def test_a_reported_pid_that_is_not_the_sandbox_child_is_never_capped(self):
+        self.fake('foreign')
+        source = Path(sandbox.__file__).resolve().parents[2]
+        probe = subprocess.run([sys.executable, '-c', FOREIGN_CONTROLLER, str(self.root / 'bwrap-foreign'), str(self.work)],
+                               cwd=source, env={'PATH': '/usr/bin:/bin', 'PYTHONPATH': str(source)},
+                               capture_output=True, text=True, timeout=30)
+        self.assertEqual(probe.returncode, 0, probe.stderr)
+        result = json.loads(probe.stdout)
+        self.assertEqual(result['status'], 'completed')
+        self.assertEqual(result['bound'], dict(enforced=False, scope=None, limit=None, reason='sandbox_not_started'))
+        self.assertEqual(result['after'], result['before'])
 
     def test_without_a_sandbox_scoped_bound_the_receipt_says_not_enforced(self):
         backend = self.fake()
@@ -87,6 +116,10 @@ class ProcessBoundTests(unittest.TestCase):
         self.assertEqual(json.loads(run['stdout']), host_limit())  # no host-wide cap in its place
         self.assertEqual(run['attestation']['process_bound'],
                          dict(enforced=False, scope=None, limit=None, reason='kernel_counts_real_uid'))
+        with patch.object(sandbox, '_namespaced_nproc', return_value=False):
+            capability = backend.capability()
+        self.assertEqual(capability['process_bound']['reason'], 'kernel_counts_real_uid')
+        self.assertIn('no sandbox process bound', capability['limitations'])
         direct = SandboxBackend(sys.executable)
         with patch.object(direct, 'command', side_effect=lambda argv, *args: argv):
             bare = direct.run([sys.executable, '-I', '-c', REPORT_LIMIT], self.work, {}, 'grader', Limits(processes=7))
@@ -112,6 +145,16 @@ class ProcessBoundTests(unittest.TestCase):
             self.assertEqual(backend.capability()['reason'], 'process_limit_exhausted')
         with patch.object(backend, 'run', return_value=failed):
             self.assertEqual(backend.capability()['reason'], 'namespace_probe_failed')
+
+    def test_a_controller_fork_eagain_is_process_limit_exhausted(self):
+        # The invoking user's own limit fails the controller's fork before bubblewrap ever runs.
+        backend = self.fake()
+        for launch_error, expected in ((BlockingIOError(errno.EAGAIN, 'Resource temporarily unavailable'),
+                                        'process_limit_exhausted'),
+                                       (PermissionError(errno.EACCES, 'Permission denied'), 'resource_boundary_unavailable')):
+            with self.subTest(error=launch_error), patch.object(sandbox.subprocess, 'Popen', side_effect=launch_error):
+                self.assertEqual(backend.capability()['reason'], expected)
+                self.assertEqual(backend.hook_trial_capability()['reason'], expected)
 
     def test_a_sandbox_that_never_reports_times_out_without_a_bound(self):
         run = self.run_fake(self.fake('silent'), limits=Limits(seconds=.5, processes=7))
