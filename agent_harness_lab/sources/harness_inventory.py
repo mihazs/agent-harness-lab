@@ -349,8 +349,12 @@ def join_loading(inventory, events=None):
     path_sha256 and the attached text hashes to its content_sha256. A path-only match, an agent invocation,
     a hook output or an MCP request never sets it, and effective is always 'unknown'. An agent invocation
     counts only on the definition the declared precedence selects. Evidence for a path the inventory lacks,
-    or for a name with no selected definition, is counted as unattributed and never becomes a node. The
-    caller pairs the capture with this checkout; that pairing, independence and every outcome stay unknown.
+    or for a name with no selected definition, is counted as unattributed and never becomes a node. A pinned
+    loading record repeating an earlier (case_id, event_id) is counted once and reported under duplicate_events;
+    when the copies disagree beyond capture placement (claude_native.UNORDERED) the identity is counted under
+    conflicting_events and nowhere else. loading_evidence is 'observed_pattern' only when some node has an
+    exact attachment, and 'none' otherwise. The caller pairs the capture with this checkout; that pairing,
+    independence and every outcome stay unknown.
     """
     from agent_harness_lab.telemetry import claude_native, codex_rollout
     from agent_harness_lab.telemetry.schema import event
@@ -358,6 +362,8 @@ def join_loading(inventory, events=None):
     rows = [dict(path_sha256=node.path_sha256, root=node.root, kind=node.kind, observed_loading='unknown', effective='unknown',
         exact_attachments=0, path_only_attachments=0, declared_invocations=0) for node in inventory.nodes]
     unattributed, ignored = dict.fromkeys(('attachment', 'hook_output', 'agent', 'mcp'), 0), 0
+    seen, duplicates, contested = {}, 0, set()
+    unplaced = lambda record: {key: value for key, value in record.items() if key not in claude_native.UNORDERED}
     status = (inventory.status if inventory.status != 'declared' else codex_rollout.LOADING_SIGNAL if inventory.runtime == 'codex'
               else 'no_capture' if events is None
               else 'task_cwd_not_checkout_root' if inventory.task_cwd_sha256 != digest('.') else 'joined')
@@ -372,8 +378,18 @@ def join_loading(inventory, events=None):
         for record in map(event, events):
             signal = record.get('loading_signal')
             if signal is None: continue
-            if record.get('source_version') != claude_native.VERSION or signal not in _UNATTRIBUTED: ignored += 1
-            elif signal == 'observed_attachment' and record.get('loading_path_sha256') in paths:
+            if record.get('source_version') != claude_native.VERSION or signal not in _UNATTRIBUTED:
+                ignored += 1; continue  # never claims an identity, so it cannot shadow a pinned copy
+            identity = (record['case_id'], record['event_id'])
+            if identity in seen:  # one capture read twice: count the event once
+                duplicates += 1
+                if unplaced(seen[identity]) != unplaced(record): contested.add(identity)  # placement alone never conflicts
+                continue
+            seen[identity] = record
+        for identity, record in seen.items():
+            if identity in contested: continue  # copies disagree: the event counts nowhere, whatever the order
+            signal = record['loading_signal']
+            if signal == 'observed_attachment' and record.get('loading_path_sha256') in paths:
                 row = rows[paths[record['loading_path_sha256']]]
                 content = inventory.nodes[paths[record['loading_path_sha256']]].content_sha256
                 exact = content is not None and record.get('loading_content_sha256') == content
@@ -383,12 +399,18 @@ def join_loading(inventory, events=None):
                 rows[agents[record['agent_name_sha256']]]['declared_invocations'] += 1
             else: unattributed[_UNATTRIBUTED[signal]] += 1  # absent path, no selected agent, or no path at all
     joined = status == 'joined'
+    observed = any(row['observed_loading'] == 'observed_pattern' for row in rows)
+    shaped = any(row['exact_attachments'] or row['path_only_attachments'] for row in rows) or any(
+        unattributed[key] for key in ('attachment', 'hook_output'))
+    warnings = {'duplicate_event_identity'} if duplicates else set()
+    if contested: warnings.add('duplicate_event_conflict')
     return dict(profile=LOADING_PROFILE, status=status, harness_inventory_sha256=inventory.sha256, runtime=inventory.runtime,
         inventory_version=inventory.version, capture_version=claude_native.VERSION if joined else None,
         version_alignment='exact' if joined and claude_native.VERSION.endswith('-' + inventory.version) else 'unverified',
-        nodes=tuple(rows), unattributed=unattributed, ignored_records=ignored, loading_evidence='observed_pattern',
-        attachment_shapes='unverified_fixture_only', effective='unknown', outcome='unknown', independence='unknown',
-        publication_allowed=False)
+        nodes=tuple(rows), unattributed=unattributed, ignored_records=ignored, duplicate_events=duplicates,
+        conflicting_events=len(contested), warnings=sorted(warnings), loading_evidence='observed_pattern' if observed else 'none',
+        attachment_shapes='unverified_fixture_only' if shaped else 'none', effective='unknown', outcome='unknown',
+        independence='unknown', publication_allowed=False)
 
 
 def state_directory(checkout):

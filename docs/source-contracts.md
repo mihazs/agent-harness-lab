@@ -1321,6 +1321,14 @@ nodes themselves are unchanged and still reject any loading claim.
 - Evidence for a path or name the inventory lacks is counted under
   `unattributed` and never adds a node. Records from another source version,
   or with an unknown `loading_signal`, count as `ignored_records`.
+- A pinned loading record whose `(case_id, event_id)` repeats an earlier one,
+  for example from two concatenated reads of one transcript, is counted once.
+  The repeats count as `duplicate_events` and `warnings` lists
+  `duplicate_event_identity`. When copies of one identity disagree, the
+  identity is contested: it counts under `conflicting_events` and in no other
+  count, whatever the input order, and `warnings` adds
+  `duplicate_event_conflict`. An ignored record never claims an identity, so
+  it cannot hide a later pinned copy.
 
 `effective`, `outcome` and `independence` are always `unknown`, and
 `publication_allowed` is `false`. The caller pairs the capture with the
@@ -1330,8 +1338,11 @@ checkout; the join cannot verify that pairing. Without a capture the status is
 `task_cwd_not_checkout_root`, because capture paths are relative to the
 session directory. A blocked or unsupported inventory keeps its status. The
 capture pin is `claude-jsonl-2.1.316` and the inventory pin is `2.1.317`, so
-`version_alignment` is `unverified` until both pins name one version. Attachment
-shapes are recorded as `unverified_fixture_only`.
+`version_alignment` is `unverified` until both pins name one version.
+`loading_evidence` is `observed_pattern` only when at least one node has an
+exact attachment, and `none` otherwise, including an empty or absent capture.
+`attachment_shapes` is `unverified_fixture_only` when an attachment or hook
+output was counted, and `none` when the join saw neither.
 
 ### Declared Claude Code path-scoped rules and Codex exec policy
 
