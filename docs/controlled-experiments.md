@@ -8,7 +8,7 @@ model. Existing cooperative evaluation remains recommendation-only.
 
 | Issue | Implemented and tested | Still required before issue closure |
 | --- | --- | --- |
-| #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral; bounded admission of proposer `mechanisms`/`falsifiers` JSON as unverified records with per-entry rejection reasons; pure planned route dispositions | Attach admission and dispositions to the `ahl improve` receipt and queue; integrate real proposal sessions and versioned evidence; evaluate composed repairs |
+| #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral; bounded admission of proposer `mechanisms`/`falsifiers` JSON as unverified records with per-entry rejection reasons; pure planned route dispositions; private `mechanism-coverage-v1` JSON/Markdown coverage report separating observed patterns, supported diagnoses, development recommendations and validated improvements | Attach admission, dispositions and the coverage report to the `ahl improve` receipt and queue; integrate real proposal sessions and versioned evidence; evaluate composed repairs |
 | #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, paired skill-present/absent transfer report under a predeclared target/control policy (`paired_transfer`), approved procedure hypothesis API; pinned Claude 2.1.316 declared `Skill` names and exact project `SKILL.md` read requests as content-free `declared_invocation`/`file_read` signals with confidence labels (`observed_declared`, never activation) | Observed activation evidence, Codex skill signals, shadowing/effective-path detection, wiring signals into trial records and reports, independently graded routing/transfer pack, live utility and compiler evaluation |
 | #12 search | Candidate identity/scope/hash checks, deduplication, hard safety feasibility, Pareto frontier, bounded development callbacks, final reserve, durable state, single final callback, conflict-checked composition | Version-verified reflective CLI proposer, actual inference resource accounting, full resume/recovery and algorithm comparisons; optional halving is not implemented |
 | #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting | An actually supported tool proxy/interception runtime and independently graded adapter effectiveness; no runtime flags are invented |
@@ -54,6 +54,28 @@ adapter routes defer. Order, deduplication and budget charges match
 `run_queue`; eligible records stay `proposed`. Both receipts are private
 profiles rejected by public export. Neither is attached to the `ahl improve`
 receipt yet; that integration remains open in #10.
+
+`coverage.report` summarizes records, or the `run_queue` output, as a private
+`mechanism-coverage-v1` report without evaluating, charging or mutating
+anything; `coverage.render_markdown` renders it with every recorded string
+escaped. Each entry keeps its responsible component, claim level, disposition
+and coverage state separate. The claim level is `observed_pattern` unless the
+record is actionable under a reviewed component (`supported_diagnosis`); a
+`recommended` disposition is a `development_recommendation` awaiting
+certification, and only `validated` is a `validated_improvement`. A disposition
+the record cannot support stays `open` with the
+`disposition_exceeds_supported_claim` limitation. A record without captured
+evidence is `unknown_capture`, with claim level `none`, whatever disposition it
+carries. Complete coverage requires at least one mechanism, every entry
+`resolved` (validated, rejected, already covered or outside scope) and an
+explicit `capture="complete"` declaration; the default `unknown` and `partial`
+capture report that unseen mechanisms are possible. A repeated key is
+suppressed only when its derived entry and history match the first record's;
+any other repeat, such as one without captured evidence or without a falsifier,
+is listed as a conflict and keeps the key open (`conflicting_records_for_key`)
+in either order. Unknown exposure denominators, suppressed duplicate keys and
+mechanism IDs recorded under several evidence/component versions are listed. Routes and claim levels are hypotheses,
+not causal proof.
 
 `run_queue` treats a record's component as its reviewed route and checks it
 through `route()` with the same held dispositions as `dispositions`. A
