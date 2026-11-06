@@ -118,9 +118,8 @@ def _command_fields(raw):
     keeps lists; a value neither keeps is _LOSSY, so any byte change counts as a change of that field."""
     fields = commands_inventory.frontmatter(raw) or {}
     if all(value is not None for value in fields.values()): return fields
-    try: kept = frontmatter.read(raw.removeprefix(codecs.BOM_UTF8),
-                                 max_bytes=commands_inventory.MAX_FRONTMATTER_BYTES)
-    except frontmatter.FrontmatterError: kept = {}  # a '...' close, which read() does not accept
+    try: kept = frontmatter.read(raw.removeprefix(codecs.BOM_UTF8))  # the same default bound texts() applies
+    except frontmatter.FrontmatterError: kept = {}  # fail closed: every reduced value stays _LOSSY
     return {key: value if value is not None else _LOSSY if kept.get(key) is None else kept[key]
             for key, value in fields.items()}
 

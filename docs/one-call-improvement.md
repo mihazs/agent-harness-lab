@@ -335,7 +335,10 @@ freezing or evaluating a non-adoptable candidate: `blocked` gives status
 gives `inconclusive` with `definition_change_recommendation_only`, and
 `no_effect` gives `no_change` with `definition_change_has_no_effect`. The result
 carries a `definition_review` document with fixed labels and paths only, never
-file text, and `adoption_authority: false`. `workflow.adopt` runs the same
+file text, and `adoption_authority: false`. The staging check runs first: a changed Claude
+file whose frontmatter names `hooks`, `permissionMode`, `mcpServers` or
+`allowed-tools`, or a Codex role with a `hooks` key, needs the hook contract, so
+`ahl improve` and `workflow.adopt` refuse it with an error before this review. `workflow.adopt` runs the same
 review and refuses anything but `adoptable`. Duplicate and skill-name checks see
 only the staged tree, so a same-name file outside the configured `harness_paths`
 is not checked. Behavioral evaluation is unchanged and does not yet use native

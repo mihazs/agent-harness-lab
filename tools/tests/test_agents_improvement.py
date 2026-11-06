@@ -76,17 +76,19 @@ class DefinitionReviewTests(unittest.TestCase):
     def test_list_valued_command_allowed_tools_is_a_permission_change(self):
         flow, block = b'---\nallowed-tools: [Read]\n---\nShip.\n', b'---\nallowed-tools:\n  - Read\n  - Bash(rm:*)\n---\nShip.\n'
         for old, new in ((None, flow), (None, block), (flow, flow.replace(b'[Read]', b'[Read, Bash]')), (flow, block),
-                         (flow, b'Ship.\n'), (b'\xef\xbb\xbf' + flow, b'\xef\xbb\xbfShip.\n'),
-                         (flow.replace(b'\n---\n', b'\n...\n'), flow.replace(b'\n---\n', b'\n...\n') + b'More.\n')):
+                         (flow, b'Ship.\n'), (b'\xef\xbb\xbf' + flow, b'\xef\xbb\xbfShip.\n')):
             with self.subTest(old=old, new=new):
                 self.assertEqual(verdict('.claude/commands/ship.md', old, new)[:2],
                                  ('recommendation_only', ('permission_field_changed:allowed-tools',)))
+        dotted = flow.replace(b'\n---\n', b'\n...\n')  # the shared command reader treats a '...' close as unterminated
+        self.assertEqual(verdict('.claude/commands/ship.md', dotted, dotted + b'More.\n')[:2],
+                         ('blocked', ('frontmatter_unterminated',)))
         for raw in (flow, block, b'\xef\xbb\xbf' + flow):  # an unchanged list is compared exactly
             self.assertEqual(verdict('.claude/commands/ship.md', raw, raw + b'More.\n')[0], 'adoptable')
 
     def test_codex_fields_outside_the_inert_allowlist_are_permission_changes(self):
-        for extra, name in ((b'web_search = "live"', 'web_search'), (b'browser_use = true', 'browser_use'),
-                            (b'computer_use = true', 'computer_use'), (b'notify = ["sh", "-c", "true"]', 'notify'),
+        for extra, name in ((b'web_search = "live"', 'web_search'), (b'[browser_use]\nsynthetic = true', 'browser_use'),
+                            (b'[computer_use]\nsynthetic = true', 'computer_use'), (b'notify = ["sh", "-c", "true"]', 'notify'),
                             (b'js_repl_node_path = "/synthetic/node"', 'js_repl_node_path'),
                             (b'openai_base_url = "https://example.invalid"', 'openai_base_url'),
                             (b'chatgpt_base_url = "https://example.invalid"', 'chatgpt_base_url'),
@@ -191,7 +193,7 @@ class WorkflowDefinitionTests(unittest.TestCase):
                  'inconclusive', 'definition_change_recommendation_only'),
                 ({'.claude/agents/reviewer.md': '\n' + AGENT.decode()}, 'blocked', 'definition_validation_failed'),
                 ({'.claude/agents/reviewer.md': '---\ndescription: d\n---\n'}, 'blocked', 'definition_validation_failed'),
-                ({'.claude/agents/reviewer.md': field(b'permissionMode: bypassPermissions').decode()},
+                ({'.claude/agents/reviewer.md': field(b'tools: Read').decode()},
                  'inconclusive', 'definition_change_recommendation_only')):
             with self.subTest(reason=reason, files=list(files)):
                 result = self.improve(files)
@@ -239,9 +241,19 @@ class WorkflowDefinitionTests(unittest.TestCase):
         return original, candidate_states(self.root / 'candidate', original)
 
     def test_adopt_refuses_a_non_adoptable_definition(self):
-        original, proposed = self.stage(AGENT, field(b'permissionMode: bypassPermissions'))
+        original, proposed = self.stage(AGENT, field(b'tools: Read'))
         with self.assertRaisesRegex(ValueError, 'recommendation_only'):
             adopt(self.project, self.root / 'baseline', self.root / 'candidate', original, proposed)
+        self.assertEqual((self.project / '.claude/agents/reviewer.md').read_bytes(), AGENT)
+
+    def test_a_frontmatter_grant_is_refused_by_the_hook_contract_first(self):
+        result = None
+        with self.assertRaisesRegex(ValueError, 'needs a hook contract: .claude/agents/reviewer.md'):
+            result = self.improve({'.claude/agents/reviewer.md': field(b'permissionMode: bypassPermissions').decode()})
+        self.assertIsNone(result)
+        self.assertFalse((self.project / '.claude').exists())
+        with self.assertRaisesRegex(ValueError, 'needs a hook contract'):
+            self.stage(AGENT, field(b'permissionMode: bypassPermissions'))
         self.assertEqual((self.project / '.claude/agents/reviewer.md').read_bytes(), AGENT)
 
     def test_adopt_updates_a_valid_definition(self):
