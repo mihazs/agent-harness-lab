@@ -831,6 +831,46 @@ checks for both. These fixture checks establish current relationship validation;
 cross-source joins, persistent proof lifecycle and a reviewed diagnostic-utility
 study remain open in #58.
 
+### Local Git ref movement between checkpoints
+
+`sources.ref_movement.ref_movement(source, store, ref_name=NAME, before=None,
+after=None)` classifies how one ref moved between two checkpoints of one
+`local_git/git/v2` journal. `NAME` is a full ref name such as `refs/heads/main`, or
+`HEAD` for the harness snapshot's base commit (a detached HEAD included). The later
+checkpoint defaults to the latest one, and the earlier one to the checkpoint just
+before it. Explicit checkpoints must belong to the journal and be in commit order.
+It reads only the journal. It runs no Git, reads no source and does not write the
+journal. It also contacts no remote.
+
+Ancestry comes only from the captured native `commit_parent` edges of the later
+checkpoint. A commit record and the `git_object_reference` record for the same
+object count as one identity, so a direct parent past the history ceiling still
+counts.
+
+| Status | Reason |
+| --- | --- |
+| `unchanged` | Both checkpoints target the same object |
+| `fast_forward` | The earlier target is a captured ancestor of the later target |
+| `non_fast_forward` | The later target's captured ancestry ends at root commits without reaching the earlier target commit |
+| `appeared` / `disappeared` | The ref is absent from the earlier or later checkpoint; absence does not prove creation or deletion, because dangling refs are excluded |
+| `unobserved` | Neither checkpoint captured the ref |
+| `unknown` | No checkpoint or no earlier checkpoint, a missing graph, a later target outside captured history (`later_target_history_not_captured`), ancestry that reaches an uncaptured parent (`later_ancestry_incomplete`, for example a history ceiling or shallow boundary) or an earlier target that is not a captured commit |
+
+`non_fast_forward` is an observation only. A force-push, reset, rebase, squash or
+recreated branch all look the same here, so `cause` stays `unknown`. The checkout's
+repository membership stays `caller_declared`. The report does not check remote
+state or intent. The report has profile `git-ref-movement-v1` and holds fingerprints
+only. `ref_sha256` uses the same `digest(name)` as the Git summary's ref
+`name_sha256`. Each side reports its checkpoint, a `capture_truncated` flag (`null`
+when that checkpoint or its capture metadata is unavailable) and the target kind (`captured_commit`, `reference_only`, `unknown`, `absent` or `unavailable`). It
+carries `publication_allowed: false` and false execution, outcome, source-read and
+network fields. Public benchmark export rejects the profile even if that flag is changed. It does not read GitHub
+force-push events or map squashed commits. `task test:sources:ref-movement` runs
+synthetic native controls: a fast-forward, a reset-and-recommit rewrite, a history
+ceiling, a branch outside HEAD history, deleted and new refs, an unchanged annotated
+tag, an annotated tag moved to a descendant, a truncated single capture, explicit
+checkpoints and refused inputs.
+
 ### Offline Git/GitHub commit join
 
 `sources.commit_join.join_commit(git_source, git_store, github_source, github_store,
