@@ -85,11 +85,34 @@ convenience reviews with unknown inclusion probability. They are counted as
 
 When every draw is reviewed, the status is `estimated`. The report gives
 Horvitz-Thompson estimates of incident prevalence, missed incidents (non-alerted
-incidents) and missed incidents per class, each as a count and a rate, plus a
-linearized ratio estimate of triage recall. Variances use the Poisson design, and
-intervals are normal 95% intervals clipped to their range, marked `interval:
-normal`. Recall is `null`, with the reason `no_sampled_incidents`, when no
-incident was sampled.
+incidents) and missed incidents per class, each as a count and a rate, plus the
+ratio estimate of triage recall. Standard errors use the Poisson design. Recall
+is `null`, with the reason `no_sampled_incidents`, when no incident was sampled.
+
+Normal (Wald) intervals under-cover and over-cover when only a few cases are
+sampled, so the 95% intervals are exact per stratum instead. Under the Poisson
+design, the sampled cases of a stratum with N cases and inclusion probability p
+follow Binomial(N, p). A stratum with x sampled cases gets the binomial-index
+analogue of the Clopper-Pearson interval: the smallest N with
+P(X >= x) >= 0.025 and the largest N with P(X <= x) >= 0.025, searched over
+whole counts up to the stratum's unit count. A stratum with no sampled case adds
+its zero-event upper bound, so it still widens the interval. A stratum reached
+by the `alerted` route holds only alerted units and never enters a missed
+count. The per-stratum limits combine into one interval by MOVER (the method of
+variance estimates recovery): the lower distances to each stratum's estimate add
+in quadrature, and so do the upper distances. Counts and rates are marked
+`interval: exact_binomial_mover`. Recall applies MOVER to the logarithm of
+missed over alerted incidents, using the two count intervals, and is marked
+`interval: exact_binomial_mover_log_ratio`.
+
+When only one stratum can hold the counted case, each exact limit misses the
+true count with probability at most 2.5%. The zero-event bound misses with
+probability at most 5%. Coverage is therefore at least 92.5% for every true
+count, and at least 95% when the zero-event bound reaches the true count. A
+combination of several strata, and the recall ratio, are approximations without
+that guarantee. Receipts record this as the `multi_stratum_intervals_approximate`
+limitation. All of this assumes independent draws at the declared probabilities
+and correct reviewer labels.
 
 A Wald interval has zero width when no case was sampled, which would claim
 certainty about the quantity being measured. An estimate with `sampled: 0`
@@ -108,8 +131,8 @@ the report `inconclusive`, with no point estimates. Its `missing_label_bounds`
 give, for prevalence and the missed-incident rate, the lower 95% limit with every
 missing label filled as `no_incident` and the upper 95% limit with every missing
 label filled as an incident, clipped to [0, 1]. They make no assumption about
-why labels are missing, but they rely on the same normal and zero-event
-approximations as the estimates. They are `null` when nothing was drawn.
+why labels are missing and use the same exact and zero-event intervals as the
+estimates. They are `null` when nothing was drawn.
 
 The report always keeps three things apart from the estimates:
 `unweighted_composition`, which holds raw per-stratum review counts and is
@@ -133,13 +156,23 @@ coverage stays within three standard errors of 95% on both sides, so intervals
 that are too wide fail as well as intervals that are too narrow. A closed-form
 case checks the Poisson-design variance exactly. Separate simulations check that
 the zero-event bounds and missing-label bounds cover the truth at no less than
-the nominal rate. The tolerances are fixed constants in the test module. This validates the implementation under that declared
-design only, not real-world distributional assumptions.
+the nominal rate.
 
-Normal intervals under-cover when few incidents are sampled. The report shows
-the `sampled` count for each estimate. The estimates assume that the declared
-units are independent and that reviewer labels are correct. Labels are
-unauthenticated, and capture outside the frame is unknown.
+Small-count tests enumerate every sample outcome, so their coverage is exact,
+not simulated. With 1 to 5 missed incidents sampled on average at random rates
+of 0.05 and 0.2, missed-incident coverage stays within the same band on both
+sides of 95%. Triage recall stays in the band with 10 alerted incidents drawn at
+0.525 and 1 to 5 sampled misses drawn at 0.05. A design that pairs a stratum
+drawn with certainty with a 0.05 stratum stays in the band too, including the
+outcomes where the 0.05 stratum has no sampled miss. The normal intervals
+these replace failed 11 of those 16 cases, with coverage from 0.64 to 1.0. The
+tolerances are fixed constants in the test module. This validates the
+implementation under that declared design only, not real-world distributional
+assumptions.
+
+The report shows the `sampled` count for each estimate. The estimates assume
+that the declared units are independent and that reviewer labels are correct.
+Labels are unauthenticated, and capture outside the frame is unknown.
 
 This first slice of #75 covers the frame, plan, receipt and fixed-window
 estimates. The issue still tracks logged budget changes and adaptive sampling
