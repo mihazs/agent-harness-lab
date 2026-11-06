@@ -398,13 +398,25 @@ The validated scope starts from the plan's `task_cwd` and `task_paths`, which
 the proposer declares, so the first validation report marks it `scope.source:
 "proposer_declared_plan"`. Once the evaluation manifest is frozen and validated,
 and before any baseline or candidate trial runs, `instruction_validation.bind`
-checks the plan against the directories the evaluated tasks run in. Those are
-each task's `cwd`, or the
-checkout root `.` for a task that declares none. The proposer does not author
-them: the configured bank, the fixed comparison or the separate evaluation
-author does. A plan whose `task_cwd` is not one of them is refused
-(`task_cwd_not_evaluated`). A plan with a task path below none of them is refused
-too (`task_path_not_evaluated`). Either way the run stops as
+checks the plan against the directories the evaluated tasks run in. A task runs
+at the checkout root `.` unless it declares a `cwd` and the trial runner honors
+it. Only the controlled Responses executor does: it passes the task `cwd` to the
+trial, which loads the root-to-cwd `AGENTS.md` chain. The command-line agents,
+the configured bank on those agents and the fixed comparison run every trial at
+the workspace root, so `bind` refuses a manifest that declares a task `cwd` there.
+The proposer does not author these directories: the configured bank, the fixed
+comparison or the separate evaluation author does. A plan whose `task_cwd` is not
+one of them is refused (`task_cwd_not_evaluated`). A task path must lie below the
+plan's own `task_cwd` and below an evaluated directory, or the plan is refused
+(`task_path_not_evaluated`).
+
+Nothing the proposer does not author declares a task path, so a task path stays
+a proposer declaration (`scope.task_paths_source: "proposer_declared"`). The
+validation report lists in `scope.task_path_scope` what only the declared task
+paths make governing: an instruction directory below the `task_cwd` chain, such
+as an on-demand Claude `docs/CLAUDE.md`, and every path rule that does not load
+at launch. The bound scope drops those, and an edit to one of them is refused
+(`task_path_scope_unbound`). Any refusal stops the run as
 `instruction_validation_blocked` before those trials. The rewritten
 `instruction-validation-<attempt>.json` records `scope.source:
 "evaluation_manifest_task_cwds"` and `scope.task_cwds`, and `check_scope`
@@ -412,12 +424,11 @@ enforces that bound scope from then on. `current` reports `scope_unbound` for a
 document that was never bound, so a recommendation never rests on a
 proposer-declared scope alone. For example, a proposer cannot declare
 `task_cwd: "docs"` to make `docs/CLAUDE.md` governing when every evaluated task
-runs in `src` or at the root. The command-line agents, the configured bank and
-the fixed comparison run every task at the root, so there a plan must declare
-`task_cwd: "."`, and a Codex `app/AGENTS.md`, which loads only from `app`, stays
-outside the scope. A task that runs at the root contains every task path, so for
-those tasks the binding constrains `task_cwd` but not which paths below the root
-the plan names.
+runs in `src` or at the root. With every task at the root, declaring the task
+path `docs/guide.md` does not make `docs/CLAUDE.md` or a `docs/**` rule writable
+either. A plan for root tasks must declare `task_cwd: "."`, and only the root
+instructions and the rules that load at launch are in its bound scope; a Codex
+`app/AGENTS.md`, which loads only from `app`, stays outside it.
 
 A shorter file is not automatically better. The report gives active-context bytes
 (`utf8-bytes-v1`) for both versions as a secondary measurement only. A reduction

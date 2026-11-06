@@ -17,7 +17,9 @@ recommended only when the I13 behavioral controls, run in surface-faithful trial
 The plan's task_cwd and task_paths come from the proposer, so the scope they yield is provisional
 (scope.source 'proposer_declared_plan') until bind() checks them against the evaluation manifest's task cwd
 values (#339), which the proposer does not author. A plan whose task_cwd is no evaluated task's cwd, or whose
-task path lies below none of them, is blocked, and only a bound document can back a recommendation.
+task path lies outside its task_cwd, is blocked. Nothing the proposer does not author declares a task path, so
+the bound scope drops what only a declared task path makes governing (a nested instruction below the cwd chain,
+or a path rule) and blocks an edit there. Only a bound document can back a recommendation.
 """
 import hashlib
 import os
@@ -46,7 +48,8 @@ PROPOSER_GUIDANCE = ('Edit an instruction file only at its governing scope (the 
     'that holds an applicable instruction file, or the task directory itself), and a path rule only when it matches '
     'a declared task path. The evaluation decides where tasks run: task_cwd must be a directory an evaluated task '
     'runs in (the checkout root "." unless the evaluation declares a task cwd), and each task path must lie below '
-    'one of them; any other plan is refused. When you change a nested instruction or any rule file, add '
+    'task_cwd; any other plan is refused. Task paths are your declaration, so an instruction file below the task_cwd '
+    'chain or a path rule that only a task path makes governing is refused too. When you change a nested instruction or any rule file, add '
     '"instruction_plan" to the '
     'proposal: {"schema_version":1,"profile":<the runtime instruction profile with task_cwd>,"task_paths":[...],'
     '"required":[{"id":...,"text":...}],"shadowing_changes":[{"change":"add"|"remove","shadow":...,"shadowed":...}],'
@@ -238,8 +241,9 @@ class _View:
                            if (digest(['unresolved_imports', source, reason]), reason) in unresolved}
         self.contexts = plan['task_paths'] or ('.',)
         chain = claude_rules.chain(self.cwd)
-        self.matched = {}
+        self.matched, self.launch = {}, set()
         for node in (self.rules.nodes if self.rules is not None and self.rules.status == 'declared' else ()):
+            if node.classification == 'launch': self.launch.add(node.path)
             status, patterns = claude_rules.declaration(files[node.path])
             for context in self.contexts:
                 below = context != '.' and (node.base_dir == '.' or context.startswith(node.base_dir + '/'))
@@ -349,8 +353,11 @@ def _evaluate(before, after, plan, staged_before, staged_after, fallback, reason
     dirs, rules = _governing(before, plan)
     rules |= _governing(after, plan)[1]
     # The scope derives from the proposer's plan (task_cwd, task_paths) and stays provisional until bind().
+    # task_path_scope is what only a declared task path makes governing, beyond the task_cwd chain and launch rules.
+    chain = claude_rules.chain(plan['profile']['task_cwd'])
     scope = dict(runtime=runtime, fallback_filenames=list(fallback), instruction_dirs=sorted(dirs), rules=sorted(rules),
-                 source=DECLARED)
+                 source=DECLARED, task_path_scope=dict(instruction_dirs=sorted(dirs - set(chain)),
+                                                       rules=sorted(rules - before.launch - after.launch)))
     # Operations compare the closures, so an edit to an unstaged project file carries its real baseline hash.
     operations = _operations(_states(before.files), _states(after.files), runtime, fallback)
     findings = []
@@ -412,14 +419,19 @@ def _evaluate(before, after, plan, staged_before, staged_after, fallback, reason
         **identity, **bindings)
 
 
-def task_cwds(manifest):
-    """Directories the evaluated tasks run in: each task's cwd, or the checkout root for a task that declares none."""
+def task_cwds(manifest, *, cwd_honored=False):
+    """Directories the evaluated tasks run in: each task's cwd, or the checkout root for a task that declares none.
+
+    A task cwd counts only where the trial runner honors it (the controlled Responses executor, which loads the
+    root-to-cwd chain); elsewhere every trial runs at the workspace root, so a declared task cwd is refused."""
     from agent_harness_lab.evaluation.instruction_context import chain_paths
     tasks = manifest.get('tasks') if isinstance(manifest, dict) else None
     if not isinstance(tasks, list) or not tasks or not all(isinstance(task, dict) for task in tasks):
         raise ValueError('evaluation manifest declares no tasks')
     cwds = set()
     for task in tasks:
+        if 'cwd' in task and not cwd_honored:
+            raise ValueError('task cwd is supported only by the controlled Responses executor')
         cwd = task.get('cwd', '.')
         chain_paths(cwd)
         cwds.add(cwd)
@@ -430,20 +442,34 @@ def _below(path, directory):
     return directory == '.' or path == directory or path.startswith(directory + '/')
 
 
-def bind(document, plan, manifest):
+def bind(document, plan, manifest, *, cwd_honored=False):
     """Bind a valid document's scope to the evaluated tasks, which the proposer does not author (#339).
 
-    The plan's task_cwd must be one of the manifest's task cwds and each declared task path must lie below one of
-    them; otherwise the document is blocked (task_cwd_not_evaluated, task_path_not_evaluated). Either way
-    scope.source records the binding and scope.task_cwds the cwds it was checked against. A document that is not
-    valid is returned unchanged; an unreadable manifest raises ValueError."""
+    The plan's task_cwd must be one of the manifest's task cwds and each declared task path must lie below that
+    task_cwd and an evaluated cwd; otherwise the document is blocked (task_cwd_not_evaluated,
+    task_path_not_evaluated). Task paths stay proposer-declared (scope.task_paths_source), so the bound scope drops
+    the instruction directories and rules only they make governing, and an operation on one is blocked
+    (task_path_scope_unbound). Either way scope.source records the binding and scope.task_cwds the cwds it was
+    checked against. A document that is not valid is returned unchanged; an unreadable manifest, or a task cwd
+    the trial runner does not honor (cwd_honored), raises ValueError."""
     if document.get('status') != 'valid' or document.get('scope') is None: return document
-    cwds, parsed = task_cwds(manifest), parse_plan(plan)
+    cwds, parsed = task_cwds(manifest, cwd_honored=cwd_honored), parse_plan(plan)
     cwd = parsed['profile']['task_cwd']
     findings = [] if cwd in cwds else [dict(reason='task_cwd_not_evaluated', path=cwd)]
     findings += [dict(reason='task_path_not_evaluated', path=path) for path in parsed['task_paths']
-                 if not any(_below(path, evaluated) for evaluated in cwds)]
-    bound = dict(document, scope=dict(document['scope'], source=BOUND, task_cwds=cwds),
+                 if not (_below(path, cwd) and any(_below(path, evaluated) for evaluated in cwds))]
+    scope = document['scope']
+    declared = scope['task_path_scope']
+    dirs = [d for d in scope['instruction_dirs'] if d not in declared['instruction_dirs']]
+    rules = [r for r in scope['rules'] if r not in declared['rules']]
+    runtime, fallback = scope['runtime'], tuple(scope['fallback_filenames'])
+    for operation in document.get('operations', ()):
+        name, kind = operation['path'], operation['kind']
+        if (kind == 'instruction' and _scope(name, runtime) in declared['instruction_dirs']
+                or kind == 'path_rule' and name in declared['rules']):
+            findings.append(dict(reason='task_path_scope_unbound', path=name))
+    bound = dict(document, scope=dict(scope, source=BOUND, task_cwds=cwds, task_paths_source='proposer_declared',
+                                      instruction_dirs=dirs, rules=rules),
                  findings=[*document.get('findings', ()), *findings])
     if findings: bound.update(status='blocked', reasons=sorted({*document['reasons'], *(f['reason'] for f in findings)}))
     return bound
