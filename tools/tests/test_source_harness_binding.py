@@ -1,4 +1,6 @@
 """Synthetic Git harness bindings; only owned in-process captures can be compared."""
+from datetime import datetime, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,6 +16,7 @@ import agent_harness_lab
 from agent_harness_lab.evaluation import controller_receipts as owned
 from agent_harness_lab.evaluation.integrity import digest as tree_digest, location
 from agent_harness_lab.sources import harness_binding
+from agent_harness_lab.sources.harness_binding import PROFILE as PROFILE_NAME
 from agent_harness_lab.sources.controller import SourceSink
 from agent_harness_lab.sources.git import GitExport
 from agent_harness_lab.sources.registry import Capability, Registry
@@ -60,6 +63,20 @@ class SyntheticHarnessRepository:
     def capture(self, reader=GitExport):
         collector = reader(self.manifest); snapshot = collector.read(self.source)
         return collector, snapshot
+
+
+def producer_facts(attempt, harness):
+    """Stand in for the real kernel producers' private executor/grader facts; the native kernel test runs them."""
+    fact = lambda value: hashlib.sha256(repr(value).encode()).hexdigest()
+    now = datetime.now(timezone.utc).isoformat()
+    attempt.data['kernels'] = [
+        dict(complete=True, role='executor', ordinal=0, binary_sha256=fact('binary'), image_sha256=fact('image'),
+            input_digests={} if harness is None else dict(harness=tree_digest(harness)), observed_at=now),
+        dict(complete=True, role='grader', ordinal=1, binary_sha256=fact('binary'), image_sha256=fact('image'),
+            input_digests=dict(oracle=fact('oracle'), fixture=fact('fixture')), observed_at=now)]
+    attempt.data['grade'] = dict(executor_ordinal=0, grader_ordinal=1, oracle_sha256=fact('oracle'), artifacts_sha256=fact('artifacts'))
+    if harness is not None: attempt.locations['0'] = location(harness)
+    owned._PENDING[attempt] = attempt._state()
 
 
 @unittest.skipUnless(git_available(), 'explicit system Git 2.43+ is required')
@@ -220,6 +237,76 @@ class HarnessBindingTests(unittest.TestCase):
         receipt = {**harness_binding._receipt('verified', None), 'publication_allowed': True}
         self.assertFalse(public_export_allowed([{**fixtures.record(), **receipt}]))
         self.assertFalse(public_export_allowed([{**fixtures.record(), 'harness_snapshot_binding': {'publication_allowed': True}}]))
+
+    def sink_finish(self, harness_capture, harness=None, mutate=None, inputs_unchanged=True, scope='synthetic-scope'):
+        sink = SourceSink(self.root/(scope+'.json'), self.fixture.source.project_sha256, digest(scope), harness_capture=harness_capture)
+        with owned.session():
+            attempt = sink.begin(['result.txt'], time.monotonic()+5)
+            if mutate is not None: mutate()
+            producer_facts(attempt, self.harness if harness is None else harness)
+            result = sink.finish(attempt, inputs_unchanged)
+            direct = harness_binding.bind(attempt, harness_capture) if result['status'] == 'observed' else None
+        return sink, result, direct
+
+    def test_live_sink_reports_the_binding_with_the_verified_session_and_attempt(self):
+        from agent_harness_lab.evaluation.benchmark import public_export_allowed
+        collector, _ = self.fixture.capture()
+        sink, result, direct = self.sink_finish(collector.harness_capture)
+        self.assertEqual(result['status'], 'observed', result)
+        live = result['live_verification']; binding = live['harness_snapshot_binding']
+        self.assertEqual((binding['status'], binding['reason']), ('verified', None))
+        self.assertEqual(binding, direct)
+        fields = {field['name']: field for field in live['verified_execution']['fields']}
+        self.assertEqual(fields['attempt']['status'], 'verified')
+        self.assertEqual(binding['controller_attempt_sha256'], fields['attempt']['value_sha256'])
+        self.assertEqual(binding['controller_harness_input_sha256'], live['controller_harness_input']['sha256'])
+        self.assertEqual(binding['harness_snapshot_sha256'], collector.harness.sha256)
+        self.assertEqual(binding['head_sha256'], collector.harness.head_sha256)
+        self.assertEqual(binding['effective_loading'], 'unverified')
+        self.assertFalse(binding['authority_granted']); self.assertFalse(binding['publication_allowed'])
+        self.assertNotIn('effective_harness', fields)
+        self.assertTrue(all(field.status == 'declared' for item in sink.store.capture(sink.source).identities for field in item.fields))
+        journal = sink.store.path.read_text()
+        for private in ('harness_snapshot_binding', PROFILE_NAME, collector.harness.sha256, str(self.root)):
+            self.assertNotIn(private, journal)
+        self.assertNotIn(str(self.root), json.dumps(result))
+        self.assertFalse(public_export_allowed([{**result, 'publication_allowed': True}]))
+
+    def test_live_sink_without_a_capture_adds_no_binding_and_changes_keep_mismatch_or_unknown(self):
+        _, plain, _ = self.sink_finish(None, scope='plain')
+        self.assertEqual(plain['status'], 'observed', plain)
+        self.assertNotIn('harness_snapshot_binding', plain['live_verification'])
+        collector, _ = self.fixture.capture()
+        changed = lambda: (self.harness/'AGENTS.md').write_text('SYNTHETIC_UNCOMMITTED_CHANGE\n')
+        _, result, _ = self.sink_finish(collector.harness_capture, mutate=changed, scope='changed')
+        binding = result['live_verification']['harness_snapshot_binding']
+        self.assertEqual((binding['status'], binding['reason']), ('mismatch', 'input_tree_differs'))
+        self.fixture.git('checkout', '--', 'harness/AGENTS.md')
+        copy = self.root/'copy'; shutil.copytree(self.fixture.repo, copy, symlinks=True)
+        _, result, _ = self.sink_finish(collector.harness_capture, harness=copy/'harness', scope='relocated')
+        binding = result['live_verification']['harness_snapshot_binding']
+        self.assertEqual((binding['status'], binding['reason']), ('unknown', 'harness_location_not_in_captured_checkout'))
+        self.assertIsNone(binding['harness_snapshot_sha256'])
+
+    def test_live_sink_reports_unowned_captures_unknown_and_incomplete_attempts_without_binding(self):
+        collector, snapshot = self.fixture.capture()
+        for index, claim in enumerate((collector.harness, snapshot, harness_binding.HarnessCapture(), {'status': 'verified'})):
+            with self.subTest(claim=type(claim).__name__):
+                _, result, _ = self.sink_finish(claim, scope='claim-%d' % index)
+                self.assertEqual(result['status'], 'observed', result)
+                binding = result['live_verification']['harness_snapshot_binding']
+                self.assertEqual((binding['status'], binding['reason']), ('unknown', 'owned_harness_capture_required'))
+                self.assertIsNone(binding['controller_attempt_sha256'])
+        _, result, _ = self.sink_finish(collector.harness_capture, inputs_unchanged=False, scope='incomplete')
+        self.assertEqual((result['status'], result['reason']), ('unknown', 'owned_source_capture_incomplete'))
+        self.assertNotIn('live_verification', result); self.assertNotIn('harness_snapshot_binding', json.dumps(result))
+        late_sink = SourceSink(self.root/'late.json', self.fixture.source.project_sha256, digest('late'), harness_capture=None)
+        with owned.session():
+            attempt = late_sink.begin(['result.txt'], time.monotonic()+5)
+            late, _ = self.fixture.capture(); late_sink.harness_capture = late.harness_capture
+            producer_facts(attempt, self.harness)
+            binding = late_sink.finish(attempt, True)['live_verification']['harness_snapshot_binding']
+        self.assertEqual((binding['status'], binding['reason']), ('unknown', 'snapshot_not_captured_before_execution'))
 
     def test_git_snapshot_and_summary_stay_unchanged_by_handle_issuance(self):
         first, one = self.fixture.capture(); second, two = self.fixture.capture()

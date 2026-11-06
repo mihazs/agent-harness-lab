@@ -3,6 +3,7 @@ from dataclasses import replace
 import secrets
 
 from agent_harness_lab.evaluation import controller_receipts as owned
+from . import harness_binding
 from .execution import CoverageManifest, ExecutionIdentity, ExecutionMetadata, IDENTITY_FIELDS, IdentityField, MissingField, RecordRef, ScanBound
 from .graph import EvidenceGraph, JoinReceipt
 from .registry import Capability, Registry
@@ -77,12 +78,14 @@ def recheck(source, connector, proposed):
 
 
 class SourceSink:
-    def __init__(self, cache, project_sha256, scope_sha256):
+    def __init__(self, cache, project_sha256, scope_sha256, harness_capture=None):
         self.source=SourceSpec('controller','ahl-controller','v1',digest(('ahl.controller-source-v1',secrets.token_hex(32))),project_sha256,scope_sha256,
             identity_provenance='source_declared_id',enabled=True)
         self.scope=dict(project_sha256=project_sha256,scope_sha256=scope_sha256)
         self.store=SourceStore(cache,**self.scope)
         self.store._safe_path()
+        # Optional opaque GitExport.harness_capture; any other value is reported as an unowned (unknown) binding.
+        self.harness_capture=harness_capture
 
     def begin(self, artifacts, deadline):
         return owned.begin(self.source,artifacts,deadline)
@@ -99,8 +102,12 @@ class SourceSink:
             receipt=registry.ingest(self.source,self.store,**self.scope)
             if self.store.status(self.source)['source_snapshot_sha256']!=preview.sha256:
                 raise ValueError('controller source checkpoint changed')
+            live=registry.recheck(self.source,self.store,**self.scope)
+            if self.harness_capture is not None:
+                # Same live capability as the verified executor/grader link; private, never journaled.
+                live['harness_snapshot_binding']=harness_binding.bind(capture,self.harness_capture)
             return dict(status='observed',profile=owned.PROFILE,publication_allowed=False,import_receipt=receipt.to_dict(),
-                live_verification=registry.recheck(self.source,self.store,**self.scope))
+                live_verification=live)
         except (ValueError,OSError,TypeError,KeyError):
             capture.cancel()
             return dict(status='unknown',profile=owned.PROFILE,reason='owned_source_capture_incomplete',publication_allowed=False)

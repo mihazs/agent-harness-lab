@@ -879,9 +879,10 @@ class TrajectoryKernelTests(KernelFixture):
                 if mode=='relocated':
                     shutil.copytree(fixture.repo,self.root/('copy-'+mode)); harness=self.root/('copy-'+mode)/'harness'
                 with owned.session():
-                    sink=SourceSink(self.root/(mode+'-binding.json'),fixture.source.project_sha256,source_digest('synthetic-scope'))
+                    sink=SourceSink(self.root/(mode+'-binding.json'),fixture.source.project_sha256,source_digest('synthetic-scope'),
+                        harness_capture=None if collector is None else collector.harness_capture)
                     capture=sink.begin(['result.txt'],time.monotonic()+15)
-                    if mode=='late': collector=fixture.capture()[0]
+                    if mode=='late': collector=fixture.capture()[0]; sink.harness_capture=collector.harness_capture
                     if mode=='changed': (harness/'AGENTS.md').write_text('SYNTHETIC_UNCOMMITTED_CHANGE\n')
                     if mode=='untracked': (harness/'extra.md').write_text('SYNTHETIC_UNTRACKED_ADDITION\n')
                     run=backend.run(argv,self.work,{} if mode=='unobserved' else {'harness':harness},'executor',
@@ -892,6 +893,7 @@ class TrajectoryKernelTests(KernelFixture):
                     self.assertEqual(result['status'],'observed',result)
                     receipt=harness_binding.bind(capture,collector.harness_capture)
                     self.assertEqual((receipt['status'],receipt['reason']),outcome,receipt)
+                    self.assertEqual(result['live_verification']['harness_snapshot_binding'],receipt)
                     self.assertEqual(receipt['effective_loading'],'unverified')
                     self.assertFalse(receipt['authority_granted']); self.assertFalse(receipt['publication_allowed'])
                     self.assertFalse(public_export_allowed([{**receipt,'publication_allowed':True}]))
