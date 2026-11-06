@@ -67,14 +67,32 @@ def routed_help():
     return sorted(routes)
 
 
+def inventory(build):
+    """Build a case inventory at collection time without letting a broken entrypoint abort collection."""
+    try:return build()
+    except (Exception,SystemExit) as error:return error
+
+
+def checked(built):
+    """Re-raise an inventory failure inside the test that consumes it."""
+    if isinstance(built,BaseException):raise built
+    return built
+
+
+def cases(built,param):
+    """One case per inventory item, or a single failing case that carries the inventory error."""
+    if isinstance(built,BaseException):return [pytest.param(built,id='inventory-error')]
+    return [param(item) for item in built]
+
+
 # Collected once so that every recursive parser and every routed command is its own case.
-PARSERS=[(entry,path,parser) for entry,root in parsers() for path,parser in walk(root)]
-ROUTED=routed_help()
+PARSERS=inventory(lambda:[(entry,path,parser) for entry,root in parsers() for path,parser in walk(root)])
+ROUTED=inventory(routed_help)
 
 
-@pytest.mark.parametrize('entry,path,parser',[pytest.param(entry,path,parser,id=entry.strip().replace(' ','_')+':'+'/'.join(path))
-    for entry,path,parser in PARSERS])
-def test_every_recursive_action_and_command_has_explicit_useful_help(entry,path,parser):
+@pytest.mark.parametrize('case',cases(PARSERS,lambda case:pytest.param(case,id=case[0].strip().replace(' ','_')+':'+'/'.join(case[1]))))
+def test_every_recursive_action_and_command_has_explicit_useful_help(case):
+    _,_,parser=checked(case)
     assert isinstance(parser.description,str)
     assert len(parser.description.strip())>=20
     for action in parser._actions:
@@ -91,15 +109,25 @@ def test_every_recursive_action_and_command_has_explicit_useful_help(entry,path,
 
 
 def test_recursive_help_covers_every_command_and_action():
-    assert len(PARSERS)>50;assert sum(len(parser._actions) for _,_,parser in PARSERS)>250
+    found=checked(PARSERS)
+    assert len(found)>50;assert sum(len(parser._actions) for _,_,parser in found)>250
 
 
 def test_routed_help_covers_every_command():
-    assert len(ROUTED)>50
+    assert len(checked(ROUTED))>50
 
 
-@pytest.mark.parametrize('route',[pytest.param(route,id='/'.join(route)) for route in ROUTED])
+def test_broken_entrypoint_inventory_becomes_one_failing_case_instead_of_a_collection_error():
+    built=inventory(lambda:capture(lambda:None))
+    collected=cases(built,lambda item:pytest.param(item,id='unused'))
+    assert [param.id for param in collected]==['inventory-error']
+    with pytest.raises(AssertionError,match='never constructed its argument parser'):checked(collected[0].values[0])
+    assert checked([('ahl',(),None)])==[('ahl',(),None)]
+
+
+@pytest.mark.parametrize('route',cases(ROUTED,lambda route:pytest.param(route,id='/'.join(route))))
 def test_all_routed_help_is_available_without_operations_or_input(route):
+    route=checked(route)
     with ExitStack() as denied:
         for target in ('subprocess.Popen','subprocess.run','urllib.request.urlopen','builtins.input',
                 'pathlib.Path.mkdir','pathlib.Path.write_text','pathlib.Path.write_bytes'):
