@@ -32,7 +32,7 @@ tasks can pass their artifact grade while violating this frozen audit policy.
 
 The dedicated standard-library monitor runs under host Python `-I -S`, outside
 the role namespace. It is launched through the sandbox keyring trampoline, so it
-and the traced bubblewrap start in a new empty session keyring while the traced
+and the traced bubblewrap start in a new empty session keyring, with key syscalls denied, while the traced
 exec chain still begins at bubblewrap. Its worker joins the existing cgroup before namespace launch;
 existing tmpfs quotas, pinned-image checks, stdout/stderr ceilings, parent deadline
 and whole-cgroup cleanup remain required. No Python `preexec_fn` runs in the

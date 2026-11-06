@@ -30,8 +30,39 @@ sys.path.insert(0, sys.argv[1])
 from agent_harness_lab.evaluation.sandbox import Limits, SandboxBackend
 hard = resource.getrlimit(resource.RLIMIT_NPROC)[1]
 limits = Limits(seconds=10, processes=hard if hard != resource.RLIM_INFINITY else 1 << 22)
-run = SandboxBackend().run(['/usr/bin/python3', '-c', sys.argv[3]], Path(sys.argv[2]), {}, 'grader', limits)
+run = SandboxBackend().run(['/usr/bin/python3', '-c', sys.argv[3], *sys.argv[4:]], Path(sys.argv[2]), {}, 'grader', limits)
 sys.stderr.write(run['stderr']); print(run['stdout'].strip()); sys.exit(0 if run['status'] == 'completed' else 1)
+'''
+
+
+# Joins a fresh synthetic session keyring and plants two keys in it: one with default permissions and one that also
+# grants its user VIEW and READ (KEYCTL_SETPERM 0x3f3f0000). Then it runs argv with the keyring's and keys' serials
+# appended, as a sandboxed run can read them from /proc/keys.
+SERIAL_PLANT = r'''
+import ctypes, json, os, subprocess, sys
+libc = ctypes.CDLL(None, use_errno=True); libc.syscall.restype = ctypes.c_long
+add_key, keyctl = {'x86_64': (248, 250), 'aarch64': (217, 219)}[os.uname().machine]
+session = libc.syscall(keyctl, 1, b'ahl-synthetic-validator-session')
+default = libc.syscall(add_key, b'user', b'ahl-synthetic-default', b'synthetic-secret-a', 18, -3)
+readable = libc.syscall(add_key, b'user', b'ahl-synthetic-readable', b'synthetic-secret-b', 18, -3)
+assert min(session, default, readable) > 0 and libc.syscall(keyctl, 5, readable, 0x3f3f0000) == 0
+buffer = ctypes.create_string_buffer(64)
+own = libc.syscall(keyctl, 11, readable, buffer, 64)
+run = subprocess.run(json.loads(sys.argv[1]) + [str(session), str(default), str(readable)], capture_output=True,
+                     text=True, env={'PATH': '/usr/bin:/bin'}, timeout=20)
+print(json.dumps(dict(own=own, rc=run.returncode, stdout=run.stdout.strip(), stderr=run.stderr[-500:])))
+'''
+# Inside the sandbox: what keyctl DESCRIBE and READ return for each planted serial.
+SERIAL_INNER = r'''
+import ctypes, os, sys
+keyctl = {'x86_64': 250, 'aarch64': 219}[os.uname().machine]
+libc = ctypes.CDLL(None, use_errno=True); libc.syscall.restype = ctypes.c_long
+seen = []
+for serial in map(int, sys.argv[1:]):
+    buffer = ctypes.create_string_buffer(256)
+    seen += [f'describe:{serial}'] if libc.syscall(keyctl, 6, serial, buffer, 256) > 0 else []
+    seen += [f'read:{serial}'] if libc.syscall(keyctl, 11, serial, buffer, 256) > 0 else []
+print(' '.join(seen) or 'denied')
 '''
 
 
@@ -145,6 +176,28 @@ class NativeKeyringTests(unittest.TestCase):
         report = json.loads(planted.stdout)
         self.assertGreater(report['own'], 0)  # the planted key is readable outside the sandbox
         self.assertEqual((report['rc'], report['stdout']), (0, 'denied'), report['stderr'])
+
+    def test_a_sandboxed_run_cannot_reach_user_readable_validator_keys_by_serial(self):
+        with tempfile.TemporaryDirectory() as folder:
+            work = Path(folder)
+            probe = SandboxBackend().run(['/usr/bin/true'], work, {}, 'grader', unbounded_processes())
+            if probe['status'] != 'completed':
+                self.skipTest(f"bubblewrap role sandbox unavailable: {probe['stderr'].strip()[:200]}")
+            for name in ('home', 'tmp', 'workspace'): (work / 'trial' / name).mkdir(parents=True)
+            trial = work / 'trial'
+            hook = SandboxBackend().hook_trial_command(['python3', '-c', SERIAL_INNER], trial, writable=[trial / 'home'],
+                                                       cwd=trial / 'workspace', env={'PATH': '/usr/bin:/bin'},
+                                                       runtime='/usr/bin/python3')
+            launches = dict(grader=[sys.executable, '-I', '-c', RUN_SANDBOXED, str(ROOT), str(work), SERIAL_INNER],
+                            hook_trial=hook)
+            for name, argv in launches.items():
+                with self.subTest(launch=name):
+                    planted = subprocess.run([sys.executable, '-I', '-c', SERIAL_PLANT, json.dumps(argv)],
+                                             capture_output=True, text=True, timeout=60)
+                    self.assertEqual(planted.returncode, 0, planted.stderr)
+                    report = json.loads(planted.stdout)
+                    self.assertEqual(report['own'], 18)  # the user-readable key is readable outside the sandbox
+                    self.assertEqual((report['rc'], report['stdout']), (0, 'denied'), report['stderr'])
 
 
 if __name__ == '__main__':

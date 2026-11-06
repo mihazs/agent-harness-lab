@@ -148,7 +148,9 @@ trial read-only at its own path. Only the trial `home`, `tmp`, `codex-home` and
 `workspace/.ahl-canary` folders are writable, so a hook cannot write the
 workspace, and nothing else of the host is visible, the user's home and
 credential stores included. Before bubblewrap starts, the run joins a new empty
-session keyring, so it cannot read keys of the validator's session keyring.
+session keyring and a seccomp filter fails every key syscall, so it cannot search,
+describe or read the validator's keys, even by serial number. `/proc/keys` still
+lists the type and description of keys the validator's uid may view.
 Results then report `host_isolation: bubblewrap` and a `sandbox` block with the
 writable folders. The probe runs that same command on `/usr/bin/true` without a
 per-user process limit. When bubblewrap or unprivileged user namespaces are
