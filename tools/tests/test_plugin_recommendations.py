@@ -216,7 +216,7 @@ class PluginRecommendationTests(unittest.TestCase):
                     {'scripts/run.sh/x': 'x'}, {'commands/status.md': PLUGIN['commands/status.md']}, {}, {'bin.md': 'a\0b'}):
             with self.subTest(changes=bad), self.assertRaises(ValueError): self.bundle(bad)
         # Each path passes every earlier check, so only the writability gate refuses it.
-        for private in ('CLAUDE.local.md', '__pycache__/a.md', 'memories/a.md'):
+        for private in ('CLAUDE.local.md', '__pycache__/a.md', '.claude/agent-memory/a.md'):
             with self.subTest(private=private), self.assertRaisesRegex(ValueError, 'path is excluded from plugin patches'):
                 self.bundle({private: 'x'})
         detour = self.base / 'elsewhere' / '..'
