@@ -18,7 +18,7 @@ class RegressionAdmissionTests(unittest.TestCase):
     def setUp(self):
         self.fixture = fixtures.ReviewFixture(); self.fixture.setUp(); self.addCleanup(self.fixture.doCleanups)
         f = self.fixture
-        prepared = f.drafted(); f.store.review(f.case_id,f.review_file())
+        f.drafted(); f.store.review(f.case_id,f.review_file())
         self.store, self.case_id = f.store, f.case_id
         source = Path(agent_harness_lab.__file__).parent/'evaluation/fixtures/starter-v1'
         parent = f.root/'parent'; shutil.copytree(source,parent)

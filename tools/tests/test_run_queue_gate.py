@@ -1,5 +1,4 @@
 """run_queue evaluates only what route() allows; unauthorized adapters never reach the callback (#233)."""
-from copy import deepcopy
 import unittest
 from agent_harness_lab.diagnostics.mechanisms import MechanismRecord
 from agent_harness_lab.optimization.budget import Budget

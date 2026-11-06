@@ -314,7 +314,7 @@ class LineageReviewTests(unittest.TestCase):
         self.assertFalse((self.store.root/'cases').exists())
 
     def test_snapshot_directory_link_cannot_write_outside_private_store(self):
-        proposed = self.propose(); folder = self.store.root/'snapshots'
+        self.propose(); folder = self.store.root/'snapshots'
         moved = self.fixture.root/'outside'; folder.rename(moved); folder.symlink_to(moved)
         original = {p.name:p.read_bytes() for p in moved.iterdir()}
         with self.assertRaises(ValueError): self.propose(1,2,'derived_from')

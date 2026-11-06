@@ -1,6 +1,5 @@
 """Immutable review contracts never manufacture application authority."""
 import dataclasses
-import hashlib
 import unittest
 
 from agent_harness_lab.harness_change_plan import HarnessChangePlan, FileRevision, digest, REFERENCE_NAMES

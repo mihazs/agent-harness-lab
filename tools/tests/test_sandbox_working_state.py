@@ -1,7 +1,6 @@
 """Descriptor-based working snapshots; these tests do not prove kernel isolation."""
 import os
 from pathlib import Path
-import shutil
 import tempfile
 import time
 import unittest

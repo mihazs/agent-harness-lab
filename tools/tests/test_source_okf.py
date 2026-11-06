@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import patch
 
 from agent_harness_lab.cli import main
-from agent_harness_lab.sources.okf import OKFExport, concept
+from agent_harness_lab.sources.okf import OKFExport
 from agent_harness_lab.sources import okf
 from agent_harness_lab.sources.schema import SourceSpec, digest
 

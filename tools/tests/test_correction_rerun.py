@@ -205,7 +205,6 @@ class CorrectionRerunTests(unittest.TestCase):
         self.assertIsNotNone(result['new_run_id'])
 
     def test_v2_incomplete_prior_uses_only_pinned_inputs_not_unsealed_results(self):
-        from agent_harness_lab.evaluation.oracle_history import HistoryStore
         parent = self.application.bank(self.applied); export = self.root/'controlled-prior'
         source = export_manifest(parent,export)
         for t in source['tasks']: t['offline_executor']=['/usr/bin/python3','-I','/inputs/harness/solve.py']

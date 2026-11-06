@@ -13,7 +13,7 @@ from unittest.mock import patch
 import agent_harness_lab
 from agent_harness_lab.cli import main
 from agent_harness_lab.evaluation import benchmark, responses
-from agent_harness_lab.evaluation.plan import ExperimentSpec, schedule
+from agent_harness_lab.evaluation.plan import schedule
 from agent_harness_lab.evaluation.precision import preflight
 if __package__:
     from . import test_preservation_analysis as preservation

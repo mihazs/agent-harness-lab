@@ -15,7 +15,7 @@ from weakref import WeakKeyDictionary
 from agent_harness_lab.private_journal import encoded
 from .bank_requalification_domain import parse,PROJECT_INPUT_PROFILE,PROJECT_INPUT_PATHS
 from .comparison_custody import snapshot_pin
-from .construction_access import store_identity,current_store_identity
+from .construction_access import store_identity,current_store_identity  # noqa: F401 - re-exported for existing importers
 from .decision_receipts import engine
 from .integrity import read_regular, regular_sha256
 from .working_state import WorkingState

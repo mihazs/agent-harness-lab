@@ -1,6 +1,4 @@
 """Seeded Beta-Bernoulli simulation with exact delayed-reward attribution."""
-from dataclasses import asdict
-import math
 import random
 from .context_policies import PolicyArm
 

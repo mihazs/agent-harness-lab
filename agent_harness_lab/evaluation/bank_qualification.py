@@ -16,7 +16,7 @@ from . import review_authority as authority
 from .bank_revisions import _copy_assets, payload_tree, sync_tree
 from .integrity import contained, copy_frozen, digest, read_regular
 from .regressions import fields, references, text
-from .task_bank import TaskSpec, _validate
+from .task_bank import _validate
 
 PROFILE='conditional-final-bank-v1'
 PROTOCOL='trusted-lineage-split-and-native-controls-v1'

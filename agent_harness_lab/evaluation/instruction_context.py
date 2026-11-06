@@ -5,7 +5,6 @@ import json
 from pathlib import Path, PurePosixPath
 
 from .comparison_custody import bundle_binding, snapshot_pin
-from .integrity import digest
 from .working_state import WorkingState,check_deadline
 from .analysis_inputs import AnalysisInputs,input_digest,check_role
 

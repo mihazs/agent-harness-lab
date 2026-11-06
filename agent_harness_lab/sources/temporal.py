@@ -71,7 +71,7 @@ def ref(key):
 
 def cyclic(adjacency):
     """Members of supersession cycles (including self-loops), found without recursion."""
-    index, low, stack, on, found, counter = {}, {}, [], set(), set(), 0
+    index, low, stack, on, counter = {}, {}, [], set(), 0
     for root in sorted(adjacency):
         if root in index: continue
         work = [(root, iter(sorted(adjacency.get(root, ()))))]

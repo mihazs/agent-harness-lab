@@ -239,7 +239,7 @@ def accept(store, case_id, parent_path, request_path):
         descriptor, task, _ = read_draft(case/'draft.json'); proposal, _ = load(case/'proposal.json')
         attempt_event = next(e for e,_ in reversed(events) if e['kind'] == 'reproduced')
         attempt = contained(case,attempt_event['payload']['attempt'])
-        run = attempt/'replay'; minimized = run/'inputs/minimized'; oracle = run/'inputs/oracle'
+        run = attempt/'replay'; minimized = run/'inputs/minimized'
         fixture_hash = digest(minimized)
         if any(t['fixture_digest'] == fixture_hash for t in parent_value['tasks']):
             raise ValueError('fixture already covered; use an explicit correction/replacement workflow')
@@ -293,7 +293,7 @@ def accept(store, case_id, parent_path, request_path):
             write_bytes(staged/'admission.json',encoded(dict(request=request,positive_review=reviewed,
                 raw_fixture_sha256=task.fixture_digest,materialized_fixture_sha256=fixture_hash,
                 historical_verification='unverified',independence='unverified',publication_allowed=False)))
-            validated = _validate(staged/'bank.json',verify_contents=True)
+            _validate(staged/'bank.json',verify_contents=True)
             from .content_grouping import fixture_content
             new_content = fixture_content(contained(staged,new_task['fixture']),new_task['fixture_digest'],MAX_REVISION_BYTES)[0]
             for prior in tasks:

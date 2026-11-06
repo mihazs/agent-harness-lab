@@ -446,7 +446,7 @@ class SequentialOnlineTests(unittest.TestCase):
                 # Complete root is not inspected until this boundary; first inspect then mutate.
                 control._inspect(rows);path.write_text('{}')
             return original(control,scheduled,rows)
-        with patch.object(custody.Controller,'before',before):result=self.run_history(expect='incomplete')
+        with patch.object(custody.Controller,'before',before):self.run_history(expect='incomplete')
         self.assertLessEqual(self.calls.count('executor'),2)
 
     def test_critical_partial_veto_and_no_from_json_controller(self):

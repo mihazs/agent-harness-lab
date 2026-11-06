@@ -85,7 +85,6 @@ class BankContentGroupingTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'changed'): validate(f.path)
 
     def test_receipt_output_keeps_every_exposure(self):
-        from unittest.mock import patch
         f = self.fixture
         (f.root/'fixture1/value').write_text(' 0\n')
         f.tasks[1]['fixture_digest'] = digest(f.root/'fixture1'); f.write()

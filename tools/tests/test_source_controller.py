@@ -1,5 +1,4 @@
 """Live-source negative controls; dictionaries and labels never issue proof."""
-import json
 from contextvars import copy_context
 import os
 from pathlib import Path

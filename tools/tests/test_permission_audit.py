@@ -224,7 +224,6 @@ print(r,flush=True)
             group.rmdir()
 
     def test_actual_runner_keeps_task_success_separate_and_blocks_qualification(self):
-        from agent_harness_lab.evaluation.integrity import digest
         if __package__:from .test_offline_evaluation import OfflineFixture,SOLVER
         else:from test_offline_evaluation import OfflineFixture,SOLVER
         fixture=OfflineFixture();fixture.setUp();self.addCleanup(fixture.doCleanups)

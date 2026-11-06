@@ -25,7 +25,6 @@ from agent_harness_lab.sources import git_view
 from agent_harness_lab.sources.git_view import Folder, GitView
 from agent_harness_lab.sources.schema import SourceSpec, digest
 from agent_harness_lab.sources.store import SourceStore
-from agent_harness_lab.sources.git_evidence import capture as capture_evidence
 from agent_harness_lab.sources import resolve
 from agent_harness_lab.sources.graph import EvidenceGraph, JoinReceipt
 
