@@ -410,6 +410,83 @@ class EmbeddedHookTests(unittest.TestCase):
         self.assertEqual(adoption('pkg/.claude/skills/x/reference.md', 0o644, hooked, in_checkout=True).writability, A)
 
 
+class ShellPreExecutionTests(unittest.TestCase):
+    """Claude runs !`cmd` and ```! blocks in command and skill bodies on invocation, so they need the hook contract."""
+    RENDERED = ('.claude/commands/deploy.md', '.claude/commands/frontend/c.md', '.claude/skills/x/SKILL.md',
+                'pkg/.claude/skills/x/SKILL.md', '.agents/skills/x/SKILL.md')
+    HEAD = b'---\ndescription: synthetic\n---\n'
+
+    def verdict(self, name, body, **context):
+        from agent_harness_lab.surfaces import adoption
+        return adoption(name, 0o644, self.HEAD + body, in_checkout=True, **context).writability
+
+    def test_documented_forms_route_commands_and_skills_to_the_hook_contract(self):
+        documented = (b'## Changes\n\n!`git diff HEAD`\n',            # a line that starts with !
+                      b'- PR diff: !`gh pr diff`\n',                    # ! after whitespace
+                      b'## Environment\n```!\nnode --version\n```\n')  # the multi-line fenced form
+        for name in self.RENDERED:
+            for body in documented:
+                with self.subTest(name=name, body=body): self.assertEqual(self.verdict(name, body), C)
+        self.assertEqual(self.verdict('skills/x/SKILL.md', documented[0], root_skills=True), C)
+
+    def test_inline_form_inside_a_fenced_code_block_is_not_excluded(self):
+        # The docs never say a plain fence suppresses the inline form, so a fenced example fails closed.
+        for fence in (b'```\n!`date`\n```\n', b'```bash\necho\n!`date`\n```\n', b'~~~\n!`date`\n~~~\n'):
+            with self.subTest(fence=fence): self.assertEqual(self.verdict('.claude/commands/c.md', fence), C)
+
+    def test_unverified_variants_fail_closed(self):
+        for body in (b'KEY=!`cmd`\n', b'!``cmd``\n', b'! `cmd`\n', b'  ```!\ncmd\n```\n', b'````!\ncmd\n````\n',
+                     b'~~~!\ncmd\n~~~\n', b'``` !\ncmd\n```\n', b'text\r\n!`cmd`\r\n', b'\xff\xfe!'):
+            with self.subTest(body=body): self.assertEqual(self.verdict('.claude/commands/c.md', body), C)
+        # Claude Code matches ```! anywhere, so a fence after other text on the line fails closed too.
+        for body in (b'> ```!\n> node -v\n> ```\n', b'>```!\nid\n```\n', b'- ```!\n  node -v\n  ```\n',
+                     b'1. ```!\n   node -v\n   ```\n', b'Env: ```!\nnode -v\n```\n', b'Use ```!date``` here.\n',
+                     b'|```!id```|\n', b'\xc2\xa0```!\nid\n```\n', b'text\r```!\rnode -v\r```\r',
+                     b'x\r```!\nid\n```\n', 'intro\u2028```!\nid\n```\n'.encode()):
+            for name in self.RENDERED:
+                with self.subTest(name=name, body=body): self.assertEqual(self.verdict(name, body), C)
+        # Even prose that quotes the marker, as in `!`, holds ! before a backtick and therefore fails closed.
+        self.assertEqual(self.verdict('.claude/commands/c.md', b'Use the `!` prefix.\n'), C)
+        # Substitution runs over the original file, so the frontmatter is scanned as well.
+        from agent_harness_lab.surfaces import adoption
+        raw = b'---\ndescription: !`date`\n---\nbody\n'
+        self.assertEqual(adoption('.claude/commands/c.md', 0o644, raw, in_checkout=True).writability, C)
+
+    def test_plain_bodies_stay_adoptable(self):
+        for body in (b'Run `git diff HEAD` and summarize it. Done!\n', b'```bash\ngit status\n```\n',
+                     b'Shout! Then `make test`.\n', b'A line\n!important\n', b'```bash\n!! echo\n```\n'):
+            for name in self.RENDERED:
+                with self.subTest(name=name, body=body): self.assertEqual(self.verdict(name, body), A)
+
+    def test_surfaces_that_do_not_render_shell_keep_their_verdicts(self):
+        body = b'!`git diff HEAD`\n'
+        for name in ('.claude/agents/a.md', '.claude/rules/r.md', 'CLAUDE.md', 'app/CLAUDE.md',
+                     '.claude/skills/x/reference.md'):
+            with self.subTest(name=name): self.assertEqual(self.verdict(name, body), A)
+        from agent_harness_lab.surfaces import adoption
+        self.assertEqual(adoption('.claude/commands/c.md', 0o644, None, in_checkout=True).writability, A)
+
+    def test_both_writers_refuse_a_pre_executing_command(self):
+        import base64
+        temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
+        name, raw = '.claude/commands/ship.md', self.HEAD + b'!`git push`\n'
+        folder = Path(temp.name) / 'candidate'; (folder / name).parent.mkdir(parents=True)
+        (folder / name).write_bytes(raw)
+        with self.assertRaisesRegex(ValueError, 'needs a hook contract'): candidate_states(folder, {})
+        (folder / name).write_bytes(self.HEAD + b'Run `git push` after review.\n')
+        self.assertEqual(list(candidate_states(folder, {})), [name])
+        with patch('agent_harness_lab.promotion.journal.ignored', return_value=False):
+            journal = Journal(folder, Path(temp.name) / 'journal')
+            target = {'content': base64.b64encode(raw).decode(), 'mode': 0o644}
+            with self.assertRaisesRegex(ValueError, 'outside owned harness surface'): journal.owned(name, target)
+
+    def test_the_syntax_is_pinned_to_public_docs(self):
+        from agent_harness_lab.surfaces import CAPABILITIES
+        row, = (r for r in CAPABILITIES if 'shell pre-execution' in r.item)
+        self.assertEqual((row.runtime, row.status, row.doc_url),
+                         ('claude-code', 'verified', 'https://code.claude.com/docs/en/skills'))
+
+
 class VendoredTreeTests(unittest.TestCase):
     """Third-party and generated trees hold no .git of their own, yet they are never project-owned surfaces."""
     VENDORED = ('node_modules/pkg/CLAUDE.md', 'node_modules/pkg/.claude/rules/x.md', 'node_modules/AGENTS.md',

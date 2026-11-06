@@ -149,8 +149,37 @@ the frontmatter of an agent definition, a command, a path rule and a `SKILL.md`:
 `surfaces.embeds_hooks` finds a `hooks`, `permissionMode`, `mcpServers` or
 `allowed-tools` word (any case) in Claude frontmatter, or a `hooks` key at any
 depth of a Codex role file, and fails closed on undecodable bytes, a YAML escape
-or unparsable TOML. Such a file needs the hook contract and is never adopted. An
-unchanged staged file is never written, so these checks skip it. The containment
+or unparsable TOML. Such a file needs the hook contract and is never adopted.
+
+A command or a `SKILL.md` can also run shell commands from its body. The
+[Claude Code skills docs](https://code.claude.com/docs/en/skills) (pin
+`2.1.317`) document two forms of dynamic context injection: an inline
+`` !`command` `` whose `!` starts a line or follows whitespace, and a fenced
+block opened with ` ```! `. Claude Code runs the command when the user invokes
+the command or skill, before Claude sees the content. `surfaces.embeds_shell`
+therefore routes such a file to the hook contract. It scans the whole file,
+frontmatter included, because substitution runs over the original file. Forms
+the docs do not confirm fail closed:
+
+- a `!` right before a backtick after any other character, as in
+  `` KEY=!`cmd` ``, or in prose that quotes `` `!` ``;
+- blanks between the `!` and the backtick;
+- a fence of four or more backticks, a tilde fence, and blanks between the fence
+  and its `!`;
+- a fence anywhere in the text, not only at the start of a line: indented, in a
+  list item or blockquote, mid-line as in `` Env: ```!cmd``` ``, or after a bare
+  CR, because Claude Code's block matcher has no line anchor;
+- undecodable bytes.
+
+A plain fenced code block is not excluded: an inline form inside it still counts.
+The docs never say that a plain fence stops substitution, so AHL does not assume
+it. A `SKILL.md` is checked under every skill root, because one bundle can load
+in both runtimes. Agent definitions, path rules, instruction files and other
+bundle files are not checked for this syntax, because the docs do not say Claude
+Code runs it there. A body that mentions a command in a code span, or a plain
+fenced block without the marker, stays adoptable.
+
+An unchanged staged file is never written, so these checks skip it. The containment
 probe runs when a promotion is prepared and again before its first write,
 together with the ignore-rule probe. Loading a recorded transaction, previewing
 it and rolling it back take containment and ignore rules as observed when it was
