@@ -10,7 +10,9 @@ and observed outcomes, not edits or data volume. Do not import project-specific
 service names, paths, policies or credentials into shared guidance.
 
 Use standard-library Python unless a concrete requirement justifies a dependency.
-Run the behavioral tests documented in README.md after changes. Keep evaluation
+Run the behavioral tests documented in README.md after changes.
+Write and refactor tests following `.agents/skills/pytest-patterns`, including
+its repository adaptation section. Keep evaluation
 artifacts and raw traces outside skill discovery; `artifacts/` is ignored.
 Never commit credentials, raw private session bodies, or generated trial workspaces.
 

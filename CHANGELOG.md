@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.125.1
+
+### Patch Changes
+
+- 964eeba: Add the MIT-licensed pytest-patterns skill under `.agents/skills/` with a repository adaptation note, as the reference for the test-suite refactor.
+
 ## 0.125.0
 
 ### Minor Changes
