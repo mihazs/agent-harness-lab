@@ -115,6 +115,8 @@ class KeyringBoundaryTests(unittest.TestCase):
             frame = json.loads(private.frame)
             self.assertEqual(frame[:2], ['/usr/bin/bwrap', '--unshare-all'])  # inherits the outer empty keyring
             self.assertNotIn(KEYRING_TRAMPOLINE, frame)
+        if os.uname().machine != 'x86_64':
+            return  # the permission-audit seccomp program exists only for native x86_64
         backend.permission_audit = PROFILE
         with scratch() as audited:
             # The traced exec chain still starts at bubblewrap; the observer itself is launched through the trampoline.
