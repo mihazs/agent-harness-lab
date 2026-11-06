@@ -11,7 +11,9 @@ from agent_harness_lab.evaluation.benchmark import public_export_allowed
 WINDOW = dict(start='2026-01-01T00:00:00+00:00', end='2026-01-08T00:00:00+00:00')
 COMMON, RARE = 'tool_misuse', 'silent_drift'
 # Fixed simulation tolerances: 200 replications, 95% intervals, coverage within
-# three Monte Carlo standard errors of nominal and bias within four standard errors.
+# three Monte Carlo standard errors of nominal (two-sided for normal intervals, a
+# lower limit only for conservative zero-event and missing-label bounds) and bias
+# within four standard errors.
 REPLICATIONS, NOMINAL = 200, .95
 
 
@@ -87,7 +89,76 @@ def test_repeated_simulation_checks_bias_and_interval_coverage(population):
     for name, truth_value in known.items():
         error = statistics.stdev(results[name]) / math.sqrt(REPLICATIONS)
         assert abs(statistics.mean(results[name]) - truth_value) <= 4 * error, name
-        assert covered[name] / REPLICATIONS >= NOMINAL - tolerance, name
+        assert abs(covered[name] / REPLICATIONS - NOMINAL) <= tolerance, name
+
+
+def test_unsampled_missed_incidents_get_a_zero_event_bound_not_certainty():
+    """20 alerted incidents, 10 missed incidents, a 5% random route: most draws sample no missed case."""
+    units = [unit(f'u{i:04d}', alerted=i < 20) for i in range(1000)]
+    value, truth = frame(units), {audit.unit_sha256(f'u{i:04d}'): COMMON if i < 20 else RARE if i < 30
+                                  else audit.NO_INCIDENT for i in range(1000)}
+    tolerance = 3 * math.sqrt(NOMINAL * (1 - NOMINAL) / REPLICATIONS)
+    zero, covered = 0, 0
+    for seed in range(REPLICATIONS):
+        receipt = audit.draw(value, plan(value, seed=seed, rates=dict(random=.05, alerted=1)))
+        report = audit.estimate(receipt, labels(receipt, truth))
+        estimates = report['estimates']
+        missed, recall = estimates['missed_incidents'], estimates['triage_recall']
+        covered += missed['count']['ci95'][0] <= 10 <= missed['count']['ci95'][1]
+        # The classifier alerts on every common incident, so that class never has a sampled missed case.
+        common = estimates['missed_by_class'][COMMON]
+        assert common['sampled'] == 0 and common['count']['ci95'][1] > 0
+        if not missed['sampled']:
+            zero += 1
+            assert 'no_sampled_missed_incidents' in report['reasons']
+            assert missed['count']['interval'] == 'zero_event_upper_bound' and missed['count']['standard_error'] is None
+            assert missed['count']['ci95'][1] >= 10 and recall['ci95'][0] <= 20 / 30 < recall['ci95'][1]
+    assert zero > REPLICATIONS / 4
+    assert covered / REPLICATIONS >= NOMINAL - tolerance
+
+
+def test_missing_label_bounds_carry_sampling_error_and_stay_in_range():
+    units = [unit(f'u{i:04d}', alerted=i < 30) for i in range(1000)]
+    value, truth = frame(units), {audit.unit_sha256(f'u{i:04d}'): COMMON if i < 90 else audit.NO_INCIDENT
+                                  for i in range(1000)}
+    tolerance = 3 * math.sqrt(NOMINAL * (1 - NOMINAL) / REPLICATIONS)
+    covered = dict(prevalence=0, missed_incident_rate=0)
+    for seed in range(REPLICATIONS):
+        receipt = audit.draw(value, plan(value, seed=seed, rates=dict(random=.1)))
+        bounds = audit.estimate(receipt, labels(receipt, truth, status=['pending']))['missing_label_bounds']
+        covered['prevalence'] += bounds['prevalence'][0] <= .09 <= bounds['prevalence'][1]
+        covered['missed_incident_rate'] += bounds['missed_incident_rate'][0] <= .06 <= bounds['missed_incident_rate'][1]
+    for name, count in covered.items():
+        assert count / REPLICATIONS >= NOMINAL - tolerance, name
+    small = frame([unit(f's{i}') for i in range(20)])
+    receipt = audit.draw(small, plan(small, rates=dict(random=.5)))
+    batch = dict(receipt_sha256=receipt['receipt_sha256'], labels=[
+        dict(unit_sha256=d['unit_sha256'], status='reviewed' if i < 2 else 'pending', label=COMMON if i < 2 else None)
+        for i, d in enumerate(receipt['draws'])])
+    bounds = audit.estimate(receipt, batch)['missing_label_bounds']
+    assert all(0 <= low <= high <= 1 for low, high in bounds.values())
+    tiny = frame([unit(f't{i}') for i in range(5)])
+    empty = next(r for r in (audit.draw(tiny, plan(tiny, seed=s, rates=dict(random=.05))) for s in range(100))
+                 if not r['drawn'])
+    report = audit.estimate(empty, dict(receipt_sha256=empty['receipt_sha256'], labels=[]))
+    assert report['status'] == 'inconclusive' and report['missing_label_bounds'] is None
+
+
+def test_seed_choice_after_the_frame_is_a_declared_limitation():
+    value = frame([unit('a')])
+    assert 'seed_selection_unverified' in audit.draw(value, plan(value))['limitations']
+
+
+def test_poisson_design_variance_matches_its_closed_form():
+    """Every draw an incident at p = .25: the HT variance is n (1 - p) / p^2, without a with-replacement inflation."""
+    value = frame([unit(f'v{i}') for i in range(40)])
+    receipt = audit.draw(value, plan(value, rates=dict(random=.25)))
+    batch = dict(receipt_sha256=receipt['receipt_sha256'],
+                 labels=[dict(unit_sha256=d['unit_sha256'], status='reviewed', label=COMMON) for d in receipt['draws']])
+    count = audit.estimate(receipt, batch)['estimates']['prevalence']['count']
+    assert receipt['drawn'] > 0
+    assert count['estimate'] == pytest.approx(receipt['drawn'] * 4)
+    assert count['standard_error'] == pytest.approx(math.sqrt(receipt['drawn'] * .75 * 16))
 
 
 def test_overlapping_routes_draw_once_with_combined_probability():

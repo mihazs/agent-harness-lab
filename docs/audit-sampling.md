@@ -49,12 +49,20 @@ frame and plan replay to the same receipt offline. A plan whose expected review
 count exceeds `review_budget` is refused. The realized count varies around the
 expected count and is recorded.
 
+The seed is chosen after the frame is frozen, and nothing commits to it in
+advance or takes it from a source the planner does not control. The
+`decision_timestamp` is self-declared too. Someone who suspects which units are
+incidents can try seeds offline until the draw leaves them out, and the sealed
+receipt still validates. The declared inclusion probabilities therefore describe
+the selection only when the seed's author is trusted. Every receipt carries the
+`seed_selection_unverified` limitation.
+
 The sealed receipt (`audit-sampling-receipt-v1`) records the window, scope, frame
 and plan hashes, policy and model identities, decision timestamp, rates, budget,
 exclusions, per-stratum inclusion probabilities and expected and realized draws.
 It also lists each draw's unit hash, stratum, alert status and inclusion
 probability, plus the maximum and minimum weights and the Kish effective sample
-size. The receipt is created before any label exists. `review_queue(receipt)`
+size. The receipt is created before `estimate` accepts any label. `review_queue(receipt)`
 gives reviewers only the drawn unit hashes in hash order, without alert status,
 stratum or score, to reduce anchoring.
 
@@ -79,13 +87,29 @@ When every draw is reviewed, the status is `estimated`. The report gives
 Horvitz-Thompson estimates of incident prevalence, missed incidents (non-alerted
 incidents) and missed incidents per class, each as a count and a rate, plus a
 linearized ratio estimate of triage recall. Variances use the Poisson design, and
-intervals are normal 95% intervals clipped to their range. Recall is `null`, with
-the reason `no_sampled_incidents`, when no incident was sampled.
+intervals are normal 95% intervals clipped to their range, marked `interval:
+normal`. Recall is `null`, with the reason `no_sampled_incidents`, when no
+incident was sampled.
+
+A Wald interval has zero width when no case was sampled, which would claim
+certainty about the quantity being measured. An estimate with `sampled: 0`
+instead reports `interval: zero_event_upper_bound`, `standard_error: null` and a
+one-sided 95% upper limit: the largest count M with `(1 - p_min)^M >= 0.05`,
+where `p_min` is the smallest stratum inclusion probability, capped at the
+population. When no missed incident was sampled, the report adds the reason
+`no_sampled_missed_incidents`. When every sampled incident was alerted, or none
+was, recall reports `interval: zero_event_plug_in_bound`, which puts that upper
+limit for the unsampled side into the ratio with the other side's point estimate.
+`missed_by_class` lists only classes seen among sampled incidents. An unseen
+class is covered by the overall `missed_incidents` bound.
 
 A missing review is not a negative label. Any pending or nonresponding draw makes
 the report `inconclusive`, with no point estimates. Its `missing_label_bounds`
-fill every missing label first as `no_incident` and then as an incident. These
-bounds need no response assumption.
+give, for prevalence and the missed-incident rate, the lower 95% limit with every
+missing label filled as `no_incident` and the upper 95% limit with every missing
+label filled as an incident, clipped to [0, 1]. They make no assumption about
+why labels are missing, but they rely on the same normal and zero-event
+approximations as the estimates. They are `null` when nothing was drawn.
 
 The report always keeps three things apart from the estimates:
 `unweighted_composition`, which holds raw per-stratum review counts and is
@@ -105,8 +129,11 @@ classifier never alerts on a rare failure class. Non-alert reviews expose those
 false negatives, and the alert-only counts never contain them. Across 200 seeded
 replications, the tests check that the bias of prevalence, missed-incident and
 recall estimates stays within four Monte Carlo standard errors and that interval
-coverage stays within three standard errors of 95%. The tolerances are fixed
-constants in the test module. This validates the implementation under that declared
+coverage stays within three standard errors of 95% on both sides, so intervals
+that are too wide fail as well as intervals that are too narrow. A closed-form
+case checks the Poisson-design variance exactly. Separate simulations check that
+the zero-event bounds and missing-label bounds cover the truth at no less than
+the nominal rate. The tolerances are fixed constants in the test module. This validates the implementation under that declared
 design only, not real-world distributional assumptions.
 
 Normal intervals under-cover when few incidents are sampled. The report shows
