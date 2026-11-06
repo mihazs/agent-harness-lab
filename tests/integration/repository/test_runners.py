@@ -20,8 +20,9 @@ STDLIB_TASKS = {'test:evaluation:bank-qualification'}
 DISCOVER = re.compile(r'''unittest\b\S*(?: \S+)? discover -s (\S+)(?: -t \S+)? -p ["']?([^\s"']+)''')
 # The bank runner appends the checkout to sys.path so an installed wheel or archive keeps precedence.
 STDLIB_MAIN = 'unittest.main(module=None)'
-# Loads a file the way `python -m unittest discover` does, with pytest unimportable, and reports what pytest
-# would also collect from it: module-level test functions and Test classes that are not unittest.TestCase.
+# Loads a file the way the documented `python -m unittest discover -s tests -t .` does, with pytest unimportable,
+# so the enclosing package `__init__.py` files run too, and reports what pytest would also collect from it:
+# module-level test functions and Test classes that are not unittest.TestCase.
 NO_PYTEST_PROBE = r'''
 import importlib.abc, inspect, json, sys, unittest
 class Blocked(importlib.abc.MetaPathFinder):
@@ -29,12 +30,12 @@ class Blocked(importlib.abc.MetaPathFinder):
         if name.partition('.')[0] in {'pytest', '_pytest'}:
             raise ModuleNotFoundError(f'No module named {name!r}', name=name)
 sys.meta_path.insert(0, Blocked())
-root, start, name = sys.argv[1:]
-sys.path.insert(0, root)
+root, start, top, name = sys.argv[1:]
+sys.path.append(root)
 def flatten(suite):
     for item in suite:
         yield from flatten(item) if isinstance(item, unittest.TestSuite) else [item]
-cases = list(flatten(unittest.defaultTestLoader.discover(start, pattern=name)))
+cases = list(flatten(unittest.defaultTestLoader.discover(start, pattern=name, top_level_dir=top or None)))
 errors = [str(case._exception) for case in cases if hasattr(case, '_exception')]
 errors += [str(error) for error in unittest.defaultTestLoader.errors]
 modules = [m for m in list(sys.modules.values()) if getattr(m, '__file__', None) and m.__file__.endswith('/' + name)]
@@ -68,10 +69,21 @@ def start_dir(text):
     return path if path.is_absolute() else ROOT/path
 
 
+def discovery_dirs(path):
+    """The start and top-level directories of the documented run: the outermost package and its parent."""
+    package = path.parent
+    while (package/'__init__.py').is_file() and (package.parent/'__init__.py').is_file():
+        package = package.parent
+    if (package/'__init__.py').is_file():
+        return package, package.parent
+    return path.parent, None
+
+
 def probe_without_pytest(path):
     path = Path(path)
-    done = subprocess.run([sys.executable, '-I', '-c', NO_PYTEST_PROBE, str(ROOT), str(path.parent), path.name],
-                          cwd=ROOT, capture_output=True, text=True, timeout=300)
+    start, top = discovery_dirs(path)
+    done = subprocess.run([sys.executable, '-I', '-c', NO_PYTEST_PROBE, str(ROOT), str(start), str(top or ''),
+                           path.name], cwd=ROOT, capture_output=True, text=True, timeout=300)
     assert done.returncode == 0, done.stderr
     return json.loads(done.stdout.splitlines()[-1])
 
@@ -153,3 +165,20 @@ def test_pytest_dependence_in_a_unittest_bound_file_is_rejected(tmp_path, extra)
     assert_runs_without_pytest(clean)
     with pytest.raises(AssertionError):
         assert_runs_without_pytest(mutated)
+
+
+@pytest.mark.parametrize('package', ['tests', 'tests/integration', 'tests/integration/tools'])
+def test_pytest_dependence_in_a_package_init_is_rejected(tmp_path, package):
+    trees = {}
+    for tree in ('clean', 'mutated'):
+        folder = tmp_path/tree/'tests/integration/tools'
+        folder.mkdir(parents=True)
+        for parent in (folder, *folder.relative_to(tmp_path/tree).parents):
+            if parent != Path('.'):
+                (tmp_path/tree/parent/'__init__.py').touch()
+        (folder/'test_case.py').write_text(CLEAN)
+        trees[tree] = folder/'test_case.py'
+    (tmp_path/'mutated'/package/'__init__.py').write_text('import pytest\n')
+    assert_runs_without_pytest(trees['clean'])
+    with pytest.raises(AssertionError):
+        assert_runs_without_pytest(trees['mutated'])
