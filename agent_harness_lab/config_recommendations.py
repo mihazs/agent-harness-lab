@@ -68,7 +68,9 @@ VOCABULARY = frozenset((*config.LAYERS, *inventory.TRUST, *APPROVALS, 'present_e
                         'not_recorded'))
 # What the inventories cannot show; a recommendation never claims these were checked.
 NOT_INVENTORIED = ('claude_local_scope_servers', 'claude_interactive_approval_choices', 'claude_folder_trust',
-                   'claude_plugin_and_connector_servers', 'claude_system_prompt_variant', 'codex_mcp_layer_precedence')
+                   'claude_plugin_and_connector_servers', 'claude_managed_mcp_servers', 'claude_managed_settings_policies',
+                   'claude_system_prompt_variant', 'codex_managed_config_and_requirements', 'codex_mcp_layer_precedence')
+_DIGEST_LISTS = ('enabled_mcpjson_server_sha256s', 'disabled_mcpjson_server_sha256s')
 
 
 def capability(runtime, item):
@@ -147,6 +149,44 @@ def _rows(document, profile, key, sha_field, core):
     return rows
 
 
+def _consistent(rows):
+    """Refuse rows that are each well formed but that no capture produces together, before any rule reads them.
+
+    A capture writes one settings row per file and one row per server id per file, a Claude server carries its
+    scope's precedence, and only a project style records a folder distance and whether a closer same-name project
+    style shadows it.
+    """
+    seen, closest = set(), {}
+    for row in rows:
+        facts = dict(row.facts)
+        if row.surface == 'output_styles' and type(facts.get('distance')) is int and _HEX.fullmatch(str(facts.get('name_sha256'))):
+            closest[facts['name_sha256']] = min(closest.get(facts['name_sha256'], facts['distance']), facts['distance'])
+    for row in rows:
+        facts, key = dict(row.facts), None
+        digests = lambda *names: all(type(facts[n]) is str and _HEX.fullmatch(facts[n]) for n in names if n in facts)
+        if len(facts) != len(row.facts): raise ValueError('a config row names a fact twice')
+        if row.surface == 'settings':
+            key = ('settings', row.root, row.layer, row.path_sha256)
+            if (any(type(facts.get(name, ())) is not tuple for name in _DIGEST_LISTS) or not digests('output_style_sha256')
+                    or type(facts.get('enable_all_project_mcp_servers', False)) is not bool):
+                raise ValueError('settings facts differ from the captured shape')
+        elif row.surface == 'mcp' and 'server_sha256' in facts:
+            key = ('mcp', row.root, row.layer, row.path_sha256, facts['server_sha256'])
+            expected = config.CLAUDE_MCP_PRECEDENCE[row.layer] if row.runtime == 'claude-code' else None
+            precedence = facts.get('precedence')
+            if not digests('server_sha256') or type(precedence) is not type(expected) or precedence != expected:
+                raise ValueError('MCP server facts differ from the captured shape')
+        elif row.surface == 'output_styles' and 'name_sha256' in facts:
+            distance, shadowed = facts.get('distance'), facts.get('shadowed', 'absent')
+            if (not digests('name_sha256') or type(facts.get('subdirectory')) is not bool
+                    or (distance is None) != (row.layer == 'user')
+                    or (shadowed is not None if distance is None
+                        else type(distance) is not int or distance < 0 or shadowed is not (distance > closest[facts['name_sha256']]))):
+                raise ValueError('output style facts differ from the captured shape')
+        if key in seen: raise ValueError('config rows declare one file or server twice')
+        if key is not None: seen.add(key)
+
+
 def _row(code, row, compatibility='verified', evidence=(), **facts):
     return Recommendation(code, row.runtime, row.root, row.layer, tuple(sorted({row.path_sha256, *evidence})),
         compatibility, tuple(sorted(facts.items())))
@@ -216,14 +256,17 @@ def _styles(rows):
     named = [(row, dict(row.facts)) for row in rows if row.surface == 'output_styles' and 'name_sha256' in dict(row.facts)]
     for row, facts in named:
         if (row.declared_state != 'present' or facts.get('keep_coding_instructions') is True
-                or facts.get('shadowed') is True): continue
+                or facts['shadowed'] is True): continue
         # The inventory leaves user-versus-project precedence unrecorded (shadowed None), so a name another style
-        # shares has an unknown winner; an unrecognized keep-coding-instructions value (None) is not a known false.
+        # shares has an unknown winner, and a user-layer style may be hidden by a same-name project style; an
+        # unrecognized keep-coding-instructions value (None) is not a known false.
         rivals = [other for peer, other in named if peer is not row and other['name_sha256'] == facts['name_sha256']]
-        unresolved = bool(rivals) and (facts.get('shadowed') is None or any(other.get('shadowed') is None for other in rivals))
-        unverified = facts.get('subdirectory') or unresolved or facts.get('keep_coding_instructions') is None
+        unresolved = bool(rivals) and (facts['shadowed'] is None or any(other.get('shadowed') is None for other in rivals))
+        known = row.layer == 'project' and facts['shadowed'] is False and not facts['subdirectory']
+        unverified = not known or unresolved or facts.get('keep_coding_instructions') is None
         yield _row('output_style_drops_coding_instructions', row, 'unverified' if unverified else 'verified',
-                   name_sha256=facts['name_sha256'], keep_coding_instructions=facts.get('keep_coding_instructions'),
+                   name_sha256=facts['name_sha256'], shadowed=facts['shadowed'],
+                   keep_coding_instructions=facts.get('keep_coding_instructions'),
                    precedence='not_recorded' if unresolved else None,
                    selected_in_inventoried_settings=facts['name_sha256'] in selected, system_prompt_variant='unknown')
 
@@ -276,6 +319,7 @@ def recommend(config_document, harness_document=None):
     if version != surfaces.PINS[runtime]: raise ValueError('a declared inventory must carry the pinned runtime version')
     parsed = [_rebuild(config.ConfigRow, row) for row in rows]
     if any(row.runtime != runtime for row in parsed): raise ValueError('config rows describe another runtime')
+    _consistent(parsed)
     found = [*_mcp(parsed, runtime), *_styles(parsed), *_memory(parsed)]
     if harness_document is not None:
         found.extend(_exec_policy(_rebuild(inventory.InventoryNode, node) for node in nodes))

@@ -132,6 +132,53 @@ class PluginRecommendationTests(unittest.TestCase):
         self.assertEqual(self.bundle()['reason'], 'unpinned_checkout')
         self.assertFalse(self.state.exists())
 
+    def test_a_touched_path_that_changed_type_is_dirty_not_an_error(self):
+        folder = Path(self.bundle()['bundle'])
+        def symlink(c):
+            copy = self.base / 'outside-status.md'; copy.write_bytes((c / 'commands/status.md').read_bytes())
+            (c / 'commands/status.md').unlink(); (c / 'commands/status.md').symlink_to(copy)
+        def directory(c): (c / 'commands/status.md').unlink(); (c / 'commands/status.md').mkdir()
+        def hardlink(c): os.link(c / 'commands/status.md', self.base / f'link-{c.name}')
+        def parent(c): (c / 'commands').rename(c / 'moved'); (c / 'commands').symlink_to(c / 'moved')
+        def created(c): (c / 'commands/new.md').mkdir()  # a path the patch creates is now a directory
+        for number, mutate in enumerate((None, symlink, directory, hardlink, parent, created)):
+            clone = self.base / f'clone-{number}'
+            git(self.base, 'clone', '-q', '--no-hardlinks', str(self.plugin), str(clone))
+            if mutate: mutate(clone)
+            with self.subTest(case=mutate and mutate.__name__):
+                self.assertEqual(recommend.status(folder, clone), 'dirty_checkout' if mutate else 'current')
+
+    def test_a_forged_manifest_is_refused_with_value_error(self):
+        folder = Path(self.bundle()['bundle'])
+        manifest = json.loads((folder / 'manifest.json').read_text())
+        row = manifest['files'][0]
+        forged = [{k: v for k, v in manifest.items() if k != 'patch_sha256'}, dict(manifest, head=None),
+                  dict(manifest, files=None), dict(manifest, files=[]), dict(manifest, files=['x']),
+                  dict(manifest, files=[{k: v for k, v in row.items() if k != 'before_sha256'}]),
+                  dict(manifest, files=[dict(row, path='../escape.md')]), dict(manifest, files=[dict(row, path='.git/config')]),
+                  dict(manifest, files=[dict(row, before_sha256=7)])]
+        for number, document in enumerate(forged):
+            (folder / 'manifest.json').write_text(json.dumps(document))
+            with self.subTest(case=number), self.assertRaises(ValueError): recommend.status(folder, self.plugin)
+
+    def test_a_worktree_over_the_folder_entry_bound_gets_the_refused_receipt(self):
+        # Empty directories are invisible to Git, so the checkout stays clean while its walk crosses 10000 entries.
+        for number in range(10001): (self.plugin / f'e{number}').mkdir()
+        self.assertEqual(self.plumbing('status', '--porcelain'), '')
+        receipt = self.bundle()
+        self.assertEqual((receipt['status'], receipt['reason'], receipt['bundle']), ('refused', 'checkout_bound_exceeded', None))
+        self.assertFalse(self.state.exists())
+
+    def test_a_worktree_deeper_than_the_inventory_depth_is_refused_as_inventory_blocked(self):
+        # The harness inventory walks the checkout first and stops at 32 levels, before the worktree walk runs.
+        deep = self.plugin
+        for _ in range(66): deep = deep / 'd'
+        deep.mkdir(parents=True)
+        self.assertEqual(self.plumbing('status', '--porcelain'), '')
+        receipt = self.bundle()
+        self.assertEqual((receipt['status'], receipt['reason'], receipt['bundle']), ('refused', 'inventory_blocked', None))
+        self.assertFalse(self.state.exists())
+
     def plumbing(self, *arguments, data=None):
         return subprocess.run(['/usr/bin/git', *arguments], cwd=self.plugin, env=ENV, input=data,
                               capture_output=True, check=True).stdout.strip().decode()

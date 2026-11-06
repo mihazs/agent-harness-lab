@@ -301,4 +301,82 @@ class ConfigRecommendationTests(unittest.TestCase):
                                          'facts': tuple(map(tuple, row['facts']))})
 
 
+    def forge(self, document, mutate):
+        forged = json.loads(json.dumps(document))
+        mutate(forged['rows'])
+        forged['config_inventory_sha256'] = digest(forged['rows'])
+        return forged
+
+    def test_forged_row_combinations_are_refused_instead_of_crashing(self):
+        roots = dict(home=str(self.home), claude_home=str(self.claude_home))
+        claude = config.capture(self.checkout, CLAUDE, declared_roots=roots)
+        codex = config.capture(self.checkout, CODEX, declared_roots=dict(codex_home=str(self.codex_home)))
+        first = lambda rows, surface, fact: next(r for r in rows if r['surface'] == surface and fact in dict(map(tuple, r['facts'])))
+        def fact(surface, name, value, present=True):
+            def mutate(rows):
+                row = first(rows, surface, name if present else {'settings': 'has_env', 'mcp': 'server_sha256',
+                                                                  'output_styles': 'name_sha256'}[surface])
+                kept = [pair for pair in row['facts'] if pair[0] != name]
+                row['facts'] = sorted(kept if value is KeyError else [*kept, [name, value]])
+            return mutate
+        duplicate = lambda surface, name: lambda rows: rows.append(json.loads(json.dumps(first(rows, surface, name))))
+        def same_name(rows):  # a second user entry for a shadowed server, without the precedence a capture records
+            row = json.loads(json.dumps(first(rows, 'mcp', 'precedence'))); row['layer'] = 'user'
+            row['facts'] = [pair for pair in row['facts'] if pair[0] != 'precedence']; rows.append(row)
+        cases = {'duplicate settings row': (claude, duplicate('settings', 'other_keys')),
+                 'duplicate server row': (claude, duplicate('mcp', 'server_sha256')),
+                 'duplicate codex server row': (codex, duplicate('mcp', 'server_sha256')),
+                 'same-name server without precedence': (claude, same_name),
+                 'precedence missing': (claude, fact('mcp', 'precedence', KeyError)),
+                 'precedence null': (claude, fact('mcp', 'precedence', None)),
+                 'precedence boolean': (claude, fact('mcp', 'precedence', True)),
+                 'precedence of another scope': (claude, fact('mcp', 'precedence', 3)),
+                 'codex precedence': (codex, fact('mcp', 'precedence', 1, present=False)),
+                 'server digest list': (claude, fact('mcp', 'server_sha256', ['a' * 64])),
+                 'approvals scalar': (claude, fact('settings', 'enabled_mcpjson_server_sha256s', 3)),
+                 'rejections boolean': (claude, fact('settings', 'disabled_mcpjson_server_sha256s', True)),
+                 'approvals digest string': (claude, fact('settings', 'enabled_mcpjson_server_sha256s', 'a' * 64)),
+                 'enable-all count': (claude, fact('settings', 'enable_all_project_mcp_servers', 1, present=False)),
+                 'style shadowing absent': (claude, fact('output_styles', 'shadowed', KeyError)),
+                 'style subdirectory absent': (claude, fact('output_styles', 'subdirectory', KeyError)),
+                 'style distance without shadowing': (claude, fact('output_styles', 'distance', None)),
+                 'fact named twice': (claude, lambda rows: rows[0]['facts'].append(list(rows[0]['facts'][0])))}
+        (self.claude_home / 'output-styles').mkdir()
+        (self.claude_home / 'output-styles/solo.md').write_text(style('solo'))
+        styled = config.capture(self.checkout, CLAUDE, declared_roots=roots)
+        def restyle(layer, name, was_shadowed, **changes):  # a capture records distance and shadowing only for project styles
+            def mutate(rows):
+                row, = [r for r in rows if r['surface'] == 'output_styles' and r['layer'] == layer
+                        and dict(map(tuple, r['facts'])).get('name_sha256') == config.style_sha256(name)
+                        and dict(map(tuple, r['facts']))['shadowed'] is was_shadowed]
+                row['facts'] = sorted([pair for pair in row['facts'] if pair[0] not in changes]
+                                      + [[key, value] for key, value in changes.items()])
+            return mutate
+        cases.update({'user style with a distance': (styled, restyle('user', 'solo', None, distance=0, shadowed=False)),
+                      'project style without a distance':
+                          (styled, restyle('project', 'plain-coder', False, distance=None, shadowed=None)),
+                      'farther same-name style not shadowed': (styled, restyle('project', 'dup', True, shadowed=False))})
+        for name, (document, mutate) in cases.items():
+            with self.subTest(case=name), self.assertRaises(ValueError): advice.recommend(self.forge(document, mutate))
+        advice.recommend(styled)
+
+    def test_user_layer_styles_with_unrecorded_precedence_are_never_verified(self):
+        (self.claude_home / 'output-styles').mkdir()
+        (self.claude_home / 'output-styles/dup.md').write_text(style('dup'))  # also declared by the project
+        (self.claude_home / 'output-styles/solo.md').write_text(style('solo'))
+        rows = [row for row in self.codes(self.claude(), 'output_style_drops_coding_instructions') if row['layer'] == 'user']
+        self.assertEqual({dict(row['facts'])['name_sha256'] for row in rows}, {config.style_sha256(n) for n in ('dup', 'solo')})
+        for row in rows:
+            self.assertEqual((row['compatibility'], dict(row['facts'])['shadowed']), ('unverified', None))
+        plain, = [row for row in self.codes(self.claude(), 'output_style_drops_coding_instructions')
+                  if dict(row['facts'])['name_sha256'] == config.style_sha256('plain-coder')]
+        self.assertEqual((plain['compatibility'], dict(plain['facts'])['shadowed']), ('verified', False))
+
+    def test_managed_layers_are_listed_as_not_inventoried(self):
+        managed = {'claude_managed_mcp_servers', 'claude_managed_settings_policies', 'codex_managed_config_and_requirements'}
+        blocked = dict(config.capture(self.checkout, CLAUDE), status='blocked', blocked_reason='row_bound_exceeded', rows=[])
+        for report in (self.claude(), self.codex(), advice.recommend(blocked)):
+            with self.subTest(runtime=report['runtime'], status=report['status']):
+                self.assertLessEqual(managed, set(report['not_inventoried']))
+
 if __name__ == '__main__': unittest.main()
