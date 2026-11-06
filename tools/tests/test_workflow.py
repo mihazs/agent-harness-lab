@@ -23,15 +23,20 @@ if p('context.json').exists():
   if mode=='no_change':
    (evaluation/'proposal.json').write_text(json.dumps({'status':'no_change','reason':'No supported defect'}))
   else:
-   if mode!='identical': (candidate/'AGENTS.md').write_text('worse' if mode=='refine' and c['attempt']==0 else 'good\n')
+   if mode not in ('identical','ambient'): (candidate/'AGENTS.md').write_text('worse' if mode=='refine' and c['attempt']==0 else 'good\n')
    escaped=('settings.json','.claude/settings.json','.claude/hooks/pre.sh','CLAUDE.local.md') if mode=='escape' else ()
-   nested=('app/CLAUDE.md','.claude/rules/style.md') if mode=='nested' else ()
+   nested={'nested':('app/AGENTS.md',),'unplanned':('app/AGENTS.md',),'unrelated':('other/AGENTS.md',),'unrequired':('app/AGENTS.md',),'ambient':('app/AGENTS.md',),'drift':('app/AGENTS.md',)}.get(mode,())
    if nested: p('proposer-prompt.txt').write_text(prompt)
    for name in escaped+nested: (candidate/name).parent.mkdir(parents=True,exist_ok=True); (candidate/name).write_text('forbidden' if escaped else 'good\n')
    if mode=='concurrent': (project/'AGENTS.md').write_text('concurrent')
-   (evaluation/'proposal.json').write_text(json.dumps({'status':'candidate','mechanisms':['synthetic'],'falsifiers':['artifact check']}))
+   proposal={'status':'candidate','mechanisms':['synthetic'],'falsifiers':['artifact check']}
+   if nested and mode!='unplanned':
+    proposal['instruction_plan']=dict(schema_version=1,profile=dict(schema_version=1,runtime='codex',version='0.166.0',task_cwd='app',fallback_filenames=[]),
+     required=[dict(id='absent',text='synthetic required text')] if mode=='unrequired' else [])
+   (evaluation/'proposal.json').write_text(json.dumps(proposal))
  else:
   assert 'candidate' not in c
+  if (project/'mode').exists() and (project/'mode').read_text()=='drift': (project/'app/AGENTS.md').write_text('drifted\n')
   grader=evaluation/'grade.py'
   grader.write_text("from pathlib import Path; import sys; w=Path(sys.argv[1]); assert (w/'artifact').read_text()=='done'; assert (w/'original').read_text()=='preserve'\n")
   tasks=[]; controls=[]
@@ -47,7 +52,7 @@ if p('context.json').exists():
   (evaluation/'manifest.json').write_text(json.dumps(dict(harness_paths=c['harness_paths'],skills=[],tasks=tasks,grader_self_tests=controls)))
 else:
  phase=p('phase').read_text()
- good=p('AGENTS.md').read_text().strip()=='good'
+ good='good' in (p('AGENTS.md').read_text().strip(),p('app/AGENTS.md').read_text().strip() if p('app/AGENTS.md').exists() else None)
  p('artifact').write_text('done' if good or phase.endswith('regression') else 'wrong')
 print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
 '''
@@ -116,20 +121,61 @@ class WorkflowTests(unittest.TestCase):
             self.assertFalse((self.project/name).exists())
         self.assertEqual((self.project/'AGENTS.md').read_text(),'bad')
 
-    def test_nested_instruction_and_rule_candidates_are_staged_but_not_auto_adopted(self):
-        (self.project/'mode').write_text('nested')
+    def test_nested_instruction_candidates_are_validated_and_staged_but_not_auto_adopted(self):
+        (self.project/'app').mkdir(); (self.project/'mode').write_text('nested')
         result=improve(self.args())
         self.assertEqual(result['status'],'inconclusive')
         self.assertEqual(result['changed_files'],[])
         evaluated=Path(result['output'])/'candidate-0'
-        self.assertEqual((evaluated/'app/CLAUDE.md').read_text(),'good\n')
-        self.assertEqual((evaluated/'.claude/rules/style.md').read_text(),'good\n')
-        self.assertFalse((self.project/'app/CLAUDE.md').exists())
-        self.assertFalse((self.project/'.claude').exists())
+        self.assertEqual((evaluated/'app/AGENTS.md').read_text(),'good\n')
+        self.assertFalse((self.project/'app/AGENTS.md').exists())
+        validation=json.loads(Path(result['instruction_validation']).read_text())
+        self.assertEqual((validation['status'],validation['scope']['instruction_dirs']),('valid',['.','app']))
+        # The root edit drops the active 'bad' line; regression controls in faithful trial workspaces preserved it.
+        self.assertEqual(result['instruction_removal']['disposition'],'recommended')
+        self.assertEqual(result['instruction_removal']['certification'],'required')
         from agent_harness_lab.surfaces import adoptable_surfaces
+        from agent_harness_lab.sources.instruction_validation import PROPOSER_GUIDANCE
         prompt=' '.join((Path(result['output'])/'preparation/proposer-prompt.txt').read_text().split())
         self.assertIn(f'modify only these project-owned surfaces in candidate: {adoptable_surfaces()}.',prompt)
+        self.assertIn(' '.join(PROPOSER_GUIDANCE.split()),prompt)
         self.assertIn('model settings, permissions, hooks or credentials',prompt)
+
+    def test_nested_instruction_candidate_outside_governing_scope_is_rejected(self):
+        (self.project/'app').mkdir()
+        for mode in ('unplanned','unrelated'):
+            with self.subTest(mode=mode):
+                (self.project/'mode').write_text(mode)
+                with self.assertRaisesRegex(ValueError,'outside its governing scope'): improve(self.args())
+                self.assertFalse((self.project/'app/AGENTS.md').exists())
+                self.assertFalse((self.project/'other').exists())
+
+    def test_unfaithful_removal_controls_withhold_the_recommendation(self):
+        # The project's app/AGENTS.md is not staged, so the baseline trial workspace never held the guidance removed.
+        (self.project/'app').mkdir(); (self.project/'app/AGENTS.md').write_text('Synthetic app guidance.\n')
+        (self.project/'mode').write_text('ambient')
+        result=improve(self.args())
+        self.assertEqual(result['instruction_removal']['disposition'],'inconclusive')
+        self.assertEqual((result['status'],result['reason'],result['instruction_removal_reason']),
+                         ('inconclusive','instruction_removal_inconclusive','workspace_surfaces_unverified'))
+        self.assertNotIn('recommendation',result)
+        self.assertFalse((Path(result['output'])/'change-plan.json').exists())
+        self.assertEqual((self.project/'app/AGENTS.md').read_text(),'Synthetic app guidance.\n')
+
+    def test_instruction_context_drift_during_evaluation_invalidates_the_recommendation(self):
+        (self.project/'app').mkdir(); (self.project/'mode').write_text('drift')
+        with self.assertRaisesRegex(ValueError,'Instruction context changed during evaluation'): improve(self.args())
+        self.assertEqual((self.project/'AGENTS.md').read_text(),'bad')
+        self.assertEqual((self.project/'app/AGENTS.md').read_text(),'drifted\n')
+        self.assertFalse(list((self.root/'state').rglob('change-plan.json')))
+
+    def test_instruction_validation_failure_blocks_before_evaluation(self):
+        (self.project/'app').mkdir(); (self.project/'mode').write_text('unrequired')
+        result=improve(self.args())
+        self.assertEqual((result['status'],result['reason']),('blocked','instruction_validation_blocked'))
+        self.assertEqual(result['instruction_reasons'],['required_text_not_active'])
+        self.assertFalse((Path(result['output'])/'preparation/evaluation-0').exists())
+        self.assertEqual((self.project/'AGENTS.md').read_text(),'bad')
 
     def test_concurrent_source_change_is_preserved(self):
         (self.project/'mode').write_text('concurrent')

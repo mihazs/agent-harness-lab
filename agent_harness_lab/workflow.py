@@ -480,6 +480,7 @@ def _improve(args):
     prepare.mkdir()
     baseline, candidate = prepare / 'baseline', prepare / 'candidate'
     from .one_call import allowed_paths, check_configuration, check_scope, pinned_bank
+    from .sources import instruction_validation
     bank = pinned_bank(args)
     bank_manifest = None
     if bank is not None:
@@ -543,6 +544,7 @@ def _improve(args):
     trials_left = getattr(args, "trial_limit", 24)
     for attempt in range(1 if bank is not None else 2):
         final_attempt = attempt
+        instruction = None
         check_configuration(args)
         if remaining() <= 0:
             result['status'] = 'budget_exhausted'
@@ -594,6 +596,7 @@ publishing, external messages, deployment, or production mutations. Do not launc
 Identify distinct mechanisms, successful controls and counterexamples before selecting repairs.
 If none is supported, write {proposal_path} as {{"status":"no_change","reason":"evidence-based explanation"}}.
 Otherwise modify only these project-owned surfaces in candidate: {surfaces.adoptable_surfaces()}.
+{instruction_validation.PROPOSER_GUIDANCE}
 Do not build evaluation tests, launch model trials, or inspect previous held-out inputs.
 The parent freezes the patch; {'the configured task bank supplies the evaluation' if bank is not None else 'a separate fresh session constructs evaluation without seeing it'}.
 Shared ceiling is {getattr(args, 'trial_limit', 24)} preparation/task roles and {args.timeout} seconds;
@@ -630,11 +633,21 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         if proposal.get('status') != 'candidate':
             raise ValueError('Proposal must declare candidate or no_change')
         proposed = candidate_states(candidate, original)
-        check_scope(args, proposed)
+        # Effective-context validation of instruction and rule edits; it also sets the scope check_scope enforces.
+        instruction = instruction_validation.hook(args, baseline, candidate, original, proposed, proposal, agent,
+                                                  deadline=started+args.timeout)
+        check_scope(args, proposed, original)
         check_configuration(args)
         if proposed == original:
             result.update(status='no_change',reason='candidate_identical_to_baseline')
             break
+        if instruction is not None:
+            write_json(output/f'instruction-validation-{attempt}.json', instruction)
+            result['instruction_validation'] = str(output/f'instruction-validation-{attempt}.json')
+            if instruction['status'] != 'valid':
+                result.update(status='blocked', reason='instruction_validation_'+instruction['status'],
+                              instruction_reasons=instruction['reasons'])
+                break
         paths = [] if controlled else original.keys() | proposed.keys()
         frozen = output / f'candidate-{attempt}'
         if access is None:shutil.copytree(candidate, frozen)
@@ -663,6 +676,18 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             compared=repeated.execute(manifest_path,baseline,frozen,args,client,grading)
             if any(file_state(args.project/name)!=value for name,value in original.items()):
                 raise ValueError('project harness changed during fixed comparison')
+            if instruction is not None:
+                # The fixed-bank comparison hands no trial records to the removal gate; see removal_disposition.
+                result['instruction_removal'] = instruction_validation.removal_disposition(instruction, None)
+                if compared.get('recommendation') == 'review_candidate':
+                    if instruction_validation.current(instruction, proposal.get('instruction_plan'), baseline, frozen,
+                                                      project=args.project, deadline=started+args.timeout):
+                        raise ValueError('Instruction context changed during evaluation; recommendation is stale')
+                    removal = result['instruction_removal']
+                    if removal.get('required'):
+                        compared = {key: value for key, value in compared.items() if key != 'recommendation'}
+                        compared.update(status='inconclusive', reason='instruction_removal_'+removal['disposition'],
+                                        instruction_removal_reason=removal['reason'])
             result.update(compared)
             break
         progress('evaluation', attempt=attempt + 1)
@@ -743,7 +768,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             from .one_call import unchanged
             if not unchanged(args):
                 raise ValueError("project configuration changed during improvement")
-            check_scope(args, proposed)
+            check_scope(args, proposed, original)
         options = argparse.Namespace(manifest=str(manifest_path), baseline=str(baseline),
             candidate=str(frozen), output=str(output / f'evaluation-{attempt}'),
             agent=agent, codex=args.codex, claude=args.claude, parent_deadline=started + args.timeout)
@@ -771,6 +796,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 result.update(status='requires_intervention',reason='permission_qualification_not_met')
                 break
         trials = evaluated['trials']
+        if instruction is not None:
+            result['instruction_removal'] = instruction_validation.removal_disposition(instruction, trials)
         if (controlled or bank is not None) and evaluated.get('status') in ('blocked','budget_exhausted'):
             result.update(status=evaluated['status'],reason=evaluated.get('reason'))
             break
@@ -801,6 +828,15 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if evaluated['inputs_unchanged'] and candidate_pass and controls_pass and improvement:
             if any(file_state(args.project / name) != value for name, value in original.items()):
                 raise ValueError('Project harness changed during evaluation; recommendation is stale')
+            if instruction is not None and instruction_validation.current(instruction, proposal.get('instruction_plan'),
+                    baseline, frozen, project=args.project, deadline=started+args.timeout):
+                raise ValueError('Instruction context changed during evaluation; recommendation is stale')
+            removal = result.get('instruction_removal') if instruction is not None else None
+            if removal is not None and removal.get('required') and removal['disposition'] != 'recommended':
+                # Removed active guidance is recommended only under faithful passing behavioral controls.
+                result.update(status='blocked' if removal['disposition'] == 'rejected' else 'inconclusive',
+                              reason='instruction_removal_'+removal['disposition'], instruction_removal_reason=removal['reason'])
+                break
             from .harness_change_plan import produce,attach
             common_plan=produce(args,original,proposed,analysis=data,evidence=evaluated,
                 diagnosis=proposal.get('mechanisms',[]),falsifiers=proposal.get('falsifiers',[]),
