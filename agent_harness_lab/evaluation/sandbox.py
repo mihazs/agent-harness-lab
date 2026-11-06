@@ -2,9 +2,11 @@
 from dataclasses import asdict, dataclass, replace
 from contextlib import ExitStack, nullcontext
 import hashlib
+import json
 import math
 import os
 from pathlib import Path
+import re
 import resource
 import selectors
 import shutil
@@ -35,6 +37,70 @@ os.execv(sys.argv[1], sys.argv[1:])
 def _file_sha256(path):
     with Path(path).open('rb') as stream:
         return hashlib.file_digest(stream, 'sha256').hexdigest()
+
+
+# bubblewrap's clone() EAGAIN: the host's process count or the user's own process limit, never a missing namespace.
+CLONE_EXHAUSTED = 'Resource temporarily unavailable'
+# Since Linux 5.14 RLIMIT_NPROC counts each user per user namespace and a namespace keeps its creator's limit for the
+# real UID, so a cap set inside the sandbox's own user namespace counts the sandbox's processes only. Earlier kernels
+# count every process of the real UID, which a sandbox-scoped bound cannot use.
+NAMESPACED_NPROC_KERNEL = (5, 14)
+INFO_BYTES = 4096
+
+
+def _namespaced_nproc(release=None):
+    numbers = re.match(r'(\d+)\.(\d+)', release if release is not None else os.uname().release)
+    return bool(numbers) and tuple(map(int, numbers.groups())) >= NAMESPACED_NPROC_KERNEL
+
+
+def _unbounded(reason):
+    return dict(enforced=False, scope=None, limit=None, reason=reason)
+
+
+def _parent_pid(pid):
+    try:
+        return int(Path(f'/proc/{pid}/stat').read_text().rsplit(')', 1)[1].split()[1])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def _bound_namespace(process, info, release, processes, deadline):
+    """Caps RLIMIT_NPROC on the sandbox's first process while bubblewrap holds it on --block-fd. That process already
+    lives in the sandbox's user namespace, so the cap counts only the sandbox's processes; the real UID keeps the host
+    limit the namespace was created under. Without a verified cap the run continues and reports the bound as not
+    enforced. The deadline leaves the sandbox blocked for the caller's timeout cleanup."""
+    report, data = None, b''
+    with selectors.DefaultSelector() as poll:
+        poll.register(info, selectors.EVENT_READ)
+        while len(data) <= INFO_BYTES:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return _unbounded('timeout')
+            if poll.select(min(.1, remaining)):
+                chunk = os.read(info, INFO_BYTES)
+                if not chunk:
+                    break
+                data += chunk
+    try:
+        pid = json.loads(data)['child-pid']
+    except (ValueError, KeyError, TypeError):
+        pid = None
+    if type(pid) is not int or pid <= 0 or _parent_pid(pid) != process.pid:
+        report = _unbounded('sandbox_not_started')
+    else:
+        try:
+            resource.prlimit(pid, resource.RLIMIT_NPROC, (processes, processes))
+            if resource.prlimit(pid, resource.RLIMIT_NPROC) != (processes, processes):
+                raise OSError('process cap not read back')
+        except OSError:
+            report = _unbounded('namespace_limit_unavailable')
+        else:
+            report = dict(enforced=True, scope='user_namespace', limit=processes, reason=None)
+    try:
+        os.write(release, b'1')
+    except OSError:
+        pass  # bubblewrap already exited
+    return report
 
 
 @dataclass(frozen=True)
@@ -175,7 +241,7 @@ class SandboxBackend:
                                      'runtime dependencies unpinned'])
         if probe.returncode == KEYRING_EXIT and KEYRING_UNAVAILABLE.encode() in probe.stderr:
             reason = 'keyring_isolation_unavailable'
-        elif b'Resource temporarily unavailable' in probe.stderr:
+        elif CLONE_EXHAUSTED.encode() in probe.stderr:
             reason = 'process_limit_exhausted'  # clone() EAGAIN: the user's own process limit, not namespaces
         else:
             reason = 'namespace_probe_failed'
@@ -212,9 +278,12 @@ class SandboxBackend:
         if self.permission_audit:
             observed=run['attestation']['permission_audit']
             available=available and observed['status']=='complete' and observed['qualification']=='violated'
+        bound = run['attestation'].get('process_bound')
         return dict(status='available' if available else 'unsupported',
-                    reason=None if available else 'namespace_probe_failed',
+                    reason=None if available else
+                        'process_limit_exhausted' if CLONE_EXHAUSTED in run.get('stderr', '') else 'namespace_probe_failed',
                     automatic_promotion=False,
+                    process_bound=bound,
                     cgroup_v2=run['attestation']['cgroup_v2'],
                     runtime_image=run['attestation'].get('runtime_image'),
                     storage_policy=run['attestation'].get('storage_policy'),
@@ -222,7 +291,8 @@ class SandboxBackend:
                     limitations=['full isolation certification not established']
                         + ([] if self.disk_bytes is not None else ['no aggregate disk quota'])
                         + ([] if self.image else ['runtime dependencies unpinned'])
-                        + ([] if self.cgroup_root is not None else ['no aggregate cgroup controls']))
+                        + ([] if self.cgroup_root is not None else ['no aggregate cgroup controls'])
+                        + ([] if bound is None or bound['enforced'] else ['no sandbox process bound']))
 
     def run(self, argv, workspace, inputs, role, limits=Limits(), *, artifact_allowlist=None, working_state=None):
         from .controller_receipts import _kernel_started, _kernel_spawned, _kernel_finished
@@ -264,12 +334,25 @@ class SandboxBackend:
                 os.sched_setscheduler(0, os.SCHED_OTHER, os.sched_param(0))
                 resource.setrlimit(resource.RLIMIT_RTPRIO, (0, 0))
             resource.setrlimit(resource.RLIMIT_CPU, (math.ceil(limits.seconds), math.ceil(limits.seconds) + 1))
-            if group is None:
-                resource.setrlimit(resource.RLIMIT_NPROC, (limits.processes, limits.processes))
             for key, value in ((resource.RLIMIT_AS, limits.memory_bytes),
                                (resource.RLIMIT_FSIZE, limits.file_bytes), (resource.RLIMIT_NOFILE, 64),
                                (resource.RLIMIT_CORE, 0)):
                 resource.setrlimit(key, (value, value))
+        # The process bound never counts the invoking user's other processes: the cgroup's pids.max, or a cap inside the
+        # sandbox's own user namespace set by _bound_namespace(); otherwise the receipt reports it as not enforced.
+        bound_fds = {}
+        if self.cgroup_root is not None:
+            process_bound = dict(enforced=True, scope='cgroup', limit=limits.processes, reason=None)
+        elif '--unshare-user' not in command or '--unshare-all' not in command:
+            process_bound = _unbounded('no_user_namespace')
+        elif not _namespaced_nproc():
+            process_bound = _unbounded('kernel_counts_real_uid')
+        else:
+            process_bound = None
+            (bound_fds['info'], bound_fds['info_child']), (bound_fds['block_child'], bound_fds['block']) = os.pipe(), os.pipe()
+            index = command.index('--unshare-all')
+            command = (command[:index] + ['--info-fd', str(bound_fds['info_child']), '--block-fd', str(bound_fds['block_child'])]
+                       + command[index:])
         buffers, reason = [bytearray(), bytearray()], None
         aggregate = replace(limits, memory_bytes=min(limits.memory_bytes, self.disk_bytes)) if self.disk_bytes is not None else limits
         boundary = Cgroup(self.cgroup_root, aggregate, start+limits.seconds) if self.cgroup_root is not None else nullcontext(None)
@@ -279,13 +362,15 @@ class SandboxBackend:
         audit_report=dict(status='not_requested',qualification='unknown',observation_scope='unobserved')
         with storage as scratch:
             with ExitStack() as stack:
+                stack.callback(lambda: [os.close(bound_fds.pop(name)) for name in list(bound_fds)])
                 group=stack.enter_context(boundary)
                 audit=None
                 if self.permission_audit:
                     from .permission_audit import Observation
                     audit=Observation(scratch.command,scratch.audit_execs,group,limits,start+limits.seconds,role,**(dict(source_ticket=source_ticket) if source_ticket is not None else {}))
                     stack.callback(audit.close)
-                descriptors=tuple(([scratch.filter_fd] if scratch else [])+([audit.writer] if audit else []))
+                descriptors=tuple(([scratch.filter_fd] if scratch else [])+([audit.writer] if audit else [])
+                    +[bound_fds[name] for name in ('info_child','block_child') if name in bound_fds])
                 process=stack.enter_context(subprocess.Popen(audit.command if audit else scratch.command if scratch else command,
                     cwd=workspace, env={'PATH': '/usr/bin:/bin'}, stdin=subprocess.PIPE if audit else subprocess.DEVNULL,
                     stdout=scratch.sender if scratch else subprocess.PIPE, stderr=subprocess.PIPE,
@@ -297,6 +382,11 @@ class SandboxBackend:
                         audit.start(process);poll.register(audit.reader,selectors.EVENT_READ,2)
                     if scratch: scratch.start(group)
                     _kernel_spawned(source_ticket,process,scratch,group,*([audit] if audit is not None else []))
+                    if bound_fds:
+                        for name in ('info_child', 'block_child'):  # bubblewrap holds its own ends
+                            os.close(bound_fds.pop(name))
+                        process_bound = _bound_namespace(process, bound_fds['info'], bound_fds['block'], limits.processes,
+                                                         start + limits.seconds)
                     for index, pipe in enumerate((scratch.receiver if scratch else process.stdout, process.stderr)):
                         os.set_blocking(pipe.fileno(), False)
                         poll.register(pipe, selectors.EVENT_READ, index)
@@ -367,6 +457,7 @@ class SandboxBackend:
                         binary_sha256=_file_sha256(self.binary),
                         input_digests=before, automatic_promotion=False,
                         resource_limits=asdict(limits),
+                        process_bound=process_bound,
                         cgroup_v2=cgroup,
                         runtime_image=image,
                         storage_policy=storage_report,
