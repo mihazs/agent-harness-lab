@@ -10,12 +10,19 @@ appends one JSON line holding the trial nonce to workspace/.ahl-canary/, so a re
 event and execution for that group.
 
 The runtime runs once through the supplied executor with cwd=workspace, HOME and TMPDIR inside the trial and an
-environment that carries no credentials. There is no host isolation: hooks run as the invoking user and can still
-read the host filesystem and reach the network (host_isolation='none'). On Linux the validator is a child subreaper
-for the run, so every process the run leaves behind is killed and reaped before the post-run snapshot; elsewhere the
-run is inconclusive. Claude Code keeps the I13 project-only setting source and strict empty MCP
-requests but not disableAllHooks. Codex gets the I13 temporary CODEX_HOME and --dangerously-bypass-hook-trust only
-while that capability row is verified; otherwise the run is inconclusive and nothing executes. A native runtime runs
+environment that carries no credentials. Without a sandbox there is no host isolation: hooks run as the invoking user
+and can still read the host filesystem and reach the network (host_isolation='none'). With the shipped bubblewrap
+backend (evaluation.sandbox.SandboxBackend) the run has no network and sees only the system directories, the runtime
+file and the trial root, read-only at its own path; only home, tmp, codex-home and the canary folder stay writable,
+and nothing else of the host, its home and credential stores included, is mounted; the run also gets a new empty
+session keyring (host_isolation='bubblewrap'). The backend's hook trial probe runs that same command first: when
+bubblewrap or user namespaces are unavailable the run is inconclusive and nothing executes, never unsandboxed. A
+sandboxed 126/127 exit is inconclusive (sandbox_dependency_unmounted), since the tool may only be outside the mounts. Any other sandbox object reports host_isolation='unverified'. On Linux the
+validator is a child subreaper for the run, so every process the run leaves behind is killed and reaped before the
+post-run snapshot; elsewhere the run is inconclusive. Claude Code keeps the I13 project-only setting source and
+strict empty MCP requests but not disableAllHooks. Codex gets the I13 temporary CODEX_HOME and
+--dangerously-bypass-hook-trust only while that capability row is verified; otherwise the run is inconclusive and
+nothing executes. A native runtime runs
 only when the caller opts in. The ahl-fake-hook-trace-v1 protocol of a synthetic runtime is the only source of
 per-handler execution facts, so a native run reports handler execution as unknown.
 
@@ -77,6 +84,8 @@ RUNTIME_CONFIG, GRANT_KEYS = 'home/.claude.json', ('permissions', 'allowedTools'
 # Findings that leave the run's observations incomplete: no label can rest on what was not observed.
 INCOMPLETE = ('runtime_timeout', 'snapshot_unavailable', 'process_containment_unavailable')
 PR_SET_CHILD_SUBREAPER, PR_GET_CHILD_SUBREAPER, SWEEP_SECONDS = 36, 37, 5
+# The only trial folders a sandboxed run may write; the workspace itself is read-only.
+SANDBOX_WRITABLE, SANDBOX_PROBE_SECONDS = ('home', 'tmp', 'codex-home', f'workspace/{CANARY_DIR}'), 3
 CANARY = '''import hashlib, json, os, sys
 raw = sys.stdin.buffer.read(1048576)
 try:
@@ -377,11 +386,13 @@ def _trace(stdout):
     return rows
 
 
-def _decisions(record):
-    """(failures, disqualifiers) of one traced execution's exit status and decision output."""
+def _decisions(record, sandboxed=False):
+    """(failures, disqualifiers) of one traced execution's exit status and decision output.
+
+    Sandboxed, a 126/127 exit may only mean the sandbox does not mount a host tool, so it is no failure here."""
     failures, disqualifiers, code = set(), set(), record['exit_code']
     if record['timed_out']: failures.add('timeout')
-    elif code in (126, 127): failures.add('missing_executable')
+    elif code in (126, 127): failures.add('sandbox_dependency_unmounted' if sandboxed else 'missing_executable')
     elif code is not None and code != 0: failures.add('nonzero_status')
     if code == 2: disqualifiers.add('blocks_required_work')  # exit 2 is the runtimes' blocking error
     if record['cancelled']: failures.add('cancellation')
@@ -437,8 +448,34 @@ def _skip(reason):
     return dict(native=_summary('skipped', reason), fake_runtime=_summary('skipped', reason))
 
 
-def run(root, marker, executor, *, binary, native=False, trace=None, timeout=60, environ=None):
-    """Execute the runtime once in the trial and classify every observed or unobserved fact."""
+def _isolation(sandbox):
+    """The host isolation a sandbox may claim: only the shipped bubblewrap backend itself is 'bubblewrap'."""
+    if sandbox is None: return 'none'
+    from .evaluation.sandbox import SandboxBackend
+    return 'bubblewrap' if type(sandbox) is SandboxBackend else 'unverified'
+
+
+def _sandbox(sandbox, status, reason=None, **facts):
+    if sandbox is None: return dict(backend=None, status='not_requested', reason=None)
+    return dict(backend=_isolation(sandbox), status=status, reason=reason, **facts)
+
+
+def _probe(sandbox):
+    """(available, reason, limitations) of the sandbox's hook trial probe; a failing or absent probe is never available."""
+    probe = getattr(sandbox, 'hook_trial_capability', None)
+    if not callable(probe): return False, 'sandbox_probe_unavailable', []
+    try: capability = probe(seconds=SANDBOX_PROBE_SECONDS)
+    except (OSError, ValueError, TimeoutError): return False, 'sandbox_probe_error', []
+    if not isinstance(capability, dict): return False, 'sandbox_probe_failed', []
+    if capability.get('status') == 'available':
+        return True, None, [row for row in capability.get('limitations') or () if isinstance(row, str)]
+    return False, capability['reason'] if isinstance(capability.get('reason'), str) else 'sandbox_probe_failed', []
+
+
+def run(root, marker, executor, *, binary, native=False, trace=None, timeout=60, environ=None, sandbox=None):
+    """Execute the runtime once in the trial and classify every observed or unobserved fact.
+
+    With a sandbox the runtime runs only inside it and only after its probe passed; a failed probe executes nothing."""
     if native and trace is not None: raise ValueError('a native canary never reads the fake-runtime trace')
     if trace not in (None, FAKE_TRACE): raise ValueError('unknown hook trace protocol')
     stored = json.loads((root / MARKER).read_text())
@@ -448,7 +485,8 @@ def run(root, marker, executor, *, binary, native=False, trace=None, timeout=60,
     if os.path.lexists(workspace / '.git'): raise ValueError('a hook trial workspace never holds Git metadata')
     env = environment(root, runtime, os.environ if environ is None else environ)
     kind = 'fake' if trace == FAKE_TRACE else 'native'
-    result = dict(runtime_kind=kind, executed=False, run=None, workspace_diff=None)
+    result = dict(runtime_kind=kind, executed=False, run=None, workspace_diff=None, host_isolation='none',
+                  sandbox=_sandbox(sandbox, 'not_run'))
     blocked = None
     if runtime == 'codex' and not _verified('codex', 'hooks', CODEX_BYPASS_ITEM): blocked = 'codex_hook_trust_bypass_unverified'
     elif runtime == 'codex' and 'CODEX_HOME' not in env: blocked = 'temporary_codex_home_unavailable'
@@ -464,12 +502,29 @@ def run(root, marker, executor, *, binary, native=False, trace=None, timeout=60,
                     handlers=_unresolved(marker, 'inconclusive'), findings=[])
     if runtime == 'codex' and not Path(env['CODEX_HOME']).is_relative_to(root): raise ValueError('Codex trust bypass outside the trial')
     missing = {(e, g, i) for e, g, i, text in marker['handlers'] if isinstance(text, str) and _missing(workspace, runtime, text, env.get('PATH', ''))}
+    argv, launch_env = command(root, runtime, binary), env
+    if sandbox is not None:
+        available, reason, limitations = _probe(sandbox)
+        if not available:
+            unavailable = _summary('inconclusive', 'sandbox_unavailable')
+            return dict(result, sandbox=_sandbox(sandbox, 'unavailable', reason),
+                        evidence=dict(native=unavailable, fake_runtime=unavailable), canary=unavailable,
+                        handlers=_unresolved(marker, 'inconclusive'), findings=[])
+        writable = [root / name for name in SANDBOX_WRITABLE if (root / name).is_dir() and not (root / name).is_symlink()]
+        argv = sandbox.hook_trial_command(argv, root, writable=writable, cwd=workspace, env=env, runtime=found)
+        launch_env = {'PATH': '/usr/bin:/bin'}
+        # Only the shipped backend's boundary is known; any other sandbox's is reported as unverified.
+        boundary = (dict(network='none', host_home='not_mounted', workspace='read_only') if _isolation(sandbox) == 'bubblewrap'
+                    else dict(network='unverified', host_home='unverified', workspace='unverified'))
+        result.update(host_isolation=_isolation(sandbox), sandbox=_sandbox(
+            sandbox, 'applied', **boundary, writable=sorted(path.relative_to(root).as_posix() for path in writable),
+            limitations=limitations))
     before = snapshot(root)
     # As child subreaper this process inherits every orphan of the run, so nothing the run started outlives it or
     # writes after the post-run snapshot.
     existing, previous = _descendants(), _subreaper(1)
     try:
-        executed = executor(command(root, runtime, binary), workspace, timeout, PROMPT, env=env)
+        executed = executor(argv, workspace, timeout, PROMPT, env=launch_env)
     finally:
         lingering, swept = _sweep(existing)
         if previous is not None: _subreaper(previous)
@@ -511,10 +566,14 @@ def run(root, marker, executor, *, binary, native=False, trace=None, timeout=60,
         rows = None if traced is None else traced.get((event, group, index), [])
         if rows:
             for record in rows:
-                more, worse = _decisions(record); failures |= more; disqualifiers |= worse
+                more, worse = _decisions(record, sandbox is not None); failures |= more; disqualifiers |= worse
             if len({record['payload_sha256'] for record in rows}) < len(rows): failures.add('duplicate_events')
+        # A host tool the sandbox does not mount is a sandbox-scope gap, never a candidate failure.
+        unmounted = 'sandbox_dependency_unmounted' in failures
+        failures.discard('sandbox_dependency_unmounted')
         if marker['disabled']: status = 'disabled'
         elif failures and (matched or rows): status = 'failed'
+        elif unmounted: status, reason = 'inconclusive', 'sandbox_dependency_unmounted'
         elif canary['status'] != 'observed': status = 'inconclusive'
         elif not matched and incomplete: status, reason = 'inconclusive', incomplete[0]
         elif not matched and _event_slot(event) not in fired: status, reason = 'inconclusive', 'event_not_observed'
@@ -563,8 +622,10 @@ def verdict(contract, observed):
 
 
 def validate(output, runtime, executor, *, unit=None, project=None, fixture=None, binary=None, native=False,
-             trace=None, timeout=60, environ=None, protected=()):
-    """One hook trial. unit is (config, before, after) journal snapshots; project resolves checkout scripts."""
+             trace=None, timeout=60, environ=None, protected=(), sandbox=None):
+    """One hook trial. unit is (config, before, after) journal snapshots; project resolves checkout scripts.
+
+    sandbox is an evaluation.sandbox.SandboxBackend (or None for an unisolated run on the host)."""
     if runtime not in DEFAULT_CONFIG: raise ValueError('unsupported hook runtime')
     if native and trace is not None: raise ValueError('a native canary never reads the fake-runtime trace')
     if trace not in (None, FAKE_TRACE): raise ValueError('unknown hook trace protocol')
@@ -579,16 +640,17 @@ def validate(output, runtime, executor, *, unit=None, project=None, fixture=None
     if contract is not None and (contract.status != 'passed' or contract.runtime != runtime or contract.config != config):
         root = guard(output, inputs)
         root.mkdir(mode=0o700)
-        observed = dict(runtime_kind='none', executed=False, run=None, workspace_diff=None,
+        observed = dict(runtime_kind='none', executed=False, run=None, workspace_diff=None, host_isolation='none',
+                        sandbox=_sandbox(sandbox, 'not_run'),
                         evidence=_skip('contract_not_passed'), canary=_summary('skipped', 'contract_not_passed'),
                         handlers=[], findings=[])
     else:
         root, marker = prepare(output, runtime, config, after, fixture=fixture, protected=inputs, project=project,
                                scripts=() if contract is None else contract.scripts)
         observed = run(root, marker, executor, binary=binary or ('claude' if runtime == 'claude-code' else 'codex'),
-                       native=native, trace=trace, timeout=timeout, environ=environ)
+                       native=native, trace=trace, timeout=timeout, environ=environ, sandbox=sandbox)
     document = dict(profile=PROFILE, runtime=runtime, pinned_version=surfaces.PINS[runtime], executed_in='trial_workspace',
-                    credentials='not_staged', host_isolation='none', inherited_hooks='managed_and_system_layers_unverified', **observed,
+                    credentials='not_staged', inherited_hooks='managed_and_system_layers_unverified', **observed,
                     contract=None if contract is None else dict(status=contract.status, sha256=contract.sha256,
                                                                findings=[list(row[:2]) for row in contract.findings]),
                     candidate=verdict(contract, observed), automatic_promotion=False, publication_allowed=False)

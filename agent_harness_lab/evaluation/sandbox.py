@@ -19,6 +19,17 @@ from .analysis_inputs import input_digest,check_role
 from .workspace import PrivateWorkspace, policy
 
 ROLES = {'proposer', 'evaluator_author', 'executor', 'grader'}
+# Runs on the host before bubblewrap: joining a new anonymous session keyring (KEYCTL_JOIN_SESSION_KEYRING, NULL name)
+# drops possession of the validator's session keyring, whose keys bubblewrap's namespaces would otherwise leave
+# readable. A kernel without keys (ENOSYS) has no keyring to leak; any other failure stops before bubblewrap runs.
+KEYRING_UNAVAILABLE, KEYRING_EXIT = 'ahl: keyring isolation unavailable', 125
+KEYRING_TRAMPOLINE = f'''import ctypes, errno, os, sys
+number = {{'x86_64': 250, 'aarch64': 219, 'riscv64': 219, 'loongarch64': 219}}.get(os.uname().machine)
+libc = ctypes.CDLL(None, use_errno=True); libc.syscall.restype = ctypes.c_long
+if number is None or (libc.syscall(number, 1, None) < 0 and ctypes.get_errno() != errno.ENOSYS):
+    sys.stderr.write({KEYRING_UNAVAILABLE!r} + '\\n'); sys.exit({KEYRING_EXIT})
+os.execv(sys.argv[1], sys.argv[1:])
+'''
 
 
 def _file_sha256(path):
@@ -102,6 +113,73 @@ class SandboxBackend:
         if self.image:
             command += ['--remount-ro', '/inputs']
         return command + ['--remount-ro', '/', '--chdir', '/work', '--', *argv]
+
+    def hook_trial_command(self, argv, root, *, writable, cwd, env, runtime):
+        """bubblewrap argv for one hook trial: no network, only env in the environment, the system directories and the
+        runtime file read-only, the trial root read-only at its own path and only the listed trial folders writable.
+        Nothing else of the host, its home and credential stores included, is mounted, and a host-side trampoline
+        (KEYRING_TRAMPOLINE) gives the run a new empty session keyring before bubblewrap starts."""
+        if not self.binary:
+            raise ValueError('bubblewrap is unavailable')
+        if not sys.executable:
+            raise ValueError('no interpreter for the keyring trampoline')
+        if not argv or not all(isinstance(a, str) and '\0' not in a for a in argv):
+            raise ValueError('invalid hook trial command')
+        root, cwd, runtime = (Path(path).resolve(strict=True) for path in (root, cwd, runtime))
+        if not cwd.is_relative_to(root) or not runtime.is_file():
+            raise ValueError('hook trial command outside its trial')
+        command = [sys.executable, '-I', '-S', '-c', KEYRING_TRAMPOLINE, self.binary, '--unshare-all', '--unshare-user',
+                   '--unshare-net', '--die-with-parent', '--new-session', '--cap-drop', 'ALL', '--clearenv']
+        for key, value in sorted(env.items()):
+            if not isinstance(key, str) or not isinstance(value, str) or not key or '=' in key or '\0' in key + value:
+                raise ValueError('invalid hook trial environment')
+            command += ['--setenv', key, value]
+        systems = [system for system in ('/usr', '/bin', '/lib', '/lib64') if Path(system).exists()]
+        for system in systems:
+            command += ['--ro-bind', system, system]
+        command += ['--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--ro-bind', str(root), str(root)]
+        for folder in writable:
+            if Path(folder).is_symlink() or not Path(folder).is_dir():
+                raise ValueError('a writable hook trial folder must be a directory')
+            folder = Path(folder).resolve()
+            if folder == root or not folder.is_relative_to(root):
+                raise ValueError('a writable hook trial folder must lie inside the trial')
+            command += ['--bind', str(folder), str(folder)]
+        if not any(runtime.is_relative_to(Path(system).resolve()) for system in systems):
+            command += ['--ro-bind', str(runtime), str(runtime)]
+        return command + ['--remount-ro', '/', '--chdir', str(cwd), '--', str(runtime), *argv[1:]]
+
+    def hook_trial_capability(self, *, seconds=3):
+        """The hook trial's own probe: its exact command on /usr/bin/true. Unlike capability() it sets no per-user
+        process limit, which a hook trial never applies, so a host running many processes is not a namespace failure."""
+        Limits(seconds=seconds).validate()
+        if sys.platform != 'linux' or not self.binary:
+            return dict(status='unsupported', reason='linux_bubblewrap_unavailable', automatic_promotion=False)
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            for name in ('home', 'tmp', 'workspace'):
+                (root / name).mkdir()
+            try:
+                argv = self.hook_trial_command(['/usr/bin/true'], root, writable=[root / 'home', root / 'tmp'],
+                                               cwd=root / 'workspace', env={'PATH': '/usr/bin:/bin'}, runtime='/usr/bin/true')
+                probe = subprocess.run(argv, cwd=root, env={'PATH': '/usr/bin:/bin'}, stdin=subprocess.DEVNULL,
+                                       capture_output=True, timeout=seconds)
+            except subprocess.TimeoutExpired:
+                return dict(status='unsupported', reason='namespace_probe_timeout', automatic_promotion=False)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                return dict(status='unsupported', reason='resource_boundary_unavailable', automatic_promotion=False)
+        if probe.returncode == 0:
+            return dict(status='available', reason=None, automatic_promotion=False,
+                        limitations=['full isolation certification not established', 'no resource limits',
+                                     'runtime dependencies unpinned'])
+        if probe.returncode == KEYRING_EXIT and KEYRING_UNAVAILABLE.encode() in probe.stderr:
+            reason = 'keyring_isolation_unavailable'
+        elif b'Resource temporarily unavailable' in probe.stderr:
+            reason = 'process_limit_exhausted'  # clone() EAGAIN: the user's own process limit, not namespaces
+        else:
+            reason = 'namespace_probe_failed'
+        return dict(status='unsupported', reason=reason, automatic_promotion=False)
 
     def capability(self, *, seconds=3):
         Limits(seconds=seconds).validate()

@@ -845,10 +845,12 @@ def hook_main(argv):
     """Hook evaluation mode: one staged hook unit and a nonce canary in a NEW private trial workspace only."""
     application_modules()
     from agent_harness_lab import hooks_validation
+    from agent_harness_lab.evaluation.sandbox import SandboxBackend
     parser = argparse.ArgumentParser(prog='run_evaluation.py hooks', formatter_class=argparse.RawDescriptionHelpFormatter,
         description='Validate one staged hook unit beside a harmless nonce canary inside a NEW private trial workspace.\n'
         'Hooks run only there, never in the candidate, fixture or project, with no credentials in the environment.\n'
-        'The host is not isolated: hooks run as you and can still read host files and reach the network.',
+        'By default the run is sandboxed with bubblewrap: no network, a read-only trial workspace and no host home;\n'
+        'without bubblewrap or user namespaces nothing executes (inconclusive). --sandbox none runs unisolated as you.',
         epilog='The candidate hooks key must pass hook_contract_v1 or nothing executes (unsupported).\n'
         'A real runtime runs only with --native-canary (one short model call); --runtime-trace reads a synthetic\n'
         'fake runtime and is never native evidence. Codex stays inconclusive while --dangerously-bypass-hook-trust is unverified.\n'
@@ -863,6 +865,9 @@ def hook_main(argv):
     parser.add_argument('--native-canary', action='store_true', help='Opt in to executing the real runtime once inside the trial workspace')
     parser.add_argument('--runtime-trace', choices=(hooks_validation.FAKE_TRACE,), help='Read per-handler execution records from a synthetic fake runtime; not native evidence')
     parser.add_argument('--timeout', type=float, default=120, help='Runtime deadline in seconds for the single trial run (default: %(default)s)')
+    parser.add_argument('--sandbox', choices=('bubblewrap', 'none'), default='bubblewrap',
+                        help='bubblewrap (default): no network, read-only workspace, no host home, never an unsandboxed fallback; '
+                        'none: run as you with host files and network reachable (host_isolation: none)')
     args = parser.parse_args(argv)
     try:
         if args.native_canary and args.runtime_trace: raise ValueError('--native-canary and --runtime-trace are exclusive')
@@ -874,12 +879,12 @@ def hook_main(argv):
         root, document = hooks_validation.validate(
             args.output, args.runtime, execute, unit=unit, project=args.fixture or args.candidate, fixture=args.fixture,
             binary=args.binary, native=args.native_canary, trace=args.runtime_trace, timeout=args.timeout,
-            protected=inputs)
+            protected=inputs, sandbox=SandboxBackend() if args.sandbox == 'bubblewrap' else None)
         if any(digest(Path(path)) != value for path, value in digests.items()): raise ValueError('hook trial inputs changed')
     except (ValueError, OSError, KeyError, TypeError) as exc:
         parser.exit(2, f'hook evaluation setup error: {exc}\n')
     print(json.dumps(dict(candidate=document['candidate']['status'], canary=document['canary']['status'],
-                          results=str(root / hooks_validation.RESULTS))))
+                          host_isolation=document['host_isolation'], results=str(root / hooks_validation.RESULTS))))
     return hooks_validation.exit_status(document)
 
 

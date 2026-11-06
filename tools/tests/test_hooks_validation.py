@@ -5,6 +5,8 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -13,6 +15,7 @@ import unittest
 from unittest.mock import patch
 
 from agent_harness_lab import hooks_validation, surfaces
+from agent_harness_lab.evaluation.sandbox import KEYRING_TRAMPOLINE, SandboxBackend
 from agent_harness_lab.hooks_validation import FAKE_TRACE, validate
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -58,6 +61,49 @@ print(json.dumps({'type': 'result', 'subtype': 'success', 'is_error': False}))
 sys.exit(scenario.get('exit', 0))
 '''
 
+# The same fake for a sandboxed run: the scenario is embedded and the invocation lands in the trial HOME, because
+# nothing beside the runtime file is mounted.
+SCENARIO_LINE = "scenario = json.loads(pathlib.Path(sys.argv[0] + '.scenario.json').read_text())"
+INVOCATION_LINE = "pathlib.Path(sys.argv[0] + '.invocation.json').write_text("
+assert SCENARIO_LINE in FAKE and INVOCATION_LINE in FAKE
+
+
+def sandboxed_fake(scenario):
+    return FAKE.replace(SCENARIO_LINE, f'scenario = json.loads({json.dumps(scenario)!r})').replace(
+        INVOCATION_LINE, "pathlib.Path(os.environ['HOME'], 'invocation.json').write_text(")
+
+
+# A synthetic bwrap: run by the keyring trampoline, it reports what its process limit and argv let it.
+FAKE_BWRAP = '''#!{python} -I
+import resource, sys
+soft = resource.getrlimit(resource.RLIMIT_NPROC)[0]
+if {mode!r} == 'eagain' or (soft != resource.RLIM_INFINITY and soft <= 32):
+    sys.stderr.write('bwrap: Creating new namespace failed: Resource temporarily unavailable\\n'); sys.exit(1)
+if {mode!r} == 'broken': sys.stderr.write('bwrap: setting up uid map: Permission denied\\n'); sys.exit(1)
+sys.exit(0 if sys.argv[1:2] == ['--unshare-all'] and sys.argv[-1:] == ['/usr/bin/true'] else 3)
+'''
+# Joins a fresh session keyring of its own (nothing on the host changes), plants a synthetic key in it, then runs the
+# sandbox argv given as JSON; the sandboxed INNER tries to find and read that key.
+KEYRING_PLANT = r'''
+import ctypes, json, os, subprocess, sys
+add_key, keyctl = {'x86_64': (248, 250), 'aarch64': (217, 219)}[os.uname().machine]
+libc = ctypes.CDLL(None, use_errno=True); libc.syscall.restype = ctypes.c_long
+assert libc.syscall(keyctl, 1, None) > 0
+assert libc.syscall(add_key, b'user', b'ahl-synthetic-probe', b'synthetic-secret', 16, -3) > 0
+own = libc.syscall(keyctl, 10, -3, b'user', b'ahl-synthetic-probe', 0)
+run = subprocess.run(json.loads(sys.argv[1]), capture_output=True, text=True, env={'PATH': '/usr/bin:/bin'}, timeout=20)
+print(json.dumps(dict(own=own, rc=run.returncode, stdout=run.stdout.strip(), stderr=run.stderr[-500:])))
+'''
+KEYRING_INNER = r'''
+import ctypes, os
+keyctl = {'x86_64': 250, 'aarch64': 219}[os.uname().machine]
+libc = ctypes.CDLL(None, use_errno=True); libc.syscall.restype = ctypes.c_long
+key = libc.syscall(keyctl, 10, -3, b'user', b'ahl-synthetic-probe', 0)
+buffer = ctypes.create_string_buffer(64)
+size = libc.syscall(keyctl, 11, key, buffer, 64) if key > 0 else -1
+print('read' if size > 0 and buffer.raw[:size] == b'synthetic-secret' else 'denied')
+'''
+
 
 def runner():
     spec = importlib.util.spec_from_file_location('hook_runner_under_test', RUNNER)
@@ -71,7 +117,8 @@ def hooks(event='PreToolUse', matcher='Bash', **fields):
     return {event: [{'matcher': matcher, 'hooks': [{k: v for k, v in handler.items() if v is not None}]}]}
 
 
-class FakeRuntimeTests(unittest.TestCase):
+class FakeRuntimeCase(unittest.TestCase):
+    """Synthetic fixture, candidate and fake runtime; the helpers only, so subclasses never rerun the tests."""
     def setUp(self):
         temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)
@@ -115,6 +162,8 @@ class FakeRuntimeTests(unittest.TestCase):
         self.assertFalse(document['candidate']['improvement_eligible'])
         self.assertFalse(document['automatic_promotion'])
 
+
+class FakeRuntimeTests(FakeRuntimeCase):
     def test_canary_proves_registration_matched_event_and_execution_inside_the_trial_only(self):
         self.scenario()
         root, document = validate(self.root / 'out', 'claude-code', self.execute, fixture=self.fixture,
@@ -442,6 +491,214 @@ class FakeRuntimeTests(unittest.TestCase):
         self.assertIsNone(self.invocation())
 
 
+class RecordingSandbox:
+    """A fake sandbox: it records the wrap and passes the command through, so it can never claim isolation."""
+    def __init__(self, capability=None):
+        self.result, self.calls = capability or dict(status='available', reason=None, limitations=['synthetic']), []
+
+    def hook_trial_capability(self, *, seconds):
+        if isinstance(self.result, BaseException): raise self.result
+        return self.result
+
+    def hook_trial_command(self, argv, root, **facts):
+        self.calls.append(dict(facts, argv=argv, root=root))
+        return argv
+
+
+class SandboxedTrialTests(FakeRuntimeCase):
+    def sandboxed(self, sandbox, name, executor=None):
+        self.scenario(events=[{'event': 'SessionStart'}, {'event': 'PreToolUse', 'value': 'Bash'}])
+        return validate(self.root / name, 'claude-code', executor or self.execute, unit=self.stage(), project=self.fixture,
+                        fixture=self.fixture, binary=str(self.fake), trace=FAKE_TRACE, environ=self.environ,
+                        protected=(self.candidate, self.fixture), sandbox=sandbox)
+
+    def test_an_unavailable_sandbox_is_inconclusive_and_never_runs_unsandboxed(self):
+        missing = SandboxBackend(binary='ahl-synthetic-missing-bwrap')
+        for name, sandbox, reason in (('missing', missing, 'linux_bubblewrap_unavailable'),
+                                      ('namespaces', RecordingSandbox(dict(status='unsupported', reason='namespace_probe_failed')),
+                                       'namespace_probe_failed'),
+                                      ('raising', RecordingSandbox(OSError('synthetic')), 'sandbox_probe_error'),
+                                      ('malformed', RecordingSandbox('available'), 'sandbox_probe_failed')):
+            with self.subTest(case=name):
+                root, document = self.sandboxed(sandbox, name)
+                self.assertIsNone(self.invocation())
+                self.assertFalse(document['executed'])
+                self.assertEqual(document['host_isolation'], 'none')
+                self.assertEqual((document['sandbox']['status'], document['sandbox']['reason']), ('unavailable', reason))
+                self.assertEqual((document['canary']['status'], document['canary']['reason']), ('inconclusive', 'sandbox_unavailable'))
+                self.assertEqual({row['status'] for row in document['evidence'].values()}, {'inconclusive'})
+                self.assertEqual(document['candidate']['status'], 'inconclusive')
+                self.assert_not_effective(document)
+                self.assertEqual(hooks_validation.exit_status(document), 3)
+                self.assertFalse((root / 'workspace' / hooks_validation.CANARY_DIR / (json.loads(
+                    (root / hooks_validation.MARKER).read_text())['nonce'] + '.jsonl')).exists())
+        self.assertEqual(missing.hook_trial_capability()['status'], 'unsupported')
+        _, document = self.sandboxed(object(), 'no-probe')
+        self.assertEqual((document['executed'], document['sandbox']['reason']), (False, 'sandbox_probe_unavailable'))
+
+    def test_the_hook_trial_probe_runs_the_trial_command_without_the_role_process_limit(self):
+        for mode, expected in (('ok', (True, None)), ('eagain', (False, 'process_limit_exhausted')),
+                               ('broken', (False, 'namespace_probe_failed'))):
+            with self.subTest(mode=mode):
+                fake = self.root / f'bwrap-{mode}'
+                fake.write_text(FAKE_BWRAP.format(python=sys.executable, mode=mode)); fake.chmod(0o700)
+                available, reason, limitations = hooks_validation._probe(SandboxBackend(binary=str(fake)))
+                self.assertEqual((available, reason), expected)
+                self.assertEqual(bool(limitations), available)
+
+    def test_a_host_tool_the_sandbox_does_not_mount_is_inconclusive_not_a_failure(self):
+        tools = self.root / 'tools'; tools.mkdir()
+        (tools / 'synthtool').write_text('#!/bin/sh\nexit 0\n'); (tools / 'synthtool').chmod(0o755)
+        self.environ['PATH'] = f"{tools}:{self.environ['PATH']}"
+        # A pass-through sandbox launches with PATH=/usr/bin:/bin, so the host tool is not found inside: exit 127.
+        self.scenario(events=[{'event': 'SessionStart'}, {'event': 'PreToolUse', 'value': 'Bash'}])
+        common = dict(unit=self.stage('synthtool'), project=self.fixture, fixture=self.fixture, binary=str(self.fake),
+                      trace=FAKE_TRACE, environ=self.environ, protected=(self.candidate, self.fixture))
+        _, plain = validate(self.root / 'plain', 'claude-code', self.execute, **common)
+        _, boxed = validate(self.root / 'boxed', 'claude-code', self.execute, sandbox=RecordingSandbox(), **common)
+        self.assertEqual(plain['candidate']['status'], 'effective')
+        [handler] = [row for row in boxed['handlers'] if row['event'] == 'PreToolUse']
+        self.assertEqual((handler['status'], handler['reason'], handler['failures']),
+                         ('inconclusive', 'sandbox_dependency_unmounted', []))
+        self.assertEqual(boxed['candidate']['status'], 'inconclusive')
+        self.assert_not_effective(boxed)
+
+    def test_the_shipped_backend_reports_its_boundary_and_launches_bubblewrap(self):
+        backend, launched = SandboxBackend(binary='ahl-synthetic-missing-bwrap'), []
+        backend.binary = '/synthetic/bwrap'
+
+        def executor(argv, cwd, timeout, stdin=None, *, env=None):
+            launched.append((argv, env))
+            return dict(exit_code=0, stdout='', stderr='', elapsed_seconds=0.0, timeout=False)
+
+        available = dict(status='available', reason=None, limitations=['synthetic'])
+        with patch.object(backend, 'hook_trial_capability', return_value=available):
+            root, document = self.sandboxed(backend, 'shipped', executor)
+        [(argv, env)] = launched
+        self.assertEqual(argv[:6], [sys.executable, '-I', '-S', '-c', KEYRING_TRAMPOLINE, '/synthetic/bwrap'])
+        self.assertEqual(argv[6], '--unshare-all')
+        self.assertEqual(env, {'PATH': '/usr/bin:/bin'})
+        self.assertEqual(document['host_isolation'], 'bubblewrap')
+        self.assertEqual(document['sandbox'], dict(backend='bubblewrap', status='applied', reason=None, network='none',
+                                                   host_home='not_mounted', workspace='read_only', limitations=['synthetic'],
+                                                   writable=['home', 'tmp', 'workspace/.ahl-canary']))
+
+    def test_a_sandbox_wraps_the_only_execution_and_claims_only_what_it_is(self):
+        sandbox, launched = RecordingSandbox(), []
+
+        def executor(argv, cwd, timeout, stdin=None, *, env=None):
+            launched.append((argv, env))
+            return self.execute(argv, cwd, timeout, stdin, env=env)
+
+        root, document = self.sandboxed(sandbox, 'wrapped', executor)
+        [call] = sandbox.calls
+        self.assertEqual(len(launched), 1)
+        self.assertEqual(launched[0], (call['argv'], {'PATH': '/usr/bin:/bin'}))
+        self.assertEqual((call['root'], call['cwd'], call['runtime']), (root, root / 'workspace', str(self.fake)))
+        self.assertEqual(sorted(path.relative_to(root).as_posix() for path in call['writable']),
+                         ['home', 'tmp', 'workspace/.ahl-canary'])
+        self.assertEqual(call['env']['HOME'], str(root / 'home'))
+        self.assertFalse(any('synthetic-secret' in value for value in call['env'].values()))
+        # A pass-through fake isolates nothing, so it never reports bubblewrap.
+        self.assertEqual(document['host_isolation'], 'unverified')
+        self.assertEqual(document['sandbox'], dict(backend='unverified', status='applied', reason=None, network='unverified',
+                                                   host_home='unverified', workspace='unverified', limitations=['synthetic'],
+                                                   writable=['home', 'tmp', 'workspace/.ahl-canary']))
+        self.assertEqual(document['canary']['status'], 'observed')
+        _, plain = self.check()
+        self.assertEqual((plain['host_isolation'], plain['sandbox']['status']), ('none', 'not_requested'))
+
+    def test_the_bubblewrap_command_mounts_only_the_trial_and_system_folders(self):
+        root, marker = hooks_validation.prepare(self.root / 'argv', 'claude-code', '.claude/settings.json', {},
+                                                fixture=self.fixture, protected=(self.fixture,))
+        backend = SandboxBackend(binary='ahl-synthetic-missing-bwrap')
+        backend.binary = '/synthetic/bwrap'
+        writable = [root / 'home', root / 'tmp', root / 'workspace' / hooks_validation.CANARY_DIR]
+        env = hooks_validation.environment(root, 'claude-code', self.environ)
+        argv = hooks_validation.command(root, 'claude-code', 'claude')
+        built = backend.hook_trial_command(argv, root, writable=writable, cwd=root / 'workspace', env=env, runtime=self.fake)
+        split = built.index('--')
+        options, inner = built[:split], built[split + 1:]
+        self.assertEqual(inner, [str(self.fake.resolve()), *argv[1:]])
+        for flag in ('--unshare-all', '--unshare-net', '--clearenv', '--die-with-parent'):
+            self.assertIn(flag, options)
+        pairs = [tuple(options[i:i + 3]) for i, value in enumerate(options) if value in ('--bind', '--ro-bind')]
+        resolved = str(root.resolve())
+        self.assertIn(('--ro-bind', resolved, resolved), pairs)
+        self.assertEqual(sorted(source for flag, source, _ in pairs if flag == '--bind'),
+                         sorted(str(path.resolve()) for path in writable))
+        self.assertEqual({source for flag, source, target in pairs if source == target}, {source for _, source, _ in pairs})
+        mounted = [Path(source) for _, source, _ in pairs]
+        for hidden in (self.root, self.root / 'synthetic-home', self.fixture, self.candidate, self.fake.parent):
+            self.assertNotIn(hidden.resolve(), mounted)
+        self.assertEqual(options[options.index('--chdir') + 1], str((root / 'workspace').resolve()))
+        self.assertNotIn('synthetic-secret', ' '.join(built))
+        link = root / 'tmp-link'; link.symlink_to(root / 'tmp')
+        for folders, extra in (([self.root], {}), ([root], {}), ([link], {}), (writable, dict(env={'A=B': 'x'})),
+                               (writable, dict(cwd=self.root))):
+            with self.subTest(folders=folders, extra=extra), self.assertRaises(ValueError):
+                backend.hook_trial_command(argv, root, **dict(dict(writable=folders, cwd=root / 'workspace', env=env,
+                                                                  runtime=self.fake), **extra))
+
+
+@unittest.skipUnless(sys.platform == 'linux' and shutil.which('bwrap'), 'requires Linux with bubblewrap (bwrap) on PATH')
+class NativeBubblewrapTrialTests(FakeRuntimeCase):
+    """Real bubblewrap trials: the hook cannot read host files or keys, write the workspace or reach the network."""
+    def backend(self):
+        backend = SandboxBackend()
+        capability = backend.hook_trial_capability()
+        if capability['status'] != 'available':
+            self.skipTest(f"bubblewrap hook trial sandbox unavailable: {capability['reason']}")
+        return backend
+
+    @unittest.skipUnless(os.uname().machine in ('x86_64', 'aarch64') and os.access('/usr/bin/python3', os.X_OK),
+                         'requires x86_64 or aarch64 and /usr/bin/python3')
+    def test_a_bubblewrap_trial_cannot_read_the_validator_session_keyring(self):
+        backend, root = self.backend(), self.root / 'keyring'
+        for name in ('home', 'tmp', 'workspace'): (root / name).mkdir(parents=True)
+        argv = backend.hook_trial_command(['python3', '-c', KEYRING_INNER], root, writable=[root / 'home', root / 'tmp'],
+                                          cwd=root / 'workspace', env={'PATH': '/usr/bin:/bin', 'HOME': str(root / 'home')},
+                                          runtime='/usr/bin/python3')
+        planted = subprocess.run([sys.executable, '-I', '-c', KEYRING_PLANT, json.dumps(argv)], capture_output=True,
+                                 text=True, timeout=60)
+        self.assertEqual(planted.returncode, 0, planted.stderr)
+        report = json.loads(planted.stdout)
+        self.assertGreater(report['own'], 0)  # the planted key is readable outside the sandbox
+        self.assertEqual((report['rc'], report['stdout']), (0, 'denied'), report['stderr'])
+
+    def test_a_bubblewrap_trial_keeps_the_hook_off_the_host(self):
+        backend = self.backend()
+        secret = self.root / 'synthetic-home/.credentials'
+        secret.parent.mkdir(); secret.write_text('synthetic-secret\n')
+        listener = socket.socket(); self.addCleanup(listener.close)
+        listener.bind(('127.0.0.1', 0)); listener.listen(1)
+        port = listener.getsockname()[1]
+        probe = (f'if cat {secret} >/dev/null 2>&1; then echo read; else echo denied-read; fi >> "$HOME/probe"\n'
+                 'if (echo tampered > "$CLAUDE_PROJECT_DIR/notes.txt") 2>/dev/null; then echo wrote; else echo denied-write; fi'
+                 ' >> "$HOME/probe"\n'
+                 f'if python3 -c "import socket; socket.create_connection((\'127.0.0.1\', {port}), 2)" 2>/dev/null;'
+                 ' then echo net; else echo denied-net; fi >> "$HOME/probe"\n'
+                 'env > "$HOME/env"\nexit 0')
+        sandboxed = self.root / 'bin/sandboxed-runtime'
+        sandboxed.write_text(sandboxed_fake(dict(events=[{'event': 'SessionStart'}, {'event': 'PreToolUse', 'value': 'Bash'}])))
+        sandboxed.chmod(0o700)
+        root, document = validate(self.root / 'native', 'claude-code', self.execute, unit=self.stage(probe),
+                                  project=self.fixture, fixture=self.fixture, binary=str(sandboxed), trace=FAKE_TRACE,
+                                  environ=self.environ, protected=(self.candidate, self.fixture), sandbox=backend)
+        self.assertEqual(document['host_isolation'], 'bubblewrap')
+        self.assertEqual({key: document['sandbox'][key] for key in ('backend', 'status', 'network', 'host_home', 'workspace')},
+                         dict(backend='bubblewrap', status='applied', network='none', host_home='not_mounted',
+                              workspace='read_only'))
+        self.assertEqual((root / 'home/probe').read_text().split(), ['denied-read', 'denied-write', 'denied-net'])
+        self.assertNotIn('synthetic-secret', (root / 'home/env').read_text())
+        self.assertEqual((root / 'workspace/notes.txt').read_text(), 'synthetic fixture\n')
+        self.assertEqual(Path(json.loads((root / 'home/invocation.json').read_text())['cwd']), (root / 'workspace').resolve())
+        self.assertEqual(document['canary']['status'], 'observed')
+        self.assertEqual(document['findings'], [])
+        self.assertEqual(document['candidate']['status'], 'effective')
+        self.assertEqual(hooks_validation.exit_status(document), 0)
+
+
 class HookModeCLITests(unittest.TestCase):
     def test_hooks_mode_validates_a_candidate_end_to_end_and_leaves_inputs_unchanged(self):
         case = FakeRuntimeTests('test_clean_matched_candidate_is_effective_and_keeps_other_settings')
@@ -450,20 +707,40 @@ class HookModeCLITests(unittest.TestCase):
         case.scenario(events=[{'event': 'SessionStart'}, {'event': 'PreToolUse', 'value': 'Bash'}])
         argv = [sys.executable, str(RUNNER), 'hooks', '--runtime', 'claude-code', '--candidate', str(case.candidate),
                 '--fixture', str(case.fixture), '--output', str(case.root / 'cli'), '--binary', str(case.fake),
-                '--runtime-trace', FAKE_TRACE]
+                '--runtime-trace', FAKE_TRACE, '--sandbox', 'none']
         result = subprocess.run(argv, capture_output=True, text=True, env=case.environ, timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout)['candidate'], 'effective')
+        self.assertEqual(json.loads(result.stdout)['host_isolation'], 'none')
         document = json.loads((case.root / 'cli' / hooks_validation.RESULTS).read_text())
         self.assertEqual(document['candidate']['status'], 'effective')
         self.assertFalse((case.candidate / '.ahl-canary').exists())
-        refused = subprocess.run([*argv[:-2], '--native-canary', '--runtime-trace', FAKE_TRACE], capture_output=True,
+        refused = subprocess.run([*argv[:-4], '--native-canary', '--runtime-trace', FAKE_TRACE], capture_output=True,
                                  text=True, env=case.environ, timeout=60)
         self.assertEqual(refused.returncode, 2)
-        gated = subprocess.run([*argv[:argv.index('--output') + 1], str(case.root / 'cli-gated'), '--binary', str(case.fake)],
-                               capture_output=True, text=True, env=case.environ, timeout=60)
+        gated = subprocess.run([*argv[:argv.index('--output') + 1], str(case.root / 'cli-gated'), '--binary', str(case.fake),
+                                '--sandbox', 'none'], capture_output=True, text=True, env=case.environ, timeout=60)
         self.assertEqual(gated.returncode, 3, gated.stderr)
         self.assertEqual(json.loads(gated.stdout)['canary'], 'skipped')
+
+
+    def test_hooks_mode_sandboxes_by_default_and_never_falls_back(self):
+        case = FakeRuntimeTests('test_clean_matched_candidate_is_effective_and_keeps_other_settings')
+        case.setUp(); self.addCleanup(case.doCleanups)
+        case.stage()
+        case.scenario(events=[{'event': 'SessionStart'}, {'event': 'PreToolUse', 'value': 'Bash'}])
+        empty = case.root / 'no-bwrap'; empty.mkdir()  # a PATH without bubblewrap
+        result = subprocess.run([sys.executable, str(RUNNER), 'hooks', '--runtime', 'claude-code', '--candidate',
+                                 str(case.candidate), '--fixture', str(case.fixture), '--output', str(case.root / 'cli'),
+                                 '--binary', str(case.fake), '--runtime-trace', FAKE_TRACE],
+                                capture_output=True, text=True, env=dict(case.environ, PATH=str(empty)), timeout=60)
+        self.assertEqual(result.returncode, 3, result.stderr)
+        self.assertEqual(json.loads(result.stdout), dict(json.loads(result.stdout), candidate='inconclusive',
+                                                         canary='inconclusive', host_isolation='none'))
+        document = json.loads((case.root / 'cli' / hooks_validation.RESULTS).read_text())
+        self.assertEqual(document['sandbox'], dict(backend='bubblewrap', status='unavailable',
+                                                   reason='linux_bubblewrap_unavailable'))
+        self.assertIsNone(case.invocation())
 
 
 if __name__ == '__main__':
