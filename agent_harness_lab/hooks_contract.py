@@ -25,7 +25,6 @@ requests were graded, and only those can make it 'improved' or 'not_improved'. C
 """
 import base64
 from dataclasses import asdict, dataclass
-import difflib
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
@@ -34,11 +33,12 @@ import stat
 import tomllib
 
 from .evaluation.integrity import contained
+from .plugin_recommendations import _diff
 from .private_journal import encoded
 from .promotion.journal import file_record, in_checkout, key_edit, snapshot_record, KEY
 from .sources.hardened import load_json
 from .sources.hooks_inventory import BOUNDS, CLAUDE_EVENTS, CODEX_EVENTS, FIELDS, _COMMON, matcher_kind, resolve
-from .sources.workflows_inventory import FORBIDDEN, LINT, lint
+from .sources.workflows_inventory import FORBIDDEN, LINT, _chain, _owner, lint
 from .surfaces import CAPABILITIES, classify
 
 PROFILE = 'hook_contract_v1'
@@ -216,9 +216,12 @@ def evaluate(project, before, after):
             finding('blocked', 'config_not_parsed', config)
     for name in names:
         if name == config or name in configs: continue
-        target, facets = after.get(name), classify(name, None, None, in_checkout=True).facets
+        target, member = after.get(name), classify(name, None, None, in_checkout=True)
+        facets = member.facets
+        # A workflow script in a hook segment has the hook facet too, but only workflow_contract_v1 lints it.
+        if member.kind == 'workflow': finding('blocked', 'workflow_member_outside_hook_contract', name)
         # A skill or agent frontmatter hook has the same classification; without a frontmatter key edit it stays blocked.
-        if 'agent' in facets or 'skill' in facets: finding('blocked', 'frontmatter_hook_unit_unsupported', name)
+        elif 'agent' in facets or 'skill' in facets: finding('blocked', 'frontmatter_hook_unit_unsupported', name)
         elif name not in referenced: finding('blocked', 'unreferenced_member', name)
         elif target is None: finding('blocked', 'script_removal_outside_contract', name)
         else:
@@ -323,11 +326,24 @@ def _fixture(args):
     return text
 
 
+def _load_folder(members):
+    """The folder, relative to the workspace, whose cwd-to-root path holds every member's .claude/workflows/."""
+    owners = {_owner(name) for name in members}
+    deepest = max(owners, key=lambda owner: len(PurePosixPath(owner).parts))
+    if not owners <= set(_chain(deepest)): raise ValueError('workflow unit members do not load from one cwd')
+    return PurePosixPath(deepest)
+
+
+def _outside(path, project):
+    return not (path == project or path.is_relative_to(project) or project.is_relative_to(path))
+
+
 def trial_request(contract, side, project, trial, args, *, max_agents=MAX_AGENTS):
     """Describe, never run, one native run of a passed workflow unit inside trial/workspace, an I13 trial copy that
     holds the side's bytes ('baseline' before, 'candidate' after). The workspace must lie outside the project, so no
-    project .claude/workflows/ on the cwd-to-root path can load. The caller's runner executes the request with its
-    environment added to the trial environment and reports a grade to outcome()."""
+    project .claude/workflows/ on the cwd-to-root path can load, and cwd is the members' owner folder in it, so theirs
+    does. The caller's runner executes the request with its environment added to the trial environment and reports a
+    grade to outcome()."""
     if contract.profile != WORKFLOW_PROFILE or contract.status != 'passed':
         raise ValueError('only a passed workflow contract is run natively')
     if side not in SIDES: raise ValueError('unknown workflow trial side')
@@ -337,27 +353,41 @@ def trial_request(contract, side, project, trial, args, *, max_agents=MAX_AGENTS
     if trial.is_symlink() or workspace.is_symlink() or not workspace.is_dir():
         raise ValueError('a workflow runs only inside a trial workspace')
     located = workspace.resolve()
-    if located == project or located.is_relative_to(project) or project.is_relative_to(located):
-        raise ValueError('a trial workspace must lie outside the project')
+    if not _outside(located, project): raise ValueError('a trial workspace must lie outside the project')
+    cwd = located / _load_folder(contract.members)
+    if not cwd.is_dir() or cwd.resolve() != cwd: raise ValueError('the owner folder must be a directory in the workspace')
     start = 1 if side == 'baseline' else 3
     for row in contract.snapshots:
         staged = file_record(contained(workspace, row[0]))
         if (None if staged is None else staged['sha256']) != row[start]:
             raise ValueError('trial workspace does not hold the unit bytes for this side')
     text = _fixture(args)
-    return dict(profile=TRIAL_PROFILE, unit_sha256=contract.sha256, side=side, cwd=str(located),
+    return dict(profile=TRIAL_PROFILE, unit_sha256=contract.sha256, side=side, cwd=str(cwd),
                 workflows=list(contract.members), environment={CAP_VARIABLE: str(max_agents)},
                 max_concurrent_agents=max_agents, args=text, args_sha256=hashlib.sha256(text.encode()).hexdigest(),
                 cap_capability=_cap_capability(), invocation=INVOCATION, executed=False)
 
 
-def _valid_run(contract, side, run):
-    """A graded run of a request trial_request() made for this unit and side, within the cap and the args bound."""
+def _run_cwd(contract, request, project):
+    """The request's cwd when it is an absolute, resolved owner folder outside the project; None otherwise."""
+    cwd = request.get('cwd')
+    if not isinstance(cwd, str) or not PurePosixPath(cwd).is_absolute(): return None
+    try: folder = _load_folder(contract.members)
+    except ValueError: return None
+    path = Path(cwd)
+    if path.resolve() != path or not _outside(path, project): return None
+    return path if folder.parts == () or path.parts[-len(folder.parts):] == folder.parts else None
+
+
+def _valid_run(contract, side, run, project):
+    """A graded run of a request trial_request() made for this unit and side, within the cap and the args bound,
+    whose cwd is an owner folder outside the project."""
     if not isinstance(run, (tuple, list)) or len(run) != 2 or run[1] not in GRADES: return False
     request = run[0]
     if not isinstance(request, dict) or request.get('profile') != TRIAL_PROFILE or request.get('side') != side \
             or request.get('unit_sha256') != contract.sha256 or request.get('executed') is not False \
-            or request.get('workflows') != list(contract.members) or request.get('invocation') != INVOCATION:
+            or request.get('workflows') != list(contract.members) or request.get('invocation') != INVOCATION \
+            or request.get('cap_capability') != _cap_capability() or _run_cwd(contract, request, project) is None:
         return False
     agents, text = request.get('max_concurrent_agents'), request.get('args')
     return (type(agents) is int and 1 <= agents <= MAX_AGENTS and request.get('environment') == {CAP_VARIABLE: str(agents)}
@@ -366,27 +396,32 @@ def _valid_run(contract, side, run):
 
 
 def unit_patch(before, after):
-    """Unified diff of a unit's text members; None when a member is not UTF-8."""
-    lines = []
-    for name in sorted(before.keys() | after.keys()):
-        try: old, new = ((_raw(side.get(name)) or b'').decode('utf-8') for side in (before, after))
-        except UnicodeDecodeError: return None
-        lines += difflib.unified_diff(old.splitlines(True), new.splitlines(True),
-                                      '/dev/null' if before.get(name) is None else 'a/' + name,
-                                      '/dev/null' if after.get(name) is None else 'b/' + name)
-    return ''.join(lines)
+    """git-format diff of a unit's changed text members, with modes; None when a member is not UTF-8."""
+    git_mode = lambda mode: 0o100755 if mode & 0o100 else 0o100644
+    state = lambda snapshot: None if snapshot is None else (git_mode(snapshot['mode']), _raw(snapshot))
+    names = [name for name in sorted(before.keys() | after.keys()) if state(before.get(name)) != state(after.get(name))]
+    try: return ''.join(_diff(name, state(before.get(name)), state(after.get(name)), 'sha1') for name in names)
+    except ValueError: return None
 
 
-def outcome(contract, before, after, runs=None):
+def _separate(runs):
+    """The baseline and candidate ran in two different trial workspaces."""
+    base, cand = (Path(runs[side][0]['cwd']) for side in SIDES)
+    return base != cand and not base.is_relative_to(cand) and not cand.is_relative_to(base)
+
+
+def outcome(contract, before, after, runs=None, *, project=None):
     """workflow_outcome_v1 for one workflow unit. Without graded baseline and candidate runs of trial_request()
-    requests the result is never 'improved': 'recommendation_only' with the patch, or 'inconclusive'."""
+    requests, each in its own trial workspace outside project, the result is never 'improved': 'recommendation_only'
+    with the patch, or 'inconclusive'. Judging runs needs the project."""
     if contract.profile != WORKFLOW_PROFILE: raise ValueError('outcome() judges workflow units only')
     if unit_snapshots(before, after) != contract.snapshots: raise ValueError('snapshots differ from the contract')
+    if runs is not None and project is None: raise ValueError('outcome() needs the project to judge native runs')
     if contract.status == 'blocked': status, reason = 'blocked', 'static_contract_blocked'
     elif runs is None: status, reason = 'recommendation_only', 'no_native_trial_run'
     elif contract.status != 'passed' or not isinstance(runs, dict) or set(runs) != set(SIDES) \
-            or not all(_valid_run(contract, side, runs[side]) for side in SIDES) \
-            or runs['baseline'][0]['args_sha256'] != runs['candidate'][0]['args_sha256']:
+            or not all(_valid_run(contract, side, runs[side], Path(project).resolve()) for side in SIDES) \
+            or runs['baseline'][0]['args_sha256'] != runs['candidate'][0]['args_sha256'] or not _separate(runs):
         status, reason = 'inconclusive', 'native_run_outside_trial_contract'
     elif (runs['baseline'][1], runs['candidate'][1]) == ('failed', 'passed'):
         status, reason = 'improved', 'native_trial_candidate_passed_baseline_failed'

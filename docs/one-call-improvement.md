@@ -274,8 +274,10 @@ workflow scripts. A unit is one or more direct `*.js` children of a checkout
 `hooks_contract.stage_workflows(project, {path: (bytes, mode)})` builds the
 journal snapshots without writing the project, and `evaluate` returns a workflow
 verdict when every member is a workflow script. A transaction that mixes hook and
-workflow files is no single unit and stays blocked; `contracts_for` returns one
-hook unit and one workflow unit for such a change.
+workflow files is no single unit and stays blocked: a workflow member of a hook
+transaction is `workflow_member_outside_hook_contract`, even when a hook command
+names it. `contracts_for` returns one hook unit and one workflow unit for such a
+change.
 
 The [static workflow lint](source-contracts.md#static-claude-workflow-script-lint)
 of every candidate is a hard gate. A unit is `blocked` when `meta` is not the
@@ -293,16 +295,21 @@ side, project, trial, args)` only describes one native run of a passed unit: the
 caller's runner executes it inside `trial/workspace`, an I13 trial copy that must
 hold the side's bytes (`baseline` before, `candidate` after) and must lie outside
 the project, so no project `.claude/workflows/` on the cwd-to-root path can load.
-The request adds `CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS` capped at 2 (gated
+Its `cwd` is the members' owner folder inside the workspace (the path before
+`.claude/workflows/`), so their folder is on that path; a unit whose members sit
+in sibling folders that no single cwd loads gets no request. The request adds `CLAUDE_CODE_WORKFLOW_MAX_CONCURRENT_AGENTS` capped at 2 (gated
 at Claude Code >=2.1.269 in `CAPABILITIES`) and a canonical JSON args fixture of
 at most 2048 bytes. AHL pins no CLI form that starts a workflow, so the request
 says `invocation: caller_runner_unverified`.
 
-`hooks_contract.outcome(verdict, before, after, runs=None)` labels the unit and
-attaches a unified-diff `patch`. A blocked unit is `blocked`. Without runs the
-result is `recommendation_only`. Runs must be a `passed` or `failed` grade for
-both a baseline and a candidate request made for this unit with the same args
-fixture and within the cap; anything else is `inconclusive`. Only such runs give
+`hooks_contract.outcome(verdict, before, after, runs=None, project=None)` labels
+the unit and attaches a git-format `patch` with mode changes and missing final
+newlines marked. A blocked unit is `blocked`. Without runs the result is
+`recommendation_only`. Judging runs needs `project`. Runs must be a `passed` or
+`failed` grade for both a baseline and a candidate request made for this unit with
+the same args fixture and within the cap, each with an absolute owner-folder `cwd`
+outside the project and in a different trial workspace; anything else is
+`inconclusive`. Only such runs give
 `improved` (the baseline failed and the candidate passed) or `not_improved`. The
 label is never adoption authority. Codex has no workflow loader at the pinned
 source, which every workflow document records.

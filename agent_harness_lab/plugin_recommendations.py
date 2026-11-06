@@ -232,8 +232,10 @@ def _diff(name, before, after, algorithm):
     head = [f'diff --git a/{name} b/{name}\n']
     if before is None: head.append(f'new file mode {after[0]:o}\n')
     elif after is None: head.append(f'deleted file mode {before[0]:o}\n')
+    elif before[0] != after[0]: head += [f'old mode {before[0]:o}\n', f'new mode {after[0]:o}\n']
     blobs = (zero if state is None else _blob(state[1], algorithm) for state in (before, after))
-    head.append('index {}..{}'.format(*blobs) + (f' {before[0]:o}\n' if before and after else '\n'))
+    same = before and after and before[0] == after[0]
+    head.append('index {}..{}'.format(*blobs) + (f' {before[0]:o}\n' if same else '\n'))
     try: old, new = (_lines(state[1].decode()) if state else [] for state in (before, after))
     except UnicodeDecodeError: raise ValueError('only UTF-8 text files can be patched') from None
     body = []
