@@ -582,6 +582,10 @@ tasks:
     desc: Run offline Git/GitHub commit and PR commit-role join negative controls with synthetic journals
     cmds:
       - '{{.PYTHON | shellQuote}} -m pytest tools/tests/test_source_commit_join.py -v'
+  test:sources:ref-movement:
+    desc: Run offline local Git ref movement controls with synthetic native repositories
+    cmds:
+      - '{{.PYTHON | shellQuote}} -m pytest tools/tests/test_source_ref_movement.py -v'
   test:sources:test-results:
     desc: Run offline JUnit XML and pytest JSON result controls with synthetic hostile reports
     cmds:
