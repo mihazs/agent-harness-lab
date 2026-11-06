@@ -11,7 +11,7 @@ RELATIONS = ('check_on', 'status_on', 'timeline_on', 'references_issue', 'timeli
     'pr_merge_commit', 'pr_test_merge_commit', 'same_observation', 'derived_from', 'cites',
     'supports', 'contradicts', 'same_execution', 'parent_attempt', 'supersedes',
     'native_session_member', 'native_message_member', 'native_message_parent', 'tool_result_of', 'git_ref_target', 'harness_based_on', 'harness_member', 'instruction_inventory_of', 'same_commit',
-    'handoff_from_session', 'memory_links_session', 'memory_links_page')
+    'handoff_from_session', 'memory_links_session', 'memory_links_page', 'workflow_run_on', 'job_of', 'job_check_run')
 STATUSES = ('verified', 'reviewed', 'candidate', 'conflicted', 'unlinked')
 
 

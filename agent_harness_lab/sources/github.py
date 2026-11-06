@@ -17,6 +17,12 @@ WINDOW_SPAN = timedelta(days=366)
 WINDOWED = ('github_issue_comment', 'github_review_comment')
 # RFC 9110 entity-tag syntax; anything else is not a validator and is never echoed back.
 ETAG = re.compile(r'(?:W/)?"[\x21\x23-\x7e]{0,510}"')
+ACTION_STATUSES = ('queued', 'in_progress', 'completed', 'waiting', 'requested', 'pending')
+RUN_CONCLUSIONS = (None, 'action_required', 'cancelled', 'failure', 'neutral', 'success', 'skipped', 'stale', 'timed_out', 'startup_failure')
+JOB_CONCLUSIONS = (None, 'action_required', 'cancelled', 'failure', 'neutral', 'success', 'skipped', 'timed_out')
+ACTION_EVENT = re.compile('[a-z][a-z_]{0,63}')
+MAX_JOB_STEPS = 1000
+ENVELOPES = ('check_runs', 'workflow_runs', 'jobs')
 
 THREAD_FIELDS = '''fragment ThreadFields on PullRequestReviewThread {
   id repository { id } pullRequest { id number headRefOid }
@@ -100,13 +106,15 @@ class GitHubSelection(Contract):
     until: str | None = None
 
     def __post_init__(self):
-        if type(self.schema_version) is not int or self.schema_version not in (1, 2, 3, 4, 5, 6): raise ValueError('unsupported GitHub selection version')
+        if type(self.schema_version) is not int or self.schema_version not in (1, 2, 3, 4, 5, 6, 7): raise ValueError('unsupported GitHub selection version')
         integer(self.repo_id, minimum=1)
         if self.schema_version < 6:
             if (self.since, self.until) != (None, None): raise ValueError('GitHub windows require selection version 6')
+        elif self.schema_version == 7 and (self.since, self.until) == (None, None): pass
         elif not timedelta(0) < instant(self.until)-instant(self.since) <= WINDOW_SPAN:
             raise ValueError('GitHub window must be ordered and bounded')
-        allowed = (('checks', 'graph', 'threads', 'timeline') if self.schema_version >= 5 else
+        allowed = (('actions', 'checks', 'graph', 'threads', 'timeline') if self.schema_version >= 7 else
+            ('checks', 'graph', 'threads', 'timeline') if self.schema_version >= 5 else
             ('checks', 'threads', 'timeline') if self.schema_version >= 3 else ('checks', 'timeline'))
         if (type(self.details) is not tuple or len(self.details) > len(allowed) or any(d not in allowed for d in self.details)
                 or tuple(sorted(set(self.details))) != self.details or self.schema_version == 1 and self.details):
@@ -125,9 +133,9 @@ class GitHubSelection(Contract):
     def parse(cls, value):
         if not isinstance(value, dict): raise ValueError('invalid GitHub selection')
         fields = set(cls.__dataclass_fields__)
-        if value.get('schema_version') not in (2, 3, 4, 5, 6): fields.remove('details')
-        if value.get('schema_version') not in (4, 5, 6): fields.remove('commits')
-        if value.get('schema_version') != 6: fields -= {'since', 'until'}
+        if value.get('schema_version') not in (2, 3, 4, 5, 6, 7): fields.remove('details')
+        if value.get('schema_version') not in (4, 5, 6, 7): fields.remove('commits')
+        if value.get('schema_version') not in (6, 7): fields -= {'since', 'until'}
         if set(value) != fields: raise ValueError('invalid GitHub selection fields')
         if not all(isinstance(value[k], (list, tuple)) for k in ('issues', 'pulls')): raise ValueError('invalid GitHub number collections')
         if 'details' in value and not isinstance(value['details'], (list, tuple)): raise ValueError('invalid GitHub details collection')
@@ -143,7 +151,9 @@ class GitHubSelection(Contract):
         return value
 
     @property
-    def window(self): return None if self.schema_version < 6 else (instant(self.since), instant(self.until))
+    def window(self):
+        # Version 7 makes the comment window optional; both bounds are then null.
+        return None if self.schema_version < 6 or self.since is None else (instant(self.since), instant(self.until))
 
     def contains(self, created_at):
         """Window membership uses immutable creation time; unknown membership blocks capture."""
@@ -326,15 +336,17 @@ class GitHubAPI:
         if set(links) != set(known): raise ValueError('GitHub thread membership is incomplete')
         return threads, links
 
-    def _next(self, link, suffix, current):
-        return next_page(self.transport, link, suffix, current, dict(per_page='100'))
+    def _next(self, link, suffix, current, query=None):
+        return next_page(self.transport, link, suffix, current, dict(query or {}, per_page='100'))
 
-    def _list(self, suffix, state, key='id', *, envelope=None):
+    def _list(self, suffix, state, key='id', *, envelope=None, query=None):
+        """A fixed-filter listing; ``query`` holds reader-built filters that every page must keep."""
         page, result, seen, total = 1, [], set(), None
+        fixed = ''.join(f'{name}={value}&' for name, value in (query or {}).items())
         while page is not None:
-            value, headers = self._get(suffix+f'?per_page=100&page={page}', state)
+            value, headers = self._get(suffix+f'?{fixed}per_page=100&page={page}', state)
             if envelope is not None:
-                if envelope != 'check_runs' or not isinstance(value, dict): raise ValueError('unsupported GitHub listing envelope')
+                if envelope not in ENVELOPES or not isinstance(value, dict): raise ValueError('unsupported GitHub listing envelope')
                 count = integer(value['total_count'])
                 if total is not None and total != count: raise ValueError('GitHub listing total changed')
                 total, value = count, value[envelope]
@@ -346,7 +358,7 @@ class GitHubAPI:
                     if key not in item or digest(item[key]) in seen: raise ValueError('duplicate or missing GitHub listing identity')
                     seen.add(digest(item[key]))
             result.extend(value)
-            page = self._next(headers.get('link'), suffix, page)
+            page = self._next(headers.get('link'), suffix, page, query)
         if total is not None and len(result) != total: raise ValueError('GitHub listing total is incomplete')
         return result
 
@@ -510,6 +522,57 @@ class GitHubAPI:
                 created_at=moment(status['created_at']), updated_at=moment(status['updated_at']), actor_sha256=self._actor(status['creator']))
             key = emit('github_commit_status', integer(status['id'], minimum=1), value, value['created_at'])
             relations.add(('status_on', key, parent))
+
+    def _actions(self, sha, parent, state, emit, nodes, relations):
+        """Workflow runs for one exact head and every attempt's jobs; reruns are correlated, never new trials."""
+        head = commit_hash(sha)
+        if head is None: raise ValueError('Actions capture requires a full head identity')
+        for run in self._list('/actions/runs', state, envelope='workflow_runs', query=dict(head_sha=sha)):
+            native = integer(run['id'], minimum=1); self._url(run['url'], '/actions/runs/'+str(native))
+            attempts = integer(run['run_attempt'], minimum=1)
+            if (run['head_sha'] != sha or run['status'] not in ACTION_STATUSES or run['conclusion'] not in RUN_CONCLUSIONS
+                    or not isinstance(run['event'], str) or ACTION_EVENT.fullmatch(run['event']) is None):
+                raise ValueError('GitHub workflow run head/status mismatch')
+            value = dict(head_sha256=head, workflow_sha256=digest(integer(run['workflow_id'], minimum=1)),
+                name_sha256=text_hash(run['name']), path_sha256=text_hash(run['path'], required=True), event=run['event'],
+                status=run['status'], conclusion=run['conclusion'], run_attempt=attempts, state_scope='latest_attempt',
+                suite_sha256=digest(integer(run['check_suite_id'], minimum=1)), created_at=moment(run['created_at']),
+                run_started_at=moment(run['run_started_at']), updated_at=moment(run['updated_at']))
+            run_key = emit('github_workflow_run', native, value, value['created_at'])
+            relations.add(('workflow_run_on', run_key, parent))
+            for attempt in range(1, attempts+1):
+                for job in self._list(f'/actions/runs/{native}/attempts/{attempt}/jobs', state, envelope='jobs'):
+                    self._job(job, sha, head, native, run_key, attempt, emit, nodes, relations)
+
+    def _job(self, job, sha, head, run, run_key, attempt, emit, nodes, relations):
+        native = integer(job['id'], minimum=1); self._url(job['url'], '/actions/jobs/'+str(native))
+        if (integer(job['run_id'], minimum=1) != run or integer(job['run_attempt'], minimum=1) != attempt
+                or job['head_sha'] != sha or job['status'] not in ACTION_STATUSES or job['conclusion'] not in JOB_CONCLUSIONS):
+            raise ValueError('GitHub workflow job run/attempt/head/status mismatch')
+        check = None
+        if job['check_run_url'] is not None:
+            if not isinstance(job['check_run_url'], str): raise ValueError('invalid GitHub job check reference')
+            identity = bigint(job['check_run_url'].rsplit('/', 1)[-1])
+            self._url(job['check_run_url'], '/check-runs/'+str(identity))
+            check = digest(('github_check_run', self.selection.repo_id, identity))
+        steps, numbers = job['steps'], set()
+        if not isinstance(steps, list) or len(steps) > MAX_JOB_STEPS: raise ValueError('GitHub job steps are malformed or unbounded')
+        captured = []
+        for step in steps:
+            if (not isinstance(step, dict) or integer(step['number'], minimum=1) in numbers
+                    or step['status'] not in ACTION_STATUSES or step['conclusion'] not in JOB_CONCLUSIONS):
+                raise ValueError('GitHub job step identity or status is invalid')
+            numbers.add(step['number'])
+            captured.append(dict(number=step['number'], name_sha256=text_hash(step['name'], required=True),
+                status=step['status'], conclusion=step['conclusion'],
+                started_at=moment(step['started_at']), completed_at=moment(step['completed_at'])))
+        value = dict(head_sha256=head, run_sha256=run_key, run_attempt=attempt, name_sha256=text_hash(job['name'], required=True),
+            status=job['status'], conclusion=job['conclusion'], created_at=moment(job['created_at']),
+            started_at=moment(job['started_at']), completed_at=moment(job['completed_at']), check_run_sha256=check, steps=captured)
+        key = emit('github_workflow_job', native, value, value['started_at'])
+        relations.add(('job_of', key, run_key))
+        if check in nodes and nodes[check]['kind'] == 'github_check_run' and nodes[check]['head_sha256'] == head:
+            relations.add(('job_check_run', key, check))
 
     def _timeline(self, number, parent, issues, pulls, state, emit, nodes, relations):
         unmapped = []
@@ -677,6 +740,7 @@ class GitHubAPI:
                 if comment['pull_request_review_id'] in review_keys:
                     relations.add(('inline_review', key, review_keys[comment['pull_request_review_id']]))
             if 'checks' in self.selection.details: self._checks(raw['head']['sha'], parent, state, emit, relations)
+            if 'actions' in self.selection.details: self._actions(raw['head']['sha'], parent, state, emit, nodes, relations)
         commit_reads = {}
         for sha in self.selection.commits:
             captured = self._commit_detail(sha, state); commit_reads[sha] = captured
@@ -725,6 +789,15 @@ class GitHubAPI:
                 summary['warnings'].remove('thread_resolution_unknown')
                 summary['warnings'].append('thread_readbacks_non_atomic')
             if self.selection.commits: summary['warnings'].append('commit_file_inventory_limited')
+            if 'actions' in self.selection.details:
+                runs = [n for n in nodes.values() if n['kind'] == 'github_workflow_run']
+                attempts = sum(n['run_attempt'] for n in runs)
+                summary['actions'] = dict(workflow_runs=len(runs), attempts=attempts, rerun_attempts=attempts-len(runs),
+                    workflow_jobs=sum(n['kind'] == 'github_workflow_job' for n in nodes.values()),
+                    replicate_identity='correlated_within_run', independent_trials=None, task_outcomes_verified=False,
+                    logs_captured=False, artifacts_captured=False, annotations_captured=False)
+                summary['warnings'].extend(('run_state_latest_attempt_only', 'workflow_reruns_not_independent',
+                    'workflow_logs_not_captured', 'workflow_artifacts_not_captured', 'check_annotations_not_captured'))
         if self.selection.window is not None:
             summary.update(window=dict(since=self.selection.since, until=self.selection.until, membership='created_at',
                 kinds=list(WINDOWED)), absences=[absences[k][0] for k in sorted(absences)])
