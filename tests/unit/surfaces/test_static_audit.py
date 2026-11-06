@@ -189,7 +189,7 @@ class StaticAuditTests(unittest.TestCase):
         files = {'CLAUDE.md': '# Synthetic\n', '.claude/settings.json': json.dumps({'enabledPlugins': {'p@m': True}})}
         project, plugin = self.build(files), self.base / 'plugin'
         for name, text in {'.claude-plugin/plugin.json': json.dumps({'version': '1'}),
-                           '.claude-plugin/marketplace.json': json.dumps({'name': 'm'})}.items():
+                           '.claude-plugin/marketplace.json': json.dumps({'name': 'm'}), 'CLAUDE.md': '   \n'}.items():
             (plugin / name).parent.mkdir(parents=True, exist_ok=True); (plugin / name).write_text(text)
         (plugin / '.git/refs/heads').mkdir(parents=True); (plugin / '.git/HEAD').write_text('ref: refs/heads/main\n')
         (plugin / '.git/refs/heads/main').write_text('c0ffee' + 'a' * 34 + '\n')
@@ -199,6 +199,10 @@ class StaticAuditTests(unittest.TestCase):
         self.assertEqual(self.statuses(report)['plugins'], 'nonconformant')
         self.assertEqual(sorted(row.reason for row in report.findings if row.dimension == 'plugins'),
                          ['plugin_manifest_name_missing', 'plugin_marketplace_entries_missing'])
+        # The runtime never loads a plugin-root CLAUDE.md, so even an empty one is unknown, never judged or remediated.
+        row = next(row for row in report.dimensions if row.dimension == 'instructions')
+        self.assertEqual((row.status, row.reasons), ('unknown', ('instruction_not_loaded_by_runtime',)))
+        self.assertFalse([row for row in report.findings if row.dimension == 'instructions' and row.remediation])
         # audit.run() over a checkout never inventories manifests, so the same files there are no plugin surface.
         self.assertEqual(next(row for row in audit.run(plugin, 'claude-code').dimensions if row.dimension == 'plugins').surfaces, 0)
 

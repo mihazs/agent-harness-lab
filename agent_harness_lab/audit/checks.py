@@ -9,6 +9,8 @@ that the harness performs better or worse.
 
 
 def instruction(facts, runtime):
+    # A plugin-root instruction file is never loaded by the runtime, so no size or emptiness rule applies to it.
+    if facts.get('plugin_runtime_loading') == 'not_loaded_by_runtime': return 'unknown', 'instruction_not_loaded_by_runtime'
     if facts.get('empty') is True: return 'nonconformant', 'instruction_empty'
     if facts.get('exceeds_launch_skip_bytes') is True: return 'nonconformant', 'instruction_exceeds_launch_bytes'
     if facts.get('exceeds_default_project_doc_max_bytes') is True:

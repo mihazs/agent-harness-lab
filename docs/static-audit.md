@@ -27,7 +27,7 @@ The report has one row per dimension, always in this order:
 
 | Dimension | Inventory kinds | Checked facts |
 | --- | --- | --- |
-| `instructions` | `instruction` | empty file, launch skip size (Claude), default project-doc size (Codex), uncertain imports; a Claude `AGENTS.md` stays `unknown` (`instruction_files_setting_unknown`) |
+| `instructions` | `instruction` | empty file, launch skip size (Claude), default project-doc size (Codex), uncertain imports; a Claude `AGENTS.md` stays `unknown` (`instruction_files_setting_unknown`); a plugin-root `CLAUDE.md`, which the runtime never loads, stays `unknown` (`instruction_not_loaded_by_runtime`) |
 | `rules` | `path_rule`, `exec_policy` | Claude rule frontmatter settles; Codex exec policy is not checked |
 | `hooks` | `hook` | unknown events, fields or handler types, a missing plugin `hooks` wrapper, skipped handlers, invalid `onFailure`; a file with no handlers is `unknown` (`no_hooks_declared`) |
 | `workflows` | `workflow` | the static workflow lint (`meta` first, no forbidden calls) |
@@ -52,6 +52,10 @@ from agent_harness_lab.sources import plugins_inventory
 plugins = plugins_inventory.capture(checkout, profile, plugin_checkouts={'name@market': '/path/to/plugin'})
 report = audit.audit(plugins.checkouts[0].inventory)
 ```
+
+That report covers every dimension of the plugin checkout. A plugin-root
+`CLAUDE.md` is `unknown` (`instruction_not_loaded_by_runtime`) there, because
+the runtime does not load it, so no size or emptiness rule applies.
 
 ## Statuses
 
