@@ -148,7 +148,7 @@ transport and cooperative attestations; they do not qualify containment or model
 The exact original unmanaged falsifier is retained separately:
 
 ```sh
-python3 -m unittest discover -s tools/tests -p derivation_raw_assessment.py -v
+python3 -m unittest discover -s tests -t . -p derivation_raw_assessment.py -v
 ```
 
 It intentionally exits 1: the raw path still obtains an unqualified fresh diagnostic

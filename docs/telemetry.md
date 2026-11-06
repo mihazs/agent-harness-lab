@@ -98,7 +98,7 @@ It prints:
 ```
 
 The first five lines are the exact records `Ledger.ingest` appends to
-`events.v2.jsonl` for these rows; `tools/tests/test_telemetry.py` runs the snippet
+`events.v2.jsonl` for these rows; `tests/integration/telemetry/test_telemetry.py` runs the snippet
 and the ledger against this page, so the output cannot drift unnoticed.
 
 - **Bodies are omitted.** The command, the error text, the assistant sentence, the

@@ -12,9 +12,11 @@ okf = ["PyYAML==6.0.3"]
 ml = ["scikit-learn>=1.3", "sentence-transformers>=3", "transformers>=4.40", "torch>=2", "sentencepiece>=0.2"]
 
 [tool.pytest.ini_options]
-testpaths = ["tools/tests", "skills/harness-evaluation/scripts"]
+testpaths = ["tests", "skills/harness-evaluation/scripts"]
 python_files = ["test_*.py"]
-addopts = "--strict-config --strict-markers"
+# append keeps an installed wheel or archive ahead of the checkout on sys.path; tests/ is a package, so the
+# default prepend would put the repository root first and shadow the installed agent_harness_lab.
+addopts = "--strict-config --strict-markers --import-mode=append"
 
 [tool.ruff]
 target-version = "py311"

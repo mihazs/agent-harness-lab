@@ -86,9 +86,12 @@ check, so maintainers type an explicit conventional merge or squash subject.
 
 ## Native tests and reusable commands
 
-Application tests live in `tools/tests/test_*.py`; evaluator tests live beside the
-owned evaluator in `skills/harness-evaluation/scripts/test_*.py`. Add discoverable
-unittest cases to these existing native suites. Put reusable commands in
+Application tests live in the `tests/` package: `tests/unit/<area>/` and
+`tests/integration/<area>/`, where the area mirrors the code under test, with shared
+helpers in `tests/support/`. The [layout rule](.agents/skills/pytest-patterns/SKILL.md#repository-adaptation)
+says which tree a test belongs to. Evaluator tests live beside the owned evaluator in
+`skills/harness-evaluation/scripts/test_*.py`. Add discoverable cases to these existing
+native suites. Put reusable commands in
 `Taskfile.yml`; do not create standalone smoke-test scripts under artifacts or
 other helper folders.
 
@@ -131,7 +134,7 @@ These publication cases are skipped during ordinary offline tests.
 | Controlled experiments | `optimization/`, `experiments/`, `diagnostics/` under `agent_harness_lab/` |
 | Monitoring and recovery | `agent_harness_lab/monitoring/`, `promotion/` |
 | Agent skills and contracts | `skills/harness-evaluation/`, `skills/harness-self-improvement/` |
-| Tests and public inputs | `tools/tests/`, evaluator `test_*.py`, `examples/`, evaluation `fixtures/` |
+| Tests and public inputs | `tests/`, evaluator `test_*.py`, `examples/`, evaluation `fixtures/` |
 | Distribution | `install.py`, `pyproject.toml`, `scripts/`, `.github/workflows/`, `.changeset/` |
 
 The map identifies areas, not permission to modify all of them. Newcomers should
@@ -153,7 +156,7 @@ Report failures and skips separately. The containment probe may be unsupported o
 your host; a skip is not isolation certification. For the public diagnosis example:
 
 ```sh
-.venv/bin/python -m pytest tools/tests/test_quickstart.py
+.venv/bin/python -m pytest tests/integration/tools/test_quickstart.py
 ```
 
 Use standard-library Python unless a concrete requirement justifies a dependency.
@@ -221,4 +224,4 @@ links, HTML, multiline links, escaped delimiters, nested parentheses and heading
 anchors are not validated. Use percent encoding or angle brackets for spaces;
 encode parentheses in file names. No network access or dependencies are needed.
 
-Focused tests: `.venv/bin/python -m pytest tools/tests/test_docs.py`.
+Focused tests: `.venv/bin/python -m pytest tests/integration/docs/test_docs.py`.

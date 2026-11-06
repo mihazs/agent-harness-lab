@@ -2425,7 +2425,7 @@ a new path; no rename is inferred. The reader summary adds `absence_reconciliati
 `rename_detection: false` and the warning `absence_is_not_deletion_evidence`.
 Records stay contextual assertions with unknown coverage. Nothing is written
 outside the selected journal, and no ai-memory command, database or server is used.
-Synthetic bundles establish this contract (`tools/tests/test_source_okf_absence.py`).
+Synthetic bundles establish this contract (`tests/unit/sources/test_source_okf_absence.py`).
 
 ### Declared handoff and workstream provenance
 
