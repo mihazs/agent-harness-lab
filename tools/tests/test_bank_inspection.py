@@ -3,8 +3,9 @@ from contextlib import redirect_stderr, redirect_stdout
 from copy import deepcopy
 import io
 import json
-import unittest
 from unittest.mock import patch
+
+import pytest
 
 from agent_harness_lab.cli import main
 from agent_harness_lab.evaluation.integrity import digest
@@ -12,75 +13,89 @@ from agent_harness_lab.evaluation.task_bank import validate
 import test_evaluation_foundation as fixtures
 
 
-class BankInspectionTests(unittest.TestCase):
-    def setUp(self):
-        self.fixture = fixtures.TaskBankTests(); self.fixture.setUp()
-        self.addCleanup(self.fixture.doCleanups)
+@pytest.fixture
+def bank():
+    """The shared synthetic task bank, written by the foundation fixture."""
+    fixture = fixtures.TaskBankTests(); fixture.setUp()
+    yield fixture
+    fixture.doCleanups()
 
-    def invoke(self, *options):
-        output, errors = io.StringIO(), io.StringIO()
-        with redirect_stdout(output), redirect_stderr(errors):
-            code = main(['bank', '--manifest', str(self.fixture.path), *options])
-        return code, json.loads(output.getvalue())
 
-    def assert_analysis(self, result):
-        self.assertTrue(result['analysis_only'])
-        self.assertFalse(result['certification_eligible'])
-        self.assertEqual(result['certification_status'], 'unverified')
-        self.assertFalse(result['admission_authority'])
-        self.assertFalse(result['execution_authorized'])
-        self.assertNotIn('admission', result)
-        self.assertNotIn('bank_qualification', result)
+def invoke(bank, *options):
+    output, errors = io.StringIO(), io.StringIO()
+    with redirect_stdout(output), redirect_stderr(errors):
+        code = main(['bank', '--manifest', str(bank.path), *options])
+    return code, json.loads(output.getvalue())
 
-    def test_public_list_reads_large_manifest_all_tasks_and_long_declared_identifiers(self):
-        f = self.fixture; original = f.tasks[0]
-        f.tasks = [dict(original, task_id='task.'+str(index)+'x'*129,
-            root_id='root.'+str(index), source_ref='synthetic '*100) for index in range(1001)]
-        f.write(); self.assertGreater(f.path.stat().st_size, 1024*1024)
-        code, result = self.invoke('--list')
-        self.assertEqual(code, 3); self.assert_analysis(result)
-        self.assertEqual(result['tasks'], 1001)
-        self.assertEqual(len(result['task_index']), 1001)
-        self.assertEqual(result['task_index'][-1]['task_id'], f.tasks[-1]['task_id'])
-        with self.assertRaises(ValueError): validate(f.path)
-        for option in ('--audit', '--export'):
-            args = [option] if option == '--audit' else [option, str(f.root/'export')]
-            with (patch('agent_harness_lab.evaluation.bank_tools.audit_graders', side_effect=AssertionError('no audit')),
-                  patch('agent_harness_lab.evaluation.bank_tools.export_manifest', side_effect=AssertionError('no export'))):
-                with self.assertRaises(SystemExit) as error: self.invoke(*args)
-            self.assertEqual(error.exception.code, 2)
-        self.assertFalse((f.root/'export').exists())
 
-    def test_public_inspection_reads_large_fixture_tree_without_weakening_execution_validation(self):
-        f = self.fixture; f.tasks = f.tasks[:1]; folder = f.root/'fixture0'
-        for index in range(1001): (folder/str(index)).write_bytes(b'')
-        (folder/'large').write_bytes(b'x'*(11*1024*1024))
-        limits = dict(max_files=None, max_bytes=None, max_entries=None, max_depth=None)
-        f.tasks[0]['fixture_digest'] = digest(folder, **limits); f.write()
-        code, result = self.invoke()
-        self.assertEqual(code, 3); self.assert_analysis(result)
-        self.assertTrue(result['contents_verified'])
-        self.assertGreater(result['content_grouping']['input_bytes'], 10*1024*1024)
-        self.assertNotIn('task_index', result)
-        with self.assertRaises(ValueError): validate(f.path)
+def assert_analysis(result):
+    assert result['analysis_only']
+    assert not result['certification_eligible']
+    assert result['certification_status'] == 'unverified'
+    assert not result['admission_authority']
+    assert not result['execution_authorized']
+    assert 'admission' not in result
+    assert 'bank_qualification' not in result
 
-    def test_controller_profile_is_only_a_declaration_during_inspection(self):
-        from agent_harness_lab.evaluation.bank_qualification import PROFILE
-        f = self.fixture; f.write(); value = json.loads(f.path.read_text())
-        value['controller_profile'] = PROFILE; f.path.write_text(json.dumps(value))
-        with patch('agent_harness_lab.evaluation.bank_revisions.validate_admission',
-                side_effect=ValueError('controller receipt required')) as admission:
-            _, result = self.invoke('--list')
-            self.assert_analysis(result); admission.assert_not_called()
-            self.assertEqual(result['controller_profile']['status'], 'declared_unverified')
-            with self.assertRaisesRegex(ValueError, 'controller receipt required'): validate(f.path)
-            admission.assert_called_once_with(f.path)
 
-    def test_inspection_keeps_schema_path_hash_and_split_checks(self):
-        f = self.fixture; original = deepcopy(f.tasks)
-        cases = [dict(extra='unknown'), dict(fixture='../escape'), dict(fixture_digest='a'*64),
-            dict(root_id=original[1]['root_id']), dict(partition='unsupported')]
-        for change in cases:
-            f.tasks = deepcopy(original); f.tasks[0].update(change); f.write()
-            with self.subTest(change=change), self.assertRaises(SystemExit) as error: self.invoke()
-            self.assertEqual(error.exception.code, 2)
+def test_public_list_reads_large_manifest_all_tasks_and_long_declared_identifiers(bank):
+    f = bank; original = f.tasks[0]
+    f.tasks = [dict(original, task_id='task.'+str(index)+'x'*129,
+        root_id='root.'+str(index), source_ref='synthetic '*100) for index in range(1001)]
+    f.write(); assert f.path.stat().st_size > 1024*1024
+    code, result = invoke(bank, '--list')
+    assert code == 3; assert_analysis(result)
+    assert result['tasks'] == 1001
+    assert len(result['task_index']) == 1001
+    assert result['task_index'][-1]['task_id'] == f.tasks[-1]['task_id']
+    with pytest.raises(ValueError): validate(f.path)
+    for option in ('--audit', '--export'):
+        args = [option] if option == '--audit' else [option, str(f.root/'export')]
+        with (patch('agent_harness_lab.evaluation.bank_tools.audit_graders', side_effect=AssertionError('no audit')),
+              patch('agent_harness_lab.evaluation.bank_tools.export_manifest', side_effect=AssertionError('no export'))):
+            with pytest.raises(SystemExit) as error: invoke(bank, *args)
+        assert error.value.code == 2
+    assert not (f.root/'export').exists()
+
+
+def test_public_inspection_reads_large_fixture_tree_without_weakening_execution_validation(bank):
+    f = bank; f.tasks = f.tasks[:1]; folder = f.root/'fixture0'
+    for index in range(1001): (folder/str(index)).write_bytes(b'')
+    (folder/'large').write_bytes(b'x'*(11*1024*1024))
+    limits = dict(max_files=None, max_bytes=None, max_entries=None, max_depth=None)
+    f.tasks[0]['fixture_digest'] = digest(folder, **limits); f.write()
+    code, result = invoke(bank)
+    assert code == 3; assert_analysis(result)
+    assert result['contents_verified']
+    assert result['content_grouping']['input_bytes'] > 10*1024*1024
+    assert 'task_index' not in result
+    with pytest.raises(ValueError): validate(f.path)
+
+
+def test_controller_profile_is_only_a_declaration_during_inspection(bank):
+    from agent_harness_lab.evaluation.bank_qualification import PROFILE
+    f = bank; f.write(); value = json.loads(f.path.read_text())
+    value['controller_profile'] = PROFILE; f.path.write_text(json.dumps(value))
+    with patch('agent_harness_lab.evaluation.bank_revisions.validate_admission',
+            side_effect=ValueError('controller receipt required')) as admission:
+        _, result = invoke(bank, '--list')
+        assert_analysis(result); admission.assert_not_called()
+        assert result['controller_profile']['status'] == 'declared_unverified'
+        with pytest.raises(ValueError, match='controller receipt required'): validate(f.path)
+        admission.assert_called_once_with(f.path)
+
+
+@pytest.mark.parametrize('change', [
+    pytest.param(dict(extra='unknown'), id='unknown-field'),
+    pytest.param(dict(fixture='../escape'), id='escaping-fixture-path'),
+    pytest.param(dict(fixture_digest='a'*64), id='wrong-fixture-digest'),
+    pytest.param('duplicate-root', id='duplicate-root'),
+    pytest.param(dict(partition='unsupported'), id='unsupported-partition'),
+])
+def test_inspection_keeps_schema_path_hash_and_split_checks(bank, change):
+    f = bank; original = deepcopy(f.tasks)
+    if change == 'duplicate-root':
+        change = dict(root_id=original[1]['root_id'])
+    f.tasks = deepcopy(original); f.tasks[0].update(change); f.write()
+    with pytest.raises(SystemExit) as error: invoke(bank)
+    assert error.value.code == 2

@@ -8,8 +8,9 @@ import shutil
 import subprocess
 import time
 from types import SimpleNamespace
-import unittest
 from unittest.mock import patch
+
+import pytest
 
 from agent_harness_lab import workflow,config
 from agent_harness_lab.cli import assets,evaluator
@@ -34,43 +35,47 @@ else:
     import test_bank_qualification_final as bank_fixtures
 
 
-class BankRequalificationBoundaryTests(unittest.TestCase):
-    def test_serialized_or_copied_authority_cannot_reserve(self):
-        for value in ({'qualified':True},copy(renewal._Qualification())):
-            with self.assertRaises(ValueError):renewal.reserve(value,{},deadline=time.monotonic()+10)
-
-    def test_serialized_domain_cannot_collect_or_read(self):
-        with self.assertRaises(ValueError):closed_inputs.check({'profile':renewal.PROFILE})
-        with self.assertRaises(ValueError):closed_inputs.before_collection({},SimpleNamespace())
-        with self.assertRaises(ValueError):closed_inputs.issue({'verified':True})
-
-    def test_unsigned_context_memory_and_incident_inputs_reject_before_collection(self):
-        from agent_harness_lab.diagnostics import retrieval
-        value=dict(projection=None)
-        cases=(({},dict(kind='synthetic-context')),(dict(memory_manifest=Path('/synthetic/memory.json')),None),
-            (dict(incident_corpus=Path('/synthetic/corpus.json')),None),(dict(incident_query='synthetic query'),None))
-        for extra,source_context in cases:
-            args=SimpleNamespace(project=Path('/synthetic/project'),events=Path('/synthetic/events.jsonl'),format='normalized',
-                _closed_input_domain=object(),**extra)
-            with self.subTest(extra=sorted(extra),source_context=source_context is not None), \
-                    patch.object(closed_inputs,'owned',return_value=value), \
-                    patch.object(retrieval,'contextual_search',side_effect=AssertionError('incident input must not be read')), \
-                    patch.object(workflow,'collect',side_effect=AssertionError('unsigned input must not be collected')):
-                with self.assertRaisesRegex(ValueError,'outside the closed input profile'):
-                    workflow.evidence(args,Path('/synthetic/output'),source_context)
-        self.assertNotIn('collection_started',value)
-
-    def test_private_domain_and_stage_profiles_cannot_be_relabelled_for_export(self):
-        from agent_harness_lab.evaluation.benchmark import public_export_allowed
-        for profile in ('ahl-live-construction-stage-v1',renewal.PROFILE,'conditional-bank-closed-input-domain-v2',
-                'ahl-controlled-agents-project-inputs-v1','owned-evidence-views-v1','owned-closed-input-closure-v1'):
-            with self.subTest(profile=profile):
-                self.assertFalse(public_export_allowed([dict(profile=profile,publication_allowed=True,
-                    provenance=dict(source_kind='synthetic',approved_publication=True,source_ref='synthetic:case',derived_from_private=False))]))
+def test_serialized_or_copied_authority_cannot_reserve():
+    for value in ({'qualified':True},copy(renewal._Qualification())):
+        with pytest.raises(ValueError):renewal.reserve(value,{},deadline=time.monotonic()+10)
 
 
-@unittest.skipUnless(kernel.ENABLED,'explicit delegated native scope required')
+def test_serialized_domain_cannot_collect_or_read():
+    with pytest.raises(ValueError):closed_inputs.check({'profile':renewal.PROFILE})
+    with pytest.raises(ValueError):closed_inputs.before_collection({},SimpleNamespace())
+    with pytest.raises(ValueError):closed_inputs.issue({'verified':True})
+
+
+@pytest.mark.parametrize(('extra','source_context'),[
+    pytest.param({},dict(kind='synthetic-context'),id='source-context'),
+    pytest.param(dict(memory_manifest=Path('/synthetic/memory.json')),None,id='memory-manifest'),
+    pytest.param(dict(incident_corpus=Path('/synthetic/corpus.json')),None,id='incident-corpus'),
+    pytest.param(dict(incident_query='synthetic query'),None,id='incident-query')])
+def test_unsigned_context_memory_and_incident_inputs_reject_before_collection(extra,source_context):
+    from agent_harness_lab.diagnostics import retrieval
+    value=dict(projection=None)
+    args=SimpleNamespace(project=Path('/synthetic/project'),events=Path('/synthetic/events.jsonl'),format='normalized',
+        _closed_input_domain=object(),**extra)
+    with patch.object(closed_inputs,'owned',return_value=value), \
+            patch.object(retrieval,'contextual_search',side_effect=AssertionError('incident input must not be read')), \
+            patch.object(workflow,'collect',side_effect=AssertionError('unsigned input must not be collected')):
+        with pytest.raises(ValueError, match='outside the closed input profile'):
+            workflow.evidence(args,Path('/synthetic/output'),source_context)
+    assert 'collection_started' not in value
+
+
+@pytest.mark.parametrize('profile',['ahl-live-construction-stage-v1',renewal.PROFILE,'conditional-bank-closed-input-domain-v2',
+        'ahl-controlled-agents-project-inputs-v1','owned-evidence-views-v1','owned-closed-input-closure-v1'])
+def test_private_domain_and_stage_profiles_cannot_be_relabelled_for_export(profile):
+    from agent_harness_lab.evaluation.benchmark import public_export_allowed
+    assert not public_export_allowed([dict(profile=profile,publication_allowed=True,
+        provenance=dict(source_kind='synthetic',approved_publication=True,source_ref='synthetic:case',derived_from_private=False))])
+
+
+@pytest.mark.skipif(not kernel.ENABLED,reason='explicit delegated native scope required')
 class BankRequalificationKernelTests(kernel.KernelFixture):
+    # The delegated kernel scope and qualified-bank fixtures are TestCase classes shared with
+    # other modules (setUpClass, addCleanup), so this class keeps that base.
     def owned_case(self,*,unbound_source=False,focus_check=None):
         actual,qualified,_,runtime,image,manifest,spec,path,history=bank_fixtures.QualifiedBankKernelTests.qualified_comparison(self)
         deadline=time.monotonic()+120
@@ -98,8 +103,8 @@ class BankRequalificationKernelTests(kernel.KernelFixture):
         policy=self.root/'operator/renewal-policy.json'
         policy.write_text(json.dumps(dict(schema_version=1,profile=authority.POLICY,purpose=renewal.PURPOSE,
             reviewers={'synthetic-reviewer':' '.join(key.with_suffix('.pub').read_text().split()[:2])})));policy.chmod(0o600)
-        self.assertEqual(bank_fixtures.invoke(store.root,'trust-delegation-reviewers','--policy',policy)[0],0)
-        code,locator=bank_fixtures.invoke(store.root,'allocate-delegation');self.assertEqual(code,0)
+        assert bank_fixtures.invoke(store.root,'trust-delegation-reviewers','--policy',policy)[0] == 0
+        code,locator=bank_fixtures.invoke(store.root,'allocate-delegation');assert code == 0
         prepared=renewal.prepare(store,qualified['case_id'],'synthetic-reviewer',domain,
             renewal.runtime_binding(backend,settings_path),deadline=deadline,request_path=locator['request_path'])
         request=Path(prepared['request_path'])
@@ -118,7 +123,7 @@ class BankRequalificationKernelTests(kernel.KernelFixture):
         if focus_check=='collection':
             args.focus='Synthetic focus.'
             with patch.object(workflow,'collect',side_effect=AssertionError('focus must reject before collection')) as collect:
-                with self.assertRaisesRegex(ValueError,'focus'):workflow.evidence(args,output)
+                with pytest.raises(ValueError, match='focus'):workflow.evidence(args,output)
                 collect.assert_not_called()
             return
         data=workflow.evidence(args,output)
@@ -127,7 +132,7 @@ class BankRequalificationKernelTests(kernel.KernelFixture):
         views=construction.views(data,assets(),output/'views',deadline,closed_domain=handle)
         counter=[0]
         def transport(credential,body,max_bytes,request_deadline):
-            self.assertIsNone(credential);counter[0]+=1;ident=str(counter[0]);payload=json.loads(body)
+            assert credential is None;counter[0]+=1;ident=str(counter[0]);payload=json.loads(body)
             if any(item.get('type')=='function_call_output' for item in payload['input']):
                 return wire.reply([wire.message('final-'+ident)])
             developer=payload['input'][0]['content']
@@ -139,10 +144,10 @@ class BankRequalificationKernelTests(kernel.KernelFixture):
         seed=self.root/'seed';shutil.copytree(baseline,seed)
         if focus_check=='direct':
             with patch.object(WorkflowAccess,'_run',side_effect=AssertionError('focus must reject before stage dispatch')) as run:
-                with self.assertRaisesRegex(ValueError,'focus'):
+                with pytest.raises(ValueError, match='focus'):
                     access.propose(views['proposer'],seed,output/'proposal',focus='Synthetic focus.')
                 run.assert_not_called()
-            self.assertEqual(client.requests,0)
+            assert client.requests == 0
             return
         _,candidate,_=access.propose(views['proposer'],seed,output/'proposal')
         frozen=output/'candidate';access.freeze_candidate(candidate,frozen)
@@ -157,11 +162,11 @@ class BankRequalificationKernelTests(kernel.KernelFixture):
 
     def test_presigned_future_owned_development_renews_and_consumes_actual_bank(self):
         store,case,domain,path,baseline,candidate,history,runtime,image,deadline,policy,client=self.owned_case()
-        self.assertGreater(client.requests,0)
-        with self.assertRaisesRegex(ValueError,'exposure epoch'):
+        assert client.requests > 0
+        with pytest.raises(ValueError, match='exposure epoch'):
             history.reserve_access(path,baseline,candidate,parent_deadline=deadline)
         handle=store.requalify_bank(case,domain,path,baseline,candidate,deadline=deadline)
-        with self.assertRaises(ValueError):history.reserve_access(path,baseline,candidate,parent_deadline=deadline,requalification=copy(handle))
+        with pytest.raises(ValueError):history.reserve_access(path,baseline,candidate,parent_deadline=deadline,requalification=copy(handle))
         if hasattr(os,'fork'):
             child=os.fork()
             if child==0:
@@ -169,21 +174,21 @@ class BankRequalificationKernelTests(kernel.KernelFixture):
                 except ValueError:os._exit(0)
                 except BaseException:os._exit(2)
                 os._exit(3)
-            self.assertEqual(os.waitpid(child,0)[1],0)
+            assert os.waitpid(child,0)[1] == 0
         reserved=history.reserve_access(path,baseline,candidate,parent_deadline=deadline,requalification=handle)
-        with self.assertRaises(ValueError):history.reserve_access(path,baseline,candidate,parent_deadline=deadline,requalification=handle)
+        with pytest.raises(ValueError):history.reserve_access(path,baseline,candidate,parent_deadline=deadline,requalification=handle)
         run=history.run(path,baseline,candidate,cgroup_root=self.cgroup_root,image_root=runtime,image_sha256=image,
             disk_bytes=64*1024*1024,budget_seconds=60,parent_deadline=deadline,access_reservation=reserved['reservation_id'])
-        self.assertEqual(run['state'],'sealed')
-        self.assertEqual(history.show(run['run_id'])['protected_access']['state'],'retired')
-        with self.assertRaises(ValueError):store.requalify_bank(case,domain,path,baseline,candidate,deadline=deadline)
-        with self.assertRaises(ValueError):history.reserve_access(path,baseline,candidate,parent_deadline=deadline)
+        assert run['state'] == 'sealed'
+        assert history.show(run['run_id'])['protected_access']['state'] == 'retired'
+        with pytest.raises(ValueError):store.requalify_bank(case,domain,path,baseline,candidate,deadline=deadline)
+        with pytest.raises(ValueError):history.reserve_access(path,baseline,candidate,parent_deadline=deadline)
 
     def test_revoked_delegation_cannot_publish_qualification(self):
         store,case,domain,path,baseline,candidate,_,_,_,deadline,policy,_=self.owned_case()
         before=store.history(store.case(case));policy.write_text('{}')
-        with self.assertRaises(ValueError):store.requalify_bank(case,domain,path,baseline,candidate,deadline=deadline)
-        self.assertEqual(store.history(store.case(case)),before)
+        with pytest.raises(ValueError):store.requalify_bank(case,domain,path,baseline,candidate,deadline=deadline)
+        assert store.history(store.case(case)) == before
 
     def test_focus_with_reviewed_source_rejects_before_collection(self):
         self.owned_case(focus_check='collection')
@@ -194,13 +199,13 @@ class BankRequalificationKernelTests(kernel.KernelFixture):
     def test_unbound_capture_selection_rejects_before_collection_or_model(self):
         with patch.object(workflow,'collect',side_effect=AssertionError('unreviewed source must not be collected')):
             # Bank preparation uses neither evidence collector nor model calls.
-            with self.assertRaisesRegex(ValueError,'outside the signed closed domain'):
+            with pytest.raises(ValueError, match='outside the signed closed domain'):
                 self.owned_case(unbound_source=True)
 
     def test_unbound_pending_controller_work_cannot_be_called_unrelated(self):
         store,case,domain,path,baseline,candidate,history,_,_,deadline,_,_=self.owned_case()
         ledger.begin_construction(history.access_ledger().path,'evaluator_author','a'*64)
-        with self.assertRaisesRegex(ValueError,'unbound'):
+        with pytest.raises(ValueError, match='unbound'):
             store.requalify_bank(case,domain,path,baseline,candidate,deadline=deadline)
 
     def test_known_source_alias_cannot_become_a_fresh_final_bank(self):
@@ -209,7 +214,7 @@ class BankRequalificationKernelTests(kernel.KernelFixture):
         # An actual ordinary exposure of the exact final-bank source assets is
         # still exposure, regardless of a later unrelatedness label.
         ledger.admit(history.access_ledger().path,actual['assets'],'a'*64)
-        with self.assertRaises(ValueError):store.requalify_bank(case,domain,path,baseline,candidate,deadline=deadline)
+        with pytest.raises(ValueError):store.requalify_bank(case,domain,path,baseline,candidate,deadline=deadline)
 
     def test_expiry_at_actual_event_replace_keeps_prior_state_and_has_no_handle(self):
         store,case,domain,path,baseline,candidate,history,_,_,deadline,_,_=self.owned_case()
@@ -225,18 +230,18 @@ class BankRequalificationKernelTests(kernel.KernelFixture):
                 before_replace=expired
             return writer(parent,name,value,before_replace)
         with patch.object(private_journal,'_publish_at',side_effect=publish):
-            with self.assertRaises(TimeoutError):store.requalify_bank(case,domain,path,baseline,candidate,deadline=deadline)
-        self.assertEqual(len(reached),1)
-        self.assertEqual(store.history(store.case(case)),before)
-        self.assertEqual(history.access_ledger().path.read_bytes(),ledger_bytes)
+            with pytest.raises(TimeoutError):store.requalify_bank(case,domain,path,baseline,candidate,deadline=deadline)
+        assert len(reached) == 1
+        assert store.history(store.case(case)) == before
+        assert history.access_ledger().path.read_bytes() == ledger_bytes
         closed_inputs.close(domain)
-        with self.assertRaises(ValueError):store.requalify_bank(case,domain,path,baseline,candidate,deadline=deadline)
+        with pytest.raises(ValueError):store.requalify_bank(case,domain,path,baseline,candidate,deadline=deadline)
 
     def test_ambiguous_access_publication_cannot_mint_replacement(self):
         store,case,domain,path,baseline,candidate,history,_,_,deadline,_,_=self.owned_case()
         handle=store.requalify_bank(case,domain,path,baseline,candidate,deadline=deadline)
         with patch.object(ledger,'_save',side_effect=OSError('synthetic access publication failure')):
-            with self.assertRaises(OSError):history.reserve_access(path,baseline,candidate,parent_deadline=deadline,requalification=handle)
-        with self.assertRaises(ValueError):store.requalify_bank(case,domain,path,baseline,candidate,deadline=deadline)
-        with self.assertRaises(ValueError):history.reserve_access(path,baseline,candidate,parent_deadline=deadline,requalification=handle)
-        with self.assertRaises(ValueError):history.reserve_access(path,baseline,candidate,parent_deadline=deadline)
+            with pytest.raises(OSError):history.reserve_access(path,baseline,candidate,parent_deadline=deadline,requalification=handle)
+        with pytest.raises(ValueError):store.requalify_bank(case,domain,path,baseline,candidate,deadline=deadline)
+        with pytest.raises(ValueError):history.reserve_access(path,baseline,candidate,parent_deadline=deadline,requalification=handle)
+        with pytest.raises(ValueError):history.reserve_access(path,baseline,candidate,parent_deadline=deadline)
