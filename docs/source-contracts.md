@@ -1155,7 +1155,10 @@ pinned to the public `openai/codex@d786ff91` source
   ancestors `unknown` (`project_root_marker_not_found_in_checkout`), because a
   marker above the checkout is not read. Those ancestors may still load, so the
   selected (first existing) file of each counts toward a declared
-  `project_doc_max_bytes` unless it is empty; a later file that would pass the
+  `project_doc_max_bytes` unless it is empty. The scope's later candidates are
+  never counted, even when the selection is empty, so an empty
+  `AGENTS.override.md` keeps a large `AGENTS.md` beside it off the budget. A
+  separator-only selection (U+001C to U+001F) is content and is counted. A later file that would pass the
   limit is `unknown` (`byte_limit_requires_native_resolution`) and the receipt is
   `blocked`.
 - `project_trust: declared_untrusted` drops every present project file to
