@@ -19,6 +19,10 @@ DEFAULT_LIMITS = dict(max_pages=1000, max_bytes=256*1024*1024, seconds=900)
 MAX_RESPONSE_BYTES = 8*1024*1024
 
 
+# The in-memory marker for a conditional GET answered 304; it is never JSON evidence.
+NOT_MODIFIED = object()
+
+
 class TransportError(ValueError):
     """Redacted transport failure; raw URLs, headers and bodies stay in memory."""
 
@@ -61,7 +65,7 @@ def next_link(link):
     return following
 
 
-def _json_exchange(origin, target, headers, *, timeout, deadline, max_bytes, body=None):
+def _json_exchange(origin, target, headers, *, timeout, deadline, max_bytes, body=None, not_modified=False):
     capped = False
     if deadline is not None:
         remaining = deadline-time.monotonic()
@@ -74,6 +78,9 @@ def _json_exchange(origin, target, headers, *, timeout, deadline, max_bytes, bod
     try:
         connection.request('GET' if body is None else 'POST', target, body=body, headers=headers)
         response = connection.getresponse()
+        if response.status == 304 and not_modified:
+            # Only a caller that sent a validator may receive 304; it carries no body to parse or charge.
+            return NOT_MODIFIED, dict(response.getheaders()), 0
         if response.status != 200:
             raise HTTPStatusError(response.status)
         if response.getheader('Content-Encoding', 'identity') != 'identity':
@@ -149,10 +156,11 @@ def budget_spent(api, state):
         or state['deadline'] is not None and time.monotonic() >= state['deadline'])
 
 
-def metered_exchange(api, target, headers, state, *, authorization=None, body=None, ceiling=None):
+def metered_exchange(api, target, headers, state, *, authorization=None, body=None, ceiling=None, not_modified=False):
     """One request charged to the capture budget; returns the JSON value and lowercase response headers.
 
     ``ceiling`` caps this one response below whatever remains of the cumulative byte budget.
+    ``not_modified`` admits a 304 answer as ``NOT_MODIFIED``; only a caller that sent a validator sets it.
     """
     headers = {'Accept-Encoding': 'identity', 'User-Agent': 'agent-harness-lab-reader', **headers}
     if authorization is not None: headers['Authorization'] = authorization
@@ -160,7 +168,7 @@ def metered_exchange(api, target, headers, state, *, authorization=None, body=No
     remaining = None if api.max_bytes is None else api.max_bytes-state['used']
     limit = remaining if ceiling is None else ceiling if remaining is None else min(ceiling, remaining)
     value, metadata, size = _json_exchange(api.origin, target, headers, body=body, timeout=api.timeout,
-        deadline=state['deadline'], max_bytes=limit)
+        deadline=state['deadline'], max_bytes=limit, not_modified=not_modified)
     state['used'] += size
     return value, {k.lower(): v for k, v in metadata.items()}
 

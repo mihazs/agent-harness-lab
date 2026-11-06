@@ -2612,8 +2612,8 @@ v6 window profile below records absence tombstones; earlier profiles infer none.
 Version 1 leaves thread resolution/outdated state unknown without native GraphQL
 evidence and does not read timelines or CI/checks; the explicit profile below adds
 those reads. Later profiles add commit detail and bounded comment windows.
-Conditional (ETag) and incremental requests remain open in #45/#42. An omitted
-comment is not proof of deletion or no defect.
+Explicit conditional (ETag) requests are described below; incremental requests
+remain open in #45/#42. An omitted comment is not proof of deletion or no defect.
 Readbacks limit head inconsistency but do not make multiple REST calls an atomic
 server snapshot. Native unittest fixtures cover the client contract using fake
 HTTPS responses; live GitHub compatibility, concurrency and diagnostic utility
@@ -2664,7 +2664,7 @@ calls share the original request/byte/deadline budgets, and final issue/PR/repos
 readbacks still gate the snapshot. HTTP denial and an unavailable detail surface
 cannot be reported as an empty successful check/review set. The explicit profile
 below adds GraphQL thread state. Later profiles add commit detail, durable claims and
-comment windows; conditional and incremental requests remain open.
+comment windows; conditional requests are opt-in below and incremental requests remain open.
 
 ### Authenticated native review threads
 
@@ -2753,8 +2753,8 @@ references require exact SHAs; open-PR test-merge references remain separate fro
 reported merged results. No revert/cherry-pick relationship is inferred from a
 message, and no comment or merge establishes a task outcome or independent root.
 Structured relationships remain in memory unless the v5 graph profile is selected.
-Persisted/cross-source resolution remains #58 work. Conditional and incremental
-requests remain open in #45/#42; comment windows are described below.
+Persisted/cross-source resolution remains #58 work. Incremental requests remain
+open in #45/#42; comment windows and conditional requests are described below.
 
 `task test:sources:github:commit:live` runs the native public-service acceptance
 case only with explicit `GITHUB_ENDPOINT`, `GITHUB_REPO_ID` and `GITHUB_COMMIT`
@@ -2838,9 +2838,50 @@ partial.
 Synthetic fixtures cover window validation, fingerprint compatibility, journal
 separation, edits, absence, idempotence and rejected captures. They do not
 establish live GitHub listing semantics, deletion detection or diagnostic
-utility. Conditional requests remain open; a `304 Not Modified` must not advance
-a checkpoint. `since`-filtered incremental requests, recheck windows and
-deletion signals beyond REST listings also remain open in #45.
+utility. Conditional requests are described below; a `304 Not Modified` never
+advances a checkpoint. `since`-filtered incremental requests, recheck windows and
+deletion signals beyond REST listings remain open in #45.
+
+### Explicit conditional requests
+
+`GitHubAPI(endpoint, selection, conditional=True)` opts one reader instance into
+`If-None-Match` REST GETs. The default (`False`) sends no validator, so existing
+requests are unchanged, and any non-boolean value is rejected. The mode is not
+part of the selection, scope or source fingerprint because it cannot change what
+a capture records. The CLI configuration does not enable it.
+
+A validator is kept only after a successful `200` whose `ETag` is a well-formed
+RFC 9110 entity tag with at most 510 characters between its quotes. It is keyed
+by the exact request target and the authorization fingerprint, and held only in
+that instance's memory together with the validated response and its byte count. Validators, raw tags and
+replayed bodies never enter the journal, summary or snapshot. GraphQL thread
+queries are never conditional. Within a capture, the final issue, PR and repository
+readbacks reuse the validators from their first reads. A later capture by the same
+instance reuses the validators from its last fully successful capture. A failed
+or rejected capture discards the validators it collected. A later `200` without a
+usable tag retires the older validator for that target.
+
+A `304 Not Modified` is accepted only for a request that sent a validator. Its
+`ETag`, when present, must equal the validator sent. The reader then replays the
+previously validated response, including its pagination links. The replay
+counts as a request and is charged its original byte count. If that charge
+exceeds the byte budget, the capture is rejected as a `200` of that size would
+be. A replayed capture therefore produces the same records, summary, coverage
+bounds and snapshot as an unconditional capture of the same responses. Recapturing
+an unchanged source with 304 answers adds no revisions or tombstones and leaves
+the committed checkpoint unchanged. A changed response arrives as a `200` and is
+validated as usual. An unsolicited 304, a 304 naming another tag, a denial, a
+429 and an exhausted budget all reject the capture. No retry follows, and the
+journal and checkpoint stay unchanged.
+
+`GitHubAPI.transfer` reports `conditional_requests` and `not_modified` for the last
+successful capture. Those counts stay in memory and outside the snapshot, so they
+cannot change a checkpoint. A 304 is the server's claim, under weak comparison,
+that its representation is unchanged. It is not independent evidence of
+unchanged content, and readbacks answered 304 rely on that claim. Synthetic
+fixtures cover the request headers, replay, budget charging, rejected 304s,
+validator lifetime and checkpoint stability. They do not establish GitHub's
+live validator semantics or rate-limit accounting.
 
 ### Explicit GitHub CLI configuration and native recheck
 

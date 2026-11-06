@@ -1,4 +1,5 @@
 """Explicit read-only GitHub captures; comments and approvals are not task grades."""
+import copy
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import json
@@ -8,12 +9,14 @@ from .execution import CoverageManifest, ExecutionMetadata, RecordRef, ScanBound
 from .graph import EvidenceGraph, JoinReceipt
 from .schema import Contract, EvidenceRecord, SourceSpec, digest, timestamp
 from .snapshot import Snapshot
-from .transport import JsonAPI, TransportError, budget_spent, endpoint, metered_exchange, next_page
+from .transport import NOT_MODIFIED, JsonAPI, TransportError, budget_spent, endpoint, metered_exchange, next_page
 
 API_VERSION = '2026-03-10'
 SOURCE_VERSION = API_VERSION+'-v1'
 WINDOW_SPAN = timedelta(days=366)
 WINDOWED = ('github_issue_comment', 'github_review_comment')
+# RFC 9110 entity-tag syntax; anything else is not a validator and is never echoed back.
+ETAG = re.compile(r'(?:W/)?"[\x21\x23-\x7e]{0,510}"')
 
 THREAD_FIELDS = '''fragment ThreadFields on PullRequestReviewThread {
   id repository { id } pullRequest { id number headRefOid }
@@ -159,7 +162,8 @@ class GitHubSelection(Contract):
 
 
 class GitHubAPI:
-    def __init__(self, base_url, selection, *, authorization=None, **limits):
+    def __init__(self, base_url, selection, *, authorization=None, conditional=False, **limits):
+        if type(conditional) is not bool: raise TransportError('explicit GitHub conditional request mode required')
         self.transport = JsonAPI(base_url, **limits)
         parsed, path = endpoint(base_url)
         if (self.transport.origin != ('api.github.com', 443) or parsed.query
@@ -168,6 +172,8 @@ class GitHubAPI:
         if not isinstance(selection, GitHubSelection): raise TransportError('explicit GitHub selection required')
         self.selection = GitHubSelection.parse(selection.to_dict())
         self.authorization = authorization
+        # Validators from the last fully successful capture of this instance; memory only, never persisted.
+        self.conditional, self._validators, self.transfer = conditional, {}, None
 
     def _url(self, value, suffix):
         parsed, path = endpoint(value)
@@ -183,11 +189,35 @@ class GitHubAPI:
         if budget_spent(self.transport, state): raise TransportError('GitHub capture budget exhausted')
         headers = ({'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': API_VERSION} if body is None
             else {'Accept': 'application/json', 'Content-Type': 'application/json'})
-        value, metadata = metered_exchange(self.transport, target, headers, state, authorization=self.authorization, body=body)
+        key = cached = None
+        if body is None and self.conditional:
+            key = digest(('github-conditional-v1', target, text_hash(self.authorization)))
+            validators = state['validators']
+            cached = validators[key] if key in validators else self._validators.get(key)
+            if cached is not None:
+                headers['If-None-Match'] = cached[0]; state['conditional'] += 1
+        used = state['used']
+        value, metadata = metered_exchange(self.transport, target, headers, state, authorization=self.authorization,
+            body=body, not_modified=cached is not None)
+        if value is NOT_MODIFIED: return self._replay(key, cached, metadata, state)
         if (body is None and metadata.get('x-github-api-version-selected') != API_VERSION
                 or metadata.get('content-type', '').split(';')[0].strip() not in ('application/json', 'application/vnd.github+json')):
             raise TransportError('GitHub API version/content capability is unavailable')
+        if key is not None:
+            etag = metadata.get('etag')
+            # A fresh answer without a usable validator also retires the older one for this target.
+            state['validators'][key] = ((etag, copy.deepcopy(value), dict(metadata), state['used']-used)
+                if isinstance(etag, str) and ETAG.fullmatch(etag) else None)
         return value, metadata
+
+    def _replay(self, key, cached, metadata, state):
+        """A 304 replays the validated 200 it names, charged its original bytes, so it cannot change a snapshot."""
+        etag, value, headers, size = cached
+        if metadata.get('etag', etag) != etag: raise TransportError('GitHub 304 names another validator')
+        if self.transport.max_bytes is not None and state['used']+size > self.transport.max_bytes:
+            raise TransportError('GitHub capture budget exhausted')
+        state['used'] += size; state['not_modified'] += 1; state['validators'][key] = cached
+        return copy.deepcopy(value), dict(headers)
 
     def _graphql(self, query, variables, state):
         if query not in (THREADS_QUERY, THREAD_COMMENTS_QUERY) or self.authorization is None:
@@ -571,7 +601,7 @@ class GitHubAPI:
         return absences
 
     def _capture(self, source, prior=()):
-        state = dict(requests=0, used=0,
+        state = dict(requests=0, used=0, validators={}, conditional=0, not_modified=0,
             deadline=time.monotonic()+self.transport.seconds if self.transport.seconds is not None else None)
         records, nodes, relations, observed = {}, {}, set(), set()
         collected, lineage = datetime.now(timezone.utc).isoformat(), self._lineage(prior)
@@ -710,4 +740,7 @@ class GitHubAPI:
             graph.validate(source, records.values())
         snapshot = Snapshot(digest(summary), tuple(records[k] for k in sorted(records)), ExecutionMetadata((), coverage), graph)
         self.summary = summary
+        # Transfer counts stay outside the snapshot: a 304 must never change what a checkpoint commits.
+        self.transfer = dict(conditional_requests=state['conditional'], not_modified=state['not_modified'])
+        if self.conditional: self._validators = {k: v for k, v in state['validators'].items() if v is not None}
         return snapshot
