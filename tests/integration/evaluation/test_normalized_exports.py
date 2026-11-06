@@ -6,8 +6,9 @@ import json
 import os
 from pathlib import Path
 import socket
-import unittest
 from unittest.mock import patch
+
+import pytest
 
 import agent_harness_lab
 from agent_harness_lab.sources import snapshot
@@ -16,17 +17,15 @@ from agent_harness_lab.sources.schema import digest
 from tests.integration.sources import test_source_dispatch as fixtures
 
 
-class NormalizedExportTests(unittest.TestCase):
-    def setUp(self):
-        expected=os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
-        if expected:
-            self.assertTrue(Path(agent_harness_lab.__file__).resolve().is_relative_to(Path(expected).resolve()),
-                            'normalized export checks imported the wrong package layout')
-        self.f=fixtures.SourceDispatchTests(); self.f.setUp(); self.addCleanup(self.f.doCleanups)
+class ExportReadback:
+    """A declared synthetic local export (from the source dispatch fixture) and its import cache."""
+
+    def __init__(self, f):
+        self.f=f
         self.cache=self.f.root/'cache.json'
 
     def seed(self):
-        code,_=self.f.invoke('import','--cache',str(self.cache)); self.assertEqual(code,0)
+        code,_=self.f.invoke('import','--cache',str(self.cache)); assert code == 0
         before=self.cache.read_bytes()
         newer=replace(self.f.record,revision_sha256=digest('second-revision'),content_sha256=digest('second-content'))
         self.f.data.write_text(json.dumps([newer.to_dict()]))
@@ -45,93 +44,104 @@ class NormalizedExportTests(unittest.TestCase):
             side_effect=lambda path,expected,limit:observed(path,compare(path,expected,limit))))
         return reads,control
 
-    def test_payload_change_after_capture_cannot_advance_checkpoint(self):
-        before=self.seed()
-        changed=replace(self.f.record,revision_sha256=digest('third-revision'),content_sha256=digest('third-content'))
-        reads,control=self.mutate_during_read(lambda:self.f.data.write_text(json.dumps([changed.to_dict()])))
-        with control: code,_=self.f.invoke('import','--cache',str(self.cache))
-        self.assertEqual(code,2); self.assertEqual(self.cache.read_bytes(),before)
-        self.assertEqual(reads,[self.f.data,self.f.data])
 
-    def test_disabled_source_is_rejected_before_readback_payload_access(self):
-        before=self.seed()
-        reads,control=self.mutate_during_read(lambda:self.f.declare(replace(self.f.source,enabled=False)))
-        with control: code,_=self.f.invoke('import','--cache',str(self.cache))
-        self.assertEqual(code,2); self.assertEqual(self.cache.read_bytes(),before)
-        self.assertEqual(reads,[self.f.data])
-
-    def test_foreign_scope_is_rejected_before_readback_payload_access(self):
-        before=self.seed()
-        reads,control=self.mutate_during_read(lambda:self.f.declare(replace(self.f.source,project_sha256=digest('foreign'))))
-        with control: code,_=self.f.invoke('import','--cache',str(self.cache))
-        self.assertEqual(code,2); self.assertEqual(self.cache.read_bytes(),before)
-        self.assertEqual(reads,[self.f.data])
-
-    def test_disable_during_payload_readback_is_caught_by_final_declaration_check(self):
-        before=self.seed()
-        reads,control=self.mutate_during_read(lambda:self.f.declare(replace(self.f.source,enabled=False)),at=2)
-        with control: code,_=self.f.invoke('import','--cache',str(self.cache))
-        self.assertEqual(code,2); self.assertEqual(self.cache.read_bytes(),before)
-        self.assertEqual(reads,[self.f.data,self.f.data])
-
-    def test_selector_change_is_rejected_before_reading_even_an_identical_alternative(self):
-        before=self.seed(); alternative=self.f.root/'alternative.json'
-        alternative.write_bytes(self.f.data.read_bytes())
-        reads,control=self.mutate_during_read(lambda:self.f.declare(data='alternative.json'))
-        with control: code,_=self.f.invoke('import','--cache',str(self.cache))
-        self.assertEqual(code,2); self.assertEqual(self.cache.read_bytes(),before)
-        self.assertEqual(reads,[self.f.data])
-
-    def test_removed_linked_partial_or_oversized_payload_does_not_commit(self):
-        original=self.f.data.read_bytes()
-        for kind in ('removed','linked','partial','oversized'):
-            with self.subTest(kind=kind):
-                if self.f.data.is_symlink() or self.f.data.exists(): self.f.data.unlink()
-                self.f.data.write_bytes(original)
-                if self.cache.exists(): self.cache.unlink()
-                before=self.seed()
-                def change():
-                    self.f.data.unlink()
-                    if kind=='linked': self.f.data.symlink_to(self.f.manifest)
-                    elif kind=='partial': self.f.data.write_bytes(b'{"partial":')
-                    elif kind=='oversized': self.f.data.write_bytes(b' '*(8*1024*1024+1))
-                _,control=self.mutate_during_read(change)
-                with control: code,_=self.f.invoke('import','--cache',str(self.cache))
-                self.assertEqual(code,2); self.assertEqual(self.cache.read_bytes(),before)
-
-    def test_unchanged_readbacks_preserve_v1_v2_v3_hashes_and_idempotent_cursors(self):
-        for version in ('v1','v2','v3'):
-            with self.subTest(version=version):
-                self.f.source=replace(self.f.source,version=version); self.f.declare()
-                rows=[self.f.record.to_dict()]
-                if version!='v1':
-                    rows=dict(schema_version=int(version[1:]),records=rows,
-                              execution_metadata=ExecutionMetadata(()).to_dict() if version=='v2' else None)
-                    if version=='v3': rows['evidence_graph']=None
-                self.f.data.write_text(json.dumps(rows)); expected=hashlib.sha256(self.f.data.read_bytes()).hexdigest()
-                reads,control=self.mutate_during_read(lambda:None)
-                with control,patch.object(socket,'socket',side_effect=AssertionError('no network')):
-                    code,raw=self.f.invoke('preview')
-                self.assertEqual(code,0); preview=json.loads(raw)
-                self.assertEqual(preview['snapshot_sha256'],expected)
-                self.assertEqual(preview['capture_completeness'],'unknown')
-                self.assertEqual(reads,[self.f.data,self.f.data])
-                cache=self.f.root/(version+'-cache.json')
-                code,raw=self.f.invoke('import','--cache',str(cache)); self.assertEqual(code,0)
-                first=json.loads(raw)
-                code,raw=self.f.invoke('import','--cache',str(cache)); self.assertEqual(code,0)
-                second=json.loads(raw)
-                self.assertEqual(second['imported'],0); self.assertEqual(second['skipped'],1)
-                self.assertEqual(first['cursor_after_sha256'],second['cursor_after_sha256'])
-
-    def test_mtime_or_declaration_format_only_changes_do_not_invent_snapshot_revisions(self):
-        expected=hashlib.sha256(self.f.data.read_bytes()).hexdigest()
-        declaration=json.loads(self.f.manifest.read_text())
-        def change():
-            self.f.data.touch(); self.f.manifest.write_text(json.dumps(declaration,indent=2))
-        _,control=self.mutate_during_read(change)
-        with control: code,raw=self.f.invoke('preview')
-        self.assertEqual(code,0); self.assertEqual(json.loads(raw)['snapshot_sha256'],expected)
+@pytest.fixture
+def ex():
+    expected=os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
+    if expected:
+        assert Path(agent_harness_lab.__file__).resolve().is_relative_to(Path(expected).resolve()), 'normalized export checks imported the wrong package layout'
+    f=fixtures.SourceDispatchTests(); f.setUp()
+    try:
+        yield ExportReadback(f)
+    finally:
+        f.doCleanups()
 
 
-if __name__=='__main__': unittest.main()
+def test_payload_change_after_capture_cannot_advance_checkpoint(ex):
+    before=ex.seed()
+    changed=replace(ex.f.record,revision_sha256=digest('third-revision'),content_sha256=digest('third-content'))
+    reads,control=ex.mutate_during_read(lambda:ex.f.data.write_text(json.dumps([changed.to_dict()])))
+    with control: code,_=ex.f.invoke('import','--cache',str(ex.cache))
+    assert code == 2; assert ex.cache.read_bytes() == before
+    assert reads == [ex.f.data,ex.f.data]
+
+
+def test_disabled_source_is_rejected_before_readback_payload_access(ex):
+    before=ex.seed()
+    reads,control=ex.mutate_during_read(lambda:ex.f.declare(replace(ex.f.source,enabled=False)))
+    with control: code,_=ex.f.invoke('import','--cache',str(ex.cache))
+    assert code == 2; assert ex.cache.read_bytes() == before
+    assert reads == [ex.f.data]
+
+
+def test_foreign_scope_is_rejected_before_readback_payload_access(ex):
+    before=ex.seed()
+    reads,control=ex.mutate_during_read(lambda:ex.f.declare(replace(ex.f.source,project_sha256=digest('foreign'))))
+    with control: code,_=ex.f.invoke('import','--cache',str(ex.cache))
+    assert code == 2; assert ex.cache.read_bytes() == before
+    assert reads == [ex.f.data]
+
+
+def test_disable_during_payload_readback_is_caught_by_final_declaration_check(ex):
+    before=ex.seed()
+    reads,control=ex.mutate_during_read(lambda:ex.f.declare(replace(ex.f.source,enabled=False)),at=2)
+    with control: code,_=ex.f.invoke('import','--cache',str(ex.cache))
+    assert code == 2; assert ex.cache.read_bytes() == before
+    assert reads == [ex.f.data,ex.f.data]
+
+
+def test_selector_change_is_rejected_before_reading_even_an_identical_alternative(ex):
+    before=ex.seed(); alternative=ex.f.root/'alternative.json'
+    alternative.write_bytes(ex.f.data.read_bytes())
+    reads,control=ex.mutate_during_read(lambda:ex.f.declare(data='alternative.json'))
+    with control: code,_=ex.f.invoke('import','--cache',str(ex.cache))
+    assert code == 2; assert ex.cache.read_bytes() == before
+    assert reads == [ex.f.data]
+
+
+@pytest.mark.parametrize('kind',('removed','linked','partial','oversized'))
+def test_removed_linked_partial_or_oversized_payload_does_not_commit(ex,kind):
+    before=ex.seed()
+    def change():
+        ex.f.data.unlink()
+        if kind=='linked': ex.f.data.symlink_to(ex.f.manifest)
+        elif kind=='partial': ex.f.data.write_bytes(b'{"partial":')
+        elif kind=='oversized': ex.f.data.write_bytes(b' '*(8*1024*1024+1))
+    _,control=ex.mutate_during_read(change)
+    with control: code,_=ex.f.invoke('import','--cache',str(ex.cache))
+    assert code == 2; assert ex.cache.read_bytes() == before
+
+
+@pytest.mark.parametrize('version',('v1','v2','v3'))
+def test_unchanged_readbacks_preserve_v1_v2_v3_hashes_and_idempotent_cursors(ex,version):
+    ex.f.source=replace(ex.f.source,version=version); ex.f.declare()
+    rows=[ex.f.record.to_dict()]
+    if version!='v1':
+        rows=dict(schema_version=int(version[1:]),records=rows,
+                  execution_metadata=ExecutionMetadata(()).to_dict() if version=='v2' else None)
+        if version=='v3': rows['evidence_graph']=None
+    ex.f.data.write_text(json.dumps(rows)); expected=hashlib.sha256(ex.f.data.read_bytes()).hexdigest()
+    reads,control=ex.mutate_during_read(lambda:None)
+    with control,patch.object(socket,'socket',side_effect=AssertionError('no network')):
+        code,raw=ex.f.invoke('preview')
+    assert code == 0; preview=json.loads(raw)
+    assert preview['snapshot_sha256'] == expected
+    assert preview['capture_completeness'] == 'unknown'
+    assert reads == [ex.f.data,ex.f.data]
+    cache=ex.f.root/(version+'-cache.json')
+    code,raw=ex.f.invoke('import','--cache',str(cache)); assert code == 0
+    first=json.loads(raw)
+    code,raw=ex.f.invoke('import','--cache',str(cache)); assert code == 0
+    second=json.loads(raw)
+    assert second['imported'] == 0; assert second['skipped'] == 1
+    assert first['cursor_after_sha256'] == second['cursor_after_sha256']
+
+
+def test_mtime_or_declaration_format_only_changes_do_not_invent_snapshot_revisions(ex):
+    expected=hashlib.sha256(ex.f.data.read_bytes()).hexdigest()
+    declaration=json.loads(ex.f.manifest.read_text())
+    def change():
+        ex.f.data.touch(); ex.f.manifest.write_text(json.dumps(declaration,indent=2))
+    _,control=ex.mutate_during_read(change)
+    with control: code,raw=ex.f.invoke('preview')
+    assert code == 0; assert json.loads(raw)['snapshot_sha256'] == expected
