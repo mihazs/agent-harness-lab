@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.120.0
+
+### Minor Changes
+
+- 047c973: Staged Claude `.claude/agents` and `.claude/commands` files and Codex `.codex/agents` role files are now validated before evaluation by the new `sources/agents_validation.py`, which reuses the agent and command inventory parsers. A create or update that the runtime would skip, reject or partly ignore (no leading fence, a leading blank line, a missing required field, bad YAML or TOML, an unknown or ignored field, a duplicate name) or that declares hooks is `blocked`. A change to a permission field such as `tools`, `permissionMode`, `mcpServers`, command `allowed-tools` in any YAML form, or any Codex role field outside an allowlist of identity, instruction and model-tuning fields is `recommendation_only`. A Codex role update that changes only `sandbox_mode` or another field a role cannot override is flagged `no_override_effect`, and a command shadowed by a skill is flagged `shadowed_by_skill` with a `migrate_to_skill` recommendation. Both are `no_effect` and never count as an improvement, unless the candidate also changes something effective. Removals stay adoptable. `ahl improve` stops such a candidate before evaluation with status `blocked`, `inconclusive` or `no_change`, and `workflow.adopt` refuses it.
+
 ## 0.119.0
 
 ### Minor Changes
