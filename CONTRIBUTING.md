@@ -93,6 +93,10 @@ unittest cases to these existing native suites. Put reusable commands in
 other helper folders.
 
 `task setup:test` installs pinned pytest/xdist into the selected virtual environment.
+Taskfile test tasks run `python -m pytest`. Filter variables such as `KERNEL_TEST_FILTER`
+take one pytest `-k` expression, and pattern variables such as `REPEATED_TEST_PATTERN`
+are file-name globs. A few files must stay runnable under `python -m unittest`; the
+[pytest-patterns adaptation](.agents/skills/pytest-patterns/SKILL.md#repository-adaptation) lists them.
 `task test` collects both suites once and schedules tests across physical CPU cores.
 Set `TEST_WORKERS` to a positive count, or `0` to debug without workers.
 The `worksteal` scheduler balances independent tests without a file-by-file runner.
@@ -149,7 +153,7 @@ Report failures and skips separately. The containment probe may be unsupported o
 your host; a skip is not isolation certification. For the public diagnosis example:
 
 ```sh
-python3 -m unittest discover -s tools/tests -p 'test_quickstart.py'
+.venv/bin/python -m pytest tools/tests/test_quickstart.py
 ```
 
 Use standard-library Python unless a concrete requirement justifies a dependency.
@@ -217,4 +221,4 @@ links, HTML, multiline links, escaped delimiters, nested parentheses and heading
 anchors are not validated. Use percent encoding or angle brackets for spaces;
 encode parentheses in file names. No network access or dependencies are needed.
 
-Focused tests: `python3 -m unittest discover -s tools/tests -p 'test_docs.py'`.
+Focused tests: `.venv/bin/python -m pytest tools/tests/test_docs.py`.
