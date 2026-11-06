@@ -1,8 +1,8 @@
 """Declared skill signals in synthetic Claude 2.1.316 captures; no real sessions, CLI or skills."""
 import json
-from pathlib import Path
-import tempfile
-import unittest
+
+import pytest
+
 if __package__:
     from . import claude_skill_fixture as fixture
 else:
@@ -19,10 +19,10 @@ SKILL_FIELDS = ('skill_signal', 'skill_id', 'skill_hash', 'skill_signal_confiden
 SESSION = '00000000-0000-4000-8000-0000000000aa'
 
 
-class ClaudeSkillSignalTests(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name); self.path = self.root/'session.jsonl'
+class TestClaudeSkillSignals:
+    @pytest.fixture(autouse=True)
+    def _capture_path(self, tmp_path):
+        self.root = tmp_path; self.path = self.root/'session.jsonl'
 
     def capture(self, rows, project=fixture.PROJECT):
         fixture.write(self.path, rows); return read(self.path, project)
@@ -41,54 +41,53 @@ class ClaudeSkillSignalTests(unittest.TestCase):
 
     def test_captures_without_skill_evidence_keep_the_pre_change_projection(self):
         events, summary, _ = self.capture(fixture.rows())
-        self.assertEqual(fixture.projection_sha256(events), fixture.BASELINE_SHA256)
-        self.assertFalse(any(key in event for event in events for key in SKILL_FIELDS))
+        assert fixture.projection_sha256(events) == fixture.BASELINE_SHA256
+        assert not any(key in event for event in events for key in SKILL_FIELDS)
         # The capability is a module contract; receipts and pinned summaries gain no keys.
-        self.assertFalse(any(key.startswith('skill') for key in summary))
+        assert not any(key.startswith('skill') for key in summary)
 
     def test_declared_invocations_and_exact_bundle_reads_are_content_free_signals(self):
         events, _, _ = self.capture(self.skill_rows())
         signals = [(e['tool_name'], e['skill_signal'], e['skill_id'], e['skill_signal_confidence']) for e in events if 'skill_signal' in e]
         name, plugin = skill_fingerprint(NAME), skill_fingerprint('plugin:'+NAME)
-        self.assertEqual(signals, [('Skill', 'declared_invocation', name, 'declared_name'), ('Skill', 'declared_invocation', plugin, 'declared_name'),
+        assert (signals == [('Skill', 'declared_invocation', name, 'declared_name'), ('Skill', 'declared_invocation', plugin, 'declared_name'),
             ('Read', 'file_read', name, 'full_read_request'), ('Read', 'file_read', name, 'partial_read_request'),
             ('Read', 'file_read', name, 'partial_read_request')])
-        self.assertTrue(all(e['activity'] == 'tool_call' and 'skill_hash' not in e for e in events if 'skill_signal' in e))
-        self.assertFalse(any('skill_signal' in e for e in events if e['activity'] != 'tool_call'))
+        assert all(e['activity'] == 'tool_call' and 'skill_hash' not in e for e in events if 'skill_signal' in e)
+        assert not any('skill_signal' in e for e in events if e['activity'] != 'tool_call')
         # A malformed or unnamed Skill call stays a plain call: the skill it refers to is unknown.
         unnamed = [e for e in events if e['activity'] == 'tool_call' and e.get('tool_name') == 'Skill' and 'skill_signal' not in e]
-        self.assertEqual(len(unnamed), 2)
+        assert len(unnamed) == 2
         text = json.dumps(events)
-        for private in (NAME, fixture.PROJECT, 'SYNTHETIC_SECRET', 'SKILL.md', 'skills'): self.assertNotIn(private, text)
+        for private in (NAME, fixture.PROJECT, 'SYNTHETIC_SECRET', 'SKILL.md', 'skills'): assert private not in text
 
     def test_skill_evidence_never_changes_identities_or_becomes_activation_or_outcome(self):
         with_skill, summary, _ = self.capture(self.skill_rows())
         without, _, _ = self.capture(self.strip(self.skill_rows()))
-        self.assertEqual([(e['case_id'], e['event_id'], e.get('call_id')) for e in with_skill],
-                         [(e['case_id'], e['event_id'], e.get('call_id')) for e in without])
-        self.assertEqual([{k: v for k, v in e.items() if k not in SKILL_FIELDS} for e in with_skill], list(without))
+        assert [(e['case_id'], e['event_id'], e.get('call_id')) for e in with_skill] == [(e['case_id'], e['event_id'], e.get('call_id')) for e in without]
+        assert [{k: v for k, v in e.items() if k not in SKILL_FIELDS} for e in with_skill] == list(without)
         for event in with_skill:
-            self.assertIsNone(verified_outcome(event)); self.assertEqual(event['outcome'], 'unknown')
+            assert verified_outcome(event) is None; assert event['outcome'] == 'unknown'
             if 'skill_signal' in event:
                 state = activation(signal=event['skill_signal'], provenance='native_field', evidence_ref=event['event_id'])
-                self.assertIsNone(state['activated']); self.assertEqual(state['missing_reason'], 'runtime_activation_unobserved')
-        self.assertFalse(any(key.startswith('skill') for key in summary))
-        self.assertEqual((CAPABILITY['skill_activation'], CAPABILITY['skill_signal']), (False, 'observed_declared'))
-        self.assertEqual([CAPABILITIES[name]['skill_activation'] for name in ('codex', 'claude')], [False, False])
-        self.assertNotIn('skill_signal', CAPABILITIES['codex'])
+                assert state['activated'] is None; assert state['missing_reason'] == 'runtime_activation_unobserved'
+        assert not any(key.startswith('skill') for key in summary)
+        assert (CAPABILITY['skill_activation'], CAPABILITY['skill_signal']) == (False, 'observed_declared')
+        assert [CAPABILITIES[name]['skill_activation'] for name in ('codex', 'claude')] == [False, False]
+        assert 'skill_signal' not in CAPABILITIES['codex']
 
     def test_bundle_reads_outside_the_selected_project_or_forged_labels_are_not_signals(self):
         rows = self.skill_rows('/synthetic-ahl/elsewhere')
         events, _, _ = self.capture(rows, '/synthetic-ahl/elsewhere')
-        self.assertEqual(sum(e.get('skill_signal') == 'file_read' for e in events), 3)
+        assert sum(e.get('skill_signal') == 'file_read' for e in events) == 3
         moved = [dict(r, cwd=fixture.PROJECT) for r in rows]
         events, _, _ = self.capture(moved)
-        self.assertEqual({e['skill_signal'] for e in events if 'skill_signal' in e}, {'declared_invocation'})
+        assert {e['skill_signal'] for e in events if 'skill_signal' in e} == {'declared_invocation'}
         forged = fixture.rows()
         forged[1].update(skill_signal='activated', skill_id='SYNTHETIC_SECRET', skill_signal_confidence='verified')
         forged[1]['message']['content'][0].update(skill_signal='activated')
         events, _, _ = self.capture(forged)
-        self.assertEqual(fixture.projection_sha256(events), fixture.BASELINE_SHA256)
+        assert fixture.projection_sha256(events) == fixture.BASELINE_SHA256
 
     def strip(self, rows):
         for row in rows:
@@ -102,15 +101,12 @@ class ClaudeSkillSignalTests(unittest.TestCase):
             fixture.write(self.path, rows)
             return collect(project, events=self.path, source_format='claude', source_version=VERSION)
         plain = collected(fixture.rows(label))
-        self.assertEqual(plain['fingerprint'], collected(self.strip(fixture.rows(label)))['fingerprint'])
+        assert plain['fingerprint'] == collected(self.strip(fixture.rows(label)))['fingerprint']
         signalled = collected(self.skill_rows(label))
-        self.assertNotEqual(signalled['fingerprint'], plain['fingerprint'])
-        self.assertEqual(signalled['evaluation_outcomes'], []); self.assertNotIn(NAME, json.dumps(signalled))
+        assert signalled['fingerprint'] != plain['fingerprint']
+        assert signalled['evaluation_outcomes'] == []; assert NAME not in json.dumps(signalled)
         projects = self.root/'claude/projects'; folder = projects/directory_names(project.resolve())[0]; folder.mkdir(parents=True)
         fixture.write(folder/(SESSION+'.jsonl'), [dict(r, sessionId=SESSION) for r in self.skill_rows(label)])
         with capture([projects], project.resolve()) as (events, summary, _sha256, _folder, _sessions):
-            self.assertEqual(sum('skill_signal' in e for e in events), 5)
-            self.assertFalse(any(key.startswith('skill') for key in summary))
-
-if __name__ == '__main__':
-    unittest.main()
+            assert sum('skill_signal' in e for e in events) == 5
+            assert not any(key.startswith('skill') for key in summary)

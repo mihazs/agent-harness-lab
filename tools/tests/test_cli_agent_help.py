@@ -7,8 +7,9 @@ import io
 from pathlib import Path
 import runpy
 import sys
-import unittest
 from unittest.mock import patch
+
+import pytest
 
 from agent_harness_lab import cli
 
@@ -47,90 +48,131 @@ def walk(parser,path=()):
             for name,child in action.choices.items():yield from walk(child,(*path,name))
 
 
-class CLIHelpTests(unittest.TestCase):
-    def parsers(self):
-        for route in ROUTES:
-            yield 'ahl '+' '.join(route),capture(lambda:cli.main(list(route)))
-        image=importlib.import_module('agent_harness_lab.evaluation.image')
-        yield 'runtime image builder',capture(image.main)
-        for relative in SCRIPTS:
-            with patch.object(sys,'argv',[relative]):
-                yield relative,capture(lambda:runpy.run_path(str(ROOT/relative),run_name='__main__'))
-
-    def test_every_recursive_action_and_command_has_explicit_useful_help(self):
-        commands=actions=0
-        for entry,root in self.parsers():
-            for path,parser in walk(root):
-                commands+=1
-                with self.subTest(entry=entry,path=path):
-                    self.assertIsInstance(parser.description,str)
-                    self.assertGreaterEqual(len(parser.description.strip()),20)
-                    for action in parser._actions:
-                        actions+=1
-                        self.assertIsInstance(action.help,str,msg=str(action.option_strings or action.dest))
-                        self.assertNotEqual(action.help,argparse.SUPPRESS)
-                        self.assertGreaterEqual(len(action.help.strip()),15,msg=str(action.option_strings or action.dest))
-                        if isinstance(action,argparse._SubParsersAction):
-                            # Argparse groups aliases into their canonical command's help row.
-                            documented={id(action.choices[row.dest]) for row in action._choices_actions}
-                            self.assertEqual(documented,{id(child) for child in action.choices.values()})
-                            for name in action.choices:self.assertIn(name,parser.format_help())
-                            for row in action._choices_actions:self.assertGreaterEqual(len(row.help.strip()),15)
-                    self.assertIn('usage:',parser.format_help())
-        self.assertGreater(commands,50);self.assertGreater(actions,250)
-
-    def test_all_routed_help_is_available_without_operations_or_input(self):
-        routes=set()
-        for route in ROUTES:
-            root=capture(lambda:cli.main(list(route)))
-            prefix=tuple(root.prog.split()[1:]) if root.prog=='ahl' or root.prog.startswith('ahl ') else route
-            routes.update((*prefix,*path) for path,_ in walk(root))
-        self.assertGreater(len(routes),50)
-        for route in sorted(routes):
-            with self.subTest(route=route),ExitStack() as denied:
-                for target in ('subprocess.Popen','subprocess.run','urllib.request.urlopen','builtins.input',
-                        'pathlib.Path.mkdir','pathlib.Path.write_text','pathlib.Path.write_bytes'):
-                    denied.enter_context(patch(target,side_effect=AssertionError('help must not perform an operation')))
-                output=io.StringIO();error=io.StringIO()
-                with redirect_stdout(output),redirect_stderr(error),self.assertRaises(SystemExit) as stopped:
-                    cli.main([*route,'--help'])
-                self.assertEqual(stopped.exception.code,0);self.assertEqual(error.getvalue(),'')
-                self.assertIn('usage:',output.getvalue());self.assertIn('--help',output.getvalue())
-
-    def test_parser_module_inventory_has_no_unreviewed_or_unexercised_entrypoint(self):
-        discovered=set()
-        for directory in ('agent_harness_lab','tools','scripts','skills/harness-evaluation/scripts'):
-            for path in (ROOT/directory).rglob('*.py'):
-                if 'tests' in path.parts:continue
-                raw=path.read_text()
-                if 'ArgumentParser' not in raw:continue
-                if any(isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute) and node.func.attr=='ArgumentParser'
-                        for node in ast.walk(ast.parse(raw))):discovered.add(path.relative_to(ROOT).as_posix())
-        discovered.add('install.py')
-        self.assertEqual(discovered,PARSER_FILES)
-        captured={parser._help_test_source for _,parser in self.parsers()}
-        for relative in PARSER_FILES:self.assertTrue(any(path.endswith('/'+relative) for path in captured),relative)
-
-    def test_workflow_options_preserve_runtime_defaults_and_unlimited_analysis(self):
-        parser=capture(lambda:cli.main([]))
-        args=parser.parse_args(['improve','.'])
-        self.assertEqual((args.agent,args.codex,args.claude,args.timeout),('auto','codex','claude',None))
-        self.assertEqual((args.max_captures,args.max_capture_scan,args.max_events),(None,None,None))
-        self.assertFalse(args.repair_contracts);self.assertEqual(args.format,'normalized')
-        explicit=parser.parse_args(['improve','.','--agent','responses','--inference-settings','settings.json','--timeout','600'])
-        self.assertEqual((explicit.agent,explicit.inference_settings,explicit.timeout),('responses',Path('settings.json'),600))
-        watch=parser.parse_args(['watch','.','--once'])
-        self.assertEqual((watch.interval,watch.max_attempts,watch.retry_delay,watch.watch_budget),(300,3,60,None))
-        self.assertTrue(watch.once)
-
-    def test_representative_help_explains_automation_scope_and_side_effects(self):
-        for route,terms in ((('analyze',),('JSON','private','--events','--source-root','--max-events')),
-                (('improve',),('2700','--repair-contracts','--inference-settings','configuration')),
-                (('init',),('--write','--non-interactive','JSON','existing')),
-                (('rollback',),('32-hex','JSON','foreign','No model'))):
-            with self.subTest(route=route),redirect_stdout(io.StringIO()) as output,self.assertRaises(SystemExit):
-                cli.main([*route,'--help'])
-            for term in terms:self.assertIn(term,output.getvalue())
+def parsers():
+    for route in ROUTES:
+        yield 'ahl '+' '.join(route),capture(lambda:cli.main(list(route)))
+    image=importlib.import_module('agent_harness_lab.evaluation.image')
+    yield 'runtime image builder',capture(image.main)
+    for relative in SCRIPTS:
+        with patch.object(sys,'argv',[relative]):
+            yield relative,capture(lambda:runpy.run_path(str(ROOT/relative),run_name='__main__'))
 
 
-if __name__=='__main__':unittest.main()
+def routed_help():
+    routes=set()
+    for route in ROUTES:
+        root=capture(lambda:cli.main(list(route)))
+        prefix=tuple(root.prog.split()[1:]) if root.prog=='ahl' or root.prog.startswith('ahl ') else route
+        routes.update((*prefix,*path) for path,_ in walk(root))
+    return sorted(routes)
+
+
+def inventory(build):
+    """Build a case inventory at collection time without letting a broken entrypoint abort collection."""
+    try:return build()
+    except (Exception,SystemExit) as error:return error
+
+
+def checked(built):
+    """Re-raise an inventory failure inside the test that consumes it."""
+    if isinstance(built,BaseException):raise built
+    return built
+
+
+def cases(built,param):
+    """One case per inventory item, or a single failing case that carries the inventory error."""
+    if isinstance(built,BaseException):return [pytest.param(built,id='inventory-error')]
+    return [param(item) for item in built]
+
+
+# Collected once so that every recursive parser and every routed command is its own case.
+PARSERS=inventory(lambda:[(entry,path,parser) for entry,root in parsers() for path,parser in walk(root)])
+ROUTED=inventory(routed_help)
+
+
+@pytest.mark.parametrize('case',cases(PARSERS,lambda case:pytest.param(case,id=case[0].strip().replace(' ','_')+':'+'/'.join(case[1]))))
+def test_every_recursive_action_and_command_has_explicit_useful_help(case):
+    _,_,parser=checked(case)
+    assert isinstance(parser.description,str)
+    assert len(parser.description.strip())>=20
+    for action in parser._actions:
+        assert isinstance(action.help,str),str(action.option_strings or action.dest)
+        assert action.help!=argparse.SUPPRESS
+        assert len(action.help.strip())>=15,str(action.option_strings or action.dest)
+        if isinstance(action,argparse._SubParsersAction):
+            # Argparse groups aliases into their canonical command's help row.
+            documented={id(action.choices[row.dest]) for row in action._choices_actions}
+            assert documented=={id(child) for child in action.choices.values()}
+            for name in action.choices:assert name in parser.format_help()
+            for row in action._choices_actions:assert len(row.help.strip())>=15
+    assert 'usage:' in parser.format_help()
+
+
+def test_recursive_help_covers_every_command_and_action():
+    found=checked(PARSERS)
+    assert len(found)>50;assert sum(len(parser._actions) for _,_,parser in found)>250
+
+
+def test_routed_help_covers_every_command():
+    assert len(checked(ROUTED))>50
+
+
+def test_broken_entrypoint_inventory_becomes_one_failing_case_instead_of_a_collection_error():
+    built=inventory(lambda:capture(lambda:None))
+    collected=cases(built,lambda item:pytest.param(item,id='unused'))
+    assert [param.id for param in collected]==['inventory-error']
+    with pytest.raises(AssertionError,match='never constructed its argument parser'):checked(collected[0].values[0])
+    assert checked([('ahl',(),None)])==[('ahl',(),None)]
+
+
+@pytest.mark.parametrize('route',cases(ROUTED,lambda route:pytest.param(route,id='/'.join(route))))
+def test_all_routed_help_is_available_without_operations_or_input(route):
+    route=checked(route)
+    with ExitStack() as denied:
+        for target in ('subprocess.Popen','subprocess.run','urllib.request.urlopen','builtins.input',
+                'pathlib.Path.mkdir','pathlib.Path.write_text','pathlib.Path.write_bytes'):
+            denied.enter_context(patch(target,side_effect=AssertionError('help must not perform an operation')))
+        output=io.StringIO();error=io.StringIO()
+        with redirect_stdout(output),redirect_stderr(error),pytest.raises(SystemExit) as stopped:
+            cli.main([*route,'--help'])
+        assert stopped.value.code==0;assert error.getvalue()==''
+        assert 'usage:' in output.getvalue();assert '--help' in output.getvalue()
+
+
+def test_parser_module_inventory_has_no_unreviewed_or_unexercised_entrypoint():
+    discovered=set()
+    for directory in ('agent_harness_lab','tools','scripts','skills/harness-evaluation/scripts'):
+        for path in (ROOT/directory).rglob('*.py'):
+            if 'tests' in path.parts:continue
+            raw=path.read_text()
+            if 'ArgumentParser' not in raw:continue
+            if any(isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute) and node.func.attr=='ArgumentParser'
+                    for node in ast.walk(ast.parse(raw))):discovered.add(path.relative_to(ROOT).as_posix())
+    discovered.add('install.py')
+    assert discovered==PARSER_FILES
+    captured={parser._help_test_source for _,parser in parsers()}
+    for relative in PARSER_FILES:assert any(path.endswith('/'+relative) for path in captured),relative
+
+
+def test_workflow_options_preserve_runtime_defaults_and_unlimited_analysis():
+    parser=capture(lambda:cli.main([]))
+    args=parser.parse_args(['improve','.'])
+    assert (args.agent,args.codex,args.claude,args.timeout)==('auto','codex','claude',None)
+    assert (args.max_captures,args.max_capture_scan,args.max_events)==(None,None,None)
+    assert not args.repair_contracts;assert args.format=='normalized'
+    explicit=parser.parse_args(['improve','.','--agent','responses','--inference-settings','settings.json','--timeout','600'])
+    assert (explicit.agent,explicit.inference_settings,explicit.timeout)==('responses',Path('settings.json'),600)
+    watch=parser.parse_args(['watch','.','--once'])
+    assert (watch.interval,watch.max_attempts,watch.retry_delay,watch.watch_budget)==(300,3,60,None)
+    assert watch.once
+
+
+@pytest.mark.parametrize('route,terms',[
+    pytest.param(('analyze',),('JSON','private','--events','--source-root','--max-events'),id='analyze'),
+    pytest.param(('improve',),('2700','--repair-contracts','--inference-settings','configuration'),id='improve'),
+    pytest.param(('init',),('--write','--non-interactive','JSON','existing'),id='init'),
+    pytest.param(('rollback',),('32-hex','JSON','foreign','No model'),id='rollback')])
+def test_representative_help_explains_automation_scope_and_side_effects(route,terms):
+    with redirect_stdout(io.StringIO()) as output,pytest.raises(SystemExit):
+        cli.main([*route,'--help'])
+    for term in terms:assert term in output.getvalue()

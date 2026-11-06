@@ -1,5 +1,5 @@
 """Public synthetic fresh qualification; actual grades, simulated sandbox attestations."""
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 from dataclasses import replace
 import hashlib
@@ -8,6 +8,8 @@ from pathlib import Path
 import time
 import unittest
 from unittest.mock import patch
+
+import pytest
 
 from agent_harness_lab.cli import evaluator
 from agent_harness_lab.private_journal import encoded, record
@@ -25,7 +27,11 @@ else:
 
 
 class RequalificationFixture(unittest.TestCase):
-    """Reusable real controller fixture; the initial bank already has structural v2."""
+    """Reusable real controller fixture; the initial bank already has structural v2.
+
+    It stays a unittest.TestCase: test_correction_cohorts builds it through setUp() and doCleanups(), and
+    execute() reuses offline.OfflineFixture.emulate, which calls TestCase assertions on it.
+    """
     def setUp(self):
         self.application = applications.BankCorrectionTests(); self.application.setUp()
         self.addCleanup(self.application.doCleanups)
@@ -122,64 +128,156 @@ class RequalificationFixture(unittest.TestCase):
         return result
 
 
-class CohortRequalificationTests(unittest.TestCase):
-    def setUp(self):
-        self.f = RequalificationFixture(); self.f.setUp(); self.addCleanup(self.f.doCleanups)
+@contextmanager
+def requalification():
+    fixture = RequalificationFixture()
+    try:
+        fixture.setUp(); yield fixture
+    finally:
+        fixture.doCleanups()
+
+
+@pytest.fixture(scope='module')
+def rejecting():
+    """One fixture for cases that each restore what they change and must fail before any dispatch."""
+    with requalification() as fixture: yield fixture
+
+
+@pytest.fixture(scope='module')
+def qualified():
+    """One completed qualification for cases that only verify mutated copies of its binding."""
+    with requalification() as fixture: yield fixture, fixture.qualify()
+
+
+@contextmanager
+def changed_protocol(f, change):
+    original = deepcopy(f.protocol); f.protocol.update(change); f.write_protocol()
+    try: yield
+    finally: f.protocol = original; f.write_protocol()
+
+
+RAW_PROTOCOLS = [pytest.param(b'{"schema_version":2,"schema_version":2}', id='duplicate-key'),
+                 pytest.param(b'{"schema_version":NaN}', id='nan'), pytest.param(b'[]', id='list')]
+PROTOCOL_CHANGES = [pytest.param(dict(schema_version=True), id='schema-version-bool'),
+                    pytest.param(dict(max_total_trials=True), id='max-trials-bool'),
+                    pytest.param(dict(max_total_trials=6.0), id='max-trials-float'),
+                    pytest.param(dict(prior_plan_sha256='f'*64), id='prior-plan'),
+                    pytest.param(dict(image_sha256='f'*64), id='image'),
+                    pytest.param(dict(unexpected='field'), id='unexpected-field')]
+# Callables of the fixture's own protocol and review, which exist only once the fixture is built.
+BEFORE_CHANGES = [pytest.param(lambda f: dict(before_harnesses=[]), id='missing-before'),
+                  pytest.param(lambda f: dict(before_harnesses=f.protocol['before_harnesses']*2), id='duplicate-before'),
+                  pytest.param(lambda f: dict(max_total_trials=5), id='ceiling')]
+RUNTIME_CHANGES = [pytest.param(lambda f: dict(image_sha256='f'*64), id='wrong-image'),
+                   pytest.param(lambda f: dict(review=dict(f.review, identity=f.protocol['author'])), id='author-review'),
+                   pytest.param(lambda f: dict(review=dict(f.review, evidence_refs=[])), id='review-without-evidence')]
+BINDING_MUTANTS = [
+    pytest.param(lambda f, b: b['phases'][0].update(run_id=f.prior['run_id']), id='prior-run'),
+    pytest.param(lambda f, b: b['phases'][0].update(event_sha256='f'*64), id='event'),
+    pytest.param(lambda f, b: b['phases'][0].update(manifest_sha256='f'*64), id='manifest'),
+    pytest.param(lambda f, b: b['cohort_binding']['qualification_bindings']['passed']['counts'][next(iter(
+        b['cohort_binding']['qualification_bindings']['passed']['counts']))].update(successes=0), id='successes'),
+    pytest.param(lambda f, b: b['snapshots']['candidate'].update(mode_sha256='f'*64), id='candidate-mode'),
+    pytest.param(lambda f, b: b.update(publication_allowed=True), id='publication')]
+MEMBERSHIP_CHANGES = [pytest.param(lambda member, second: [member], id='tail-loss'),
+                      pytest.param(lambda member, second: [second, member], id='reordered'),
+                      pytest.param(lambda member, second: [member, second, second], id='duplicated')]
+
+
+def first_members(f):
+    original = record(f.history.case(f.prior['run_id'])/'cohort-binding.json', core.MAX_BYTES)[0]
+    member = original['manifest']['cohorts'][0]['members'][0]
+    return member, dict(member, task_id='synthetic-second-member')
+
+
+@pytest.mark.parametrize('raw', RAW_PROTOCOLS)
+def test_protocol_raw_parser_rejects_before_dispatch(rejecting, raw):
+    f = rejecting
+    f.protocol_path.write_bytes(raw)
+    try:
+        with pytest.raises(ValueError):
+            core.load_protocol(f.protocol_path, hashlib.sha256(raw).hexdigest(), f.prior,
+                               f.baseline, f.candidate, 'e'*64)
+    finally:
+        f.write_protocol()
+
+
+@pytest.mark.parametrize('change', PROTOCOL_CHANGES)
+def test_protocol_types_and_exact_identity_reject_before_dispatch(rejecting, change):
+    f = rejecting
+    with changed_protocol(f, change):
+        with patch.object(core.HistoryStore, 'run') as run:
+            with pytest.raises(ValueError): f.qualify()
+            run.assert_not_called()
+        assert not (f.root/'fresh-qualification').exists()
+
+
+@pytest.mark.parametrize('change', BEFORE_CHANGES)
+def test_missing_duplicate_D_and_ceiling_fail_before_dispatch(rejecting, change):
+    f = rejecting
+    with changed_protocol(f, change(f)):
+        with patch.object(core.HistoryStore, 'run') as run:
+            with pytest.raises(ValueError): f.qualify()
+            run.assert_not_called()
+        assert not (f.root/'fresh-qualification').exists()
+
+
+@pytest.mark.parametrize('change', RUNTIME_CHANGES)
+def test_wrong_runtime_and_review_fail_before_dispatch(rejecting, change):
+    f = rejecting
+    with patch.object(core.HistoryStore, 'run') as run:
+        with pytest.raises(ValueError): f.qualify(**change(f))
+        run.assert_not_called()
+
+
+@pytest.mark.parametrize('mutate', BINDING_MUTANTS)
+def test_binding_mutants_cannot_replace_actual_sealed_evidence(qualified, mutate):
+    f, binding = qualified
+    changed = deepcopy(binding); mutate(f, changed)
+    with pytest.raises(ValueError):
+        core.verify_completion(changed, f.prior, f.bank, f.history)
+
+
+@pytest.mark.parametrize('updated', MEMBERSHIP_CHANGES)
+def test_whole_membership_comparison_rejects_tail_loss_and_order_changes(rejecting, updated):
+    member, second = first_members(rejecting)
+    with pytest.raises(ValueError, match='membership'):
+        core._members([member, second], updated(member, second))
+
+
+class TestCohortRequalification:
+    @pytest.fixture(autouse=True)
+    def _requalification(self):
+        with requalification() as fixture:
+            self.f = fixture; yield
 
     def test_actual_fresh_phases_freeze_same_members_roles_rules_and_private_attribution(self):
         f = self.f; started = []
         binding = f.qualify(on_started=lambda phase, run: started.append((phase, run)))
-        self.assertEqual(len(binding['phases']), 2)
-        self.assertEqual(f.worker.call_count, 8)
-        self.assertEqual(len(started), 2)
-        self.assertTrue(all(p['run_id'] != f.prior['run_id'] for p in binding['phases']))
+        assert len(binding['phases']) == 2
+        assert f.worker.call_count == 8
+        assert len(started) == 2
+        assert all(p['run_id'] != f.prior['run_id'] for p in binding['phases'])
         for phase in binding['phases']:
             actual = f.history.historical_plan(phase['run_id'])
-            self.assertEqual(actual['plan']['candidate_hash'], f.prior['plan']['baseline_hash'])
+            assert actual['plan']['candidate_hash'] == f.prior['plan']['baseline_hash']
             if phase['role'] == 'historical_pass':
-                self.assertEqual(actual['plan']['baseline_hash'], actual['plan']['candidate_hash'])
-        self.assertFalse(binding['publication_allowed'])
-        self.assertNotIn('supported', binding)
-        self.assertEqual(core.verify_completion(binding, f.prior, f.bank, f.history), binding)
-        self.assertEqual(core.verify_completion(binding, f.prior, f.bank, f.history, current=True), binding)
+                assert actual['plan']['baseline_hash'] == actual['plan']['candidate_hash']
+        assert not binding['publication_allowed']
+        assert 'supported' not in binding
+        assert core.verify_completion(binding, f.prior, f.bank, f.history) == binding
+        assert core.verify_completion(binding, f.prior, f.bank, f.history, current=True) == binding
 
-    def test_protocol_raw_parser_types_and_exact_identity_reject_before_dispatch(self):
+    def test_protocol_digest_must_match(self):
         f = self.f
-        for raw in (b'{"schema_version":2,"schema_version":2}', b'{"schema_version":NaN}', b'[]'):
-            f.protocol_path.write_bytes(raw)
-            with self.subTest(raw=raw), self.assertRaises(ValueError):
-                core.load_protocol(f.protocol_path, hashlib.sha256(raw).hexdigest(), f.prior,
-                                   f.baseline, f.candidate, 'e'*64)
-        for change in (dict(schema_version=True), dict(max_total_trials=True), dict(max_total_trials=6.0),
-                       dict(prior_plan_sha256='f'*64), dict(image_sha256='f'*64), dict(unexpected='field')):
-            original = deepcopy(f.protocol); f.protocol.update(change); f.write_protocol()
-            with self.subTest(change=change), patch.object(core.HistoryStore, 'run') as run:
-                with self.assertRaises(ValueError): f.qualify()
-                run.assert_not_called()
-            self.assertFalse((f.root/'fresh-qualification').exists())
-            f.protocol = original
-        f.write_protocol()
-        with self.assertRaisesRegex(ValueError, 'digest'):
+        with pytest.raises(ValueError, match='digest'):
             core.load_protocol(f.protocol_path, 'f'*64, f.prior, f.baseline, f.candidate, 'e'*64)
 
-    def test_missing_duplicate_D_ceiling_wrong_runtime_and_review_fail_before_dispatch(self):
+    def test_missing_original_before_bytes_fail_before_dispatch(self):
         f = self.f
-        for changes in (dict(before_harnesses=[]),
-                        dict(before_harnesses=f.protocol['before_harnesses']*2), dict(max_total_trials=5)):
-            saved = deepcopy(f.protocol); f.protocol.update(changes); f.write_protocol()
-            with self.subTest(changes=changes), patch.object(core.HistoryStore, 'run') as run:
-                with self.assertRaises(ValueError): f.qualify()
-                run.assert_not_called()
-            self.assertFalse((f.root/'fresh-qualification').exists()); f.protocol = saved
-        f.write_protocol()
-        with patch.object(core.HistoryStore, 'run') as run:
-            for kwargs in (dict(image_sha256='f'*64), dict(review=dict(f.review, identity=f.protocol['author'])),
-                           dict(review=dict(f.review, evidence_refs=[]))):
-                with self.subTest(kwargs=kwargs), self.assertRaises(ValueError): f.qualify(**kwargs)
-            run.assert_not_called()
         (f.before/'solve.py').write_text('# missing original before bytes\n')
         with patch.object(core.HistoryStore, 'run') as run:
-            with self.assertRaisesRegex(ValueError, 'before-harness'): f.qualify()
+            with pytest.raises(ValueError, match='before-harness'): f.qualify()
             run.assert_not_called()
 
     def test_actual_repaired_phase_without_new_failure_to_pass_cannot_freeze(self):
@@ -190,19 +288,19 @@ class CohortRequalificationTests(unittest.TestCase):
                 (args[1]/'result.json').write_text('{"count":3,"label":"ok"}')
             return result
         profile = f.profile(); profile.pop('budget_seconds')
-        with f.workers(all_pass), self.assertRaisesRegex(ValueError, 'failure-to-pass'):
+        with f.workers(all_pass), pytest.raises(ValueError, match='failure-to-pass'):
             core.qualify(f.protocol_path, f.protocol_sha256, f.prior, f.bank, f.baseline, f.candidate,
                 f.root/'fresh-qualification', f.history, review=f.review,
                 parent_deadline=time.monotonic()+300, **profile)
-        self.assertEqual(f.worker.call_count, 8)
-        self.assertEqual(f.history.historical_plan(f.prior['run_id'])['state'], 'sealed')
-        self.assertFalse((f.root/'fresh-qualification/cohort-binding.json').exists())
+        assert f.worker.call_count == 8
+        assert f.history.historical_plan(f.prior['run_id'])['state'] == 'sealed'
+        assert not (f.root/'fresh-qualification/cohort-binding.json').exists()
 
     def test_historical_completion_survives_external_deletion_and_later_revocation(self):
         f = self.f; binding = f.qualify()
         f.protocol_path.unlink(); (f.baseline/'solve.py').unlink(); (f.before/'solve.py').unlink()
-        self.assertEqual(core.verify_completion(binding, f.prior, f.bank, f.history), binding)
-        with self.assertRaises((ValueError, OSError)):
+        assert core.verify_completion(binding, f.prior, f.bank, f.history) == binding
+        with pytest.raises((ValueError, OSError)):
             core.verify_completion(binding, f.prior, f.bank, f.history, current=True)
         bundle = binding['cohort_binding']['manifest']['cohorts'][0]['members'][0]['bundle_sha256']
         active = f.history.oracle(bundle)
@@ -211,48 +309,37 @@ class CohortRequalificationTests(unittest.TestCase):
                           provenance='synthetic evidence', basis='Revoke synthetic oracle'),
             evidence_refs=[dict(ref='synthetic:revocation', sha256='b'*64)], reason='Synthetic later revocation')
         path = f.root/'quarantine.json'; path.write_bytes(encoded(request)); f.history.quarantine(path)
-        self.assertEqual(core.verify_completion(binding, f.prior, f.bank, f.history), binding)
+        assert core.verify_completion(binding, f.prior, f.bank, f.history) == binding
 
-    def test_binding_mutants_cannot_replace_actual_sealed_evidence(self):
+    def test_changed_started_run_custody_cannot_replace_actual_sealed_evidence(self):
         f = self.f; binding = f.qualify()
-        mutations = [lambda b:b['phases'][0].update(run_id=f.prior['run_id']),
-            lambda b:b['phases'][0].update(event_sha256='f'*64),
-            lambda b:b['phases'][0].update(manifest_sha256='f'*64),
-            lambda b:b['cohort_binding']['qualification_bindings']['passed']['counts'][next(iter(
-                b['cohort_binding']['qualification_bindings']['passed']['counts']))].update(successes=0),
-            lambda b:b['snapshots']['candidate'].update(mode_sha256='f'*64),
-            lambda b:b.update(publication_allowed=True)]
-        for mutate in mutations:
-            changed = deepcopy(binding); mutate(changed)
-            with self.subTest(mutate=mutate), self.assertRaises(ValueError):
-                core.verify_completion(changed, f.prior, f.bank, f.history)
         phase = binding['phases'][0]; Path(phase['started_path']).write_bytes(encoded(dict(run_id=f.prior['run_id'])))
-        with self.assertRaisesRegex(ValueError, 'custody'):
+        with pytest.raises(ValueError, match='custody'):
             core.verify_completion(binding, f.prior, f.bank, f.history)
 
     def test_interrupt_preserves_started_real_run_without_redispatch_or_success(self):
         f = self.f; started = []
         def interrupt(phase, run):
             started.append((phase, run)); raise KeyboardInterrupt
-        with self.assertRaises(KeyboardInterrupt): f.qualify(on_started=interrupt)
-        self.assertEqual(f.worker.call_count, 0)
-        self.assertEqual(len(started), 1)
+        with pytest.raises(KeyboardInterrupt): f.qualify(on_started=interrupt)
+        assert f.worker.call_count == 0
+        assert len(started) == 1
         phase, run = started[0]
-        self.assertEqual(record(f.root/'fresh-qualification'/phase/'started-run.json')[0], dict(run_id=run))
-        self.assertEqual(f.history.historical_plan(run)['state'], 'incomplete')
-        with self.assertRaisesRegex(ValueError, 'must be new'): f.qualify()
+        assert record(f.root/'fresh-qualification'/phase/'started-run.json')[0] == dict(run_id=run)
+        assert f.history.historical_plan(run)['state'] == 'incomplete'
+        with pytest.raises(ValueError, match='must be new'): f.qualify()
 
     def test_one_deadline_includes_preflight_and_final_revalidation(self):
         f = self.f
         with patch.object(core.HistoryStore, 'run') as run:
-            with self.assertRaises(TimeoutError): f.qualify(parent_deadline=time.monotonic()-1)
+            with pytest.raises(TimeoutError): f.qualify(parent_deadline=time.monotonic()-1)
             run.assert_not_called()
         binding = f.qualify()
         clock = [time.monotonic()]; real = core.verify_completion
         def late(*args, **kwargs):
             result = real(*args, **kwargs); clock[0] += 301; return result
         with patch.object(core, 'verify_completion', side_effect=late), \
-                patch.object(core.time, 'monotonic', side_effect=lambda:clock[0]), self.assertRaises(TimeoutError):
+                patch.object(core.time, 'monotonic', side_effect=lambda:clock[0]), pytest.raises(TimeoutError):
             core.revalidate(binding, f.prior, f.baseline, f.candidate, f.bank, f.history, parent_deadline=clock[0]+300)
 
     def test_late_original_edit_during_live_authority_recheck_rejects_completion(self):
@@ -261,18 +348,13 @@ class CohortRequalificationTests(unittest.TestCase):
             result = original(*args, **kwargs)
             (f.baseline/'solve.py').write_text('# changed during final check\n')
             return result
-        with patch.object(cohorts, 'revalidate', side_effect=changed), self.assertRaisesRegex(ValueError, 'original harness'):
+        with patch.object(cohorts, 'revalidate', side_effect=changed), pytest.raises(ValueError, match='original harness'):
             core.revalidate(binding, f.prior, f.baseline, f.candidate, f.bank, f.history,
                             parent_deadline=time.monotonic()+300)
-        self.assertEqual(core.verify_completion(binding, f.prior, f.bank, f.history), binding)
+        assert core.verify_completion(binding, f.prior, f.bank, f.history) == binding
 
-    def test_whole_membership_comparison_rejects_tail_loss_and_order_changes(self):
-        original = record(self.f.history.case(self.f.prior['run_id'])/'cohort-binding.json', core.MAX_BYTES)[0]
-        member = original['manifest']['cohorts'][0]['members'][0]
-        second = dict(member, task_id='synthetic-second-member')
-        for updated in ([member], [second, member], [member, second, second]):
-            with self.subTest(updated=updated), self.assertRaisesRegex(ValueError, 'membership'):
-                core._members([member, second], updated)
+    def test_whole_membership_comparison_accepts_a_changed_bundle_in_the_same_order(self):
+        member, second = first_members(self.f)
         core._members([member, second], [dict(member, bundle_sha256='f'*64), second])
 
     def test_snapshot_uses_bounded_captured_bytes_without_following_late_source_symlink(self):
@@ -287,14 +369,14 @@ class CohortRequalificationTests(unittest.TestCase):
             return result
         with patch.object(core, 'scan', side_effect=changed):
             binding = core._copy(source, f.root/'bounded-copy', expected)
-        self.assertEqual((Path(binding['path'])/'allowed.txt').read_text(), 'original synthetic bytes')
-        self.assertEqual(outside.read_text(), 'distinct synthetic sentinel')
+        assert (Path(binding['path'])/'allowed.txt').read_text() == 'original synthetic bytes'
+        assert outside.read_text() == 'distinct synthetic sentinel'
 
     def test_destination_under_original_before_harness_rejects_without_source_writes(self):
         f = self.f; profile = f.profile(); profile.pop('budget_seconds')
         destination = f.before/'unapproved-custody'
-        with f.workers(), self.assertRaisesRegex(ValueError, 'overlaps'):
+        with f.workers(), pytest.raises(ValueError, match='overlaps'):
             core.qualify(f.protocol_path, f.protocol_sha256, f.prior, f.bank, f.baseline, f.candidate,
                 destination, f.history, review=f.review, parent_deadline=time.monotonic()+300, **profile)
-        self.assertFalse(destination.exists())
-        self.assertEqual(f.worker.call_count, 0)
+        assert not destination.exists()
+        assert f.worker.call_count == 0
