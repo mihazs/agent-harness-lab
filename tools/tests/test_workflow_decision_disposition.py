@@ -91,6 +91,10 @@ class DefaultDecisionDisposition(unittest.TestCase):
         plan = json.loads(Path(result['plan']).read_text())
         self.assertIs(plan['application_eligible'], False)
         self.assertEqual(decision['bindings']['candidate_sha256'], plan['candidate_sha256'])
+        # Every surface the single-run candidate cannot adopt is deferred; the list comes from surfaces.matrix().
+        self.assertEqual(plan['harness_change_plan']['deferred_surfaces'],
+                         ['behavioral_application_pending_independent_certification', 'skill_lifecycle',
+                          'hooks', 'workflows', 'agents', 'plugins', 'mcp', 'output_styles', 'settings'])
 
     def test_no_change_reports_observed_absence_not_failure(self):
         self.original = 'good'

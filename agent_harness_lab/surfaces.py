@@ -289,6 +289,16 @@ def vendored(parts, bundles=False):
                for index, part in enumerate(parts[:-1]))
 
 
+def _writability(matched, kinds, executable, context):
+    rank = WRITABILITY.index
+    writability = min((row.writability for row in matched if row.unconfirmed is None), key=rank, default='unsupported')
+    # A gated row can only lower a verdict to adoptable, so it is consulted (and containment probed) only above that.
+    if rank(writability) > rank('adoptable'):
+        writability = min((writability, *(_verdict(row, kinds, executable, context) for row in matched
+                                          if row.unconfirmed is not None)), key=rank)
+    return writability
+
+
 def classify(relative_path, runtime=None, mode=None, *, root_skills=False, external_root=False, origin='project',
              declared_root=None, in_checkout=False, ignored=False):
     """Classify a root-relative POSIX path; runtime None means either runtime, mode is optional st_mode bits.
@@ -318,12 +328,7 @@ def classify(relative_path, runtime=None, mode=None, *, root_skills=False, exter
     facets = kinds + ((HOOK_FACET,) if 'hook' in kinds or executable else ())
     if named and named[0].root: scope = PurePosixPath(*parts[:len(PurePosixPath(named[0].root).parts) + 1])
     else: scope = path.parent
-    rank = WRITABILITY.index
-    writability = min((row.writability for row in matched if row.unconfirmed is None), key=rank, default='unsupported')
-    # A gated row can only lower a verdict to adoptable, so it is consulted (and containment probed) only above that.
-    if rank(writability) > rank('adoptable'):
-        writability = min((writability, *(_verdict(row, kinds, executable, context) for row in matched
-                                          if row.unconfirmed is not None)), key=rank)
+    writability = _writability(matched, kinds, executable, context)
     if parts[0].startswith(PLUGIN_ROOT_PREFIX): origin = 'external_repository'
     if origin == 'external_repository' and writability != 'private_excluded': writability = 'recommendation_only'
     # Last, so no other cap raises a vendored path above unsupported; only an adoptable verdict probes ignore rules,
@@ -545,3 +550,64 @@ CAPABILITIES = (
     _row('hooks', 'codex', '--dangerously-bypass-hook-trust inside a temporary CODEX_HOME', _CODEX + 'hooks', 'unverified'),
     _row('settings', 'codex', 'temporary CODEX_HOME with model, effort and one workspace trust entry', _CODEX + 'config-reference', 'unverified'),
 )
+
+
+# The generic surface matrix: per SURFACES row and runtime, one synthetic checkout-relative path and the classifier
+# kind that owns the surface there (None for the kind-free memory rows); None means the runtime has no file surface.
+# A shared file answers per surface: the hooks key of .claude/settings.json is a hook, its plugin enablement a plugin
+# and its other keys settings. Writability is the RULES verdict for that kind inside the checkout, never restated.
+MATRIX = (
+    ('instructions', {'claude-code': ('CLAUDE.md', 'instruction'), 'codex': ('AGENTS.md', 'instruction')}),
+    ('path_rules', {'claude-code': ('.claude/rules/style.md', 'path_rule'),
+                    'codex': ('.codex/rules/default.rules', 'exec_policy')}),
+    ('hooks', {'claude-code': ('.claude/settings.json', 'hook'), 'codex': ('.codex/hooks.json', 'hook')}),
+    ('workflows', {'claude-code': ('.claude/workflows/build.js', 'workflow'), 'codex': None}),
+    ('agents', {'claude-code': ('.claude/agents/reviewer.md', 'agent'), 'codex': ('.codex/agents/reviewer.toml', 'agent')}),
+    ('commands_skills', {'claude-code': ('.claude/skills/example/SKILL.md', 'skill'),
+                         'codex': ('.agents/skills/example/SKILL.md', 'skill')}),
+    ('plugins', {'claude-code': ('.claude/settings.json', 'plugin'), 'codex': ('.codex/config.toml', 'plugin')}),
+    ('mcp', {'claude-code': ('.mcp.json', 'config'), 'codex': ('.codex/config.toml', 'config')}),
+    ('output_styles', {'claude-code': ('.claude/output-styles/terse.md', 'config'), 'codex': ('.codex/config.toml', 'config')}),
+    ('memory', {'claude-code': ('.claude/agent-memory/reviewer/MEMORY.md', None), 'codex': ('memories/notes.md', None)}),
+    ('settings', {'claude-code': ('.claude/settings.json', 'config'), 'codex': ('.codex/config.toml', 'config')}),
+)
+# Where the single-run controller routes a surface. An adoptable path whose edits carry the hook facet (an agent
+# definition) is a contract route: change plans keep it unresolved until a passed hook contract names it.
+ROUTES = {'adoptable': 'adopt', 'contract_required': 'contract', 'recommendation_only': 'recommendation',
+          'private_excluded': 'excluded', 'unsupported': 'excluded'}
+
+
+def _cell(runtime, entry):
+    if entry is None: return None
+    path, kind = entry
+    parts, context = PurePosixPath(path).parts, _Context(False, in_checkout=True)
+    matched = [row for row in RULES if runtime in row.runtimes and row.kind in (kind, None) and row.match(path, parts, context)]
+    full = classify(path, runtime, in_checkout=True)
+    writability = _writability(matched, (kind,), full.executable, context)
+    route = 'contract' if writability == 'adoptable' and HOOK_FACET in full.facets else ROUTES[writability]
+    return dict(writability=writability, route=route)
+
+
+def matrix():
+    """One path-free row per SURFACES entry, in SURFACES order: each runtime's writability and route, or None."""
+    rows = []
+    for surface, cells in MATRIX:
+        if set(cells) != set(RUNTIMES): raise ValueError('surface matrix row needs every runtime')
+        verdicts = {runtime: _cell(runtime, cells[runtime]) for runtime in RUNTIMES}
+        rows.append(dict(surface=surface, writability={k: v and v['writability'] for k, v in verdicts.items()},
+                         route={k: v and v['route'] for k, v in verdicts.items()}))
+    if tuple(row['surface'] for row in rows) != SURFACES: raise ValueError('surface matrix must list SURFACES in order')
+    return tuple(rows)
+
+
+def adopted():
+    """Surfaces some runtime routes to adopt: the ones a single-run candidate may change directly."""
+    return tuple(row['surface'] for row in matrix() if 'adopt' in row['route'].values())
+
+
+def deferred(resolved):
+    """Surfaces a change plan leaves for later, in SURFACES order: every surface not in resolved, except one that every
+    runtime excludes (memory is never read or changed, so it is never deferred)."""
+    if not set(resolved) <= set(SURFACES): raise ValueError('unknown resolved surface')
+    return tuple(row['surface'] for row in matrix() if row['surface'] not in resolved
+                 and set(row['route'].values()) - {'excluded', None})

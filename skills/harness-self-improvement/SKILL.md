@@ -97,6 +97,8 @@ small corrections over a quota of edits or a wholesale rewrite.
 
 1. Snapshot affected files with modes and hashes before changing them. Preserve
    baseline separately from candidate; capture applicable ambient configuration.
+   Before touching a surface other than root instructions or skills, check its
+   writability in the [surface matrix](references/surfaces.md).
 2. Create a small task set from the failure and acceptance criteria. Include an
    adjacent regression and a fresh transfer case. Freeze graders before scoring.
    Use real task execution when the claim concerns execution; hypothetical answers

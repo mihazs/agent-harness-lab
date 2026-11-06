@@ -93,6 +93,37 @@ The skill describes an assisted evaluation-and-edit loop; it is distinct from th
 CLI's current recommendation-only controller. Supported autonomous application
 and matching CLI/skill receipts are tracked in [#77](https://github.com/mihazs/agent-harness-lab/issues/77).
 
+## Harness surfaces
+
+AHL inventories eleven harness surfaces of Claude Code 2.1.317 and Codex 0.166.0
+read-only: it never executes a hook, workflow or script while analyzing, and it never
+edits another repository in place. `agent_harness_lab/surfaces.py` owns each verdict.
+For a synthetic path inside the checkout, the writability and the route a change gets:
+
+| Surface | Claude Code | Codex |
+| --- | --- | --- |
+| `instructions` | `adoptable` / adopt | `adoptable` / adopt |
+| `path_rules` | `adoptable` / adopt | `recommendation_only` / recommendation |
+| `hooks` | `contract_required` / contract | `contract_required` / contract |
+| `workflows` | `contract_required` / contract | no file surface |
+| `agents` | `adoptable` / contract | `adoptable` / contract |
+| `commands_skills` | `adoptable` / adopt | `adoptable` / adopt |
+| `plugins` | `recommendation_only` / recommendation | `recommendation_only` / recommendation |
+| `mcp` | `recommendation_only` / recommendation | `recommendation_only` / recommendation |
+| `output_styles` | `recommendation_only` / recommendation | `recommendation_only` / recommendation |
+| `memory` | `private_excluded` / excluded | `private_excluded` / excluded |
+| `settings` | `recommendation_only` / recommendation | `recommendation_only` / recommendation |
+
+A candidate may change an *adopt* surface in its staged copy; application still
+follows the policy above. A *contract* change stays unresolved until a passed hook
+contract names it; agent definitions take this route because their frontmatter can
+register hooks. A *recommendation* is reported, never written, and *excluded* files
+are never read. Change plans list the surfaces they leave for later as deferred.
+`ahl sources inventory CHECKOUT --runtime RUNTIME --version VERSION` prints this
+matrix for the declared runtime. See the [surface reference](skills/harness-self-improvement/references/surfaces.md)
+for paths, version pins and unverified items, and [trial isolation](skills/harness-evaluation/references/isolation.md)
+for what an evaluation trial still inherits.
+
 ## Try it without credentials
 
 Requires Git, Python 3.11+ and a POSIX shell. This uses the current source checkout;
