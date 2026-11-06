@@ -118,6 +118,17 @@ writability wins, in the order `private_excluded`, `adoptable`,
 the lowest priority names the kind. A new surface therefore adds a row and
 leaves existing rows untouched.
 
+`surfaces.matrix()` is the generic surface matrix: one row per `SURFACES` entry
+with each runtime's writability and route (`adopt`, `contract`, `recommendation`
+or `excluded`), computed from these rows for one synthetic path per runtime. An
+adoptable path whose edits carry the hook facet, such as an agent definition,
+routes to `contract`. Change plans derive the surface part of `deferred_surfaces`
+from `surfaces.deferred(resolved)`: every surface the plan does not resolve,
+except memory, which both runtimes exclude. The behavioral candidate resolves the
+surfaces some runtime routes to `adopt`; `--repair-contracts` resolves only skill
+headers. The [surface reference](../skills/harness-self-improvement/references/surfaces.md)
+shows the matrix.
+
 ## Staging nested instruction, rule, agent and command files
 
 Containment-gated rows in `surfaces.RULES` make these project files `adoptable`:
@@ -259,8 +270,9 @@ state with `Journal.recover`, and a foreign edit to any member is a conflict tha
 writes nothing. Rollback admits exactly the members its reverted deployment
 admitted, and only when its snapshots are the exact reversal of that committed
 deployment's. A change plan resolves a `contract_required` operation only through a
-passed contract (`hook_contracts`), and `ahl improve . --repair-contracts` drops
-`hooks` from its deferred surfaces only when every hook unit in the run passed.
+passed contract (`hook_contracts`), and `ahl improve . --repair-contracts` treats
+`hooks` as resolved, dropping it from its deferred surfaces, only when every hook
+unit in the run passed.
 No CLI path stages a hook unit yet. A passed contract is not behavioral evidence.
 Behavior comes only from `ahl evaluate hooks`, which runs the unit beside a nonce
 canary inside a private trial workspace with no credentials in its environment

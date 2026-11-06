@@ -429,7 +429,8 @@ def main(argv):
         description='Read-only harness surface inventory of one checkout: no runtime, hook or script is executed, '
         'no file is changed, and no root outside the checkout is read unless declared with --external-root.',
         epilog='Writes the full inventory to a private 0700 directory under XDG state with publication_allowed=false '
-        'and prints path-free JSON metadata. Exit 0: declared; 2: invalid input; 3: blocked or unsupported.')
+        'and prints path-free JSON metadata, including the generic surface matrix (writability and route of every '
+        'surface for the declared runtime; empty unless the inventory is declared). Exit 0: declared; 2: invalid input; 3: blocked or unsupported.')
     parser.add_argument('checkout', help='Checkout directory to inventory; links on its path are refused')
     parser.add_argument('--runtime', required=True, choices=surfaces.RUNTIMES, help='Declared runtime whose surfaces are classified')
     parser.add_argument('--version', required=True, help='Declared runtime version; only the pinned version is supported')
@@ -450,8 +451,11 @@ def main(argv):
         output = folder / (inventory.sha256 + '.json')
         from agent_harness_lab.monitoring.state import atomic_json
         atomic_json(output, inventory.document())
+        # The matrix rests on research at the pinned version, so an unsupported or blocked inventory prints none.
+        matrix = [dict(surface=row['surface'], writability=row['writability'][args.runtime],
+                       route=row['route'][args.runtime]) for row in surfaces.matrix()] if inventory.status == 'declared' else []
         print(json.dumps(dict(inventory.summary(), schema_version=1, output=str(output), publication_allowed=False,
-            source_read=True, network_used=False), sort_keys=True))
+            source_read=True, network_used=False, surfaces=matrix), sort_keys=True))
         return 0 if inventory.status == 'declared' else 3
     except (NotImplementedError, PermissionError):
         print('inventory blocked by unavailable filesystem capabilities/access', file=sys.stderr); return 3

@@ -1250,7 +1250,8 @@ the checkout, its nodes are labelled `caller_declared_external` with trust
 The CLI writes the full inventory document to a private `0700` directory
 under `$XDG_STATE_HOME/agent-harness-lab/inventories/`, in a `0600` file
 marked `publication_allowed: false` and `loading_evidence: false`. It prints
-path-free metadata only. Git summaries carry only the inventory fingerprint,
+path-free metadata only, including `surfaces`: the eleven rows of
+`surfaces.matrix()` with the declared runtime's writability and route. Git summaries carry only the inventory fingerprint,
 status and counts. Exit 0 means declared, 2 means invalid input, and 3 means
 blocked or unsupported. Synthetic tests check the walk, the refusals, the
 bounds, unchanged trees and the absence of processes and network use. An

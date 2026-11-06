@@ -849,7 +849,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             common_plan=produce(args,original,proposed,analysis=data,evidence=evaluated,
                 diagnosis=proposal.get('mechanisms',[]),falsifiers=proposal.get('falsifiers',[]),
                 controls=dict(evaluation_sha256=runner.digest(Path(options.output)),candidate_pass=candidate_pass,controls_pass=controls_pass),
-                deferred=['behavioral_application_pending_independent_certification','skill_lifecycle','hooks'])
+                deferred=['behavioral_application_pending_independent_certification','skill_lifecycle',
+                          *surfaces.deferred(surfaces.adopted())])
             common_plan.validate_inventories(candidate_states(baseline,original),candidate_states(frozen,original))
             write_json(output / 'change-plan.json', attach(dict(schema_version=1, kind='behavioral_candidate',
                 profile='one-call-improvement-v1', publication_allowed=False,
