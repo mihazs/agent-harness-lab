@@ -881,8 +881,70 @@ verify Git repository membership or inspect organization/user scope beyond the t
 selected sources. `task test:sources:commit-join` runs synthetic negative controls
 for foreign repositories, force-push staleness, abbreviated/case-variant SHAs,
 missing repository identity and truncated history. It also runs one native case
-through both built-in readers. The remaining cross-source chain, persisted proofs,
-contradiction reports and the diagnostic-utility study stay open in #58.
+through both built-in readers. The [PR commit-role join](#offline-pr-commit-role-join)
+below answers the PR head and merge-result questions this join leaves open. The
+remaining cross-source chain, persisted proofs, contradiction reports and the
+diagnostic-utility study stay open in #58.
+
+### Offline PR commit-role join
+
+`sources.commit_join.join_pull_commit(git_source, git_store, github_source,
+github_store, repository_id=ID, pull_id=PR_ID, commit_sha=SHA)` names the roles one
+exact local commit holds in one GitHub pull request. `PR_ID` is the PR's numeric
+GitHub ID, not its number, so the same PR number in another repository is never a
+candidate. Non-integer and non-positive IDs are rejected. The commit identity checks
+are the [commit join](#offline-gitgithub-commit-join)'s, and they run first: a
+foreign repository stays `unlinked`, a missing repository ID or unobserved commit
+stays `unknown`, and a commit missing from either latest checkpoint stays `stale`.
+Like the commit join, it reads only the two selected journals and changes neither.
+
+Roles come only from the GitHub reader's native PR edges. Edges that start at the
+PR's current revision give `head` (`pr_head_commit`), `base` (`pr_base_commit`),
+`merge_result` (`pr_merge_commit`, a merged PR) and `test_merge`
+(`pr_test_merge_commit`, an unmerged PR's test merge). A `commit_on` edge into the PR
+gives `member`, meaning the commit is in its complete commit listing. The reader emits
+the head, base and merge edges only when the selection also lists commits, and only
+for commits it captured. Each role in `roles` is one of:
+
+| Role state | Meaning |
+| --- | --- |
+| `current` | The edge joins the current PR and commit revisions in the latest checkpoint |
+| `superseded` | An earlier checkpoint of the same journal had the edge between the same native IDs, but the latest does not |
+| `unobserved` | No checkpoint of the journal has the edge |
+
+`roles` is `null` when the commit identity is `unlinked` or `unknown`, or when the PR
+was never observed or has ambiguous current revisions. A `superseded` head is the
+stale-head control. The head moved after the checkpoint that recorded it, and the old
+head may still be a `member` (new commits were pushed) or no longer listed (the
+branch was rewritten). The report does not claim which happened. Roles describe the
+GitHub journal only. With a `stale` local commit, current GitHub roles can still be
+listed while the overall status stays `stale`.
+
+The overall `status` is `matched` (reason `exact_pull_commit_role`) when the commit
+join matched and at least one role is current. It is `stale` with reason
+`pull_role_superseded` when no role is current but one was recorded earlier, and
+with reason `pull_not_in_current_checkpoint` when the PR left the latest checkpoint.
+It is `unknown` when the PR is unobserved (`pull_unobserved`) or has ambiguous current
+revisions (`ambiguous_pull_revision`), and also when neither checkpoint ever showed a
+role (`pull_role_unobserved`). A missing edge is not proof that the commit is outside
+the PR, so this case is never `unlinked`. A `matched` report carries one candidate
+`receipts` entry per current role. Each uses the role's relation, namespace
+`git-github.pull-commit` and basis `source_declaration`. Its endpoints are the GitHub
+PR record and the local Git commit record (for `commit_on`, the Git commit is the left
+endpoint). The GitHub commit, PR and repository records are its evidence. Other
+statuses carry an empty list.
+
+The report has profile `cross-journal-pull-commit-join-v1`, holds fingerprints only
+(`pull_id_sha256` is the PR's native-ID fingerprint), and carries the same false
+authority, freshness, outcome and publication fields as the commit join. Public
+benchmark export rejects it. A current head role does not show that the commit ran,
+that CI or a grader evaluated it, or which revision produced a later outcome.
+Squash, rebase and cherry-pick mappings are not inferred, and timeline force-push
+events are not read. `task test:sources:commit-join` also runs these synthetic
+controls: current head, an advanced head, a force-pushed head, merge versus test
+merge versus base, foreign repositories, other PR IDs, missing edges, a dropped PR,
+ambiguous PR revisions and private export. One native case runs through both
+built-in readers.
 
 ### Declared Codex project instruction inventory
 
