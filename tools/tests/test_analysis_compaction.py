@@ -4,12 +4,11 @@ from datetime import datetime, timedelta, timezone
 import io
 import json
 import os
-from pathlib import Path
 import random
-import tempfile
 import tracemalloc
-import unittest
 from unittest.mock import patch
+
+import pytest
 
 from agent_harness_lab.cli import main
 import tools.diagnose as diagnose
@@ -107,114 +106,127 @@ def sharing(result):
     return shape
 
 
-class AnalysisCompactionTests(unittest.TestCase):
-    def assertEquivalent(self, rows, **options):
-        expected, actual = outcome(reference, rows, **options), outcome(diagnose, rows, **options)
-        if isinstance(expected, tuple):
-            self.assertEqual(actual, expected)
-            return None
-        self.assertEqual(json.dumps(actual, indent=2), json.dumps(expected, indent=2))
-        self.assertEqual(diagnose.report(actual), diagnose.report(expected))
-        self.assertEqual(sharing(actual), sharing(expected))
-        return actual
-
-    def test_seeded_multi_root_corpora_match_the_frozen_implementation(self):
-        exercised = dict(sequences=0, duplicates=0, violations=0, unordered=0, selected=0)
-        for seed in range(16):
-            rng = random.Random(1000 + seed)
-            rows = corpus(seed, roots=1 + seed % 7, cases=1 + seed % 4, steps=4 + 3 * (seed % 6), lineage=seed % 5 != 4)
-            for _ in range(4):
-                options = dict(select_methods=rng.random() < 0.6, sequence_length=rng.choice((None, None, 1, 2, 3, 5)))
-                if rng.random() < 0.5:
-                    options.update(observation_per_case=rng.choice((None, 1, 2)), observation_total=rng.choice((None, 2, 5)),
-                                   observation_max_age=rng.choice((None, 3, 40)))
-                with self.subTest(seed=seed, events=len(rows), **options):
-                    result = self.assertEquivalent(rows, **options)
-                    exercised['sequences'] += len(result['recurring_sequences'])
-                    exercised['duplicates'] += sum(f['kind'] == 'duplicate_observation' for f in result['findings'])
-                    exercised['violations'] += sum(f['kind'] == 'contract_violation' for f in result['findings'])
-                    exercised['unordered'] += result['method_inputs']['unordered_sequence_cases']
-                    exercised['selected'] += result['method_inputs']['selected_sequence_cases']
-        self.assertTrue(all(exercised.values()), exercised)
-
-    def test_event_limits_and_invalid_inputs_fail_identically(self):
-        rows = corpus(7, roots=4, cases=3, steps=10)
-        for select in (False, True):
-            with self.subTest(select=select):
-                self.assertIsNotNone(self.assertEquivalent(rows, max_events=len(rows), select_methods=select))
-                self.assertEqual(outcome(diagnose, rows, max_events=len(rows) - 1, select_methods=select),
-                                 outcome(reference, rows, max_events=len(rows) - 1, select_methods=select))
-                for broken in (dict(rows[3], event_id=rows[1]['event_id'], case_id=rows[1]['case_id']),
-                               dict(rows[3], root_case_id='elsewhere'), dict(rows[3], activity=''), 'row'):
-                    damaged = [*rows[:5], broken, *rows[5:]]
-                    self.assertIsInstance(outcome(reference, damaged, select_methods=select), tuple)
-                    self.assertEquivalent(damaged, select_methods=select)
-
-    def test_mapping_references_keep_their_identity(self):
-        rows = corpus(3, roots=5, cases=2, steps=12)
-        cases, roots = {}, {}
-        for number, event in enumerate(rows, 1):
-            roots[event['case_id']] = event['root_case_id']
-            ref = {'case_id': event['case_id'], 'event_id': event['event_id']}
-            cases.setdefault(event['case_id'], []).append((event['activity'], number, ref))
-        expected = reference.recurring_sequences(cases, roots, 4)
-        actual = diagnose.recurring_sequences(cases, roots, 4)
-        self.assertTrue(expected)
-        self.assertEqual(json.dumps(actual), json.dumps(expected))
-        self.assertEqual(sharing(dict(recurring_sequences=actual, findings=[])),
-                         sharing(dict(recurring_sequences=expected, findings=[])))
-        given = {id(entry[2]) for entries in cases.values() for entry in entries}
-        self.assertTrue(all(id(ref) in given for row in actual for ref in row['evidence']))
-
-    def test_analyze_command_writes_identical_bytes(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary); project = root/'project'; project.mkdir()
-            capture = root/'events.jsonl'
-            capture.write_text(''.join(json.dumps(row)+'\n' for row in exportable(corpus(11, roots=5, cases=3, steps=14))))
-            environment = dict(CODEX_HOME=str(root/'codex'), CLAUDE_CONFIG_DIR=str(root/'claude'), XDG_STATE_HOME=str(root/'state'))
-
-            def run(name):
-                out, err = io.StringIO(), io.StringIO()
-                with patch.dict(os.environ, environment), redirect_stdout(out), redirect_stderr(err):
-                    code = main(['analyze', str(project), '--output', str(root/name), '--events', str(capture)])
-                files = {path.name: path.read_bytes().replace(str(root/name).encode(), b'OUTPUT')
-                         for path in sorted((root/name).iterdir())}
-                return code, out.getvalue().replace(str(root/name), 'OUTPUT'), files
-            actual = run('compact')
-            with patch('agent_harness_lab.evidence.analyze', reference.analyze):
-                expected = run('frozen')
-        self.assertEqual(actual[0], 0)
-        self.assertIn('analysis.json', actual[2])
-        self.assertTrue(json.loads(actual[2]['analysis.json'])['analysis']['recurring_sequences'])
-        self.assertEqual(actual, expected)
-
-    def test_peak_and_retained_bytes_per_event_fall(self):
-        rows = corpus(5, roots=40, cases=4, steps=100)
-
-        def measure(module):
-            retained = []
-
-            def mining(*args, **kwargs):
-                retained.append(tracemalloc.get_traced_memory()[0])
-                return original(*args, **kwargs)
-            original = module.recurring_sequences
-            tracemalloc.start()
-            try:
-                base = tracemalloc.get_traced_memory()[0]
-                with patch.object(module, 'recurring_sequences', mining):
-                    result = module.analyze(iter(rows), select_methods=True, sequence_length=8)
-                peak = tracemalloc.get_traced_memory()[1]
-            finally:
-                tracemalloc.stop()
-            return json.dumps(result), (peak - base) / len(rows), (retained[0] - base) / len(rows)
-        expected, old_peak, old_retained = measure(reference)
-        actual, new_peak, new_retained = measure(diagnose)
-        self.assertEqual(actual, expected)
-        self.assertGreater(len(rows), 10000)
-        message = f'per event: peak {old_peak:.0f} -> {new_peak:.0f} B, retained {old_retained:.0f} -> {new_retained:.0f} B'
-        self.assertLess(new_peak, 0.5 * old_peak, message)
-        self.assertLess(new_retained, 0.5 * old_retained, message)
+def assert_equivalent(rows, **options):
+    expected, actual = outcome(reference, rows, **options), outcome(diagnose, rows, **options)
+    if isinstance(expected, tuple):
+        assert actual == expected
+        return None
+    assert json.dumps(actual, indent=2) == json.dumps(expected, indent=2)
+    assert diagnose.report(actual) == diagnose.report(expected)
+    assert sharing(actual) == sharing(expected)
+    return actual
 
 
-if __name__ == '__main__':
-    unittest.main()
+def seeded_cases():
+    """Sixteen seeded corpora, each analysed under four seeded option sets."""
+    for seed in range(16):
+        rng = random.Random(1000 + seed)
+        shape = dict(roots=1 + seed % 7, cases=1 + seed % 4, steps=4 + 3 * (seed % 6), lineage=seed % 5 != 4)
+        for run in range(4):
+            options = dict(select_methods=rng.random() < 0.6, sequence_length=rng.choice((None, None, 1, 2, 3, 5)))
+            if rng.random() < 0.5:
+                options.update(observation_per_case=rng.choice((None, 1, 2)), observation_total=rng.choice((None, 2, 5)),
+                               observation_max_age=rng.choice((None, 3, 40)))
+            yield pytest.param(seed, shape, options, id=f'seed{seed}-run{run}')
+
+
+SEEDED_CASES = list(seeded_cases())
+
+
+@pytest.mark.parametrize(('seed', 'shape', 'options'), SEEDED_CASES)
+def test_seeded_multi_root_corpora_match_the_frozen_implementation(seed, shape, options):
+    assert assert_equivalent(corpus(seed, **shape), **options) is not None
+
+
+def test_seeded_corpora_exercise_every_compacted_analysis_path():
+    exercised = dict(sequences=0, duplicates=0, violations=0, unordered=0, selected=0)
+    for case in SEEDED_CASES:
+        seed, shape, options = case.values
+        result = diagnose.analyze(iter(corpus(seed, **shape)), **options)
+        exercised['sequences'] += len(result['recurring_sequences'])
+        exercised['duplicates'] += sum(f['kind'] == 'duplicate_observation' for f in result['findings'])
+        exercised['violations'] += sum(f['kind'] == 'contract_violation' for f in result['findings'])
+        exercised['unordered'] += result['method_inputs']['unordered_sequence_cases']
+        exercised['selected'] += result['method_inputs']['selected_sequence_cases']
+    assert all(exercised.values()), exercised
+
+
+@pytest.mark.parametrize('select', [pytest.param(False, id='all-methods'), pytest.param(True, id='selected-methods')])
+def test_event_limits_and_invalid_inputs_fail_identically(select):
+    rows = corpus(7, roots=4, cases=3, steps=10)
+    assert assert_equivalent(rows, max_events=len(rows), select_methods=select) is not None
+    assert (outcome(diagnose, rows, max_events=len(rows) - 1, select_methods=select)
+            == outcome(reference, rows, max_events=len(rows) - 1, select_methods=select))
+    for broken in (dict(rows[3], event_id=rows[1]['event_id'], case_id=rows[1]['case_id']),
+                   dict(rows[3], root_case_id='elsewhere'), dict(rows[3], activity=''), 'row'):
+        damaged = [*rows[:5], broken, *rows[5:]]
+        assert isinstance(outcome(reference, damaged, select_methods=select), tuple)
+        assert_equivalent(damaged, select_methods=select)
+
+
+def test_mapping_references_keep_their_identity():
+    rows = corpus(3, roots=5, cases=2, steps=12)
+    cases, roots = {}, {}
+    for number, event in enumerate(rows, 1):
+        roots[event['case_id']] = event['root_case_id']
+        ref = {'case_id': event['case_id'], 'event_id': event['event_id']}
+        cases.setdefault(event['case_id'], []).append((event['activity'], number, ref))
+    expected = reference.recurring_sequences(cases, roots, 4)
+    actual = diagnose.recurring_sequences(cases, roots, 4)
+    assert expected
+    assert json.dumps(actual) == json.dumps(expected)
+    assert (sharing(dict(recurring_sequences=actual, findings=[]))
+            == sharing(dict(recurring_sequences=expected, findings=[])))
+    given = {id(entry[2]) for entries in cases.values() for entry in entries}
+    assert all(id(ref) in given for row in actual for ref in row['evidence'])
+
+
+def test_analyze_command_writes_identical_bytes(tmp_path):
+    root = tmp_path; project = root/'project'; project.mkdir()
+    capture = root/'events.jsonl'
+    capture.write_text(''.join(json.dumps(row)+'\n' for row in exportable(corpus(11, roots=5, cases=3, steps=14))))
+    environment = dict(CODEX_HOME=str(root/'codex'), CLAUDE_CONFIG_DIR=str(root/'claude'), XDG_STATE_HOME=str(root/'state'))
+
+    def run(name):
+        out, err = io.StringIO(), io.StringIO()
+        with patch.dict(os.environ, environment), redirect_stdout(out), redirect_stderr(err):
+            code = main(['analyze', str(project), '--output', str(root/name), '--events', str(capture)])
+        files = {path.name: path.read_bytes().replace(str(root/name).encode(), b'OUTPUT')
+                 for path in sorted((root/name).iterdir())}
+        return code, out.getvalue().replace(str(root/name), 'OUTPUT'), files
+    actual = run('compact')
+    with patch('agent_harness_lab.evidence.analyze', reference.analyze):
+        expected = run('frozen')
+    assert actual[0] == 0
+    assert 'analysis.json' in actual[2]
+    assert json.loads(actual[2]['analysis.json'])['analysis']['recurring_sequences']
+    assert actual == expected
+
+
+def test_peak_and_retained_bytes_per_event_fall():
+    rows = corpus(5, roots=40, cases=4, steps=100)
+
+    def measure(module):
+        retained = []
+
+        def mining(*args, **kwargs):
+            retained.append(tracemalloc.get_traced_memory()[0])
+            return original(*args, **kwargs)
+        original = module.recurring_sequences
+        tracemalloc.start()
+        try:
+            base = tracemalloc.get_traced_memory()[0]
+            with patch.object(module, 'recurring_sequences', mining):
+                result = module.analyze(iter(rows), select_methods=True, sequence_length=8)
+            peak = tracemalloc.get_traced_memory()[1]
+        finally:
+            tracemalloc.stop()
+        return json.dumps(result), (peak - base) / len(rows), (retained[0] - base) / len(rows)
+    expected, old_peak, old_retained = measure(reference)
+    actual, new_peak, new_retained = measure(diagnose)
+    assert actual == expected
+    assert len(rows) > 10000
+    message = f'per event: peak {old_peak:.0f} -> {new_peak:.0f} B, retained {old_retained:.0f} -> {new_retained:.0f} B'
+    assert new_peak < 0.5 * old_peak, message
+    assert new_retained < 0.5 * old_retained, message
+

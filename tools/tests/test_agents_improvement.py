@@ -3,10 +3,11 @@ import argparse
 import json
 from pathlib import Path
 import shutil
-import tempfile
-import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
+import pytest
+
+from agent_harness_lab import workflow
 from agent_harness_lab.sources.agents_validation import review, review_tree
 from agent_harness_lab.workflow import adopt, candidate_states, improve, snapshot
 
@@ -25,134 +26,178 @@ def verdict(path, before, after, staged=None):
     return found.verdict, found.findings[0].reasons, found.findings[0].flags, found.findings[0].recommendations
 
 
-class DefinitionReviewTests(unittest.TestCase):
-    def test_malformed_agents_are_blocked(self):
-        for raw, reason in ((b'\n' + AGENT, 'no_leading_fence'),
-                            (b'---\ndescription: Missing name\n---\nBody\n', 'missing_name'),
-                            (b'---\nname: reviewer\n---\nBody\n', 'missing_description'),
-                            (b'---\nname: reviewer\ndescription: [unclosed\n---\n', 'bad_yaml'),
-                            (field(b'colour: red'), 'unknown_field'),
-                            (field(b'hooks:\n  Stop: []'), 'hooks_need_hook_contract')):
-            with self.subTest(reason=reason):
-                self.assertEqual(verdict('.claude/agents/reviewer.md', None, raw)[:2], ('blocked', (reason,)))
-        for raw, reason in ((ROLE + b'bogus = 1\n', 'unknown_field_rejected'), (b'name = [\n', 'bad_toml'),
-                            (ROLE.replace(b'description = "Reviews synthetic diffs"\n', b''), 'missing_description'),
-                            (ROLE.replace(b'developer_instructions = "Check the diff."\n', b''),
-                             'missing_developer_instructions'),
-                            (ROLE + b'[hooks]\nStop = []\n', 'hooks_need_hook_contract')):
-            with self.subTest(reason=reason):
-                self.assertEqual(verdict('.codex/agents/reviewer.toml', None, raw)[:2], ('blocked', (reason,)))
+CLAUDE_AGENT = '.claude/agents/reviewer.md'
+CODEX_ROLE = '.codex/agents/reviewer.toml'
+SHIP = '.claude/commands/ship.md'
+FLOW = b'---\nallowed-tools: [Read]\n---\nShip.\n'
+BLOCK = b'---\nallowed-tools:\n  - Read\n  - Bash(rm:*)\n---\nShip.\n'
+INERT_ROLE = ROLE.decode() + 'sandbox_mode = "read-only"\n'
 
-    def test_duplicate_names_in_one_layer_are_blocked(self):
-        staged = {'.claude/agents/a.md': AGENT, '.claude/agents/b.md': AGENT, 'app/.claude/agents/c.md': AGENT}
-        self.assertEqual(verdict('.claude/agents/b.md', None, AGENT, staged)[:2], ('blocked', ('duplicate_name',)))
-        self.assertEqual(verdict('app/.claude/agents/c.md', None, AGENT, staged)[0], 'adoptable')
-        commands = {'.claude/commands/a/b.md': b'One\n', '.claude/commands/a:b.md': b'Two\n'}
-        self.assertEqual(verdict('.claude/commands/a:b.md', None, b'Two\n', commands)[:2],
-                         ('blocked', ('duplicate_name',)))
 
-    def test_permission_fields_are_recommendation_only(self):
-        before = field(b'tools: Read, Grep')
-        cases = ((AGENT, field(b'permissionMode: bypassPermissions'), 'permissionMode'),
-                 (before, field(b'tools: Read, Grep, Bash'), 'tools'),
-                 (before, AGENT, 'tools'),  # dropping a tools allowlist inherits every tool
-                 (None, field(b'mcpServers:\n  - synthetic'), 'mcpServers'),
-                 (field(b'disallowedTools: Bash'), AGENT, 'disallowedTools'))
-        for old, new, name in cases:
-            with self.subTest(field=name):
-                self.assertEqual(verdict('.claude/agents/reviewer.md', old, new)[:2],
-                                 ('recommendation_only', (f'permission_field_changed:{name}',)))
-        nested = (field(b'mcpServers:\n  synthetic:\n    command: one'), field(b'mcpServers:\n  synthetic:\n    command: two'))
-        self.assertEqual(verdict('.claude/agents/reviewer.md', *nested)[0], 'recommendation_only')
-        self.assertEqual(verdict('.codex/agents/reviewer.toml', ROLE, ROLE + b'[permissions]\nnetwork = true\n')[:2],
-                         ('recommendation_only', ('permission_field_changed:permissions',)))
-        table = ROLE + b'[permissions]\nnetwork = true\n'
-        self.assertEqual(verdict('.codex/agents/reviewer.toml', table, table.replace(b'Check the diff.', b'Check twice.'))[0],
-                         'adoptable')  # an unchanged TOML table is compared exactly
-        self.assertEqual(verdict('.claude/commands/ship.md', None, b'---\nallowed-tools: Bash\n---\nShip.\n')[0],
-                         'recommendation_only')
-        self.assertEqual(verdict('.claude/agents/reviewer.md', before, before + b'More.\n')[0], 'adoptable')
+@pytest.mark.parametrize(('raw', 'reason'), [
+    pytest.param(b'\n' + AGENT, 'no_leading_fence', id='no_leading_fence'),
+    pytest.param(b'---\ndescription: Missing name\n---\nBody\n', 'missing_name', id='missing_name'),
+    pytest.param(b'---\nname: reviewer\n---\nBody\n', 'missing_description', id='missing_description'),
+    pytest.param(b'---\nname: reviewer\ndescription: [unclosed\n---\n', 'bad_yaml', id='bad_yaml'),
+    pytest.param(field(b'colour: red'), 'unknown_field', id='unknown_field'),
+    pytest.param(field(b'hooks:\n  Stop: []'), 'hooks_need_hook_contract', id='hooks_need_hook_contract'),
+])
+def test_malformed_agents_are_blocked(raw, reason):
+    assert verdict(CLAUDE_AGENT, None, raw)[:2] == ('blocked', (reason,))
 
-    def test_list_valued_command_allowed_tools_is_a_permission_change(self):
-        flow, block = b'---\nallowed-tools: [Read]\n---\nShip.\n', b'---\nallowed-tools:\n  - Read\n  - Bash(rm:*)\n---\nShip.\n'
-        for old, new in ((None, flow), (None, block), (flow, flow.replace(b'[Read]', b'[Read, Bash]')), (flow, block),
-                         (flow, b'Ship.\n'), (b'\xef\xbb\xbf' + flow, b'\xef\xbb\xbfShip.\n')):
-            with self.subTest(old=old, new=new):
-                self.assertEqual(verdict('.claude/commands/ship.md', old, new)[:2],
-                                 ('recommendation_only', ('permission_field_changed:allowed-tools',)))
-        dotted = flow.replace(b'\n---\n', b'\n...\n')  # the shared command reader treats a '...' close as unterminated
-        self.assertEqual(verdict('.claude/commands/ship.md', dotted, dotted + b'More.\n')[:2],
-                         ('blocked', ('frontmatter_unterminated',)))
-        for raw in (flow, block, b'\xef\xbb\xbf' + flow):  # an unchanged list is compared exactly
-            self.assertEqual(verdict('.claude/commands/ship.md', raw, raw + b'More.\n')[0], 'adoptable')
 
-    def test_codex_fields_outside_the_inert_allowlist_are_permission_changes(self):
-        for extra, name in ((b'web_search = "live"', 'web_search'), (b'[browser_use]\nsynthetic = true', 'browser_use'),
-                            (b'[computer_use]\nsynthetic = true', 'computer_use'), (b'notify = ["sh", "-c", "true"]', 'notify'),
-                            (b'js_repl_node_path = "/synthetic/node"', 'js_repl_node_path'),
-                            (b'openai_base_url = "https://example.invalid"', 'openai_base_url'),
-                            (b'chatgpt_base_url = "https://example.invalid"', 'chatgpt_base_url'),
-                            (b'[features]\nsynthetic = true', 'features'), (b'[apps]\nsynthetic = {}', 'apps'),
-                            (b'[plugins]\nsynthetic = {}', 'plugins'), (b'[otel]\nsynthetic = 1', 'otel'),
-                            (b'[model_providers.x]\nbase_url = "https://example.invalid"', 'model_providers')):
-            with self.subTest(field=name):
-                self.assertEqual(verdict('.codex/agents/reviewer.toml', ROLE, ROLE + extra + b'\n')[:2],
-                                 ('recommendation_only', (f'permission_field_changed:{name}',)))
-        tuned = ROLE + b'model = "synthetic"\nmodel_reasoning_effort = "high"\n'
-        self.assertEqual(verdict('.codex/agents/reviewer.toml', ROLE, tuned)[0], 'adoptable')
+@pytest.mark.parametrize(('raw', 'reason'), [
+    pytest.param(ROLE + b'bogus = 1\n', 'unknown_field_rejected', id='unknown_field_rejected'),
+    pytest.param(b'name = [\n', 'bad_toml', id='bad_toml'),
+    pytest.param(ROLE.replace(b'description = "Reviews synthetic diffs"\n', b''), 'missing_description',
+                 id='missing_description'),
+    pytest.param(ROLE.replace(b'developer_instructions = "Check the diff."\n', b''),
+                 'missing_developer_instructions', id='missing_developer_instructions'),
+    pytest.param(ROLE + b'[hooks]\nStop = []\n', 'hooks_need_hook_contract', id='hooks_need_hook_contract'),
+])
+def test_malformed_codex_roles_are_blocked(raw, reason):
+    assert verdict(CODEX_ROLE, None, raw)[:2] == ('blocked', (reason,))
 
-    def test_codex_no_override_field_has_no_effect(self):
-        added = ROLE + b'sandbox_mode = "read-only"\n'
-        self.assertEqual(verdict('.codex/agents/reviewer.toml', ROLE, added),
-                         ('no_effect', ('no_override_field_changed:sandbox_mode',), ('no_override_effect',), ()))
-        self.assertEqual(verdict('.codex/agents/reviewer.toml', added, ROLE)[0], 'no_effect')
-        kept = verdict('.codex/agents/reviewer.toml', added, added.replace(b'Check the diff.', b'Check twice.'))
-        self.assertEqual(kept, ('adoptable', (), ('no_override_effect',), ()))
 
-    def test_an_inert_part_next_to_an_effective_change_is_only_flagged(self):
-        added = ROLE + b'sandbox_mode = "read-only"\n'
-        effective = (('adoptable', (), ('no_override_effect',), ()))
-        self.assertEqual(verdict('.codex/agents/reviewer.toml', None, added), effective)  # a new role takes effect
-        self.assertEqual(verdict('.codex/agents/reviewer.toml', ROLE, added.replace(b'Check the diff.', b'Check twice.')),
-                         effective)
-        inert = {'.codex/agents/reviewer.toml': (ROLE, added)}
-        self.assertEqual(review(inert).verdict, 'no_effect')
-        self.assertEqual(review({**inert, 'AGENTS.md': (b'old', b'new')}).verdict, 'adoptable')
-        self.assertEqual(review({**inert, '.claude/agents/reviewer.md': (None, AGENT)}).verdict, 'adoptable')
-        self.assertEqual(review(inert, other_changes=True).verdict, 'adoptable')
-        shadowed = {'.claude/commands/deploy.md': (None, b'Deploy.\n'), '.claude/skills/deploy/SKILL.md': (None, SKILL)}
-        self.assertEqual(review(shadowed).verdict, 'adoptable')  # the new skill itself changes behaviour
-        self.assertEqual(review(shadowed, {'.claude/commands/deploy.md': b'Deploy.\n',
-                                           '.claude/skills/deploy/SKILL.md': SKILL}).findings[0].verdict, 'no_effect')
+def test_duplicate_names_in_one_layer_are_blocked():
+    staged = {'.claude/agents/a.md': AGENT, '.claude/agents/b.md': AGENT, 'app/.claude/agents/c.md': AGENT}
+    assert verdict('.claude/agents/b.md', None, AGENT, staged)[:2] == ('blocked', ('duplicate_name',))
+    assert verdict('app/.claude/agents/c.md', None, AGENT, staged)[0] == 'adoptable'
+    commands = {'.claude/commands/a/b.md': b'One\n', '.claude/commands/a:b.md': b'Two\n'}
+    assert verdict('.claude/commands/a:b.md', None, b'Two\n', commands)[:2] == ('blocked', ('duplicate_name',))
 
-    def test_review_parses_each_staged_definition_once(self):
-        changes = {f'.claude/agents/a{index}.md': (None, AGENT.replace(b'reviewer', b'r%d' % index))
-                   for index in range(40)}
-        with patch('agent_harness_lab.sources.agents_validation.agents_inventory.parse',
-                   wraps=__import__('agent_harness_lab.sources.agents_inventory', fromlist=['parse']).parse) as parse:
-            self.assertEqual(review(changes).verdict, 'adoptable')
-        self.assertLessEqual(parse.call_count, 2 * len(changes))
 
-    def test_commands(self):
-        self.assertEqual(verdict('.claude/commands/ops/deploy.md', None, b'Deploy the synthetic app.\n')[0], 'adoptable')
-        for raw in (b'---\nname: deploy\n---\nDeploy.\n', b'---\npaths: src/**\n---\nDeploy.\n'):
-            self.assertEqual(verdict('.claude/commands/deploy.md', None, raw)[:2], ('blocked', ('ignored_field',)))
-        self.assertEqual(verdict('.claude/commands/deploy.md', None, b'---\nhooks:\n  Stop: []\n---\nDeploy.\n')[:2],
-                         ('blocked', ('hooks_need_hook_contract',)))
-        self.assertEqual(verdict('.claude/commands/deploy.md', None, b'---\ndescription: [x\n---\n')[:2],
-                         ('blocked', ('frontmatter_bad_yaml',)))
-        staged = {'.claude/commands/deploy.md': b'Deploy.\n', '.claude/skills/deploy/SKILL.md': SKILL}
-        self.assertEqual(verdict('.claude/commands/deploy.md', None, b'Deploy.\n', staged),
-                         ('no_effect', ('shadowed_by_skill',), ('shadowed_by_skill',), ('migrate_to_skill',)))
+@pytest.mark.parametrize(('old', 'new', 'name'), [
+    pytest.param(AGENT, field(b'permissionMode: bypassPermissions'), 'permissionMode', id='permissionMode'),
+    pytest.param(field(b'tools: Read, Grep'), field(b'tools: Read, Grep, Bash'), 'tools', id='tools-widened'),
+    # dropping a tools allowlist inherits every tool
+    pytest.param(field(b'tools: Read, Grep'), AGENT, 'tools', id='tools-dropped'),
+    pytest.param(None, field(b'mcpServers:\n  - synthetic'), 'mcpServers', id='mcpServers'),
+    pytest.param(field(b'disallowedTools: Bash'), AGENT, 'disallowedTools', id='disallowedTools'),
+])
+def test_permission_fields_are_recommendation_only(old, new, name):
+    assert verdict(CLAUDE_AGENT, old, new)[:2] == ('recommendation_only', (f'permission_field_changed:{name}',))
 
-    def test_removal_and_other_surfaces(self):
-        self.assertEqual(verdict('.claude/agents/reviewer.md', b'\n' + AGENT, None), ('adoptable', (), (), ()))
-        found = review({'AGENTS.md': (b'old', b'new'), '.claude/rules/style.md': (None, b'rule')})
-        self.assertEqual((found.verdict, found.findings), ('adoptable', ()))
-        document = review({'.claude/agents/r.md': (None, b'\n' + AGENT)}).document()
-        self.assertEqual((document['verdict'], document['adoption_authority'], document['publication_allowed']),
-                         ('blocked', False, False))
-        self.assertNotIn('Reviews synthetic diffs', json.dumps(document))
+
+def test_permission_fields_are_recommendation_only_in_nested_and_other_definitions():
+    before = field(b'tools: Read, Grep')
+    nested = (field(b'mcpServers:\n  synthetic:\n    command: one'), field(b'mcpServers:\n  synthetic:\n    command: two'))
+    assert verdict(CLAUDE_AGENT, *nested)[0] == 'recommendation_only'
+    assert verdict(CODEX_ROLE, ROLE, ROLE + b'[permissions]\nnetwork = true\n')[:2] == (
+        'recommendation_only', ('permission_field_changed:permissions',))
+    table = ROLE + b'[permissions]\nnetwork = true\n'
+    # an unchanged TOML table is compared exactly
+    assert verdict(CODEX_ROLE, table, table.replace(b'Check the diff.', b'Check twice.'))[0] == 'adoptable'
+    assert verdict(SHIP, None, b'---\nallowed-tools: Bash\n---\nShip.\n')[0] == 'recommendation_only'
+    assert verdict(CLAUDE_AGENT, before, before + b'More.\n')[0] == 'adoptable'
+
+
+@pytest.mark.parametrize(('old', 'new'), [
+    pytest.param(None, FLOW, id='new-flow-list'),
+    pytest.param(None, BLOCK, id='new-block-list'),
+    pytest.param(FLOW, FLOW.replace(b'[Read]', b'[Read, Bash]'), id='flow-list-widened'),
+    pytest.param(FLOW, BLOCK, id='flow-to-block-list'),
+    pytest.param(FLOW, b'Ship.\n', id='flow-list-dropped'),
+    pytest.param(b'\xef\xbb\xbf' + FLOW, b'\xef\xbb\xbfShip.\n', id='bom-flow-list-dropped'),
+])
+def test_list_valued_command_allowed_tools_is_a_permission_change(old, new):
+    assert verdict(SHIP, old, new)[:2] == ('recommendation_only', ('permission_field_changed:allowed-tools',))
+
+
+def test_unterminated_command_frontmatter_is_blocked():
+    dotted = FLOW.replace(b'\n---\n', b'\n...\n')  # the shared command reader treats a '...' close as unterminated
+    assert verdict(SHIP, dotted, dotted + b'More.\n')[:2] == ('blocked', ('frontmatter_unterminated',))
+
+
+@pytest.mark.parametrize('raw', [
+    pytest.param(FLOW, id='flow-list'),
+    pytest.param(BLOCK, id='block-list'),
+    pytest.param(b'\xef\xbb\xbf' + FLOW, id='bom-flow-list'),
+])
+def test_unchanged_command_allowed_tools_list_is_adoptable(raw):
+    # an unchanged list is compared exactly
+    assert verdict(SHIP, raw, raw + b'More.\n')[0] == 'adoptable'
+
+
+@pytest.mark.parametrize(('extra', 'name'), [
+    pytest.param(b'web_search = "live"', 'web_search', id='web_search'),
+    pytest.param(b'[browser_use]\nsynthetic = true', 'browser_use', id='browser_use'),
+    pytest.param(b'[computer_use]\nsynthetic = true', 'computer_use', id='computer_use'),
+    pytest.param(b'notify = ["sh", "-c", "true"]', 'notify', id='notify'),
+    pytest.param(b'js_repl_node_path = "/synthetic/node"', 'js_repl_node_path', id='js_repl_node_path'),
+    pytest.param(b'openai_base_url = "https://example.invalid"', 'openai_base_url', id='openai_base_url'),
+    pytest.param(b'chatgpt_base_url = "https://example.invalid"', 'chatgpt_base_url', id='chatgpt_base_url'),
+    pytest.param(b'[features]\nsynthetic = true', 'features', id='features'),
+    pytest.param(b'[apps]\nsynthetic = {}', 'apps', id='apps'),
+    pytest.param(b'[plugins]\nsynthetic = {}', 'plugins', id='plugins'),
+    pytest.param(b'[otel]\nsynthetic = 1', 'otel', id='otel'),
+    pytest.param(b'[model_providers.x]\nbase_url = "https://example.invalid"', 'model_providers', id='model_providers'),
+])
+def test_codex_fields_outside_the_inert_allowlist_are_permission_changes(extra, name):
+    assert verdict(CODEX_ROLE, ROLE, ROLE + extra + b'\n')[:2] == (
+        'recommendation_only', (f'permission_field_changed:{name}',))
+
+
+def test_codex_model_tuning_fields_are_adoptable():
+    tuned = ROLE + b'model = "synthetic"\nmodel_reasoning_effort = "high"\n'
+    assert verdict(CODEX_ROLE, ROLE, tuned)[0] == 'adoptable'
+
+
+def test_codex_no_override_field_has_no_effect():
+    added = ROLE + b'sandbox_mode = "read-only"\n'
+    assert verdict(CODEX_ROLE, ROLE, added) == (
+        'no_effect', ('no_override_field_changed:sandbox_mode',), ('no_override_effect',), ())
+    assert verdict(CODEX_ROLE, added, ROLE)[0] == 'no_effect'
+    kept = verdict(CODEX_ROLE, added, added.replace(b'Check the diff.', b'Check twice.'))
+    assert kept == ('adoptable', (), ('no_override_effect',), ())
+
+
+def test_an_inert_part_next_to_an_effective_change_is_only_flagged():
+    added = ROLE + b'sandbox_mode = "read-only"\n'
+    effective = ('adoptable', (), ('no_override_effect',), ())
+    assert verdict(CODEX_ROLE, None, added) == effective  # a new role takes effect
+    assert verdict(CODEX_ROLE, ROLE, added.replace(b'Check the diff.', b'Check twice.')) == effective
+    inert = {CODEX_ROLE: (ROLE, added)}
+    assert review(inert).verdict == 'no_effect'
+    assert review({**inert, 'AGENTS.md': (b'old', b'new')}).verdict == 'adoptable'
+    assert review({**inert, CLAUDE_AGENT: (None, AGENT)}).verdict == 'adoptable'
+    assert review(inert, other_changes=True).verdict == 'adoptable'
+    shadowed = {'.claude/commands/deploy.md': (None, b'Deploy.\n'), '.claude/skills/deploy/SKILL.md': (None, SKILL)}
+    assert review(shadowed).verdict == 'adoptable'  # the new skill itself changes behaviour
+    assert review(shadowed, {'.claude/commands/deploy.md': b'Deploy.\n',
+                             '.claude/skills/deploy/SKILL.md': SKILL}).findings[0].verdict == 'no_effect'
+
+
+def test_review_parses_each_staged_definition_once():
+    changes = {f'.claude/agents/a{index}.md': (None, AGENT.replace(b'reviewer', b'r%d' % index))
+               for index in range(40)}
+    with patch('agent_harness_lab.sources.agents_validation.agents_inventory.parse',
+               wraps=__import__('agent_harness_lab.sources.agents_inventory', fromlist=['parse']).parse) as parse:
+        assert review(changes).verdict == 'adoptable'
+    assert parse.call_count <= 2 * len(changes)
+
+
+def test_commands():
+    assert verdict('.claude/commands/ops/deploy.md', None, b'Deploy the synthetic app.\n')[0] == 'adoptable'
+    for raw in (b'---\nname: deploy\n---\nDeploy.\n', b'---\npaths: src/**\n---\nDeploy.\n'):
+        assert verdict('.claude/commands/deploy.md', None, raw)[:2] == ('blocked', ('ignored_field',))
+    assert verdict('.claude/commands/deploy.md', None, b'---\nhooks:\n  Stop: []\n---\nDeploy.\n')[:2] == (
+        'blocked', ('hooks_need_hook_contract',))
+    assert verdict('.claude/commands/deploy.md', None, b'---\ndescription: [x\n---\n')[:2] == (
+        'blocked', ('frontmatter_bad_yaml',))
+    staged = {'.claude/commands/deploy.md': b'Deploy.\n', '.claude/skills/deploy/SKILL.md': SKILL}
+    assert verdict('.claude/commands/deploy.md', None, b'Deploy.\n', staged) == (
+        'no_effect', ('shadowed_by_skill',), ('shadowed_by_skill',), ('migrate_to_skill',))
+
+
+def test_removal_and_other_surfaces():
+    assert verdict(CLAUDE_AGENT, b'\n' + AGENT, None) == ('adoptable', (), (), ())
+    found = review({'AGENTS.md': (b'old', b'new'), '.claude/rules/style.md': (None, b'rule')})
+    assert (found.verdict, found.findings) == ('adoptable', ())
+    document = review({'.claude/agents/r.md': (None, b'\n' + AGENT)}).document()
+    assert (document['verdict'], document['adoption_authority'], document['publication_allowed']) == (
+        'blocked', False, False)
+    assert 'Reviews synthetic diffs' not in json.dumps(document)
 
 
 FAKE = r'''#!/usr/bin/env python3
@@ -170,103 +215,116 @@ print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
 '''
 
 
-class WorkflowDefinitionTests(unittest.TestCase):
-    def setUp(self):
-        temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
-        self.root = Path(temp.name); self.project = self.root / 'project'; self.project.mkdir()
+class Workspace:
+    """A synthetic project beside a fake agent executable."""
+
+    def __init__(self, root):
+        self.root = root; self.project = root / 'project'; self.project.mkdir()
         (self.project / 'AGENTS.md').write_text('synthetic\n')
-        self.agent = self.root / 'agent'; self.agent.write_text(FAKE); self.agent.chmod(0o700)
-        for target, value in (('state_root', self.root / 'state'), ('collect', dict(
-                analysis=dict(events=0, cases=0, field_coverage={}, findings=[], recurring_sequences=[], limitations=[],
-                              deferred_mechanisms={}), evaluation_failures=[], fingerprint='one', caveats=[]))):
-            patcher = patch(f'agent_harness_lab.workflow.{target}', return_value=value)
-            patcher.start(); self.addCleanup(patcher.stop)
+        self.agent = root / 'agent'; self.agent.write_text(FAKE); self.agent.chmod(0o700)
 
     def improve(self, files):
         (self.project / 'files.json').write_text(json.dumps(files))
         return improve(argparse.Namespace(project=self.project, events=None, format='normalized', output=None,
             agent='codex', codex=str(self.agent), claude='missing', timeout=30, interval=1, once=True, focus=None))
 
-    def test_invalid_or_permission_candidates_stop_before_evaluation(self):
-        for files, status, reason in (
-                ({'.codex/agents/reviewer.toml': ROLE.decode() + 'web_search = "live"\n'},
-                 'inconclusive', 'definition_change_recommendation_only'),
-                ({'.claude/agents/reviewer.md': '\n' + AGENT.decode()}, 'blocked', 'definition_validation_failed'),
-                ({'.claude/agents/reviewer.md': '---\ndescription: d\n---\n'}, 'blocked', 'definition_validation_failed'),
-                ({'.claude/agents/reviewer.md': field(b'tools: Read').decode()},
-                 'inconclusive', 'definition_change_recommendation_only')):
-            with self.subTest(reason=reason, files=list(files)):
-                result = self.improve(files)
-                self.assertEqual((result['status'], result['reason']), (status, reason))
-                self.assertEqual(result['changed_files'], [])
-                self.assertFalse((Path(result['output']) / 'preparation/evaluation-0').exists())
-                self.assertFalse((Path(result['output']) / 'candidate-0').exists())
-                self.assertEqual(json.loads((Path(result['output']) / 'workflow.json').read_text())['reason'], reason)
-                self.assertFalse((self.project / '.claude').exists() or (self.project / '.codex').exists())
-
-    def test_a_role_with_an_inert_field_next_to_an_effective_change_reaches_evaluation(self):
-        role = ROLE.decode() + 'sandbox_mode = "read-only"\n'
-        for files in ({'.codex/agents/reviewer.toml': role},
-                      {'.codex/agents/reviewer.toml': role, 'AGENTS.md': 'synthetic and changed\n'}):
-            with self.subTest(files=list(files)):
-                result = self.improve(files)
-                self.assertNotIn('definition_review', result)
-                self.assertTrue((Path(result['output']) / 'candidate-0/.codex/agents/reviewer.toml').is_file())
-
-    def test_review_tree_stops_only_an_inert_only_candidate(self):
-        (self.project / '.codex/agents').mkdir(parents=True)
-        (self.project / '.codex/agents/reviewer.toml').write_bytes(ROLE)
-        original = snapshot(self.project, self.root / 'baseline', allowed_paths=['AGENTS.md', '.codex/agents/reviewer.toml'])
-        shutil.copytree(self.root / 'baseline', self.root / 'candidate')
-        (self.root / 'candidate/.codex/agents/reviewer.toml').write_bytes(ROLE + b'sandbox_mode = "read-only"\n')
-        tree = lambda: review_tree(self.root / 'baseline', self.root / 'candidate', original,
-                                   candidate_states(self.root / 'candidate', original))
-        self.assertEqual(tree().outcome()['reason'], 'definition_change_has_no_effect')
-        (self.root / 'candidate/AGENTS.md').write_text('synthetic and changed\n')
-        self.assertEqual((tree().verdict, tree().outcome()), ('adoptable', None))
-
-    def test_valid_agent_candidate_reaches_evaluation(self):
-        result = self.improve({'.claude/agents/reviewer.md': AGENT.decode()})
-        self.assertNotIn('definition_review', result)
-        self.assertTrue((Path(result['output']) / 'preparation/evaluation-0/context.json').is_file())
-        self.assertTrue((Path(result['output']) / 'candidate-0/.claude/agents/reviewer.md').is_file())
-
     def stage(self, before, after):
         (self.project / '.claude/agents').mkdir(parents=True)
-        (self.project / '.claude/agents/reviewer.md').write_bytes(before)
-        original = snapshot(self.project, self.root / 'baseline', allowed_paths=['AGENTS.md', '.claude/agents/reviewer.md'])
+        (self.project / CLAUDE_AGENT).write_bytes(before)
+        original = snapshot(self.project, self.root / 'baseline', allowed_paths=['AGENTS.md', CLAUDE_AGENT])
         shutil.copytree(self.root / 'baseline', self.root / 'candidate')
-        if after is None: (self.root / 'candidate/.claude/agents/reviewer.md').unlink()
-        else: (self.root / 'candidate/.claude/agents/reviewer.md').write_bytes(after)
+        if after is None: (self.root / 'candidate' / CLAUDE_AGENT).unlink()
+        else: (self.root / 'candidate' / CLAUDE_AGENT).write_bytes(after)
         return original, candidate_states(self.root / 'candidate', original)
 
-    def test_adopt_refuses_a_non_adoptable_definition(self):
-        original, proposed = self.stage(AGENT, field(b'tools: Read'))
-        with self.assertRaisesRegex(ValueError, 'recommendation_only'):
-            adopt(self.project, self.root / 'baseline', self.root / 'candidate', original, proposed)
-        self.assertEqual((self.project / '.claude/agents/reviewer.md').read_bytes(), AGENT)
 
-    def test_a_frontmatter_grant_is_refused_by_the_hook_contract_first(self):
-        result = None
-        with self.assertRaisesRegex(ValueError, 'needs a hook contract: .claude/agents/reviewer.md'):
-            result = self.improve({'.claude/agents/reviewer.md': field(b'permissionMode: bypassPermissions').decode()})
-        self.assertIsNone(result)
-        self.assertFalse((self.project / '.claude').exists())
-        with self.assertRaisesRegex(ValueError, 'needs a hook contract'):
-            self.stage(AGENT, field(b'permissionMode: bypassPermissions'))
-        self.assertEqual((self.project / '.claude/agents/reviewer.md').read_bytes(), AGENT)
-
-    def test_adopt_updates_a_valid_definition(self):
-        original, proposed = self.stage(AGENT, AGENT + b'Check twice.\n')
-        self.assertEqual(adopt(self.project, self.root / 'baseline', self.root / 'candidate', original, proposed),
-                         ['.claude/agents/reviewer.md'])
-        self.assertEqual((self.project / '.claude/agents/reviewer.md').read_bytes(), AGENT + b'Check twice.\n')
-
-    def test_adopt_removes_a_definition(self):
-        original, proposed = self.stage(AGENT, None)
-        adopt(self.project, self.root / 'baseline', self.root / 'candidate', original, proposed)
-        self.assertFalse((self.project / '.claude/agents/reviewer.md').exists())
+@pytest.fixture
+def workspace(tmp_path, monkeypatch):
+    collected = dict(
+        analysis=dict(events=0, cases=0, field_coverage={}, findings=[], recurring_sequences=[], limitations=[],
+                      deferred_mechanisms={}), evaluation_failures=[], fingerprint='one', caveats=[])
+    monkeypatch.setattr(workflow, 'state_root', Mock(return_value=tmp_path / 'state'))
+    monkeypatch.setattr(workflow, 'collect', Mock(return_value=collected))
+    return Workspace(tmp_path)
 
 
-if __name__ == '__main__':
-    unittest.main()
+@pytest.mark.parametrize(('files', 'status', 'reason'), [
+    pytest.param({CODEX_ROLE: ROLE.decode() + 'web_search = "live"\n'},
+                 'inconclusive', 'definition_change_recommendation_only', id='codex-web_search'),
+    pytest.param({CLAUDE_AGENT: '\n' + AGENT.decode()}, 'blocked', 'definition_validation_failed',
+                 id='claude-no_leading_fence'),
+    pytest.param({CLAUDE_AGENT: '---\ndescription: d\n---\n'}, 'blocked', 'definition_validation_failed',
+                 id='claude-missing_name'),
+    pytest.param({CLAUDE_AGENT: field(b'tools: Read').decode()},
+                 'inconclusive', 'definition_change_recommendation_only', id='claude-tools'),
+])
+def test_invalid_or_permission_candidates_stop_before_evaluation(workspace, files, status, reason):
+    result = workspace.improve(files)
+    assert (result['status'], result['reason']) == (status, reason)
+    assert result['changed_files'] == []
+    assert not (Path(result['output']) / 'preparation/evaluation-0').exists()
+    assert not (Path(result['output']) / 'candidate-0').exists()
+    assert json.loads((Path(result['output']) / 'workflow.json').read_text())['reason'] == reason
+    assert not ((workspace.project / '.claude').exists() or (workspace.project / '.codex').exists())
+
+
+@pytest.mark.parametrize('files', [
+    pytest.param({CODEX_ROLE: INERT_ROLE}, id='role-only'),
+    pytest.param({CODEX_ROLE: INERT_ROLE, 'AGENTS.md': 'synthetic and changed\n'}, id='role-and-instructions'),
+])
+def test_a_role_with_an_inert_field_next_to_an_effective_change_reaches_evaluation(workspace, files):
+    result = workspace.improve(files)
+    assert 'definition_review' not in result
+    assert (Path(result['output']) / 'candidate-0' / CODEX_ROLE).is_file()
+
+
+def test_review_tree_stops_only_an_inert_only_candidate(workspace):
+    root, project = workspace.root, workspace.project
+    (project / '.codex/agents').mkdir(parents=True)
+    (project / CODEX_ROLE).write_bytes(ROLE)
+    original = snapshot(project, root / 'baseline', allowed_paths=['AGENTS.md', CODEX_ROLE])
+    shutil.copytree(root / 'baseline', root / 'candidate')
+    (root / 'candidate' / CODEX_ROLE).write_bytes(ROLE + b'sandbox_mode = "read-only"\n')
+    tree = lambda: review_tree(root / 'baseline', root / 'candidate', original,
+                               candidate_states(root / 'candidate', original))
+    assert tree().outcome()['reason'] == 'definition_change_has_no_effect'
+    (root / 'candidate/AGENTS.md').write_text('synthetic and changed\n')
+    assert (tree().verdict, tree().outcome()) == ('adoptable', None)
+
+
+def test_valid_agent_candidate_reaches_evaluation(workspace):
+    result = workspace.improve({CLAUDE_AGENT: AGENT.decode()})
+    assert 'definition_review' not in result
+    assert (Path(result['output']) / 'preparation/evaluation-0/context.json').is_file()
+    assert (Path(result['output']) / 'candidate-0' / CLAUDE_AGENT).is_file()
+
+
+def test_adopt_refuses_a_non_adoptable_definition(workspace):
+    original, proposed = workspace.stage(AGENT, field(b'tools: Read'))
+    with pytest.raises(ValueError, match='recommendation_only'):
+        adopt(workspace.project, workspace.root / 'baseline', workspace.root / 'candidate', original, proposed)
+    assert (workspace.project / CLAUDE_AGENT).read_bytes() == AGENT
+
+
+def test_a_frontmatter_grant_is_refused_by_the_hook_contract_first(workspace):
+    result = None
+    with pytest.raises(ValueError, match='needs a hook contract: .claude/agents/reviewer.md'):
+        result = workspace.improve({CLAUDE_AGENT: field(b'permissionMode: bypassPermissions').decode()})
+    assert result is None
+    assert not (workspace.project / '.claude').exists()
+    with pytest.raises(ValueError, match='needs a hook contract'):
+        workspace.stage(AGENT, field(b'permissionMode: bypassPermissions'))
+    assert (workspace.project / CLAUDE_AGENT).read_bytes() == AGENT
+
+
+def test_adopt_updates_a_valid_definition(workspace):
+    original, proposed = workspace.stage(AGENT, AGENT + b'Check twice.\n')
+    assert adopt(workspace.project, workspace.root / 'baseline', workspace.root / 'candidate',
+                 original, proposed) == [CLAUDE_AGENT]
+    assert (workspace.project / CLAUDE_AGENT).read_bytes() == AGENT + b'Check twice.\n'
+
+
+def test_adopt_removes_a_definition(workspace):
+    original, proposed = workspace.stage(AGENT, None)
+    adopt(workspace.project, workspace.root / 'baseline', workspace.root / 'candidate', original, proposed)
+    assert not (workspace.project / CLAUDE_AGENT).exists()
