@@ -189,7 +189,8 @@ Observe-only monitoring uses a frozen exposure window and task-start deployment
 mapping. Late A outcomes cannot trigger rollback of B. Duplicate, missing and
 ambiguous observations are not fabricated successes. A verified critical event
 pauses for manual review; statistical drift attribution and automatic reversion
-are not implemented. A `stable` window means its explicit exposure conditions
+are not implemented. [Frozen drift plans](drift-monitoring.md) separate capture
+alerts from task-mix and verified-performance exposure without a statistical test. A `stable` window means its explicit exposure conditions
 were reached without an observed critical event, not that rare-harm risk is zero.
 
 ## CLI and reports
