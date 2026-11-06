@@ -208,7 +208,8 @@ RULES = (
     # rows outrank the skill and hook segment rows, so agents/hooks/x.md stays an agent that has the hook facet.
     # Checkout agent files are adoptable, yet the hook facet keeps every agent edit unresolved in change plans, and
     # adoption() refuses an agent, command, path rule or SKILL.md whose frontmatter registers hooks, grants
-    # permissions or tools, or starts an MCP server (CLAUDE_GRANT_KEYS).
+    # permissions or tools, or starts an MCP server (CLAUDE_GRANT_KEYS), and a command or SKILL.md whose body
+    # holds shell pre-execution syntax (embeds_shell).
     Rule('claude-agent-definition', 'agent', 15, 'adoptable', _agent_file('.claude', '.md'),
          runtimes=frozenset({'claude-code'}), label='.claude/agents/**/*.md agent definitions',
          unconfirmed='recommendation_only'),
@@ -373,6 +374,29 @@ def embeds_hooks(relative_path, raw):
     return bool(_CLAUDE_GRANTS.search(front))
 
 
+# Claude Code shell pre-execution, pinned to the public skills docs (_CLAUDE + 'skills', "Inject dynamic context"):
+# an inline !`command` whose ! starts a line or follows whitespace, and a fenced block opened with ```!. The command
+# runs when a skill or command is invoked, before Claude sees the body, so it is hook-equivalent. Variants the docs
+# do not confirm fail closed: a ! after any other character, blanks between ! and the backtick, an indented, longer
+# or tilde fence, and blanks before the fence's !. A plain fenced code block is not excluded, because the docs never
+# say Claude skips one, and the frontmatter is scanned too, because substitution runs over the original file.
+_SHELL_PREEXECUTION = re.compile(r'![ \t]*`|^[ \t]*(?:`{3,}|~{3,})[ \t]*!', re.MULTILINE)
+
+
+def embeds_shell(raw):
+    """Whether Markdown bytes hold Claude shell pre-execution syntax; undecodable bytes count as holding it."""
+    try: text = raw.decode('utf-8')
+    except UnicodeDecodeError: return True
+    return _SHELL_PREEXECUTION.search(text) is not None
+
+
+def _renders_shell(relative_path, facets):
+    """The Markdown commands and SKILL.md files whose body Claude renders with shell pre-execution. A SKILL.md is
+    checked under every skill root, since one bundle can load in both runtimes; agents and rules do not render it."""
+    name = PurePosixPath(relative_path).name
+    return name.endswith('.md') and 'command' in facets or name == 'SKILL.md' and 'skill' in facets
+
+
 def _reads_frontmatter(relative_path, facets):
     """Agent definitions, and the Markdown commands, path rules and SKILL.md files whose frontmatter Claude parses."""
     name = PurePosixPath(relative_path).name
@@ -382,11 +406,13 @@ def _reads_frontmatter(relative_path, facets):
 
 def adoption(relative_path, mode, raw, **context):
     """classify() for writing raw bytes with st_mode bits mode at the path. A file whose frontmatter can register
-    hooks, grant permissions or start processes needs the hook contract (hooks_contract), the same classification as
-    a settings hook, so adoption never evades hook review; raw None writes no content."""
+    hooks, grant permissions or start processes, or a command or SKILL.md whose body runs shell commands on
+    invocation, needs the hook contract (hooks_contract), the same classification as a settings hook, so adoption
+    never evades hook review; raw None writes no content."""
     verdict = classify(relative_path, None, mode, **context)
-    if verdict.writability == 'adoptable' and raw is not None and _reads_frontmatter(relative_path, verdict.facets) \
-            and embeds_hooks(relative_path, raw):
+    if verdict.writability == 'adoptable' and raw is not None and (
+            _reads_frontmatter(relative_path, verdict.facets) and embeds_hooks(relative_path, raw)
+            or _renders_shell(relative_path, verdict.facets) and embeds_shell(raw)):
         return replace(verdict, writability='contract_required')
     return verdict
 
@@ -478,6 +504,7 @@ CAPABILITIES = (
     _row('commands_skills', 'codex', '.agents/skills from the cwd to the root plus user and system roots', _CODEX + 'skills'),
     _row('commands_skills', 'codex', 'deprecated custom prompts may be removed after 0.166.0', _CODEX + 'custom-prompts', 'unverified'),
     _row('commands_skills', 'claude-code', 'command frontmatter excludes name and paths; a same-name skill wins', _CLAUDE + 'skills'),
+    _row('commands_skills', 'claude-code', '!`command` and ```! shell pre-execution in skill and command bodies', _CLAUDE + 'skills'),
     _row('commands_skills', 'claude-code', 'nested skills load on first file access, named /<subdir>:<dir> on a directory clash', _CLAUDE + 'skills'),
     _row('commands_skills', 'codex', 'skill name at most 64 characters, scan depth 6, agents/openai.yaml metadata', _CODEX_SOURCE + '/ext/skills/src/loader/mod.rs'),
     _row('commands_skills', 'codex', '[[skills.config]] path or name selector with enabled', _CODEX + 'skills'),

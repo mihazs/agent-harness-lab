@@ -1756,7 +1756,11 @@ file.
   `skills/` directory, such as `packages/skills`, is still a command folder. They
   are `adoptable` only after a caller confirms checkout containment and are
   otherwise `unsupported`. A non-executable command edit is no longer listed under
-  `unresolved_operations`.
+  `unresolved_operations`. Adoption still refuses a command whose frontmatter
+  grants hooks, permissions, tools or MCP servers, or whose body holds shell
+  pre-execution syntax (`` !`command` `` or a ` ```! ` block, including inside a
+  plain fenced code block). It routes such a file to the hook contract; see
+  `docs/one-call-improvement.md`.
   A subdirectory becomes part of the id, so
   `.claude/commands/frontend/component.md` is `/frontend:component`. A command
   whose id matches a skill's id is flagged `shadowed_by_skill`, because the skill
