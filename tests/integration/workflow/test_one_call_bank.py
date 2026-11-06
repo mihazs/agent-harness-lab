@@ -13,6 +13,7 @@ import pytest
 from agent_harness_lab import config
 from agent_harness_lab.cli import evaluator, main
 from tests.integration.evaluation.test_offline_evaluation import SOLVER
+from tests.support.unittest_cleanups import run_cleanups
 
 
 @pytest.fixture
@@ -54,7 +55,7 @@ else:
 print(json.dumps(dict(type='turn.completed',usage=dict(output_tokens=1))))
 '''.replace('exec(SOLVER)', 'exec('+repr(SOLVER)+')'))
     yield pinned
-    pinned.fixture.doCleanups()
+    run_cleanups(pinned.fixture)
 
 
 def write_config(pinned):

@@ -23,6 +23,7 @@ from agent_harness_lab.evaluation.sandbox import SandboxBackend
 from tests.integration.evaluation import test_regression_admission as admissions
 from tests.integration.evaluation import test_offline_evaluation as offline
 from tests.integration.evaluation import test_oracle_history as histories
+from tests.support.unittest_cleanups import run_cleanups
 
 
 class OracleBankAuthorityTests(unittest.TestCase):
@@ -86,7 +87,7 @@ class OracleBankAuthorityTests(unittest.TestCase):
 def fixture():
     value = OracleBankAuthorityTests(); value.setUp()
     yield value
-    value.doCleanups()
+    run_cleanups(value)
 
 
 def assert_not_current(operation):

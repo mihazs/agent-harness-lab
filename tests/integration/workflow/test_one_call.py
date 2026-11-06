@@ -15,6 +15,7 @@ from agent_harness_lab.cli import main
 from agent_harness_lab import config
 from agent_harness_lab.promotion.journal import Journal
 from agent_harness_lab.one_call import structural_candidate
+from tests.support.unittest_cleanups import run_cleanups
 
 
 class OneCallTests(unittest.TestCase):
@@ -48,7 +49,7 @@ class OneCallTests(unittest.TestCase):
 def one():
     fixture = OneCallTests(); fixture.setUp()
     yield fixture
-    fixture.doCleanups()
+    run_cleanups(fixture)
 
 
 def test_single_call_applies_verified_contract_and_is_idempotent(one):
@@ -326,8 +327,7 @@ def configured_workflow(one):
             runtime=dict(name='codex',executable=str(fixture.agent)),harness_paths=['AGENTS.md'],limits=dict(trials=trials))))
         return fixture
     yield build
-    for fixture in reversed(made):
-        fixture.doCleanups()
+    run_cleanups(*reversed(made))
 
 
 def test_configured_scope_is_frozen_before_preparation(configured_workflow):

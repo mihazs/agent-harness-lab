@@ -26,6 +26,7 @@ from tests.integration.evaluation import test_preservation_history as fixtures
 from tests.unit.evaluation import test_preservation_analysis as math_fixtures
 from tests.integration.evaluation import test_oracle_history as histories
 from tests.integration.evaluation import test_regression_admission as admissions
+from tests.support.unittest_cleanups import run_cleanups
 
 
 def candidate(name,changes):
@@ -42,7 +43,7 @@ def resources(fixture):
 def history():
     source=fixtures.PreservationHistoryTests(); source.setUp()
     yield source.f
-    source.doCleanups()
+    run_cleanups(source)
 
 
 def search_context(fixture,allowed=('solve.py','nested/new.txt')):
@@ -210,14 +211,14 @@ def test_baseline_changed_during_last_numeric_verify_cannot_return_fresh(history
 def owner():
     owner=admissions.RegressionAdmissionTests(); owner.setUp()
     yield owner
-    owner.doCleanups()
+    run_cleanups(owner)
 
 
 @pytest.fixture
 def oracle_history(owner):
     fixture=histories.OracleHistoryTests(); fixture.setUp()
     yield fixture
-    fixture.doCleanups()
+    run_cleanups(fixture)
 
 
 def test_actual_fresh_both_arms_can_qualify_under_explicit_synthetic_power_policy(owner, oracle_history):

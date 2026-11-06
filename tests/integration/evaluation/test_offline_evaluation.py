@@ -13,6 +13,7 @@ from agent_harness_lab.evaluation.bank_tools import export_manifest
 from agent_harness_lab.evaluation.sandbox import SandboxBackend
 # The standard-library bank-qualification runner imports SOLVER and OfflineFixture from here without pytest.
 from tests.support.optional_pytest import pytest
+from tests.support.unittest_cleanups import run_cleanups
 
 BANK = Path(__file__).resolve().parents[3]/'agent_harness_lab/evaluation/fixtures/starter-v1/bank.json'
 SOLVER = '''import json,pathlib
@@ -69,7 +70,7 @@ class OfflineFixture(unittest.TestCase):
 def offline():
     fixture = OfflineFixture(); fixture.setUp()
     yield fixture
-    fixture.doCleanups()
+    run_cleanups(fixture)
 
 
 def test_storage_policy_passes_declared_artifacts_to_executors_only(offline):

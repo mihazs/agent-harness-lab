@@ -11,6 +11,7 @@ from agent_harness_lab.evaluation.oracle_history import HistoryStore
 from tests.integration.evaluation.test_offline_evaluation import OfflineFixture
 # derivation_raw_assessment.py, run with python -m unittest, imports OracleHistoryTests from here.
 from tests.support.optional_pytest import pytest
+from tests.support.unittest_cleanups import run_cleanups
 
 
 class OracleHistoryTests(OfflineFixture):
@@ -87,7 +88,7 @@ class OracleHistoryTests(OfflineFixture):
 def history():
     value = OracleHistoryTests(); value.setUp()
     yield value
-    value.doCleanups()
+    run_cleanups(value)
 
 
 def assert_not_current(operation):

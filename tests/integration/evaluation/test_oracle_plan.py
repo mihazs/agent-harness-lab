@@ -9,6 +9,7 @@ from agent_harness_lab.evaluation.plan import ExperimentSpec, schedule
 from agent_harness_lab.evaluation.sandbox import SandboxBackend
 from agent_harness_lab.evaluation.statistics import TrialRecord, analyze
 from tests.integration.evaluation.test_offline_evaluation import OfflineFixture
+from tests.support.unittest_cleanups import run_cleanups
 
 
 class OraclePlanTests(OfflineFixture):
@@ -32,7 +33,7 @@ class OraclePlanTests(OfflineFixture):
 def oracle():
     value = OraclePlanTests(); value.setUp()
     yield value
-    value.doCleanups()
+    run_cleanups(value)
 
 
 def test_stale_oracle_pin_rejects_before_probe_or_output(oracle):
