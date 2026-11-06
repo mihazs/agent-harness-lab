@@ -919,7 +919,11 @@ For the supported declaration, discovery examines each directory from the checko
 root through `task_cwd`, considering `AGENTS.override.md`, `AGENTS.md` and the explicit
 fallback names in order. Following `openai/codex@d786ff91`
 `codex-rs/core/src/agents_md.rs`, the first candidate that exists as a regular file
-is selected by its metadata alone, whatever its content. A non-empty selection is
+is selected by its metadata alone, whatever its content. Codex skips a candidate
+whose metadata is not a file and tries the next name. This reader fails closed
+instead: a candidate that exists but is not a single-link regular file, such as
+a directory, a symlink, a FIFO or a hard-linked file, makes the capture raise an
+error, so no receipt is produced rather than one that guesses the selection. A non-empty selection is
 declared applicable. A zero-byte or whitespace-only selection is hashed and stays
 `unknown` with reason `selected_empty`. Whitespace here is what Rust `str::trim`
 removes, the Unicode `White_Space` set; the separators U+001C to U+001F are content,
@@ -1637,7 +1641,11 @@ Field sets are pinned to the `surfaces.CAPABILITIES` sources: Claude Code
 
 Claude frontmatter is read by `sources/frontmatter.py`, a bounded reader
 (64 KiB, 512 lines) for a small YAML subset. The opening fence must be on
-line 1. These Claude files are `skipped_silently` with a reason:
+line 1, and a fence line may end only in `\r`. An opening fence, or a fence
+line before the closing one, that ends in spaces or tabs, such as `--- `, gives
+the disposition `unknown` with reason `frontmatter_unsupported_yaml`, because
+whether the runtime trims it is not verified, so such a file is never read as
+unfenced. These Claude files are `skipped_silently` with a reason:
 `no_leading_fence`, `bad_yaml`, `missing_name`, `invalid_name` (a leading `-`,
 a `:` or more than 256 characters) and `missing_description`. The subset
 covers plain and quoted keys, quoted scalars with a trailing comment, flow

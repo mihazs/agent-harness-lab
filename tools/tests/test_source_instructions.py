@@ -217,6 +217,15 @@ class InstructionInventoryTests(unittest.TestCase):
                 self.profile['fallback_filenames'] = names
                 with self.assertRaises(ValueError): self.read()
 
+    def test_a_non_regular_candidate_fails_closed_instead_of_being_skipped(self):
+        # #312: Codex skips a candidate whose metadata is not a file; this reader refuses the capture instead.
+        self.write('AGENTS.md', 'SYNTHETIC_ROOT')
+        (self.root/'project/AGENTS.override.md').mkdir()
+        with self.assertRaises(ValueError): self.read()
+        (self.root/'project/AGENTS.override.md').rmdir()
+        os.link(self.root/'project/AGENTS.md', self.root/'project/TEAM.md')
+        with self.assertRaises(ValueError): self.read()
+
     def home(self, name, text):
         path = self.root/'home'/name; path.parent.mkdir(parents=True, exist_ok=True); path.write_text(text)
 
