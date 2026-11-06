@@ -1,15 +1,18 @@
 """Seeded power and false-recommendation simulation of the fixed analysis; synthetic only."""
+from collections import defaultdict
 from dataclasses import replace
 import contextlib
 import io
 import json
 from pathlib import Path
+import random
 import tempfile
 import unittest
+from unittest import mock
 
 from agent_harness_lab.cli import main
-from agent_harness_lab.evaluation import benchmark, sequential
-from agent_harness_lab.evaluation.plan import ExperimentSpec
+from agent_harness_lab.evaluation import benchmark, power, sequential
+from agent_harness_lab.evaluation.plan import ExperimentSpec, schedule
 from agent_harness_lab.evaluation.power import MODEL_SCHEMA, simulate, wilson
 
 
@@ -99,6 +102,35 @@ class PowerSimulationTests(unittest.TestCase):
         sequential_spec = replace(spec, max_trials=20, sequential=sequential.config(10, 3, .25))
         with self.assertRaisesRegex(ValueError, 'fixed-final'): simulate(sequential_spec, outcome(.5, 0))
         with self.assertRaises(ValueError): simulate(spec.to_dict(), outcome(.5, 0))
+
+    def test_oversized_plans_are_refused_before_any_schedule_is_built(self):
+        unscheduled = mock.patch.object(power, 'schedule', side_effect=AssertionError('schedule was built'))
+        for spec, simulations in ((plan(1000, 10 ** 7), 1), (plan(2, 50001), 1), (plan(1000), 1001)):
+            with self.subTest(repeats=spec.repeats, simulations=simulations), unscheduled, \
+                    self.assertRaisesRegex(ValueError, 'trials'):
+                simulate(spec, outcome(.5, 0), simulations=simulations)
+
+    def test_repeat_correlation_and_root_spread_shape_drawn_outcomes(self):
+        spec = plan(20, 200)
+        trials = schedule(spec)
+
+        def outcomes(**kwargs):
+            declared = power.model(outcome(.5, 0, **kwargs), ['family'])
+            drawn = power._draw(spec, trials, declared, random.Random(3))
+            grouped = defaultdict(list)
+            for trial, record in zip(trials, drawn):
+                grouped[trial['root'], trial['version']].append(record.outcome)
+            return grouped
+
+        self.assertTrue(all(len(set(v)) == 1 for v in outcomes(repeat_correlation=1).values()))
+        self.assertTrue(any(len(set(v)) > 1 for v in outcomes(repeat_correlation=0).values()))
+        def baseline_rates(spread):
+            return [sum(v) / len(v) for (_, arm), v in outcomes(root_spread=spread).items() if arm == 'baseline']
+        # 200 independent repeats estimate each root's base probability to within about .035.
+        self.assertTrue(all(abs(rate - .5) < .15 for rate in baseline_rates(0)))
+        spread = baseline_rates(1)
+        self.assertLess(min(spread), .2)
+        self.assertGreater(max(spread), .8)
 
     def test_wilson_reference_values(self):
         self.assertEqual(wilson(0, 100)[0], 0)

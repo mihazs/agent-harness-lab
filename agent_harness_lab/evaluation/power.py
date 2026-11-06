@@ -16,6 +16,8 @@ MODEL_SCHEMA = 'synthetic-paired-outcome-model-v1'
 MAX_TASKS = 1000
 MAX_SIMULATIONS = 10000
 MAX_SIMULATED_TRIALS = 2_000_000
+# analyze rebuilds the schedule for every simulation, so one plan is bounded separately.
+MAX_PLANNED_TRIALS = 100_000
 DISPOSITIONS = ('supported', 'rejected', 'inconclusive', 'incomplete', 'blocked')
 Z95 = 1.959963984540054
 _RANGES = dict(baseline_success=(0, 1), candidate_effect=(-1, 1), root_spread=(0, 1),
@@ -96,9 +98,12 @@ def simulate(spec, outcome_model, *, simulations=200, seed=0):
     if type(seed) is not int: raise ValueError('simulation seed must be an integer')
     families = sorted({family for _, _, family in spec.tasks})
     declared = model(outcome_model, families)
-    plan = schedule(spec)
-    if simulations * len(plan) > MAX_SIMULATED_TRIALS:
+    planned = 2 * len(spec.tasks) * spec.repeats
+    if planned > MAX_PLANNED_TRIALS:
+        raise ValueError(f'power simulation exceeds {MAX_PLANNED_TRIALS} planned trials per simulation')
+    if simulations * planned > MAX_SIMULATED_TRIALS:
         raise ValueError(f'power simulation exceeds {MAX_SIMULATED_TRIALS} simulated trials')
+    plan = schedule(spec)
     rng, counts, reasons = random.Random(seed), dict.fromkeys(DISPOSITIONS, 0), {}
     for _ in range(simulations):
         result = analyze(spec, _draw(spec, plan, declared, rng))

@@ -109,8 +109,9 @@ reason counts, the plan and model SHA-256, declared roots separately from
 repetitions, and the simulated trial count. `supported_rate` is labeled `power`
 for a beneficial declared effect, `false_recommendation_rate` for a null or
 harmful one, and `mixed_family_effects` otherwise. Plans with a cohort pin or a
-sequential profile are refused, and one call is capped at 10000 simulations and
-2,000,000 simulated trials. A completed simulation exits 0.
+sequential profile are refused, and one call is capped at 10000 simulations,
+100,000 planned trials per simulation and 2,000,000 simulated trials, checked
+before any schedule is built. A completed simulation exits 0.
 
 The offline tests predeclare their criteria before running: 300 null simulations
 with heterogeneous roots and correlated repeats keep the Wilson upper bound of the
