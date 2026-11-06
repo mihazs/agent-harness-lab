@@ -1,7 +1,10 @@
 """Taskfile runners use pytest; only standard-library-only runners keep unittest, and their files are listed."""
 import ast
 import fnmatch
+import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -14,6 +17,29 @@ MARKDOWN = [ROOT/'README.md', ROOT/'CONTRIBUTING.md', *sorted((ROOT/'docs').rglo
 # test:evaluation:bank-qualification:wheel runs this task from a venv that cannot install pytest.
 STDLIB_TASKS = {'test:evaluation:bank-qualification'}
 DISCOVER = re.compile(r'''-m unittest discover -s (\S+) -p ["']?([^\s"']+)''')
+# Loads a file the way `python -m unittest discover` does, with pytest unimportable, and reports what pytest
+# would also collect from it: module-level test functions and Test classes that are not unittest.TestCase.
+NO_PYTEST_PROBE = r'''
+import importlib.abc, inspect, json, sys, unittest
+class Blocked(importlib.abc.MetaPathFinder):
+    def find_spec(self, name, path=None, target=None):
+        if name.partition('.')[0] in {'pytest', '_pytest'}:
+            raise ModuleNotFoundError(f'No module named {name!r}', name=name)
+sys.meta_path.insert(0, Blocked())
+root, start, name = sys.argv[1:]
+sys.path.insert(0, root)
+def flatten(suite):
+    for item in suite:
+        yield from flatten(item) if isinstance(item, unittest.TestSuite) else [item]
+cases = list(flatten(unittest.defaultTestLoader.discover(start, pattern=name)))
+errors = [str(case._exception) for case in cases if hasattr(case, '_exception')]
+errors += [str(error) for error in unittest.defaultTestLoader.errors]
+modules = [m for m in list(sys.modules.values()) if getattr(m, '__file__', None) and m.__file__.endswith('/' + name)]
+pytest_only = [f'{m.__name__}.{key}' for m in modules for key, value in vars(m).items()
+               if (key.startswith('test') and inspect.isfunction(value))
+               or (key.startswith('Test') and inspect.isclass(value) and not issubclass(value, unittest.TestCase))]
+print(json.dumps({'cases': len(cases) - len(errors), 'errors': errors, 'modules': len(modules), 'pytest_only': pytest_only}))
+'''
 
 
 def task_blocks():
@@ -36,6 +62,22 @@ def start_dir(text):
     if path.is_absolute() and text.startswith('/path/to/'):
         path = ROOT/'skills'/text.removeprefix('/path/to/')
     return path if path.is_absolute() else ROOT/path
+
+
+def probe_without_pytest(path):
+    path = Path(path)
+    done = subprocess.run([sys.executable, '-I', '-c', NO_PYTEST_PROBE, str(ROOT), str(path.parent), path.name],
+                          cwd=ROOT, capture_output=True, text=True, timeout=300)
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout.splitlines()[-1])
+
+
+def assert_runs_without_pytest(path):
+    report = probe_without_pytest(path)
+    assert report['errors'] == [], report['errors']
+    assert report['modules'] == 1, f'{path} was not imported by unittest discovery'
+    assert report['pytest_only'] == [], f'{path} defines cases only pytest collects: {report["pytest_only"]}'
+    assert report['cases'] > 0, f'{path} has no unittest cases'
 
 
 def unittest_bound():
@@ -85,3 +127,24 @@ def test_unittest_bound_file_keeps_a_testcase_class(path):
     tree = ast.parse((ROOT/path).read_text())
     bases = [ast.unparse(base) for node in ast.walk(tree) if isinstance(node, ast.ClassDef) for base in node.bases]
     assert 'unittest.TestCase' in bases
+
+
+@pytest.mark.parametrize('path', sorted(listed_bound()))
+def test_unittest_bound_file_runs_fully_without_pytest(path):
+    assert_runs_without_pytest(ROOT/path)
+
+
+CLEAN = 'import unittest\n\n\nclass Cases(unittest.TestCase):\n    def test_one(self):\n        pass\n'
+
+
+@pytest.mark.parametrize('extra', ['import pytest\n', 'from _pytest import fixtures\n',
+                                   'def test_pytest_only(tmp_path):\n    pass\n',
+                                   'class TestPlain:\n    def test_two(self):\n        pass\n'])
+def test_pytest_dependence_in_a_unittest_bound_file_is_rejected(tmp_path, extra):
+    clean, mutated = tmp_path/'clean'/'test_case.py', tmp_path/'mutated'/'test_case.py'
+    for path, text in ((clean, CLEAN), (mutated, extra + CLEAN if 'import' in extra else CLEAN + extra)):
+        path.parent.mkdir()
+        path.write_text(text)
+    assert_runs_without_pytest(clean)
+    with pytest.raises(AssertionError):
+        assert_runs_without_pytest(mutated)
