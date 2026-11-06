@@ -69,9 +69,12 @@ evidence is `unknown_capture`, with claim level `none`, whatever disposition it
 carries. Complete coverage requires at least one mechanism, every entry
 `resolved` (validated, rejected, already covered or outside scope) and an
 explicit `capture="complete"` declaration; the default `unknown` and `partial`
-capture report that unseen mechanisms are possible. Unknown exposure
-denominators, suppressed duplicate keys and mechanism IDs recorded under several
-evidence/component versions are listed. Routes and claim levels are hypotheses,
+capture report that unseen mechanisms are possible. A repeated key is
+suppressed only when its derived entry and history match the first record's;
+any other repeat, such as one without captured evidence or without a falsifier,
+is listed as a conflict and keeps the key open (`conflicting_records_for_key`)
+in either order. Unknown exposure denominators, suppressed duplicate keys and
+mechanism IDs recorded under several evidence/component versions are listed. Routes and claim levels are hypotheses,
 not causal proof.
 
 `run_queue` treats a record's component as its reviewed route and checks it

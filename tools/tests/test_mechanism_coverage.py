@@ -119,15 +119,32 @@ class MechanismCoverageTests(unittest.TestCase):
             result = report(order, capture='complete')
             self.assertFalse(result['coverage_complete'])
             self.assertEqual(result['entries'][0]['coverage'], 'open')
-            self.assertIn('conflicting_dispositions_for_key', result['entries'][0]['limitations'])
-            self.assertIn('conflicting_dispositions_for_key', result['limitations'])
+            self.assertIn('conflicting_records_for_key', result['entries'][0]['limitations'])
+            self.assertIn('conflicting_records_for_key', result['limitations'])
             self.assertEqual(result['totals']['duplicates_suppressed'], 1)
             self.assertTrue(result['duplicates'][0]['conflict'])
             self.assertEqual(result['duplicates'][0]['disposition'], order[1].disposition)
         exact = report([resolved(), resolved()], capture='complete')
         self.assertTrue(exact['coverage_complete'])
         self.assertFalse(exact['duplicates'][0]['conflict'])
-        self.assertNotIn('conflicting_dispositions_for_key', exact['limitations'])
+        self.assertNotIn('conflicting_records_for_key', exact['limitations'])
+
+    def test_same_key_records_that_derive_different_coverage_conflict_in_any_order(self):
+        pairs = {'actionability': (lambda: record('a').transition('validated', 'ok'),
+                                   lambda: record('a', falsifier=None).transition('validated', 'ok')),
+                 'evidence': (lambda: record('a').transition('rejected', 'tie'),
+                              lambda: record('a', evidence=[]).transition('rejected', 'tie')),
+                 'exposure': (lambda: record('a').transition('rejected', 'tie'),
+                              lambda: record('a', exposure=None).transition('rejected', 'tie'))}
+        for name, (first, second) in pairs.items():
+            for order in ([first(), second()], [second(), first()]):
+                with self.subTest(name, first=order[0].as_dict()):
+                    result = report(order, capture='complete')
+                    self.assertFalse(result['coverage_complete'])
+                    self.assertNotEqual(result['entries'][0]['coverage'], 'resolved')
+                    self.assertEqual([d['conflict'] for d in result['duplicates']], [True])
+                    self.assertIn('conflicting_records_for_key', result['entries'][0]['limitations'])
+                    self.assertIn('conflicting_records_for_key', result['limitations'])
 
     def test_report_is_pure_deterministic_private_and_accepts_queue_output(self):
         records = [record('a', exposure=None), record('b', 'skill')]

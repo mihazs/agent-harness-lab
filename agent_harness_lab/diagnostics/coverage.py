@@ -5,6 +5,7 @@ causal claim. A record without captured evidence is ``unknown_capture`` whatever
 disposition it carries, and a run whose capture completeness is not declared
 ``complete`` cannot report complete coverage: unseen mechanisms may exist.
 """
+from copy import deepcopy
 import hashlib
 import json
 
@@ -17,7 +18,7 @@ CLAIM_LEVELS = ('none', 'observed_pattern', 'supported_diagnosis', 'development_
                 'validated_improvement')
 COVERAGE_STATES = ('resolved', 'awaiting_certification', 'open', 'unknown_capture')
 _RESOLVED = frozenset({'validated', 'rejected', 'already_covered', 'outside_scope'})
-_CONFLICT = 'conflicting_dispositions_for_key'
+_CONFLICT = 'conflicting_records_for_key'
 _CLAIMED = {'validated': 'validated_improvement', 'recommended': 'development_recommendation'}
 
 
@@ -87,9 +88,11 @@ def report(mechanisms, *, capture='unknown'):
     """Return the private ``mechanism-coverage-v1`` JSON report for ``mechanisms``.
 
     ``mechanisms`` are records or their ``as_dict`` mappings (as ``run_queue``
-    returns). Repeats of a key with the same disposition, reason and history
-    are suppressed and listed; a repeat that disagrees is listed as a conflict
-    and keeps that key open (``conflicting_dispositions_for_key``). One mechanism ID under
+    returns). A repeat of a key is suppressed and listed only when its derived
+    entry (capture, claim level, component, disposition, coverage, limitations
+    and the rest) and history match the first; any other repeat is listed as a
+    conflict and keeps that key open (``conflicting_records_for_key``), so the
+    result never depends on which repeat comes first. One mechanism ID under
     several evidence/component versions stays separate entries, listed as
     ``multiple_versions``. ``capture`` is the controller's declaration for the
     run. Pure: nothing is evaluated, charged or mutated.
@@ -99,10 +102,12 @@ def report(mechanisms, *, capture='unknown'):
     entries, duplicates, kept, versions = [], [], {}, {}
     for value in mechanisms:
         mechanism = _record(value)
-        state = (mechanism.disposition, mechanism.reason, mechanism.history)
+        derived = _entry(mechanism)
+        # Compare what the record derives, not just its review fields: evidence or actionability changes coverage.
+        state = (deepcopy(derived), deepcopy(mechanism.history))
         if mechanism.key in kept:
             entry, first = kept[mechanism.key]
-            # Only an exact repeat is suppressed; a disagreeing review keeps the key open whatever the order.
+            # Only an exact repeat is suppressed; any disagreement keeps the key open whatever the order.
             conflict = state != first
             duplicates.append(dict(mechanism_id=mechanism.mechanism_id, key=mechanism.key,
                                    disposition=mechanism.disposition, reason=mechanism.reason, conflict=conflict))
@@ -111,7 +116,7 @@ def report(mechanisms, *, capture='unknown'):
                 if entry['coverage'] != 'unknown_capture':
                     entry['coverage'] = 'open'
             continue
-        entry = _entry(mechanism)
+        entry = derived
         kept[mechanism.key] = (entry, state)
         versions.setdefault(mechanism.mechanism_id, []).append(mechanism.key)
         entries.append(entry)
