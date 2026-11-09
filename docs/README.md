@@ -20,6 +20,7 @@
 | Review a baseline/candidate experiment pair by pair | [Side-by-side review model](side-by-side-reports.md) |
 | Search with current preservation evidence and fresh confirmation | [Guarded development search](guarded-search.md) |
 | Audit and review a proposed grader correction | [Frozen correction controls](grader-corrections.md) |
+| Separate capture, task-mix and verified-performance drift | [Frozen drift plans and receipts](drift-monitoring.md) |
 | Check implemented/pending capabilities | [Controlled experiments](controlled-experiments.md) |
 | Inspect original smoke results | [Initial validation](validation.md) |
 | Develop, test and submit a PR | [Contributor guide](../CONTRIBUTING.md) |
