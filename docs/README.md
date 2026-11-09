@@ -14,6 +14,7 @@
 | Run conditional finite-bank sequential diagnostics | [Sequential experiments](sequential-experiments.md) |
 | Inspect selected-plan precision or simulated power before execution | [Frozen-plan precision](experiment-precision.md) |
 | Record comparisons and invalidate defective graders | [Controller oracle history](oracle-history.md) |
+| Decide cost and latency regressions only under verified quality | [Resource decisions](resource-decisions.md) |
 | Bind private analysis to current controller evidence | [Decision receipts](decision-receipts.md) |
 | Render current private qualification and preservation evidence | [Controller history reports](history-reports.md) |
 | Audit non-alerted episodes with probability sampling | [Probability-sampled triage audits](audit-sampling.md) |
