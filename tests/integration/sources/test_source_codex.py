@@ -4,8 +4,10 @@ from copy import deepcopy
 from dataclasses import replace
 import io
 import json
-import unittest
 from unittest.mock import patch
+
+import pytest
+
 from tests.integration.telemetry import test_codex_rollout as fixtures
 from agent_harness_lab.cli import main
 from agent_harness_lab.evidence import collect
@@ -13,10 +15,11 @@ from agent_harness_lab.sources.schema import SourceSpec, digest
 from agent_harness_lab.sources.store import SourceStore
 
 
-class NativeSourceTests(unittest.TestCase):
-    def setUp(self):
-        self.fixture = fixtures.CodexRolloutTests(); self.fixture.setUp()
-        self.addCleanup(self.fixture.doCleanups)
+class NativeSourceTests:
+    """Synthetic journal builder; test_source_claude, test_source_codex_relations, test_source_codex_root and
+    test_source_native_compat also build it through setUp() and doCleanups()."""
+    def setUp(self, root=None):
+        self.fixture = fixtures.CodexRolloutTests(); self.fixture.setUp(root)
         self.root, self.project, self.capture = self.fixture.root, self.fixture.project, self.fixture.path
         self.rows = deepcopy(self.fixture.rows)
         self.manifest, self.descriptor = self.root/'source.json', self.root/'selection.json'
@@ -45,107 +48,115 @@ class NativeSourceTests(unittest.TestCase):
             code = main(['sources', operation, '--manifest', str(self.manifest), '--project-sha256', self.source.project_sha256,
                 '--scope-sha256', self.source.scope_sha256, '--cache', str(self.cache), *extra])
         for private in ('SYNTHETIC_SECRET', str(self.root), 'synthetic-thread'):
-            self.assertNotIn(private, out.getvalue()+err.getvalue())
+            assert private not in out.getvalue()+err.getvalue()
         return code, json.loads(out.getvalue()) if out.getvalue() else None
+
+    def doCleanups(self): self.fixture.doCleanups()
+
+
+class TestNativeSource(NativeSourceTests):
+    @pytest.fixture(autouse=True)
+    def _journal(self, tmp_path):
+        self.setUp(tmp_path)
 
     def test_native_cli_preview_and_import_use_shared_contracts_and_preserve_privacy(self):
         code, result = self.invoke('preview')
-        self.assertEqual(code, 0); self.assertTrue(result['checkpoint_ready'])
-        self.assertEqual(result['records'], 6); self.assertEqual(result['evidence_graph']['nodes'], 6)
-        self.assertFalse(result['network_used']); self.assertFalse(self.cache.exists())
-        self.assertEqual(self.invoke('import')[0], 0)
+        assert code == 0; assert result['checkpoint_ready']
+        assert result['records'] == 6; assert result['evidence_graph']['nodes'] == 6
+        assert not result['network_used']; assert not self.cache.exists()
+        assert self.invoke('import')[0] == 0
         status = self.invoke('status')[1]
-        self.assertEqual(status['revisions'], 6); self.assertEqual(status['execution_metadata']['identities'], 2)
-        self.assertEqual(status['evidence_graph']['joins'], 6)
-        self.assertEqual(self.cache.stat().st_mode & 0o777, 0o600)
-        self.assertNotIn('SYNTHETIC_SECRET', self.cache.read_text()); self.assertNotIn(str(self.root), self.cache.read_text())
+        assert status['revisions'] == 6; assert status['execution_metadata']['identities'] == 2
+        assert status['evidence_graph']['joins'] == 6
+        assert self.cache.stat().st_mode & 0o777 == 0o600
+        assert 'SYNTHETIC_SECRET' not in self.cache.read_text(); assert str(self.root) not in self.cache.read_text()
 
     def test_probe_scope_disabled_and_unsupported_versions_do_not_read_native_capture(self):
         with patch('agent_harness_lab.sources.codex.CodexCapture.read', side_effect=AssertionError('no capture read')):
-            self.assertEqual(self.invoke('probe')[0], 0)
-            self.assertEqual(self.invoke('preview', '--project-sha256', digest('foreign'))[0], 2)
+            assert self.invoke('probe')[0] == 0
+            assert self.invoke('preview', '--project-sha256', digest('foreign'))[0] == 2
             for changed in (replace(self.source, enabled=False), replace(self.source, version='future')):
                 self.manifest.write_text(json.dumps(dict(schema_version=1, source=changed.to_dict(), data='selection.json')))
-                self.assertEqual(self.invoke('preview')[0], 3)
+                assert self.invoke('preview')[0] == 3
 
     def test_declared_native_identity_never_becomes_effective_settings_or_task_success(self):
         snapshot = self.reader().read(self.source)
-        self.assertEqual(len(snapshot.metadata.identities), 2)
+        assert len(snapshot.metadata.identities) == 2
         summary = snapshot.metadata.summary()
-        self.assertEqual(summary['fields']['requested_model']['declared'], 1)
-        self.assertEqual(summary['fields']['requested_model']['unknown'], 1)
+        assert summary['fields']['requested_model']['declared'] == 1
+        assert summary['fields']['requested_model']['unknown'] == 1
         for field in ('served_model', 'effective_harness', 'effective_config', 'memory_snapshot', 'grader_revision', 'task_root'):
-            self.assertEqual(summary['fields'][field]['unknown'], 2)
-        self.assertTrue(all(f.status == 'declared' for i in snapshot.metadata.identities for f in i.fields))
-        self.assertTrue(all(r.plane == 'behavioral_event' and r.independence == 'unknown' for r in snapshot.records))
-        self.assertIsNone(snapshot.graph.summary()['independent_roots'])
+            assert summary['fields'][field]['unknown'] == 2
+        assert all(f.status == 'declared' for i in snapshot.metadata.identities for f in i.fields)
+        assert all(r.plane == 'behavioral_event' and r.independence == 'unknown' for r in snapshot.records)
+        assert snapshot.graph.summary()['independent_roots'] is None
         (self.project/'AGENTS.md').write_text('SYNTHETIC_CHANGED_CONFIG')
         after = self.reader().read(self.source)
-        self.assertEqual(after.sha256, snapshot.sha256); self.assertEqual(after.metadata, snapshot.metadata)
-        self.assertEqual(after.graph, snapshot.graph)
+        assert after.sha256 == snapshot.sha256; assert after.metadata == snapshot.metadata
+        assert after.graph == snapshot.graph
 
     def test_reimport_is_native_revision_and_checkpoint_idempotent(self):
-        self.assertEqual(self.invoke('import')[1]['imported'], 6)
+        assert self.invoke('import')[1]['imported'] == 6
         store = self.store(); cursor = store.status(self.source)['cursor_sha256']; original = self.cache.read_bytes()
         second = self.invoke('import')[1]
-        self.assertEqual(second['imported'], 0); self.assertEqual(second['skipped'], 6)
-        self.assertEqual(store.status(self.source)['cursor_sha256'], cursor); self.assertEqual(self.cache.read_bytes(), original)
+        assert second['imported'] == 0; assert second['skipped'] == 6
+        assert store.status(self.source)['cursor_sha256'] == cursor; assert self.cache.read_bytes() == original
 
     def test_late_appended_context_preserves_old_model_request_and_membership(self):
-        self.assertEqual(self.invoke('import')[0], 0); store = self.store()
+        assert self.invoke('import')[0] == 0; store = self.store()
         cursor = store.status(self.source)['cursor_sha256']; old = store.capture(self.source, cursor); graph = store.graph(self.source, cursor)
         self.rows.append(self.fixture.row('turn_context', dict(cwd=str(self.project), model='SYNTHETIC_NEW_MODEL', turn_id='new-turn'), 6))
-        self.write(); self.assertEqual(self.invoke('import')[0], 0)
-        self.assertEqual(store.capture(self.source, cursor), old); self.assertEqual(store.graph(self.source, cursor), graph)
+        self.write(); assert self.invoke('import')[0] == 0
+        assert store.capture(self.source, cursor) == old; assert store.graph(self.source, cursor) == graph
         current = store.capture(self.source)
-        self.assertEqual(current.summary()['fields']['requested_model']['declared'], 2)
-        self.assertEqual(old.summary()['fields']['requested_model']['declared'], 1)
+        assert current.summary()['fields']['requested_model']['declared'] == 2
+        assert old.summary()['fields']['requested_model']['declared'] == 1
 
     def test_body_only_edit_versions_native_record_without_retriggering_metadata_monitor(self):
         first = collect(self.project, events=self.capture, source_format='codex', source_version=fixtures.VERSION)
-        self.assertEqual(self.invoke('import')[0], 0); store = self.store()
+        assert self.invoke('import')[0] == 0; store = self.store()
         before = self.reader().read(self.source)
         call = next(r for r in before.records if r.record_type == 'codex_tool_call')
         self.rows[2]['payload']['arguments'] = 'SYNTHETIC_CHANGED_BODY'; self.write()
         result = self.invoke('import')[1]
-        self.assertEqual(result['imported'], 1); self.assertEqual(len(store.history(self.source, call.native_id_sha256)), 2)
-        self.assertEqual(collect(self.project, events=self.capture, source_format='codex', source_version=fixtures.VERSION)['fingerprint'], first['fingerprint'])
-        self.assertNotIn('SYNTHETIC_CHANGED_BODY', self.cache.read_text())
+        assert result['imported'] == 1; assert len(store.history(self.source, call.native_id_sha256)) == 2
+        assert collect(self.project, events=self.capture, source_format='codex', source_version=fixtures.VERSION)['fingerprint'] == first['fingerprint']
+        assert 'SYNTHETIC_CHANGED_BODY' not in self.cache.read_text()
 
     def test_partial_preview_is_visible_but_import_cannot_create_or_advance_a_checkpoint(self):
         full = self.capture.read_bytes(); self.capture.write_bytes(full.rstrip(b'\n'))
         code, preview = self.invoke('preview')
-        self.assertEqual(code, 0); self.assertFalse(preview['checkpoint_ready'])
-        self.assertTrue(preview['native_summary']['partial_tail'])
-        self.assertEqual(self.invoke('import')[0], 2); self.assertFalse(self.cache.parent.exists())
-        self.capture.write_bytes(full); self.assertEqual(self.invoke('import')[0], 0); original = self.cache.read_bytes()
-        self.capture.write_bytes(full.rstrip(b'\n')); self.assertEqual(self.invoke('import')[0], 2)
-        self.assertEqual(self.cache.read_bytes(), original)
+        assert code == 0; assert not preview['checkpoint_ready']
+        assert preview['native_summary']['partial_tail']
+        assert self.invoke('import')[0] == 2; assert not self.cache.parent.exists()
+        self.capture.write_bytes(full); assert self.invoke('import')[0] == 0; original = self.cache.read_bytes()
+        self.capture.write_bytes(full.rstrip(b'\n')); assert self.invoke('import')[0] == 2
+        assert self.cache.read_bytes() == original
 
     def test_failed_decode_unknown_version_and_linked_inputs_preserve_committed_state(self):
-        self.assertEqual(self.invoke('import')[0], 0); original = self.cache.read_bytes(); full = self.capture.read_bytes()
-        self.capture.write_bytes(full+b'{bad}\n'); self.assertEqual(self.invoke('import')[0], 2)
-        self.assertEqual(self.cache.read_bytes(), original)
-        self.rows[0]['payload']['cli_version'] = 'future'; self.write(); self.assertEqual(self.invoke('import')[0], 2)
+        assert self.invoke('import')[0] == 0; original = self.cache.read_bytes(); full = self.capture.read_bytes()
+        self.capture.write_bytes(full+b'{bad}\n'); assert self.invoke('import')[0] == 2
+        assert self.cache.read_bytes() == original
+        self.rows[0]['payload']['cli_version'] = 'future'; self.write(); assert self.invoke('import')[0] == 2
         self.capture.write_bytes(full); linked = self.root/'other.jsonl'; self.capture.rename(linked); self.capture.symlink_to(linked)
-        self.assertEqual(self.invoke('import')[0], 2); self.assertEqual(self.cache.read_bytes(), original)
+        assert self.invoke('import')[0] == 2; assert self.cache.read_bytes() == original
 
     def test_descriptor_and_manifest_redirection_changes_during_capture_reject_before_commit(self):
-        self.assertEqual(self.invoke('import')[0], 0); original = self.cache.read_bytes()
+        assert self.invoke('import')[0] == 0; original = self.cache.read_bytes()
         from agent_harness_lab.sources.codex import decode
         declaration = self.manifest.read_text()
         def mutate_descriptor(*args, **kwargs):
             result = decode(*args, **kwargs)
             changed = {**self.selected, 'max_records': 9999}; self.descriptor.write_text(json.dumps(changed))
             return result
-        with patch('agent_harness_lab.sources.codex.decode', mutate_descriptor): self.assertEqual(self.invoke('import')[0], 2)
+        with patch('agent_harness_lab.sources.codex.decode', mutate_descriptor): assert self.invoke('import')[0] == 2
         self.descriptor.write_text(json.dumps(self.selected))
         def redirect_manifest(*args, **kwargs):
             result = decode(*args, **kwargs); (self.root/'other-selection.json').write_text(self.descriptor.read_text())
             self.manifest.write_text(json.dumps(dict(schema_version=1, source=self.source.to_dict(), data='other-selection.json')))
             return result
-        with patch('agent_harness_lab.sources.codex.decode', redirect_manifest): self.assertEqual(self.invoke('import')[0], 2)
-        self.manifest.write_text(declaration); self.assertEqual(self.cache.read_bytes(), original)
+        with patch('agent_harness_lab.sources.codex.decode', redirect_manifest): assert self.invoke('import')[0] == 2
+        self.manifest.write_text(declaration); assert self.cache.read_bytes() == original
 
     def test_forged_proof_labels_and_parent_fork_metadata_do_not_upgrade_execution_identity(self):
         self.rows[0]['payload'].update(parent_thread_id='native-parent', forked_from_id='other-fork', subagent_history_start_ordinal=1,
@@ -153,30 +164,30 @@ class NativeSourceTests(unittest.TestCase):
         self.write(); reader = self.reader(); snapshot = reader.read(self.source)
         header = snapshot.metadata.identities[0]
         parent = next(f for f in header.fields if f.name == 'parent_session')
-        self.assertEqual(parent.status, 'declared'); self.assertEqual(parent.namespace, 'codex.thread')
-        self.assertFalse(any(f.status == 'verified' or f.name == 'effective_harness' for i in snapshot.metadata.identities for f in i.fields))
-        self.assertEqual(self.invoke('import')[0], 0); self.assertNotIn('SYNTHETIC_SECRET', self.cache.read_text())
+        assert parent.status == 'declared'; assert parent.namespace == 'codex.thread'
+        assert not any(f.status == 'verified' or f.name == 'effective_harness' for i in snapshot.metadata.identities for f in i.fields)
+        assert self.invoke('import')[0] == 0; assert 'SYNTHETIC_SECRET' not in self.cache.read_text()
 
     def test_derived_pending_identity_survives_other_pending_calls_resolving(self):
-        self.rows = self.rows[:3]; self.write(); self.assertEqual(self.invoke('import')[0], 0)
+        self.rows = self.rows[:3]; self.write(); assert self.invoke('import')[0] == 0
         self.rows.append(self.fixture.row('response_item', dict(type='function_call', name='exec_command', call_id='second', arguments='SYNTHETIC_SECRET'), 3))
-        self.write(); self.assertEqual(self.invoke('import')[0], 0)
+        self.write(); assert self.invoke('import')[0] == 0
         before = self.reader().read(self.source)
         pending = [r for r in before.records if r.record_type == 'codex_capture_coverage']
-        self.assertEqual(len(pending), 2)
+        assert len(pending) == 2
         self.rows.append(self.fixture.row('response_item', dict(type='function_call_output', call_id='SYNTHETIC_SECRET', output='SYNTHETIC_SECRET'), 4))
-        self.write(); self.assertEqual(self.invoke('import')[0], 0)
+        self.write(); assert self.invoke('import')[0] == 0
         after = self.reader().read(self.source)
         remaining = next(r for r in after.records if r.record_type == 'codex_capture_coverage')
-        self.assertIn(remaining.native_id_sha256, {r.native_id_sha256 for r in pending})
-        self.assertEqual(len(self.store().history(self.source, remaining.native_id_sha256)), 1)
+        assert remaining.native_id_sha256 in {r.native_id_sha256 for r in pending}
+        assert len(self.store().history(self.source, remaining.native_id_sha256)) == 1
 
     def test_limits_and_traversal_are_rejected_without_source_or_cache_mutation(self):
         original = dict(self.selected)
         with patch('agent_harness_lab.sources.codex.decode', side_effect=AssertionError('no capture reads')):
             for change in (dict(capture='../outside.jsonl'), dict(max_records=True), dict(max_records=-1)):
-                self.selected = {**original, **change}; self.declare(); self.assertEqual(self.invoke('preview')[0], 2)
-        self.assertFalse(self.cache.exists())
+                self.selected = {**original, **change}; self.declare(); assert self.invoke('preview')[0] == 2
+        assert not self.cache.exists()
 
     def test_native_conversion_has_no_implicit_ten_second_deadline(self):
         from agent_harness_lab.sources.native import EvidenceRecord
@@ -186,18 +197,18 @@ class NativeSourceTests(unittest.TestCase):
             return result
         with patch('agent_harness_lab.sources.git_view.time.monotonic', side_effect=lambda: clock[0]), \
              patch('agent_harness_lab.sources.native.EvidenceRecord', delayed):
-            self.assertTrue(self.reader().read(self.source).records)
-        self.assertFalse(self.cache.exists())
+            assert self.reader().read(self.source).records
+        assert not self.cache.exists()
 
     def test_source_record_limit_is_optional_and_explicit_large_limits_are_not_clamped(self):
         self.selected.pop('max_records'); self.declare()
         snapshot = self.reader().read(self.source)
-        self.assertIsNone(next(bound.limit for bound in snapshot.metadata.coverage.scan_bounds if bound.dimension == 'records'))
+        assert next(bound.limit for bound in snapshot.metadata.coverage.scan_bounds if bound.dimension == 'records') is None
         self.selected['max_records'] = 100001; self.declare()
-        self.assertTrue(self.reader().read(self.source).records)
+        assert self.reader().read(self.source).records
 
     def test_unlimited_source_keeps_more_than_the_former_identity_ceiling(self):
         self.rows = self.rows[:1]+[self.fixture.row('turn_context', dict(cwd=str(self.project), model='synthetic'), ordinal)
             for ordinal in range(1, 1002)]
         self.write(); self.selected.pop('max_records'); self.declare()
-        self.assertEqual(len(self.reader().read(self.source).metadata.identities), 1002)
+        assert len(self.reader().read(self.source).metadata.identities) == 1002

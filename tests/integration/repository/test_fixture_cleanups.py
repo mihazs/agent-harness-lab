@@ -58,6 +58,8 @@ ROWS = [
      ['tests.integration.sandbox.test_sandbox_inference.ControllerInferenceTests']),
     ('tests.integration.sandbox.test_sandbox_inference', 'evaluation',
      ['tests.integration.sandbox.test_sandbox_inference.ResponsesEvaluationTests']),
+    ('tests.integration.sources.test_source_commit_join', 'github_driver',
+     ['tests.integration.sources.test_source_commit_join.GitHubDriver']),
 ]
 TEMPLATE = '''import contextlib, errno, importlib
 
@@ -134,3 +136,13 @@ def test_nested_admission_cleanup_failure_fails_the_bank_authority_fixture(tmp_p
         source('tests.integration.evaluation.test_oracle_bank_authority', 'fixture', [], wrapped=[admission]))
     run = pytest_run(tmp_path, ['test_cleanup_nested.py'])
     assert 'ERROR ' in run.stdout and 'synthetic per-test cleanup failure' in run.stdout, run.stdout[-4000:]
+
+
+def test_claude_journal_cleanup_failure_is_raised(tmp_path):
+    # ClaudeSourceTests is not a TestCase; its doCleanups runs the native helper's cleanups and must not swallow errors.
+    from tests.integration.sources.test_source_claude import ClaudeSourceTests
+    journal = ClaudeSourceTests(); journal.setUp(tmp_path)
+    def fail(): raise RuntimeError('synthetic per-test cleanup failure')
+    journal.fixture._cleanups.append(fail)
+    with pytest.raises(RuntimeError, match='synthetic per-test cleanup failure'):
+        journal.doCleanups()
