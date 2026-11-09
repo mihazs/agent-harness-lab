@@ -545,8 +545,11 @@ frontmatter fence on line 1 that parses (`missing_frontmatter`,
 and name itself after its directory in lowercase letters, digits and hyphens
 (`invalid_name`). A name is required outside `.claude/skills`
 (`missing_name`), since Codex rejects a skill without one. Inline Markdown links
-outside code must resolve to a file in the bundle (`dangling_reference`) and
-stay inside it (`reference_escapes_bundle`); a newly added file that
+outside code must resolve to a file, or a directory holding one, in the bundle
+(`dangling_reference`) and stay inside it (`reference_escapes_bundle`); targets
+are percent-decoded and normalized, and `<...>` targets may hold spaces. Fenced
+code is skipped in one linear pass (a closing fence needs the opener's length and
+no info string; an unclosed fence runs to the end). A newly added file that
 `SKILL.md` never mentions by path or file name is an `orphan_asset`.
 
 The check reads staged bytes and never runs them; executable files and
@@ -555,6 +558,10 @@ stops a blocked candidate with status `blocked`, reason
 `skill_bundle_validation_failed` and a `skill_review` document of fixed labels
 and bundle paths, and `workflow.adopt` refuses it. A removal is journaled like
 any adoption, so `ahl promotion --action rollback` restores the whole bundle.
+When `ahl.json` `harness_paths` is configured, the snapshot holds only the listed
+files, so bundle membership is unknown: the entry point, dangling reference and
+orphan asset checks are skipped, the action is reported as `scoped`, and only
+the listed `SKILL.md` frontmatter, name and escaping links are judged.
 Same-name collisions across roots, references from other bundles to a removed
 one, and runtime activation are not checked or claimed.
 

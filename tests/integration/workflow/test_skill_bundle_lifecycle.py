@@ -1,5 +1,6 @@
 """Synthetic project skill bundles: create, update and remove are validated as whole bundles, then journaled."""
 import shutil
+import time
 from unittest.mock import patch
 
 import pytest
@@ -135,3 +136,68 @@ def test_codex_skill_root_requires_a_name(project):
     stage = Stage(project)
     stage.write('.agents/skills/delta/SKILL.md', '---\ndescription: Summarize\n---\n')
     assert reasons(stage.review()) == {'.agents/skills/delta': ('create', ('missing_name',))}
+
+
+@pytest.mark.parametrize('link', ['references/', 'references/my%20guide.md', '<references/my guide.md>',
+                                  'references/../SKILL.md', './references/guide.md', 'references/x/../guide.md'])
+def test_valid_link_forms_are_not_blocked(project, link):
+    write(project, f'{ALPHA}/references/my guide.md', 'spaced\n')
+    stage = Stage(project)
+    stage.write(f'{ALPHA}/SKILL.md', ENTRY.format(name='alpha') + f'[x]({link})\n[m](references/my%20guide.md)\n')
+    assert reasons(stage.review()) == {ALPHA: ('update', ())}
+
+
+@pytest.mark.parametrize('link, expected', [('references/nothing/', 'dangling_reference'),
+                                            ('references/../../beta', 'reference_escapes_bundle')])
+def test_invalid_link_forms_stay_blocked(project, link, expected):
+    stage = Stage(project)
+    stage.write(f'{ALPHA}/SKILL.md', ENTRY.format(name='alpha') + f'[x]({link})\n')
+    assert expected in stage.review().findings[0].reasons
+
+
+def test_many_unclosed_fences_are_reviewed_in_linear_time(project):
+    stage = Stage(project)
+    stage.write(f'{ALPHA}/SKILL.md', ENTRY.format(name='alpha') + '```a\n' * 20000)
+    started = time.monotonic()
+    assert reasons(stage.review()) == {ALPHA: ('update', ())}
+    assert time.monotonic() - started < 2
+
+
+def test_fence_closer_needs_the_opener_length_and_no_info_string(project):
+    stage = Stage(project)
+    hidden = '````\n```\n[x](references/gone.md)\n```js\n````\n'
+    stage.write(f'{ALPHA}/SKILL.md', ENTRY.format(name='alpha') + hidden)
+    assert reasons(stage.review()) == {ALPHA: ('update', ())}
+    stage.write(f'{ALPHA}/SKILL.md', ENTRY.format(name='alpha') + '```\ncode\n```\n[x](references/gone.md)\n')
+    assert reasons(stage.review()) == {ALPHA: ('update', ('dangling_reference',))}
+
+
+def scoped_stage(project, paths):
+    stage = Stage(project)
+    stage.original = snapshot(project, project.parent / 'scoped', allowed_paths=paths)
+    shutil.rmtree(stage.root / 'candidate')
+    shutil.copytree(project.parent / 'scoped', stage.root / 'candidate')
+    return stage
+
+
+def scoped_review(stage):
+    proposed = candidate_states(stage.candidate, stage.original)
+    return skill_validation.review_tree(stage.root / 'scoped', stage.candidate, stage.original, proposed, scoped=True)
+
+
+def test_partial_bundle_scope_does_not_block_an_asset_edit(project):
+    stage = scoped_stage(project, [f'{ALPHA}/references/guide.md'])
+    stage.write(f'{ALPHA}/references/guide.md', 'revised\n')
+    assert scoped_review(stage).verdict == 'adoptable'
+
+
+def test_partial_bundle_scope_does_not_block_an_entry_point_edit(project):
+    stage = scoped_stage(project, [f'{ALPHA}/SKILL.md'])
+    stage.write(f'{ALPHA}/SKILL.md', ENTRY.format(name='alpha').replace('Summarize', 'Digest'))
+    assert scoped_review(stage).verdict == 'adoptable'
+
+
+def test_scoped_review_still_judges_the_listed_entry_point(project):
+    stage = scoped_stage(project, [f'{ALPHA}/SKILL.md'])
+    stage.write(f'{ALPHA}/SKILL.md', 'no frontmatter\n')
+    assert scoped_review(stage).findings[0].reasons == ('missing_frontmatter',)

@@ -398,7 +398,7 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
     return manifest
 
 
-def adopt(project, baseline, candidate, original, proposed):
+def adopt(project, baseline, candidate, original, proposed, scoped=False):
     """Journal a directly authorized owned patch; behavioral controller is gated."""
     from agent_harness_lab.promotion.journal import Journal, file_record
     with project_lock(project):
@@ -407,7 +407,7 @@ def adopt(project, baseline, candidate, original, proposed):
         verdict = agents_validation.review_tree(baseline, candidate, original, proposed).verdict
         if verdict != 'adoptable':
             raise ValueError(f'Candidate agent or command definition is {verdict}; nothing was applied')
-        if skill_validation.review_tree(baseline, candidate, original, proposed).verdict != 'adoptable':
+        if skill_validation.review_tree(baseline, candidate, original, proposed, scoped).verdict != 'adoptable':
             raise ValueError('Candidate skill bundle is blocked; nothing was applied')
         names = sorted(original.keys() | proposed.keys())
         before, after = {}, {}
@@ -671,7 +671,8 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                               instruction_reasons=instruction['reasons'])
                 break
         stopped = (agents_validation.review_tree(baseline, candidate, original, proposed).outcome()
-                   or skill_validation.review_tree(baseline, candidate, original, proposed).outcome())
+                   or skill_validation.review_tree(baseline, candidate, original, proposed,
+                                                    allowed_paths(args) is not None).outcome())
         if stopped is not None:
             result.update(stopped)
             break

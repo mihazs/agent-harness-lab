@@ -11,25 +11,30 @@ folder (.claude/skills, .agents/skills, skills or a nested <dir>/.claude/skills)
   where Codex rejects a skill without one (missing_name); any name must be the directory name in lowercase
   letters, digits and hyphens, at most 64 characters (invalid_name).
 - link only to files the bundle holds (dangling_reference) and stay inside it (reference_escapes_bundle). Only
-  inline Markdown links outside code are read; URLs, anchors and absolute paths are not bundle references.
+  inline Markdown links outside code are read, percent-decoded and normalized; a directory target needs a file
+  below it; URLs, anchors and absolute paths are not bundle references.
 - leave no newly added asset unmentioned in SKILL.md (orphan_asset): the path or the file name must appear in
   the text, so no file ships that the entry point never tells an agent about.
 
-Findings carry fixed labels and bundle paths only, never file text. Same-name collisions across roots and
+Findings carry fixed labels and bundle paths only, never file text. With configured harness_paths the
+snapshot holds only the listed files, so the membership checks (missing_entry_point, dangling_reference,
+orphan_asset and the create/remove action) are skipped. Same-name collisions across roots and
 references from other bundles to a removed one are not checked. Candidate code is read as bytes and never run.
 """
 from dataclasses import asdict, dataclass
 import hashlib
+import posixpath
 from pathlib import PurePosixPath
 import re
+from urllib.parse import unquote
 from agent_harness_lab import surfaces
 from . import frontmatter
 
 PROFILE = 'ahl-skill-bundle-validation-v1'
 NAME = re.compile(r'[a-z0-9]+(?:-[a-z0-9]+)*')
-_FENCE = re.compile(r'^[ \t]*(`{3,}|~{3,}).*?^[ \t]*\1[`~]*[ \t]*$', re.DOTALL | re.MULTILINE)
+_FENCE = re.compile(r'[ \t]*(`{3,}|~{3,})(.*)$')
 _SPAN = re.compile(r'`[^`\n]*`')
-_LINK = re.compile(r'\]\(<?([^)\s>]*)')
+_LINK = re.compile(r'\]\((?:<([^>\n]*)>|([^)\s>]*))')
 _EXTERNAL = re.compile(r'^(?:[A-Za-z][A-Za-z0-9+.-]*:|#|/|\?)')
 
 
@@ -66,16 +71,36 @@ def bundle_of(path):
     return None if index is None or len(parts) < index + 3 else '/'.join(parts[:index + 2])
 
 
+def _unfenced(text):
+    """The lines outside fenced code, in one pass; an unclosed fence runs to the end, as in CommonMark."""
+    fence = None
+    for line in text.split('\n'):
+        found = _FENCE.match(line)
+        mark, info = found.groups() if found else ('', '')
+        if fence:
+            if mark[:1] == fence[0] and len(mark) >= len(fence) and not info.strip(): fence = None
+        elif mark and not (mark[0] == '`' and '`' in info): fence = mark
+        else: yield line
+
+
 def _references(text):
-    """Bundle-relative link targets of the Markdown outside code, without fragments or queries."""
-    text = _SPAN.sub('', _FENCE.sub('', text))
-    return [re.split('[#?]', target, maxsplit=1)[0] for target in _LINK.findall(text) if not _EXTERNAL.match(target)]
+    """Bundle-relative link targets of the Markdown outside code, decoded and normalized, without fragments or queries."""
+    text = _SPAN.sub('', '\n'.join(_unfenced(text)))
+    found = []
+    for angled, bare in _LINK.findall(text):
+        target = angled or bare
+        if _EXTERNAL.match(target): continue
+        target = unquote(re.split('[#?]', target, maxsplit=1)[0])
+        if target and not _EXTERNAL.match(target): found.append(posixpath.normpath(target))
+    return found
 
 
-def _reasons(bundle, files, added):
-    """Blocking reasons for the candidate membership files (name below the bundle -> bytes)."""
+def _reasons(bundle, files, added, complete=True):
+    """Blocking reasons for the candidate membership files (name below the bundle -> bytes).
+
+    complete=False means the files are only the ones a configured scope lists, so membership checks are skipped."""
     entry = files.get('SKILL.md')
-    if entry is None: return ['missing_entry_point']
+    if entry is None: return ['missing_entry_point'] if complete else []
     reasons = []
     try: fields = frontmatter.read(entry)
     except frontmatter.FrontmatterError as error:
@@ -88,17 +113,20 @@ def _reasons(bundle, files, added):
                                or not NAME.fullmatch(name) or len(name) > 64): reasons.append('invalid_name')
     text = entry.decode('utf-8', 'replace')
     for target in _references(text):
-        resolved = PurePosixPath(*[p for p in PurePosixPath(target).parts if p != '.']) if target else None
-        if resolved is None: continue
-        if '..' in resolved.parts: reasons.append('reference_escapes_bundle')
-        elif str(resolved) not in files: reasons.append('dangling_reference')
-    if any(name != 'SKILL.md' and name not in text and PurePosixPath(name).name not in text for name in added):
+        if target == '.': continue
+        if target == '..' or target.startswith('../'): reasons.append('reference_escapes_bundle')
+        elif complete and target not in files and not any(name.startswith(target + '/') for name in files):
+            reasons.append('dangling_reference')
+    if complete and any(name != 'SKILL.md' and name not in text and PurePosixPath(name).name not in text for name in added):
         reasons.append('orphan_asset')
     return sorted(set(reasons))
 
 
-def review_tree(baseline, candidate, original, proposed):
-    """Findings for every bundle with a changed file; original and proposed are the snapshot and candidate states."""
+def review_tree(baseline, candidate, original, proposed, scoped=False):
+    """Findings for every bundle with a changed file; original and proposed are the snapshot and candidate states.
+
+    scoped=True when harness_paths limits the snapshot: a bundle's membership is then unknown, so the create/remove
+    action (reported as 'scoped'), entry point, dangling reference and orphan asset checks are skipped."""
     changed = sorted(name for name in original.keys() | proposed.keys() if original.get(name) != proposed.get(name))
     bundles = sorted({bundle for bundle in map(bundle_of, changed) if bundle})
     rows = []
@@ -111,7 +139,7 @@ def review_tree(baseline, candidate, original, proposed):
             if hashlib.sha256(raw).hexdigest() != proposed[name][0]:
                 raise ValueError('Candidate changed during skill bundle review')
             files[name[len(prefix):]] = raw
-        action = 'create' if not before else 'remove' if not files else 'update'
+        action = 'scoped' if scoped else 'create' if not before else 'remove' if not files else 'update'
         added = [name[len(prefix):] for name in proposed if name.startswith(prefix) and name not in original]
-        rows.append(Finding(bundle, action, () if action == 'remove' else tuple(_reasons(bundle, files, added))))
+        rows.append(Finding(bundle, action, () if action == 'remove' or not files else tuple(_reasons(bundle, files, added, not scoped))))
     return Review(tuple(rows))
