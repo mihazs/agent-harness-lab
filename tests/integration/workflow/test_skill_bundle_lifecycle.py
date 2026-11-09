@@ -163,6 +163,16 @@ def test_many_unclosed_fences_are_reviewed_in_linear_time(project):
     assert time.monotonic() - started < 2
 
 
+def test_many_links_over_many_files_are_reviewed_in_linear_time(project):
+    stage = Stage(project)
+    for index in range(300):
+        stage.write(f'{ALPHA}/references/f{index}.md', 'x')
+    stage.write(f'{ALPHA}/SKILL.md', ENTRY.format(name='alpha') + '[x](gone)\n[y](references)\n' * 100000)
+    started = time.monotonic()
+    assert reasons(stage.review()) == {ALPHA: ('update', ('dangling_reference', 'orphan_asset'))}
+    assert time.monotonic() - started < 2
+
+
 def test_fence_closer_needs_the_opener_length_and_no_info_string(project):
     stage = Stage(project)
     hidden = '````\n```\n[x](references/gone.md)\n```js\n````\n'

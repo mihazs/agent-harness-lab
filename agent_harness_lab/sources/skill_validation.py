@@ -112,10 +112,11 @@ def _reasons(bundle, files, added, complete=True):
     elif name is not None and (not isinstance(name, str) or name != PurePosixPath(bundle).name
                                or not NAME.fullmatch(name) or len(name) > 64): reasons.append('invalid_name')
     text = entry.decode('utf-8', 'replace')
-    for target in _references(text):
+    known = set(files) | {parent for name in files for parent in map(str, PurePosixPath(name).parents)}
+    for target in set(_references(text)):
         if target == '.': continue
         if target == '..' or target.startswith('../'): reasons.append('reference_escapes_bundle')
-        elif complete and target not in files and not any(name.startswith(target + '/') for name in files):
+        elif complete and target not in known:
             reasons.append('dangling_reference')
     if complete and any(name != 'SKILL.md' and name not in text and PurePosixPath(name).name not in text for name in added):
         reasons.append('orphan_asset')
