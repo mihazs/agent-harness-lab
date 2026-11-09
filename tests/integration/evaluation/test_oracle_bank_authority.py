@@ -38,7 +38,7 @@ class OracleBankAuthorityTests(unittest.TestCase):
 
     def setUp(self):
         self.admission = admissions.RegressionAdmissionTests(); self.admission.setUp()
-        self.addCleanup(self.admission.doCleanups)
+        self.addCleanup(run_cleanups, self.admission)
         self.root = self.admission.fixture.root
         parent = json.loads(self.admission.parent.read_text())
         task = next(t for t in json.loads(offline.BANK.read_text())['tasks'] if t['task_id']=='localization')

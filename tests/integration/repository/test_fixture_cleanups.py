@@ -78,6 +78,10 @@ for path in {classes!r}:
     helper.setUp = set_up
     if path in {kernels!r}:
         helper.setUpClass = classmethod(lambda cls: cls.enterClassContext(busy()))
+for path in {wrapped!r}:
+    module, _, name = path.rpartition('.')
+    helper = getattr(importlib.import_module(module), name)
+    helper.setUp = (lambda original: lambda self: (original(self), self.addCleanup(fail)))(helper.setUp)
 del helper  # a module-level TestCase would be collected
 
 from {module} import {imports}
@@ -87,9 +91,10 @@ def test_synthetic({fixture}):
 '''
 
 
-def source(module, fixture, classes):
+def source(module, fixture, classes, wrapped=()):
     imports = f'kernel_scope, {fixture}' if set(classes) & set(KERNELS) else fixture
-    return TEMPLATE.format(module=module, fixture=fixture, imports=imports, classes=classes, kernels=KERNELS)
+    return TEMPLATE.format(module=module, fixture=fixture, imports=imports, classes=classes, kernels=KERNELS,
+                           wrapped=list(wrapped))
 
 
 def pytest_run(root, names):
@@ -120,3 +125,12 @@ def test_kernel_scope_reports_a_busy_class_cleanup(tmp_path, row):
     run = pytest_run(tmp_path, ['test_cleanup_kernel_scope.py'])
     assert 'OSError: [Errno 16] synthetic leaked cgroup' in run.stdout, run.stdout[-4000:]
     assert 'RuntimeError: synthetic per-test cleanup failure' in run.stdout, run.stdout[-4000:]
+
+
+def test_nested_admission_cleanup_failure_fails_the_bank_authority_fixture(tmp_path):
+    # The real OracleBankAuthorityTests.setUp runs, so its own release of the nested admission is exercised.
+    admission = 'tests.integration.evaluation.test_regression_admission.RegressionAdmissionTests'
+    (tmp_path/'test_cleanup_nested.py').write_text(
+        source('tests.integration.evaluation.test_oracle_bank_authority', 'fixture', [], wrapped=[admission]))
+    run = pytest_run(tmp_path, ['test_cleanup_nested.py'])
+    assert 'ERROR ' in run.stdout and 'synthetic per-test cleanup failure' in run.stdout, run.stdout[-4000:]
