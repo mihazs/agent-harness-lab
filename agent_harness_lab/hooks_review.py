@@ -7,6 +7,7 @@ graded matched tasks, the canary run's wall time is not a per-hook overhead, and
 not exist yet, so applied files are never operational validation."""
 import hashlib
 import json
+from collections import Counter
 
 from .hooks_contract import _raw, read_hooks, unit_patch, CONFIGS, PROFILE
 from . import surfaces
@@ -23,8 +24,18 @@ def _entries(raw, form):
         for group in groups if isinstance(groups, list) else ():
             handlers = group.get('hooks') if isinstance(group, dict) else None
             for handler in handlers if isinstance(handlers, list) else ():
-                rows.append((event, group.get('matcher'), json.dumps(handler, sort_keys=True)))
+                rows.append((event, group.get('matcher'), json.dumps(handler, sort_keys=True, default=str)))
     return rows
+
+
+def _split(rows, common):
+    """(kept, rest) of rows against a Counter of shared rows, consuming one match per kept row so duplicates count."""
+    left, kept, rest = Counter(common), [], []
+    for row in rows:
+        key = repr(row)
+        if left[key] > 0: left[key] -= 1; kept.append(row)
+        else: rest.append(row)
+    return kept, rest
 
 
 def _script_rows(contract, before, after):
@@ -44,8 +55,8 @@ def review_packet(contract, before, after, document=None, *, expected_effect=Non
     if contract.profile != PROFILE: raise ValueError('review_packet() reviews hook units only')
     form = CONFIGS.get(contract.config, (None, None))[1]
     old, new = (_entries(_raw(side.get(contract.config)), form) for side in (before, after))
-    added, removed = [row for row in new if row not in old], [row for row in old if row not in new]
-    kept_old, kept_new = [row for row in old if row in new], [row for row in new if row in old]
+    common = Counter(map(repr, old)) & Counter(map(repr, new))
+    (kept_old, removed), (kept_new, added) = _split(old, common), _split(new, common)
     candidate = (document or {}).get('candidate') or {}
     run = (document or {}).get('run') or {}
     status = candidate.get('status', 'not_validated')

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from agent_harness_lab import hooks_review, hooks_validation
-from agent_harness_lab.hooks_contract import evaluate, stage
+from agent_harness_lab.hooks_contract import evaluate, snapshot_record, stage
 
 SETTINGS = b'{\n  "permissions": {"allow": ["Bash(ls)"]}\n}\n'
 SCRIPT = '.claude/hooks/check.sh'
@@ -100,3 +100,39 @@ def test_validate_writes_a_private_review_packet_for_a_staged_unit_and_none_with
     assert document['executed'] is False and not Path(project / SCRIPT).exists()
     root, _ = hooks_validation.validate(tmp_path / 'canary', 'claude-code', None)
     assert not (root / hooks_validation.REVIEW).exists()
+
+
+def test_duplicate_entries_are_counted_not_collapsed(project):
+    (project / SCRIPT).parent.mkdir()
+    (project / SCRIPT).write_bytes(SCRIPT_BYTES[0]); (project / SCRIPT).chmod(0o755)
+    base = json.dumps(dict(json.loads(SETTINGS), hooks={'PreToolUse': [entry(), entry()]}), indent=2).encode() + b'\n'
+    (project / '.claude/settings.json').write_bytes(base)
+    before, after, contract = unit(project, {'PreToolUse': [entry()]}, scripts={})
+    delta = hooks_review.review_packet(contract, before, after)['config_delta']
+    assert delta['added'] == [] and len(delta['removed']) == 1 and delta['order_preserved']
+    before, after, contract = unit(project, {'PreToolUse': [entry(), entry(), entry()]}, scripts={})
+    delta = hooks_review.review_packet(contract, before, after)['config_delta']
+    assert len(delta['added']) == 1 and delta['removed'] == [] and delta['order_preserved']
+
+
+def test_a_toml_datetime_handler_value_does_not_crash_the_packet(project):
+    config = '.codex/config.toml'
+    toml = b'[[hooks.PreToolUse]]\nmatcher = "Bash"\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "echo"\ntimeout = 1979-05-27T07:32:00Z\n'
+    (project / '.codex').mkdir()
+    before, after = {config: None}, {config: snapshot_record(toml, 0o644)}
+    contract = evaluate(project, before, after)
+    packet = hooks_review.review_packet(contract, before, after)
+    assert [row['matcher'] for row in packet['config_delta']['added']] == ['Bash']
+    assert '1979' in packet['config_delta']['added'][0]['handler']['timeout']
+
+
+@pytest.mark.parametrize('runtime, value, scripts', [
+    ('claude-code', {'PreToolUse': [entry(script='.claude/hooks/missing.sh')]}, {}),
+    ('codex', {'PreToolUse': [entry()]}, None)])
+def test_validate_writes_the_packet_for_an_unsupported_unit(project, tmp_path, runtime, value, scripts):
+    before, after, _ = unit(project, value, scripts)
+    root, document = hooks_validation.validate(
+        tmp_path / 'out', runtime, None, unit=('.claude/settings.json', before, after), project=project)
+    packet = json.loads((root / hooks_validation.REVIEW).read_text())
+    assert packet['evaluation']['disposition'] == document['candidate']['status'] == 'unsupported'
+    assert packet['overhead']['canary_run_seconds'] is None
