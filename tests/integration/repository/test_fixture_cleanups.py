@@ -8,6 +8,8 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[3]
 KERNEL = 'tests.integration.evaluation.test_permission_audit.PermissionKernelTests'
 REPEATED_KERNEL = 'tests.integration.evaluation.test_repeated_workflow.RepeatedWorkflowKernel'
@@ -111,8 +113,9 @@ def test_manually_driven_unittest_cleanup_failures_fail_the_fixture(tmp_path):
     assert f'{len(names)} passed' in run.stdout, run.stdout[-4000:]
 
 
-def test_kernel_scope_reports_a_busy_class_cleanup(tmp_path):
-    module, fixture, classes = next(row for row in ROWS if row[1] == 'case')
+@pytest.mark.parametrize('row', [row for row in ROWS if set(row[2]) & set(KERNELS)], ids=lambda row: row[0])
+def test_kernel_scope_reports_a_busy_class_cleanup(tmp_path, row):
+    module, fixture, classes = row
     (tmp_path/'test_cleanup_kernel_scope.py').write_text(source(module, fixture, classes))
     run = pytest_run(tmp_path, ['test_cleanup_kernel_scope.py'])
     assert 'OSError: [Errno 16] synthetic leaked cgroup' in run.stdout, run.stdout[-4000:]
