@@ -12,6 +12,8 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch,Mock
 
+import pytest
+
 from agent_harness_lab import cli,workflow
 from agent_harness_lab.evaluation import responses,comparison_custody
 from agent_harness_lab.evaluation.integrity import digest
@@ -20,6 +22,7 @@ from agent_harness_lab.private_journal import encoded,record
 from tests.integration.sandbox import test_sandbox_kernel as kernel
 from tests.integration.sandbox import test_sandbox_construction as roles
 from tests.integration.workflow import test_workflow as workflow_fixture
+from tests.support.unittest_cleanups import run_class_cleanups,run_cleanups
 
 GRADER="""from pathlib import Path
 import json,sys
@@ -36,11 +39,18 @@ Path('result.json').write_text(json.dumps(dict(ok=ok)))
 
 
 class PublicFixture:
+    """A synthetic fixed bank, request and settings for public improve; the host class supplies root,
+    cgroup_root and addCleanup.
+
+    test_repeated_access_companion, test_effective_agents and test_experiment_recovery_gap mix it into
+    their own TestCase hosts.
+    """
+
     def configure(self):
         import agent_harness_lab
         expected=os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
-        if expected:self.assertTrue(Path(agent_harness_lab.__file__).resolve().is_relative_to(Path(expected).resolve()))
-        self.f=workflow_fixture.WorkflowTests();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        if expected:assert Path(agent_harness_lab.__file__).resolve().is_relative_to(Path(expected).resolve())
+        self.f=workflow_fixture.WorkflowTests();self.f.setUp();self.addCleanup(run_cleanups,self.f)
         self.project=self.f.project
         self.bank=self.root/'bank';self.bank.mkdir()
         oracle=self.bank/'oracle';oracle.mkdir()
@@ -72,10 +82,10 @@ class PublicFixture:
         self.calls=[];self.key_reads=0;self.mode='good'
 
     def transport(self,key,body,*args):
-        self.assertIsNone(key);value=json.loads(body);self.calls.append(value);ident=str(len(self.calls))
+        assert key is None;value=json.loads(body);self.calls.append(value);ident=str(len(self.calls))
         if any(row.get('type')=='function_call_output' for row in value['input']):return roles.wire.reply([roles.wire.message('final-'+ident)])
         prompt=value['input'][0]['content']
-        self.assertNotIn('You are the evaluator author',prompt)
+        assert 'You are the evaluator author' not in prompt
         if 'You are the proposer' in prompt:argv=['/usr/bin/python3','-c',roles.PROPOSER,'good']
         elif self.mode=='pending':raise responses.InferenceError('synthetic unresolved request')
         elif self.mode=='unknown':return roles.wire.reply([roles.wire.message('empty-'+ident)])
@@ -102,46 +112,17 @@ class PublicFixture:
             self.key_reads+=1;return None
         with patch.object(workflow,'improve',side_effect=controlled),patch.object(responses,'read_credential',side_effect=read_key),patch.object(responses,'request',side_effect=self.transport),redirect_stdout(io.StringIO()):
             code=cli.main(self.arguments(runtime,pin,output))
-        self.assertEqual((self.project/'AGENTS.md').read_text(),'bad')
+        assert (self.project/'AGENTS.md').read_text() == 'bad'
         return code,json.loads((output/'workflow.json').read_text())
 
 
-class RepeatedWorkflowAdmissionTests(PublicFixture,unittest.TestCase):
+class RepeatedWorkflowAdmission(PublicFixture,unittest.TestCase):
+    """Hosts PublicFixture without kernel workers for the admission cases below; it defines no tests."""
+
     def setUp(self):
         import tempfile
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name);self.cgroup_root=self.root/'no-cgroup';self.configure()
-
-    def test_malformed_manifest_containers_are_input_errors_before_dispatch(self):
-        original=json.loads(self.manifest.read_text())
-        malformed=[None,[],dict(original,tasks=[None,{}]),dict(original,tasks=['task',{}]),
-            dict(original,grader_bundles=None),dict(original,grader_bundles=[])]
-        for index,value in enumerate(malformed):
-            with self.subTest(index=index):
-                self.manifest.write_bytes(encoded(value))
-                self.request_value.update(manifest_sha256=hashlib.sha256(self.manifest.read_bytes()).hexdigest(),bank_sha256=digest(self.bank))
-                self.request.write_bytes(encoded(self.request_value))
-                with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=AssertionError('no probe')):
-                    with self.assertRaises(SystemExit) as error:
-                        self.invoke(self.root/'image','a'*64,self.root/('invalid-'+str(index)))
-                self.assertEqual(error.exception.code,2)
-                self.assertEqual(self.calls,[]);self.assertEqual(self.key_reads,0)
-
-    def test_unmet_precision_blocks_before_probe_key_and_model(self):
-        self.request_value['precision_half_width']=.01;self.request.write_bytes(encoded(self.request_value))
-        with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=AssertionError('no probe')),patch.object(responses,'read_credential',side_effect=AssertionError('no key')):
-            code,result=self.invoke(self.root/'image','a'*64,self.root/'output')
-        self.assertEqual((code,result['reason']),(3,'precision_target_infeasible'));self.assertEqual(self.calls,[]);self.assertEqual(self.key_reads,0)
-
-    def test_fully_labeled_cooperative_backend_cannot_seal_a_comparison(self):
-        helper=roles.ControlledWorkflowTests();helper.root=self.root;helper.roles=[]
-        backend=Mock(permission_audit=None);backend.capability.return_value=dict(status='available')
-        backend.run.side_effect=helper.execute
-        with patch.object(roles,'EXECUTOR',EXECUTOR),patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=backend):
-            code,result=self.invoke(self.root/'image','a'*64,self.root/'output')
-        self.assertEqual((code,result['status']),(1,'incomplete'),result)
-        self.assertNotIn('decision',result);self.assertEqual(len(self.calls),3)
-        self.assertEqual(len(comparison_custody._STATES),0)
 
     def supported_removal(self,drift=False,task_cwd='.'):
         """Drive the fixed-bank path with a candidate that removes the active root guidance and a supported comparison."""
@@ -165,74 +146,6 @@ class RepeatedWorkflowAdmissionTests(PublicFixture,unittest.TestCase):
                 'agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=backend),patch.object(Request,'execute',execute):
             return self.invoke(self.root/'image','a'*64,self.root/'output')
 
-    def test_fixed_bank_removal_candidate_withholds_the_recommendation(self):
-        code,result=self.supported_removal()
-        validation=json.loads(Path(result['instruction_validation']).read_text())
-        self.assertEqual((validation['status'],validation['removal']['required']),('valid',True))
-        self.assertEqual((result['instruction_removal']['disposition'],result['instruction_removal']['reason']),
-                         ('inconclusive','trial_records_unavailable'))
-        self.assertEqual((result['status'],result['reason'],result['instruction_removal_reason']),
-                         ('inconclusive','instruction_removal_inconclusive','trial_records_unavailable'),result)
-        self.assertNotIn('recommendation',result);self.assertEqual(result['changed_files'],[])
-        self.assertFalse((self.project/'app/AGENTS.md').exists())
-
-    def test_fixed_bank_plan_for_a_task_cwd_no_bank_task_runs_in_is_refused(self):
-        code,result=self.supported_removal(task_cwd='app')
-        self.assertEqual((result['status'],result['reason'],result['instruction_reasons']),
-                         ('blocked','instruction_validation_blocked',['task_cwd_not_evaluated']),result)
-        validation=json.loads(Path(result['instruction_validation']).read_text())
-        self.assertEqual((validation['scope']['source'],validation['scope']['task_cwds']),('evaluation_manifest_task_cwds',['.']))
-        self.assertFalse(self.compared);self.assertNotIn('recommendation',result)
-        self.assertFalse((self.project/'app/AGENTS.md').exists())
-
-    def test_fixed_bank_instruction_context_drift_invalidates_the_recommendation(self):
-        errors=io.StringIO()
-        with redirect_stderr(errors),self.assertRaises(SystemExit) as stopped:self.supported_removal(drift=True)
-        self.assertEqual(stopped.exception.code,2)
-        self.assertIn('Instruction context changed during evaluation',errors.getvalue())
-        self.assertEqual((self.project/'app/AGENTS.md').read_text(),'Synthetic drifted guidance.\n')
-        self.assertFalse(list(self.root.rglob('change-plan.json')))
-
-    def test_private_request_settings_credential_and_cache_cannot_be_in_runtime(self):
-        image=self.root/'image';image.mkdir();request,settings=self.request,self.settings
-        original=dict(self.settings_value)
-        for kind in ('request','settings','credential','cache'):
-            with self.subTest(kind=kind):
-                self.request,self.settings=request,settings;self.cache_path=None
-                self.settings_value=dict(original)
-                if kind=='request':
-                    self.request=image/'request.json';self.request.write_bytes(request.read_bytes())
-                elif kind=='settings':
-                    self.settings=image/'settings.json';self.settings.write_bytes(settings.read_bytes())
-                elif kind=='credential':
-                    self.settings_value['credential_file']=str(image/'never-read-key')
-                    settings.write_bytes(encoded(self.settings_value))
-                else:self.cache_path=image/'source-cache.json'
-                with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=AssertionError('no private image probe')):
-                    with self.assertRaises(SystemExit):self.invoke(image,'a'*64,self.root/(kind+'-output'))
-                self.assertEqual(self.calls,[]);self.assertEqual(self.key_reads,0)
-                settings.write_bytes(encoded(original))
-        self.request,self.settings=request,settings;self.cache_path=None
-
-    def test_bundle_pin_includes_directory_modes_and_empty_directories(self):
-        deadline=time.monotonic()+5;original=comparison_custody.bundle_binding(self.project,deadline)
-        mode=self.project.stat().st_mode&0o777;self.project.chmod(0o750)
-        changed=comparison_custody.bundle_binding(self.project,deadline)
-        self.assertEqual(original['file_tree_sha256'],changed['file_tree_sha256'])
-        self.assertNotEqual(original['bundle_sha256'],changed['bundle_sha256'])
-        self.project.chmod(mode);(self.project/'empty').mkdir()
-        changed=comparison_custody.bundle_binding(self.project,deadline)
-        self.assertEqual(original['file_tree_sha256'],changed['file_tree_sha256'])
-        self.assertNotEqual(original['bundle_sha256'],changed['bundle_sha256'])
-
-    def test_private_markers_cannot_be_relabelled_for_public_export(self):
-        from agent_harness_lab.evaluation.benchmark import public_export_allowed
-        public=dict(publication_allowed=True,provenance=dict(source_kind='synthetic',approved_publication=True,
-            source_ref='synthetic:repeated-workflow',derived_from_private=False))
-        for marker in (dict(profile='ahl-improve-fixed-bank-v1'),dict(profile=comparison_custody.PROFILE),
-                dict(request_sha256='a'*64),dict(responses_binding={}),dict(responses_custody_sha256='a'*64)):
-            self.assertFalse(public_export_allowed([dict(public,**marker)]))
-
     def new_comparison(self):
         from agent_harness_lab.evaluation.plan import ExperimentSpec
         plan=ExperimentSpec('synthetic',(('a','a','family'),('b','b','family')),1,0,4,2,.05,.1,.05,
@@ -240,186 +153,248 @@ class RepeatedWorkflowAdmissionTests(PublicFixture,unittest.TestCase):
         client=responses.Client(self.settings_value,None,time.monotonic()+10,transport=self.transport)
         return comparison_custody.Comparison(plan,{'a':'a'*64,'b':'b'*64},client,time.monotonic()+10)
 
-    def test_public_token_mutation_cannot_strand_comparison_context(self):
-        comp=self.new_comparison();original=None
-        try:
-            with comp:
-                original=comp.token;comp.token=None
-            self.assertIsNone(comparison_custody.current())
-        finally:
-            if comparison_custody.current() is comp:
-                comparison_custody._ACTIVE.reset(original)
 
-    def test_failed_entry_cannot_strand_comparison_context(self):
-        comp=self.new_comparison();comp.fixtures={'invalid':b'not-json'}
-        try:
-            with self.assertRaises(TypeError):comp.__enter__()
-            self.assertIsNone(comparison_custody.current())
-        finally:
-            if comparison_custody.current() is comp:
-                comparison_custody._ACTIVE.reset(comp.token)
+@pytest.fixture
+def admission():
+    value=RepeatedWorkflowAdmission();value.setUp()
+    yield value
+    run_cleanups(value)
 
-    def test_used_and_copied_closed_comparisons_cannot_reenter(self):
-        comp=self.new_comparison()
-        with comp:pass
-        for value in (comp,copy(comp)):
-            value.closed=False;value.token=None
-            with self.assertRaises(ValueError):
-                with value:pass
 
-    def test_comparison_copy_mutation_expiry_and_fork_cannot_recreate_custody(self):
-        comp=self.new_comparison();plan,client=comp.spec,comp.client
+@pytest.mark.parametrize('index, malform', [
+    pytest.param(0, lambda original: None, id='null'),
+    pytest.param(1, lambda original: [], id='list'),
+    pytest.param(2, lambda original: dict(original,tasks=[None,{}]), id='null-task'),
+    pytest.param(3, lambda original: dict(original,tasks=['task',{}]), id='string-task'),
+    pytest.param(4, lambda original: dict(original,grader_bundles=None), id='null-bundles'),
+    pytest.param(5, lambda original: dict(original,grader_bundles=[]), id='list-bundles')])
+def test_malformed_manifest_containers_are_input_errors_before_dispatch(admission, index, malform):
+    original=json.loads(admission.manifest.read_text())
+    admission.manifest.write_bytes(encoded(malform(original)))
+    admission.request_value.update(manifest_sha256=hashlib.sha256(admission.manifest.read_bytes()).hexdigest(),bank_sha256=digest(admission.bank))
+    admission.request.write_bytes(encoded(admission.request_value))
+    with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=AssertionError('no probe')):
+        with pytest.raises(SystemExit) as error:
+            admission.invoke(admission.root/'image','a'*64,admission.root/('invalid-'+str(index)))
+    assert error.value.code == 2
+    assert admission.calls == [];assert admission.key_reads == 0
+
+
+def test_unmet_precision_blocks_before_probe_key_and_model(admission):
+    admission.request_value['precision_half_width']=.01;admission.request.write_bytes(encoded(admission.request_value))
+    with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=AssertionError('no probe')),patch.object(responses,'read_credential',side_effect=AssertionError('no key')):
+        code,result=admission.invoke(admission.root/'image','a'*64,admission.root/'output')
+    assert (code,result['reason']) == (3,'precision_target_infeasible');assert admission.calls == [];assert admission.key_reads == 0
+
+
+def test_fully_labeled_cooperative_backend_cannot_seal_a_comparison(admission):
+    helper=roles.ControlledWorkflowTests();helper.root=admission.root;helper.roles=[]
+    backend=Mock(permission_audit=None);backend.capability.return_value=dict(status='available')
+    backend.run.side_effect=helper.execute
+    with patch.object(roles,'EXECUTOR',EXECUTOR),patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=backend):
+        code,result=admission.invoke(admission.root/'image','a'*64,admission.root/'output')
+    assert (code,result['status']) == (1,'incomplete'), result
+    assert 'decision' not in result;assert len(admission.calls) == 3
+    assert len(comparison_custody._STATES) == 0
+
+
+def test_fixed_bank_removal_candidate_withholds_the_recommendation(admission):
+    code,result=admission.supported_removal()
+    validation=json.loads(Path(result['instruction_validation']).read_text())
+    assert (validation['status'],validation['removal']['required']) == ('valid',True)
+    assert (result['instruction_removal']['disposition'],result['instruction_removal']['reason']) == ('inconclusive','trial_records_unavailable')
+    assert (result['status'],result['reason'],result['instruction_removal_reason']) == ('inconclusive','instruction_removal_inconclusive','trial_records_unavailable'), result
+    assert 'recommendation' not in result;assert result['changed_files'] == []
+    assert not (admission.project/'app/AGENTS.md').exists()
+
+
+def test_fixed_bank_plan_for_a_task_cwd_no_bank_task_runs_in_is_refused(admission):
+    code,result=admission.supported_removal(task_cwd='app')
+    assert (result['status'],result['reason'],result['instruction_reasons']) == ('blocked','instruction_validation_blocked',['task_cwd_not_evaluated']), result
+    validation=json.loads(Path(result['instruction_validation']).read_text())
+    assert (validation['scope']['source'],validation['scope']['task_cwds']) == ('evaluation_manifest_task_cwds',['.'])
+    assert not admission.compared;assert 'recommendation' not in result
+    assert not (admission.project/'app/AGENTS.md').exists()
+
+
+def test_fixed_bank_instruction_context_drift_invalidates_the_recommendation(admission):
+    errors=io.StringIO()
+    with redirect_stderr(errors),pytest.raises(SystemExit) as stopped:admission.supported_removal(drift=True)
+    assert stopped.value.code == 2
+    assert 'Instruction context changed during evaluation' in errors.getvalue()
+    assert (admission.project/'app/AGENTS.md').read_text() == 'Synthetic drifted guidance.\n'
+    assert not list(admission.root.rglob('change-plan.json'))
+
+
+@pytest.mark.parametrize('kind', [
+    pytest.param('request', id='request'),
+    pytest.param('settings', id='settings'),
+    pytest.param('credential', id='credential'),
+    pytest.param('cache', id='cache')])
+def test_private_request_settings_credential_and_cache_cannot_be_in_runtime(admission, kind):
+    image=admission.root/'image';image.mkdir();request,settings=admission.request,admission.settings
+    if kind=='request':
+        admission.request=image/'request.json';admission.request.write_bytes(request.read_bytes())
+    elif kind=='settings':
+        admission.settings=image/'settings.json';admission.settings.write_bytes(settings.read_bytes())
+    elif kind=='credential':
+        admission.settings_value['credential_file']=str(image/'never-read-key')
+        settings.write_bytes(encoded(admission.settings_value))
+    else:admission.cache_path=image/'source-cache.json'
+    with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=AssertionError('no private image probe')):
+        with pytest.raises(SystemExit):admission.invoke(image,'a'*64,admission.root/(kind+'-output'))
+    assert admission.calls == [];assert admission.key_reads == 0
+
+
+def test_bundle_pin_includes_directory_modes_and_empty_directories(admission):
+    deadline=time.monotonic()+5;original=comparison_custody.bundle_binding(admission.project,deadline)
+    mode=admission.project.stat().st_mode&0o777;admission.project.chmod(0o750)
+    changed=comparison_custody.bundle_binding(admission.project,deadline)
+    assert original['file_tree_sha256'] == changed['file_tree_sha256']
+    assert original['bundle_sha256'] != changed['bundle_sha256']
+    admission.project.chmod(mode);(admission.project/'empty').mkdir()
+    changed=comparison_custody.bundle_binding(admission.project,deadline)
+    assert original['file_tree_sha256'] == changed['file_tree_sha256']
+    assert original['bundle_sha256'] != changed['bundle_sha256']
+
+
+def test_private_markers_cannot_be_relabelled_for_public_export(admission):
+    from agent_harness_lab.evaluation.benchmark import public_export_allowed
+    public=dict(publication_allowed=True,provenance=dict(source_kind='synthetic',approved_publication=True,
+        source_ref='synthetic:repeated-workflow',derived_from_private=False))
+    for marker in (dict(profile='ahl-improve-fixed-bank-v1'),dict(profile=comparison_custody.PROFILE),
+            dict(request_sha256='a'*64),dict(responses_binding={}),dict(responses_custody_sha256='a'*64)):
+        assert not public_export_allowed([dict(public,**marker)])
+
+
+def test_public_token_mutation_cannot_strand_comparison_context(admission):
+    comp=admission.new_comparison();original=None
+    try:
         with comp:
-            self.assertTrue(comp._valid());self.assertFalse(copy(comp)._valid())
-            if hasattr(os,'fork'):
-                child=os.fork()
-                if child==0:os._exit(0 if not comp._valid() else 2)
-                until=time.monotonic()+2;found=0
-                while time.monotonic()<until:
-                    found,status=os.waitpid(child,os.WNOHANG)
-                    if found:break
-                    time.sleep(.01)
-                if not found:
-                    import signal
-                    os.kill(child,signal.SIGKILL);os.waitpid(child,0);self.fail('comparison fork check timed out')
-                self.assertEqual(os.waitstatus_to_exitcode(status),0)
-            self.assertTrue(comp._valid())
-            client.settings['model']='changed';self.assertFalse(comp._valid())
-            client.settings['model']=self.settings_value['model'];self.assertFalse(comp._valid())
-        self.assertIsNone(comparison_custody.current())
-        expired=comparison_custody.Comparison(plan,{},client,time.monotonic()-1)
-        with self.assertRaises(ValueError):expired.__enter__()
-        self.assertEqual(len(comparison_custody._STATES),0)
-
-    def test_best_case_request_budget_infeasible_blocks_before_any_model(self):
-        self.settings_value['max_requests']=25;self.settings.write_bytes(encoded(self.settings_value))
-        with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=AssertionError('no impossible probe')):
-            code,result=self.invoke(self.root/'image','a'*64,self.root/'output')
-        self.assertEqual((code,result['reason']),(3,'fixed_comparison_inference_budget_infeasible'))
-        self.assertEqual(self.calls,[]);self.assertEqual(self.key_reads,0)
-
-    def test_expiry_during_real_bank_freeze_is_budget_exhaustion(self):
-        from agent_harness_lab.evaluation import repeated_workflow
-        original=repeated_workflow.copy_frozen;clock=time.monotonic;expired=[False]
-        def freeze(*args):
-            result=original(*args);expired[0]=True;return result
-        with patch.object(repeated_workflow,'copy_frozen',side_effect=freeze),patch.object(
-                workflow.time,'monotonic',side_effect=lambda:clock()+(1000 if expired[0] else 0)),patch(
-                'agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=AssertionError('no expired probe')):
-            code,result=self.invoke(self.root/'image','a'*64,self.root/'output')
-        self.assertEqual((code,result['status']),(1,'budget_exhausted'),result)
-        self.assertEqual(self.calls,[]);self.assertEqual(self.key_reads,0)
-
-    def test_expiry_during_actual_bank_digest_is_budget_exhaustion(self):
-        from agent_harness_lab.evaluation import repeated_workflow
-        original=repeated_workflow.copy_frozen;hash_bank=repeated_workflow.digest
-        clock=time.monotonic;copied=[False];expired=[False]
-        def freeze(*args):
-            value=original(*args);copied[0]=True;return value
-        def hashing(path):
-            value=hash_bank(path)
-            if Path(path)==self.bank and copied[0]:expired[0]=True
-            return value
-        with patch.object(repeated_workflow,'copy_frozen',side_effect=freeze),patch.object(
-                repeated_workflow,'digest',side_effect=hashing),patch.object(
-                workflow.time,'monotonic',side_effect=lambda:clock()+(1000 if expired[0] else 0)),patch(
-                'agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=AssertionError('no expired probe')):
-            code,result=self.invoke(self.root/'image','a'*64,self.root/'output')
-        self.assertTrue(expired[0]);self.assertEqual((code,result['status']),(1,'budget_exhausted'),result)
-        self.assertEqual(self.calls,[]);self.assertEqual(self.key_reads,0)
-
-    def test_expired_request_stops_before_probe_key_and_model(self):
-        times=iter((0,151))
-        with patch.object(workflow.time,'monotonic',side_effect=lambda:next(times,151)),patch(
-                'agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=AssertionError('no expired probe')):
-            code,result=self.invoke(self.root/'image','a'*64,self.root/'output')
-        self.assertEqual((code,result['status']),(1,'budget_exhausted'));self.assertEqual(self.calls,[]);self.assertEqual(self.key_reads,0)
-
-    def test_protected_split_is_refused_before_proposer(self):
-        manifest=record(self.manifest)[0];manifest['tasks'][0]['split']='heldout'
-        self.manifest.write_bytes(encoded(manifest));self.request_value.update(
-            manifest_sha256=record(self.manifest)[1],bank_sha256=digest(self.bank))
-        self.request.write_bytes(encoded(self.request_value))
-        with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=AssertionError('no protected probe')):
-            with self.assertRaises(SystemExit):self.invoke(self.root/'image','a'*64,self.root/'output')
-        self.assertEqual(self.calls,[]);self.assertEqual(self.key_reads,0)
-
-    def test_bank_under_project_is_refused_before_model(self):
-        self.request_value['manifest']=str(self.project/'manifest.json');self.request.write_bytes(encoded(self.request_value))
-        with patch.object(responses,'request',side_effect=AssertionError('no model')):
-            with self.assertRaises(SystemExit):self.invoke(self.root/'image','a'*64,self.root/'output')
-        self.assertEqual(self.calls,[]);self.assertEqual(self.key_reads,0)
+            original=comp.token;comp.token=None
+        assert comparison_custody.current() is None
+    finally:
+        if comparison_custody.current() is comp:
+            comparison_custody._ACTIVE.reset(original)
 
 
-@unittest.skipUnless(kernel.ENABLED,'explicit delegated kernel profile required')
-class RepeatedWorkflowKernelTests(PublicFixture,kernel.KernelFixture):
+def test_failed_entry_cannot_strand_comparison_context(admission):
+    comp=admission.new_comparison();comp.fixtures={'invalid':b'not-json'}
+    try:
+        with pytest.raises(TypeError):comp.__enter__()
+        assert comparison_custody.current() is None
+    finally:
+        if comparison_custody.current() is comp:
+            comparison_custody._ACTIVE.reset(comp.token)
+
+
+def test_used_and_copied_closed_comparisons_cannot_reenter(admission):
+    comp=admission.new_comparison()
+    with comp:pass
+    for value in (comp,copy(comp)):
+        value.closed=False;value.token=None
+        with pytest.raises(ValueError):
+            with value:pass
+
+
+def test_comparison_copy_mutation_expiry_and_fork_cannot_recreate_custody(admission):
+    comp=admission.new_comparison();plan,client=comp.spec,comp.client
+    with comp:
+        assert comp._valid();assert not copy(comp)._valid()
+        if hasattr(os,'fork'):
+            child=os.fork()
+            if child==0:os._exit(0 if not comp._valid() else 2)
+            until=time.monotonic()+2;found=0
+            while time.monotonic()<until:
+                found,status=os.waitpid(child,os.WNOHANG)
+                if found:break
+                time.sleep(.01)
+            if not found:
+                import signal
+                os.kill(child,signal.SIGKILL);os.waitpid(child,0);pytest.fail('comparison fork check timed out')
+            assert os.waitstatus_to_exitcode(status) == 0
+        assert comp._valid()
+        client.settings['model']='changed';assert not comp._valid()
+        client.settings['model']=admission.settings_value['model'];assert not comp._valid()
+    assert comparison_custody.current() is None
+    expired=comparison_custody.Comparison(plan,{},client,time.monotonic()-1)
+    with pytest.raises(ValueError):expired.__enter__()
+    assert len(comparison_custody._STATES) == 0
+
+
+def test_best_case_request_budget_infeasible_blocks_before_any_model(admission):
+    admission.settings_value['max_requests']=25;admission.settings.write_bytes(encoded(admission.settings_value))
+    with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=AssertionError('no impossible probe')):
+        code,result=admission.invoke(admission.root/'image','a'*64,admission.root/'output')
+    assert (code,result['reason']) == (3,'fixed_comparison_inference_budget_infeasible')
+    assert admission.calls == [];assert admission.key_reads == 0
+
+
+def test_expiry_during_real_bank_freeze_is_budget_exhaustion(admission):
+    from agent_harness_lab.evaluation import repeated_workflow
+    original=repeated_workflow.copy_frozen;clock=time.monotonic;expired=[False]
+    def freeze(*args):
+        result=original(*args);expired[0]=True;return result
+    with patch.object(repeated_workflow,'copy_frozen',side_effect=freeze),patch.object(
+            workflow.time,'monotonic',side_effect=lambda:clock()+(1000 if expired[0] else 0)),patch(
+            'agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=AssertionError('no expired probe')):
+        code,result=admission.invoke(admission.root/'image','a'*64,admission.root/'output')
+    assert (code,result['status']) == (1,'budget_exhausted'), result
+    assert admission.calls == [];assert admission.key_reads == 0
+
+
+def test_expiry_during_actual_bank_digest_is_budget_exhaustion(admission):
+    from agent_harness_lab.evaluation import repeated_workflow
+    original=repeated_workflow.copy_frozen;hash_bank=repeated_workflow.digest
+    clock=time.monotonic;copied=[False];expired=[False]
+    def freeze(*args):
+        value=original(*args);copied[0]=True;return value
+    def hashing(path):
+        value=hash_bank(path)
+        if Path(path)==admission.bank and copied[0]:expired[0]=True
+        return value
+    with patch.object(repeated_workflow,'copy_frozen',side_effect=freeze),patch.object(
+            repeated_workflow,'digest',side_effect=hashing),patch.object(
+            workflow.time,'monotonic',side_effect=lambda:clock()+(1000 if expired[0] else 0)),patch(
+            'agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=AssertionError('no expired probe')):
+        code,result=admission.invoke(admission.root/'image','a'*64,admission.root/'output')
+    assert expired[0];assert (code,result['status']) == (1,'budget_exhausted'), result
+    assert admission.calls == [];assert admission.key_reads == 0
+
+
+def test_expired_request_stops_before_probe_key_and_model(admission):
+    times=iter((0,151))
+    with patch.object(workflow.time,'monotonic',side_effect=lambda:next(times,151)),patch(
+            'agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=AssertionError('no expired probe')):
+        code,result=admission.invoke(admission.root/'image','a'*64,admission.root/'output')
+    assert (code,result['status']) == (1,'budget_exhausted');assert admission.calls == [];assert admission.key_reads == 0
+
+
+def test_protected_split_is_refused_before_proposer(admission):
+    manifest=record(admission.manifest)[0];manifest['tasks'][0]['split']='heldout'
+    admission.manifest.write_bytes(encoded(manifest));admission.request_value.update(
+        manifest_sha256=record(admission.manifest)[1],bank_sha256=digest(admission.bank))
+    admission.request.write_bytes(encoded(admission.request_value))
+    with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=AssertionError('no protected probe')):
+        with pytest.raises(SystemExit):admission.invoke(admission.root/'image','a'*64,admission.root/'output')
+    assert admission.calls == [];assert admission.key_reads == 0
+
+
+def test_bank_under_project_is_refused_before_model(admission):
+    admission.request_value['manifest']=str(admission.project/'manifest.json');admission.request.write_bytes(encoded(admission.request_value))
+    with patch.object(responses,'request',side_effect=AssertionError('no model')):
+        with pytest.raises(SystemExit):admission.invoke(admission.root/'image','a'*64,admission.root/'output')
+    assert admission.calls == [];assert admission.key_reads == 0
+
+
+kernel_only=pytest.mark.skipif(not kernel.ENABLED,reason='explicit delegated kernel profile required')
+
+
+class RepeatedWorkflowKernel(PublicFixture,kernel.KernelFixture):
+    """Hosts PublicFixture on the KernelFixture scope for the kernel cases below; it defines no tests."""
+
     def setUp(self):
         super().setUp();self.configure()
-
-    def test_public_cli_executes_seals_consumes_repeated_decision(self):
-        runtime=self.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
-        code,result=self.invoke(runtime,pin,self.root/'output',source=True)
-        self.assertEqual(code,3,result)
-        self.assertEqual(result['recommendation'],'review_candidate',result)
-        self.assertEqual(result['analysis']['status'],'supported')
-        self.assertEqual(len(self.calls),26)
-        self.assertFalse(result['automatic_promotion']);self.assertEqual(result['changed_files'],[])
-        self.assertEqual(result['native_identity'],'unverified')
-        store=HistoryStore(self.root/'output/private-history');run=result['controller_run_id']
-        checked=store.checked(run);self.assertEqual(checked[2]['schema_version'],6)
-        self.assertEqual(len(checked[4]['trials']),12)
-        self.assertEqual(len({row['trial_id'] for row in checked[4]['trials']}),12)
-        self.assertTrue(all(row['source_capture']['status']=='observed' for row in checked[4]['trials']))
-        self.assertEqual(result['isolation_qualification']['qualification'],'qualified')
-        self.assertEqual(store.verify_decision(run,result['decision']['receipt_sha256'])['analysis'],result['analysis'])
-        self.assertIsNone(comparison_custody.current())
-        gc.collect();self.assertEqual(len(comparison_custody._STATES),0)
-        case=checked[0];calls=len(self.calls)
-        for target in (case/'responses-custody.json',case/'execution/results.json',case/'manifest.json',case/'workflow-request.json'):
-            original=target.read_bytes();target.write_bytes(original+b' ')
-            try:
-                with self.assertRaises(ValueError):store.verify_decision(run,result['decision']['receipt_sha256'])
-            finally:target.write_bytes(original)
-        self.assertEqual(len(self.calls),calls)
-
-    def test_missing_artifact_stops_without_further_calls_or_decision(self):
-        self.mode='unknown';runtime=self.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
-        code,result=self.invoke(runtime,pin,self.root/'output')
-        self.assertEqual((code,result['status']),(1,'incomplete'),result)
-        self.assertNotIn('decision',result);self.assertEqual(len(self.calls),3)
-        self.assertIsNone(comparison_custody.current())
-        gc.collect();self.assertEqual(len(comparison_custody._STATES),0)
-
-    def test_private_bank_under_runtime_cannot_reach_proposer(self):
-        from agent_harness_lab.evaluation.image import scan
-        runtime=self.root/'runtime';kernel.pinned_runtime(runtime)
-        moved=runtime/'private-bank';shutil.move(str(self.bank),moved)
-        self.bank=moved;self.manifest=moved/'manifest.json'
-        source=record(self.manifest)[0];canary='SYNTHETIC_PRIVATE_BANK_CANARY'
-        source['synthetic_private_canary']=canary;self.manifest.write_bytes(encoded(source))
-        self.request_value.update(manifest=str(self.manifest),manifest_sha256=record(self.manifest)[1],bank_sha256=digest(self.bank))
-        self.request.write_bytes(encoded(self.request_value));pin=scan(runtime)['sha256']
-        revealing="print(__import__('pathlib').Path('/private-bank/manifest.json').read_text())\n"+roles.PROPOSER
-        try:
-            with patch.object(roles,'PROPOSER',revealing):self.invoke(runtime,pin,self.root/'output')
-        except SystemExit:pass
-        self.assertFalse(any(canary in json.dumps(call) for call in self.calls),
-            'private bank manifest was read by the actual proposer through the pinned image')
-        self.assertEqual(self.calls,[])
-
-    def test_requested_grader_permission_violation_cannot_recommend_review(self):
-        oracle=self.bank/'oracle'
-        denied=GRADER.replace('value=json.loads',"try:Path(sys.argv[2]).write_text('forbidden grader write')\nexcept OSError:pass\nvalue=json.loads")
-        (oracle/'grade.py.txt').write_text(denied)
-        source=record(self.manifest)[0]
-        for declaration in source['grader_bundles'].values():declaration['digest']=digest(oracle)
-        self.manifest.write_bytes(encoded(source));self.request_value.update(
-            manifest_sha256=record(self.manifest)[1],bank_sha256=digest(self.bank))
-        self.request.write_bytes(encoded(self.request_value))
-        runtime=self.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
-        _,result=self.invoke(runtime,pin,self.root/'output',source=True)
-        self.assertNotEqual(result['isolation_qualification']['qualification'],'qualified')
-        self.assertNotEqual(result.get('recommendation'),'review_candidate',result)
 
     def without_requested_grader_monitor(self,late):
         from agent_harness_lab.evaluation.sandbox import SandboxBackend
@@ -433,115 +408,219 @@ class RepeatedWorkflowKernelTests(PublicFixture,kernel.KernelFixture):
             return original(backend,argv,*args,**kwargs)
         runtime=self.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
         with patch.object(SandboxBackend,'run',dispatch):_,result=self.invoke(runtime,pin,self.root/'output',source=True)
-        self.assertEqual(dropped[0],1);self.assertNotIn('decision',result)
-        self.assertEqual(result['status'],'incomplete' if late else 'requires_intervention',result)
-        self.assertEqual(len(self.calls),4 if late else 2)
-
-    def test_candidate_file_modes_cannot_mix_under_one_byte_identity(self):
-        original=comparison_custody.Comparison.before;changed=[False]
-        def changing(comp,scheduled,workspace,harness,client):
-            if scheduled['version']=='candidate':
-                (Path(harness)/'AGENTS.md').chmod(0o644 if changed[0] else 0o700);changed[0]=True
-            return original(comp,scheduled,workspace,harness,client)
-        runtime=self.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
-        with patch.object(comparison_custody.Comparison,'before',changing):_,result=self.invoke(runtime,pin,self.root/'output',source=True)
-        self.assertTrue(changed[0]);self.assertNotIn('decision',result)
-        self.assertEqual(result['status'],'incomplete',result);self.assertEqual(len(self.calls),2)
-
-    def test_actual_dispatch_directory_mode_change_cannot_gain_review(self):
-        from agent_harness_lab.evaluation.sandbox import SandboxBackend
-        original=SandboxBackend.run;changed=[False]
-        def dispatch(backend,argv,workspace,inputs,role,*args,**kwargs):
-            comp=comparison_custody.current()
-            if role=='executor' and comp is not None and not comp.controls and not changed[0]:
-                Path(inputs['harness']).chmod(0o750);changed[0]=True
-            return original(backend,argv,workspace,inputs,role,*args,**kwargs)
-        runtime=self.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
-        with patch.object(SandboxBackend,'run',dispatch):_,result=self.invoke(runtime,pin,self.root/'output',source=True)
-        self.assertTrue(changed[0]);self.assertNotIn('decision',result)
-        self.assertEqual(result['status'],'incomplete',result);self.assertEqual(len(self.calls),3)
-
-    def test_mode_change_during_controls_cannot_become_an_admission_pin(self):
-        from agent_harness_lab.evaluation.sandbox import SandboxBackend
-        original=SandboxBackend.run;changed=[False]
-        def dispatch(backend,*args,**kwargs):
-            comp=comparison_custody.current()
-            if comp is not None and comp.controls and not changed[0]:
-                (self.root/'output/candidate-0/AGENTS.md').chmod(0o700);changed[0]=True
-            return original(backend,*args,**kwargs)
-        runtime=self.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
-        with patch.object(SandboxBackend,'run',dispatch):
-            with self.assertRaises(SystemExit):self.invoke(runtime,pin,self.root/'output',source=True)
-        result=record(self.root/'output/workflow.json')[0]
-        self.assertTrue(changed[0]);self.assertNotIn('decision',result);self.assertEqual(len(self.calls),2)
-
-    def test_missing_requested_selftest_monitor_stops_before_trial_calls(self):
-        self.without_requested_grader_monitor(False)
-
-    def test_missing_requested_trial_monitor_stops_before_another_call(self):
-        self.without_requested_grader_monitor(True)
-
-    def test_requested_late_grader_denial_stops_before_another_trial(self):
-        oracle=self.bank/'oracle';source=record(self.manifest)[0]
-        denied=GRADER.replace('outcome=value.get',"if not value.get('control'):\n try:Path(sys.argv[2]).write_text('forbidden trial grader write')\n except OSError:pass\noutcome=value.get")
-        (oracle/'grade.py.txt').write_text(denied)
-        for control in source['grader_self_tests']:
-            path=self.bank/control['fixture']/'result.json';data=record(path)[0];data['control']=True;path.write_bytes(encoded(data))
-        for declaration in source['grader_bundles'].values():declaration['digest']=digest(oracle)
-        self.manifest.write_bytes(encoded(source));self.request_value.update(
-            manifest_sha256=record(self.manifest)[1],bank_sha256=digest(self.bank))
-        self.request.write_bytes(encoded(self.request_value))
-        runtime=self.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
-        _,result=self.invoke(runtime,pin,self.root/'output',source=True)
-        self.assertEqual(result['status'],'requires_intervention',result)
-        self.assertNotIn('decision',result);self.assertEqual(len(self.calls),4)
-
-    def test_wrong_physical_seed_cannot_gain_a_decision_or_an_extra_request(self):
-        from dataclasses import replace
-        from agent_harness_lab.evaluation.working_state import WorkingState
-        original=WorkingState.seed;changed=[False]
-        def wrong(state,*args):
-            comp=comparison_custody.current()
-            if comp is not None and comp.active is not None and not changed[0]:
-                changed[0]=True
-                state.snapshot=replace(state.snapshot,files=tuple((name,mode,b'{"case":"wrong-seed"}' if name=='task.json' else raw)
-                    for name,mode,raw in state.snapshot.files))
-            return original(state,*args)
-        runtime=self.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
-        with patch.object(WorkingState,'seed',wrong):_,result=self.invoke(runtime,pin,self.root/'output')
-        self.assertTrue(changed[0]);self.assertEqual(result['status'],'incomplete',result)
-        self.assertNotIn('decision',result);self.assertEqual(len(self.calls),3)
-
-    def test_unresolved_request_is_retained_without_redispatch_or_decision(self):
-        self.mode='pending';runtime=self.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
-        _,result=self.invoke(runtime,pin,self.root/'output')
-        self.assertEqual(result['status'],'incomplete',result);self.assertNotIn('decision',result)
-        self.assertEqual(len(self.calls),3)
-        self.assertTrue(result['inference']['request_pending'])
-        self.assertIsNone(comparison_custody.current())
-
-    def test_actual_critical_dispatch_vetoes_artifact_success(self):
-        from agent_harness_lab.evaluation import trajectory_assertions as trajectory
-        source=record(self.manifest)[0];folder=self.bank/'critical-oracle';shutil.copytree(self.bank/'oracle',folder)
-        policy=dict(schema_version=1,profile=trajectory.PROFILE,task_id='case0',root_id='root0',family='synthetic',
-            engine=trajectory.engine(),outcome_mapping='artifact_and_required_v1',assertions=[dict(id='critical-dispatch',
-            required=True,severity='critical',rule=dict(kind='forbidden',stage='dispatch',tool='run',quantifier='exists',
-                arguments=dict(mode='exact',argv=['/usr/bin/python3','-c',EXECUTOR])))])
-        (folder/'trajectory.json').write_bytes(encoded(policy))
-        source['grader_bundles']['case0']=dict(path='critical-oracle',digest=digest(folder))
-        self.manifest.write_bytes(encoded(source));self.request_value.update(manifest_sha256=record(self.manifest)[1],bank_sha256=digest(self.bank))
-        self.request.write_bytes(encoded(self.request_value))
-        runtime=self.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
-        _,result=self.invoke(runtime,pin,self.root/'output')
-        self.assertEqual((result['analysis']['status'],result['analysis']['reason']),('rejected','critical_regression'),result)
-        self.assertEqual(result['recommendation'],'candidate_not_supported')
-
-    def test_different_actual_artifacts_change_analysis_and_recommendation(self):
-        self.mode='harm';runtime=self.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
-        _,result=self.invoke(runtime,pin,self.root/'output')
-        self.assertEqual(result['analysis']['status'],'rejected',result)
-        self.assertEqual(result['recommendation'],'candidate_not_supported')
-        self.assertEqual(len(self.calls),26)
+        assert dropped[0] == 1;assert 'decision' not in result
+        assert result['status'] == ('incomplete' if late else 'requires_intervention'), result
+        assert len(self.calls) == (4 if late else 2)
 
 
-if __name__=='__main__':unittest.main()
+@pytest.fixture(scope='module')
+def kernel_scope():
+    RepeatedWorkflowKernel.setUpClass()
+    yield
+    run_class_cleanups(RepeatedWorkflowKernel)
+
+
+@pytest.fixture
+def kernel_case(kernel_scope):
+    value=RepeatedWorkflowKernel();value.setUp()
+    yield value
+    run_cleanups(value)
+
+
+@kernel_only
+def test_public_cli_executes_seals_consumes_repeated_decision(kernel_case):
+    runtime=kernel_case.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
+    code,result=kernel_case.invoke(runtime,pin,kernel_case.root/'output',source=True)
+    assert code == 3, result
+    assert result['recommendation'] == 'review_candidate', result
+    assert result['analysis']['status'] == 'supported'
+    assert len(kernel_case.calls) == 26
+    assert not result['automatic_promotion'];assert result['changed_files'] == []
+    assert result['native_identity'] == 'unverified'
+    store=HistoryStore(kernel_case.root/'output/private-history');run=result['controller_run_id']
+    checked=store.checked(run);assert checked[2]['schema_version'] == 6
+    assert len(checked[4]['trials']) == 12
+    assert len({row['trial_id'] for row in checked[4]['trials']}) == 12
+    assert all(row['source_capture']['status']=='observed' for row in checked[4]['trials'])
+    assert result['isolation_qualification']['qualification'] == 'qualified'
+    assert store.verify_decision(run,result['decision']['receipt_sha256'])['analysis'] == result['analysis']
+    assert comparison_custody.current() is None
+    gc.collect();assert len(comparison_custody._STATES) == 0
+    case=checked[0];calls=len(kernel_case.calls)
+    for target in (case/'responses-custody.json',case/'execution/results.json',case/'manifest.json',case/'workflow-request.json'):
+        original=target.read_bytes();target.write_bytes(original+b' ')
+        try:
+            with pytest.raises(ValueError):store.verify_decision(run,result['decision']['receipt_sha256'])
+        finally:target.write_bytes(original)
+    assert len(kernel_case.calls) == calls
+
+
+@kernel_only
+def test_missing_artifact_stops_without_further_calls_or_decision(kernel_case):
+    kernel_case.mode='unknown';runtime=kernel_case.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
+    code,result=kernel_case.invoke(runtime,pin,kernel_case.root/'output')
+    assert (code,result['status']) == (1,'incomplete'), result
+    assert 'decision' not in result;assert len(kernel_case.calls) == 3
+    assert comparison_custody.current() is None
+    gc.collect();assert len(comparison_custody._STATES) == 0
+
+
+@kernel_only
+def test_private_bank_under_runtime_cannot_reach_proposer(kernel_case):
+    from agent_harness_lab.evaluation.image import scan
+    runtime=kernel_case.root/'runtime';kernel.pinned_runtime(runtime)
+    moved=runtime/'private-bank';shutil.move(str(kernel_case.bank),moved)
+    kernel_case.bank=moved;kernel_case.manifest=moved/'manifest.json'
+    source=record(kernel_case.manifest)[0];canary='SYNTHETIC_PRIVATE_BANK_CANARY'
+    source['synthetic_private_canary']=canary;kernel_case.manifest.write_bytes(encoded(source))
+    kernel_case.request_value.update(manifest=str(kernel_case.manifest),manifest_sha256=record(kernel_case.manifest)[1],bank_sha256=digest(kernel_case.bank))
+    kernel_case.request.write_bytes(encoded(kernel_case.request_value));pin=scan(runtime)['sha256']
+    revealing="print(__import__('pathlib').Path('/private-bank/manifest.json').read_text())\n"+roles.PROPOSER
+    try:
+        with patch.object(roles,'PROPOSER',revealing):kernel_case.invoke(runtime,pin,kernel_case.root/'output')
+    except SystemExit:pass
+    assert not any(canary in json.dumps(call) for call in kernel_case.calls), 'private bank manifest was read by the actual proposer through the pinned image'
+    assert kernel_case.calls == []
+
+
+@kernel_only
+def test_requested_grader_permission_violation_cannot_recommend_review(kernel_case):
+    oracle=kernel_case.bank/'oracle'
+    denied=GRADER.replace('value=json.loads',"try:Path(sys.argv[2]).write_text('forbidden grader write')\nexcept OSError:pass\nvalue=json.loads")
+    (oracle/'grade.py.txt').write_text(denied)
+    source=record(kernel_case.manifest)[0]
+    for declaration in source['grader_bundles'].values():declaration['digest']=digest(oracle)
+    kernel_case.manifest.write_bytes(encoded(source));kernel_case.request_value.update(
+        manifest_sha256=record(kernel_case.manifest)[1],bank_sha256=digest(kernel_case.bank))
+    kernel_case.request.write_bytes(encoded(kernel_case.request_value))
+    runtime=kernel_case.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
+    _,result=kernel_case.invoke(runtime,pin,kernel_case.root/'output',source=True)
+    assert result['isolation_qualification']['qualification'] != 'qualified'
+    assert result.get('recommendation') != 'review_candidate', result
+
+
+@kernel_only
+def test_candidate_file_modes_cannot_mix_under_one_byte_identity(kernel_case):
+    original=comparison_custody.Comparison.before;changed=[False]
+    def changing(comp,scheduled,workspace,harness,client):
+        if scheduled['version']=='candidate':
+            (Path(harness)/'AGENTS.md').chmod(0o644 if changed[0] else 0o700);changed[0]=True
+        return original(comp,scheduled,workspace,harness,client)
+    runtime=kernel_case.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
+    with patch.object(comparison_custody.Comparison,'before',changing):_,result=kernel_case.invoke(runtime,pin,kernel_case.root/'output',source=True)
+    assert changed[0];assert 'decision' not in result
+    assert result['status'] == 'incomplete', result;assert len(kernel_case.calls) == 2
+
+
+@kernel_only
+def test_actual_dispatch_directory_mode_change_cannot_gain_review(kernel_case):
+    from agent_harness_lab.evaluation.sandbox import SandboxBackend
+    original=SandboxBackend.run;changed=[False]
+    def dispatch(backend,argv,workspace,inputs,role,*args,**kwargs):
+        comp=comparison_custody.current()
+        if role=='executor' and comp is not None and not comp.controls and not changed[0]:
+            Path(inputs['harness']).chmod(0o750);changed[0]=True
+        return original(backend,argv,workspace,inputs,role,*args,**kwargs)
+    runtime=kernel_case.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
+    with patch.object(SandboxBackend,'run',dispatch):_,result=kernel_case.invoke(runtime,pin,kernel_case.root/'output',source=True)
+    assert changed[0];assert 'decision' not in result
+    assert result['status'] == 'incomplete', result;assert len(kernel_case.calls) == 3
+
+
+@kernel_only
+def test_mode_change_during_controls_cannot_become_an_admission_pin(kernel_case):
+    from agent_harness_lab.evaluation.sandbox import SandboxBackend
+    original=SandboxBackend.run;changed=[False]
+    def dispatch(backend,*args,**kwargs):
+        comp=comparison_custody.current()
+        if comp is not None and comp.controls and not changed[0]:
+            (kernel_case.root/'output/candidate-0/AGENTS.md').chmod(0o700);changed[0]=True
+        return original(backend,*args,**kwargs)
+    runtime=kernel_case.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
+    with patch.object(SandboxBackend,'run',dispatch):
+        with pytest.raises(SystemExit):kernel_case.invoke(runtime,pin,kernel_case.root/'output',source=True)
+    result=record(kernel_case.root/'output/workflow.json')[0]
+    assert changed[0];assert 'decision' not in result;assert len(kernel_case.calls) == 2
+
+
+@kernel_only
+def test_missing_requested_selftest_monitor_stops_before_trial_calls(kernel_case):
+    kernel_case.without_requested_grader_monitor(False)
+
+
+@kernel_only
+def test_missing_requested_trial_monitor_stops_before_another_call(kernel_case):
+    kernel_case.without_requested_grader_monitor(True)
+
+
+@kernel_only
+def test_requested_late_grader_denial_stops_before_another_trial(kernel_case):
+    oracle=kernel_case.bank/'oracle';source=record(kernel_case.manifest)[0]
+    denied=GRADER.replace('outcome=value.get',"if not value.get('control'):\n try:Path(sys.argv[2]).write_text('forbidden trial grader write')\n except OSError:pass\noutcome=value.get")
+    (oracle/'grade.py.txt').write_text(denied)
+    for control in source['grader_self_tests']:
+        path=kernel_case.bank/control['fixture']/'result.json';data=record(path)[0];data['control']=True;path.write_bytes(encoded(data))
+    for declaration in source['grader_bundles'].values():declaration['digest']=digest(oracle)
+    kernel_case.manifest.write_bytes(encoded(source));kernel_case.request_value.update(
+        manifest_sha256=record(kernel_case.manifest)[1],bank_sha256=digest(kernel_case.bank))
+    kernel_case.request.write_bytes(encoded(kernel_case.request_value))
+    runtime=kernel_case.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
+    _,result=kernel_case.invoke(runtime,pin,kernel_case.root/'output',source=True)
+    assert result['status'] == 'requires_intervention', result
+    assert 'decision' not in result;assert len(kernel_case.calls) == 4
+
+
+@kernel_only
+def test_wrong_physical_seed_cannot_gain_a_decision_or_an_extra_request(kernel_case):
+    from dataclasses import replace
+    from agent_harness_lab.evaluation.working_state import WorkingState
+    original=WorkingState.seed;changed=[False]
+    def wrong(state,*args):
+        comp=comparison_custody.current()
+        if comp is not None and comp.active is not None and not changed[0]:
+            changed[0]=True
+            state.snapshot=replace(state.snapshot,files=tuple((name,mode,b'{"case":"wrong-seed"}' if name=='task.json' else raw)
+                for name,mode,raw in state.snapshot.files))
+        return original(state,*args)
+    runtime=kernel_case.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
+    with patch.object(WorkingState,'seed',wrong):_,result=kernel_case.invoke(runtime,pin,kernel_case.root/'output')
+    assert changed[0];assert result['status'] == 'incomplete', result
+    assert 'decision' not in result;assert len(kernel_case.calls) == 3
+
+
+@kernel_only
+def test_unresolved_request_is_retained_without_redispatch_or_decision(kernel_case):
+    kernel_case.mode='pending';runtime=kernel_case.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
+    _,result=kernel_case.invoke(runtime,pin,kernel_case.root/'output')
+    assert result['status'] == 'incomplete', result;assert 'decision' not in result
+    assert len(kernel_case.calls) == 3
+    assert result['inference']['request_pending']
+    assert comparison_custody.current() is None
+
+
+@kernel_only
+def test_actual_critical_dispatch_vetoes_artifact_success(kernel_case):
+    from agent_harness_lab.evaluation import trajectory_assertions as trajectory
+    source=record(kernel_case.manifest)[0];folder=kernel_case.bank/'critical-oracle';shutil.copytree(kernel_case.bank/'oracle',folder)
+    policy=dict(schema_version=1,profile=trajectory.PROFILE,task_id='case0',root_id='root0',family='synthetic',
+        engine=trajectory.engine(),outcome_mapping='artifact_and_required_v1',assertions=[dict(id='critical-dispatch',
+        required=True,severity='critical',rule=dict(kind='forbidden',stage='dispatch',tool='run',quantifier='exists',
+            arguments=dict(mode='exact',argv=['/usr/bin/python3','-c',EXECUTOR])))])
+    (folder/'trajectory.json').write_bytes(encoded(policy))
+    source['grader_bundles']['case0']=dict(path='critical-oracle',digest=digest(folder))
+    kernel_case.manifest.write_bytes(encoded(source));kernel_case.request_value.update(manifest_sha256=record(kernel_case.manifest)[1],bank_sha256=digest(kernel_case.bank))
+    kernel_case.request.write_bytes(encoded(kernel_case.request_value))
+    runtime=kernel_case.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
+    _,result=kernel_case.invoke(runtime,pin,kernel_case.root/'output')
+    assert (result['analysis']['status'],result['analysis']['reason']) == ('rejected','critical_regression'), result
+    assert result['recommendation'] == 'candidate_not_supported'
+
+
+@kernel_only
+def test_different_actual_artifacts_change_analysis_and_recommendation(kernel_case):
+    kernel_case.mode='harm';runtime=kernel_case.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
+    _,result=kernel_case.invoke(runtime,pin,kernel_case.root/'output')
+    assert result['analysis']['status'] == 'rejected', result
+    assert result['recommendation'] == 'candidate_not_supported'
+    assert len(kernel_case.calls) == 26
+

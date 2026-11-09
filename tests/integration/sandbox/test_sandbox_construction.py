@@ -5,8 +5,12 @@ from pathlib import Path
 import subprocess
 import tempfile
 import time
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
+
+import pytest
+
 from agent_harness_lab.cli import assets
 from agent_harness_lab import workflow
 from agent_harness_lab.evaluation import construction
@@ -15,93 +19,108 @@ from agent_harness_lab.workflow import improve, watch_configuration
 from agent_harness_lab.evaluation.working_state import WorkingState
 from tests.integration.sandbox import test_sandbox_graders as fixtures
 from tests.integration.sandbox import test_sandbox_inference as wire
+from tests.support.unittest_cleanups import run_cleanups
 
 
-class PreparationContractTests(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name); self.deadline = time.monotonic()+10
-        self.baseline = self.root/'baseline'; self.baseline.mkdir(); (self.baseline/'AGENTS.md').write_text('synthetic baseline')
-
-    def test_views_exclude_raw_sources_prior_outcomes_and_event_identity(self):
-        canary = 'SYNTHETIC_PRIOR_HELDOUT_SECRET'
-        data = dict(analysis=dict(events=3,cases=1,findings=[dict(kind='tool_error',status='observed_pattern',
-            explanation='synthetic observed tool error',evidence=[dict(case_id=canary)])],recurring_sequences=[]),
-            evaluation_failures=[dict(split='heldout',result=canary)],sources=[dict(path=canary)])
-        views = construction.views(data,assets(),self.root/'views',self.deadline)
-        for role,folder in views.items():
-            summary = json.loads((folder/'analysis-summary.json').read_text())
-            self.assertNotIn(canary,json.dumps(summary)); self.assertEqual(summary['findings'][0]['kind'],'tool_error')
-            self.assertTrue((folder/'methodology/harness-evaluation/SKILL.md').is_file())
-            self.assertEqual((folder/'methodology/harness-self-improvement').exists(),role=='proposer')
-            self.assertFalse(list(folder.rglob('*.pyc')))
-            WorkingState(folder,self.deadline)
-
-    def test_proposer_publication_preserves_candidate_modes_and_never_mutates_baseline(self):
-        seed = self.root/'seed'; construction.proposer_seed(self.baseline,seed,self.deadline)
-        (seed/'candidate/AGENTS.md').write_text('synthetic candidate'); (seed/'candidate/AGENTS.md').chmod(0o710)
-        (seed/'proposal.json').write_text('{"status":"candidate"}')
-        state = WorkingState(seed,self.deadline)
-        with patch.object(construction,'run_role',return_value=(state,[])) as run:
-            proposal,candidate,commands = construction.propose(Mock(),Mock(),self.baseline,self.root/'context',seed,self.root/'published',self.deadline)
-        self.assertEqual(proposal['status'],'candidate'); self.assertEqual(commands,[])
-        self.assertEqual((candidate/'AGENTS.md').read_text(),'synthetic candidate')
-        self.assertEqual((candidate/'AGENTS.md').stat().st_mode&0o777,0o710)
-        self.assertEqual((self.baseline/'AGENTS.md').read_text(),'synthetic baseline')
-        self.assertEqual(run.call_args.args[4],'proposer')
-        self.assertEqual(set(run.call_args.args[3]),{'harness','fixture'})
-        self.assertNotIn(str(self.root),run.call_args.args[5])
-
-    def test_proposer_cannot_publish_other_roots_or_nonfinite_declarations(self):
-        for extra,body in ((True,'{"status":"candidate"}'),(False,'{"status":"candidate","unknown":NaN}')):
-            with self.subTest(extra=extra), tempfile.TemporaryDirectory(dir=self.root) as folder:
-                root = Path(folder); seed = root/'seed'; construction.proposer_seed(self.baseline,seed,self.deadline)
-                (seed/'proposal.json').write_text(body)
-                if extra: (seed/'outside-candidate').write_text('forbidden')
-                with patch.object(construction,'run_role',return_value=(WorkingState(seed,self.deadline),[])),self.assertRaises(ValueError):
-                    construction.propose(Mock(),Mock(),self.baseline,self.root/'context',seed,root/'published',self.deadline)
+class Preparation(SimpleNamespace):
+    """A synthetic baseline under tmp_path; authored() adds a controller-owned grader declaration."""
 
     def authored(self):
-        fixture = fixtures.SandboxedGraderTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        fixture = fixtures.SandboxedGraderTests(); fixture.setUp(); self.helpers.append(fixture)
         path,manifest,_ = fixture.controls()
         for task in manifest['tasks']: task.pop('grader')
         path.write_text(json.dumps(manifest))
         return path,manifest
 
-    def test_controller_constructs_exact_grader_commands_after_author_publication(self):
-        path,manifest = self.authored();path.chmod(0o640);path.parent.chmod(0o750)
-        state = WorkingState(path.parent,self.deadline);original=state.snapshot;published=[]
-        destination = self.root/'published';publish=WorkingState.publish
-        def normalized_once(item,target,deadline):
-            document=json.loads(next(raw for name,_,raw in item.snapshot.files if name=='manifest.json'))
-            self.assertTrue(all('grader' in task for task in document['tasks']))
-            self.assertEqual(item.snapshot.root_mode,original.root_mode)
-            self.assertEqual(item.snapshot.directories,original.directories)
-            self.assertEqual([(name,mode) for name,mode,_ in item.snapshot.files],[(name,mode) for name,mode,_ in original.files])
-            published.append(target);return publish(item,target,deadline)
-        with patch.object(construction,'run_role',return_value=(state,[])) as run,patch.object(WorkingState,'publish',normalized_once):
-            authored,_ = construction.author(Mock(),Mock(),self.baseline,self.root/'context',self.root/'seed',destination,self.deadline)
-        actual = json.loads(authored.read_text())
-        self.assertEqual(published,[destination]);self.assertEqual(authored.stat().st_mode&0o777,0o640)
-        self.assertEqual(destination.stat().st_mode&0o777,0o750)
-        self.assertEqual(actual['harness_paths'],[]); self.assertEqual(actual['skills'],[])
-        for task in actual['tasks']:
-            self.assertEqual(task['grader'],['/usr/bin/python3',str(destination/'oracle/grade.py.txt'),'{workspace}',str(destination/'oracle/expected.json')])
-        self.assertEqual(run.call_args.args[4],'evaluator_author')
-        self.assertNotIn(str(self.root),run.call_args.args[5])
-        self.assertTrue(all('grader' not in task for task in manifest['tasks']))
 
-    def test_authored_grader_argv_digests_and_candidate_derived_injection_are_rejected(self):
-        for changes in ('argv','digest','injection'):
-            with self.subTest(changes=changes):
-                path,manifest = self.authored()
-                if changes=='argv': manifest['tasks'][0]['grader'] = ['/bin/sh','-c','forbidden']
-                elif changes=='digest': manifest['grader_bundles']['development']['digest'] = 'model-selected'
-                else: manifest['harness_paths'] = ['candidate-only-name']
-                path.write_text(json.dumps(manifest)); state = WorkingState(path.parent,self.deadline)
-                with patch.object(construction,'run_role',return_value=(state,[])),self.assertRaises(ValueError):
-                    construction.author(Mock(),Mock(),self.baseline,self.root/'context',self.root/('seed-'+changes),
-                        self.root/('published-'+changes),self.deadline)
+@pytest.fixture
+def prep(tmp_path):
+    baseline = tmp_path/'baseline'; baseline.mkdir(); (baseline/'AGENTS.md').write_text('synthetic baseline')
+    value = Preparation(root=tmp_path,deadline=time.monotonic()+10,baseline=baseline,helpers=[])
+    yield value
+    run_cleanups(*reversed(value.helpers))
+
+
+def test_views_exclude_raw_sources_prior_outcomes_and_event_identity(prep):
+    canary = 'SYNTHETIC_PRIOR_HELDOUT_SECRET'
+    data = dict(analysis=dict(events=3,cases=1,findings=[dict(kind='tool_error',status='observed_pattern',
+        explanation='synthetic observed tool error',evidence=[dict(case_id=canary)])],recurring_sequences=[]),
+        evaluation_failures=[dict(split='heldout',result=canary)],sources=[dict(path=canary)])
+    views = construction.views(data,assets(),prep.root/'views',prep.deadline)
+    for role,folder in views.items():
+        summary = json.loads((folder/'analysis-summary.json').read_text())
+        assert canary not in json.dumps(summary); assert summary['findings'][0]['kind'] == 'tool_error'
+        assert (folder/'methodology/harness-evaluation/SKILL.md').is_file()
+        assert (folder/'methodology/harness-self-improvement').exists() == (role=='proposer')
+        assert not list(folder.rglob('*.pyc'))
+        WorkingState(folder,prep.deadline)
+
+
+def test_proposer_publication_preserves_candidate_modes_and_never_mutates_baseline(prep):
+    seed = prep.root/'seed'; construction.proposer_seed(prep.baseline,seed,prep.deadline)
+    (seed/'candidate/AGENTS.md').write_text('synthetic candidate'); (seed/'candidate/AGENTS.md').chmod(0o710)
+    (seed/'proposal.json').write_text('{"status":"candidate"}')
+    state = WorkingState(seed,prep.deadline)
+    with patch.object(construction,'run_role',return_value=(state,[])) as run:
+        proposal,candidate,commands = construction.propose(Mock(),Mock(),prep.baseline,prep.root/'context',seed,prep.root/'published',prep.deadline)
+    assert proposal['status'] == 'candidate'; assert commands == []
+    assert (candidate/'AGENTS.md').read_text() == 'synthetic candidate'
+    assert (candidate/'AGENTS.md').stat().st_mode&0o777 == 0o710
+    assert (prep.baseline/'AGENTS.md').read_text() == 'synthetic baseline'
+    assert run.call_args.args[4] == 'proposer'
+    assert set(run.call_args.args[3]) == {'harness','fixture'}
+    assert str(prep.root) not in run.call_args.args[5]
+
+
+@pytest.mark.parametrize('extra, body', [
+    pytest.param(True, '{"status":"candidate"}', id='outside-candidate'),
+    pytest.param(False, '{"status":"candidate","unknown":NaN}', id='nonfinite')])
+def test_proposer_cannot_publish_other_roots_or_nonfinite_declarations(prep, extra, body):
+    with tempfile.TemporaryDirectory(dir=prep.root) as folder:
+        root = Path(folder); seed = root/'seed'; construction.proposer_seed(prep.baseline,seed,prep.deadline)
+        (seed/'proposal.json').write_text(body)
+        if extra: (seed/'outside-candidate').write_text('forbidden')
+        with patch.object(construction,'run_role',return_value=(WorkingState(seed,prep.deadline),[])),pytest.raises(ValueError):
+            construction.propose(Mock(),Mock(),prep.baseline,prep.root/'context',seed,root/'published',prep.deadline)
+
+
+def test_controller_constructs_exact_grader_commands_after_author_publication(prep):
+    path,manifest = prep.authored();path.chmod(0o640);path.parent.chmod(0o750)
+    state = WorkingState(path.parent,prep.deadline);original=state.snapshot;published=[]
+    destination = prep.root/'published';publish=WorkingState.publish
+    def normalized_once(item,target,deadline):
+        document=json.loads(next(raw for name,_,raw in item.snapshot.files if name=='manifest.json'))
+        assert all('grader' in task for task in document['tasks'])
+        assert item.snapshot.root_mode == original.root_mode
+        assert item.snapshot.directories == original.directories
+        assert [(name,mode) for name,mode,_ in item.snapshot.files] == [(name,mode) for name,mode,_ in original.files]
+        published.append(target);return publish(item,target,deadline)
+    with patch.object(construction,'run_role',return_value=(state,[])) as run,patch.object(WorkingState,'publish',normalized_once):
+        authored,_ = construction.author(Mock(),Mock(),prep.baseline,prep.root/'context',prep.root/'seed',destination,prep.deadline)
+    actual = json.loads(authored.read_text())
+    assert published == [destination];assert authored.stat().st_mode&0o777 == 0o640
+    assert destination.stat().st_mode&0o777 == 0o750
+    assert actual['harness_paths'] == []; assert actual['skills'] == []
+    for task in actual['tasks']:
+        assert task['grader'] == ['/usr/bin/python3',str(destination/'oracle/grade.py.txt'),'{workspace}',str(destination/'oracle/expected.json')]
+    assert run.call_args.args[4] == 'evaluator_author'
+    assert str(prep.root) not in run.call_args.args[5]
+    assert all('grader' not in task for task in manifest['tasks'])
+
+
+@pytest.mark.parametrize('changes', [
+    pytest.param('argv', id='argv'),
+    pytest.param('digest', id='digest'),
+    pytest.param('injection', id='injection')])
+def test_authored_grader_argv_digests_and_candidate_derived_injection_are_rejected(prep, changes):
+    path,manifest = prep.authored()
+    if changes=='argv': manifest['tasks'][0]['grader'] = ['/bin/sh','-c','forbidden']
+    elif changes=='digest': manifest['grader_bundles']['development']['digest'] = 'model-selected'
+    else: manifest['harness_paths'] = ['candidate-only-name']
+    path.write_text(json.dumps(manifest)); state = WorkingState(path.parent,prep.deadline)
+    with patch.object(construction,'run_role',return_value=(state,[])),pytest.raises(ValueError):
+        construction.author(Mock(),Mock(),prep.baseline,prep.root/'context',prep.root/('seed-'+changes),
+            prep.root/('published-'+changes),prep.deadline)
 
 
 PROPOSER = r'''from pathlib import Path
@@ -143,8 +162,14 @@ Path('result.json').write_text(json.dumps(dict(complete=good or task['split']=='
 
 
 class ControlledWorkflowTests(unittest.TestCase):
+    """A public improve run whose four roles use a synthetic controller transport and cooperative workers.
+
+    Many evaluation, workflow and kernel modules instantiate this class and call setUp, transport, execute,
+    run_controlled and doCleanups, so it keeps that TestCase interface and holds no tests.
+    """
+
     def setUp(self):
-        self.fixture = fixtures.workflow_fixtures.WorkflowTests(); self.fixture.setUp(); self.addCleanup(self.fixture.doCleanups)
+        self.fixture = fixtures.workflow_fixtures.WorkflowTests(); self.fixture.setUp(); self.addCleanup(run_cleanups, self.fixture)
         self.root,self.project = self.fixture.root,self.fixture.project
         self.args = self.fixture.args(); self.args.agent = 'responses'
         self.args.cgroup_root = self.root/'delegation'; self.args.image_root = self.root/'image'
@@ -163,8 +188,8 @@ class ControlledWorkflowTests(unittest.TestCase):
         self.args.inference_settings.write_text(json.dumps(self.settings))
 
     def transport(self,key,body,max_bytes,deadline):
-        self.assertEqual(key,'SYNTHETIC_CONTROLLER_KEY'); self.assertNotIn(key,body.decode())
-        self.assertNotIn(str(self.root),body.decode())
+        assert key == 'SYNTHETIC_CONTROLLER_KEY'; assert key not in body.decode()
+        assert str(self.root) not in body.decode()
         payload = json.loads(body); self.histories.append(payload)
         ident = str(len(self.histories)); instructions = payload['input'][0]['content']
         if any(item.get('type')=='function_call_output' for item in payload['input']): return wire.reply([wire.message('final-'+ident)])
@@ -180,23 +205,23 @@ class ControlledWorkflowTests(unittest.TestCase):
     def execute(self,argv,workspace,inputs,role,limits,**options):
         self.roles.append(role)
         if role=='grader':
-            self.assertEqual(options,{}); self.assertEqual(set(inputs),{'fixture','oracle'})
+            assert options == {}; assert set(inputs) == {'fixture','oracle'}
             translated = list(argv)
             for name,folder in inputs.items(): translated = [value.replace('/inputs/'+name,str(folder)) for value in translated]
             run = subprocess.run(translated,cwd=workspace,env={'PATH':'/usr/bin:/bin'},capture_output=True,text=True,timeout=limits.seconds)
             return dict(status='completed' if run.returncode==0 else 'failed',exit_code=run.returncode,stdout=run.stdout,stderr=run.stderr,
                         inputs_unchanged=True,attestation=dict(backend='test-only-cooperative'))
-        self.assertEqual(set(options),{'working_state'}); state = options['working_state']
-        self.assertNotIn(b'SYNTHETIC_CONTROLLER_KEY',b''.join(raw for _,_,raw in state.snapshot.files))
-        self.assertEqual(set(inputs),{'harness'} if role=='executor' else {'harness','fixture'})
+        assert set(options) == {'working_state'}; state = options['working_state']
+        assert b'SYNTHETIC_CONTROLLER_KEY' not in b''.join(raw for _,_,raw in state.snapshot.files)
+        assert set(inputs) == ({'harness'} if role=='executor' else {'harness','fixture'})
         if role=='evaluator_author':
-            self.assertFalse(state.snapshot.files)
+            assert not state.snapshot.files
             for folder in inputs.values():
                 text = b'\n'.join(path.read_bytes() for path in folder.rglob('*') if path.is_file())
-                self.assertNotIn(b'SYNTHETIC_CANDIDATE_SECRET',text); self.assertNotIn(b'SYNTHETIC_PRIOR_HELDOUT_SECRET',text)
+                assert b'SYNTHETIC_CANDIDATE_SECRET' not in text; assert b'SYNTHETIC_PRIOR_HELDOUT_SECRET' not in text
         # Fixed synthetic scripts only; this emulation does not establish OS containment.
         expected = {'proposer':PROPOSER,'evaluator_author':AUTHOR,'executor':EXECUTOR}[role]
-        self.assertEqual(argv[:3],['/usr/bin/python3','-c',expected])
+        assert argv[:3] == ['/usr/bin/python3','-c',expected]
         translated = [value.replace('/inputs/harness',str(inputs['harness'])) if index>=3 else value for index,value in enumerate(argv)]
         with tempfile.TemporaryDirectory(dir=self.root) as folder:
             descriptor = os.open(folder,os.O_RDONLY|os.O_DIRECTORY)
@@ -218,83 +243,100 @@ class ControlledWorkflowTests(unittest.TestCase):
              patch.object(self.runner,'agent_command',side_effect=AssertionError('no native command construction')), \
              patch('agent_harness_lab.workflow.shutil.which',side_effect=AssertionError('no native binary discovery')):
             result = improve(self.args)
-        self.assertEqual(factory.call_count,1); self.assertEqual(key_read.call_count,1)
+        assert factory.call_count == 1; assert key_read.call_count == 1
         return result
 
-    def test_all_roles_share_one_client_and_budget_without_exposing_candidates_to_author(self):
-        result = self.run_controlled(); self.assertEqual(result['status'],'inconclusive')
-        self.assertEqual(len(self.histories),16); self.assertEqual(result['inference']['request_attempts'],16)
-        self.assertEqual(self.roles.count('proposer'),1); self.assertEqual(self.roles.count('evaluator_author'),1)
-        self.assertEqual(self.roles.count('executor'),6); self.assertEqual(self.roles.count('grader'),15)
-        ledger = json.loads((Path(result['output'])/'inference.json').read_text())
-        self.assertEqual(ledger['request_attempts'],16); self.assertFalse(ledger['request_pending'])
-        self.assertEqual((self.project/'AGENTS.md').read_text(),'bad'); self.assertEqual(result['changed_files'],[])
 
-    def test_refinement_receives_only_minimal_development_feedback_and_a_fresh_author(self):
-        self.mode = 'refine'; result = self.run_controlled()
-        self.assertEqual(result['status'],'inconclusive'); self.assertEqual(self.authors,2)
-        feedback = json.loads((Path(result['output'])/'preparation/proposer-context-1/feedback.json').read_text())
-        self.assertEqual(len(feedback['trials']),4)
-        self.assertTrue(all(set(row)=={'task','version','split','status'} and row['split']!='heldout' for row in feedback['trials']))
-        self.assertEqual(result['inference']['request_attempts'],32)
+@pytest.fixture
+def controlled():
+    value = ControlledWorkflowTests(); value.setUp()
+    yield value
+    run_cleanups(value)
 
-    def test_shared_request_exhaustion_stops_before_trials_and_preserves_receipt(self):
-        self.settings['max_requests'] = 3; self.write_settings(); result = self.run_controlled()
-        self.assertEqual(result['status'],'budget_exhausted'); self.assertEqual(len(self.histories),3)
-        self.assertNotIn('executor',self.roles); self.assertNotIn('grader',self.roles)
-        ledger = json.loads((Path(result['output'])/'inference.json').read_text())
-        self.assertEqual(ledger['request_attempts'],3); self.assertTrue(ledger['further_requests_blocked'])
 
-    def test_watch_fingerprint_changes_with_caps_without_reading_key_or_binaries(self):
-        with patch.object(responses,'read_credential',side_effect=AssertionError('no watch-scheduling key read')), \
-             patch('agent_harness_lab.workflow.shutil.which',side_effect=AssertionError('no native discovery')):
-            before = watch_configuration(self.args); self.settings['max_requests'] = 61; self.write_settings()
-            self.assertNotEqual(before,watch_configuration(self.args))
+def test_all_roles_share_one_client_and_budget_without_exposing_candidates_to_author(controlled):
+    result = controlled.run_controlled(); assert result['status'] == 'inconclusive'
+    assert len(controlled.histories) == 16; assert result['inference']['request_attempts'] == 16
+    assert controlled.roles.count('proposer') == 1; assert controlled.roles.count('evaluator_author') == 1
+    assert controlled.roles.count('executor') == 6; assert controlled.roles.count('grader') == 15
+    ledger = json.loads((Path(result['output'])/'inference.json').read_text())
+    assert ledger['request_attempts'] == 16; assert not ledger['request_pending']
+    assert (controlled.project/'AGENTS.md').read_text() == 'bad'; assert result['changed_files'] == []
 
-    def test_unsupported_profile_blocks_before_key_native_discovery_or_inference(self):
-        self.backend.capability.return_value = dict(status='unsupported')
-        with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=self.backend), \
-             patch.object(responses,'read_credential',side_effect=AssertionError('no unavailable-boundary key')), \
-             patch.object(responses,'request',side_effect=AssertionError('no unsupported inference')):
-            result = improve(self.args)
-        self.assertEqual(result['reason'],'inference_sandbox_unavailable'); self.assertFalse(self.histories)
-        self.assertEqual((self.project/'AGENTS.md').read_text(),'bad')
 
-    def test_ambiguous_provider_failure_preserves_pending_receipt_and_never_falls_back(self):
-        with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=self.backend), \
-             patch.object(responses,'request',return_value=b'{"status":"incomplete","error":{"message":"SYNTHETIC_PROVIDER_PRIVATE"}}') as request, \
-             patch.object(self.runner,'execute',side_effect=AssertionError('no native fallback')):
-            result = improve(self.args)
-        self.assertEqual(result['status'],'execution_error'); self.assertEqual(result['failure_class'],'requires_intervention')
-        self.assertEqual(request.call_count,1); self.assertEqual(self.roles,[])
-        ledger = json.loads((Path(result['output'])/'inference.json').read_text())
-        self.assertTrue(ledger['request_pending']); self.assertTrue(ledger['further_requests_blocked'])
-        self.assertEqual(ledger['request_attempts'],1)
-        self.assertNotIn('SYNTHETIC_PROVIDER_PRIVATE',json.dumps(result)); self.assertNotIn('SYNTHETIC_CONTROLLER_KEY',json.dumps(ledger))
+def test_refinement_receives_only_minimal_development_feedback_and_a_fresh_author(controlled):
+    controlled.mode = 'refine'; result = controlled.run_controlled()
+    assert result['status'] == 'inconclusive'; assert controlled.authors == 2
+    feedback = json.loads((Path(result['output'])/'preparation/proposer-context-1/feedback.json').read_text())
+    assert len(feedback['trials']) == 4
+    assert all(set(row)=={'task','version','split','status'} and row['split']!='heldout' for row in feedback['trials'])
+    assert result['inference']['request_attempts'] == 32
 
-    def test_mixed_runtime_settings_and_large_initial_harness_fail_before_key(self):
-        for mode in ('mixed','oversized'):
-            with self.subTest(mode=mode):
-                if mode=='mixed': self.args.agent = 'codex'
-                else:
-                    self.args.agent = 'responses'; (self.project/'AGENTS.md').write_bytes(b'x'*(1024*1024+1))
-                with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=self.backend), \
-                     patch.object(responses,'read_credential',side_effect=AssertionError('no invalid-input key')), \
-                     patch.object(responses,'request',side_effect=AssertionError('no invalid-input inference')),self.assertRaises(ValueError):
-                    improve(self.args)
 
-    def test_controlled_connection_failure_requires_intervention_without_transient_retry(self):
-        with patch('agent_harness_lab.cli.evaluator',return_value=self.runner), \
-             patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=self.backend), \
-             patch.object(responses,'request',side_effect=ConnectionError('synthetic ambiguous disconnect')) as request:
-            result = improve(self.args)
-        self.assertEqual(request.call_count,1); self.assertEqual(result['failure_class'],'requires_intervention')
-        ledger = json.loads((Path(result['output'])/'inference.json').read_text())
-        self.assertTrue(ledger['request_pending']); self.assertEqual(ledger['request_attempts'],1)
+def test_shared_request_exhaustion_stops_before_trials_and_preserves_receipt(controlled):
+    controlled.settings['max_requests'] = 3; controlled.write_settings(); result = controlled.run_controlled()
+    assert result['status'] == 'budget_exhausted'; assert len(controlled.histories) == 3
+    assert 'executor' not in controlled.roles; assert 'grader' not in controlled.roles
+    ledger = json.loads((Path(result['output'])/'inference.json').read_text())
+    assert ledger['request_attempts'] == 3; assert ledger['further_requests_blocked']
 
-    def test_user_authored_host_command_is_rejected_before_any_grader_or_trial(self):
-        self.mode = 'bad-argv'
-        with self.assertRaisesRegex(ValueError,'controller owns authored grader commands'):
-            self.run_controlled()
-        self.assertNotIn('grader',self.roles); self.assertNotIn('executor',self.roles)
-        self.assertEqual((self.project/'AGENTS.md').read_text(),'bad')
+
+def test_watch_fingerprint_changes_with_caps_without_reading_key_or_binaries(controlled):
+    with patch.object(responses,'read_credential',side_effect=AssertionError('no watch-scheduling key read')), \
+         patch('agent_harness_lab.workflow.shutil.which',side_effect=AssertionError('no native discovery')):
+        before = watch_configuration(controlled.args); controlled.settings['max_requests'] = 61; controlled.write_settings()
+        assert before != watch_configuration(controlled.args)
+
+
+def test_unsupported_profile_blocks_before_key_native_discovery_or_inference(controlled):
+    controlled.backend.capability.return_value = dict(status='unsupported')
+    with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=controlled.backend), \
+         patch.object(responses,'read_credential',side_effect=AssertionError('no unavailable-boundary key')), \
+         patch.object(responses,'request',side_effect=AssertionError('no unsupported inference')):
+        result = improve(controlled.args)
+    assert result['reason'] == 'inference_sandbox_unavailable'; assert not controlled.histories
+    assert (controlled.project/'AGENTS.md').read_text() == 'bad'
+
+
+def test_ambiguous_provider_failure_preserves_pending_receipt_and_never_falls_back(controlled):
+    with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=controlled.backend), \
+         patch.object(responses,'request',return_value=b'{"status":"incomplete","error":{"message":"SYNTHETIC_PROVIDER_PRIVATE"}}') as request, \
+         patch.object(controlled.runner,'execute',side_effect=AssertionError('no native fallback')):
+        result = improve(controlled.args)
+    assert result['status'] == 'execution_error'; assert result['failure_class'] == 'requires_intervention'
+    assert request.call_count == 1; assert controlled.roles == []
+    ledger = json.loads((Path(result['output'])/'inference.json').read_text())
+    assert ledger['request_pending']; assert ledger['further_requests_blocked']
+    assert ledger['request_attempts'] == 1
+    assert 'SYNTHETIC_PROVIDER_PRIVATE' not in json.dumps(result); assert 'SYNTHETIC_CONTROLLER_KEY' not in json.dumps(ledger)
+
+
+@pytest.mark.parametrize('mode', [
+    pytest.param('mixed', id='mixed'),
+    pytest.param('oversized', id='oversized')])
+def test_mixed_runtime_settings_and_large_initial_harness_fail_before_key(controlled, mode):
+    if mode=='mixed': controlled.args.agent = 'codex'
+    else:
+        controlled.args.agent = 'responses'; (controlled.project/'AGENTS.md').write_bytes(b'x'*(1024*1024+1))
+    with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=controlled.backend), \
+         patch.object(responses,'read_credential',side_effect=AssertionError('no invalid-input key')), \
+         patch.object(responses,'request',side_effect=AssertionError('no invalid-input inference')),pytest.raises(ValueError):
+        improve(controlled.args)
+
+
+def test_controlled_connection_failure_requires_intervention_without_transient_retry(controlled):
+    with patch('agent_harness_lab.cli.evaluator',return_value=controlled.runner), \
+         patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=controlled.backend), \
+         patch.object(responses,'request',side_effect=ConnectionError('synthetic ambiguous disconnect')) as request:
+        result = improve(controlled.args)
+    assert request.call_count == 1; assert result['failure_class'] == 'requires_intervention'
+    ledger = json.loads((Path(result['output'])/'inference.json').read_text())
+    assert ledger['request_pending']; assert ledger['request_attempts'] == 1
+
+
+def test_user_authored_host_command_is_rejected_before_any_grader_or_trial(controlled):
+    controlled.mode = 'bad-argv'
+    with pytest.raises(ValueError, match='controller owns authored grader commands'):
+        controlled.run_controlled()
+    assert 'grader' not in controlled.roles; assert 'executor' not in controlled.roles
+    assert (controlled.project/'AGENTS.md').read_text() == 'bad'
