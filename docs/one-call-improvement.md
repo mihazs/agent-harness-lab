@@ -530,6 +530,34 @@ only the staged tree, so a same-name file outside the configured `harness_paths`
 is not checked. Behavioral evaluation is unchanged and does not yet use native
 subagent loading attribution.
 
+## Validating staged skill bundles
+
+`sources/skill_validation.py` judges every skill bundle with a changed file as
+one unit before evaluation, because an adoptable path does not make a bundle
+valid. A bundle is a folder directly below a `skills/` folder
+(`.claude/skills`, `.agents/skills`, an owned root `skills/` or a nested
+`<dir>/.claude/skills`). Each change is a `create` (no baseline file), `remove`
+(no candidate file) or `update`, and a complete removal is always valid. Any
+other candidate membership must keep `SKILL.md` (`missing_entry_point`, so
+deleting only the entry point cannot orphan the assets), open it with a
+frontmatter fence on line 1 that parses (`missing_frontmatter`,
+`bad_frontmatter`; a BOM blocks), give a `description` (`missing_description`),
+and name itself after its directory in lowercase letters, digits and hyphens
+(`invalid_name`). A name is required outside `.claude/skills`
+(`missing_name`), since Codex rejects a skill without one. Inline Markdown links
+outside code must resolve to a file in the bundle (`dangling_reference`) and
+stay inside it (`reference_escapes_bundle`); a newly added file that
+`SKILL.md` never mentions by path or file name is an `orphan_asset`.
+
+The check reads staged bytes and never runs them; executable files and
+hook-bearing frontmatter still go through the hook contract. `ahl improve`
+stops a blocked candidate with status `blocked`, reason
+`skill_bundle_validation_failed` and a `skill_review` document of fixed labels
+and bundle paths, and `workflow.adopt` refuses it. A removal is journaled like
+any adoption, so `ahl promotion --action rollback` restores the whole bundle.
+Same-name collisions across roots, references from other bundles to a removed
+one, and runtime activation are not checked or claimed.
+
 ## Independently verified format repair
 
 ```sh
