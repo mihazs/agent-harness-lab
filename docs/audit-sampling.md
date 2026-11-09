@@ -49,13 +49,23 @@ frame and plan replay to the same receipt offline. A plan whose expected review
 count exceeds `review_budget` is refused. The realized count varies around the
 expected count and is recorded.
 
-The seed is chosen after the frame is frozen, and nothing commits to it in
-advance or takes it from a source the planner does not control. The
-`decision_timestamp` is self-declared too. Someone who suspects which units are
-incidents can try seeds offline until the draw leaves them out, and the sealed
-receipt still validates. The declared inclusion probabilities therefore describe
-the selection only when the seed's author is trusted. Every receipt carries the
-`seed_selection_unverified` limitation.
+A plan may add `seed_commitment`: `{"sha256":C,"committed_at":T,"nonce":X}`, where
+`C = commit_seed(seed, X)` is a SHA-256 of the seed and a secret nonce, published
+before the audit window closes. The plan then reveals `seed` and the nonce, and
+`draw` refuses it when the seed does not open the commitment or `committed_at` is
+not strictly before the window end. The receipt records the commitment and the
+revealed seed, and `review_queue` and `estimate` re-run the check, so a receipt
+re-sealed with another seed is refused. A seed searched after the fact cannot match
+a commitment made earlier, and a commitment made later is refused.
+
+Without a commitment the seed is chosen after the frame is frozen, and someone who
+suspects which units are incidents can try seeds offline until the draw leaves them
+out; the sealed receipt still validates. Such a receipt keeps the
+`seed_selection_unverified` limitation. A receipt that passes the commitment check
+drops it and carries `commitment_time_unauthenticated` instead: `committed_at` and
+`decision_timestamp` are self-declared, so the check proves only that the seed was
+fixed before the stated time. Anchor the commitment hash in a source the planner
+does not control (a signed or public log) to make that time trustworthy.
 
 The sealed receipt (`audit-sampling-receipt-v1`) records the window, scope, frame
 and plan hashes, policy and model identities, decision timestamp, rates, budget,
