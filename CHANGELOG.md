@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.145.0
+
+### Minor Changes
+
+- e7965f9: Validate staged project skill bundles as a whole before evaluation and adoption, so a missing entry point, malformed metadata, dangling references and orphan assets block a skill create, update or removal (#78).
+
 ## 0.144.1
 
 ### Patch Changes
