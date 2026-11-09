@@ -58,6 +58,10 @@ ROWS = [
      ['tests.integration.sandbox.test_sandbox_inference.ControllerInferenceTests']),
     ('tests.integration.sandbox.test_sandbox_inference', 'evaluation',
      ['tests.integration.sandbox.test_sandbox_inference.ResponsesEvaluationTests']),
+    ('tests.integration.sources.test_source_claude_root', 'claude_journal',
+     ['tests.integration.sources.test_source_claude.ClaudeSourceTests']),
+    ('tests.integration.sources.test_source_commit_join', 'github_driver',
+     ['tests.integration.sources.test_source_commit_join.GitHubDriver']),
 ]
 TEMPLATE = '''import contextlib, errno, importlib
 
