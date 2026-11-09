@@ -4,7 +4,8 @@ import json
 import pytest
 
 from agent_harness_lab import audit
-from agent_harness_lab.sources import harness_inventory
+from agent_harness_lab.audit import skills as skills_module
+from agent_harness_lab.sources import harness_inventory, skill_headers
 
 AGREEMENT = 'Extracts tables and text from PDF files. Use when the user mentions PDF forms, scans or extraction.'
 SPEC = 'https://agentskills.io/specification'
@@ -159,3 +160,30 @@ def test_the_inventory_keeps_description_words_out_of_its_facts(checkout):
     profile = dict(schema_version=1, runtime='claude-code', version='2.1.317', task_cwd='.')
     text = json.dumps(harness_inventory.capture(root, profile).document())
     assert 'quokka' not in text.lower() and 'ahl-skill-tokens-v1' in text
+
+
+def test_link_targets_never_reach_the_inventory_but_a_missing_one_is_still_found(checkout):
+    root = checkout({'.claude/skills/a/SKILL.md': skill('a', body='[k](sk-live-ABCDEF123456SECRET) [ok](references/ok.md)\n'),
+                     '.claude/skills/a/references/ok.md': 'Ok.\n'})
+    profile = dict(schema_version=1, runtime='claude-code', version='2.1.317', task_cwd='.')
+    text = json.dumps(harness_inventory.capture(root, profile).document())
+    assert 'SECRET' not in text and 'ok.md' not in text.replace('.claude/skills/a/references/ok.md', '')
+    assert reasons(audit.run(root, 'claude-code')) == {'.claude/skills/a/SKILL.md': 'skill_reference_missing'}
+
+
+def test_collision_findings_cap_related_paths_and_keep_the_full_count(checkout):
+    count = skills_module.MAX_RELATED + 4
+    root = checkout({f'.claude/skills/s{n:02}/SKILL.md': skill(f's{n:02}') for n in range(count)})
+    report = audit.run(root, 'claude-code')
+    assert len(report.findings) == count
+    for row in report.findings:
+        assert len(row.related) == skills_module.MAX_RELATED
+        assert dict(row.measures)['related_total'] == count - 1
+        assert list(row.related) == sorted(row.related) and row.path not in row.related
+
+
+def test_descriptions_under_the_minimum_token_count_never_collide(checkout):
+    short = 'Builds rockets. Use when asked.'
+    assert len(skill_headers.tokens(short)) < skills_module.MIN_TOKENS
+    root = checkout({'.claude/skills/a/SKILL.md': skill('a', short), '.claude/skills/b/SKILL.md': skill('b', short)})
+    assert audit.run(root, 'claude-code').findings == ()

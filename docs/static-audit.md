@@ -143,10 +143,11 @@ threshold (`skill_collision_rule`, `skill_tokenizer`, `skill_collision_threshold
 reproduced. Only skills that load together are compared: both in the audited runtime's root, in the same folder or one
 nested below a folder that encloses the other. Sibling directories such as `a/.claude/skills` and `b/.claude/skills`
 are never paired, and neither are skills whose description was not read or not text. Each skill in a colliding pair
-gets a `skill_routing_collision` finding (`behavioral_evaluation_required`) whose `related` field lists the other
-skill paths and whose `measures` are the strongest pair's `shared_tokens`, `union_tokens`, `similarity_permille` and
+gets a `skill_routing_collision` finding (`behavioral_evaluation_required`) whose `related` field lists at most
+five of the other skill paths (the first in sorted order; `related_total` in `measures` is the full count) and whose
+other `measures` are the strongest pair's `shared_tokens`, `union_tokens`, `similarity_permille` and
 `threshold_permille`. A skill that already has another finding reports that reason first; the collision appears
-once it is fixed. The inventory stores only hashes of the description tokens, never the words. A collision is
+once it is fixed. The inventory stores only hashes of the description tokens and of the relative link targets, never the words or paths. A collision is
 a lexical overlap, not evidence that a runtime mis-routes: confirm it with a routing evaluation.
 
 ## Statuses

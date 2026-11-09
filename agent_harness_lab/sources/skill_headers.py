@@ -4,7 +4,8 @@ The bounded shared reader (sources.frontmatter.texts via commands_inventory.fron
 parser; a block it cannot model is the unknown 'unsupported', a definite reason raises so the node is
 parse_failed, and a file without a block records frontmatter False. Other files of a bundle stay 'not_parsed'.
 Raw text never reaches a node: the description is reduced to its length, a trigger-phrase flag and the sorted
-hashes of its tokens (TOKENIZER), which the audit compares for routing collisions without the words.
+hashes of its tokens (TOKENIZER), which the audit compares for routing collisions without the words; each
+bundle link target is reduced to a short hash (link_hash) the audit compares with hashes of the bundle's paths.
 """
 import hashlib
 import posixpath
@@ -31,6 +32,10 @@ def tokens(text):
 _FENCE = re.compile(r'^\s*(?:```|~~~)')
 _LINK = re.compile(r'\]\(([^()\s]+)\)')
 MAX_LINKS = 50
+
+
+def link_hash(target):
+    return hashlib.sha256(target.encode()).hexdigest()[:12]
 
 
 def body(raw):
@@ -70,7 +75,7 @@ def parse(path, raw, profile):
     state = 'missing' if description == '' or 'description' not in keys else 'text'
     if description is None and 'description' in keys or text.lower() in _NOT_TEXT: state = 'not_text'
     lines = body(raw)
-    facts = dict(body_lines=len(lines), reference_links=' '.join(links(lines)),
+    facts = dict(body_lines=len(lines), reference_hashes=' '.join(link_hash(target) for target in links(lines)),
         frontmatter=fields is not None, name_declared='name' in keys, description=state, description_chars=len(text),
         name_valid=isinstance(name, str) and len(name) <= NAME_MAX and _NAME.fullmatch(name) is not None,
         name_reserved=isinstance(name, str) and any(word in name.lower() for word in RESERVED_WORDS),

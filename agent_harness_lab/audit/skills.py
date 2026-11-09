@@ -14,11 +14,12 @@ holding at least MIN_TOKENS tokens. Skills whose descriptions were not read or n
 from itertools import combinations
 from pathlib import PurePosixPath
 from agent_harness_lab.audit import chain
-from agent_harness_lab.sources.skill_headers import TOKENIZER
+from agent_harness_lab.sources.skill_headers import TOKENIZER, link_hash
 
 COLLISION_RULE = 'ahl-skill-collision-jaccard-v1'
 COLLISION_THRESHOLD = 0.5
 MIN_TOKENS = 4
+MAX_RELATED = 5  # related paths named per finding; the full count stays in the related_total measure
 ROOTS = {'claude-code': ('.claude', 'skills'), 'codex': ('.agents', 'skills')}
 SOURCE = 'https://agentskills.io/specification'
 BEST_PRACTICES = 'https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices'
@@ -67,12 +68,10 @@ class Context:
     def facts(self, node):
         """Bundle facts for one SKILL.md node, added to its header facts."""
         bundle = str(PurePosixPath(node.path).parent)
-        under = [path for path in self.listed if path.startswith(bundle + '/')]
-        missing = 0
-        for target in str(dict(node.facts).get('reference_links') or '').split():
-            wanted = str(PurePosixPath(bundle) / target)
-            missing += wanted not in self.listed and not any(path.startswith(wanted + '/') for path in under)
-        return dict(load=self.load(node.path), has_references=any(path.startswith(bundle + '/references/') for path in under),
+        under = [path[len(bundle) + 1:] for path in self.listed if path.startswith(bundle + '/')]
+        present = {link_hash('/'.join(parts[:i])) for parts in (path.split('/') for path in under) for i in range(1, len(parts) + 1)}
+        missing = sum(target not in present for target in str(dict(node.facts).get('reference_hashes') or '').split())
+        return dict(load=self.load(node.path), has_references=any(path.startswith('references/') for path in under),
             missing_references=missing)
 
     def collisions(self, threshold=COLLISION_THRESHOLD):
@@ -85,7 +84,7 @@ class Context:
             if (node.declared_state == 'present' and node.parse_status == 'parsed' and facts.get('description_tokenizer') == TOKENIZER
                     and len(words) >= MIN_TOKENS and self.load(path) == 'loaded'):
                 sets[path] = words
-        found = {}
+        found, total = {}, {}
         for first, second in combinations(sorted(sets), 2):
             if not _together(_place(first, self.runtime)[0], _place(second, self.runtime)[0]): continue
             shared, union = len(sets[first] & sets[second]), len(sets[first] | sets[second])
@@ -93,9 +92,11 @@ class Context:
             measures = (('shared_tokens', shared), ('similarity_permille', shared * 1000 // union),
                         ('threshold_permille', round(threshold * 1000)), ('union_tokens', union))
             for path, other in ((first, second), (second, first)):
-                related, rows = found.get(path, ((), measures))
-                found[path] = (tuple(sorted(related + (other,))), max(rows, measures, key=lambda row: row[1][1]))  # strongest pair
-        return found
+                related, rows = found.get(path, ([], measures))
+                total[path] = total.get(path, 0) + 1
+                if len(related) < MAX_RELATED: related.append(other)  # pairs arrive in sorted order, so this keeps the first sorted
+                found[path] = (related, max(rows, measures, key=lambda row: row[1][1]))  # strongest pair
+        return {path: (tuple(related), tuple(sorted(rows + (('related_total', total[path]),)))) for path, (related, rows) in found.items()}
 
 
 # Public documentation behind each skill reason; the lexical and routing rules cite each runtime's own page.
