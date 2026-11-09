@@ -31,7 +31,9 @@ native and fake runtimes. A handler is effective only when its group's canary fi
 with no failure class. Disabled, unmatched and unsupported handlers never are; unmatched needs the event's unfiltered
 canary to have fired, otherwise the handler is inconclusive. Out-of-scope writes come from a trial-root diff; writes
 outside the trial stay unobserved. Hiding errors, blocking required work and changing
-permissions disqualify a candidate from any improvement claim, and no result authorizes promotion.
+permissions disqualify a candidate from any improvement claim, and no result authorizes promotion. A staged unit also
+writes hook-review.json (hooks_review.review_packet): the semantic hook-entry and script delta, capability receipt,
+disposition and canary wall time for a reviewer, with task effect and the apply check stated as not performed.
 """
 import base64
 import collections
@@ -54,7 +56,8 @@ import time
 from . import surfaces
 from .evaluation import trial_surfaces
 from .evaluation.integrity import contained
-from .hooks_contract import CONFIGS, evaluate as contract_evaluate, read_hooks
+from .hooks_contract import CONFIGS, evaluate as contract_evaluate, read_hooks, PROFILE as CONTRACT_PROFILE
+from .hooks_review import review_packet
 from .promotion.journal import file_record, key_edit, snapshot_record
 from .sources.hooks_inventory import INTERPRETERS, resolve
 
@@ -69,7 +72,7 @@ CODEX_BYPASS_ITEM = '--dangerously-bypass-hook-trust inside a temporary CODEX_HO
 DEFAULT_CONFIG = {'claude-code': '.claude/settings.json', 'codex': '.codex/hooks.json'}
 CANARY_DIR = '.ahl-canary'
 RUNTIME_STATE = ('home/', 'tmp/', 'codex-home/')
-MARKER, RESULTS = 'hook-trial.json', 'hook-validation.json'
+MARKER, RESULTS, REVIEW = 'hook-trial.json', 'hook-validation.json', 'hook-review.json'
 PROMPT = 'Reply with the single word OK.\n'
 PASSED_ENV = ('PATH', 'LANG', 'LC_ALL', 'TZ', 'TERM')
 CANARY_TIMEOUT = 10
@@ -655,6 +658,9 @@ def validate(output, runtime, executor, *, unit=None, project=None, fixture=None
                                                                findings=[list(row[:2]) for row in contract.findings]),
                     candidate=verdict(contract, observed), automatic_promotion=False, publication_allowed=False)
     _private(root / RESULTS, json.dumps(document, indent=2, sort_keys=True) + '\n')
+    if contract is not None and contract.profile == CONTRACT_PROFILE:
+        packet = review_packet(contract, before, after, document)
+        _private(root / REVIEW, json.dumps(packet, indent=2, sort_keys=True) + '\n')
     return root, document
 
 
