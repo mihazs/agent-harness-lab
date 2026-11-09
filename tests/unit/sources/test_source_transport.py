@@ -1,10 +1,9 @@
 from dataclasses import replace
 import io
 import json
-from pathlib import Path
-import tempfile
-import unittest
 from unittest.mock import Mock, patch
+
+import pytest
 
 from agent_harness_lab.sources.schema import EvidenceRecord, SourceSpec, digest
 from agent_harness_lab.sources.transport import JsonAPI, TransportError
@@ -24,28 +23,29 @@ class Response(io.BytesIO):
         return list(self.headers.items())
 
 
-class SourceTransportTests(unittest.TestCase):
-    def setUp(self):
+class TestSourceTransport:
+    @pytest.fixture(autouse=True)
+    def _transport(self):
         self.base = 'https://api.example.invalid/v1/items'
         self.source = SourceSpec('api', 'synthetic', 'v1', digest(self.base), digest('project'),
             digest('scope'), identity_provenance='source_declared_id', auth_mode='configured', enabled=True)
         self.scope = dict(project_sha256=self.source.project_sha256, scope_sha256=self.source.scope_sha256,
                           authorization='Bearer SYNTHETIC_SECRET', decode=lambda value, headers: value)
-        wire = patch('agent_harness_lab.sources.transport.http.client.HTTPSConnection')
-        self.wire = wire.start()
-        self.addCleanup(wire.stop)
-        self.connection = self.wire.return_value
+        with patch('agent_harness_lab.sources.transport.http.client.HTTPSConnection') as wire:
+            self.wire = wire
+            self.connection = self.wire.return_value
+            yield
 
     def collect(self, **limits):
         return JsonAPI(self.base, **limits).pages(self.source, **self.scope)
 
     def test_authorized_pages_use_get_and_exact_origin_with_no_proxy_or_retry(self):
         self.connection.getresponse.side_effect = [Response(dict(items=[1], next='?page=2')), Response(dict(items=[2], next=None))]
-        self.assertEqual(self.collect(), (1, 2))
-        self.assertEqual(self.connection.request.call_count, 2)
-        self.assertEqual(self.connection.request.call_args.args[:2], ('GET', '/v1/items?page=2'))
-        self.assertEqual(self.connection.close.call_count, 2)
-        self.assertTrue(self.wire.call_args.kwargs['context'].check_hostname)
+        assert self.collect() == (1, 2)
+        assert self.connection.request.call_count == 2
+        assert self.connection.request.call_args.args[:2] == ('GET', '/v1/items?page=2')
+        assert self.connection.close.call_count == 2
+        assert self.wire.call_args.kwargs['context'].check_hostname
 
     def test_default_collection_exhausts_pages_records_and_bytes_without_a_deadline(self):
         large='synthetic '*1000000
@@ -57,51 +57,53 @@ class SourceTransportTests(unittest.TestCase):
         self.connection.getresponse.side_effect=pages
         with patch('agent_harness_lab.sources.transport.time.monotonic',side_effect=AssertionError('no implicit deadline')):
             captured=self.collect()
-        self.assertEqual(len(captured),10500)
-        self.assertEqual(captured[0],large)
-        self.assertEqual(captured[-1],10499)
-        self.assertEqual(self.connection.request.call_count,21)
-        self.assertIsNone(self.wire.call_args.kwargs['timeout'])
+        assert len(captured) == 10500
+        assert captured[0] == large
+        assert captured[-1] == 10499
+        assert self.connection.request.call_count == 21
+        assert self.wire.call_args.kwargs['timeout'] is None
 
     def test_long_endpoint_and_explicit_limits_above_former_ceilings(self):
         long_url=self.base+'/'+'synthetic'*1200
-        self.assertEqual(JsonAPI(long_url).base,long_url)
+        assert JsonAPI(long_url).base == long_url
         self.connection.getresponse.return_value=Response(dict(items=[1],next=None))
-        self.assertEqual(self.collect(max_pages=101,max_bytes=9*1024*1024,timeout=301,seconds=601),(1,))
-        self.assertGreater(self.wire.call_args.kwargs['timeout'],300)
+        assert self.collect(max_pages=101,max_bytes=9*1024*1024,timeout=301,seconds=601) == (1,)
+        assert self.wire.call_args.kwargs['timeout'] > 300
 
     def test_scope_and_auth_fail_before_connection(self):
         for source in (replace(self.source, enabled=False), replace(self.source, root_sha256=digest('wrong')),
                        replace(self.source, project_sha256=digest('foreign'))):
-            with self.assertRaises(TransportError): JsonAPI(self.base).pages(source, **self.scope)
+            with pytest.raises(TransportError): JsonAPI(self.base).pages(source, **self.scope)
         for token in (None, 'Bearer bad\nheader'):
-            with self.assertRaises(TransportError): JsonAPI(self.base).pages(self.source, **{**self.scope, 'authorization': token})
+            with pytest.raises(TransportError): JsonAPI(self.base).pages(self.source, **{**self.scope, 'authorization': token})
         self.wire.assert_not_called()
 
-    def test_cross_origin_downgrade_path_escape_and_encoded_traversal_stop_before_second_request(self):
-        for target in ('https://evil.invalid/v1/items', 'http://api.example.invalid/v1/items',
-                       '/other', '/v1/items/%2e%2e/private', '/v1/items/%252e%252e/private',
-                       '/v1/items/%5c..%5cprivate',
-                       'https://user:password@api.example.invalid/v1/items'):
-            with self.subTest(target=target):
-                self.connection.reset_mock()
-                self.connection.getresponse.side_effect = None
-                self.connection.getresponse.return_value = Response(dict(items=[], next=target))
-                with self.assertRaises(TransportError): self.collect()
-                self.assertEqual(self.connection.request.call_count, 1)
+    @pytest.mark.parametrize('target', [
+        pytest.param('https://evil.invalid/v1/items', id='cross-origin'),
+        pytest.param('http://api.example.invalid/v1/items', id='downgrade'),
+        pytest.param('/other', id='path-escape'),
+        pytest.param('/v1/items/%2e%2e/private', id='encoded-traversal'),
+        pytest.param('/v1/items/%252e%252e/private', id='double-encoded-traversal'),
+        pytest.param('/v1/items/%5c..%5cprivate', id='encoded-backslash-traversal'),
+        pytest.param('https://user:password@api.example.invalid/v1/items', id='userinfo')])
+    def test_cross_origin_downgrade_path_escape_and_encoded_traversal_stop_before_second_request(self, target):
+        self.connection.getresponse.side_effect = None
+        self.connection.getresponse.return_value = Response(dict(items=[], next=target))
+        with pytest.raises(TransportError): self.collect()
+        assert self.connection.request.call_count == 1
 
     def test_http_failures_and_timeout_are_redacted_and_never_retried(self):
         for status in (301, 302, 401, 429, 500):
             self.connection.reset_mock()
             response = Response(b'SYNTHETIC_SECRET', status)
             self.connection.getresponse.return_value = response
-            with self.assertRaises(TransportError) as error: self.collect()
-            self.assertNotIn('SYNTHETIC_SECRET', str(error.exception))
-            self.assertEqual(self.connection.request.call_count, 1)
-            self.assertTrue(response.closed)
+            with pytest.raises(TransportError) as error: self.collect()
+            assert 'SYNTHETIC_SECRET' not in str(error.value)
+            assert self.connection.request.call_count == 1
+            assert response.closed
         self.connection.getresponse.side_effect = TimeoutError('SYNTHETIC_SECRET')
-        with self.assertRaises(TransportError) as error: self.collect()
-        self.assertNotIn('SYNTHETIC_SECRET', str(error.exception))
+        with pytest.raises(TransportError) as error: self.collect()
+        assert 'SYNTHETIC_SECRET' not in str(error.value)
 
     def test_caps_partial_json_encoding_and_duplicate_keys_fail_closed(self):
         cases = [(Response(dict(items=[], next='?page=2')), {'max_pages': 1}),
@@ -112,25 +114,25 @@ class SourceTransportTests(unittest.TestCase):
                  (Response(b'{}', headers={'Content-Encoding': 'gzip'}), {})]
         for response, limits in cases:
             self.connection.getresponse.return_value = response
-            with self.assertRaises(TransportError): self.collect(**limits)
+            with pytest.raises(TransportError): self.collect(**limits)
 
     def test_cycle_and_deadline_are_enforced(self):
         self.connection.getresponse.return_value = Response(dict(items=[], next=self.base))
-        with self.assertRaises(TransportError): self.collect()
+        with pytest.raises(TransportError): self.collect()
         with patch('agent_harness_lab.sources.transport.time.monotonic', side_effect=[0, 2]):
-            with self.assertRaises(TransportError): self.collect(seconds=1)
+            with pytest.raises(TransportError): self.collect(seconds=1)
         self.connection.getresponse.return_value = Response(dict(items=[], next=None))
         with patch('agent_harness_lab.sources.transport.time.monotonic', side_effect=[0, 0, 0, 0, 2]):
-            with self.assertRaises(TransportError): self.collect(seconds=1)
+            with pytest.raises(TransportError): self.collect(seconds=1)
 
     def test_provider_decoder_exceptions_cannot_expose_response_contents(self):
         self.connection.getresponse.return_value = Response(dict(items=[], next=None))
         decoder = Mock(side_effect=RuntimeError('SYNTHETIC_SECRET'))
-        with self.assertRaises(TransportError) as error:
+        with pytest.raises(TransportError) as error:
             JsonAPI(self.base).pages(self.source, **{**self.scope, 'decode': decoder})
-        self.assertNotIn('SYNTHETIC_SECRET', str(error.exception))
+        assert 'SYNTHETIC_SECRET' not in str(error.value)
 
-    def test_failed_later_page_cannot_advance_registry_checkpoint(self):
+    def test_failed_later_page_cannot_advance_registry_checkpoint(self, tmp_path):
         record = EvidenceRecord(self.source.source_key, digest('native'), digest('revision'), digest('body'),
             'contextual_assertion', 'page', '2026-01-01T00:00:00Z')
         self.connection.getresponse.side_effect = [Response(dict(items=[record.to_dict()], next='?page=2')),
@@ -139,15 +141,14 @@ class SourceTransportTests(unittest.TestCase):
         collector.read.side_effect = lambda source: self.collect()
         registry = Registry()
         registry.register(Capability('api', 'synthetic', 'v1', ('contextual_assertion',)), collector)
-        with tempfile.TemporaryDirectory() as folder:
-            scope = {k: self.scope[k] for k in ('project_sha256', 'scope_sha256')}
-            store = SourceStore(Path(folder)/'cache.json', **scope)
-            with self.assertRaises(TransportError): registry.ingest(self.source, store, **scope)
-            self.assertFalse(store.path.exists())
+        scope = {k: self.scope[k] for k in ('project_sha256', 'scope_sha256')}
+        store = SourceStore(tmp_path/'cache.json', **scope)
+        with pytest.raises(TransportError): registry.ingest(self.source, store, **scope)
+        assert not store.path.exists()
 
     def test_malformed_endpoints_and_nonfinite_bounds_are_rejected(self):
         for url in ('http://api.example.invalid/x', 'https://user:secret@api.example.invalid/x',
                     'https://api.example.invalid:bad/x', 'https://api.example.invalid/x#secret'):
-            with self.assertRaises(TransportError): JsonAPI(url)
+            with pytest.raises(TransportError): JsonAPI(url)
         for limits in ({'max_pages': True}, {'max_bytes': 0}, {'timeout': float('nan')}, {'seconds': -1}):
-            with self.assertRaises(TransportError): JsonAPI(self.base, **limits)
+            with pytest.raises(TransportError): JsonAPI(self.base, **limits)
