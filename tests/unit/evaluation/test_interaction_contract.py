@@ -175,3 +175,20 @@ def test_any_contract_change_changes_the_identity():
 def test_invalid_contracts_are_rejected(change):
     with pytest.raises(ValueError):
         validate(contract(**change))
+
+
+@pytest.mark.parametrize('spec, events, final', [
+    (dict(AMBIGUOUS, endpoint='interaction_boundary'), [ASK], ORIGINAL),
+    (AMBIGUOUS, [ASK, REPLY, EDIT], DONE),
+    (contract(permitted_mutations=[], protected_paths=['app.py'], completion=dict(kind='interaction'),
+              endpoint='interaction_boundary'), [], ORIGINAL),
+    (contract(), [EDIT], DONE),
+])
+@pytest.mark.parametrize('termination, passed', [('completed', True), ('crash', False), ('timeout', False),
+        ('cancelled', False), ('provider_error', False), ('unsupported_continuation', None), ('unknown', None)])
+def test_termination_applies_without_a_declared_stop_reason(spec, events, final, termination, passed):
+    result = grade(spec, events=events, final=final, termination=termination)
+    assert result['passed'] is passed
+    if passed is not True:
+        assert result['interaction_requirement_satisfied'] is passed
+        assert result['whole_task_completed'] is not True or spec['completion']['kind'] != 'interaction'

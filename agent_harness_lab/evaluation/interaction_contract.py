@@ -168,6 +168,10 @@ def evaluate(contract, evidence):
         unknowns.append('transcript_incomplete')
     if capture['receipts'] != 'complete':
         unknowns.append('side_effect_receipts_incomplete')
+    if capture['termination'] in ABNORMAL:
+        violations.append('abnormal_termination')
+    elif capture['termination'] in ('unknown', 'unsupported_continuation'):
+        unknowns.append('termination_unobserved')
     stop = _stop(contract, evidence, events)
     if stop is False:
         violations.append('stop_not_deliberate_or_not_authorized')
