@@ -71,6 +71,14 @@ def _norm(text):
     return ' '.join(text.split())
 
 
+def _single_line(text):
+    """A non-empty, bounded, single-line string that encodes as UTF-8 (a lone surrogate would crash hashing)."""
+    if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT or '\n' in text or '\r' in text: return False
+    try: text.encode()
+    except UnicodeEncodeError: return False
+    return True
+
+
 def parse_plan(plan):
     """Validate a proposer-declared instruction plan; raises ValueError for anything outside the schema."""
     if (not isinstance(plan, dict) or not {'schema_version', 'profile'} <= set(plan) <= PLAN_FIELDS
@@ -86,9 +94,7 @@ def parse_plan(plan):
     for item in required:
         if not isinstance(item, dict) or set(item) != {'id', 'text'}: raise ValueError('invalid required behaviour')
         label(item['id'])
-        text = item['text']
-        if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT or '\n' in text or '\r' in text:
-            raise ValueError('invalid required behaviour text')
+        if not _single_line(item['text']): raise ValueError('invalid required behaviour text')
     if len({item['id'] for item in required}) != len(required): raise ValueError('duplicate required behaviour')
     if not isinstance(shadowing, list) or len(shadowing) > MAX_SHADOWING: raise ValueError('invalid shadowing changes')
     for item in shadowing:
@@ -117,9 +123,7 @@ def _declared_operations(items, required_ids):
         if not isinstance(preserved, list) or len(preserved) > MAX_REQUIRED or not set(preserved) <= required_ids:
             raise ValueError('operation preserves an undeclared required behaviour')
         for field in ('expected_change', 'falsifier'):
-            text = item[field]
-            if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT or '\n' in text or '\r' in text:
-                raise ValueError('invalid operation text')
+            if not _single_line(item[field]): raise ValueError('invalid operation text')
         if item['path'] in declared: raise ValueError('duplicate operation')
         declared[item['path']] = item
     return declared

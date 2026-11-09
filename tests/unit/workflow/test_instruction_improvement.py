@@ -498,3 +498,13 @@ def test_an_uncited_or_malformed_justification_is_an_invalid_plan(ws, bad):
     ws.write(ws.candidate, 'src/CLAUDE.md', FILES['src/CLAUDE.md'] + 'Check the synthetic build.\n')
     document = ws.validate(ws.plan(operations=[dict(operation('src/CLAUDE.md', 'update'), **bad)]))
     assert (document['status'], document['reasons']) == ('blocked', ['instruction_plan_invalid'])
+
+
+@pytest.mark.parametrize('field', ['expected_change', 'falsifier', 'required'])
+def test_a_lone_surrogate_in_plan_text_is_an_invalid_plan_not_a_crash(ws, field):
+    ws.write(ws.candidate, 'src/CLAUDE.md', FILES['src/CLAUDE.md'] + 'Check the synthetic build.\n')
+    bad = 'a\ud800'
+    plan = ws.plan(operations=[dict(operation('src/CLAUDE.md', 'update'), **({} if field == 'required' else {field: bad}))])
+    if field == 'required': plan['required'] = [dict(id='tests', text=bad)]
+    document = ws.validate(plan)
+    assert (document['status'], document['reasons']) == ('blocked', ['instruction_plan_invalid'])
