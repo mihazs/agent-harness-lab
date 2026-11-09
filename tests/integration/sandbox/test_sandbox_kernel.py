@@ -1,5 +1,5 @@
 """Opt-in real kernel boundaries; synthetic fixtures, no inference or credentials."""
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import hashlib
 import os
 import json
@@ -15,6 +15,8 @@ import time
 import unittest
 from unittest.mock import patch
 
+from tests.support.optional_pytest import pytest
+
 import agent_harness_lab
 from agent_harness_lab.evaluation.bank_tools import regrade_artifacts
 from agent_harness_lab.evaluation.cgroup import delegated
@@ -22,6 +24,7 @@ from agent_harness_lab.evaluation.integrity import artifacts, digest
 from agent_harness_lab.evaluation.sandbox import Limits, SandboxBackend
 from agent_harness_lab.evaluation.image import MOUNT_DIRS, scan
 from tests.integration.evaluation.test_offline_evaluation import OfflineFixture
+from tests.support.unittest_cleanups import run_cleanups
 
 ENABLED = bool(os.environ.get('AHL_TEST_CGROUP_ROOT')) or os.environ.get('AHL_TEST_SYSTEMD_SCOPE') == '1'
 
@@ -53,13 +56,42 @@ def kernel_subtree():
         controller.rmdir()
 
 
-class KernelFixture(unittest.TestCase):
+@contextmanager
+def kernel_scope():
+    """The delegated cgroup subtree after checking that the intended package layout is imported."""
+    expected = os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
+    if expected and not Path(agent_harness_lab.__file__).resolve().is_relative_to(Path(expected).resolve()):
+        raise AssertionError('kernel canaries imported the wrong package layout')
+    with kernel_subtree() as root:
+        yield root
+
+
+def assert_complete(run):
+    assert run['status'] == 'completed', run['stderr']
+    assert run['exit_code'] == 0, run['stderr']
+    assert run['inputs_unchanged']
+    assert run['attestation']['cgroup_v2']['empty_after_cleanup']
+    assert not run['attestation']['automatic_promotion']
+
+
+class KernelHelpers:
+    def run_code(self, code, *, inputs=None, role='executor', limits=Limits(seconds=5), **options):
+        return self.backend.run(['/usr/bin/python3', '-c', code], self.work, inputs or {}, role, limits, **options)
+
+    def assert_complete(self, run):
+        assert_complete(run)
+
+
+class KernelFixture(KernelHelpers, unittest.TestCase):
+    """unittest host of the kernel scope for the other kernel modules' cases; it defines no tests.
+
+    Those modules subclass it, and two of them call KernelCase methods below with an instance as `self`,
+    so KernelCase keeps this interface: root, work, backend, cgroup_root, run_code, assert_complete and
+    addCleanup.
+    """
     @classmethod
     def setUpClass(cls):
-        expected = os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
-        if expected and not Path(agent_harness_lab.__file__).resolve().is_relative_to(Path(expected).resolve()):
-            raise AssertionError('kernel canaries imported the wrong package layout')
-        cls.cgroup_root = cls.enterClassContext(kernel_subtree())
+        cls.cgroup_root = cls.enterClassContext(kernel_scope())
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
@@ -67,15 +99,30 @@ class KernelFixture(unittest.TestCase):
         self.work = self.root/'work'; self.work.mkdir()
         self.backend = SandboxBackend(cgroup_root=self.cgroup_root)
 
-    def run_code(self, code, *, inputs=None, role='executor', limits=Limits(seconds=5), **options):
-        return self.backend.run(['/usr/bin/python3', '-c', code], self.work, inputs or {}, role, limits, **options)
 
-    def assert_complete(self, run):
-        self.assertEqual(run['status'], 'completed', run['stderr'])
-        self.assertEqual(run['exit_code'], 0, run['stderr'])
-        self.assertTrue(run['inputs_unchanged'])
-        self.assertTrue(run['attestation']['cgroup_v2']['empty_after_cleanup'])
-        self.assertFalse(run['attestation']['automatic_promotion'])
+@pytest.fixture(scope='module')
+def cgroup_root():
+    with kernel_scope() as root:
+        yield root
+
+
+class KernelCase(KernelHelpers):
+    """pytest host of one test's work directory and backend inside the module's delegated cgroup subtree."""
+    backend_options = {}
+
+    @pytest.fixture(autouse=True)
+    def _kernel(self, cgroup_root, tmp_path):
+        self.cgroup_root = cgroup_root
+        self.root = tmp_path
+        self.work = self.root/'work'; self.work.mkdir()
+        self.backend = SandboxBackend(cgroup_root=cgroup_root, **self.backend_options)
+        with ExitStack() as stack:
+            self.addCleanup = stack.callback
+            self.prepare()
+            yield
+
+    def prepare(self):
+        """Hook run after the backend exists and before the test."""
 
 
 def pinned_runtime(rootfs):
@@ -97,8 +144,8 @@ def pinned_runtime(rootfs):
     return scan(rootfs)
 
 
-@unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
-class NamespaceKernelTests(KernelFixture):
+@pytest.mark.skipif(not ENABLED, reason='requires explicit delegated kernel canaries; use task test:sandbox:kernel')
+class TestNamespaceKernel(KernelCase):
     def test_executable_artifact_cannot_read_the_grader_reference(self):
         bundle = Path(agent_harness_lab.__file__).parent/'evaluation/fixtures/starter-v1/graders/localization'
         expected = json.loads((bundle/'expected.json').read_text())
@@ -120,25 +167,25 @@ pathlib.Path('result.json').write_text({json.dumps(expected['result'])!r})
         self.assert_complete(self.run_code(code))
         grade = regrade_artifacts(self.work, ['app/calc.py', 'original.txt', 'result.json'], bundle,
                                  digest(bundle), self.backend, limits=Limits(seconds=5))
-        self.assertEqual(grade['status'], 'failed')
-        self.assertIs(grade['outcome'], False)
+        assert grade['status'] == 'failed'
+        assert grade['outcome'] is False
 
     def test_capability_with_real_aggregate_controls(self):
         result = self.backend.capability()
-        self.assertEqual(result['status'], 'available', result)
-        self.assertIsNotNone(result['cgroup_v2'])
-        self.assertFalse(result['automatic_promotion'])
+        assert result['status'] == 'available', result
+        assert result['cgroup_v2'] is not None
+        assert not result['automatic_promotion']
 
-    def test_roles_cannot_read_forbidden_files_or_mutate_readonly_inputs(self):
+    @pytest.mark.parametrize('role', ['proposer', 'evaluator_author', 'executor', 'grader'])
+    def test_roles_cannot_read_forbidden_files_or_mutate_readonly_inputs(self, role):
         (self.root/'forbidden').write_text('SYNTHETIC_FORBIDDEN')
         harness, fixture, oracle = (self.root/name for name in ('harness', 'fixture', 'oracle'))
         for path in (harness, fixture, oracle):
             path.mkdir(); (path/'marker').write_text('SYNTHETIC_INPUT')
         with tempfile.TemporaryDirectory(prefix='ahl-canary-', dir=Path.home()) as home:
             secret = Path(home)/'canary'; secret.write_text('SYNTHETIC_HOME')
-            for role in ('proposer', 'evaluator_author', 'executor', 'grader'):
-                inputs = {'fixture': fixture, 'oracle': oracle} if role == 'grader' else {'harness': harness, 'fixture': fixture}
-                code = f'''import os,pathlib
+            inputs = {'fixture': fixture, 'oracle': oracle} if role == 'grader' else {'harness': harness, 'fixture': fixture}
+            code = f'''import os,pathlib
 assert 'AHL_TEST_SECRET' not in os.environ
 for value in {list(map(str, (secret, self.root/'forbidden', oracle, self.root)))!r}:
  assert not pathlib.Path(value).exists()
@@ -151,8 +198,8 @@ for name in {list(inputs)!r}:
  try: path.chmod(0o777); raise AssertionError('readonly input chmod succeeded')
  except OSError: pass
 '''
-                with self.subTest(role=role), patch.dict(os.environ, AHL_TEST_SECRET='SYNTHETIC_ENV'):
-                    self.assert_complete(self.run_code(code, inputs=inputs, role=role))
+            with patch.dict(os.environ, AHL_TEST_SECRET='SYNTHETIC_ENV'):
+                self.assert_complete(self.run_code(code, inputs=inputs, role=role))
 
     def test_network_namespace_cannot_connect_to_host_listener(self):
         with socket.socket() as listener:
@@ -171,7 +218,7 @@ os.link('original','hardlink')
 '''
         self.assert_complete(self.run_code(code))
         for name in ('symlink', 'hardlink', '../forbidden'):
-            with self.assertRaises(ValueError): artifacts(self.work, [name])
+            with pytest.raises(ValueError): artifacts(self.work, [name])
 
     def test_forged_passing_artifact_is_regraded_by_pristine_oracle(self):
         bundle = self.root/'oracle'; bundle.mkdir()
@@ -183,79 +230,86 @@ sys.exit(0 if outcome else 1)
 ''')
         self.assert_complete(self.run_code("from pathlib import Path; Path('result.json').write_text('{\"outcome\":true}'); print('passed')"))
         grade = regrade_artifacts(self.work, ['result.json'], bundle, digest(bundle), self.backend, limits=Limits(seconds=5))
-        self.assertEqual(grade['status'], 'failed')
-        self.assertIs(grade['outcome'], False)
+        assert grade['status'] == 'failed'
+        assert grade['outcome'] is False
 
     def test_output_timeout_and_interruption_leave_no_worker_group(self):
         before = {p.name for p in self.cgroup_root.iterdir() if p.is_dir()}
         flood = self.run_code("print('x'*100000)", limits=Limits(seconds=3, output_bytes=1024))
-        self.assertEqual(flood['status'], 'output_limit')
+        assert flood['status'] == 'output_limit'
         timeout = self.run_code('import time; time.sleep(30)', limits=Limits(seconds=.5))
-        self.assertEqual(timeout['status'], 'timeout')
+        assert timeout['status'] == 'timeout'
         with patch.object(selectors.EpollSelector, 'select', side_effect=KeyboardInterrupt):
-            with self.assertRaises(KeyboardInterrupt): self.run_code('import time; time.sleep(30)')
-        self.assertEqual({p.name for p in self.cgroup_root.iterdir() if p.is_dir()}, before)
+            with pytest.raises(KeyboardInterrupt): self.run_code('import time; time.sleep(30)')
+        assert {p.name for p in self.cgroup_root.iterdir() if p.is_dir()} == before
 
 
-@unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
-class OfflineKernelTests(OfflineFixture, KernelFixture):
+class OfflineKernel(KernelCase):
+    """KernelCase plus the offline evaluation fixture; self.root is that fixture's directory."""
+    def prepare(self):
+        self.f = OfflineFixture(); self.f.setUp(); self.addCleanup(run_cleanups, self.f)
+        self.root = self.f.root
+
+
+@pytest.mark.skipif(not ENABLED, reason='requires explicit delegated kernel canaries; use task test:sandbox:kernel')
+class TestOfflineKernel(OfflineKernel):
     def test_both_arms_of_all_starter_tasks_use_real_executor_and_pristine_grader(self):
-        self.args.cgroup_root = self.cgroup_root
-        self.assertEqual(self.runner.evaluate(self.args), 1)
-        result = self.results()
-        self.assertEqual(len(result['trials']), 14)
-        self.assertTrue(result['inputs_unchanged'])
-        self.assertFalse(result['automatic_promotion'])
+        self.f.args.cgroup_root = self.cgroup_root
+        assert self.f.runner.evaluate(self.f.args) == 1
+        result = self.f.results()
+        assert len(result['trials']) == 14
+        assert result['inputs_unchanged']
+        assert not result['automatic_promotion']
         for trial in result['trials']:
-            self.assertEqual(trial['status'], 'passed' if trial['version'] == 'candidate' else 'failed')
-            self.assertIs(trial['grader']['outcome'], trial['version'] == 'candidate')
+            assert trial['status'] == ('passed' if trial['version'] == 'candidate' else 'failed')
+            assert trial['grader']['outcome'] is (trial['version'] == 'candidate')
             for run in (trial['execution'], trial['grader']['execution']):
-                self.assertEqual(run['attestation']['backend'], 'bubblewrap-offline-v1')
-                self.assertTrue(run['attestation']['cgroup_v2']['empty_after_cleanup'])
+                assert run['attestation']['backend'] == 'bubblewrap-offline-v1'
+                assert run['attestation']['cgroup_v2']['empty_after_cleanup']
 
 
-@unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
-class PinnedImageKernelTests(OfflineFixture, KernelFixture):
+@pytest.mark.skipif(not ENABLED, reason='requires explicit delegated kernel canaries; use task test:sandbox:kernel')
+class TestPinnedImageKernel(OfflineKernel):
     def test_oracle_history_seals_real_arms_and_quarantines_shared_grader_dependencies(self):
         from dataclasses import asdict, replace
         from agent_harness_lab.evaluation.oracle import identity
         from agent_harness_lab.evaluation.oracle_history import HistoryStore
         from agent_harness_lab.evaluation.plan import ExperimentSpec
         rootfs = self.root/'runtime'; frozen = pinned_runtime(rootfs)
-        tasks = [self.manifest['tasks'][0],self.manifest['tasks'][-1]]
-        self.manifest['tasks'] = tasks
-        self.manifest['grader_bundles'] = {t['id']:self.manifest['grader_bundles'][t['id']] for t in tasks}
+        tasks = [self.f.manifest['tasks'][0],self.f.manifest['tasks'][-1]]
+        self.f.manifest['tasks'] = tasks
+        self.f.manifest['grader_bundles'] = {t['id']:self.f.manifest['grader_bundles'][t['id']] for t in tasks}
         plan = ExperimentSpec('synthetic-history',tuple((t['id'],t['root'],t['family']) for t in tasks),
             1,13,4,2,.05,.1,.05,tuple((t['family'],.5) for t in tasks),
-            self.runner.digest(self.root/'baseline'),self.runner.digest(self.root/'candidate'),
-            identity(self.root/'export',tasks,self.manifest['grader_bundles']),frozen['sha256'])
-        self.manifest['experiment'] = asdict(plan); self.write_manifest()
+            self.f.runner.digest(self.root/'baseline'),self.f.runner.digest(self.root/'candidate'),
+            identity(self.root/'export',tasks,self.f.manifest['grader_bundles']),frozen['sha256'])
+        self.f.manifest['experiment'] = asdict(plan); self.f.write_manifest()
         history = HistoryStore(self.root/'history')
         options = dict(cgroup_root=self.cgroup_root,image_root=rootfs,image_sha256=frozen['sha256'],
             disk_bytes=64*1024*1024,budget_seconds=60)
-        old = history.run(self.args.manifest,self.args.baseline,self.args.candidate,**options)
-        self.assertEqual(old['state'],'sealed'); self.assertEqual(old['oracle_validity'],'current')
+        old = history.run(self.f.args.manifest,self.f.args.baseline,self.f.args.candidate,**options)
+        assert old['state'] == 'sealed'; assert old['oracle_validity'] == 'current'
         report = history.case(old['run_id'])/'execution/results.json'; original = report.read_bytes()
-        bundle = self.manifest['grader_bundles'][tasks[0]['id']]
+        bundle = self.f.manifest['grader_bundles'][tasks[0]['id']]
         decision = dict(schema_version=1,bundle_sha256=bundle['digest'],
             expected_event_sha256=history.oracle(bundle['digest'])['event_sha256'],
             operator=dict(identity='synthetic-curator',source='operator_attestation',
                 provenance='synthetic kernel canary',basis='Exercise oracle dependency quarantine.'),
             evidence_refs=[dict(ref='synthetic:kernel-history',sha256='a'*64)],reason='Synthetic quarantine.')
         record = self.root/'quarantine.json'; record.write_text(json.dumps(decision)); history.quarantine(record)
-        self.assertEqual(history.analyze(old['run_id'])['reason'],'oracle_quarantined')
-        self.assertEqual(report.read_bytes(),original)
+        assert history.analyze(old['run_id'])['reason'] == 'oracle_quarantined'
+        assert report.read_bytes() == original
         reference = self.root/'export'/bundle['path']/'expected.json'; reference.write_text(reference.read_text()+'\n')
         bundle['digest'] = digest(reference.parent)
-        plan = replace(plan,grader_hash=identity(self.root/'export',tasks,self.manifest['grader_bundles']))
-        self.manifest['experiment'] = asdict(plan); self.write_manifest()
-        new = history.run(self.args.manifest,self.args.baseline,self.args.candidate,**options)
-        self.assertEqual(new['state'],'sealed'); self.assertEqual(new['oracle_validity'],'current')
+        plan = replace(plan,grader_hash=identity(self.root/'export',tasks,self.f.manifest['grader_bundles']))
+        self.f.manifest['experiment'] = asdict(plan); self.f.write_manifest()
+        new = history.run(self.f.args.manifest,self.f.args.baseline,self.f.args.candidate,**options)
+        assert new['state'] == 'sealed'; assert new['oracle_validity'] == 'current'
         observed = json.loads((history.case(new['run_id'])/'execution/results.json').read_text())
-        self.assertEqual(len(observed['trials']),4)
-        self.assertEqual({t['version'] for t in observed['trials']},{'baseline','candidate'})
-        self.assertEqual(history.show(old['run_id'])['oracle_validity'],'invalidated')
-        self.assertEqual(new['oracle_review'],'unverified'); self.assertEqual(new['independence'],'unverified')
+        assert len(observed['trials']) == 4
+        assert {t['version'] for t in observed['trials']} == {'baseline','candidate'}
+        assert history.show(old['run_id'])['oracle_validity'] == 'invalidated'
+        assert new['oracle_review'] == 'unverified'; assert new['independence'] == 'unverified'
 
     def test_pinned_image_is_used_by_executor_pristine_grader_and_nested_checks(self):
         rootfs = self.root/'runtime'; frozen = pinned_runtime(rootfs)
@@ -270,35 +324,35 @@ except OSError: pass
 '''
         run = backend.run(['/usr/bin/python3', '-I', '-c', code], scratch, {}, 'executor', Limits(seconds=5), artifact_allowlist=[])
         self.assert_complete(run)
-        self.assertTrue(run['attestation']['runtime_image']['verified_after'])
-        self.args.cgroup_root = self.cgroup_root
-        self.args.image_root, self.args.image_sha256 = rootfs, frozen['sha256']
-        self.args.disk_bytes = 64*1024*1024
-        self.assertEqual(self.runner.evaluate(self.args), 1)
-        result = self.results()
-        self.assertEqual(len(result['trials']), 14)
+        assert run['attestation']['runtime_image']['verified_after']
+        self.f.args.cgroup_root = self.cgroup_root
+        self.f.args.image_root, self.f.args.image_sha256 = rootfs, frozen['sha256']
+        self.f.args.disk_bytes = 64*1024*1024
+        assert self.f.runner.evaluate(self.f.args) == 1
+        result = self.f.results()
+        assert len(result['trials']) == 14
         for trial in result['trials']:
-            self.assertEqual(trial['status'], 'passed' if trial['version'] == 'candidate' else 'failed')
+            assert trial['status'] == ('passed' if trial['version'] == 'candidate' else 'failed')
             for execution in (trial['execution'], trial['grader']['execution']):
-                self.assertTrue(execution['attestation']['aggregate_disk_bound_verified'])
+                assert execution['attestation']['aggregate_disk_bound_verified']
                 attested = execution['attestation']['runtime_image']
-                self.assertEqual(attested['sha256'], frozen['sha256'])
-                self.assertTrue(attested['verified_before'] and attested['verified_after'])
+                assert attested['sha256'] == frozen['sha256']
+                assert attested['verified_before'] and attested['verified_after']
 
 
-@unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
-class RegressionDraftKernelTests(KernelFixture):
+@pytest.mark.skipif(not ENABLED, reason='requires explicit delegated kernel canaries; use task test:sandbox:kernel')
+class TestRegressionDraftKernel(KernelCase):
     def test_preservation_qualification_uses_real_prior_and_fresh_pinned_workers(self):
         from dataclasses import replace
         from tests.integration.evaluation.test_preservation_cohorts import PreservationCohortTests
         from agent_harness_lab.evaluation.plan import ExperimentSpec
-        fixture=PreservationCohortTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        fixture=PreservationCohortTests(); fixture.setUp(); self.addCleanup(run_cleanups, fixture)
         value=fixture.fixture; runtime=self.root/'runtime'; pinned=pinned_runtime(runtime)
         value.image_hash=pinned['sha256']; value.install_plan()
         profile=dict(cgroup_root=self.cgroup_root,image_root=runtime,image_sha256=pinned['sha256'],
             disk_bytes=64*1024*1024,budget_seconds=60)
         prior=value.store.run(value.export/'manifest.json',value.baseline,value.candidate,**profile)
-        self.assertEqual(prior['state'],'sealed',prior)
+        assert prior['state'] == 'sealed', prior
         captured=value.store.historical_plan(prior['run_id'])
         qualification=fixture.value['cohorts'][0]['qualification']
         qualification.update(run_id=prior['run_id'],event_sha256=captured['event_sha256'],
@@ -311,15 +365,15 @@ class RegressionDraftKernelTests(KernelFixture):
         spec=replace(ExperimentSpec.parse(value.manifest['experiment']),cohort_manifest_sha256=pin)
         value.manifest['experiment']=spec.to_dict(); value.write_manifest()
         observed=value.store.run(value.export/'manifest.json',value.baseline,value.candidate,**profile)
-        self.assertEqual(observed['state'],'sealed',observed)
-        self.assertEqual(observed['cohort_qualification'],'current_membership_only')
+        assert observed['state'] == 'sealed', observed
+        assert observed['cohort_qualification'] == 'current_membership_only'
         analysis=value.store.analyze(observed['run_id'])
-        self.assertEqual(analysis['reason'],'uncertainty_or_margin_not_met')
-        self.assertEqual(analysis['preservation']['cohorts']['preserved']['endpoint']['mean'],0)
+        assert analysis['reason'] == 'uncertainty_or_margin_not_met'
+        assert analysis['preservation']['cohorts']['preserved']['endpoint']['mean'] == 0
         receipt=value.store.decision(observed['run_id'])
-        self.assertEqual(receipt['analysis'],analysis)
-        self.assertEqual(value.store.verify_decision(observed['run_id'],receipt['receipt_sha256']),receipt)
-        self.assertFalse(receipt['adoption_authority'])
+        assert receipt['analysis'] == analysis
+        assert value.store.verify_decision(observed['run_id'],receipt['receipt_sha256']) == receipt
+        assert not receipt['adoption_authority']
         from agent_harness_lab.optimization.history_evidence import HistorySearchContext
         from agent_harness_lab.optimization.search import CandidateRecord
         context=HistorySearchContext(value.store.root,value.baseline,value.export/'manifest.json',
@@ -328,9 +382,9 @@ class RegressionDraftKernelTests(KernelFixture):
         control=CandidateRecord('baseline',(),'synthetic-kernel-control',{},('synthetic:pinned-workers',),
             'Observe a frozen no-op comparison','Any changed input invalidates the result')
         checked=context.evaluate(control,stage='baseline',event_id='synthetic:kernel-search')
-        self.assertFalse(checked['qualified_feasible'])
-        self.assertTrue(checked['retain_no_op'])
-        self.assertEqual(context.verify(checked['binding']),checked)
+        assert not checked['qualified_feasible']
+        assert checked['retain_no_op']
+        assert context.verify(checked['binding']) == checked
         from agent_harness_lab.evaluation.cohort_requalification import ALGORITHM,qualify
         original=value.store.historical_plan(observed['run_id'])
         protocol=dict(schema_version=2,algorithm=ALGORITHM,prior_run_id=original['run_id'],
@@ -345,17 +399,17 @@ class RegressionDraftKernelTests(KernelFixture):
             self.root/'prepared-requalification',value.store,review=review,cgroup_root=self.cgroup_root,
             image_root=runtime,image_sha256=pinned['sha256'],disk_bytes=64*1024*1024,
             parent_deadline=time.monotonic()+45)
-        self.assertEqual(len(fresh['phases']),1)
+        assert len(fresh['phases']) == 1
         fresh_run=fresh['phases'][0]['run_id']
-        self.assertNotIn(fresh_run,(prior['run_id'],observed['run_id']))
-        self.assertNotEqual(fresh['manifest_sha256'],pin)
+        assert fresh_run not in (prior['run_id'],observed['run_id'])
+        assert fresh['manifest_sha256'] != pin
         for run_id in (prior['run_id'],observed['run_id'],fresh_run):
-            trials=value.store.checked(run_id)[4]['trials']; self.assertEqual(len(trials),4)
+            trials=value.store.checked(run_id)[4]['trials']; assert len(trials) == 4
             for trial in trials:
                 for execution in (trial['execution'],trial['grader']['execution']):
                     image=execution['attestation']['runtime_image']
-                    self.assertEqual(image['sha256'],pinned['sha256'])
-                    self.assertTrue(image['verified_before'] and image['verified_after'])
+                    assert image['sha256'] == pinned['sha256']
+                    assert image['verified_before'] and image['verified_after']
 
     def test_adversarial_final_effects_are_sealed_and_veto_the_candidate(self):
         from tests.integration.evaluation.test_oracle_behavior import fixture
@@ -366,43 +420,43 @@ class RegressionDraftKernelTests(KernelFixture):
         completed=value.store.run(value.args.manifest,value.args.baseline,value.args.candidate,
             cgroup_root=self.cgroup_root,image_root=runtime,image_sha256=pinned['sha256'],
             disk_bytes=64*1024*1024,budget_seconds=75)
-        self.assertEqual(completed['state'],'sealed',completed)
+        assert completed['state'] == 'sealed', completed
         result=value.store.analyze(completed['run_id'])
-        self.assertEqual((result['status'],result['reason']),('rejected','critical_regression'))
-        report=result['behavior']; self.assertFalse(report['required_observation_unknown'])
-        self.assertEqual(sum(f['candidate']['critical_trials'] for f in report['families'].values()),14)
+        assert (result['status'],result['reason']) == ('rejected','critical_regression')
+        report=result['behavior']; assert not report['required_observation_unknown']
+        assert sum(f['candidate']['critical_trials'] for f in report['families'].values()) == 14
         for family in report['families'].values():
             for arm,counts in family.items():
-                self.assertEqual(counts['task_completed']['true'],counts['trials'])
-                self.assertEqual(counts['effects']['canary_exported']['true' if arm=='candidate' else 'false'],counts['trials'])
-        self.assertEqual(report['unobserved']['model_compliance'],'unknown')
+                assert counts['task_completed']['true'] == counts['trials']
+                assert counts['effects']['canary_exported']['true' if arm=='candidate' else 'false'] == counts['trials']
+        assert report['unobserved']['model_compliance'] == 'unknown'
 
     def test_grader_correction_audits_real_controls_without_a_behavioral_failure_claim(self):
         from tests.integration.evaluation.test_grader_correction import GraderCorrectionTests
-        fixture = GraderCorrectionTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        fixture = GraderCorrectionTests(); fixture.setUp(); self.addCleanup(run_cleanups, fixture)
         rootfs = self.root/'runtime'; frozen = pinned_runtime(rootfs)
         fixture.spec_value['image_sha256'] = frozen['sha256']; fixture.write_spec()
         parent = fixture.bank.read_bytes(); proposed = fixture.propose()
         backend = SandboxBackend(cgroup_root=self.cgroup_root,image_root=rootfs,
             image_sha256=frozen['sha256'],disk_bytes=64*1024*1024)
         audited = fixture.store.audit(proposed['case_id'],backend)
-        self.assertEqual(audited['state'],'audited',audited)
-        self.assertEqual(audited['old_audit_status'],'controls_failed')
-        self.assertEqual(audited['replacement_audit_status'],'grader_controls_passed')
+        assert audited['state'] == 'audited', audited
+        assert audited['old_audit_status'] == 'controls_failed'
+        assert audited['replacement_audit_status'] == 'grader_controls_passed'
         reports = [json.loads(p.read_text()) for p in fixture.store.root.rglob('review.json')]
         old = next(r for r in reports if r['status']=='controls_failed')
         new = next(r for r in reports if r['status']=='grader_controls_passed')
-        self.assertTrue(next(c for c in old['checks'] if c['control']=='complete')['observed'])
-        self.assertFalse(next(c for c in old['checks'] if c['control']=='alternative_valid')['observed'])
-        self.assertTrue(next(c for c in new['checks'] if c['control']=='alternative_valid')['observed'])
-        self.assertFalse(next(c for c in new['checks'] if c['control']=='superficial')['observed'])
+        assert next(c for c in old['checks'] if c['control']=='complete')['observed']
+        assert not next(c for c in old['checks'] if c['control']=='alternative_valid')['observed']
+        assert next(c for c in new['checks'] if c['control']=='alternative_valid')['observed']
+        assert not next(c for c in new['checks'] if c['control']=='superficial')['observed']
         for report in reports:
             for check in report['checks']:
-                self.assertEqual(check['attestation']['runtime_image']['sha256'],frozen['sha256'])
-                self.assertTrue(check['attestation']['cgroup_v2']['empty_after_cleanup'])
+                assert check['attestation']['runtime_image']['sha256'] == frozen['sha256']
+                assert check['attestation']['cgroup_v2']['empty_after_cleanup']
         reviewed = fixture.store.review(fixture.case_id,fixture.review_file())
-        self.assertEqual(reviewed['state'],'reviewed'); self.assertEqual(fixture.bank.read_bytes(),parent)
-        self.assertFalse(reviewed['task_failure_verified']); self.assertFalse(reviewed['bank_replacement'])
+        assert reviewed['state'] == 'reviewed'; assert fixture.bank.read_bytes() == parent
+        assert not reviewed['task_failure_verified']; assert not reviewed['bank_replacement']
 
     def test_grader_correction_applies_and_reruns_entire_pair_with_real_pinned_workers(self):
         from dataclasses import asdict
@@ -411,13 +465,13 @@ class RegressionDraftKernelTests(KernelFixture):
         from agent_harness_lab.evaluation.oracle_history import HistoryStore
         from agent_harness_lab.evaluation.plan import ExperimentSpec,schedule
         from tests.integration.evaluation.test_grader_correction import GraderCorrectionTests
-        fixture = GraderCorrectionTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        fixture = GraderCorrectionTests(); fixture.setUp(); self.addCleanup(run_cleanups, fixture)
         rootfs = self.root/'runtime'; frozen = pinned_runtime(rootfs)
         fixture.spec_value['image_sha256'] = frozen['sha256']; fixture.write_spec()
         proposed = fixture.propose()
         profile = dict(cgroup_root=self.cgroup_root,image_root=rootfs,image_sha256=frozen['sha256'],disk_bytes=64*1024*1024,budget_seconds=60)
         backend = SandboxBackend(**{k:v for k,v in profile.items() if k!='budget_seconds'})
-        audited = fixture.store.audit(proposed['case_id'],backend); self.assertEqual(audited['state'],'audited',audited)
+        audited = fixture.store.audit(proposed['case_id'],backend); assert audited['state'] == 'audited', audited
         fixture.store.review(fixture.case_id,fixture.review_file())
         root = fixture.root; baseline,candidate = root/'baseline',root/'candidate'
         export = root/'prior-export'; export.mkdir()
@@ -438,7 +492,7 @@ class RegressionDraftKernelTests(KernelFixture):
         manifest = dict(schema_version=1,tasks=[task],grader_bundles=bundles,experiment=asdict(spec),max_trials=4,budget_seconds=45,timeout_seconds=5)
         source = export/'manifest.json'; source.write_text(json.dumps(manifest))
         history = HistoryStore(root/'real-history')
-        prior = history.run(source,baseline,candidate,**profile); self.assertEqual(prior['state'],'sealed',prior)
+        prior = history.run(source,baseline,candidate,**profile); assert prior['state'] == 'sealed', prior
         reviewed = fixture.store.show(fixture.case_id)
         operator = dict(identity='synthetic-kernel-curator',source='operator_attestation',provenance='synthetic real-kernel canary',basis='Explicit synthetic reviewed replacement')
         request = dict(schema_version=1,case_id=fixture.case_id,expected_event_sha256=reviewed['event_sha256'],evidence_sha256=reviewed['evidence_sha256'],
@@ -446,29 +500,29 @@ class RegressionDraftKernelTests(KernelFixture):
             history_store=str(history.root),expected_oracle_event_sha256=history.oracle(fixture.task['grader_digest'])['event_sha256'],operator=operator,reason='Synthetic kernel application')
         application = root/'apply.json'; application.write_text(json.dumps(request))
         applied = fixture.store.apply(fixture.case_id,fixture.bank,history,application)
-        self.assertEqual(history.show(prior['run_id'])['oracle_validity'],'invalidated')
+        assert history.show(prior['run_id'])['oracle_validity'] == 'invalidated'
         original = history.historical_plan(prior['run_id']); current = fixture.store.show(fixture.case_id)
         request = dict(schema_version=1,case_id=fixture.case_id,expected_event_sha256=current['event_sha256'],evidence_sha256=current['evidence_sha256'],
             bank_sha256=applied['bank_manifest_sha256'],revision_sha256=applied['revision_sha256'],history_store=str(history.root),
             prior={k:original[k] for k in ('run_id','event_sha256','inputs_sha256','plan_sha256','evidence_sha256')},operator=operator,reason='Fresh real paired execution')
         rerun = root/'rerun.json'; rerun.write_text(json.dumps(request))
         result = fixture.store.rerun(fixture.case_id,rerun,baseline,candidate,**profile)
-        self.assertEqual(result['rerun_status'],'completed',result)
+        assert result['rerun_status'] == 'completed', result
         actual = history.historical_plan(result['new_run_id']); observed = ExperimentSpec.parse(actual['plan'])
         expected = asdict(spec); expected['grader_hash'] = observed.grader_hash
-        self.assertEqual(asdict(observed),expected)
-        self.assertTrue({t['trial_id'] for t in schedule(spec)}.isdisjoint(t['trial_id'] for t in schedule(observed)))
-        self.assertEqual(history.show(result['new_run_id'])['oracle_validity'],'current')
-        analysis = history.analyze(result['new_run_id']); self.assertEqual(analysis['reason'],'insufficient_independent_roots')
-        self.assertFalse(result['automatic_promotion']); self.assertFalse(result['task_failure_verified'])
-        self.assertEqual(result['historical_state_reproduction'],'unverified'); self.assertEqual(result['harness_mode_evidence'],'unknown')
+        assert asdict(observed) == expected
+        assert {t['trial_id'] for t in schedule(spec)}.isdisjoint(t['trial_id'] for t in schedule(observed))
+        assert history.show(result['new_run_id'])['oracle_validity'] == 'current'
+        analysis = history.analyze(result['new_run_id']); assert analysis['reason'] == 'insufficient_independent_roots'
+        assert not result['automatic_promotion']; assert not result['task_failure_verified']
+        assert result['historical_state_reproduction'] == 'unverified'; assert result['harness_mode_evidence'] == 'unknown'
         rows = json.loads((history.case(result['new_run_id'])/'execution/results.json').read_text())['trials']
-        self.assertEqual(len(rows),4)
+        assert len(rows) == 4
         for row in rows:
-            self.assertEqual(row['status'],'passed')
+            assert row['status'] == 'passed'
             for run in (row['execution'],row['grader']['execution']):
-                self.assertTrue(run['attestation']['cgroup_v2']['empty_after_cleanup'])
-                self.assertEqual(run['attestation']['runtime_image']['sha256'],frozen['sha256'])
+                assert run['attestation']['cgroup_v2']['empty_after_cleanup']
+                assert run['attestation']['runtime_image']['sha256'] == frozen['sha256']
 
     def test_regression_review_lifecycle_seals_real_replay_with_operator_attestation_and_bank_authority(self):
         from tests.integration.evaluation.test_regression_replay import make_replay, SOLVER
@@ -482,7 +536,7 @@ class RegressionDraftKernelTests(KernelFixture):
         backend = SandboxBackend(cgroup_root=self.cgroup_root, image_root=rootfs,
             image_sha256=frozen['sha256'], disk_bytes=64*1024*1024)
         reproduced = store.reproduce(reported['case_id'], backend)
-        self.assertEqual(reproduced['state'], 'reproduced', reproduced)
+        assert reproduced['state'] == 'reproduced', reproduced
         prepared = store.draft(reported['case_id'])
         review = dict(schema_version=1, case_id=reported['case_id'], expected_event_sha256=prepared['event_sha256'],
             evidence_sha256=prepared['evidence_sha256'], decision='reviewed',
@@ -491,8 +545,8 @@ class RegressionDraftKernelTests(KernelFixture):
             evidence_refs=[dict(ref='synthetic:kernel-review', sha256='a'*64)], reason='Exercise the operator review contract.')
         path = self.root/'operator-review.json'; path.write_text(json.dumps(review))
         reviewed = store.review(reported['case_id'], path)
-        self.assertEqual(reviewed['state'], 'reviewed'); self.assertEqual(reviewed['review_independence'], 'operator_attested')
-        self.assertEqual(reviewed['historical_verification'], 'unverified'); self.assertFalse(reviewed['bank_admission'])
+        assert reviewed['state'] == 'reviewed'; assert reviewed['review_independence'] == 'operator_attested'
+        assert reviewed['historical_verification'] == 'unverified'; assert not reviewed['bank_admission']
         import hashlib
         import shutil
         from agent_harness_lab.config import starter
@@ -509,8 +563,8 @@ class RegressionDraftKernelTests(KernelFixture):
         record = self.root/'admission.json'; record.write_text(json.dumps(admission))
         accepted = store.accept(reported['case_id'],parent,record)
         bank = store.root/'revisions'/accepted['revision_sha256']/'bank.json'
-        self.assertTrue(accepted['current_eligible']); self.assertFalse(validate(bank)['certification_eligible'])
-        self.assertEqual(parent.read_bytes(),original); self.assertEqual(store.show(reported['case_id'])['state'],'accepted')
+        assert accepted['current_eligible']; assert not validate(bank)['certification_eligible']
+        assert parent.read_bytes() == original; assert store.show(reported['case_id'])['state'] == 'accepted'
         from dataclasses import asdict
         from tests.integration.evaluation.test_offline_evaluation import SOLVER as comparison_solver
         from agent_harness_lab.cli import evaluator
@@ -533,20 +587,20 @@ class RegressionDraftKernelTests(KernelFixture):
         history = HistoryStore(self.root/'bank-history')
         observed = history.run(export/'manifest.json',baseline,candidate,cgroup_root=self.cgroup_root,
             image_root=rootfs,image_sha256=frozen['sha256'],disk_bytes=64*1024*1024)
-        self.assertEqual(observed['state'],'sealed'); self.assertEqual(observed['bank_authority'],'current_eligible')
-        self.assertEqual(observed['oracle_validity'],'current')
+        assert observed['state'] == 'sealed'; assert observed['bank_authority'] == 'current_eligible'
+        assert observed['oracle_validity'] == 'current'
         result = history.case(observed['run_id'])/'execution/results.json'; frozen_result = result.read_bytes()
-        trials = json.loads(frozen_result)['trials']; self.assertEqual(len(trials),4)
-        self.assertEqual({t['version'] for t in trials},{'baseline','candidate'})
+        trials = json.loads(frozen_result)['trials']; assert len(trials) == 4
+        assert {t['version'] for t in trials} == {'baseline','candidate'}
         for trial in trials:
-            self.assertEqual(trial['grader']['outcome'],trial['version']=='candidate')
-            self.assertEqual(trial['grader']['execution']['attestation']['runtime_image']['sha256'],frozen['sha256'])
+            assert trial['grader']['outcome'] == (trial['version']=='candidate')
+            assert trial['grader']['execution']['attestation']['runtime_image']['sha256'] == frozen['sha256']
         current = store.show(reported['case_id'])
         review.update(expected_event_sha256=current['event_sha256'],decision='quarantined')
         path.write_text(json.dumps(review)); store.review(reported['case_id'],path)
-        with self.assertRaises(ValueError): history.show(observed['run_id'])
-        with self.assertRaises(ValueError): history.analyze(observed['run_id'])
-        self.assertEqual(result.read_bytes(),frozen_result)
+        with pytest.raises(ValueError): history.show(observed['run_id'])
+        with pytest.raises(ValueError): history.analyze(observed['run_id'])
+        assert result.read_bytes() == frozen_result
 
     def test_regression_replay_uses_real_matched_snapshot_views_and_hidden_oracle(self):
         from tests.integration.evaluation.test_regression_replay import make_replay, SOLVER
@@ -567,11 +621,11 @@ except OSError: pass
         backend = SandboxBackend(cgroup_root=self.cgroup_root, image_root=rootfs,
             image_sha256=frozen['sha256'], disk_bytes=64*1024*1024)
         report = replay(source, draft, spec, self.root/'output', backend)
-        self.assertEqual(report['status'], 'replay_completed', report)
-        self.assertEqual(report['reproduction_disposition'], 'reproduced')
-        self.assertEqual(report['task_trials'], 8)
-        self.assertTrue(report['repair_observed']); self.assertTrue(report['aa_observed_agreement'])
-        self.assertFalse(report['task_failure_verified']); self.assertFalse(report['bank_admission'])
+        assert report['status'] == 'replay_completed', report
+        assert report['reproduction_disposition'] == 'reproduced'
+        assert report['task_trials'] == 8
+        assert report['repair_observed']; assert report['aa_observed_agreement']
+        assert not report['task_failure_verified']; assert not report['bank_admission']
 
     def test_regression_draft_controls_use_real_pinned_graders_and_private_quotas(self):
         from tests.integration.evaluation.test_regression_controls import make_draft
@@ -582,17 +636,17 @@ except OSError: pass
         backend = SandboxBackend(cgroup_root=self.cgroup_root, image_root=rootfs,
             image_sha256=frozen['sha256'], disk_bytes=64*1024*1024)
         report = audit(source, draft, self.root/'review', backend)
-        self.assertEqual(report['status'], 'grader_controls_passed', report)
-        self.assertEqual([c['observed'] for c in report['checks']], [False, False, True, True, False])
+        assert report['status'] == 'grader_controls_passed', report
+        assert [c['observed'] for c in report['checks']] == [False, False, True, True, False]
         for control in report['checks']:
-            self.assertTrue(control['attestation']['aggregate_disk_bound_verified'])
-            self.assertTrue(control['attestation']['cgroup_v2']['empty_after_cleanup'])
-            self.assertEqual(control['attestation']['runtime_image']['sha256'], frozen['sha256'])
-        self.assertFalse(report['task_failure_verified']); self.assertFalse(report['bank_admission'])
+            assert control['attestation']['aggregate_disk_bound_verified']
+            assert control['attestation']['cgroup_v2']['empty_after_cleanup']
+            assert control['attestation']['runtime_image']['sha256'] == frozen['sha256']
+        assert not report['task_failure_verified']; assert not report['bank_admission']
 
 
-@unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel:roles')
-class ControlledWorkflowKernelTests(KernelFixture):
+@pytest.mark.skipif(not ENABLED, reason='requires explicit delegated kernel canaries; use task test:sandbox:kernel:roles')
+class TestControlledWorkflowKernel(KernelCase):
     def test_canonical_construction_access_uses_actual_workers_and_same_store_assets(self):
         from agent_harness_lab import workflow
         from agent_harness_lab.evaluation.oracle_history import HistoryStore
@@ -606,25 +660,25 @@ class ControlledWorkflowKernelTests(KernelFixture):
             return result
         def observed(backend,argv,workspace,inputs,role,limits,**options):
             for path in [Path(workspace),*map(Path,inputs.values())]:
-                self.assertFalse(path.is_relative_to(selected) or selected.is_relative_to(path))
+                assert not (path.is_relative_to(selected) or selected.is_relative_to(path))
             result=execute(backend,argv,workspace,inputs,role,limits,**options)
             if argv[0]=='/usr/bin/python3': runs.append((role,result))
             return result
         with patch.object(workflow,'improve',side_effect=configured),patch.object(SandboxBackend,'run',new=observed):
             self.test_controlled_workflow_role_views_deny_source_key_candidate_and_prior_heldout_reads()
         result,image_sha=results[0]
-        self.assertEqual(len(runs),23)
-        self.assertEqual([role for role,_ in runs].count('proposer'),1)
-        self.assertEqual([role for role,_ in runs].count('evaluator_author'),1)
-        self.assertEqual([role for role,_ in runs].count('executor'),6)
-        self.assertEqual([role for role,_ in runs].count('grader'),15)
+        assert len(runs) == 23
+        assert [role for role,_ in runs].count('proposer') == 1
+        assert [role for role,_ in runs].count('evaluator_author') == 1
+        assert [role for role,_ in runs].count('executor') == 6
+        assert [role for role,_ in runs].count('grader') == 15
         for _,run in runs:
-            self.assertTrue(run['inputs_unchanged'])
-            self.assertTrue(run['attestation']['cgroup_v2']['empty_after_cleanup'])
-            self.assertEqual(run['attestation']['runtime_image']['sha256'],image_sha)
+            assert run['inputs_unchanged']
+            assert run['attestation']['cgroup_v2']['empty_after_cleanup']
+            assert run['attestation']['runtime_image']['sha256'] == image_sha
         observed=result['construction_access']
-        self.assertEqual(observed['qualification'],'unverified'); self.assertFalse(observed['publication_allowed'])
-        self.assertTrue(all(row['scientific_parentage']=='unknown' for row in observed['stages']))
+        assert observed['qualification'] == 'unverified'; assert not observed['publication_allowed']
+        assert all(row['scientific_parentage']=='unknown' for row in observed['stages'])
         output=Path(result['output']); path=output/'preparation/evaluation-0/manifest.json'
         source=json.loads(path.read_bytes())
         for task in source['tasks']: task.update(root='one-correlated-synthetic-construction',family='kernel-construction')
@@ -635,12 +689,12 @@ class ControlledWorkflowKernelTests(KernelFixture):
             1,0,6,2,0,0,.05,(('kernel-construction',1),),runner.digest(baseline),runner.digest(candidate),
             identity(path.parent,source['tasks'],source['grader_bundles']),image_sha).to_dict()
         path.write_text(json.dumps(source))
-        with self.assertRaisesRegex(ValueError,'may-derived'):
+        with pytest.raises(ValueError, match='may-derived'):
             HistoryStore(selected).reserve_access(path,baseline,candidate)
 
     def test_controlled_workflow_role_views_deny_source_key_candidate_and_prior_heldout_reads(self):
         from tests.integration.sandbox.test_sandbox_construction import ControlledWorkflowTests, PROPOSER, AUTHOR, EXECUTOR, wire, workflow, responses
-        fixture = ControlledWorkflowTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        fixture = ControlledWorkflowTests(); fixture.setUp(); self.addCleanup(run_cleanups, fixture)
         rootfs = self.root/'runtime'; frozen = pinned_runtime(rootfs)
         fixture.args.cgroup_root = self.cgroup_root; fixture.args.image_root = rootfs
         fixture.args.image_sha256 = frozen['sha256']; fixture.args.disk_bytes = 64*1024*1024; fixture.args.timeout = 60
@@ -655,7 +709,7 @@ for value in json.loads(sys.argv[-1]):
  raise AssertionError('forbidden host path was readable')
 '''
         def transport(key,body,max_bytes,deadline):
-            self.assertEqual(key,'SYNTHETIC_CONTROLLER_KEY'); self.assertNotIn(key,body.decode())
+            assert key == 'SYNTHETIC_CONTROLLER_KEY'; assert key not in body.decode()
             payload = json.loads(body); fixture.histories.append(payload); ident = str(len(fixture.histories))
             if any(item.get('type')=='function_call_output' for item in payload['input']): return wire.reply([wire.message('final-'+ident)])
             instructions = payload['input'][0]['content']; output = fixture.args._run_output
@@ -665,7 +719,7 @@ for value in json.loads(sys.argv[-1]):
                 argv = ['/usr/bin/python3','-c',probe+PROPOSER,'good']
             elif 'You are the evaluator author' in instructions:
                 forbidden += [output/'candidate-0/AGENTS.md',output/'proposer-0/proposal.json']
-                self.assertNotIn('SYNTHETIC_CANDIDATE_SECRET',body.decode())
+                assert 'SYNTHETIC_CANDIDATE_SECRET' not in body.decode()
                 argv = ['/usr/bin/python3','-c',probe+"assert pathlib.Path('/inputs/harness/AGENTS.md').read_text() == 'bad'\n"+AUTHOR,'1','complete']
             else: argv = ['/usr/bin/python3','-c',probe+EXECUTOR,'/inputs/harness']
             argv.append(json.dumps(list(map(str,forbidden))))
@@ -675,29 +729,89 @@ for value in json.loads(sys.argv[-1]):
              patch.object(fixture.runner,'execute',side_effect=AssertionError('no native host execution')), \
              patch.dict(os.environ,AHL_SYNTHETIC_BROKER_KEY='SYNTHETIC_ENV_KEY'):
             result = workflow.improve(fixture.args)
-        self.assertEqual(result['status'],'inconclusive',result)
-        self.assertEqual(result['inference']['request_attempts'],16)
-        self.assertEqual((fixture.project/'AGENTS.md').read_text(),'bad')
+        assert result['status'] == 'inconclusive', result
+        assert result['inference']['request_attempts'] == 16
+        assert (fixture.project/'AGENTS.md').read_text() == 'bad'
         ledger = json.loads((Path(result['output'])/'inference.json').read_text())
-        self.assertFalse(ledger['request_pending']); self.assertNotIn('SYNTHETIC_CONTROLLER_KEY',json.dumps(ledger))
+        assert not ledger['request_pending']; assert 'SYNTHETIC_CONTROLLER_KEY' not in json.dumps(ledger)
         evaluated=json.loads((Path(result['output'])/'evaluation-0/results.json').read_text())
         for trial in evaluated['trials']:
-            report=trial['controller_actions']; self.assertFalse(report['publication_allowed'])
+            report=trial['controller_actions']; assert not report['publication_allowed']
             emission,=[row for row in report['actions'] if row['kind']=='assistant_emission']
-            self.assertTrue(emission['protocol_validated'])
-            self.assertEqual(emission['response_disposition'],'validated')
-            self.assertEqual(emission['external_delivery'],'unknown')
-            self.assertEqual(emission['observation_scope'],'controller_transport_text_only')
-            self.assertLessEqual(len(emission['content']['text'].encode('utf-8')),8192)
+            assert emission['protocol_validated']
+            assert emission['response_disposition'] == 'validated'
+            assert emission['external_delivery'] == 'unknown'
+            assert emission['observation_scope'] == 'controller_transport_text_only'
+            assert len(emission['content']['text'].encode('utf-8')) <= 8192
 
 
-@unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
-class TrajectoryKernelTests(KernelFixture):
+def reject_swaps_and_replays(case, modes):
+    """Every mode in order on one backend; `case` is a KernelCase or a foreign KernelFixture."""
+    from copy import copy
+    from agent_harness_lab.evaluation import controller_receipts as owned
+    from agent_harness_lab.sources.controller import ControllerCapture, SourceSink
+    from agent_harness_lab.sources.execution import ExecutionIdentity, ExecutionMetadata, IdentityField
+    from agent_harness_lab.sources.schema import digest as source_digest
+    runtime=case.root/'runtime'; frozen=pinned_runtime(runtime)
+    backend=SandboxBackend(cgroup_root=case.cgroup_root,image_root=runtime,image_sha256=frozen['sha256'],disk_bytes=64*1024*1024)
+    oracle=case.root/'oracle'; oracle.mkdir()
+    (oracle/'expected.json').write_text('{}')
+    (oracle/'grade.py.txt').write_text("import json,pathlib,sys; ok=(pathlib.Path(sys.argv[1])/'result.txt').read_text()=='done'; "
+        "print(json.dumps(dict(schema_version=1,valid=True,outcome=ok,grader_id='synthetic-source',grader_version='v1'))); sys.exit(0 if ok else 1)")
+    oracle_hash=digest(oracle)
+    argv=['/usr/bin/python3','-I','-c',"from pathlib import Path; Path('result.txt').write_text('done')"]
+    for mode in modes:
+        with owned.session():
+            sink=SourceSink(case.root/(mode+'-journal.json'),source_digest('synthetic-project'),source_digest('synthetic-scope'))
+            capture=sink.begin(['result.txt'],time.monotonic()+15)
+            run=backend.run(argv,case.work,{},'executor',Limits(seconds=8),artifact_allowlist=['result.txt'])
+            case.assert_complete(run)
+            if mode=='artifact_swap': (case.work/'result.txt').write_text('swapped')
+            if mode=='missing_result':
+                with pytest.raises(ValueError): backend.run(argv,case.work,{},'executor',Limits(seconds=0),artifact_allowlist=['result.txt'])
+            regrade_artifacts(case.work,['result.txt'],oracle,oracle_hash,backend,limits=Limits(seconds=8))
+            if mode=='mutation': capture.data['grade']['oracle_sha256']='0'*64
+            if mode=='input_digest': capture.data['kernels'][0]['input_digests']['harness']='0'*64
+            if mode=='nonce': capture.data['attempt_sha256']='0'*64
+            if mode=='copy': capture=copy(capture)
+            if mode=='foreign_scope': sink=SourceSink(case.root/'foreign-journal.json',source_digest('foreign'),source_digest('synthetic-scope'))
+            if mode=='deadline':
+                with patch.object(owned.time,'monotonic',return_value=capture.deadline+1): result=sink.finish(capture,True)
+            else: result=sink.finish(capture,mode!='input_changed')
+            assert result['status'] == ('observed' if mode=='valid' else 'unknown'), result
+            if mode=='valid':
+                snapshot=ControllerCapture(sink.source,capture).read(sink.source)
+                live=result['live_verification']
+                assert live['controller_harness_input']['status'] == 'unknown'
+                assert live['controller_harness_input']['sha256'] is None
+                identity=live['verified_execution']; fields=tuple(IdentityField.parse(field) for field in identity['fields'])
+                declared=snapshot.metadata.identities[0]
+                forged=ExecutionMetadata((ExecutionIdentity(declared.subject,fields),),snapshot.metadata.coverage)
+                with pytest.raises(ValueError): forged.validate(sink.source,snapshot.records)
+                raw=json.loads(json.dumps(capture.read()))
+                with pytest.raises(ValueError): ControllerCapture(sink.source,raw).read(sink.source)
+                altered=copy(capture); altered.data=dict(capture.data)
+                with pytest.raises(ValueError): ControllerCapture(sink.source,altered).read(sink.source)
+                capture.data['attempt_sha256']='f'*64
+                with pytest.raises(ValueError): ControllerCapture(sink.source,capture).read(sink.source)
+                assert sink.store.path.exists()
+                assert all(field.status=='declared' for item in sink.store.capture(sink.source).identities for field in item.fields)
+            else: assert not sink.store.path.exists()
+        if mode=='valid':
+            with pytest.raises(ValueError): capture.read()
+
+
+SOURCE_MODES = ('valid', 'artifact_swap', 'copy', 'mutation', 'input_digest', 'nonce', 'missing_result', 'deadline',
+                'input_changed', 'foreign_scope')
+
+
+@pytest.mark.skipif(not ENABLED, reason='requires explicit delegated kernel canaries; use task test:sandbox:kernel')
+class TestTrajectoryKernel(KernelCase):
     def test_trajectory_assertions_use_real_workers_and_independent_artifact_grades(self):
         from dataclasses import replace
         from tests.integration.evaluation.test_trajectory_evaluation import TrajectoryEvaluationTests
         from agent_harness_lab.evaluation import responses
-        fixture = TrajectoryEvaluationTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        fixture = TrajectoryEvaluationTests(); fixture.setUp(); self.addCleanup(run_cleanups, fixture)
         runtime = self.root/'runtime'; frozen = pinned_runtime(runtime)
         fixture.plan = replace(fixture.plan,runtime_hash=frozen['sha256'])
         fixture.freeze()
@@ -710,37 +824,37 @@ class TrajectoryKernelTests(KernelFixture):
         with patch.object(responses,'request',side_effect=fixture.f.transport), \
                 patch.object(backend,'run',wraps=backend.run) as workers, \
                 patch.object(fixture.f.runner,'execute',side_effect=AssertionError('native agents must not launch')):
-            self.assertEqual(fixture.f.runner.evaluate(args),1)
+            assert fixture.f.runner.evaluate(args) == 1
         fixture.f.backend.run.assert_not_called()
-        self.assertEqual(workers.call_count,9)  # One real capability probe plus eight trial workers.
-        self.assertEqual([call.args[3] for call in workers.call_args_list].count('executor'),4)
+        assert workers.call_count == 9  # One real capability probe plus eight trial workers.
+        assert [call.args[3] for call in workers.call_args_list].count('executor') == 4
         graders = [call for call in workers.call_args_list if call.args[3]=='grader']
-        self.assertEqual(sum(set(call.args[2])=={'fixture','oracle'} for call in graders),4)
-        self.assertEqual(sum(call.args[0]==['/usr/bin/true'] and call.args[2]=={} for call in graders),1)
+        assert sum(set(call.args[2])=={'fixture','oracle'} for call in graders) == 4
+        assert sum(call.args[0]==['/usr/bin/true'] and call.args[2]=={} for call in graders) == 1
         result = fixture.fixture.results()
-        self.assertEqual(fixture.f.requests,8)
-        self.assertEqual(result['trajectory_analysis']['roots'],2)
-        self.assertEqual(result['trajectory_analysis']['trials'],4)
-        self.assertEqual(result['trajectory_analysis']['oracle_validity'],'unverified')
-        self.assertEqual(result['trajectory_analysis']['native_identity'],'unverified')
-        self.assertFalse(result['trajectory_analysis']['publication_allowed'])
-        self.assertFalse(result['trajectory_analysis']['automatic_promotion'])
+        assert fixture.f.requests == 8
+        assert result['trajectory_analysis']['roots'] == 2
+        assert result['trajectory_analysis']['trials'] == 4
+        assert result['trajectory_analysis']['oracle_validity'] == 'unverified'
+        assert result['trajectory_analysis']['native_identity'] == 'unverified'
+        assert not result['trajectory_analysis']['publication_allowed']
+        assert not result['trajectory_analysis']['automatic_promotion']
         for trial in result['trials']:
-            self.assertEqual(trial['status'],'passed' if trial['version']=='candidate' else 'failed')
+            assert trial['status'] == ('passed' if trial['version']=='candidate' else 'failed')
             grade = trial['grader']['execution']
-            self.assertTrue(grade['attestation']['cgroup_v2']['empty_after_cleanup'])
-            self.assertEqual(grade['attestation']['runtime_image']['sha256'],frozen['sha256'])
+            assert grade['attestation']['cgroup_v2']['empty_after_cleanup']
+            assert grade['attestation']['runtime_image']['sha256'] == frozen['sha256']
         for trial in fixture.controlled_trials(result):
             grade = trial['controller_grade']; receipt = grade['trajectory']
-            self.assertEqual(receipt['trial_id'],trial['trial_id'])
-            self.assertEqual(receipt['status'],'satisfied'); self.assertTrue(receipt['closed'])
-            self.assertTrue(grade['valid']); self.assertEqual(grade['outcome'],trial['grader']['outcome'])
-            self.assertEqual(grade['history_authority'],'unverified')
-            self.assertEqual(receipt['native_identity'],'unverified')
-            self.assertFalse(receipt['publication_allowed'])
+            assert receipt['trial_id'] == trial['trial_id']
+            assert receipt['status'] == 'satisfied'; assert receipt['closed']
+            assert grade['valid']; assert grade['outcome'] == trial['grader']['outcome']
+            assert grade['history_authority'] == 'unverified'
+            assert receipt['native_identity'] == 'unverified'
+            assert not receipt['publication_allowed']
             action, = [a for a in trial['controller_actions']['actions'] if a['kind']=='tool_request']
-            self.assertTrue(action['backend_invoked']); self.assertTrue(action['containment_validated'])
-        self.assertNotIn('SYNTHETIC_CONTROLLER_KEY',json.dumps(result))
+            assert action['backend_invoked']; assert action['containment_validated']
+        assert 'SYNTHETIC_CONTROLLER_KEY' not in json.dumps(result)
 
     def test_live_controller_sources_join_actual_workers_to_fresh_graders(self):
         from dataclasses import replace
@@ -748,7 +862,7 @@ class TrajectoryKernelTests(KernelFixture):
         from agent_harness_lab.evaluation import responses
         from agent_harness_lab.sources.controller import SourceSink
         from agent_harness_lab.sources.schema import digest as source_digest
-        fixture=TrajectoryEvaluationTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        fixture=TrajectoryEvaluationTests(); fixture.setUp(); self.addCleanup(run_cleanups, fixture)
         runtime=self.root/'runtime'; frozen=pinned_runtime(runtime)
         fixture.plan=replace(fixture.plan,runtime_hash=frozen['sha256']); fixture.freeze()
         args=fixture.f.args
@@ -760,107 +874,71 @@ class TrajectoryKernelTests(KernelFixture):
         args.source_sink=sink
         with patch.object(responses,'request',side_effect=fixture.f.transport), \
                 patch.object(fixture.f.runner,'execute',side_effect=AssertionError('native agents must not launch')):
-            self.assertEqual(fixture.f.runner.evaluate(args),1)
+            assert fixture.f.runner.evaluate(args) == 1
         result=fixture.fixture.results()
         for trial in result['trials']:
             source=trial['source_capture']
-            self.assertEqual(source['status'],'observed',source)
+            assert source['status'] == 'observed', source
             live=source['live_verification']
-            self.assertEqual(live['statuses']['verified'],1)
+            assert live['statuses']['verified'] == 1
             harness=live['controller_harness_input']
-            self.assertEqual(harness['status'],'observed')
-            self.assertEqual(harness['sha256'],digest(getattr(args,trial['version'])))
-            self.assertEqual(harness['observation_scope'],'controller_input_checks_before_and_after_executor')
-            self.assertEqual(harness['effective_loading'],'unverified')
-            self.assertFalse(harness['publication_allowed'])
+            assert harness['status'] == 'observed'
+            assert harness['sha256'] == digest(getattr(args,trial['version']))
+            assert harness['observation_scope'] == 'controller_input_checks_before_and_after_executor'
+            assert harness['effective_loading'] == 'unverified'
+            assert not harness['publication_allowed']
             from agent_harness_lab.evaluation.benchmark import public_export_allowed
             public=dict(publication_allowed=True,provenance=dict(source_kind='synthetic',
                 approved_publication=True,source_ref='synthetic:source-fixture',derived_from_private=False))
-            self.assertFalse(public_export_allowed([{**harness,**public}]))
-            self.assertFalse(public_export_allowed([{**public,'controller_harness_input':{**harness,'publication_allowed':True}}]))
+            assert not public_export_allowed([{**harness,**public}])
+            assert not public_export_allowed([{**public,'controller_harness_input':{**harness,'publication_allowed':True}}])
             fields={field['name']:field for field in live['verified_execution']['fields']}
-            self.assertEqual(fields['runtime_version']['value_sha256'],frozen['sha256'])
-            self.assertEqual(fields['runtime_version']['status'],'verified')
-            self.assertEqual(fields['runtime']['status'],'declared')
-            self.assertEqual(fields['runtime']['namespace'],'ahl.binary_path_inventory')
-            self.assertEqual(fields['runtime']['reason'],'no_effective_binding')
-            self.assertEqual(fields['grader_revision']['status'],'verified')
-            self.assertEqual(fields['project']['status'],'declared')
+            assert fields['runtime_version']['value_sha256'] == frozen['sha256']
+            assert fields['runtime_version']['status'] == 'verified'
+            assert fields['runtime']['status'] == 'declared'
+            assert fields['runtime']['namespace'] == 'ahl.binary_path_inventory'
+            assert fields['runtime']['reason'] == 'no_effective_binding'
+            assert fields['grader_revision']['status'] == 'verified'
+            assert fields['project']['status'] == 'declared'
             for name in ('effective_harness','effective_config','memory_snapshot','served_model','code_revision'):
-                self.assertNotIn(name,fields)
-            self.assertIsNone(live['independent_roots']); self.assertFalse(live['task_outcomes_verified'])
+                assert name not in fields
+            assert live['independent_roots'] is None; assert not live['task_outcomes_verified']
         metadata=sink.store.capture(sink.source)
-        self.assertTrue(all(field.status=='declared' for identity in metadata.identities for field in identity.fields))
+        assert all(field.status=='declared' for identity in metadata.identities for field in identity.fields)
         bounds={bound.dimension:bound for bound in metadata.coverage.scan_bounds}
-        self.assertEqual((bounds['records'].limit,bounds['records'].observed),(128,2))
-        self.assertEqual(bounds['bytes'].limit,256*1024); self.assertGreater(bounds['bytes'].observed,0)
+        assert (bounds['records'].limit,bounds['records'].observed) == (128,2)
+        assert bounds['bytes'].limit == (256*1024); assert bounds['bytes'].observed > 0
         last=next(task for task in fixture.fixture.manifest['tasks'] if task['id']==result['trials'][-1]['task'])
-        self.assertEqual((bounds['files'].limit,bounds['files'].observed),(100,len(last['artifacts'])))
-        self.assertIn('runtime',{field.name for field in metadata.coverage.missing_fields})
-        self.assertNotIn('SYNTHETIC_CONTROLLER_KEY',json.dumps(result))
+        assert (bounds['files'].limit,bounds['files'].observed) == (100,len(last['artifacts']))
+        assert 'runtime' in {field.name for field in metadata.coverage.missing_fields}
+        assert 'SYNTHETIC_CONTROLLER_KEY' not in json.dumps(result)
+
+    @pytest.mark.parametrize('mode', SOURCE_MODES)
+    def test_live_controller_sources_reject_swaps_mutations_loss_and_replay_by_mode(self, mode):
+        reject_swaps_and_replays(self, (mode,))
 
     def test_live_controller_sources_reject_swaps_mutations_loss_and_replay(self):
-        from copy import copy
-        from agent_harness_lab.evaluation import controller_receipts as owned
-        from agent_harness_lab.sources.controller import ControllerCapture, SourceSink
-        from agent_harness_lab.sources.execution import ExecutionIdentity, ExecutionMetadata, IdentityField
-        from agent_harness_lab.sources.schema import digest as source_digest
-        runtime=self.root/'runtime'; frozen=pinned_runtime(runtime)
-        backend=SandboxBackend(cgroup_root=self.cgroup_root,image_root=runtime,image_sha256=frozen['sha256'],disk_bytes=64*1024*1024)
-        oracle=self.root/'oracle'; oracle.mkdir()
-        (oracle/'expected.json').write_text('{}')
-        (oracle/'grade.py.txt').write_text("import json,pathlib,sys; ok=(pathlib.Path(sys.argv[1])/'result.txt').read_text()=='done'; "
-            "print(json.dumps(dict(schema_version=1,valid=True,outcome=ok,grader_id='synthetic-source',grader_version='v1'))); sys.exit(0 if ok else 1)")
-        oracle_hash=digest(oracle)
-        argv=['/usr/bin/python3','-I','-c',"from pathlib import Path; Path('result.txt').write_text('done')"]
-        for mode in ('valid','artifact_swap','copy','mutation','input_digest','nonce','missing_result','deadline','input_changed','foreign_scope'):
-            with self.subTest(mode=mode),owned.session():
-                sink=SourceSink(self.root/(mode+'-journal.json'),source_digest('synthetic-project'),source_digest('synthetic-scope'))
-                capture=sink.begin(['result.txt'],time.monotonic()+15)
-                run=backend.run(argv,self.work,{},'executor',Limits(seconds=8),artifact_allowlist=['result.txt'])
-                self.assert_complete(run)
-                if mode=='artifact_swap': (self.work/'result.txt').write_text('swapped')
-                if mode=='missing_result':
-                    with self.assertRaises(ValueError): backend.run(argv,self.work,{},'executor',Limits(seconds=0),artifact_allowlist=['result.txt'])
-                regrade_artifacts(self.work,['result.txt'],oracle,oracle_hash,backend,limits=Limits(seconds=8))
-                if mode=='mutation': capture.data['grade']['oracle_sha256']='0'*64
-                if mode=='input_digest': capture.data['kernels'][0]['input_digests']['harness']='0'*64
-                if mode=='nonce': capture.data['attempt_sha256']='0'*64
-                if mode=='copy': capture=copy(capture)
-                if mode=='foreign_scope': sink=SourceSink(self.root/'foreign-journal.json',source_digest('foreign'),source_digest('synthetic-scope'))
-                if mode=='deadline':
-                    with patch.object(owned.time,'monotonic',return_value=capture.deadline+1): result=sink.finish(capture,True)
-                else: result=sink.finish(capture,mode!='input_changed')
-                self.assertEqual(result['status'],'observed' if mode=='valid' else 'unknown',result)
-                if mode=='valid':
-                    snapshot=ControllerCapture(sink.source,capture).read(sink.source)
-                    live=result['live_verification']
-                    self.assertEqual(live['controller_harness_input']['status'],'unknown')
-                    self.assertIsNone(live['controller_harness_input']['sha256'])
-                    identity=live['verified_execution']; fields=tuple(IdentityField.parse(field) for field in identity['fields'])
-                    declared=snapshot.metadata.identities[0]
-                    forged=ExecutionMetadata((ExecutionIdentity(declared.subject,fields),),snapshot.metadata.coverage)
-                    with self.assertRaises(ValueError): forged.validate(sink.source,snapshot.records)
-                    raw=json.loads(json.dumps(capture.read()))
-                    with self.assertRaises(ValueError): ControllerCapture(sink.source,raw).read(sink.source)
-                    altered=copy(capture); altered.data=dict(capture.data)
-                    with self.assertRaises(ValueError): ControllerCapture(sink.source,altered).read(sink.source)
-                    capture.data['attempt_sha256']='f'*64
-                    with self.assertRaises(ValueError): ControllerCapture(sink.source,capture).read(sink.source)
-                    self.assertTrue(sink.store.path.exists())
-                    self.assertTrue(all(field.status=='declared' for item in sink.store.capture(sink.source).identities for field in item.fields))
-                else: self.assertFalse(sink.store.path.exists())
-            if mode=='valid':
-                with self.assertRaises(ValueError): capture.read()
+        # Entry point for test_source_permission_composition, which calls it with its own KernelFixture; the
+        # by-mode cases above are the collected tests.
+        reject_swaps_and_replays(self, SOURCE_MODES)
+    test_live_controller_sources_reject_swaps_mutations_loss_and_replay.__test__ = False
 
-    def test_live_controller_sources_bind_executed_harness_to_owned_git_snapshot(self):
+    @pytest.mark.parametrize('mode,outcome', [
+        pytest.param('valid', ('verified', None), id='valid'),
+        pytest.param('changed', ('mismatch', 'input_tree_differs'), id='changed'),
+        pytest.param('untracked', ('mismatch', 'input_tree_differs'), id='untracked'),
+        pytest.param('relocated', ('unknown', 'harness_location_not_in_captured_checkout'), id='relocated'),
+        pytest.param('late', ('unknown', 'snapshot_not_captured_before_execution'), id='late'),
+        pytest.param('unobserved', ('unknown', 'controller_harness_input_unobserved'), id='unobserved'),
+    ])
+    def test_live_controller_sources_bind_executed_harness_to_owned_git_snapshot(self, mode, outcome):
         from agent_harness_lab.evaluation import controller_receipts as owned
         from agent_harness_lab.evaluation.benchmark import public_export_allowed
         from agent_harness_lab.sources import harness_binding
         from agent_harness_lab.sources.controller import SourceSink
         from agent_harness_lab.sources.schema import digest as source_digest
         from tests.integration.sources.test_source_harness_binding import SyntheticHarnessRepository, git_available
-        if not git_available(): self.skipTest('explicit system Git 2.43+ is required')
+        if not git_available(): pytest.skip('explicit system Git 2.43+ is required')
         runtime=self.root/'runtime'; frozen=pinned_runtime(runtime)
         backend=SandboxBackend(cgroup_root=self.cgroup_root,image_root=runtime,image_sha256=frozen['sha256'],disk_bytes=64*1024*1024)
         oracle=self.root/'oracle'; oracle.mkdir()
@@ -869,47 +947,42 @@ class TrajectoryKernelTests(KernelFixture):
             "print(json.dumps(dict(schema_version=1,valid=True,outcome=ok,grader_id='synthetic-source',grader_version='v1'))); sys.exit(0 if ok else 1)")
         oracle_hash=digest(oracle)
         argv=['/usr/bin/python3','-I','-c',"from pathlib import Path; Path('result.txt').write_text('done')"]
-        expected=dict(valid=('verified',None),changed=('mismatch','input_tree_differs'),untracked=('mismatch','input_tree_differs'),
-            relocated=('unknown','harness_location_not_in_captured_checkout'),late=('unknown','snapshot_not_captured_before_execution'),
-            unobserved=('unknown','controller_harness_input_unobserved'))
-        for mode,outcome in expected.items():
-            with self.subTest(mode=mode):
-                fixture=SyntheticHarnessRepository(self.root/('git-'+mode)); harness=fixture.repo/'harness'
-                collector=None if mode=='late' else fixture.capture()[0]
-                if mode=='relocated':
-                    shutil.copytree(fixture.repo,self.root/('copy-'+mode)); harness=self.root/('copy-'+mode)/'harness'
-                with owned.session():
-                    sink=SourceSink(self.root/(mode+'-binding.json'),fixture.source.project_sha256,source_digest('synthetic-scope'),
-                        harness_capture=None if collector is None else collector.harness_capture)
-                    capture=sink.begin(['result.txt'],time.monotonic()+15)
-                    if mode=='late': collector=fixture.capture()[0]; sink.harness_capture=collector.harness_capture
-                    if mode=='changed': (harness/'AGENTS.md').write_text('SYNTHETIC_UNCOMMITTED_CHANGE\n')
-                    if mode=='untracked': (harness/'extra.md').write_text('SYNTHETIC_UNTRACKED_ADDITION\n')
-                    run=backend.run(argv,self.work,{} if mode=='unobserved' else {'harness':harness},'executor',
-                        Limits(seconds=8),artifact_allowlist=['result.txt'])
-                    self.assert_complete(run)
-                    regrade_artifacts(self.work,['result.txt'],oracle,oracle_hash,backend,limits=Limits(seconds=8))
-                    result=sink.finish(capture,True)
-                    self.assertEqual(result['status'],'observed',result)
-                    receipt=harness_binding.bind(capture,collector.harness_capture)
-                    self.assertEqual((receipt['status'],receipt['reason']),outcome,receipt)
-                    self.assertEqual(result['live_verification']['harness_snapshot_binding'],receipt)
-                    self.assertEqual(receipt['effective_loading'],'unverified')
-                    self.assertFalse(receipt['authority_granted']); self.assertFalse(receipt['publication_allowed'])
-                    self.assertFalse(public_export_allowed([{**receipt,'publication_allowed':True}]))
-                    if mode=='valid':
-                        self.assertEqual(receipt['harness_snapshot_sha256'],collector.harness.sha256)
-                        self.assertEqual(receipt['head_sha256'],collector.harness.head_sha256)
-                        self.assertEqual(receipt['controller_harness_input_sha256'],digest(harness))
-                        self.assertEqual(receipt['controller_harness_input_sha256'],result['live_verification']['controller_harness_input']['sha256'])
-                        self.assertEqual(receipt['git_source_sha256'],fixture.source.source_key)
-                        self.assertNotIn(str(self.root),json.dumps(receipt))
-                        self.assertEqual(len(capture.locations),1)
-                        self.assertNotIn('harness_location_sha256',json.dumps(capture.read()))
-                    if outcome[0]=='unknown': self.assertIsNone(receipt['harness_snapshot_sha256'])
-                    self.assertTrue(all(field.status=='declared' for item in sink.store.capture(sink.source).identities for field in item.fields))
-                after=harness_binding.bind(capture,collector.harness_capture)
-                self.assertEqual((after['status'],after['reason']),('unknown','owned_controller_capture_required'))
+        fixture=SyntheticHarnessRepository(self.root/('git-'+mode)); harness=fixture.repo/'harness'
+        collector=None if mode=='late' else fixture.capture()[0]
+        if mode=='relocated':
+            shutil.copytree(fixture.repo,self.root/('copy-'+mode)); harness=self.root/('copy-'+mode)/'harness'
+        with owned.session():
+            sink=SourceSink(self.root/(mode+'-binding.json'),fixture.source.project_sha256,source_digest('synthetic-scope'),
+                harness_capture=None if collector is None else collector.harness_capture)
+            capture=sink.begin(['result.txt'],time.monotonic()+15)
+            if mode=='late': collector=fixture.capture()[0]; sink.harness_capture=collector.harness_capture
+            if mode=='changed': (harness/'AGENTS.md').write_text('SYNTHETIC_UNCOMMITTED_CHANGE\n')
+            if mode=='untracked': (harness/'extra.md').write_text('SYNTHETIC_UNTRACKED_ADDITION\n')
+            run=backend.run(argv,self.work,{} if mode=='unobserved' else {'harness':harness},'executor',
+                Limits(seconds=8),artifact_allowlist=['result.txt'])
+            self.assert_complete(run)
+            regrade_artifacts(self.work,['result.txt'],oracle,oracle_hash,backend,limits=Limits(seconds=8))
+            result=sink.finish(capture,True)
+            assert result['status'] == 'observed', result
+            receipt=harness_binding.bind(capture,collector.harness_capture)
+            assert (receipt['status'],receipt['reason']) == outcome, receipt
+            assert result['live_verification']['harness_snapshot_binding'] == receipt
+            assert receipt['effective_loading'] == 'unverified'
+            assert not receipt['authority_granted']; assert not receipt['publication_allowed']
+            assert not public_export_allowed([{**receipt,'publication_allowed':True}])
+            if mode=='valid':
+                assert receipt['harness_snapshot_sha256'] == collector.harness.sha256
+                assert receipt['head_sha256'] == collector.harness.head_sha256
+                assert receipt['controller_harness_input_sha256'] == digest(harness)
+                assert receipt['controller_harness_input_sha256'] == result['live_verification']['controller_harness_input']['sha256']
+                assert receipt['git_source_sha256'] == fixture.source.source_key
+                assert str(self.root) not in json.dumps(receipt)
+                assert len(capture.locations) == 1
+                assert 'harness_location_sha256' not in json.dumps(capture.read())
+            if outcome[0]=='unknown': assert receipt['harness_snapshot_sha256'] is None
+            assert all(field.status=='declared' for item in sink.store.capture(sink.source).identities for field in item.fields)
+        after=harness_binding.bind(capture,collector.harness_capture)
+        assert (after['status'],after['reason']) == ('unknown','owned_controller_capture_required')
 
     def test_live_controller_sources_do_not_verify_replaced_executable_inventory(self):
         from agent_harness_lab.evaluation import controller_receipts as owned
@@ -936,25 +1009,23 @@ class TrajectoryKernelTests(KernelFixture):
             self.assert_complete(run)
             regrade_artifacts(self.work,['result.txt'],oracle,digest(oracle),backend,limits=Limits(seconds=8))
             result=sink.finish(capture,True)
-            self.assertEqual(result['status'],'observed',result)
+            assert result['status'] == 'observed', result
             fields={field['name']:field for field in result['live_verification']['verified_execution']['fields']}
             if fields['runtime']['status']=='verified':
-                self.assertEqual(fields['runtime']['value_sha256'],before)
+                assert fields['runtime']['value_sha256'] == before
             else:
-                self.assertIn(fields['runtime']['status'],('declared','unknown'))
+                assert fields['runtime']['status'] in ('declared','unknown')
                 if fields['runtime']['status']=='declared':
-                    self.assertNotEqual(before,fields['runtime']['value_sha256'])
-                    self.assertEqual(fields['runtime']['value_sha256'],hashlib.sha256(binary.read_bytes()).hexdigest())
-                    self.assertEqual(fields['runtime']['namespace'],'ahl.binary_path_inventory')
-                    self.assertEqual(fields['runtime']['reason'],'no_effective_binding')
-            self.assertEqual(fields['runtime_version']['status'],'verified')
+                    assert before != fields['runtime']['value_sha256']
+                    assert fields['runtime']['value_sha256'] == hashlib.sha256(binary.read_bytes()).hexdigest()
+                    assert fields['runtime']['namespace'] == 'ahl.binary_path_inventory'
+                    assert fields['runtime']['reason'] == 'no_effective_binding'
+            assert fields['runtime_version']['status'] == 'verified'
 
 
-@unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
-class StorageKernelTests(KernelFixture):
-    def setUp(self):
-        super().setUp()
-        self.backend = SandboxBackend(cgroup_root=self.cgroup_root, disk_bytes=64*1024*1024)
+@pytest.mark.skipif(not ENABLED, reason='requires explicit delegated kernel canaries; use task test:sandbox:kernel')
+class TestStorageKernel(KernelCase):
+    backend_options = dict(disk_bytes=64*1024*1024)
 
     def run_code(self, code, **options):
         options.setdefault('artifact_allowlist', [])
@@ -968,30 +1039,30 @@ class StorageKernelTests(KernelFixture):
             return self.backend.run(['/usr/bin/python3','-c',code],self.work,{},'executor',
                                     Limits(seconds=seconds),working_state=state)
         first = execute("from pathlib import Path; Path('empty').rmdir(); Path('seed').unlink(); Path('result').write_text('edited'); raise SystemExit(1)")
-        self.assertEqual(first['status'],'failed'); self.assertEqual(first['exit_code'],1)
-        self.assertTrue(first['attestation']['cgroup_v2']['empty_after_cleanup'])
-        self.assertIsNotNone(first['attestation']['storage_policy']['extracted'])
+        assert first['status'] == 'failed'; assert first['exit_code'] == 1
+        assert first['attestation']['cgroup_v2']['empty_after_cleanup']
+        assert first['attestation']['storage_policy']['extracted'] is not None
         second = execute("from pathlib import Path; assert not Path('empty').exists(); assert not Path('seed').exists(); assert Path('result').read_text()=='edited'; Path('result').write_text('final')")
         self.assert_complete(second)
         before = state.snapshot
         failed = execute("from pathlib import Path; import time; Path('result').write_text('partial'); time.sleep(30)",.5)
-        self.assertEqual(failed['status'],'timeout'); self.assertIs(state.snapshot,before)
-        self.assertTrue(failed['attestation']['cgroup_v2']['empty_after_cleanup'])
+        assert failed['status'] == 'timeout'; assert state.snapshot is before
+        assert failed['attestation']['cgroup_v2']['empty_after_cleanup']
         signaled = execute("from pathlib import Path; import os,signal; Path('result').write_text('killed'); os.kill(os.getpid(),signal.SIGKILL)")
-        self.assertTrue(signaled['exit_code']<0 or signaled['exit_code']>=128)
-        self.assertIs(state.snapshot,before)
-        self.assertIsNone(signaled['attestation']['storage_policy']['extracted'])
+        assert signaled['exit_code']<0 or signaled['exit_code']>=128
+        assert state.snapshot is before
+        assert signaled['attestation']['storage_policy']['extracted'] is None
         exported = state.export(['result'],self.root/'artifacts',time.monotonic()+5)
-        self.assertEqual((exported/'result').read_text(),'final')
-        self.assertEqual((self.work/'seed').read_text(),'original'); self.assertTrue((self.work/'empty').is_dir())
+        assert (exported/'result').read_text() == 'final'
+        assert (self.work/'seed').read_text() == 'original'; assert (self.work/'empty').is_dir()
 
     def test_every_writable_volume_enforces_aggregate_capacity_without_leaking_setup_fds(self):
         code = "import errno,os,stat\nfor value in os.listdir('/proc/self/fd'):\n if int(value)>2:\n  try: info=os.fstat(int(value))\n  except OSError: continue\n  assert not stat.S_ISDIR(info.st_mode), 'setup handle leaked'\nfor path,cap in (('/work',32*1024*1024),('/tmp',16*1024*1024),('/dev/shm',16*1024*1024)):\n info=os.statvfs(path)\n assert info.f_blocks*info.f_frsize == cap\n denied=False\n for number in range(128):\n  try:\n   with open(path+'/'+str(number),'wb') as stream: stream.write(b'x'*(512*1024))\n  except OSError as error:\n   assert error.errno == errno.ENOSPC\n   denied=True; break\n assert denied, path+' exceeded aggregate quota'\n assert os.statvfs(path).f_bavail == 0\n for name in os.listdir(path): os.unlink(path+'/'+name)\nprint('all-volumes-bounded')\n"
         run = self.run_code(code)
         self.assert_complete(run)
-        self.assertIn('all-volumes-bounded', run['stdout'])
-        self.assertTrue(run['attestation']['aggregate_disk_bound_verified'])
-        self.assertEqual(list(self.work.iterdir()), [])
+        assert 'all-volumes-bounded' in run['stdout']
+        assert run['attestation']['aggregate_disk_bound_verified']
+        assert list(self.work.iterdir()) == []
 
     def test_seed_and_only_allowlisted_artifacts_survive_worker_cleanup(self):
         source = self.work/'seed'; source.write_text('original'); source.chmod(0o755)
@@ -999,86 +1070,87 @@ class StorageKernelTests(KernelFixture):
         code = "from pathlib import Path\nassert Path('seed').read_text() == 'original'\nassert Path('seed').stat().st_mode & 0o777 == 0o755\nassert Path('empty').is_dir()\nPath('seed').write_text('changed')\nPath('result').write_text('allowed')\nPath('unlisted').write_text('discarded')\n"
         run = self.run_code(code, artifact_allowlist=['seed', 'result'])
         self.assert_complete(run)
-        self.assertEqual(source.read_text(), 'changed')
-        self.assertEqual(source.stat().st_mode & 0o777, 0o755)
-        self.assertEqual((self.work/'result').read_text(), 'allowed')
-        self.assertFalse((self.work/'unlisted').exists())
-        self.assertEqual(run['attestation']['storage_policy']['extracted'], dict(artifacts=2, bytes=14))
+        assert source.read_text() == 'changed'
+        assert (source.stat().st_mode & 0o777) == 0o755
+        assert (self.work/'result').read_text() == 'allowed'
+        assert not (self.work/'unlisted').exists()
+        assert run['attestation']['storage_policy']['extracted'] == dict(artifacts=2, bytes=14)
 
-    def test_unsafe_or_oversized_outputs_are_rejected_before_export(self):
-        for code in ("os.symlink('/etc/passwd','result')",
-                     "Path('original').write_text('x'); os.link('original','result')",
-                     "os.mkfifo('result')", "Path('dir').mkdir(); os.symlink('dir','result')",
-                     "Path('result').write_bytes(b'x'*(1024*1024+1))"):
-            with self.subTest(code=code), self.assertRaises((OSError, ValueError)):
-                self.run_code('import os; from pathlib import Path; '+code,
-                    artifact_allowlist=['result'], limits=Limits(seconds=5, file_bytes=2*1024*1024))
-            self.assertEqual(list(self.work.iterdir()), [])
+    @pytest.mark.parametrize('code', [
+        pytest.param("os.symlink('/etc/passwd','result')", id='symlink'),
+        pytest.param("Path('original').write_text('x'); os.link('original','result')", id='hardlink'),
+        pytest.param("os.mkfifo('result')", id='fifo'),
+        pytest.param("Path('dir').mkdir(); os.symlink('dir','result')", id='directory-link'),
+        pytest.param("Path('result').write_bytes(b'x'*(1024*1024+1))", id='oversized'),
+    ])
+    def test_unsafe_or_oversized_outputs_are_rejected_before_export(self, code):
+        with pytest.raises((OSError, ValueError)):
+            self.run_code('import os; from pathlib import Path; '+code,
+                artifact_allowlist=['result'], limits=Limits(seconds=5, file_bytes=2*1024*1024))
+        assert list(self.work.iterdir()) == []
 
     def test_failure_timeout_and_interruption_do_not_export_and_leave_no_cgroup(self):
         before = {p.name for p in self.cgroup_root.iterdir() if p.is_dir()}
         for suffix, expected in (("raise SystemExit(1)", 'failed'), ("import time; time.sleep(30)", 'timeout')):
             run = self.run_code("from pathlib import Path; Path('result').write_text('untrusted'); "+suffix,
                                 artifact_allowlist=['result'], limits=Limits(seconds=.5))
-            self.assertEqual(run['status'], expected)
-            self.assertFalse((self.work/'result').exists())
+            assert run['status'] == expected
+            assert not (self.work/'result').exists()
         with patch.object(selectors.EpollSelector, 'select', side_effect=KeyboardInterrupt):
-            with self.assertRaises(KeyboardInterrupt): self.run_code('import time; time.sleep(30)')
-        self.assertEqual({p.name for p in self.cgroup_root.iterdir() if p.is_dir()}, before)
+            with pytest.raises(KeyboardInterrupt): self.run_code('import time; time.sleep(30)')
+        assert {p.name for p in self.cgroup_root.iterdir() if p.is_dir()} == before
 
-    def test_memfd_and_new_tmpfs_cannot_bypass_the_aggregate_storage_ceiling(self):
+    @pytest.mark.parametrize('attack', ['memfd', 'new-tmpfs'])
+    def test_memfd_and_new_tmpfs_cannot_bypass_the_aggregate_storage_ceiling(self, attack):
         filler = "import os; f=open('data','wb'); [f.write(b'x'*65536) for _ in range(2048)]"
         new_mount = ['/usr/bin/bwrap', '--unshare-all', '--unshare-user', '--ro-bind', '/', '/',
                      '--proc', '/proc', '--dev', '/dev', '--size', str(128*1024*1024),
                      '--tmpfs', '/tmp', '--chdir', '/tmp', '--', '/usr/bin/python3', '-c', filler]
-        attacks = ["import os; fd=os.memfd_create('bypass'); [os.write(fd,b'x'*65536) for _ in range(2048)]",
-                   f"import os; os.execv('/usr/bin/bwrap',{new_mount!r})"]
+        code = {'memfd': "import os; fd=os.memfd_create('bypass'); [os.write(fd,b'x'*65536) for _ in range(2048)]",
+                'new-tmpfs': f"import os; os.execv('/usr/bin/bwrap',{new_mount!r})"}[attack]
         (self.work/'seed').write_bytes(b'x'*(1024*1024))
-        for code in attacks:
-            with self.subTest(code=code):
-                run = self.run_code(code, limits=Limits(seconds=5, file_bytes=128*1024*1024))
-                self.assertEqual(run['status'], 'resource_limit', run)
-                controls = run['attestation']['cgroup_v2']
-                self.assertEqual(run['attestation']['storage_policy']['controller_seeded_bytes'], 1024*1024)
-                self.assertEqual(int(controls['controls']['memory.max']), 63*1024*1024)
-                self.assertGreater(controls['events']['memory.events']['oom_kill'], 0)
-                self.assertTrue(controls['empty_after_cleanup'])
+        run = self.run_code(code, limits=Limits(seconds=5, file_bytes=128*1024*1024))
+        assert run['status'] == 'resource_limit', run
+        controls = run['attestation']['cgroup_v2']
+        assert run['attestation']['storage_policy']['controller_seeded_bytes'] == 1024*1024
+        assert int(controls['controls']['memory.max']) == 63*1024*1024
+        assert controls['events']['memory.events']['oom_kill'] > 0
+        assert controls['empty_after_cleanup']
 
     def test_capability_verifies_the_storage_policy(self):
         result = self.backend.capability()
-        self.assertEqual(result['status'], 'available', result)
-        self.assertTrue(result['storage_policy']['verified'])
-        self.assertNotIn('no aggregate disk quota', result['limitations'])
+        assert result['status'] == 'available', result
+        assert result['storage_policy']['verified']
+        assert 'no aggregate disk quota' not in result['limitations']
 
     def test_hugetlb_memfd_mapping_and_shared_memory_are_denied(self):
         code = "import ctypes,errno,mmap,os\ntry: os.memfd_create('hugetlb-probe',os.MFD_HUGETLB)\nexcept OSError as error: assert error.errno == errno.EPERM\nelse: raise AssertionError('HugeTLB memfd allowed')\nlibc=ctypes.CDLL(None,use_errno=True)\nlibc.mmap.restype=ctypes.c_void_p\nmapped=libc.mmap(None,2*1024*1024,3,mmap.MAP_PRIVATE|mmap.MAP_ANONYMOUS|0x40000,-1,0)\nassert mapped == ctypes.c_void_p(-1).value and ctypes.get_errno() == errno.EPERM\nassert libc.shmget(0,2*1024*1024,0o600|0o1000|0o4000) == -1\nassert ctypes.get_errno() == errno.EPERM\nprint('hugetlb-denied')\n"
         run = self.run_code(code, limits=Limits(seconds=5, file_bytes=4*1024*1024))
         self.assert_complete(run)
-        self.assertIn('hugetlb-denied', run['stdout'])
-        self.assertEqual(run['attestation']['storage_policy']['hugetlb_policy']['name'], 'seccomp-deny-hugetlb-v1')
+        assert 'hugetlb-denied' in run['stdout']
+        assert run['attestation']['storage_policy']['hugetlb_policy']['name'] == 'seccomp-deny-hugetlb-v1'
 
     def test_alternate_syscall_numbers_cannot_bypass_the_storage_filter(self):
         code = "import ctypes; ctypes.CDLL(None).syscall(0x4000013f,0,4); raise AssertionError('alternate syscall returned')"
         run = self.run_code(code)
-        self.assertEqual(run['status'], 'failed', run)
-        self.assertEqual(run['stderr'], '')
-        self.assertTrue(run['attestation']['cgroup_v2']['empty_after_cleanup'])
+        assert run['status'] == 'failed', run
+        assert run['stderr'] == ''
+        assert run['attestation']['cgroup_v2']['empty_after_cleanup']
 
     def test_startup_verification_and_tiny_budget_fail_closed_and_cleanup(self):
         before = {p.name for p in self.cgroup_root.iterdir() if p.is_dir()}
         with patch('agent_harness_lab.evaluation.workspace.VERIFY', "raise RuntimeError('synthetic startup failure')"):
-            with self.assertRaises(ValueError): self.run_code("raise AssertionError('worker must not start')")
+            with pytest.raises(ValueError): self.run_code("raise AssertionError('worker must not start')")
         (self.work/'seed').write_bytes(b'x'*(5*1024*1024))
         self.backend = SandboxBackend(cgroup_root=self.cgroup_root, disk_bytes=16384)
-        with self.assertRaises((OSError, ValueError)): self.run_code("raise AssertionError('worker must not start')")
-        self.assertEqual((self.work/'seed').stat().st_size, 5*1024*1024)
-        self.assertEqual({p.name for p in self.cgroup_root.iterdir() if p.is_dir()}, before)
+        with pytest.raises((OSError, ValueError)): self.run_code("raise AssertionError('worker must not start')")
+        assert (self.work/'seed').stat().st_size == 5*1024*1024
+        assert {p.name for p in self.cgroup_root.iterdir() if p.is_dir()} == before
 
 
-@unittest.skipUnless(ENABLED, 'requires explicit delegated kernel canaries; use task test:sandbox:kernel')
-class ResourceKernelTests(KernelFixture):
-    def setUp(self):
-        super().setUp()
+@pytest.mark.skipif(not ENABLED, reason='requires explicit delegated kernel canaries; use task test:sandbox:kernel')
+class TestResourceKernel(KernelCase):
+    def prepare(self):
         # Test cgroup enforcement independently from namespace containment.
         command = patch.object(self.backend, 'command', side_effect=lambda argv, *args: argv)
         command.start(); self.addCleanup(command.stop)
@@ -1094,9 +1166,9 @@ for _ in range(2):
 time.sleep(30)
 '''
         run = self.run_code(code, limits=Limits(seconds=5, memory_bytes=128*1024*1024, processes=16))
-        self.assertGreater(run['attestation']['cgroup_v2']['events']['memory.events']['oom_kill'], 0)
-        self.assertEqual(run['status'], 'resource_limit')
-        self.assertTrue(run['attestation']['cgroup_v2']['empty_after_cleanup'])
+        assert run['attestation']['cgroup_v2']['events']['memory.events']['oom_kill'] > 0
+        assert run['status'] == 'resource_limit'
+        assert run['attestation']['cgroup_v2']['empty_after_cleanup']
 
     def test_fork_limit_and_cleanup_include_children_that_create_sessions(self):
         code = '''import os,time
@@ -1110,10 +1182,16 @@ for _ in range(20):
 print(*pids,flush=True)
 '''
         run = self.run_code(code, limits=Limits(seconds=5, processes=6))
-        self.assertEqual(run['status'], 'resource_limit')
-        self.assertGreater(run['attestation']['cgroup_v2']['events']['pids.events']['max'], 0)
+        assert run['status'] == 'resource_limit'
+        assert run['attestation']['cgroup_v2']['events']['pids.events']['max'] > 0
         for pid in run['stdout'].split():
             path = Path('/proc')/pid/'stat'
             if path.exists():
-                try: self.assertEqual(path.read_text().split(') ')[1].split()[0], 'Z')
+                try: assert path.read_text().split(') ')[1].split()[0] == 'Z'
                 except FileNotFoundError: pass
+
+
+# test_permission_audit and test_source_permission_composition call methods of these classes with their own
+# KernelFixture instance as `self`, so the former names stay importable.
+ControlledWorkflowKernelTests = TestControlledWorkflowKernel
+TrajectoryKernelTests = TestTrajectoryKernel

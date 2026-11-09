@@ -1,8 +1,9 @@
 """Opt-in fresh sequential root blocks with actual pinned Linux workers."""
 from dataclasses import replace
 import json
-import unittest
 from unittest.mock import patch
+
+import pytest
 
 from agent_harness_lab.evaluation import sequential
 from agent_harness_lab.evaluation.sandbox import SandboxBackend
@@ -10,19 +11,27 @@ from tests.integration.sandbox import test_sandbox_kernel as kernel
 from tests.integration.evaluation import test_sequential as fixtures
 
 
-@unittest.skipUnless(kernel.ENABLED, 'explicit delegated sequential kernel profile required')
-class SequentialKernelTests(kernel.KernelFixture):
-    def setUp(self):
-        super().setUp()
-        self.fixture = fixtures.SequentialOnlineTests()
+@pytest.fixture(scope='module')
+def cgroup_root():
+    with kernel.kernel_scope() as root: yield root
+
+
+@pytest.mark.skipif(not kernel.ENABLED, reason='explicit delegated sequential kernel profile required')
+class TestSequentialKernel:
+    @pytest.fixture(autouse=True)
+    def _sequential(self, cgroup_root, tmp_path):
+        self.cgroup_root = cgroup_root
+        self.root = tmp_path
+        self.fixture = fixtures.SequentialOnline()
         self.fixture.setUp()
-        self.addCleanup(self.fixture.doCleanups)
         self.case = self.fixture.f
         self.runtime = self.root/'runtime'
         self.image = kernel.pinned_runtime(self.runtime)
         self.fixture.plan = replace(self.fixture.plan, runtime_hash=self.image['sha256'],
             sequential=sequential.config(3, 60, 5))
         self.fixture.install()
+        yield
+        self.fixture.doCleanups()
 
     def run_history(self):
         return self.fixture.store.run(self.case.args.manifest, self.case.args.baseline,
@@ -34,28 +43,28 @@ class SequentialKernelTests(kernel.KernelFixture):
 
     def test_fresh_paired_roots_stop_before_unseen_root_and_receipt_replay_runs_no_worker(self):
         result = self.run_history()
-        self.assertEqual(result['state'], 'sealed', result)
+        assert result['state'] == 'sealed', result
         analysis = self.fixture.store.analyze(result['run_id'])
-        self.assertEqual(analysis['status'], 'supported', analysis)
-        self.assertEqual((analysis['completed_roots'], analysis['unobserved_roots']), (2, 1))
+        assert analysis['status'] == 'supported', analysis
+        assert (analysis['completed_roots'], analysis['unobserved_roots']) == (2, 1)
         rows = self.execution(result)['trials']
-        self.assertEqual(len(rows), 4)
+        assert len(rows) == 4
         roots = {row['root'] for row in rows}
-        self.assertEqual(len(roots), 2)
+        assert len(roots) == 2
         for root in roots:
-            self.assertEqual({row['version'] for row in rows if row['root'] == root}, {'baseline', 'candidate'})
+            assert {row['version'] for row in rows if row['root'] == root} == {'baseline', 'candidate'}
         for row in rows:
             for run in (row['execution'], row['grader']['execution']):
                 attestation = run['attestation']
-                self.assertEqual(attestation['backend'], 'bubblewrap-offline-v1')
-                self.assertTrue(attestation['cgroup_v2']['empty_after_cleanup'])
-                self.assertTrue(attestation['runtime_image']['verified_before'])
-                self.assertTrue(attestation['runtime_image']['verified_after'])
+                assert attestation['backend'] == 'bubblewrap-offline-v1'
+                assert attestation['cgroup_v2']['empty_after_cleanup']
+                assert attestation['runtime_image']['verified_before']
+                assert attestation['runtime_image']['verified_after']
         receipt = self.fixture.store.decision(result['run_id'])
-        self.assertEqual(receipt['receipt']['analysis_disposition']['status'], 'supported')
-        self.assertFalse(receipt['adoption_authority'])
+        assert receipt['receipt']['analysis_disposition']['status'] == 'supported'
+        assert not receipt['adoption_authority']
         with patch.object(SandboxBackend, 'run', side_effect=AssertionError('receipt replay must not execute')):
-            self.assertEqual(self.fixture.store.verify_decision(result['run_id'], receipt['receipt_sha256']), receipt)
+            assert self.fixture.store.verify_decision(result['run_id'], receipt['receipt_sha256']) == receipt
 
     def test_failed_actual_executor_keeps_partial_root_incomplete_without_decision_receipt(self):
         (self.case.args.candidate/'solve.py').write_text('raise SystemExit(23)\n')
@@ -63,14 +72,14 @@ class SequentialKernelTests(kernel.KernelFixture):
             candidate_hash=self.case.runner.digest(self.case.args.candidate))
         self.fixture.install()
         result = self.run_history()
-        self.assertEqual(result['state'], 'incomplete', result)
+        assert result['state'] == 'incomplete', result
         execution = self.execution(result)
         failed = [row for row in execution['trials'] if row['version'] == 'candidate']
-        self.assertEqual(len(failed), 1)
-        self.assertEqual(failed[0]['status'], 'execution_error')
-        self.assertEqual(failed[0]['execution']['exit_code'], 23)
-        self.assertTrue(failed[0]['execution']['attestation']['cgroup_v2']['empty_after_cleanup'])
-        self.assertEqual(execution['sequential_analysis']['status'], 'incomplete')
-        self.assertEqual(self.fixture.store.analyze(result['run_id'])['status'], 'incomplete')
-        with self.assertRaisesRegex(ValueError, 'sealed currently applicable controller run'):
+        assert len(failed) == 1
+        assert failed[0]['status'] == 'execution_error'
+        assert failed[0]['execution']['exit_code'] == 23
+        assert failed[0]['execution']['attestation']['cgroup_v2']['empty_after_cleanup']
+        assert execution['sequential_analysis']['status'] == 'incomplete'
+        assert self.fixture.store.analyze(result['run_id'])['status'] == 'incomplete'
+        with pytest.raises(ValueError, match='sealed currently applicable controller run'):
             self.fixture.store.decision(result['run_id'])

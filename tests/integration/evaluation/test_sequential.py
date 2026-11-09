@@ -3,6 +3,7 @@ from copy import copy, deepcopy
 from dataclasses import replace
 from fractions import Fraction
 from decimal import Decimal,localcontext,getcontext
+from contextlib import ExitStack
 import itertools
 import hashlib
 import json
@@ -11,11 +12,11 @@ from collections import Counter
 import os
 import random
 from pathlib import Path
-import tempfile
 import time
 from types import SimpleNamespace
-import unittest
 from unittest.mock import patch
+
+import pytest
 
 import agent_harness_lab
 from agent_harness_lab.evaluation import sequential as core, sequential_state as custody, responses, benchmark, oracle_history
@@ -29,6 +30,7 @@ from tests.integration.evaluation import test_offline_evaluation as offline
 from tests.integration.sandbox import test_sandbox_inference as inference
 from tests.unit.evaluation import test_preservation_analysis as preservation
 from tests.integration.evaluation import test_preservation_history as qualified
+from tests.support.unittest_cleanups import run_cleanups
 
 
 # Synthetic offline arms are real subprocesses, so their quotas are generous enough
@@ -50,10 +52,10 @@ def records(plan,binding,outcome):
         plan.baseline_hash,plan.candidate_hash,plan.grader_hash,plan.runtime_hash) for r in core.schedule(plan,binding)]
 
 
-class SequentialMathTests(unittest.TestCase):
+class TestSequentialMath:
     def test_selected_import_root(self):
         expected=os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
-        if expected:self.assertTrue(Path(agent_harness_lab.__file__).resolve().is_relative_to(Path(expected).resolve()))
+        if expected:assert Path(agent_harness_lab.__file__).resolve().is_relative_to(Path(expected).resolve())
 
     def test_positive_subnormal_alpha_survives_family_allocation(self):
         plan=replace(spec(3),alpha=math.ulp(0.0),
@@ -62,7 +64,7 @@ class SequentialMathTests(unittest.TestCase):
         plan.validate();binding=core.create_binding(plan,[])
         core.validate_binding(plan,binding)
         bounds=core.endpoint([Fraction(1)],1,core.rational(plan.alpha)/3,binding['lambdas'])
-        self.assertEqual(bounds[:2],(Fraction(1),Fraction(1)))
+        assert bounds[:2] == (Fraction(1),Fraction(1))
 
     def test_uniform_fisher_yates_is_not_a_user_seeded_shuffle(self):
         plan=spec(3);orders=set()
@@ -70,8 +72,8 @@ class SequentialMathTests(unittest.TestCase):
             for second in range(2):
                 with patch.object(core.secrets,'randbelow',side_effect=[first,second]) as draw:
                     binding=core.create_binding(plan,[])
-                self.assertEqual([c.args[0] for c in draw.call_args_list],[3,2]);orders.add(tuple(binding['root_order']))
-        self.assertEqual(len(orders),6)
+                assert [c.args[0] for c in draw.call_args_list] == [3,2];orders.add(tuple(binding['root_order']))
+        assert len(orders) == 6
 
     def test_preregistered_small_null_simulation_and_correlated_repeats(self):
         # Fixed before production checks: 256 SRS permutations, N32, alpha.05;
@@ -86,20 +88,20 @@ class SequentialMathTests(unittest.TestCase):
         # Exact binomial CDF at .06: if this is <=.01, its one-sided99% upper
         # confidence endpoint is <=.06 (avoids approximate normal error bars).
         probability=sum(math.comb(256,k)*.06**k*.94**(256-k) for k in range(wrong+1))
-        self.assertLessEqual(probability,.01,wrong)
+        assert probability <= .01, wrong
         one=core.analyze(plan,records(plan,binding,lambda row:row['version']=='candidate'),binding)
         repeated=replace(plan,repeats=20,max_trials=1280,sequential=core.config(32,100,1))
         other=core.create_binding(repeated,[]);other['root_order']=binding['root_order']
         many=core.analyze(repeated,records(repeated,other,lambda row:row['version']=='candidate'),other)
-        self.assertEqual(one['endpoints'],many['endpoints']);self.assertEqual(many['roots'],32)
+        assert one['endpoints'] == many['endpoints'];assert many['roots'] == 32
 
     def test_absent_mode_preserves_exact_legacy_plan_and_schedule_bytes(self):
         from agent_harness_lab.evaluation.plan import schedule
         from agent_harness_lab.private_journal import encoded
         plan=replace(spec(),sequential=None)
-        self.assertNotIn('sequential',plan.to_dict())
-        self.assertEqual(plan.digest,'27bb105305f8a9643a0ac5966399d7f20f55bcf6da7d1c2011aec02937bb3bff')
-        self.assertEqual(hashlib.sha256(encoded(schedule(plan))).hexdigest(),'ebbac77c4f7ae92ee840edf22234f924e54584ed97d9a626a7d77d6159a0c398')
+        assert 'sequential' not in plan.to_dict()
+        assert plan.digest == '27bb105305f8a9643a0ac5966399d7f20f55bcf6da7d1c2011aec02937bb3bff'
+        assert hashlib.sha256(encoded(schedule(plan))).hexdigest() == 'ebbac77c4f7ae92ee840edf22234f924e54584ed97d9a626a7d77d6159a0c398'
 
     def test_logarithm_enclosure_is_outward_and_context_local(self):
         before=getcontext().copy()
@@ -108,15 +110,15 @@ class SequentialMathTests(unittest.TestCase):
             with localcontext() as context:
                 context.prec=100
                 reference=(Decimal(2*alpha.denominator)/Decimal(alpha.numerator)).ln()
-                self.assertGreater(Decimal(upper.numerator)/Decimal(upper.denominator),reference)
-        self.assertEqual(getcontext().prec,before.prec)
+                assert (Decimal(upper.numerator)/Decimal(upper.denominator)) > reference
+        assert getcontext().prec == before.prec
 
     def test_reference_formula_and_exact_census(self):
         plan=spec();binding=core.create_binding(plan,[])
         for alpha in (Fraction(1,20),Fraction(1,60)):
             values=[Fraction(-1),Fraction(0),Fraction(1),Fraction(1)]
             result=core.endpoint(values,4,alpha,binding['lambdas'])
-            self.assertEqual(result[:2],(Fraction(1,4),Fraction(1,4)))
+            assert result[:2] == (Fraction(1,4),Fraction(1,4))
             # Direct equation3.2–3.7 calculation independent of core.endpoint.
             s=a=b=q=0.
             for i,x in enumerate(values[:2],1):
@@ -124,7 +126,7 @@ class SequentialMathTests(unittest.TestCase):
             low=max(-.75,a/b-(q+math.log(2/float(alpha)))/b)
             hi=min(.25,a/b+(q+math.log(2/float(alpha)))/b)
             actual=core.endpoint(values[:2],4,alpha,binding['lambdas'])
-            self.assertAlmostEqual(float(actual[0]),low,places=12);self.assertAlmostEqual(float(actual[1]),hi,places=12)
+            assert round(abs(float(actual[0])-low),12)==0;assert round(abs(float(actual[1])-hi),12)==0
 
     def test_all_six_exact_margin_orders_and_weighted_primary(self):
         plan=replace(spec(4),tasks=(('a','x','family'),('b','y','family'),('c','z','family'),('d','z','family')),
@@ -135,7 +137,7 @@ class SequentialMathTests(unittest.TestCase):
             return row['task']=='c' and row['version']=='baseline' and row['repetition']==0
         for order in itertools.permutations(('x','y','z')):
             binding['root_order']=list(order);result=core.analyze(plan,records(plan,binding,outcome),binding)
-            self.assertEqual(result['primary']['exact_low'],[1,20]);self.assertNotEqual(result['status'],'supported')
+            assert result['primary']['exact_low'] == [1,20];assert result['status'] != 'supported'
         # Exact normalized decimal weights and NI equality have no float upgrade.
         plan=replace(spec(4),tasks=(('a','x','one'),('b','y','one'),('c','z','two'),('d','w','two')),
             family_weights=(('one',.1),('two',.2)),alpha=.99)
@@ -143,32 +145,32 @@ class SequentialMathTests(unittest.TestCase):
         plan=replace(plan,family_weights=(('one',.4),('two',.6)))
         binding=core.create_binding(plan,[])
         result=core.analyze(plan,records(plan,binding,lambda row:row['family']=='one' and row['version']=='candidate'),binding)
-        self.assertEqual(result['primary']['exact_low'],[2,5]);self.assertEqual(result['family_weights']['two'],[3,5])
+        assert result['primary']['exact_low'] == [2,5];assert result['family_weights']['two'] == [3,5]
 
     def test_ni_equality_and_cohort_member_task_mean_differs_from_whole_root(self):
         plan=replace(spec(4),repeats=10,max_trials=80,sequential=core.config(4,100,1),family_margin=.1)
         binding=core.create_binding(plan,[])
         data=records(plan,binding,lambda row:row['version']=='baseline' and row['repetition']==0)
         result=core.analyze(plan,data,binding)
-        self.assertEqual(result['endpoints']['family:family']['exact_low'],[-1,10])
-        self.assertEqual(result['endpoints']['family:family']['disposition'],'supported')
-        self.assertNotEqual(result['status'],'supported') # NI alone is not practical superiority.
+        assert result['endpoints']['family:family']['exact_low'] == [-1,10]
+        assert result['endpoints']['family:family']['disposition'] == 'supported'
+        assert result['status'] != 'supported' # NI alone is not practical superiority.
         plan=replace(spec(4),tasks=(('t0','r0','family'),('t1','r0','family'),('t2','r1','family'),('t3','r1','family')),
             sequential=core.config(2,10,1))
         plan,frozen=preservation.freeze(replace(plan,cohort_manifest_sha256='d'*64),members=['t0','t2'])
         binding=core.create_binding(plan,core.membership(plan,frozen['manifest_json']))
         data=records(plan,binding,lambda row:row['version']==('baseline' if row['task'] in ('t0','t2') else 'candidate'))
         result=core.analyze(plan,data,binding,cohort_json=frozen['manifest_json'])
-        self.assertEqual(result['primary']['exact_low'],[0,1])
-        self.assertEqual(result['endpoints']['cohort:protected']['exact_high'],[-1,1])
+        assert result['primary']['exact_low'] == [0,1]
+        assert result['endpoints']['cohort:protected']['exact_high'] == [-1,1]
 
     def test_sampling_budget_does_not_expand_population_or_repeats(self):
         plan=replace(spec(100),max_trials=4,sequential=core.config(2,3,.25))
         plan.validate();binding=core.create_binding(plan,[])
-        self.assertEqual(len(core.schedule(plan,binding)),4)
+        assert len(core.schedule(plan,binding)) == 4
         result=core.analyze(plan,records(plan,binding,lambda row:row['version']=='candidate'),binding)
-        self.assertEqual(result['endpoints']['family:family']['population_roots'],100)
-        self.assertEqual(result['unobserved_roots'],98)
+        assert result['endpoints']['family:family']['population_roots'] == 100
+        assert result['unobserved_roots'] == 98
 
     def test_sparse_exact_family_harm_precedes_favorable_minimum(self):
         plan=replace(spec(3),tasks=(('a','x','common'),('b','y','common'),('c','z','rare')),
@@ -176,22 +178,22 @@ class SequentialMathTests(unittest.TestCase):
         binding=core.create_binding(plan,[])
         data=records(plan,binding,lambda row:row['version']==('baseline' if row['family']=='rare' else 'candidate'))
         result=core.analyze(plan,data,binding)
-        self.assertEqual(result['status'],'rejected')
-        self.assertEqual(result['endpoints']['family:rare']['exact_high'],[-1,1])
-        self.assertEqual(result['endpoints']['family:rare']['disposition'],'harm')
+        assert result['status'] == 'rejected'
+        assert result['endpoints']['family:rare']['exact_high'] == [-1,1]
+        assert result['endpoints']['family:rare']['disposition'] == 'harm'
         data=records(plan,binding,lambda row:row['family']=='common' and row['version']=='candidate')
         result=core.analyze(plan,data,binding)
-        self.assertEqual(result['status'],'inconclusive')
-        self.assertEqual(result['endpoints']['family:rare']['disposition'],'insufficient_roots')
+        assert result['status'] == 'inconclusive'
+        assert result['endpoints']['family:rare']['disposition'] == 'insufficient_roots'
 
     def test_sparse_required_cohort_exact_harm_precedes_minimum(self):
         plan,frozen=preservation.freeze(replace(spec(3),cohort_manifest_sha256='d'*64),members=['t0'])
         binding=core.create_binding(plan,core.membership(plan,frozen['manifest_json']))
         data=records(plan,binding,lambda row:row['version']==('baseline' if row['task']=='t0' else 'candidate'))
         result=core.analyze(plan,data,binding,cohort_json=frozen['manifest_json'])
-        self.assertEqual(result['status'],'rejected')
-        self.assertEqual(result['endpoints']['cohort:protected']['exact_high'],[-1,1])
-        self.assertEqual(result['endpoints']['cohort:protected']['disposition'],'harm')
+        assert result['status'] == 'rejected'
+        assert result['endpoints']['cohort:protected']['exact_high'] == [-1,1]
+        assert result['endpoints']['cohort:protected']['disposition'] == 'harm'
 
     def test_subset_cohort_means_and_preservation_veto(self):
         base=replace(preservation.plan(100),sequential=core.config(100,3,.25))
@@ -199,44 +201,56 @@ class SequentialMathTests(unittest.TestCase):
         binding=core.create_binding(plan,core.membership(plan,frozen['manifest_json']))
         data=records(plan,binding,lambda row:(int(row['task'][1:])<20)==(row['version']=='baseline'))
         result=core.analyze(plan,data,binding,cohort_json=frozen['manifest_json'])
-        self.assertEqual(result['primary']['exact_low'],[3,5]);self.assertEqual(result['status'],'rejected')
-        self.assertEqual(result['endpoints']['cohort:protected']['exact_high'],[-1,1])
-        self.assertEqual(result['multiplicity']['endpoints'],2)
+        assert result['primary']['exact_low'] == [3,5];assert result['status'] == 'rejected'
+        assert result['endpoints']['cohort:protected']['exact_high'] == [-1,1]
+        assert result['multiplicity']['endpoints'] == 2
 
     def test_binding_plan_bounds_prefix_duplicates_and_fixed_consumers(self):
         plan=spec();binding=core.create_binding(plan,[]);data=records(plan,binding,lambda row:row['version']=='candidate')
-        self.assertEqual(core.analyze(plan,data[:1],binding)['status'],'incomplete')
-        self.assertEqual(core.analyze(plan,[data[0],data[0]],binding)['status'],'incomplete')
-        self.assertEqual(fixed_analyze(plan,data)['reason'],'owned_sequential_inspection_required')
-        with self.assertRaises(ValueError):preflight(plan)
-        for changes in (dict(precision_half_width=.3),dict(profile='certification',partition='certification'),
-                dict(sequential={**plan.sequential,'max_roots':True}),dict(sequential={**plan.sequential,'arm_seconds':float('nan')})):
-            with self.subTest(changes=changes),self.assertRaises(ValueError):replace(plan,**changes).validate()
+        assert core.analyze(plan,data[:1],binding)['status'] == 'incomplete'
+        assert core.analyze(plan,[data[0],data[0]],binding)['status'] == 'incomplete'
+        assert fixed_analyze(plan,data)['reason'] == 'owned_sequential_inspection_required'
+        with pytest.raises(ValueError):preflight(plan)
+
+    @pytest.mark.parametrize('changes',[
+        pytest.param(lambda plan:dict(precision_half_width=.3),id='precision-half-width'),
+        pytest.param(lambda plan:dict(profile='certification',partition='certification'),id='certification-profile'),
+        pytest.param(lambda plan:dict(sequential={**plan.sequential,'max_roots':True}),id='boolean-max-roots'),
+        pytest.param(lambda plan:dict(sequential={**plan.sequential,'arm_seconds':float('nan')}),id='nan-arm-seconds'),
+    ])
+    def test_plan_bounds_reject_invalid_sequential_and_precision_changes(self,changes):
+        plan=spec()
+        with pytest.raises(ValueError):replace(plan,**changes(plan)).validate()
+
+    def test_schedule_is_binding_order_invariant_and_forged_bindings_are_rejected(self):
+        plan=spec();binding=core.create_binding(plan,[])
         original=core.schedule(plan,binding)
         alternate=deepcopy(binding);alternate['root_order'].reverse()
         first={(r['root'],r['task'],r['repetition']):[] for r in original}
         second=deepcopy(first)
         for row in original:first[row['root'],row['task'],row['repetition']].append(row['version'])
         for row in core.schedule(plan,alternate):second[row['root'],row['task'],row['repetition']].append(row['version'])
-        self.assertEqual(first,second)
+        assert first == second
         for forged in ({},dict(binding,nonce='x'),dict(binding,root_order=[binding['root_order'][0]]*16)):
-            with self.assertRaises((ValueError,TypeError)):core.validate_binding(plan,forged)
+            with pytest.raises((ValueError,TypeError)):core.validate_binding(plan,forged)
 
     def test_empty_intersection_never_restarts_and_shared_shock_is_not_expected_quality(self):
         # An extreme but possible alpha-error path can empty a running intersection.
         tuning=[[1,2]]*100
-        self.assertIsNone(core.endpoint([Fraction(1)]*50+[Fraction(-1)]*50,100,Fraction(99,100),tuning))
+        assert core.endpoint([Fraction(1)]*50+[Fraction(-1)]*50,100,Fraction(99,100),tuning) is None
         plan=spec();binding=core.create_binding(plan,[])
         for shock in (True,False):
             result=core.analyze(plan,records(plan,binding,lambda row:(row['version']=='candidate')==shock),binding)
-            self.assertEqual(result['status'],'supported' if shock else 'rejected')
-            self.assertEqual(result['future_expected_quality'],'unknown')
-            self.assertFalse(result['automatic_promotion'])
+            assert result['status'] == ('supported' if shock else 'rejected')
+            assert result['future_expected_quality'] == 'unknown'
+            assert not result['automatic_promotion']
 
 
-class SequentialOnlineTests(unittest.TestCase):
+class SequentialOnline:
+    """Fresh synthetic sequential history builder; test_sequential_kernel builds it through setUp() and doCleanups()."""
     def setUp(self):
-        self.f=offline.OfflineFixture();self.f.setUp();self.addCleanup(self.f.doCleanups)
+        self._cleanups=ExitStack()
+        self.f=offline.OfflineFixture();self.f.setUp();self._cleanups.callback(run_cleanups,self.f)
         all_tasks=self.f.manifest['tasks'];seen=set();tasks=[]
         for task in all_tasks:
             if task['root'] not in seen:tasks.append(task);seen.add(task['root'])
@@ -249,6 +263,8 @@ class SequentialOnlineTests(unittest.TestCase):
             identity(self.f.root/'export',tasks,self.f.manifest['grader_bundles']),'a'*64,sequential=core.config(3,ROOT_SECONDS,ARM_SECONDS))
         self.install()
         self.store=HistoryStore(self.f.root/'history');self.calls=[]
+
+    def doCleanups(self):self._cleanups.close()
 
     def install(self):self.f.manifest['experiment']=self.plan.to_dict();self.f.write_manifest()
 
@@ -264,7 +280,7 @@ class SequentialOnlineTests(unittest.TestCase):
             result=self.store.run(self.f.args.manifest,self.f.args.baseline,self.f.args.candidate,cgroup_root=self.f.root/'delegation',
                 image_root=self.f.root/'image',image_sha256='a'*64,disk_bytes=65536,budget_seconds=budget)
         if expect is not None and result['state']!=expect:
-            self.fail(f"history run expected {expect}, got {result['state']}: "+json.dumps(self.run_diagnostic(result,budget,time.monotonic()-started),sort_keys=True))
+            raise AssertionError(f"history run expected {expect}, got {result['state']}: "+json.dumps(self.run_diagnostic(result,budget,time.monotonic()-started),sort_keys=True))
         return result
 
     def run_diagnostic(self,result,budget,elapsed):
@@ -284,51 +300,60 @@ class SequentialOnlineTests(unittest.TestCase):
             value['analysis']=dict(status=analysis.get('status'),reason=analysis.get('reason'),completed_roots=analysis.get('completed_roots'))
         return value
 
+    def skewed_clock(self,module):
+        """Advance only one deadline owner's monotonic clock; enforcement code is unchanged."""
+        skew=[0.0];real=time.monotonic
+        self._cleanups.enter_context(patch.object(module,'time',SimpleNamespace(monotonic=lambda:real()+skew[0])))
+        return skew
+
+
+class TestSequentialOnline(SequentialOnline):
+    @pytest.fixture(autouse=True)
+    def _online(self,tmp_path):
+        self.tmp_path=tmp_path
+        self.setUp()
+        yield
+        self.doCleanups()
+
     def test_actual_fresh_both_arms_stop_early_and_guarded_receipt_replays_without_calls(self):
-        result=self.run_history();self.assertEqual(result['state'],'sealed',result)
-        self.assertEqual(self.calls.count('executor'),4);self.assertEqual(self.calls.count('grader'),4)
-        analysis=self.store.analyze(result['run_id']);self.assertEqual(analysis['status'],'supported')
-        self.assertEqual(analysis['completed_roots'],2);self.assertEqual(analysis['unobserved_roots'],1)
-        receipt=self.store.decision(result['run_id']);self.assertFalse(receipt['adoption_authority'])
+        result=self.run_history();assert result['state'] == 'sealed', result
+        assert self.calls.count('executor') == 4;assert self.calls.count('grader') == 4
+        analysis=self.store.analyze(result['run_id']);assert analysis['status'] == 'supported'
+        assert analysis['completed_roots'] == 2;assert analysis['unobserved_roots'] == 1
+        receipt=self.store.decision(result['run_id']);assert not receipt['adoption_authority']
         with patch.object(SandboxBackend,'run',side_effect=AssertionError('must not resume or rerun')):
-            self.assertEqual(self.store.verify_decision(result['run_id'],receipt['receipt_sha256']),receipt)
+            assert self.store.verify_decision(result['run_id'],receipt['receipt_sha256']) == receipt
         case=self.store.case(result['run_id']);rows=json.loads((case/'execution/results.json').read_text())['trials']
-        self.assertEqual({t['version'] for t in rows},{'baseline','candidate'})
-        with self.assertRaises(ValueError):self.store.historical_plan(result['run_id'])
+        assert {t['version'] for t in rows} == {'baseline','candidate'}
+        with pytest.raises(ValueError):self.store.historical_plan(result['run_id'])
         # Reusing the same hypothesis never reuses rows or controller sampling custody.
-        again=self.run_history();self.assertNotEqual(again['run_id'],result['run_id'])
+        again=self.run_history();assert again['run_id'] != result['run_id']
         other=json.loads((self.store.case(again['run_id'])/'execution/results.json').read_text())['trials']
-        self.assertTrue({r['trial_id'] for r in rows}.isdisjoint(r['trial_id'] for r in other))
+        assert {r['trial_id'] for r in rows}.isdisjoint(r['trial_id'] for r in other)
 
     def test_caller_ceiling_admits_only_frozen_sequential_root_budget(self):
         self.plan=replace(self.plan,max_trials=4,sequential=core.config(2,ROOT_SECONDS,ARM_SECONDS))
         self.f.manifest['max_trials']=4;self.install()
-        result=self.run_history();self.assertEqual(result['state'],'sealed',result)
-        self.assertEqual(self.calls.count('executor'),4);self.assertEqual(self.calls.count('grader'),4)
-        self.assertEqual(self.store.analyze(result['run_id'])['completed_roots'],2)
+        result=self.run_history();assert result['state'] == 'sealed', result
+        assert self.calls.count('executor') == 4;assert self.calls.count('grader') == 4
+        assert self.store.analyze(result['run_id'])['completed_roots'] == 2
         self.plan=replace(self.plan,max_trials=6,sequential=None);self.install()
         with (patch.object(SandboxBackend,'capability',side_effect=AssertionError('no fixed-mode probe')),
-                self.assertRaisesRegex(ValueError,'trial limit exceeded')):
+                pytest.raises(ValueError, match='trial limit exceeded')):
             self.f.runner.evaluate(self.f.args)
 
     def test_harm_insufficient_and_no_root_budget_have_truthful_dispositions(self):
         first=self.f.root/'baseline/solve.py';second=self.f.root/'candidate/solve.py'
         a,b=first.read_bytes(),second.read_bytes();first.write_bytes(b);second.write_bytes(a)
         self.plan=replace(self.plan,baseline_hash=self.f.runner.digest(first.parent),candidate_hash=self.f.runner.digest(second.parent));self.install()
-        result=self.run_history();self.assertEqual(result['state'],'sealed',result)
-        self.assertEqual(self.store.analyze(result['run_id'])['status'],'rejected')
-        self.assertEqual(self.calls.count('executor'),4)
+        result=self.run_history();assert result['state'] == 'sealed', result
+        assert self.store.analyze(result['run_id'])['status'] == 'rejected'
+        assert self.calls.count('executor') == 4
         self.calls.clear();self.store=HistoryStore(self.f.root/'budget-history')
         # A root quota equal to the whole history budget can never be reserved once any time has passed.
         self.plan=replace(self.plan,sequential=core.config(3,HISTORY_SECONDS,ARM_SECONDS));self.install()
-        result=self.run_history();self.assertEqual(result['state'],'sealed',result)
-        self.assertEqual(self.calls,[]);self.assertEqual(self.store.analyze(result['run_id'])['reason'],'root_budget_not_reserved')
-
-    def skewed_clock(self,module):
-        """Advance only one deadline owner's monotonic clock; enforcement code is unchanged."""
-        skew=[0.0];real=time.monotonic
-        self.enterContext(patch.object(module,'time',SimpleNamespace(monotonic=lambda:real()+skew[0])))
-        return skew
+        result=self.run_history();assert result['state'] == 'sealed', result
+        assert self.calls == [];assert self.store.analyze(result['run_id'])['reason'] == 'root_budget_not_reserved'
 
     def test_exhausted_root_quota_is_incomplete_never_sealed(self):
         skew=self.skewed_clock(custody)
@@ -336,52 +361,52 @@ class SequentialOnlineTests(unittest.TestCase):
             if args[3]=='executor':skew[0]=ROOT_SECONDS
             return self.execute(*args,**kwargs)
         result=self.run_history(execute,expect='incomplete')
-        self.assertEqual(self.calls,['executor','grader'])
+        assert self.calls == ['executor','grader']
         terminal=json.loads((self.store.case(result['run_id'])/'sequential/terminal.json').read_text())
-        self.assertEqual((terminal['status'],terminal['reason']),('incomplete','partial_root_budget'))
-        self.assertEqual(self.store.analyze(result['run_id'])['reason'],'controller_run_not_sealed')
+        assert (terminal['status'],terminal['reason']) == ('incomplete','partial_root_budget')
+        assert self.store.analyze(result['run_id'])['reason'] == 'controller_run_not_sealed'
 
     def test_exhausted_history_budget_after_execution_is_incomplete_never_sealed(self):
         skew=self.skewed_clock(oracle_history)
         def execute(*args,**kwargs):
             skew[0]=HISTORY_SECONDS;return self.execute(*args,**kwargs)
         result=self.run_history(execute,expect='incomplete')
-        self.assertEqual(self.calls.count('executor'),4)
+        assert self.calls.count('executor') == 4
         case=self.store.case(result['run_id'])
-        self.assertFalse((case/'evidence.json').exists())
-        self.assertEqual(self.store.analyze(result['run_id'])['reason'],'controller_run_not_sealed')
+        assert not (case/'evidence.json').exists()
+        assert self.store.analyze(result['run_id'])['reason'] == 'controller_run_not_sealed'
 
     def test_unsealed_fixture_run_reports_its_reason_instead_of_a_downstream_failure(self):
         skew=self.skewed_clock(custody)
         def execute(*args,**kwargs):
             if args[3]=='executor':skew[0]=ROOT_SECONDS
             return self.execute(*args,**kwargs)
-        with self.assertRaises(AssertionError) as failure:self.run_history(execute)
-        message=str(failure.exception)
+        with pytest.raises(AssertionError) as failure:self.run_history(execute)
+        message=str(failure.value)
         for fragment in ('expected sealed, got incomplete','"reason": "partial_root_budget"',
                 '"dispatched_roles": {"executor": 1, "grader": 1}','"budget_seconds": 180','execution_or_evidence_incomplete'):
-            self.assertIn(fragment,message)
+            assert fragment in message
 
     def test_missing_arm_and_interruption_are_incomplete_not_resumed(self):
         def missing(*args,**kwargs):
             if len(self.calls)==2:raise OSError('synthetic second arm unavailable')
             return self.execute(*args,**kwargs)
         result=self.run_history(missing,expect='incomplete')
-        self.assertNotEqual(self.store.analyze(result['run_id'])['status'],'supported')
-        self.assertLessEqual(self.calls.count('executor'),1)
+        assert self.store.analyze(result['run_id'])['status'] != 'supported'
+        assert self.calls.count('executor') <= 1
 
     def test_real_interrupt_retains_attempt_and_cold_restart_never_executes_it(self):
         def interrupt(*args,**kwargs):
             if args[3]=='executor':raise KeyboardInterrupt()
             return self.execute(*args,**kwargs)
-        with self.assertRaises(KeyboardInterrupt):self.run_history(interrupt)
+        with pytest.raises(KeyboardInterrupt):self.run_history(interrupt)
         cases=[p for p in (self.store.root/'cases').iterdir() if (p/'inputs.json').exists()]
-        self.assertEqual(len(cases),1);case=cases[0]
-        self.assertEqual(self.store.show(case.name)['state'],'incomplete')
-        self.assertTrue((case/'sequential/0000-started.json').exists())
-        self.assertFalse((case/'sequential/0000-inspected.json').exists())
-        with self.assertRaises(FileExistsError):custody.Controller(self.plan,case/'sequential',time.monotonic()+HISTORY_SECONDS,inputs_sha256='0'*64)
-        self.assertEqual(self.calls,[])
+        assert len(cases) == 1;case=cases[0]
+        assert self.store.show(case.name)['state'] == 'incomplete'
+        assert (case/'sequential/0000-started.json').exists()
+        assert not (case/'sequential/0000-inspected.json').exists()
+        with pytest.raises(FileExistsError):custody.Controller(self.plan,case/'sequential',time.monotonic()+HISTORY_SECONDS,inputs_sha256='0'*64)
+        assert self.calls == []
 
     def test_revocation_blocks_current_decision_without_new_execution(self):
         result=self.run_history();receipt=self.store.decision(result['run_id'])
@@ -392,14 +417,14 @@ class SequentialOnlineTests(unittest.TestCase):
             operator=dict(identity='synthetic-reviewer',source='operator_attestation',provenance='public synthetic',basis='reference defect'),
             evidence_refs=[dict(ref='synthetic:defect',sha256='d'*64)],reason='synthetic oracle invalidation')))
         self.store.quarantine(path)
-        with self.assertRaises(ValueError):self.store.verify_decision(result['run_id'],receipt['receipt_sha256'])
-        self.assertEqual(self.store.analyze(result['run_id'])['status'],'blocked')
-        with patch.object(SandboxBackend,'run',side_effect=AssertionError('no quarantined dispatch')),self.assertRaises(ValueError):self.run_history()
+        with pytest.raises(ValueError):self.store.verify_decision(result['run_id'],receipt['receipt_sha256'])
+        assert self.store.analyze(result['run_id'])['status'] == 'blocked'
+        with patch.object(SandboxBackend,'run',side_effect=AssertionError('no quarantined dispatch')),pytest.raises(ValueError):self.run_history()
 
     def test_changed_sampling_or_inspection_seal_fails_closed(self):
         result=self.run_history();case=self.store.case(result['run_id'])
         binding=case/'sequential/binding.json';raw=json.loads(binding.read_text());raw['root_order'].reverse();binding.write_text(json.dumps(raw))
-        with self.assertRaises(ValueError):self.store.show(result['run_id'])
+        with pytest.raises(ValueError):self.store.show(result['run_id'])
 
     def test_frozen_remaining_quota_not_reduced_and_insufficient_family_stays_inconclusive(self):
         tasks=self.f.manifest['tasks']
@@ -414,22 +439,22 @@ class SequentialOnlineTests(unittest.TestCase):
         def grade(*args,**kwargs):
             grade_budgets.append(kwargs['limits'].seconds);return original(*args,**kwargs)
         with patch.object(bank_tools,'regrade_artifacts',side_effect=grade):result=self.run_history(execute)
-        self.assertEqual(result['state'],'sealed',result)
-        analysis=self.store.analyze(result['run_id']);self.assertEqual(analysis['status'],'inconclusive')
-        self.assertEqual(analysis['reason'],'maximum_roots');self.assertEqual(len(limits),8)
-        self.assertEqual({seconds for role,seconds in limits if role=='executor'},{ARM_SECONDS})
-        self.assertEqual(grade_budgets,[ARM_SECONDS]*4)
-        self.assertTrue(all(0<seconds<=ARM_SECONDS for _,seconds in limits))
+        assert result['state'] == 'sealed', result
+        analysis=self.store.analyze(result['run_id']);assert analysis['status'] == 'inconclusive'
+        assert analysis['reason'] == 'maximum_roots';assert len(limits) == 8
+        assert {seconds for role,seconds in limits if role=='executor'} == {ARM_SECONDS}
+        assert grade_budgets == [ARM_SECONDS]*4
+        assert all(0<seconds<=ARM_SECONDS for _,seconds in limits)
 
     def test_engine_change_and_expired_direct_parent_cannot_continue(self):
         result=self.run_history();run_id=result['run_id']
-        with patch.object(core,'engine_pin',return_value='f'*64),self.assertRaises(ValueError):self.store.analyze(run_id)
+        with patch.object(core,'engine_pin',return_value='f'*64),pytest.raises(ValueError):self.store.analyze(run_id)
         # The public runner preserves the legacy already-exhausted status before sampling.
         self.f.args.parent_deadline=-1
         with patch.object(SandboxBackend,'capability',side_effect=AssertionError('no probe')),patch.object(SandboxBackend,'run',side_effect=AssertionError('no worker')):
-            self.assertEqual(self.f.runner.evaluate(self.f.args),1)
-        self.assertEqual(self.f.results()['reason'],'preflight_budget_exhausted')
-        self.assertFalse((self.f.root/'output/sequential').exists())
+            assert self.f.runner.evaluate(self.f.args) == 1
+        assert self.f.results()['reason'] == 'preflight_budget_exhausted'
+        assert not (self.f.root/'output/sequential').exists()
 
     def test_live_sampling_and_prefix_mutation_are_detected_before_next_worker(self):
         seen=[]
@@ -441,54 +466,53 @@ class SequentialOnlineTests(unittest.TestCase):
                 control._inspect(rows);path.write_text('{}')
             return original(control,scheduled,rows)
         with patch.object(custody.Controller,'before',before):self.run_history(expect='incomplete')
-        self.assertLessEqual(self.calls.count('executor'),2)
+        assert self.calls.count('executor') <= 2
 
     def test_critical_partial_veto_and_no_from_json_controller(self):
         plan=self.plan
         for seed in range(100):
             chosen=replace(plan,seed=seed)
             if core.schedule(chosen)[0]['version']=='candidate':plan=chosen;break
-        with tempfile.TemporaryDirectory() as folder:
-            with patch.object(core.secrets,'randbelow',side_effect=lambda n:n-1):
-                control=custody.Controller(plan,Path(folder)/'ledger',time.monotonic()+HISTORY_SECONDS,inputs_sha256='0'*64)
-            schedule=control.schedule
-            first=next(i for i,r in enumerate(schedule) if r['version']=='candidate')
-            data=[]
-            for row in schedule[:first+1]:
-                data.append(dict(row,status='failed',grader=dict(outcome=False),
-                    controller_grade=dict(outcome=False,valid=True,critical_violation=row['version']=='candidate')))
-            self.assertTrue(control.before(schedule[0],[]))
-            # The controller observes actual candidate critical evidence before a full root.
-            control._inspect(data);result=control.finish(data)
-            self.assertEqual(result['status'],'rejected');self.assertEqual(result['reason'],'critical_regression')
-            self.assertEqual(first,0);self.assertEqual(result['completed_roots'],0)
-            with self.assertRaises(ValueError):control.validate(plan)
-            with self.assertRaises(FileExistsError):custody.Controller(plan,control.path,time.monotonic()+HISTORY_SECONDS,inputs_sha256='0'*64)
-            with self.assertRaises(AttributeError):custody.Controller.from_json(control.binding)
+        with patch.object(core.secrets,'randbelow',side_effect=lambda n:n-1):
+            control=custody.Controller(plan,self.tmp_path/'ledger',time.monotonic()+HISTORY_SECONDS,inputs_sha256='0'*64)
+        schedule=control.schedule
+        first=next(i for i,r in enumerate(schedule) if r['version']=='candidate')
+        data=[]
+        for row in schedule[:first+1]:
+            data.append(dict(row,status='failed',grader=dict(outcome=False),
+                controller_grade=dict(outcome=False,valid=True,critical_violation=row['version']=='candidate')))
+        assert control.before(schedule[0],[])
+        # The controller observes actual candidate critical evidence before a full root.
+        control._inspect(data);result=control.finish(data)
+        assert result['status'] == 'rejected';assert result['reason'] == 'critical_regression'
+        assert first == 0;assert result['completed_roots'] == 0
+        with pytest.raises(ValueError):control.validate(plan)
+        with pytest.raises(FileExistsError):custody.Controller(plan,control.path,time.monotonic()+HISTORY_SECONDS,inputs_sha256='0'*64)
+        with pytest.raises(AttributeError):custody.Controller.from_json(control.binding)
 
     def test_private_labels_cannot_publish_or_authenticate_a_saved_result(self):
         result=self.run_history();case=self.store.case(result['run_id']);raw=json.loads((case/'execution/results.json').read_text())
         raw.update(publication_allowed=True,provenance=dict(source_kind='synthetic',source_ref='synthetic:sequential',
             approved_publication=True,derived_from_private=False))
-        self.assertFalse(benchmark.public_export_allowed([raw]))
-        self.assertFalse(benchmark.public_export_allowed([{**raw['sequential_analysis'],'publication_allowed':True,'provenance':raw['provenance']}]))
+        assert not benchmark.public_export_allowed([raw])
+        assert not benchmark.public_export_allowed([{**raw['sequential_analysis'],'publication_allowed':True,'provenance':raw['provenance']}])
         raw['trials'][0]['grader']['outcome']=not raw['trials'][0]['grader']['outcome']
         (case/'execution/results.json').write_text(json.dumps(raw))
-        with self.assertRaises(ValueError):self.store.show(result['run_id'])
+        with pytest.raises(ValueError):self.store.show(result['run_id'])
 
     def test_qualified_cohort_uses_schema5_and_live_revocation_still_blocks(self):
         f=qualified.PreservationHistoryTests();f.setUp()
         try:
             plan=replace(f.spec,sequential=core.config(2,10,1))
             f.f.manifest['experiment']=plan.to_dict();f.f.write_manifest()
-            result,_=f.f.run_history();self.assertEqual(result['state'],'sealed',result)
+            result,_=f.f.run_history();assert result['state'] == 'sealed', result
             analysis=f.f.store.analyze(result['run_id'])
-            self.assertEqual(analysis['endpoints']['cohort:preserved']['exact_low'],[0,1])
+            assert analysis['endpoints']['cohort:preserved']['exact_low'] == [0,1]
             receipt=f.f.store.decision(result['run_id'])
-            self.assertIn('cohort:preserved',receipt['receipt']['analysis_disposition']['required_endpoints'])
+            assert 'cohort:preserved' in receipt['receipt']['analysis_disposition']['required_endpoints']
             f.f.revoke()
-            with self.assertRaises(ValueError):f.f.store.verify_decision(result['run_id'],receipt['receipt_sha256'])
-        finally:f.doCleanups()
+            with pytest.raises(ValueError):f.f.store.verify_decision(result['run_id'],receipt['receipt_sha256'])
+        finally:run_cleanups(f)
 
     def test_legacy_workflow_refuses_before_controls(self):
         from agent_harness_lab.workflow import validate_manifest
@@ -496,15 +520,15 @@ class SequentialOnlineTests(unittest.TestCase):
         path.write_text(json.dumps(dict(experiment={'sequential':self.plan.sequential},skills=[],harness_paths=[],
             tasks=[dict(id=split,split=split,fixture=split,grader=['/usr/bin/true'])
                 for split in ('development','regression','heldout')],grader_self_tests=[])))
-        with self.assertRaisesRegex(ValueError,'does not consume sequential'):
+        with pytest.raises(ValueError, match='does not consume sequential'):
             validate_manifest(path,self.f.args.baseline,self.f.args.candidate,[],self.f.runner,lambda:30,set())
 
     def test_selected_protected_split_is_not_downgraded_by_development_plan(self):
         self.f.manifest['tasks'][0]['split']='heldout';self.install()
-        with patch.object(SandboxBackend,'capability',side_effect=AssertionError('no protected probe')),self.assertRaisesRegex(ValueError,'development/regression'):
+        with patch.object(SandboxBackend,'capability',side_effect=AssertionError('no protected probe')),pytest.raises(ValueError, match='development/regression'):
             self.f.runner.evaluate(self.f.args)
-        with self.assertRaisesRegex(ValueError,'development/regression'):self.run_history()
-        self.assertFalse(self.store.root.exists());self.assertFalse(self.calls)
+        with pytest.raises(ValueError, match='development/regression'):self.run_history()
+        assert not self.store.root.exists();assert not self.calls
 
     def test_json_or_wrong_input_view_controller_rejects_before_probe(self):
         f=self.f
@@ -513,12 +537,11 @@ class SequentialOnlineTests(unittest.TestCase):
         controller=custody.Controller(self.plan,f.root/'sequential',time.monotonic()+HISTORY_SECONDS,inputs_sha256='0'*64)
         for forged in ({},controller):
             f.args._sequential_controller=forged
-            with patch.object(SandboxBackend,'capability',side_effect=AssertionError('no foreign-view probe')),self.assertRaises(ValueError):
+            with patch.object(SandboxBackend,'capability',side_effect=AssertionError('no foreign-view probe')),pytest.raises(ValueError):
                 f.runner.evaluate(f.args)
-        with tempfile.TemporaryDirectory() as folder:
-            control=custody.Controller(self.plan,Path(folder)/'ledger',time.monotonic()+HISTORY_SECONDS,inputs_sha256='0'*64)
-            alias=copy(control);control.claim(self.plan,'0'*64)
-            with self.assertRaises(ValueError):alias.claim(self.plan,'0'*64)
+        control=custody.Controller(self.plan,self.tmp_path/'ledger',time.monotonic()+HISTORY_SECONDS,inputs_sha256='0'*64)
+        alias=copy(control);control.claim(self.plan,'0'*64)
+        with pytest.raises(ValueError):alias.claim(self.plan,'0'*64)
 
     def test_actual_responses_uses_fresh_calls_but_never_authenticates_model_or_assumptions(self):
         f=inference.ResponsesEvaluationTests();f.setUp()
@@ -532,11 +555,9 @@ class SequentialOnlineTests(unittest.TestCase):
                 grader_hash=identity(f.root/'export',f.fixture.manifest['tasks'],f.fixture.manifest['grader_bundles']))
             f.fixture.manifest['experiment']=plan.to_dict();f.fixture.write_manifest()
             with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=f.backend),patch.object(responses,'request',side_effect=f.transport):
-                self.assertEqual(f.runner.evaluate(f.args),0)
-            result=f.fixture.results();self.assertEqual((f.requests,f.commands,f.grades),(8,4,4))
-            self.assertEqual(result['sequential_analysis']['assumptions_status'],'declared_unverified')
-            self.assertEqual(result['sequential_analysis']['future_expected_quality'],'unknown')
-        finally:f.doCleanups()
+                assert f.runner.evaluate(f.args) == 0
+            result=f.fixture.results();assert (f.requests,f.commands,f.grades) == (8,4,4)
+            assert result['sequential_analysis']['assumptions_status'] == 'declared_unverified'
+            assert result['sequential_analysis']['future_expected_quality'] == 'unknown'
+        finally:run_cleanups(f)
 
-
-if __name__=='__main__':unittest.main()
