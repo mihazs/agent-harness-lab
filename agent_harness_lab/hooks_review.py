@@ -24,7 +24,7 @@ def _entries(raw, form):
         for group in groups if isinstance(groups, list) else ():
             handlers = group.get('hooks') if isinstance(group, dict) else None
             for handler in handlers if isinstance(handlers, list) else ():
-                rows.append((event, group.get('matcher'), json.dumps(handler, sort_keys=True, default=str)))
+                rows.append((event, json.loads(json.dumps(group.get('matcher'), default=str)), json.dumps(handler, sort_keys=True, default=str)))
     return rows
 
 

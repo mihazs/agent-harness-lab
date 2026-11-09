@@ -126,6 +126,16 @@ def test_a_toml_datetime_handler_value_does_not_crash_the_packet(project):
     assert '1979' in packet['config_delta']['added'][0]['handler']['timeout']
 
 
+def test_a_toml_datetime_matcher_survives_validation(project, tmp_path):
+    config = '.codex/config.toml'
+    toml = b'[[hooks.PreToolUse]]\nmatcher = 1979-05-27T07:32:00Z\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "echo"\n'
+    (project / '.codex').mkdir()
+    before, after = {config: None}, {config: snapshot_record(toml, 0o644)}
+    root, _ = hooks_validation.validate(tmp_path / 'out', 'codex', None, unit=(config, before, after), project=project)
+    packet = json.loads((root / hooks_validation.REVIEW).read_text())
+    assert '1979' in packet['config_delta']['added'][0]['matcher']
+
+
 @pytest.mark.parametrize('runtime, value, scripts', [
     ('claude-code', {'PreToolUse': [entry(script='.claude/hooks/missing.sh')]}, {}),
     ('codex', {'PreToolUse': [entry()]}, None)])
