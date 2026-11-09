@@ -64,8 +64,29 @@ out; the sealed receipt still validates. Such a receipt keeps the
 `seed_selection_unverified` limitation. A receipt that passes the commitment check
 drops it and carries `commitment_time_unauthenticated` instead: `committed_at` and
 `decision_timestamp` are self-declared, so the check proves only that the seed was
-fixed before the stated time. Anchor the commitment hash in a source the planner
-does not control (a signed or public log) to make that time trustworthy.
+fixed before the stated time.
+
+To make that time trustworthy, add `"anchor":{"kind":"hash_chain_log","entries":[...]}`
+to `seed_commitment`. Each entry is `{"time":T,"payload_sha256":H,"prev_sha256":P}`,
+where `P` is `anchor_entry_sha256` of the previous entry (`null` for the first). The
+first entry's `payload_sha256` must be exactly the commitment hash, entry times must
+not decrease and the last entry's time must be strictly before the window end. The
+caller passes `trusted_heads` to `draw`, `review_queue` and `estimate`: a mapping of
+log head hash to the time that head was observed, copied from a source the planner
+does not control (a public checkpoint, a witness, a mirror). The anchor verifies only
+when the last entry hash is such a head, observed no earlier than that entry and
+strictly before the window end, and only then are `commitment_time_unauthenticated`
+and `seed_selection_unverified` both dropped. An anchor over another hash, a broken
+chain, an untrusted head or a late time is refused. An anchor with no `trusted_heads`
+is recorded but not verified, and a receipt claiming a verified anchor is refused
+without them. Verification is offline and standard library only.
+
+What it proves: the commitment hash was in a chain whose head hash a trusted source
+saw by the observation time, so the seed was fixed before then. What it does not
+prove: that the log is honest or append-only, that the observation time is accurate,
+or that the head source is independent. No Git, signature or timestamp-authority
+anchors are verified; those need a public key or third-party service and remain
+unauthenticated.
 
 The sealed receipt (`audit-sampling-receipt-v1`) records the window, scope, frame
 and plan hashes, policy and model identities, decision timestamp, rates, budget,

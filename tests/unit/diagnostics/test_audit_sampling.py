@@ -313,6 +313,84 @@ def test_receipt_resealed_with_a_forged_commitment_or_limitations_is_refused():
         audit.review_queue(audit._seal(body))
 
 
+def log_chain(payload, times=('2026-01-06T00:00:00+00:00', '2026-01-06T06:00:00+00:00')):
+    """A synthetic public log: the first entry covers ``payload``; returns its entries and head hash."""
+    entries, previous = [], None
+    for at, data in zip(times, (payload, *['f' * 64] * len(times))):
+        entries.append(dict(time=at, payload_sha256=data, prev_sha256=previous))
+        previous = audit.anchor_entry_sha256(entries[-1])
+    return entries, previous
+
+
+def anchored(value, entries=None, **changes):
+    digest = audit.commit_seed(7, 'n-1')
+    entries = entries or log_chain(digest)[0]
+    commitment = dict(sha256=digest, committed_at='2026-01-07T00:00:00+00:00', nonce='n-1',
+                      anchor=dict(kind=audit.ANCHOR_KIND, entries=entries))
+    return plan(value, seed=7, seed_commitment=dict(commitment, **changes))
+
+
+def test_anchor_verified_against_a_trusted_head_drops_the_time_limitation():
+    value = frame([unit(f'u{i}') for i in range(50)])
+    entries, head = log_chain(audit.commit_seed(7, 'n-1'))
+    receipt = audit.draw(value, anchored(value, entries), {head: '2026-01-07T12:00:00+00:00'})
+    assert 'commitment_time_unauthenticated' not in receipt['limitations']
+    assert 'seed_selection_unverified' not in receipt['limitations']
+    assert receipt['seed_commitment']['anchor']['entries'] == entries
+    audit.review_queue(receipt, {head: '2026-01-07T12:00:00+00:00'})
+
+
+def test_backdated_commitment_without_a_verified_anchor_stays_unauthenticated():
+    value = frame([unit(f'u{i}') for i in range(50)])
+    backdated = committed(value, at='2026-01-02T00:00:00+00:00')
+    assert 'commitment_time_unauthenticated' in audit.draw(value, backdated)['limitations']
+    # An anchor recorded without a trusted head is not verified either.
+    assert 'commitment_time_unauthenticated' in audit.draw(value, anchored(value))['limitations']
+
+
+def test_receipt_cannot_claim_an_anchor_that_was_not_verified():
+    value = frame([unit(f'u{i}') for i in range(50)])
+    entries, head = log_chain(audit.commit_seed(7, 'n-1'))
+    receipt = audit.draw(value, anchored(value, entries), {head: '2026-01-07T12:00:00+00:00'})
+    with pytest.raises(ValueError, match='limitations do not match'):
+        audit.review_queue(receipt)
+    plain = audit.draw(value, anchored(value, entries))
+    assert audit.review_queue(plain, {head: '2026-01-07T12:00:00+00:00'})
+
+
+def test_anchor_over_a_different_hash_is_refused():
+    value = frame([unit('a')])
+    entries, head = log_chain('b' * 64)
+    with pytest.raises(ValueError, match='does not cover the commitment hash'):
+        audit.draw(value, anchored(value, entries), {head: '2026-01-07T12:00:00+00:00'})
+
+
+@pytest.mark.parametrize('times, observed, message', [
+    (('2026-01-08T00:00:00+00:00', '2026-01-08T00:00:01+00:00'), '2026-01-07T12:00:00+00:00', 'anchor postdates'),
+    (('2026-01-06T00:00:00+00:00', '2026-01-07T00:00:00+00:00'), '2026-01-08T00:00:00+00:00', 'not observed before'),
+    (('2026-01-06T00:00:00+00:00', '2026-01-07T00:00:00+00:00'), '2026-01-06T12:00:00+00:00', 'not observed before'),
+    (('2026-01-06T00:00:00+00:00', '2026-01-05T00:00:00+00:00'), '2026-01-07T00:00:00+00:00', 'back in time')])
+def test_anchor_must_be_strictly_before_the_window_end(times, observed, message):
+    value = frame([unit('a')])
+    entries, head = log_chain(audit.commit_seed(7, 'n-1'), times)
+    with pytest.raises(ValueError, match=message):
+        audit.draw(value, anchored(value, entries), {head: observed})
+
+
+def test_broken_untrusted_or_malformed_anchor_is_refused():
+    value = frame([unit('a')])
+    entries, head = log_chain(audit.commit_seed(7, 'n-1'))
+    broken = [entries[0], dict(entries[1], prev_sha256='0' * 64)]
+    with pytest.raises(ValueError, match='chain is broken'):
+        audit.draw(value, anchored(value, broken), {head: '2026-01-07T12:00:00+00:00'})
+    with pytest.raises(ValueError, match='does not end in a trusted head'):
+        audit.draw(value, anchored(value, entries), {'1' * 64: '2026-01-07T12:00:00+00:00'})
+    for bad in (dict(kind='git_commit', entries=entries), dict(kind=audit.ANCHOR_KIND, entries=[]),
+                dict(kind=audit.ANCHOR_KIND, entries=entries, extra=1), dict(kind=audit.ANCHOR_KIND, entries=[dict(time='x')])):
+        with pytest.raises(ValueError, match='invalid audit seed anchor'):
+            audit.draw(value, anchored(value, anchor=bad), {head: '2026-01-07T12:00:00+00:00'})
+
+
 def test_poisson_design_variance_matches_its_closed_form():
     """Every draw an incident at p = .25: the HT variance is n (1 - p) / p^2, without a with-replacement inflation."""
     value = frame([unit(f'v{i}') for i in range(40)])
