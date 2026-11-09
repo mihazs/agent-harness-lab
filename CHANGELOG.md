@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.143.0
+
+### Minor Changes
+
+- 1cc4ac7: Add `agent_harness_lab.diagnostics.drift`, a library API for frozen `drift-plan-v1` monitoring plans, count-only `drift-reference-v1` references and `drift-receipt-v1` receipts for one non-overlapping fixed window. The receipt keeps capture, task-mix and verified-performance drift in separate channels. The capture channel alerts on schema mismatches, conflicting duplicates, cursor gaps or collisions, untimed runs and coverage below the frozen rule. Runs with partial or unknown capture, missing fields, or unknown task root or harness identity never enter the task-mix or performance counts. Retries of one task root count once, requested model aliases cannot become strata, and missing, unverified or mixed outcomes stay unknown. The task-mix and performance detectors are not implemented yet, so those channels report descriptive exposure as `insufficient_evidence`, and every receipt states `regression_label: not_established` with no rollback or promotion authority.
+
 ## 0.142.0
 
 ### Minor Changes
