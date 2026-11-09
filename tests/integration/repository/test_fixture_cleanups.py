@@ -8,8 +8,13 @@ import os
 import subprocess
 import sys
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[3]
 KERNEL = 'tests.integration.evaluation.test_permission_audit.PermissionKernelTests'
+REPEATED_KERNEL = 'tests.integration.evaluation.test_repeated_workflow.RepeatedWorkflowKernel'
+ACCESS_KERNEL = 'tests.integration.evaluation.test_repeated_access_companion.RepeatedAccessKernel'
+KERNELS = [KERNEL, REPEATED_KERNEL, ACCESS_KERNEL]
 ROWS = [
     ('tests.integration.evaluation.test_offline_evaluation', 'offline',
      ['tests.integration.evaluation.test_offline_evaluation.OfflineFixture']),
@@ -33,6 +38,26 @@ ROWS = [
      ['tests.integration.workflow.test_one_call.OneCallTests']),
     ('tests.integration.workflow.test_one_call_custody', 'one',
      ['tests.integration.workflow.test_one_call.OneCallTests']),
+    ('tests.integration.evaluation.test_regression_replay', 'replay_case',
+     ['tests.integration.evaluation.test_regression_replay.RegressionReplayTests']),
+    ('tests.integration.evaluation.test_regression_review', 'review',
+     ['tests.integration.evaluation.test_regression_review.ReviewFixture']),
+    ('tests.integration.evaluation.test_review_authority', 'authority',
+     ['tests.integration.evaluation.test_review_authority.ReviewAuthorityFixture']),
+    ('tests.integration.evaluation.test_repeated_workflow', 'admission',
+     ['tests.integration.evaluation.test_repeated_workflow.RepeatedWorkflowAdmission']),
+    ('tests.integration.evaluation.test_repeated_workflow', 'kernel_case', [REPEATED_KERNEL]),
+    ('tests.integration.evaluation.test_repeated_access_companion', 'access',
+     ['tests.integration.evaluation.test_repeated_access_companion.RepeatedAccessAdmission']),
+    ('tests.integration.evaluation.test_repeated_access_companion', 'kernel_case', [ACCESS_KERNEL]),
+    ('tests.integration.sandbox.test_sandbox_construction', 'controlled',
+     ['tests.integration.sandbox.test_sandbox_construction.ControlledWorkflowTests']),
+    ('tests.integration.sandbox.test_sandbox_graders', 'grader',
+     ['tests.integration.sandbox.test_sandbox_graders.SandboxedGraderTests']),
+    ('tests.integration.sandbox.test_sandbox_inference', 'controller',
+     ['tests.integration.sandbox.test_sandbox_inference.ControllerInferenceTests']),
+    ('tests.integration.sandbox.test_sandbox_inference', 'evaluation',
+     ['tests.integration.sandbox.test_sandbox_inference.ResponsesEvaluationTests']),
 ]
 TEMPLATE = '''import contextlib, errno, importlib
 
@@ -51,7 +76,7 @@ for path in {classes!r}:
     module, _, name = path.rpartition('.')
     helper = getattr(importlib.import_module(module), name)
     helper.setUp = set_up
-    if path == {kernel!r}:
+    if path in {kernels!r}:
         helper.setUpClass = classmethod(lambda cls: cls.enterClassContext(busy()))
 del helper  # a module-level TestCase would be collected
 
@@ -63,8 +88,8 @@ def test_synthetic({fixture}):
 
 
 def source(module, fixture, classes):
-    imports = 'kernel_scope, case' if fixture == 'case' else fixture
-    return TEMPLATE.format(module=module, fixture=fixture, imports=imports, classes=classes, kernel=KERNEL)
+    imports = f'kernel_scope, {fixture}' if set(classes) & set(KERNELS) else fixture
+    return TEMPLATE.format(module=module, fixture=fixture, imports=imports, classes=classes, kernels=KERNELS)
 
 
 def pytest_run(root, names):
@@ -88,8 +113,9 @@ def test_manually_driven_unittest_cleanup_failures_fail_the_fixture(tmp_path):
     assert f'{len(names)} passed' in run.stdout, run.stdout[-4000:]
 
 
-def test_kernel_scope_reports_a_busy_class_cleanup(tmp_path):
-    module, fixture, classes = next(row for row in ROWS if row[1] == 'case')
+@pytest.mark.parametrize('row', [row for row in ROWS if set(row[2]) & set(KERNELS)], ids=lambda row: row[0])
+def test_kernel_scope_reports_a_busy_class_cleanup(tmp_path, row):
+    module, fixture, classes = row
     (tmp_path/'test_cleanup_kernel_scope.py').write_text(source(module, fixture, classes))
     run = pytest_run(tmp_path, ['test_cleanup_kernel_scope.py'])
     assert 'OSError: [Errno 16] synthetic leaked cgroup' in run.stdout, run.stdout[-4000:]
