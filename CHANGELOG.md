@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.146.1
+
+### Patch Changes
+
+- e657c9c: Move the plugin recommendation, precision solver, preservation, private and promotion journal, project sync, published release, refinement input and regression admission, control and proposal tests to pytest fixtures, plain asserts and parametrized cases, keeping every assertion. `PreservationCohortTests`, `PreservationHistoryTests`, `PreservationReceiptTests`, `RegressionAdmissionTests`, `RegressionControlTests` and `make_draft` keep the interface other test modules build on. `test_runners.py::test_unittest_bound_file_runs_fully_without_pytest` already runs the standard-library discovery of the unittest-bound files with pytest blocked, so a helper module they import that takes pytest directly fails the suite.
+
 ## 0.146.0
 
 ### Minor Changes
