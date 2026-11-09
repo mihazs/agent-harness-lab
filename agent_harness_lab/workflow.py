@@ -117,6 +117,10 @@ def evidence(args, output, source_context=None, *, progress=None):
         data['incident_retrieval'] = incident_retrieval
     if memory_summary is not None:
         data['memory_source'] = memory_summary
+        # Source insufficiency must reach the receipt and next action, not read as a clean observation.
+        data.setdefault('caveats', []).append('Session observations lack diagnostic evidence ('
+            +', '.join(memory_summary['missing_fields'])+' unknown); this is source insufficiency, not a no-defect outcome. '
+            +memory_summary['remediation'])
     data['execution'] = summarize(data)
     if closed is not None:
         from .evaluation.closed_inputs import collected
