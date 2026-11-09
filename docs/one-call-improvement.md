@@ -46,7 +46,8 @@ When `ahl.json` exists, its profile, executable, scope and limits constrain the 
 Explicit CLI runtime/binary/time options take precedence; configuration never
 supplies execution authorization. Offline/unsupported profiles, unintegrated
 project banks, stale bank digests, ambiguous runtimes and insufficient trial
-budgets stop before inference. A configuration file is optional and is not created
+budgets stop before inference, each with its own `reason` and a matching one-step
+`remediation` in `workflow.json` (the generic text is only a fallback). A configuration file is optional and is not created
 by improve. Configured trials share one ceiling across preparation and both attempts.
 The bundled starter bank is not represented as a target-project certification bank.
 Only configured harness files enter preparation snapshots; candidates outside that

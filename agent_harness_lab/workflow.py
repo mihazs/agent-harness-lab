@@ -942,7 +942,7 @@ def _run_improvement(args, *, parent_started=None):
     if started is not None: args._construction_started=started
     if configured: args._configured_started=started
     try:
-        from .one_call import contracts, preflight, check_configuration
+        from .one_call import contracts, preflight, check_configuration, REMEDIATION, DEFAULT_REMEDIATION
         check_configuration(args)
         if managed:
             from .evaluation.construction_access import selection
@@ -957,7 +957,7 @@ def _run_improvement(args, *, parent_started=None):
             if reason:
                 output = output_dir(args,deadline=(time.monotonic() if started is None else started)+args.timeout)
                 result = dict(status='blocked', reason=reason, output=str(output), changed_files=[],
-                              remediation='Select a supported runtime/profile and budget; see ahl improve --help')
+                              remediation=REMEDIATION.get(reason, DEFAULT_REMEDIATION))
                 write_json(output/'workflow.json', result)
                 return result
         if started is not None and time.monotonic()>=started+args.timeout:

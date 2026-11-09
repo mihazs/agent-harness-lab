@@ -209,6 +209,26 @@ def test_ambiguous_runtime_blocks_before_inference(one):
     assert result['reason'] == 'select_one_runtime_with_agent'
 
 
+def test_blocked_preflight_gives_a_reason_specific_remediation(one):
+    from agent_harness_lab.one_call import REMEDIATION
+    with patch('agent_harness_lab.one_call.shutil.which', return_value='/synthetic/runtime'):
+        _, ambiguous=one.invoke()
+    config.create(one.project,config.defaults())
+    _, offline=one.invoke()
+    assert ambiguous['remediation'] == REMEDIATION['select_one_runtime_with_agent']
+    assert offline['remediation'] == REMEDIATION['configured_profile_does_not_allow_cooperative_improvement']
+    assert ambiguous['remediation'] != offline['remediation']
+
+
+def test_every_preflight_reason_has_its_own_remediation():
+    import inspect, re
+    from agent_harness_lab import one_call
+    reasons=set(re.findall(r"return '([a-z_]+)'",inspect.getsource(one_call.preflight)))
+    assert reasons <= set(one_call.REMEDIATION)
+    assert len(set(one_call.REMEDIATION.values())) == len(one_call.REMEDIATION)
+    assert one_call.DEFAULT_REMEDIATION not in one_call.REMEDIATION.values()
+
+
 def test_offline_configuration_blocks_before_inference(one):
     config.create(one.project,config.defaults())
     code,result=one.invoke()
