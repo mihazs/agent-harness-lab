@@ -373,6 +373,20 @@ A proposal that changes a nested instruction file or any rule file must add an
  "removed_task_paths": []}
 ```
 
+A plan may also justify each changed file with an `operations` list. Each entry
+names the `path`, a `decision` (`add`, `update`, `remove` or `consolidate`), the
+`mechanism_id` and `evidence_refs` (at least one label) it cites, the
+`expected_change`, the required behaviour ids it `preserved` and its
+`falsifier`. Once a plan lists any, every changed instruction or rule file needs
+exactly one entry whose decision matches the validator's own classification
+(`operation_unjustified`, `justification_for_unchanged_path`,
+`justification_decision_mismatch`), and an entry that cites no evidence, names an
+undeclared required id or carries multi-line text makes the plan invalid. The
+report's `decisions` list records each justification with hashes for the text
+fields, never the text. A plan without `operations` leaves `decisions` null:
+the justification is a declaration, not evidence that the mechanism is real, and
+it grants no adoption authority.
+
 `profile` uses the instruction resolver's profile schema, and its runtime must be
 the trial runtime (`responses` validates as `codex`, because the controlled
 executor loads the `AGENTS.md` chain). Root-only edits without a plan keep their

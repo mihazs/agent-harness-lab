@@ -444,3 +444,57 @@ def test_validation_leaves_inputs_graders_and_heldout_untouched(ws):
     assert json.dumps(trials, sort_keys=True) == frozen
     for root, digest in before.items(): assert tree_digest(root) == digest
     assert str(ws.root) not in json.dumps({k: v for k, v in document.items() if k != 'task_cwd'})
+
+
+def operation(path, decision, **fields):
+    return dict(dict(path=path, decision=decision, mechanism_id='m-tests', evidence_refs=['ev-1'],
+                     expected_change='Synthetic build check is added.', preserved=['tests'],
+                     falsifier='Synthetic build still fails unchecked.'), **fields)
+
+
+def test_operations_are_justified_one_to_one_and_recorded_as_hashes(ws):
+    ws.write(ws.candidate, 'src/CLAUDE.md', FILES['src/CLAUDE.md'] + 'Check the synthetic build.\n')
+    plan = ws.plan(operations=[operation('src/CLAUDE.md', 'update')])
+    document = ws.validate(plan)
+    assert (document['status'], document['reasons']) == ('valid', [])
+    [record] = document['decisions']
+    assert (record['path'], record['decision'], record['mechanism_id'], record['preserved']) == (
+        'src/CLAUDE.md', 'update', 'm-tests', ['tests'])
+    assert record['expected_change_sha256'] == hashlib.sha256(b'Synthetic build check is added.').hexdigest()
+    assert record['after_sha256'] == document['operations'][0]['after_sha256']
+    assert 'Synthetic build' not in json.dumps(document['decisions'])
+
+
+def test_a_plan_without_operations_keeps_decisions_undeclared(ws):
+    ws.write(ws.candidate, 'src/CLAUDE.md', FILES['src/CLAUDE.md'] + 'Check the synthetic build.\n')
+    assert ws.validate()['decisions'] is None
+
+
+@pytest.mark.parametrize('reason, operations', [
+    ('operation_unjustified', []),
+    ('justification_for_unchanged_path', [operation('src/CLAUDE.md', 'update'), operation('CLAUDE.md', 'update')]),
+    ('justification_decision_mismatch', [operation('src/CLAUDE.md', 'remove')]),
+])
+def test_a_missing_extra_or_mismatched_justification_blocks(ws, reason, operations):
+    ws.write(ws.candidate, 'src/CLAUDE.md', FILES['src/CLAUDE.md'] + 'Check the synthetic build.\n')
+    document = ws.validate(ws.plan(operations=operations))
+    assert (document['status'], document['reasons']) == ('blocked', [reason])
+
+
+def test_a_consolidation_must_be_declared_as_one(ws):
+    ws.write(ws.candidate, 'src/CLAUDE.md', FILES['src/CLAUDE.md'] + 'Use synthetic strict types.\n')
+    (ws.candidate / '.claude/rules/ts.md').unlink()
+    declared = [operation('src/CLAUDE.md', 'update'), operation('.claude/rules/ts.md', 'consolidate')]
+    assert ws.validate(ws.plan(operations=declared))['status'] == 'valid'
+    declared[1] = operation('.claude/rules/ts.md', 'remove')
+    assert ws.validate(ws.plan(operations=declared))['reasons'] == ['justification_decision_mismatch']
+
+
+@pytest.mark.parametrize('bad', [
+    dict(evidence_refs=[]), dict(preserved=['unknown']), dict(falsifier=' '), dict(expected_change='a\nb'),
+    dict(mechanism_id='bad id'), dict(decision='rewrite'),
+])
+def test_an_uncited_or_malformed_justification_is_an_invalid_plan(ws, bad):
+    ws.write(ws.candidate, 'src/CLAUDE.md', FILES['src/CLAUDE.md'] + 'Check the synthetic build.\n')
+    document = ws.validate(ws.plan(operations=[dict(operation('src/CLAUDE.md', 'update'), **bad)]))
+    assert (document['status'], document['reasons']) == ('blocked', ['instruction_plan_invalid'])
