@@ -69,7 +69,7 @@ class TestCommandsInventory:
         component = nodes['.claude/commands/frontend/component.md']
         assert (component.kind, component.parse_status, component.capability_ref) == ('command', 'parsed', 'commands_skills:claude-code')
         assert dict(component.facts) == dict(frontmatter=True, name_key=True, paths_key=True, description_chars=1)
-        assert nodes['.claude/skills/alpha/SKILL.md'].parse_status == 'not_parsed'
+        assert nodes['.claude/skills/alpha/SKILL.md'].parse_status == 'parsed'
         # Commands are a Claude Code surface: a Codex inventory of the same checkout lists none.
         codex = commands.capture(checkout, dict(CODEX, task_cwd='.'))
         assert not self.entries(codex, 'command')

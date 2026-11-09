@@ -1338,7 +1338,7 @@ any other value, because a listed file is not evidence that a runtime loaded it.
 
 Parsers are registered in `PARSERS`, a tuple sorted by surface kind with one
 self-contained `(kind, capability surface, 'module:function')` line per kind.
-Parsers not described in this document are stubs that return `not_parsed`. A kind with
+Parsers not described in this document are stubs that return `not_parsed`. The `skill` parser reads only `SKILL.md`: it records the name and description state, a trigger-phrase flag, the body line count, relative link targets and hashed description tokens (`sources/skill_headers.py`), and leaves other bundle files `not_parsed`. A kind with
 no entry is `no_parser`, and a parser that raises `ValueError` gives
 `parse_failed`. Parser facts are flat scalar mappings, so raw text never
 reaches a node.
