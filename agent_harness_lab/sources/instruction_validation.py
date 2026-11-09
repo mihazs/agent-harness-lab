@@ -35,7 +35,10 @@ from .git_view import Folder
 from .schema import digest, label
 
 PROFILE = 'ahl-instruction-validation-v1'
-PLAN_FIELDS = {'schema_version', 'profile', 'task_paths', 'required', 'shadowing_changes', 'removed_task_paths'}
+PLAN_FIELDS = {'schema_version', 'profile', 'task_paths', 'required', 'shadowing_changes', 'removed_task_paths', 'operations'}
+OPERATION_FIELDS = {'path', 'decision', 'mechanism_id', 'evidence_refs', 'expected_change', 'preserved', 'falsifier'}
+DECISIONS = ('add', 'update', 'remove', 'consolidate')
+MAX_OPERATIONS, MAX_REFS = 64, 16
 KINDS = ('instruction', 'path_rule')
 # The trial runtime whose instruction semantics a candidate is validated under; the controlled Responses
 # executor loads the root-to-cwd AGENTS.md chain, which is the Codex resolver's model.
@@ -53,7 +56,10 @@ PROPOSER_GUIDANCE = ('Edit an instruction file only at its governing scope (the 
     '"instruction_plan" to the '
     'proposal: {"schema_version":1,"profile":<the runtime instruction profile with task_cwd>,"task_paths":[...],'
     '"required":[{"id":...,"text":...}],"shadowing_changes":[{"change":"add"|"remove","shadow":...,"shadowed":...}],'
-    '"removed_task_paths":[...]}. Never move required text out of the active context to cut bytes; a shorter file '
+    '"removed_task_paths":[...]}. To justify each changed file, add "operations":[{"path":...,"decision":"add"|"update"|'
+    '"remove"|"consolidate","mechanism_id":...,"evidence_refs":[...],"expected_change":...,"preserved":[<required ids>],'
+    '"falsifier":...}]: once you list any, every changed instruction or rule file needs exactly one entry whose decision '
+    'matches the change. Never move required text out of the active context to cut bytes; a shorter file '
     'is not automatically better.')
 
 
@@ -63,6 +69,14 @@ class _Blocked(Exception):
 
 def _norm(text):
     return ' '.join(text.split())
+
+
+def _single_line(text):
+    """A non-empty, bounded, single-line string that encodes as UTF-8 (a lone surrogate would crash hashing)."""
+    if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT or '\n' in text or '\r' in text: return False
+    try: text.encode()
+    except UnicodeEncodeError: return False
+    return True
 
 
 def parse_plan(plan):
@@ -80,18 +94,59 @@ def parse_plan(plan):
     for item in required:
         if not isinstance(item, dict) or set(item) != {'id', 'text'}: raise ValueError('invalid required behaviour')
         label(item['id'])
-        text = item['text']
-        if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT or '\n' in text or '\r' in text:
-            raise ValueError('invalid required behaviour text')
+        if not _single_line(item['text']): raise ValueError('invalid required behaviour text')
     if len({item['id'] for item in required}) != len(required): raise ValueError('duplicate required behaviour')
     if not isinstance(shadowing, list) or len(shadowing) > MAX_SHADOWING: raise ValueError('invalid shadowing changes')
     for item in shadowing:
         if not isinstance(item, dict) or set(item) != {'change', 'shadow', 'shadowed'} or item['change'] not in ('add', 'remove'):
             raise ValueError('invalid shadowing change')
         relative(item['shadow']); relative(item['shadowed'])
-    return dict(profile=profile, task_paths=task_paths, removed=frozenset(removed),
+    declared = _declared_operations(plan.get('operations'), {item['id'] for item in required})
+    return dict(profile=profile, task_paths=task_paths, removed=frozenset(removed), operations=declared,
                 required=tuple((item['id'], _norm(item['text'])) for item in required),
                 shadowing=frozenset((item['change'], item['shadow'], item['shadowed']) for item in shadowing))
+
+
+def _declared_operations(items, required_ids):
+    """Operation-level justifications keyed by path, or None when the plan declares none (#79 slice B)."""
+    if items is None: return None
+    if not isinstance(items, list) or len(items) > MAX_OPERATIONS: raise ValueError('invalid operations')
+    declared = {}
+    for item in items:
+        if not isinstance(item, dict) or set(item) != OPERATION_FIELDS or item['decision'] not in DECISIONS:
+            raise ValueError('invalid operation')
+        relative(item['path']); label(item['mechanism_id'])
+        refs = item['evidence_refs']
+        if not isinstance(refs, list) or not 1 <= len(refs) <= MAX_REFS: raise ValueError('invalid operation evidence')
+        for ref in refs: label(ref)
+        preserved = item['preserved']
+        if not isinstance(preserved, list) or len(preserved) > MAX_REQUIRED or not set(preserved) <= required_ids:
+            raise ValueError('operation preserves an undeclared required behaviour')
+        for field in ('expected_change', 'falsifier'):
+            if not _single_line(item[field]): raise ValueError('invalid operation text')
+        if item['path'] in declared: raise ValueError('duplicate operation')
+        declared[item['path']] = item
+    return declared
+
+
+def _decisions(plan, operations, find):
+    """Per-operation decision records from the plan's justifications; text is kept as hashes, like required text."""
+    declared = plan['operations']
+    if declared is None: return None
+    changed = {operation['path']: operation for operation in operations}
+    for name in sorted(changed.keys() - declared.keys()): find('operation_unjustified', name)
+    for name in sorted(declared.keys() - changed.keys()): find('justification_for_unchanged_path', name)
+    records = []
+    for name in sorted(changed.keys() & declared.keys()):
+        operation, item = changed[name], declared[name]
+        if item['decision'] != operation['operation']: find('justification_decision_mismatch', name)
+        records.append(dict(path=name, decision=operation['operation'], declared_decision=item['decision'],
+                            mechanism_id=item['mechanism_id'], evidence_refs=sorted(item['evidence_refs']),
+                            preserved=sorted(item['preserved']),
+                            expected_change_sha256=hashlib.sha256(item['expected_change'].encode()).hexdigest(),
+                            falsifier_sha256=hashlib.sha256(item['falsifier'].encode()).hexdigest(),
+                            before_sha256=operation['before_sha256'], after_sha256=operation['after_sha256']))
+    return records
 
 
 def _kind(path, runtime, fallback=()):
@@ -400,13 +455,14 @@ def _evaluate(before, after, plan, staged_before, staged_after, fallback, reason
         where = [context for context in before.contexts if operation['path'] in before.active(context)]
         if where and all(before.lines({operation['path']}) <= after.lines(after.active(context)) for context in where):
             operation['operation'] = 'consolidate'
+    decisions = _decisions(plan, operations, find)  # after consolidation labelled the operations
     def active_bytes(view):
         return sum(len(view.files[path]) for path in {p for c in view.contexts for p in view.active(c)})
     baseline_bytes, candidate_bytes = active_bytes(before), active_bytes(after)
     moved_bytes = sum(len(line.encode()) + 1 for line in moved)  # each moved line with its newline
     status = 'blocked' if reasons else 'valid'
     credited = max(0, baseline_bytes - candidate_bytes - moved_bytes) if status == 'valid' else 0
-    return _document(status, reasons, scope=scope, operations=operations, findings=findings, required=required,
+    return _document(status, reasons, scope=scope, operations=operations, decisions=decisions, findings=findings, required=required,
         measurements=dict(estimator=ESTIMATOR, baseline_active_bytes=baseline_bytes, candidate_active_bytes=candidate_bytes,
                           moved_out_of_active_context_bytes=moved_bytes, credited_reduction_bytes=credited,
                           selects_winner=False),
