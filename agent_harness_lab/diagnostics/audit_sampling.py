@@ -18,6 +18,12 @@ Estimates with no sampled case carry a zero-event upper bound, not a zero-width
 interval. Alert-only counts and the unweighted review composition are reported
 separately and are never population estimates. Nothing here calls a model or a
 hosted service, updates a policy or promotes a harness.
+
+The seed may be committed before the window closes: ``commit_seed`` hashes it with a
+nonce, the plan records that commitment and its time, and the draw reveals both. A
+receipt whose seed does not match its commitment, or whose commitment was not
+recorded before the window closed, is refused. Only a receipt that passes drops the
+``seed_selection_unverified`` limitation, and it keeps an unauthenticated-time one.
 """
 import hashlib
 import json
@@ -40,6 +46,7 @@ COUNT_INTERVAL, RECALL_INTERVAL = 'exact_binomial_mover', 'exact_binomial_mover_
 LIMITATIONS = ('multi_stratum_intervals_approximate', 'unit_independence_declared_not_verified',
                'reviewer_labels_unauthenticated', 'capture_outside_frame_unknown', 'seed_selection_unverified')
 ALPHA = .05
+SEED_UNVERIFIED, COMMITMENT_TIME = 'seed_selection_unverified', 'commitment_time_unauthenticated'
 
 
 def _digest(value):
@@ -74,6 +81,11 @@ def _time(value):
     if moment.tzinfo is None:
         raise ValueError('timezone-aware timestamp required')
     return moment
+
+
+def commit_seed(seed, nonce):
+    """Hash commitment to a seed: publish this before the window closes, reveal ``seed`` and ``nonce`` after."""
+    return hashlib.sha256(f'audit-seed-v1:{seed}:{nonce}'.encode()).hexdigest()
 
 
 def _fields(value, names, message):
@@ -127,8 +139,19 @@ def _rate(value):
     return type(value) in (int, float) and math.isfinite(value) and 0 < value <= 1
 
 
+def _commitment(seed, commitment, window):
+    """Refuse a commitment that does not open to the seed or was not recorded before the window closed."""
+    _fields(commitment, 'sha256 committed_at nonce', 'invalid audit seed commitment')
+    _sha(commitment['sha256']); _text(commitment['nonce'])
+    if commit_seed(seed, commitment['nonce']) != commitment['sha256']:
+        raise ValueError('audit seed does not match its commitment')
+    if not _time(commitment['committed_at']) < _time(window['end']):
+        raise ValueError('audit seed commitment postdates the frame window')
+
+
 def _plan(plan, frozen):
-    _fields(plan, 'schema_version profile frame_sha256 seed rates review_budget policy_sha256 model_sha256 decision_timestamp',
+    required = 'schema_version profile frame_sha256 seed rates review_budget policy_sha256 model_sha256 decision_timestamp'
+    _fields({k: v for k, v in plan.items() if k != 'seed_commitment'} if isinstance(plan, dict) else plan, required,
             'invalid audit plan schema')
     if type(plan['schema_version']) is not int or plan['schema_version'] != 1 or plan['profile'] != PLAN_PROFILE:
         raise ValueError('invalid audit plan schema')
@@ -142,6 +165,8 @@ def _plan(plan, frozen):
         raise ValueError('every audit route rate must be in (0, 1]; zero or invalid inclusion probability refused')
     if type(plan['seed']) is not int or plan['seed'] < 0 or type(plan['review_budget']) is not int or plan['review_budget'] < 1:
         raise ValueError('audit seed must be a nonnegative integer and review budget a positive integer')
+    if plan.get('seed_commitment') is not None:
+        _commitment(plan['seed'], plan['seed_commitment'], frozen['window'])
     return rates
 
 
@@ -169,6 +194,13 @@ def _weights(probabilities):
                 effective_sample_size=total * total / sum(w * w for w in weights) if weights else None)
 
 
+def _limitations(commitment):
+    """A passing commitment replaces the unverified-seed limitation; its time is still self-declared."""
+    if commitment is None:
+        return list(LIMITATIONS)
+    return [COMMITMENT_TIME if x == SEED_UNVERIFIED else x for x in LIMITATIONS]
+
+
 def _seal(body):
     return dict(body, receipt_sha256=_digest(body))
 
@@ -193,11 +225,12 @@ def draw(frame, plan):
         schema_version=1, profile=RECEIPT_PROFILE, estimand=ESTIMAND, scope=frozen['scope'], window=frozen['window'],
         frame_sha256=frozen['frame_sha256'], plan_sha256=_digest(plan), policy_sha256=plan['policy_sha256'],
         model_sha256=plan['model_sha256'], decision_timestamp=plan['decision_timestamp'], seed=plan['seed'],
+        seed_commitment=plan.get('seed_commitment'),
         rates=dict(sorted(rates.items())), review_budget=plan['review_budget'], frame=frozen['summary'],
         strata=[dict(s, expected_draws=s['units'] * s['inclusion_probability']) for _, s in sorted(strata.items())],
         expected_draws=expected, drawn=len(draws), draws=draws,
         weights=_weights([d['inclusion_probability'] for d in draws]),
-        reviewer_status='pending', limitations=list(LIMITATIONS), publication_allowed=False,
+        reviewer_status='pending', limitations=_limitations(plan.get('seed_commitment')), publication_allowed=False,
         automatic_policy_update=False))
 
 
@@ -214,6 +247,11 @@ def _receipt(receipt):
     body = {k: v for k, v in receipt.items() if k != 'receipt_sha256'}
     if receipt.get('receipt_sha256') != _digest(body):
         raise ValueError('audit sampling receipt changed after it was sealed')
+    commitment = receipt.get('seed_commitment')
+    if commitment is not None:
+        _commitment(receipt['seed'], commitment, receipt['window'])
+    if receipt['limitations'] != _limitations(commitment):
+        raise ValueError('audit receipt limitations do not match its seed commitment')
     strata = {s['stratum']: s['inclusion_probability'] for s in receipt['strata']}
     for item in receipt['draws']:
         probability = item['inclusion_probability']

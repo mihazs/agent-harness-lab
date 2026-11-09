@@ -260,6 +260,59 @@ def test_seed_choice_after_the_frame_is_a_declared_limitation():
     assert 'seed_selection_unverified' in audit.draw(value, plan(value))['limitations']
 
 
+def committed(value, seed=7, nonce='n-1', at='2026-01-07T00:00:00+00:00', digest=None, **changes):
+    commitment = dict(sha256=digest or audit.commit_seed(seed, nonce), committed_at=at, nonce=nonce)
+    return plan(value, seed=seed, seed_commitment=commitment, **changes)
+
+
+def test_committed_seed_is_accepted_and_drops_the_unverified_limitation():
+    value = frame([unit(f'u{i}') for i in range(50)])
+    receipt = audit.draw(value, committed(value))
+    assert receipt['seed_commitment']['sha256'] == audit.commit_seed(7, 'n-1')
+    assert 'seed_selection_unverified' not in receipt['limitations']
+    assert 'commitment_time_unauthenticated' in receipt['limitations']
+    audit.review_queue(receipt)
+
+
+def test_seed_searched_after_the_fact_is_refused():
+    value = frame([unit(f'u{i}') for i in range(50)])
+    honest = committed(value, seed=7)
+    searched = dict(honest, seed=8)  # planner re-picks the seed once the draw is known
+    with pytest.raises(ValueError, match='does not match its commitment'):
+        audit.draw(value, searched)
+    with pytest.raises(ValueError, match='does not match its commitment'):
+        audit.draw(value, committed(value, seed=8, digest=audit.commit_seed(7, 'n-1')))
+
+
+def test_commitment_made_after_the_window_closed_is_refused():
+    value = frame([unit('a')])
+    with pytest.raises(ValueError, match='postdates'):
+        audit.draw(value, committed(value, at='2026-01-08T00:00:01+00:00'))
+    with pytest.raises(ValueError, match='postdates'):
+        audit.draw(value, committed(value, at='2026-01-08T00:00:00+00:00'))
+
+
+def test_malformed_commitment_is_refused():
+    value = frame([unit('a')])
+    with pytest.raises(ValueError, match='invalid audit seed commitment'):
+        audit.draw(value, plan(value, seed_commitment=dict(sha256='0' * 64)))
+
+
+def test_receipt_resealed_with_a_forged_commitment_or_limitations_is_refused():
+    value = frame([unit(f'u{i}') for i in range(50)])
+    receipt = audit.draw(value, committed(value))
+    for change, message in ((dict(seed=8), 'does not match its commitment'),
+                            (dict(limitations=list(audit.LIMITATIONS)), 'limitations do not match')):
+        body = dict(receipt, **change)
+        body.pop('receipt_sha256')
+        with pytest.raises(ValueError, match=message):
+            audit.review_queue(audit._seal(body))
+    plain = audit.draw(value, plan(value))
+    body = {k: v for k, v in dict(plain, limitations=receipt['limitations']).items() if k != 'receipt_sha256'}
+    with pytest.raises(ValueError, match='limitations do not match'):
+        audit.review_queue(audit._seal(body))
+
+
 def test_poisson_design_variance_matches_its_closed_form():
     """Every draw an incident at p = .25: the HT variance is n (1 - p) / p^2, without a with-replacement inflation."""
     value = frame([unit(f'v{i}') for i in range(40)])
