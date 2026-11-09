@@ -206,6 +206,18 @@ candidate, or a clean observed canary-only run. Exit 1 means it ran but failed o
 was disabled or unmatched. Exit 2 is a setup error, and exit 3 is skipped,
 unsupported or inconclusive.
 
+`hook-review.json` (`hook_review_v1`, `agent_harness_lab/hooks_review.py`) is written beside it
+whenever a staged hook unit was given, even when the unit was unsupported and nothing
+ran. It is the reviewer's packet: the semantic hook-entry delta (added and removed
+entries and whether the surviving entries kept their order), the script delta with
+hashes, the unit patch, the proposer's expected effect (`not_stated` unless given), the
+static capability receipt, the canary disposition and the wall time of the whole canary
+run. That time is not a per-hook overhead, and an unknown time stays `null`. Task effect
+and the instruction-only comparison are `not_evaluated` and `not_compared`, because they
+need graded matched tasks. Files applied by a later deployment are reported
+`applied_unverified` until effective registration is checked. The packet authorizes
+nothing.
+
 ## Offline executor and separate grader integration
 
 `ahl evaluate --agent offline --manifest MANIFEST --baseline BASELINE --candidate
