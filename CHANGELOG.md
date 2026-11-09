@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.148.0
+
+### Minor Changes
+
+- 9a76891: Write a `hook-review.json` packet beside hook canary results: the semantic hook-entry and script delta, capability receipt, canary disposition and whole-run wall time, with task effect, the instruction-only comparison and post-apply verification stated as not performed (#80).
+
 ## 0.147.0
 
 ### Minor Changes
