@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.151.0
+
+### Minor Changes
+
+- 6b3b537: Add an opt-in frozen resource contract and paired capped cost and latency decision that never accepts a saving while quality is unverified, keeps timeouts and unknown measurements visible, and stays recommendation-only.
+
 ## 0.150.0
 
 ### Minor Changes
