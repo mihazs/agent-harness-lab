@@ -229,6 +229,15 @@ def test_every_preflight_reason_has_its_own_remediation():
     assert one_call.DEFAULT_REMEDIATION not in one_call.REMEDIATION.values()
 
 
+@pytest.mark.parametrize('reason',['configured_profile_does_not_allow_cooperative_improvement','configured_bank_requires_cooperative_runtime'])
+def test_runtime_remediation_names_runtime_and_executable(reason):
+    # profile or runtime.name alone leaves config.validate rejecting an explicit runtime without an absolute executable.
+    from agent_harness_lab.one_call import REMEDIATION
+    assert 'executable' in REMEDIATION[reason]
+    assert 'runtime' in REMEDIATION[reason]
+    assert 'absolute' in REMEDIATION[reason]
+
+
 def test_offline_configuration_blocks_before_inference(one):
     config.create(one.project,config.defaults())
     code,result=one.invoke()
