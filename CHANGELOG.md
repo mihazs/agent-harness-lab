@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.150.0
+
+### Minor Changes
+
+- 0cdd7fc: Add skill metadata, disclosure and routing-collision checks to the static audit
+
 ## 0.149.4
 
 ### Patch Changes

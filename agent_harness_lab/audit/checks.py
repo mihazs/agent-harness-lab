@@ -67,6 +67,29 @@ def command(facts, runtime):
     return 'conformant', 'documented_format'
 
 
+def skill(facts, runtime):
+    """Agent Skills header, description and disclosure conventions, then whether the runtime's own root holds the file.
+
+    One reason per skill, cheapest edit first. A violation is reported wherever the bundle sits; a skill with none is
+    'conformant' only in the runtime's own skill root, with a settled scope, never when the file was not loaded."""
+    if facts.get('frontmatter') == 'unsupported': return 'unknown', 'skill_frontmatter_unsupported'
+    if facts.get('name_declared'):
+        if not facts.get('name_valid'): return 'nonconformant', 'skill_name_invalid'
+        if facts.get('name_reserved') and runtime == 'claude-code':  # documented for Claude skills only
+             return 'nonconformant', 'skill_name_reserved_word'
+        if not facts.get('name_matches_directory'): return 'nonconformant', 'skill_name_differs_from_directory'
+    state = facts.get('description')
+    if state == 'missing': return 'nonconformant', 'skill_description_missing'
+    if state == 'not_text': return 'nonconformant', 'skill_description_not_text'
+    if facts.get('description_chars', 0) > 1024: return 'nonconformant', 'skill_description_too_long'
+    if facts.get('missing_references'): return 'nonconformant', 'skill_reference_missing'
+    if not facts.get('description_trigger'): return 'nonconformant', 'skill_description_lacks_trigger_phrasing'
+    if facts.get('body_lines', 0) > 500 and not facts.get('has_references'): return 'nonconformant', 'skill_body_without_references'
+    if facts.get('load') == 'unsettled': return 'unknown', 'skill_load_scope_unsettled'
+    if facts.get('load') != 'loaded': return 'unknown', 'skill_not_loaded_by_runtime'
+    return 'conformant', 'documented_format'
+
+
 def plugin(facts, runtime):
     form = facts.get('plugin_file')
     if form == 'manifest' and facts.get('name_declared') is not True: return 'nonconformant', 'plugin_manifest_name_missing'

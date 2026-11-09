@@ -45,7 +45,7 @@ PARSERS = (
     ('instruction', 'instructions', 'agent_harness_lab.sources.instructions:parse_surface'),
     ('path_rule', 'path_rules', 'agent_harness_lab.sources.claude_rules:parse'),
     ('plugin', 'plugins', 'agent_harness_lab.sources.plugins_inventory:parse_manifest'),
-    ('skill', 'commands_skills', STUB),
+    ('skill', 'commands_skills', 'agent_harness_lab.sources.skill_headers:parse'),
     ('workflow', 'workflows', 'agent_harness_lab.sources.workflows_inventory:parse'),
 )
 # Runtime files documented to hold several surfaces, per runtime: path -> facet kinds whose parser also reads it.
