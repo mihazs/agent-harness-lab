@@ -9,7 +9,6 @@ from unittest.mock import patch
 import pytest
 
 from tests.integration.sources import test_source_claude as fixtures
-from tests.support.unittest_cleanups import run_cleanups
 from agent_harness_lab.sources.schema import digest
 from agent_harness_lab.telemetry.claude_discovery import directory_names, simple_hash
 
@@ -21,7 +20,7 @@ OTHER = '00000000-0000-4000-8000-000000000002'
 def claude_journal():
     journal = fixtures.ClaudeSourceTests(); journal.setUp()
     yield journal
-    run_cleanups(journal)
+    journal.doCleanups()
 
 
 class TestClaudeRoot:
