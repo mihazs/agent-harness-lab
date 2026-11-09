@@ -54,6 +54,26 @@ def test_slow_timeouts_stay_in_the_all_assigned_estimate():
     assert result['decision'] == 'regression' and result['endpoints'][0]['capped_observations'] == 100
 
 
+@pytest.mark.parametrize('status', ['completed', 'agent_timeout'])
+def test_values_above_the_horizon_are_clamped_and_a_timeout_at_the_horizon_is_not_censored(status):
+    over = decide(contract(), [dict(p, candidate=arm(300, status)) for p in pairs(50, 0)], 'supported')['endpoints'][0]
+    assert over['mean_difference'] == pytest.approx(50)  # 300 -> 100, so (100 - 50); uncapped would be 250
+    assert over['high'] <= 100 and over['low'] >= -100 and over['capped_observations'] == 100
+    at_horizon = decide(contract(), [dict(p, candidate=arm(100, 'agent_timeout')) for p in pairs(50, 0)], 'supported')
+    assert at_horizon['endpoints'][0]['status'] != 'unknown' and at_horizon['endpoints'][0]['capped_observations'] == 100
+
+
+def test_alpha_is_split_across_required_endpoints():
+    loose = dict(TIME, max_increase=40)
+    second = dict(loose, name='elapsed2')
+    one = decide(contract(loose), pairs(50, 50, roots=50), 'supported')
+    rows = [dict(p, baseline=arm(50, elapsed2=50), candidate=arm(50, elapsed2=50)) for p in pairs(50, 50, roots=50)]
+    two = decide(contract(loose, second), rows, 'supported')
+    assert [e['per_endpoint_alpha'] for e in two['endpoints']] == [0.025, 0.025]
+    assert one['endpoints'][0]['per_endpoint_alpha'] == 0.05 and one['decision'] == 'noninferior'
+    assert two['decision'] == 'inconclusive'  # same data, wider interval at the split level
+
+
 @pytest.mark.parametrize('trial', [arm(None), arm(-1), arm(True), arm(20, 'agent_timeout'), arm(20, 'infrastructure_interruption'), arm(20, 'cancelled')])
 def test_unknown_required_measurement_blocks_a_favorable_decision(trial):
     rows = pairs(60, 10)
