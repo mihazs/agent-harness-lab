@@ -47,6 +47,8 @@ only allowed differences:
 
 - each route's private run directory (`output`), with paths under it compared
   relative to it;
+- the `deployment` ID minted by each application and the `rollback` command that
+  embeds it; each route's own deployment must roll back to the same target bytes;
 - digests that bind run artifacts holding timing or context values:
   `plan_sha256`, `decision.bindings.results_sha256` and `manifest_sha256`,
   and the change plan's `affected_controls_sha256` and `evidence` reference;
