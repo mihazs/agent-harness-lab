@@ -69,6 +69,7 @@ def observation_wire(tmp_path, monkeypatch):
 
 def test_public_analysis_reads_scoped_session_and_reports_evidence_gap(observation_wire, tmp_path, capsys):
     wire = observation_wire
+    wire.page_size = 1
     project = tmp_path / 'project'
     project.mkdir()
     output = tmp_path / 'analysis'
@@ -82,6 +83,8 @@ def test_public_analysis_reads_scoped_session_and_reports_evidence_gap(observati
     assert receipt['memory_source']['snapshot_atomicity'] == 'unavailable'
     events = [json.loads(line) for line in (output / 'events.v2.jsonl').read_text().splitlines()]
     assert [row['activity'] for row in events] == ['tool_call', 'tool_result', 'turn_stop']
+    assert [row['event_id'] for row in events] == ['0', '1', '2']
+    assert [call['offset'] for call in wire.calls] == [0, 1, 2, 2, 1, 0]
     assert all(row['outcome'] == 'unknown' and 'tool_name' not in row and not row['lineage_verified'] for row in events)
     artifacts = ''.join(path.read_text() for path in output.iterdir() if path.is_file())
     assert 'SYNTHETIC_PRIVATE_BODY' not in artifacts
