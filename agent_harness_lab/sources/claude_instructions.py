@@ -13,6 +13,7 @@ from pathlib import Path, PurePosixPath
 from agent_harness_lab.evaluation.integrity import relative
 from .claude_rules import base_dir, instruction_reason
 from .instructions import InstructionEdge, InstructionNode
+from . import instruction_shapes
 from .schema import digest
 
 # Public memory documentation, checked 2026-11-04 for the declared 2.1.317 profile.
@@ -230,7 +231,7 @@ def excluded(path, patterns):
     return any(fnmatch.fnmatchcase('/'+path, pattern) or fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
 
 
-def capture(profile, scopes, selected, folder, checkout):
+def capture(profile, scopes, selected, folder, checkout, *, audit_facts=None):
     """Declared Claude memory graph of the whole checkout; returns (nodes, edges, resolution status).
 
     Files are hashed while streamed and never kept; an expanded file is re-read, at most SKIPPED_BYTES of it."""
@@ -262,7 +263,12 @@ def capture(profile, scopes, selected, folder, checkout):
         size, data = facts[key][0], folder.read(str(Path(checkout)/path_of[key]), SKIPPED_BYTES, prefix=True)
         if data is None or size <= SKIPPED_BYTES and hashlib.sha256(data).hexdigest() != nodes[key].content_sha256:
             raise ValueError('Git input changed during reading')
-        return codecs.getincrementaldecoder('utf-8')().decode(data, size <= SKIPPED_BYTES)
+        text = codecs.getincrementaldecoder('utf-8')().decode(data, size <= SKIPPED_BYTES)
+        if audit_facts is not None and size <= SKIPPED_BYTES:
+            audit_facts[key] = (nodes[key].content_sha256, size, len(text.splitlines()),
+                                any(reason is not None for _, reason in imports(text)), path_of[key],
+                                instruction_shapes.analyze(text))
+        return text
     def locate(target, conditional):
         if target not in probed:
             try: probed[target] = probe(folder, checkout, target)
