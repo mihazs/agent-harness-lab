@@ -260,6 +260,7 @@ The CLI writes one short summary to stderr and preserves the JSON receipt on std
 | `restricted_process_protocol_unqualified` | Restore the required restricted-process qualification. |
 | `select_one_runtime_with_agent` | Several supported runtimes were found; rerun with --agent codex or --agent claude (or set runtime in ahl.json). |
 | `shared_trial_budget_exhausted` | Review and increase the shared trial budget if appropriate. |
+| `target_filesystem_read_only` | Use a separately authorized writable execution context or keep analysis read-only. |
 | `status:applied` | Review the recorded deployment and its rollback information. |
 | `status:blocked` | Review the reported prerequisite before retrying. |
 | `status:budget_exhausted` | Review the recorded budget before retrying. |

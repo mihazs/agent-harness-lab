@@ -1,6 +1,7 @@
 """Human-readable, descriptive exit guidance; it never grants execution authority."""
 
 REMEDIATION = {
+    'target_filesystem_read_only': 'Use a separately authorized writable execution context or keep analysis read-only.',
     'no_data': 'Run ahl audit . for a zero-model-cost static convention check; ahl improve may incur model costs.',
     'analysis_incomplete': 'Review caveats in analysis.json; restore missing coverage or remove explicit limits before interpreting absence of findings.',
     'analysis_observed': 'Review the captured evidence and assess a candidate with ahl improve when ready.',
