@@ -242,7 +242,8 @@ def evaluate(policy, observations, *, report_version=2):
     try:
         total_cost = sum(errors[k]*costs[k] for k in COSTS)
         if type(total_cost) is float and not math.isfinite(total_cost): total_cost = None
-    except OverflowError:
+        if total_cost is not None: json.dumps(total_cost,allow_nan=False)
+    except (OverflowError,ValueError):
         total_cost = None
     if total_cost is None:
         missing.append('cost_total_unrepresentable')

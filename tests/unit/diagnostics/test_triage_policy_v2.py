@@ -288,3 +288,17 @@ def test_large_integer_cost_remains_exact():
 def test_non_scalar_label_is_rejected_as_taxonomy_mismatch(label):
     with pytest.raises(ValueError,match='label outside'):
         triage.evaluate(policy(),[row('synthetic',label,NONE)])
+
+
+def test_integer_total_above_json_digit_limit_is_unknown():
+    import sys
+
+    limit=sys.get_int_max_str_digits()
+    if not limit: pytest.skip('integer string digit limit is disabled')
+    configured=policy();configured['costs']['false_alert']=10**(limit-1)
+    rows=[row(f'synthetic-{index}',NONE,SEVERE) for index in range(10)]
+    result=triage.evaluate(configured,rows)
+    assert result['costs']['counts']['false_alert']==10
+    assert result['costs']['total'] is None and 'cost_total_unrepresentable' in result['reasons']
+    assert not result['automatic_promotion'] and not result['publication_allowed']
+    json.dumps(result,allow_nan=False)

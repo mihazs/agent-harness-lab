@@ -81,9 +81,10 @@ The report contains a root-grouped confusion matrix (true class by predicted
 class or `abstained`) and per-class TP/FP/FN/TN, abstentions, precision and
 end-to-end recall, whose denominator includes abstained roots. It also reports
 coverage, abstention reasons, review routing, error counts and the total of the
-declared costs. If floating-point cost arithmetic exceeds its finite range, the
-total is null and `cost_total_unrepresentable` is listed as a reason; all-integer
-cost arithmetic remains exact. A severe miss is a severe-class root predicted as a non-severe
+declared costs. If a cost total exceeds the finite floating-point range or the
+active integer-to-JSON digit limit, the total is null and
+`cost_total_unrepresentable` is listed as a reason. All-integer cost arithmetic
+remains exact when the total can be serialized. A severe miss is a severe-class root predicted as a non-severe
 class, or abstained and not routed to review. Severe misses are counted
 separately in `severe_misses`, with their root hashes, even when aggregate
 metrics are high. A wrong severe-class alert counts as `wrong_class`. Decisions
