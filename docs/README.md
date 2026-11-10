@@ -1,7 +1,7 @@
 # Documentation
 
-Choose a starting point by what you need. Some established pages still combine
-procedures and contracts; their primary purpose determines where they appear here.
+Choose a starting point by what you need. Each page is listed under its primary
+reader purpose.
 
 ## Learn
 
@@ -11,6 +11,7 @@ procedures and contracts; their primary purpose determines where they appear her
 
 - [Install](installation.md) and [check readiness or initialize a project](onboarding.md).
 - [Analyze, improve, or monitor a project](workflows.md); [analyze an explicit memory session](analyze-memory-session.md); [inspect CLI help](cli-help.md).
+- [Repair a supported skill header](repair-skill-header.md) or [inspect a private source journal](inspect-source-context.md).
 - [Run a static audit](static-audit.md) without captured traces or a model.
 - [Review source relationships](source-lineage-review.md), [declare a regression](regression-proposals.md), [review a case](regression-review.md), or [admit it to a development bank](regression-admission.md).
 - [Review a conditional final bank](conditional-bank-review.md) or [run fixed repeated-bank improvement](repeated-improvement.md).
@@ -20,8 +21,8 @@ procedures and contracts; their primary purpose determines where they appear her
 
 ## Look up behavior and contracts
 
-- [Command overview](command-reference.md) and [analysis methods](analysis.md).
-- [Source contracts](source-contracts.md), [source lineage review](source-lineage-reference.md), [telemetry](telemetry.md), and [explicit memory page captures](memory-page-capture.md).
+- [Command overview](command-reference.md), [analysis methods](analysis.md), and [evaluation contracts and prerequisites](evaluation-foundation.md).
+- [Source contracts](source-contracts.md), [source lineage review](source-lineage-reference.md), [regression review records](regression-review-reference.md), [telemetry](telemetry.md), and [explicit memory page captures](memory-page-capture.md).
 - [Bank qualification](bank-qualification.md), [synthetic adversarial bank](adversarial-bank.md), [content grouping](content-grouping.md), and [evaluation interchange](evaluation-interchange.md).
 - [Controlled experiments](controlled-experiments.md), [controller-loaded instructions](controlled-agents.md), [controller source observations](controller-sources.md), and [implementation prerequisite observations](implementation-prerequisites.md).
 - [Decision receipts](decision-receipts.md), [diagnostic corpus](diagnostic-corpus.md), [triage policies](diagnostic-triage.md), and [audit sampling](audit-sampling.md).
@@ -31,8 +32,7 @@ procedures and contracts; their primary purpose determines where they appear her
 
 ## Understand the context
 
-- [Evaluation foundation and remaining prerequisites](evaluation-foundation.md).
-- [Newcomer experience decisions](onboarding-rationale.md).
+- [Newcomer experience decisions](onboarding-rationale.md) and [analysis method-selection rationale](analysis-method-rationale.md).
 - [Scientific sources and limits](../skills/harness-evaluation/references/evidence-to-design.md), [diagnosis criteria](../skills/harness-evaluation/references/trace-diagnosis.md), and [execution contract](../skills/harness-evaluation/references/execution.md).
 
 ## Historical and maintainer material

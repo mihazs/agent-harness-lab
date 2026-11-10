@@ -1,8 +1,9 @@
 # What analysis runs
 
-Run `ahl analyze .` to inspect local evidence without a model call. `ahl analysis .`
-is an alias. Run `ahl improve .` to collect the same evidence and then prepare and
-evaluate supported candidates. Neither command requires a separate mining step.
+`ahl analyze .` inspects local evidence without a model call; `ahl analysis .`
+is its alias. `ahl improve .` collects the same evidence before candidate preparation
+and evaluation. Neither requires a separate mining step. See [workflows](workflows.md)
+for the operating steps.
 
 ## Default methods
 
@@ -80,15 +81,8 @@ Each receipt distinguishes `discovery_input_events` from method-specific
 synthesis carry the same private profile as the execution receipt even when
 extracted for supported local reporting.
 
-The policy adapts algorithm-selection principles from
-[Rice (1976)](https://doi.org/10.1016/S0065-2458(08)60520-3), event-quality guidance
-from the [Process Mining Manifesto](https://www.vdaalst.com/publications/p658.pdf),
-and the distinction between complementary methods and independent bias structures
-in [Lawlor et al.](https://pmc.ncbi.nlm.nih.gov/articles/PMC5841843/).
-[Cawley and Talbot](https://jmlr.org/papers/v11/cawley10a.html) explain why selecting
-on finite observed performance can bias evaluation. These motivate a transparent
-prerequisite policy; they do not establish that AHL's policy is unbiased or improves
-diagnostic accuracy. That requires a separate frozen, independently labeled study.
+The [method-selection rationale](analysis-method-rationale.md) describes the
+research context and limits of this policy.
 
 Private `analysis.json` contains the graph, findings, execution receipt and
 collection metadata. `report.md` presents counts, method statuses and caveats.
