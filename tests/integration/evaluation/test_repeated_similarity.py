@@ -24,14 +24,15 @@ def setup_workflow():
         yield RepeatedAccessAdmission(cleanup.callback)
 
 
-def test_opt_in_detects_duplicate_prompts_before_dispatch(setup_workflow):
+def test_default_detects_duplicate_prompts_before_dispatch(setup_workflow):
     host = setup_workflow
     source = record(host.manifest)[0]
     source['tasks'][0]['prompt'] = 'Set customer from records then return customer.'
     source['tasks'][1]['prompt'] = 'Set account from records then return account.'
     source['tasks'][2]['prompt'] = 'Repair the calendar parser and reject invalid leap years.'
     host.manifest.write_bytes(encoded(source))
-    host.request_value.update(root_similarity=True, manifest_sha256=record(host.manifest)[1], bank_sha256=tree_digest(host.bank))
+    host.request_value.pop('root_similarity')
+    host.request_value.update(manifest_sha256=record(host.manifest)[1], bank_sha256=tree_digest(host.bank))
     host.request.write_bytes(encoded(host.request_value))
     output = host.root/'prepared'; output.mkdir()
     request = repeated_workflow.Request(host.request_args(host.selected), output, time.monotonic()+30)
@@ -42,12 +43,13 @@ def test_opt_in_detects_duplicate_prompts_before_dispatch(setup_workflow):
     assert host.calls == [] and host.key_reads == 0
 
 
-def test_legacy_request_does_not_claim_similarity_check(setup_workflow):
+def test_explicit_legacy_request_does_not_claim_similarity_check(setup_workflow):
     host = setup_workflow
     output = host.root/'legacy'; output.mkdir()
     request = repeated_workflow.Request(host.request_args(host.selected), output, time.monotonic()+30)
     assert request.template.root_similarity_sha256 is None
     assert request.precision['effective_roots'] is None
+    assert request.precision['root_independence'] == 'unverified'
 
 
 def test_stored_final_analysis_recomputes_snapshot_and_blocks_tampering(tmp_path):
@@ -117,7 +119,7 @@ def test_real_runner_rechecks_pinned_manifest_before_any_worker(trajectory):
     fx.f.backend.capability.assert_not_called()
 
 
-def test_unrelated_opted_in_prompts_do_not_enter_proposer_input(setup_workflow):
+def test_unrelated_default_prompts_do_not_enter_proposer_input(setup_workflow):
     host = setup_workflow
     source = record(host.manifest)[0]
     prompts = ['Return the first valid calendar date from the input.',
@@ -126,7 +128,8 @@ def test_unrelated_opted_in_prompts_do_not_enter_proposer_input(setup_workflow):
     for task, prompt in zip(source['tasks'], prompts):
         task['prompt'] = prompt
     host.manifest.write_bytes(encoded(source))
-    host.request_value.update(root_similarity=True, manifest_sha256=record(host.manifest)[1], bank_sha256=tree_digest(host.bank))
+    host.request_value.pop('root_similarity')
+    host.request_value.update(manifest_sha256=record(host.manifest)[1], bank_sha256=tree_digest(host.bank))
     host.request.write_bytes(encoded(host.request_value))
     pin = digest(manifest_evidence(source))
     from tests.integration.evaluation.test_repeated_workflow import RepeatedWorkflowAdmission

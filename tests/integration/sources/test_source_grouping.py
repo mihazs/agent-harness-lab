@@ -81,7 +81,7 @@ class TestBankContentGrouping:
         assert checked['review_declarations_complete']
         assert not checked['certification_eligible']
         assert checked['content_grouping']['overlaps'] == 0
-        assert checked['issues'] == []
+        assert checked['issues'] == [dict(status='independence_unverified', reason='prompt_similarity_incomplete')]
         from agent_harness_lab.evaluation.content_grouping import fixture_content
         with pytest.raises(ValueError):
             fixture_content(f.root/'fixture0', f.tasks[0]['fixture_digest'], 0)
@@ -120,7 +120,7 @@ class TestBankContentGrouping:
         assert checked['review_declarations_complete']
         assert not checked['certification_eligible']
         assert checked['content_grouping']['overlaps'] == 0
-        assert checked['issues'] == []
+        assert checked['issues'] == [dict(status='independence_unverified', reason='prompt_similarity_incomplete')]
 
 
     def test_ambiguous_json_cannot_hide_the_effective_prompt_from_exposure_checks(self):

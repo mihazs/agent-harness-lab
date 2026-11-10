@@ -65,16 +65,19 @@ def inspect_bank(root, tasks, bank_sha256):
                 partition_boundary=prior[0].partition != task.partition, kind=kind,
                 receipt_sha256=receipt.sha256))
     revision = metadata_digest(dict(algorithm=FIXTURE_ALGORITHM, bank_sha256=bank_sha256, fingerprints=identities))
-    from .root_similarity import evidence as similarity_evidence
+    from .root_similarity import evidence as similarity_evidence, suspected_components
     roots_available = all(hasattr(t, 'root_id') for t in tasks)
     similarity = similarity_evidence(bank_sha256, revision, [(t.task_id, t.root_id) for t in tasks], prompts) if roots_available and len(prompts) == len(tasks) else None
     roots = {t.root_id for t in tasks} if roots_available else set()
-    groups = [] if similarity is None else similarity['groups']
+    groups = suspected_components(prompts) if similarity is None else similarity['groups']
+    if roots_available and similarity is None:
+        issues.append(dict(status='independence_unverified', reason='prompt_similarity_incomplete'))
     flagged = {root for group in groups for root in group}
     issues.extend(dict(task=t.task_id, status='independence_unverified', reason='suspected_near_duplicate')
                   for t in tasks if roots_available and t.root_id in flagged)
     return dict(schema_version=1, algorithm=FIXTURE_ALGORITHM, revision_sha256=revision, checked_tasks=len(tasks),
         root_similarity=dict(status='complete' if similarity is not None else 'incomplete',
+            uninspected_tasks=len(tasks)-len(prompts),
             nominal_roots=len(roots) if roots_available else None, effective_roots=None if similarity is None else len(roots) - sum(len(g)-1 for g in groups),
             evidence=similarity, evidence_sha256=None if similarity is None else metadata_digest(similarity),
             independence='unverified'),

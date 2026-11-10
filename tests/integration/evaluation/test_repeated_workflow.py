@@ -72,7 +72,7 @@ class PublicFixture:
             manifest_sha256=record(self.manifest)[1],bank_sha256=digest(self.bank),experiment_id='synthetic-public-fixed',
             repeats=2,seed=13,max_trials=12,min_roots=2,effect_margin=.01,family_margin=.01,alpha=.99,
             family_weights=dict(synthetic=1.),precision_half_width=None,operator_review='synthetic operator declaration, unverified',
-            cache_policy='fresh_controller_calls_provider_cache_unknown')
+            cache_policy='fresh_controller_calls_provider_cache_unknown',root_similarity=False)
         self.request.write_bytes(encoded(self.request_value))
         self.settings=self.root/'settings.json'
         self.settings_value=dict(schema_version=1,model='synthetic-transport',credential_file=str(self.root/'never-read-key'),
