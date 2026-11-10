@@ -41,8 +41,9 @@ accepts caller-supplied instruction bytes only when their digest matches a parse
 checkout inventory node. It emits bounded line-number and hash references for
 lexical hard-constraint cues and exact protected-path references, without line
 text. For a direct lexical write constraint mentioning an inventoried protected
-path, a declared Claude `PreToolUse` handler with a recognized Edit/Write or
-all-tools matcher is a `hook_candidate_present`. The matcher concerns tool names,
+path, a well-formed supported command handler in Claude project settings with a
+recognized `PreToolUse` Edit/Write or all-tools matcher is a `hook_candidate_present`.
+Disabled, malformed, conditional and other handler forms stay unknown. The matcher concerns tool names,
 not paths: the handler's behavior, loading, execution and enforcement stay unknown.
 Other matchers and Codex hook matching remain unknown; no match is not evidence
 of missing enforcement. Lexical cues are not proof of a rule or its enforcement.
