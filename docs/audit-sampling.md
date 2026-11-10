@@ -184,6 +184,20 @@ identity, the caller-supplied frame, rubric semantics, reviewer identities or
 independence. Estimates explicitly retain those limitations. No automatic policy
 update is authorized.
 
+## Observe-only triage audit monitoring
+
+`promotion.monitor.triage_audit_observation` recomputes a supported local corpus
+audit and checks that its declared policy and model hashes match a supplied
+`diagnostic-triage-policy-v2`. The audit rubric classes must match the policy's
+class and severity declarations. The private observation retains the audit
+estimate and its limitations; it never changes the policy, deployment monitor
+state, rollback or promotion.
+
+A hash match checks caller declarations only. It does not establish that the
+model or policy ran, that frame alert flags are genuine, or that frame origin,
+reviewer identity, assignment timing or labels are authenticated. This is not
+a drift detector or a causal claim.
+
 ## Estimates
 
 `estimate(receipt, batch)` takes labels bound to one receipt:

@@ -47,3 +47,32 @@ def monitor(deployment,task_versions,events,policy,now):
     return dict(state=state,verified_exposure=len(outcomes),successes=sum(outcomes),unknown=unknown,
                 policy_version=policy.version,causal_attribution='unestablished',
                 action='manual_review' if critical else 'observe',automatic_rollback=False)
+
+
+def triage_audit_observation(policy,receipt,frame,store_path,binding,rubric,*,plan=None,trusted_heads=None):
+    """Recompute a private triage-audit observation; identifiers are declarations, not execution proof."""
+    from agent_harness_lab.diagnostics import audit_corpus, audit_fixed, audit_sampling, audit_stratified, triage_policy
+    triage_policy.check_policy(policy)
+    policy_sha=triage_policy.policy_sha256(policy);model_sha=policy['model_sha256']
+    audit_corpus.rubric(rubric)
+    classes=policy['classes']; labels=set(rubric['markers'].values())
+    if (audit_sampling.NO_INCIDENT not in classes or not labels<=set(classes)
+            or classes[audit_sampling.NO_INCIDENT]['severity']!='none'
+            or any(classes[name]['severity']=='none' for name in labels if name!=audit_sampling.NO_INCIDENT)):
+        raise ValueError('audit rubric classes differ from triage policy semantics')
+    if not isinstance(receipt,dict):raise ValueError('audit receipt required')
+    if receipt.get('profile')==audit_sampling.RECEIPT_PROFILE_V2 and plan is None:
+        declared=receipt
+    elif receipt.get('profile') in (audit_fixed.RECEIPT_PROFILE,audit_stratified.RECEIPT_PROFILE) and isinstance(plan,dict):
+        declared=plan
+    else:raise ValueError('supported audit receipt and plan required')
+    if model_sha is None or declared.get('policy_sha256')!=policy_sha or declared.get('model_sha256')!=model_sha:
+        raise ValueError('audit policy or model declaration differs')
+    report=audit_corpus.estimate(receipt,frame,store_path,binding,rubric,trusted_heads,plan=plan)
+    return dict(schema_version=1,profile='triage-audit-monitor-observation-v1',policy_sha256=policy_sha,
+        model_sha256=model_sha,audit_receipt_sha256=receipt['receipt_sha256'],audit_report=report,
+        identity_binding='caller_declared_identifiers_only',source_execution='unverified',
+        policy_application='not_observed',alert_decisions='caller_declared_unverified',
+        reviewer_identity='unverified',assignment_timing='unauthenticated',frame_origin='unauthenticated',
+        action='observe_only',causal_attribution='unestablished',automatic_policy_update=False,
+        automatic_rollback=False,promotion_authority='none',publication_allowed=False)
