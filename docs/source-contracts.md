@@ -4079,6 +4079,25 @@ contract validation, checkpoint behavior and a side-effect-free registry, not
 real-source compatibility, containment, diagnostic usefulness or certification.
 ## Offline Hindsight bank archives
 
+`local_file/hindsight-knowledge-pages/v1` reads only `manifest.json` and
+`knowledge_pages.json` from one explicitly selected, already extracted archive
+using the pinned v1.1.0 transfer shape. Its descriptor has `schema_version: 1`,
+`hindsight_version: "1.1.0"`, `instance`, `bank_id` and `archive`, with optional
+lower `limits`. The source project fingerprint must equal
+`digest(("hindsight.bank", instance, bank_id))`. The archive's bank is checked
+before its page file is opened. Both files are bounded and rehashed. A missing
+page file or inconsistent declared page count is refused, including when a
+documents-only archive does not contain the page file.
+
+The private result records page IDs, names, parent and backing-model references
+as guessable fingerprints, together with reported kind, flags, order and
+timestamps. Invalid or placeholder timestamps remain unknown. Parent and model
+references are claims, not verified edges; page content, model content and
+other archive parts are not read. The caller-supplied archive's origin, producer,
+completeness and lineage remain unverified. The local file checkpoint does not
+establish task outcomes or complete bank coverage. This profile does not open
+ZIPs, start a service, access a backend or invoke a model.
+
 `local_file/hindsight-bank-zip/v1` accepts the same selection descriptor shape
 as the extracted archive profile below, with `archive` naming one explicitly
 selected ZIP file. It reads the ZIP in memory without extracting files. The
