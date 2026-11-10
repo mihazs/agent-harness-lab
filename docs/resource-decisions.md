@@ -174,3 +174,6 @@ The collector is opt-in, process-local, non-durable, and is not a same-process s
 boundary. It does not inject summaries into worker or provider inputs, authorize promotion,
 establish quality or billing completeness, or produce a resource decision. Provider usage
 remains unverified and all final totals remain unknown.
+Ordinary observer exceptions invalidate collection without undoing the already accepted trial.
+Interruptions such as `KeyboardInterrupt` propagate after the trial may have been committed;
+they do not establish a complete collection or permit replaying that trial as a fresh request.

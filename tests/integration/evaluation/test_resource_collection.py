@@ -78,3 +78,17 @@ def test_collection_failure_does_not_change_trial_custody_and_remains_unusable(t
             row = finish_trial(comparison,client,workspace,harness,deadline)
             assert comparison.rows[-1]['trial_sha256'] == trial_usage.hashed(row)
             with pytest.raises(ValueError,match='complete live'): collector.report(dict(trials=[row]))
+
+
+def test_collection_interruption_propagates_after_committed_trial(tmp_path, monkeypatch):
+    comparison,client,workspace,harness,deadline = comparison_fixture(tmp_path,transport())
+    with comparison:
+        with resource_collection.UsageCollector(comparison,token_scope_contract()) as collector:
+            def interrupted(_): raise KeyboardInterrupt
+            monkeypatch.setattr(collector,'_record',interrupted)
+            comparison.before(comparison.expected[0],workspace,harness,client)
+            execute(comparison,client,workspace,harness,deadline)
+            row = synthetic_after_row(comparison)
+            with pytest.raises(KeyboardInterrupt): comparison.after(row)
+            assert comparison.active is None and comparison.rows[-1]['trial_sha256'] == trial_usage.hashed(row)
+            with pytest.raises(ValueError,match='complete live'): collector.report(dict(trials=[row]))
