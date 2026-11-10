@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 import sqlite3
+import subprocess
 from unittest.mock import patch
 
 import pytest
@@ -39,9 +40,9 @@ def test_selected_backup_is_private_unverified_and_never_opens_sidecars(source):
     for path in sidecars: path.write_bytes(b'SYNTHETIC_SIDECAR')
     connector = OpenCodeBackup(manifest)
     with patch('socket.socket', side_effect=AssertionError('network')), patch(
-            'agent_harness_lab.sources.opencode_backup.sqlite3.connect', wraps=sqlite3.connect) as connect:
+            'agent_harness_lab.sources.opencode_backup.subprocess.run', wraps=subprocess.run) as run:
         snapshot = connector.read(spec)
-    connect.assert_called_once_with(':memory:')
+    assert run.call_args.args[0][1] == '-I'
     assert connector.summary['snapshot_status'] == 'caller_declared_unverified'
     assert connector.summary['producer_version'] == 'unverified'
     assert connector.summary['capture_completeness'] == 'unknown'
@@ -130,6 +131,17 @@ def test_missing_parent_and_archive_are_unknown(source):
     assert connector.summary['parent_sha256'] is None
     assert connector.summary['archive_state'] == 'unknown'
     assert 'lineage_unknown' in connector.summary['warnings']
+
+
+def test_unsupported_platform_and_timed_out_worker_fail_closed(source):
+    _, _, spec, manifest = source
+    with patch('agent_harness_lab.sources.opencode_backup.sys.platform', 'unsupported'):
+        with patch('agent_harness_lab.sources.opencode_backup.subprocess.run') as run:
+            with pytest.raises(ValueError, match='unavailable'): OpenCodeBackup(manifest).read(spec)
+            run.assert_not_called()
+    with patch('agent_harness_lab.sources.opencode_backup.subprocess.run',
+               side_effect=subprocess.TimeoutExpired('synthetic', 4)):
+        with pytest.raises(ValueError, match='timed out'): OpenCodeBackup(manifest).read(spec)
 
 
 def test_cli_preview_and_import_are_private(source, tmp_path):

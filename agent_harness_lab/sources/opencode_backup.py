@@ -1,8 +1,10 @@
 """One caller-supplied OpenCode SQLite backup, read in memory as unverified metadata."""
 from dataclasses import dataclass
-import math
-import sqlite3
-import time
+import json
+from pathlib import Path
+import struct
+import subprocess
+import sys
 from agent_harness_lab.evaluation.integrity import contained, read_regular, regular_sha256, relative
 from .hardened import limits
 from .opencode import PIN
@@ -25,42 +27,24 @@ class BackupClaim:
 
 
 def _session(raw, session, project):
-    """Query one caller-selected row in a bounded disposable in-memory database."""
-    if not hasattr(sqlite3.Connection, 'deserialize') or not hasattr(sqlite3.Connection, 'setlimit'):
-        raise ValueError('SQLite backup reader unavailable')
-    connection = sqlite3.connect(':memory:')
+    """Run native parsing in a Linux child with enforced resource limits and a wall timeout."""
+    if sys.platform != 'linux': raise ValueError('isolated OpenCode backup reader unavailable')
+    request = json.dumps({'session': session, 'project': project}, ensure_ascii=True).encode('ascii')
+    if len(request) > 16384: raise ValueError('OpenCode selection exceeds IPC bound')
+    worker = Path(__file__).with_name('_opencode_backup_worker.py')
     try:
-        connection.enable_load_extension(False)
-        connection.setlimit(sqlite3.SQLITE_LIMIT_ATTACHED, 0)
-        connection.setlimit(sqlite3.SQLITE_LIMIT_LENGTH, 1024*1024)
-        connection.setlimit(sqlite3.SQLITE_LIMIT_COLUMN, 256)
-        connection.setlimit(sqlite3.SQLITE_LIMIT_SQL_LENGTH, 4096)
-        connection.execute('PRAGMA trusted_schema=OFF')
-        connection.execute('PRAGMA temp_store=MEMORY')
-        connection.deserialize(raw)
-        allowed = frozenset(('id', 'project_id', 'parent_id', 'time_archived'))
-        def authorize(action, arg1, arg2, database, trigger):
-            if action == sqlite3.SQLITE_SELECT: return sqlite3.SQLITE_OK
-            if action == sqlite3.SQLITE_READ and arg1 == 'session_v2' and arg2 in allowed and database == 'main' and trigger is None:
-                return sqlite3.SQLITE_OK
-            return sqlite3.SQLITE_DENY
-        connection.set_authorizer(authorize)
-        deadline = time.monotonic()+1
-        ticks = 0
-        def progress():
-            nonlocal ticks
-            ticks += 1
-            return ticks > 400 or time.monotonic() >= deadline
-        connection.set_progress_handler(progress, 1000)
-        rows = connection.execute('SELECT id, project_id, parent_id, time_archived FROM session_v2 '
-            'WHERE id = ? AND project_id = ? LIMIT 2', (session, project)).fetchall()
-        if len(rows) != 1 or rows[0][0] != session or rows[0][1] != project:
-            raise ValueError('selected OpenCode session unavailable or ambiguous')
-        return rows[0][2:]
-    except (sqlite3.Error, OverflowError):
-        raise ValueError('OpenCode backup is unsupported, damaged, or exceeds query bounds') from None
-    finally:
-        connection.close()
+        result = subprocess.run([sys.executable, '-I', str(worker)], input=struct.pack('!I', len(request))+request+raw,
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=4, env={}, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        raise ValueError('isolated OpenCode backup reader unavailable or timed out') from None
+    if result.returncode != 0 or len(result.stdout) > 4096:
+        raise ValueError('OpenCode backup is unsupported, damaged, ambiguous, or exceeds query bounds')
+    try:
+        value = json.loads(result.stdout)
+        if not isinstance(value, dict) or set(value) != {'parent', 'archived'}: raise ValueError()
+        return value['parent'], value['archived']
+    except (ValueError, UnicodeDecodeError):
+        raise ValueError('invalid isolated OpenCode backup result') from None
 
 
 class OpenCodeBackup(LocalExport):
@@ -89,10 +73,6 @@ class OpenCodeBackup(LocalExport):
         backup_hash, = self.capture(source, descriptor, selection, [contained(self.manifest.parent, selection['backup'])],
             bounds['max_backup_bytes'], consume, 'OpenCode backup changed during capture', read_regular, regular_sha256)
         parent, archived = rows.pop()
-        if parent is not None and (not isinstance(parent, str) or not parent.startswith('ses') or len(parent) > 256 or
-                any(c.isspace() for c in parent) or parent == session): raise ValueError('invalid OpenCode parent claim')
-        if archived is not None and (type(archived) not in (int, float) or abs(archived) > 8640000000000000 or
-                not math.isfinite(archived)): raise ValueError('invalid OpenCode archive claim')
         native = digest(('opencode.session', instance, session))
         parent_hash = digest(('opencode.session', instance, parent)) if parent is not None else None
         self.claims = [BackupClaim('session', native, project_hash, parent_hash, 'reported_archived' if archived is not None else 'unknown')]
