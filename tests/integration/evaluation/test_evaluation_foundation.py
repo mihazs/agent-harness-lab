@@ -14,7 +14,7 @@ import pytest
 
 from agent_harness_lab.evaluation.plan import ExperimentSpec, schedule
 from agent_harness_lab.evaluation.planning import required_roots
-from agent_harness_lab.evaluation.statistics import TrialRecord, analyze
+from agent_harness_lab.evaluation.statistics import TrialRecord, analyze, incomplete_bounds
 from agent_harness_lab.evaluation.task_bank import CertificationLedger, validate
 from agent_harness_lab.evaluation.integrity import artifacts, digest
 from agent_harness_lab.evaluation.sandbox import SandboxBackend, Limits
@@ -75,7 +75,66 @@ def test_critical_and_invalid_grades_are_order_independent():
         rows = [mismatch if row is unknown else row for row in prefix]
         assert analyze(spec, [*rows, *data[3:]]) == dict(status='blocked', reason='provenance_mismatch')
     for prefix in permutations((invalid, unknown)):
-        assert analyze(spec, [data[0], *prefix, *data[3:]]) == dict(status='incomplete', reason='unknown_or_invalid_grade')
+        result = analyze(spec, [data[0], *prefix, *data[3:]])
+        assert (result['status'], result['reason']) == ('incomplete', 'unknown_or_invalid_grade')
+
+
+def test_ungraded_arms_bound_frozen_estimand_without_changing_decision():
+    spec = plan(n=10, repeats=1)
+    data = records(spec)
+    unknown = [i for i, trial in enumerate(schedule(spec)) if trial['version'] == 'candidate'][:2]
+    partial = [replace(row, outcome=None) if i in unknown else row for i, row in enumerate(data)]
+    result = analyze(spec, partial)
+    bounds = result['missing_outcome_bounds']
+    assert (result['status'], bounds['unknown_arms'], bounds['primary']['estimate']) == ('incomplete', 2, None)
+    assert bounds['primary']['identified_low'] == pytest.approx(.8)
+    assert bounds['primary']['identified_high'] == pytest.approx(1)
+    assert bounds['primary']['pessimistic_low'] <= bounds['primary']['identified_low']
+    assert bounds['primary']['identified_high'] <= bounds['primary']['optimistic_high']
+    assert not decide(spec, result).automatic
+    absent = analyze(spec, [row for i, row in enumerate(data) if i not in unknown])
+    assert absent['missing_outcome_bounds']['primary'] == bounds['primary']
+    assert absent['status'] == 'incomplete'
+
+
+def test_ungraded_baseline_and_candidate_bounds_enclose_all_binary_completions():
+    spec = plan(n=4, repeats=2)
+    data = records(spec)
+    trials = schedule(spec)
+    missing = [next(i for i, row in enumerate(trials) if row['version'] == arm)
+               for arm in ('baseline', 'candidate')]
+    partial = [replace(row, outcome=None) if i in missing else row for i, row in enumerate(data)]
+    limits = analyze(spec, partial)['missing_outcome_bounds']['primary']
+    for first in (False, True):
+        for second in (False, True):
+            completed = [replace(row, outcome=dict(zip(missing, (first, second)))[i]) if i in missing else row
+                         for i, row in enumerate(data)]
+            estimate = analyze(spec, completed)['primary']['mean']
+            assert limits['identified_low'] <= estimate <= limits['identified_high']
+
+
+def test_ungraded_bounds_preserve_declared_related_root_grouping():
+    spec = plan(n=4, repeats=1)
+    data = records(spec)[1:]
+    expected = {row['trial_id']: row for row in schedule(spec)}
+    ungrouped = incomplete_bounds(spec, expected, data, {})['primary']
+    grouped = incomplete_bounds(spec, expected, data, {'r1': 'r0'})['primary']
+    assert grouped['independent_roots'] == 3
+    assert grouped['pessimistic_low'] <= ungrouped['pessimistic_low']
+    assert grouped['optimistic_high'] >= ungrouped['optimistic_high']
+
+
+def test_empty_bounds_are_opt_in_and_extreme_alpha_stays_conservative():
+    spec = replace(plan(n=4, repeats=1), alpha=5e-324)
+    assert analyze(spec, []) == dict(status='incomplete', reason='missing_or_duplicate_trials')
+    empty = analyze(spec, [], include_empty_bounds=True)
+    assert empty['missing_outcome_bounds']['primary']['identified_low'] == -1
+    assert empty['missing_outcome_bounds']['primary']['identified_high'] == 1
+    data = records(spec)
+    result = analyze(spec, [replace(data[0], outcome=None), *data[1:]])
+    primary = result['missing_outcome_bounds']['primary']
+    assert result['status'] == 'incomplete'
+    assert (primary['pessimistic_low'], primary['optimistic_high'], primary['numeric_status']) == (-1, 1, 'conservative_fallback')
 
 
 def test_repeated_related_roots_are_not_independent():

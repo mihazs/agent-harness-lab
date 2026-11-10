@@ -112,6 +112,49 @@ def test_sparse_cohort_inconclusive_and_optional_is_only_descriptive():
     assert result['preservation']['error_allocation']['per_endpoint_alpha'] == .05/2
 
 
+def test_missing_cohort_bounds_enclose_all_completions_without_authorizing():
+    spec, frozen = freeze(plan(10, 1), members=['t0000', 't0001', 't0002'])
+    data = records(spec, lambda row: row['version'] == 'candidate')
+    scheduled = schedule(spec)
+    missing = [next(i for i, row in enumerate(scheduled) if row['task'] == 't0000' and row['version'] == 'baseline'),
+               next(i for i, row in enumerate(scheduled) if row['task'] == 't0001' and row['version'] == 'candidate')]
+    partial = [replace(row, outcome=None) if i in missing else row for i, row in enumerate(data)]
+    result = analyze(spec, partial, cohort_binding=frozen)
+    bounds = result['missing_outcome_bounds']
+    assert result['status'] == 'incomplete' and not result['automatic_promotion']
+    assert bounds['unknown_arms'] == 2
+    assert bounds['multiplicity'] == 'Bonferroni_primary_families_required_cohorts'
+    assert bounds['primary']['estimate'] is None
+    for first in (False, True):
+        for second in (False, True):
+            completed = [replace(row, outcome=dict(zip(missing, (first, second)))[i]) if i in missing else row
+                         for i, row in enumerate(data)]
+            actual = analyze(spec, completed, cohort_binding=frozen)
+            for interval, estimate in ((bounds['primary'], actual['primary']['mean']),
+                    (bounds['required_cohorts']['protected'], actual['preservation']['cohorts']['protected']['endpoint']['mean'])):
+                assert interval['identified_low'] - 1e-12 <= estimate <= interval['identified_high'] + 1e-12
+    assert not decide(spec, result).automatic
+
+
+def test_incomplete_cohort_bounds_require_unambiguous_membership_and_records():
+    spec, frozen = freeze(plan(4, 1), members=['t0000'], required=False)
+    data = records(spec, lambda row: True)
+    partial = [replace(data[0], outcome=None), *data[1:]]
+    result = analyze(spec, partial, cohort_binding=frozen)
+    assert result['missing_outcome_bounds']['required_cohorts'] == {}
+    assert 'missing_outcome_bounds' not in analyze(spec, partial + [data[0]], cohort_binding=frozen)
+    assert 'missing_outcome_bounds' not in analyze(spec, partial, cohort_binding=None)
+
+
+def test_incomplete_cohort_bounds_with_tiny_alpha_use_full_outer_range():
+    spec, frozen = freeze(replace(plan(4, 1), alpha=5e-324), members=['t0000'])
+    data = records(spec, lambda row: True)
+    result = analyze(spec, [replace(data[0], outcome=None), *data[1:]], cohort_binding=frozen)
+    for interval in (result['missing_outcome_bounds']['primary'],
+                     result['missing_outcome_bounds']['required_cohorts']['protected']):
+        assert (interval['pessimistic_low'], interval['optimistic_high'], interval['numeric_status']) == (-1, 1, 'conservative_fallback')
+
+
 EVIDENCE_MUTATIONS = [
     pytest.param('missing', lambda data: data[1:], id='missing'),
     pytest.param('duplicate', lambda data: data + [data[0]], id='duplicate'),
