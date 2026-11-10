@@ -8,6 +8,7 @@ VERIFY = re.compile(r'\b(?:pytest|unittest|npm\s+(?:test|run\s+(?:build|test|che
 HEADING = re.compile(r'^\s{0,3}#{1,6}\s')
 NUMBERED = re.compile(r'^\s{0,3}\d+[.)]\s+')
 FENCE = re.compile(r'^\s{0,3}(`{3,}|~{3,})')
+SHELL_LANGUAGES = frozenset(('bash', 'sh', 'zsh', 'fish', 'shell', 'console', 'powershell', 'pwsh'))
 
 
 def analyze(text):
@@ -23,7 +24,9 @@ def analyze(text):
             marker = match.group(1)
             if fence is None:
                 fence = marker
-                blocks += 1
+                language = line[match.end():].strip().split(maxsplit=1)
+                if language and language[0].lower() in SHELL_LANGUAGES:
+                    blocks += 1
             elif marker[0] == fence[0] and len(marker) >= len(fence):
                 fence = None
             continue

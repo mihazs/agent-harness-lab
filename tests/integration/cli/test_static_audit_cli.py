@@ -647,3 +647,15 @@ def test_feedback_sensor_candidates_stay_private_and_unexecuted(tmp_path,monkeyp
     assert any(row['path']=='Taskfile.yml' and row['category']=='task_runner' for row in view['candidates'])
     assert view['consistency']=='not_checked' and view['runtime_execution']=='unknown'
     assert not view['publication_allowed'] and 'SYNTHETIC_SENSOR_COMMAND' not in json.dumps(report)
+
+
+def test_non_shell_fences_do_not_create_procedure_hypothesis(tmp_path,monkeypatch,capsys):
+    project=tmp_path/'project';(project/'.git').mkdir(parents=True)
+    source=project/'AGENTS.md'
+    source.write_text('# Synthetic examples\n'+''.join(f'```json\n{{"value":{n}}}\n```\n' for n in range(3)))
+    monkeypatch.setenv('XDG_STATE_HOME',str(tmp_path/'state'))
+    assert main(['audit',str(project),'--json'])==0
+    report=json.loads(capsys.readouterr().out)
+    assert report['declared_instruction_totals']['shape']['procedure_sections'] is False
+    assert not any(row['reason']=='instruction_procedure_section_detected' for row in report['findings'])
+    assert '"value"' not in json.dumps(report)

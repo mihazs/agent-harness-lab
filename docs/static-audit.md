@@ -327,10 +327,12 @@ Unknown totals never produce this hypothesis.
 
 For a settled, nonempty Claude or Codex checkout closure, the CLI also emits lexical hypotheses when it
 finds no constraint wording or common verification command, and a structural
-hypothesis for a section with at least five numbered steps or three fenced
+hypothesis for a section with at least five numbered steps or three shell-labelled fenced
 blocks. These are deliberately simple patterns: they can miss equivalent
 wording and match examples. Findings need behavioral evaluation and do not quote
-instruction contents or headings. No shape hypothesis is emitted for an
+instruction contents or headings. Unlabelled and other-language fences do not
+count toward the shell-block cue; older findings based solely on them will not
+pass a fresh procedure recheck. No shape hypothesis is emitted for an
 unknown closure. An empty resolved Claude import also produces a weak
 hypothesis; missing imports and cycles leave totals unknown with a reason.
 
