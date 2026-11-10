@@ -66,7 +66,7 @@ def test_stored_final_analysis_recomputes_snapshot_and_blocks_tampering(tmp_path
     (case/'manifest.json').write_bytes(encoded(source))
     data = records(plan, lambda trial: trial['version'] == 'candidate')
     store = HistoryStore(tmp_path/'history')
-    checked = (case, [], {'run_id':'synthetic'}, plan, {}, 'current')
+    checked = (case, [], {'schema_version':1, 'run_id':'synthetic'}, plan, {}, 'current')
     with patch.object(store, 'trials', return_value=data):
         result = store._analyze_checked(checked)
         assert result['primary']['independent_roots'] == 3
