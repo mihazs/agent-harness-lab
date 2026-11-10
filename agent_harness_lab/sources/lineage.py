@@ -12,7 +12,7 @@ from .execution import RecordRef, frozen, objects, unpack
 from .schema import Contract, EvidenceRecord, digest, fingerprint, label
 from .store import SourceStore
 
-RELATIONS = ('same_observation', 'derived_from', 'independent_case')
+RELATIONS = ('same_observation', 'derived_from', 'same_execution', 'test_result_for', 'independent_case')
 
 
 def text(value):
@@ -279,10 +279,14 @@ class LineageStore(PrivateJournal):
                     if key not in seen: seen.add(key); pending.extend(adjacency.get(key, ()))
             if self.cache(origin)[3] != cache_hash: raise ValueError('source cache changed during lineage query')
         revision = digest(dict(project=self.project, scope=self.scope, cache=cache_hash, heads=heads))
-        return dict(schema_version=1, grouping_revision_sha256=revision, cache_sha256=cache_hash,
+        result = dict(schema_version=1, grouping_revision_sha256=revision, cache_sha256=cache_hash,
             applicability='selected_frozen_cache_only', native_freshness='unverified', links=links,
             components=components, independence_assertions=assertions, conflicts=conflicts, stale_cases=stale,
             independent_roots=None, task_outcomes_verified=False, execution_authorized=False, publication_allowed=False)
+        from .outcomes import correlate
+        outcomes = correlate(state, links)
+        if outcomes['records'] or outcomes['ambiguous_sources']: result['outcome_correlation'] = outcomes
+        return result
 
 
 def main(argv=None):
@@ -301,7 +305,7 @@ def main(argv=None):
         purpose={'propose':'Record an unsigned claim and freeze its exact source-cache snapshot',
             'review':'Append an operator-attested decision bound to the case, event and cache hashes',
             'show':'Read a recorded case summary without checking current cache applicability',
-            'query':'Read reviewed links applicable to the selected cache and report stale cases/conflicts'}
+            'query':'Read reviewed links and structured outcome contradictions in the selected cache'}
         action = commands.add_parser(name,help=purpose[name],description=purpose[name],
             epilog='Output is private JSON metadata, not native execution proof. Use the parent --help for scope identities and exit states.')
         if name in ('review', 'show'): action.add_argument('--case', required=True,help='Exact case ID returned by propose; not a file path')
