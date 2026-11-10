@@ -432,7 +432,9 @@ class Client:
             candidate = value.get('output') if isinstance(value,dict) else None
             if isinstance(candidate,list) and 0<len(candidate)<=64:
                 self.observe_items(candidate)
-                self.response_items_observed = all(isinstance(item,dict) and item.get('type') in ('message','reasoning','function_call') for item in candidate)
+                self.response_items_observed = (value.get('status') == 'completed' and value.get('error') is None
+                    and value.get('incomplete_details') is None and all(isinstance(item,dict)
+                    and item.get('type') in ('message','reasoning','function_call') for item in candidate))
                 self.actions.update(request_action,tool_item_visibility='bounded_items_observed',emission_visibility='bounded_items_observed')
             if (not isinstance(value,dict) or value.get('status') != 'completed'
                     or value.get('error') is not None or value.get('incomplete_details') is not None): raise ValueError('response incomplete')

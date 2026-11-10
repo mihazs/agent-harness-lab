@@ -413,8 +413,10 @@ and satisfies forbidden `all`. Incomplete relevant coverage remains unknown.
 
 Positive witnesses, count lower bounds already reached and observed counts above
 a maximum can decide despite omissions. Absence, upper-bound satisfaction and
-exact sequences require closed, predicate-relevant coverage. Request, denial,
-dispatch and backend-result order use their own controller ordinals; no concurrent
+exact sequences require closed, predicate-relevant coverage. Incomplete or error
+responses leave request coverage unknown even if some output items were observed.
+Observed requests can still be decisive witnesses. Request, denial, dispatch and
+backend-result order use their own controller ordinals; no concurrent
 dependency is reconstructed. Missing, redacted, clipped or invalidly encoded
 compared arguments stay unknown. A backend result establishes a return observation,
 not semantic success. Group truth tables preserve every child: `all_of` fails on
