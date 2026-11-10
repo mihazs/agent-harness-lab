@@ -121,7 +121,7 @@ class Request:
         weights=value['family_weights']
         if not isinstance(weights,dict):raise ValueError('frozen family weights required')
         similarity = None
-        if value.get('root_similarity', False):
+        if value.get('root_similarity', True):
             from .root_similarity import manifest_evidence
             similarity = manifest_evidence(source)
         from agent_harness_lab.sources.schema import digest as metadata_digest

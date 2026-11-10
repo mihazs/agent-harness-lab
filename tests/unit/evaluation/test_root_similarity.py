@@ -153,3 +153,37 @@ def test_projected_snapshot_hides_other_task_ids_and_retains_transitive_group(mo
     changed = replace(selected_plan, tasks=((selected[0][0], 'wrong-root', 'a'), *selected_plan.tasks[1:]))
     with pytest.raises(ValueError, match='does not match'):
         preflight(changed, root_similarity_evidence=projected, root_similarity_bank='synthetic')
+
+
+def test_incomplete_bank_still_reports_observed_candidates_without_effective_count():
+    from contextlib import ExitStack
+    from copy import deepcopy
+    import json
+    import shutil
+    from agent_harness_lab.evaluation.integrity import digest as fixture_digest
+    from agent_harness_lab.evaluation.task_bank import inspect
+    from tests.integration.evaluation.test_evaluation_foundation import TaskBank
+
+    with ExitStack() as cleanup:
+        bank = TaskBank(cleanup.callback)
+        bank.tasks[1]['partition'] = 'development'
+        third = deepcopy(bank.tasks[0])
+        third.update(task_id='t2', root_id='r2', family='f2', project_group='p2',
+                     time_group='time2', fixture='fixture2')
+        shutil.copytree(bank.root/'fixture0', bank.root/'fixture2')
+        third['fixture_digest'] = fixture_digest(bank.root/'fixture2')
+        bank.tasks.append(third)
+        for index, prompt in enumerate(('Set customer from records then return customer.',
+                                        'Set account from records then return account.')):
+            folder = bank.root/f'fixture{index}'
+            (folder/'task.json').write_text(json.dumps({'prompt': prompt}))
+            bank.tasks[index]['fixture_digest'] = fixture_digest(folder)
+        bank.write()
+        report = inspect(bank.path)
+        similarity = report['content_grouping']['root_similarity']
+        assert similarity['status'] == 'incomplete' and similarity['uninspected_tasks'] == 1
+        assert any(issue.get('reason') == 'prompt_similarity_incomplete' for issue in report['issues'])
+        assert similarity['nominal_roots'] == 3
+        assert similarity['effective_roots'] is None and similarity['evidence'] is None
+        assert {issue['task'] for issue in report['issues'] if issue.get('reason') == 'suspected_near_duplicate'} == {'t0', 't1'}
+        assert similarity['independence'] == 'unverified'

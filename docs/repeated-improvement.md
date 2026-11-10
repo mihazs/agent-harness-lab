@@ -39,7 +39,7 @@ The request is strict JSON with these fields:
 | `effect_margin`, `family_margin`, `alpha` | Frozen decision margins and error level |
 | `family_weights` | Object mapping every selected family to its positive frozen weight |
 | `precision_half_width` | Explicit analytic target, or JSON `null` |
-| `root_similarity` | Optional boolean; `true` freezes local prompt-similarity candidates |
+| `root_similarity` | Optional boolean; defaults to `true` and freezes local prompt-similarity candidates |
 | `operator_review` | Bounded operator declaration; retained as **unverified** |
 | `cache_policy` | `fresh_controller_calls_provider_cache_unknown` |
 
@@ -57,15 +57,16 @@ for proposer publication and every fresh worker trial. Actual consumption may ex
 the budget sooner; time feasibility remains unknown. This analytic check is not power or a
 prediction of provider cost or completion time.
 
-Set `root_similarity` to `true` to compute candidate relationships from the
-selected manifest prompts before dispatch. The plan pins that private snapshot;
+By default, the controller computes candidate relationships from the selected
+manifest prompts before dispatch. The plan pins that private snapshot;
 preflight uses grouped weights and blocks if its criteria cannot be met. Stored
 history recomputes the snapshot from the frozen manifest before final analysis,
 and changed or missing evidence cannot support a decision. Only the evidence
 digest is added to the plan; prompts, candidate groupings, and digests remain
-private. A match indicates possible dependence, and no match proves independence.
-Omitting the option or setting it to `false` preserves legacy behavior and does
-not perform this additional check. The check is not supported by sequential
+private. A match indicates possible dependence; the absence of a match does not prove independence.
+Setting `root_similarity` to `false` explicitly selects legacy behavior and does
+not perform this additional check; independence remains unverified. Previously
+stored plans keep their original semantics. The check is not supported by sequential
 plans or the power simulator.
 
 The proposer receives its existing minimal metadata and baseline views. It cannot

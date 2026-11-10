@@ -112,7 +112,8 @@ other dependencies can be missed; an absent flag does not establish independence
 
 This check reads prompts locally and does not send them to a service. If any task
 has no explicit `task.json` prompt, its report is incomplete and the effective
-count and evidence are unavailable. Counts and evidence are private bank-derived
+count and evidence are unavailable. The report flags the incomplete inspection
+and still reports candidates found among the prompts that were available. Counts and evidence are private bank-derived
 outputs. The lexical candidate is not an authenticated lineage finding.
 
 For a fixed comparison using the whole inspected bank, save the report's

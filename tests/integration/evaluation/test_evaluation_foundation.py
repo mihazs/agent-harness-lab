@@ -155,7 +155,7 @@ def test_declared_reviewed_bank_remains_unqualified_and_detects_mutated_oracle(b
     bank.write(); checked = validate(bank.path)
     assert checked['review_declarations_complete']
     assert not checked['certification_eligible']
-    assert checked['issues'] == []
+    assert checked['issues'] == [dict(status='independence_unverified', reason='prompt_similarity_incomplete')]
     (bank.root/'grader1/grade.py').write_text('different\n')
     with pytest.raises(ValueError, match='integrity'): validate(bank.path)
 
