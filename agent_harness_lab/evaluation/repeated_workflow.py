@@ -28,11 +28,17 @@ def canonical(value):
     return path
 
 
+def request_fields(value):
+    fields(value, REQUEST_FIELDS + (' root_similarity' if 'root_similarity' in value else ''))
+    if 'root_similarity' in value and type(value['root_similarity']) is not bool:
+        raise ValueError('root similarity option must be boolean')
+
+
 def selected_store(args,output=None):
     value=getattr(args,'evaluation_store',None)
     if value is None:return None,None
     path=canonical(value);request=canonical(args.experiment_request)
-    declaration,pin=record(request,64*1024);fields(declaration,REQUEST_FIELDS)
+    declaration,pin=record(request,64*1024);request_fields(declaration)
     if type(declaration['schema_version']) is not int or declaration['schema_version']!=1 or declaration['profile']!=PROFILE:
         raise ValueError('unsupported repeated workflow request')
     previous=getattr(args,'_evaluation_request_sha256',None)
@@ -60,7 +66,7 @@ class Request:
         self.baseline_bundle=None
         self.path=canonical(args.experiment_request);self.deadline=deadline
         self.value,self.request_hash=record(self.path,64*1024)
-        fields(self.value,REQUEST_FIELDS)
+        request_fields(self.value)
         selected,pin=selected_store(args,output)
         if pin is not None and pin!=self.request_hash:raise ValueError('selected-store request changed')
         self.store=selected if selected is not None else output/'private-history'
@@ -114,11 +120,17 @@ class Request:
         self.source_value=source
         weights=value['family_weights']
         if not isinstance(weights,dict):raise ValueError('frozen family weights required')
+        similarity = None
+        if value.get('root_similarity', False):
+            from .root_similarity import manifest_evidence
+            similarity = manifest_evidence(source)
+        from agent_harness_lab.sources.schema import digest as metadata_digest
         self.template=ExperimentSpec(value['experiment_id'],tuple((t['id'],t['root'],t['family']) for t in tasks),
             value['repeats'],value['seed'],value['max_trials'],value['min_roots'],value['effect_margin'],
             value['family_margin'],value['alpha'],tuple(sorted(weights.items())),'unbound-baseline','unbound-candidate',
             identity(self.root,tasks,source['grader_bundles']),'unbound-runtime',
-            precision_half_width=value['precision_half_width'])
+            precision_half_width=value['precision_half_width'],
+            root_similarity_sha256=metadata_digest(similarity) if similarity is not None else None)
         self.template.validate()
         trials=2*len(tasks)*self.template.repeats
         self.blocked_reason=('fixed_comparison_inference_budget_infeasible'
@@ -126,7 +138,8 @@ class Request:
         if getattr(args,'project_settings',None) is not None and 1+trials>args.trial_limit:
             self.blocked_reason='configured_shared_trial_budget_infeasible'
         remaining=self.check()
-        self.precision=preflight(self.template,trial_limit=value['max_trials'],budget_seconds=remaining)
+        self.precision=preflight(self.template,trial_limit=value['max_trials'],budget_seconds=remaining,
+            root_similarity_evidence=similarity,root_similarity_bank=self.manifest if similarity is not None else None)
         write_bytes(output/'fixed-request.json',read_regular(self.path,64*1024))
         write_bytes(output/'fixed-request-binding.json',encoded(dict(profile=PROFILE,request_sha256=self.request_hash,
             operator_review_status='operator_declared_unverified',publication_allowed=False)))
