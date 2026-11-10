@@ -82,7 +82,16 @@ def test_definition_validation_output_v1_keeps_blocked_private_verdict():
     assert output['verdict'] == 'blocked' and output['publication_allowed'] is False
 
 
-@pytest.mark.parametrize('name', ['interaction-contract-v1-output', 'audit-sampling-receipt-v1', 'ahl-definition-validation-v1'])
+def test_triage_evaluation_v2_preserves_private_synthetic_result():
+    rows = [dict(root_case_id='synthetic-root', split='heldout', label='tool_misuse',
+        scores={'tool_misuse': 0.9, 'instruction_drift': 0.05, 'no_incident': 0.05})]
+    output = triage_policy.evaluate(sample('diagnostic-triage-policy-v2'), rows)
+    assert output == sample('diagnostic-triage-evaluation-v2')
+    assert output['publication_allowed'] is False
+
+
+@pytest.mark.parametrize('name', ['interaction-contract-v1-output', 'audit-sampling-receipt-v1',
+    'ahl-definition-validation-v1', 'diagnostic-triage-evaluation-v2'])
 def test_private_golden_output_cannot_be_relabelled_as_a_public_benchmark(name):
     assert not public_export_allowed([sample(name) | public_record() | {'publication_allowed': True}])
 
