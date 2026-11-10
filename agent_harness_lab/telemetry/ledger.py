@@ -48,7 +48,7 @@ class Ledger:
                 seen.add(digest)
             count, size = 0, os.fstat(stream.fileno()).st_size
             # Validate the complete batch before appending, without retaining its bodies in memory.
-            with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as additions:
+            with tempfile.TemporaryFile(mode='w+', encoding='utf-8', dir=self.path.parent) as additions:
                 for record in records:
                     encoded, digest = register(record, identities, 'conflicting reingestion; existing ledger unchanged')
                     if digest in seen:

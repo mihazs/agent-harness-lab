@@ -98,6 +98,30 @@ def test_public_analysis_reads_scoped_session_and_reports_evidence_gap(observati
         (repeated / 'analysis.json').read_text())['fingerprint']
 
 
+def test_analysis_scratch_uses_selected_stable_output(observation_wire, tmp_path, monkeypatch, capsys):
+    import tempfile
+    project = tmp_path / 'project'; project.mkdir()
+    ambient = tmp_path / 'ambient'; ambient.mkdir()
+    output = tmp_path / 'analysis'
+    original_temporary, original_named = tempfile.TemporaryFile, tempfile.NamedTemporaryFile
+    locations = []
+    def temporary(*args, **kwargs):
+        locations.append(kwargs.get('dir'))
+        return original_temporary(*args, **kwargs)
+    def named(*args, **kwargs):
+        locations.append(kwargs.get('dir'))
+        return original_named(*args, **kwargs)
+    monkeypatch.setattr(tempfile, 'tempdir', str(ambient))
+    monkeypatch.setattr(tempfile, 'TemporaryFile', temporary)
+    monkeypatch.setattr(tempfile, 'NamedTemporaryFile', named)
+    assert main(['analyze', str(project), '--memory-manifest', str(observation_wire.manifest),
+                 '--authorization-file', str(observation_wire.auth), '--output', str(output)]) == 0
+    capsys.readouterr()
+    assert len(locations) == 3 and all(path == output for path in locations)
+    assert list(ambient.iterdir()) == []
+    assert not any(path.name.startswith('tmp') for path in output.iterdir())
+
+
 def test_pagination_has_no_aggregate_read_or_request_cap(observation_wire):
     wire = observation_wire
     wire.page_size = 1

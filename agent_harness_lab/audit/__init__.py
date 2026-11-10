@@ -328,5 +328,5 @@ def run(checkout, runtime, *, task_cwd='.', project_trust='unknown', collision_t
     if runtime not in surfaces.RUNTIMES: raise ValueError('unknown audit runtime')
     profile = dict(schema_version=1, runtime=runtime, version=surfaces.PINS[runtime], task_cwd=task_cwd)
     if project_trust != 'unknown': profile['project_trust'] = project_trust
-    return audit(harness_inventory.capture(checkout, profile), task_cwd=task_cwd, collision_threshold=collision_threshold,
+    return audit(harness_inventory.capture(checkout, profile, schema_version=2), task_cwd=task_cwd, collision_threshold=collision_threshold,
                  codex_project_doc_max_bytes=codex_project_doc_max_bytes)

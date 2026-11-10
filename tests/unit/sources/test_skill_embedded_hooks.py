@@ -41,7 +41,7 @@ def test_checkout_inventory_retains_only_private_hook_metadata(tmp_path):
     skill.write_text('---\nname: sample\ndescription: synthetic\nhooks:\n  PreToolUse:\n'
                      '    - hooks:\n        - type: command\n          command: SYNTHETIC_SECRET\n---\n')
     profile = dict(schema_version=1, runtime='claude-code', version=surfaces.PINS['claude-code'], task_cwd='.')
-    inventory = harness_inventory.capture(tmp_path, profile)
+    inventory = harness_inventory.capture(tmp_path, profile, schema_version=2)
     node = next(node for node in inventory.nodes if node.path == '.claude/skills/sample/SKILL.md')
     assert dict(node.facts)['embedded_hook_key_hashes_unvalidated'] == digest('PreToolUse')
     assert dict(node.facts)['embedded_hooks'] == 'unknown'

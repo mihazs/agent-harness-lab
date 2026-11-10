@@ -159,7 +159,7 @@ class HarnessInventory:
                 or (self.status == 'blocked') != (self.blocked_reason is not None)
                 or self.status != 'declared' and (self.nodes or self.refusals)
                 or type(self.external_roots) is not tuple or self.observed_loading != 'unknown' or self.effective != 'unknown'
-                or type(self.schema_version) is not int or self.schema_version != 1):
+                or type(self.schema_version) is not int or self.schema_version not in (1, 2)):
             raise ValueError('invalid harness inventory')
         for name in self.external_roots: label(name)
         if self.blocked_reason is not None: label(self.blocked_reason)
@@ -173,7 +173,7 @@ class HarnessInventory:
             nodes=len(self.nodes), refusals=len(self.refusals), observed_loading='unknown', effective='unknown')
 
     def document(self):
-        return dict(asdict(self), profile=PROFILE, harness_inventory_sha256=self.sha256, publication_allowed=False,
+        return dict(asdict(self), profile=PROFILE if self.schema_version == 1 else 'ahl-harness-inventory-v2', harness_inventory_sha256=self.sha256, publication_allowed=False,
             adoption_authority=False, loading_evidence=False)
 
 
@@ -182,8 +182,8 @@ class _Blocked(Exception):
 
 
 class _Walk:
-    def __init__(self, profile):
-        self.profile, self.parsers = profile, parsers()
+    def __init__(self, profile, schema_version=1):
+        self.profile, self.parsers, self.schema_version = profile, parsers(), schema_version
         self.nodes, self.refusals, self.directories = [], [], set()
         self.entries = self.bytes = self.facts = 0
 
@@ -239,6 +239,8 @@ class _Walk:
             raw = self.read(descriptor, name, info)
             content, state = hashlib.sha256(raw).hexdigest(), 'present'
             status, facts = self.dispatch(surface, reference, path, raw)
+            if self.schema_version == 1:
+                facts = tuple((key, value) for key, value in facts if not _v2_fact(key))
             self.facts += len(facts)
             if self.facts > MAX_FACTS: raise _Blocked('fact_bound_exceeded')
         runtime = self.profile['runtime']
@@ -319,18 +321,26 @@ def external(roots, checkout):
     return tuple(result)
 
 
-def capture(checkout, profile, *, external_roots=None, harness_sha256=None, walk=None):
+def _v2_fact(key):
+    return (key.startswith(('config.permission_deny.', 'embedded_hook'))
+            or key in ('config.permission_deny_state', 'disable_all_hooks_valid', 'audit_top_level_supported')
+            or key.endswith(('.matcher_group_supported', '.audit_candidate_supported')))
+
+
+def capture(checkout, profile, *, external_roots=None, harness_sha256=None, walk=None, schema_version=1):
     """Inventory one checkout plus caller-declared roots; a bound overflow is blocked, never truncated.
 
     walk is an unused _Walk a caller passes to keep reading under the same entry, byte and file bounds."""
     validate(profile)
+    if type(schema_version) is not int or schema_version not in (1, 2): raise ValueError('unsupported inventory schema')
     roots = external(external_roots, checkout)
     identity = dict(runtime=profile['runtime'], version=profile['version'], profile_sha256=digest(profile),
         task_cwd_sha256=digest(profile['task_cwd']), harness_sha256=harness_sha256,
-        external_roots=tuple(name for name, _ in roots))
+        external_roots=tuple(name for name, _ in roots), schema_version=schema_version)
     if profile['version'] != surfaces.PINS[profile['runtime']]:
         return HarnessInventory(**identity, status='unsupported', nodes=(), refusals=())
-    walk = _Walk(profile) if walk is None else walk
+    walk = _Walk(profile, schema_version) if walk is None else walk
+    if walk.schema_version != schema_version: raise ValueError('inventory walk schema mismatch')
     try:
         walk.root(os.path.abspath(checkout), 'checkout', 'checkout')
         if profile['task_cwd'] not in walk.directories: raise ValueError('task_cwd is not a walked checkout directory')

@@ -61,7 +61,7 @@ class TestMultiSurfaceDispatch:
             '.claude/settings.json': json.dumps(SETTINGS), '.codex/config.toml': CONFIG_TOML}, hostile=False)
 
     def node(self, profile, path):
-        value = inventory.capture(self.checkout, profile)
+        value = inventory.capture(self.checkout, profile, schema_version=2)
         assert value.status == 'declared'
         return next(node for node in value.nodes if node.path == path)
 

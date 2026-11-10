@@ -97,7 +97,7 @@ def evidence(args, output, source_context=None, *, progress=None):
     incident_retrieval = contextual_search(getattr(args, 'incident_corpus', None), getattr(args, 'incident_query', None))
     if progress is None:
         progress = getattr(args, '_progress', None) or _progress_reporter()
-    with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as events, contextlib.ExitStack() as captures:
+    with tempfile.TemporaryFile(mode='w+', encoding='utf-8', dir=output) as events, contextlib.ExitStack() as captures:
         selected, source_format, memory_summary = args.events, args.format, None
         source_identity = {}
         if getattr(args, 'memory_manifest', None) is not None:
@@ -105,7 +105,7 @@ def evidence(args, output, source_context=None, *, progress=None):
             from .sources.schema import digest
             records, memory_summary = capture(args.memory_manifest, args.authorization_file, progress=progress)
             source_identity = dict(source_identity=digest([memory_summary['source_sha256'], memory_summary['session_sha256']]))
-            temporary = captures.enter_context(tempfile.NamedTemporaryFile(mode='w+', encoding='utf-8'))
+            temporary = captures.enter_context(tempfile.NamedTemporaryFile(mode='w+', encoding='utf-8', dir=output))
             for record in records:
                 temporary.write(serialize(record)+'\n')
             temporary.flush()
