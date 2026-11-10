@@ -7,6 +7,9 @@ import struct
 import sys
 import time
 
+MESSAGE_KINDS = frozenset(('agent-switched', 'model-switched', 'location-switched', 'user', 'synthetic',
+    'system', 'skill', 'shell', 'assistant', 'compaction', 'idle'))
+
 
 def main():
     # Native SQLite parsing occurs only after the hard process limits are in force.
@@ -41,6 +44,8 @@ def main():
                     and arg2 == 'session_id' and database == 'main' and trigger is None): return sqlite3.SQLITE_OK
             if (request.get('parts') is True and action == sqlite3.SQLITE_READ and arg1 == 'session_part'
                     and arg2 == 'session_id' and database == 'main' and trigger is None): return sqlite3.SQLITE_OK
+            if (isinstance(request.get('selected_message'), str) and action == sqlite3.SQLITE_READ and arg1 == 'session_message'
+                    and arg2 in ('id', 'session_id', 'type', 'seq') and database == 'main' and trigger is None): return sqlite3.SQLITE_OK
             return sqlite3.SQLITE_DENY
         connection.set_authorizer(authorize)
         deadline = time.monotonic()+1
@@ -71,6 +76,14 @@ def main():
                 count += 1
                 if count > 100000: raise ValueError('part count bound exceeded')
             result['part_count'] = count
+        if isinstance(request.get('selected_message'), str):
+            message_id = request['selected_message']
+            messages = connection.execute('SELECT id, type, seq FROM session_message '
+                'WHERE session_id = ? COLLATE BINARY AND id = ? COLLATE BINARY LIMIT 2', (session, message_id)).fetchall()
+            if len(messages) != 1 or messages[0][0] != message_id or type(messages[0][2]) is not int:
+                raise ValueError('selected message unavailable or malformed')
+            kind = messages[0][1]
+            result['message'] = dict(kind=kind if isinstance(kind, str) and kind in MESSAGE_KINDS else 'unknown', seq=messages[0][2])
         sys.stdout.write(json.dumps(result, allow_nan=False))
     finally:
         connection.close()
