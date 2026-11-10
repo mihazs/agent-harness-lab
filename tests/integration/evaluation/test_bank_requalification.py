@@ -29,6 +29,7 @@ from tests.integration.sandbox import test_sandbox_kernel as kernel
 from tests.integration.sandbox import test_sandbox_construction as roles
 from tests.integration.sandbox import test_sandbox_inference as wire
 from tests.integration.evaluation import test_bank_qualification_final as bank_fixtures
+from tests.support.unittest_cleanups import run_cleanups
 
 
 def test_serialized_or_copied_authority_cannot_reserve():
@@ -73,7 +74,8 @@ class TestBankRequalificationKernel(kernel.PytestKernelFixture):
     def owned_case(self,*,unbound_source=False,focus_check=None):
         bank_case=bank_fixtures.QualifiedBankKernelTests()
         bank_case.root,bank_case.cgroup_root=self.root,self.cgroup_root
-        actual,qualified,_,runtime,image,manifest,spec,path,history=bank_case.qualified_comparison()
+        self.addCleanup(run_cleanups,bank_case)
+        actual,qualified,bank_policy,runtime,image,manifest,spec,path,history=bank_case.qualified_comparison()
         deadline=time.monotonic()+120
         project=self.root/'project';project.mkdir();(project/'AGENTS.md').write_text('Synthetic baseline.')
         project_settings=config.defaults();project_settings['harness_paths']=['AGENTS.md']
@@ -95,8 +97,8 @@ class TestBankRequalificationKernel(kernel.PytestKernelFixture):
             engine_sha256=closed_inputs.pin(engine()),
             methodology_sha256=closed_inputs.tree_pin(assets()/'skills',deadline),
             history_identity_sha256=closed_inputs.store_identity(history.root),sources=[source])
-        store=ReviewStore(self.root/'review');key=self.root/'operator/reviewer'
-        policy=self.root/'operator/renewal-policy.json'
+        store=ReviewStore(Path(qualified['review_store']));key=bank_policy.parent/'reviewer'
+        policy=bank_policy.parent/'renewal-policy.json'
         policy.write_text(json.dumps(dict(schema_version=1,profile=authority.POLICY,purpose=renewal.PURPOSE,
             reviewers={'synthetic-reviewer':' '.join(key.with_suffix('.pub').read_text().split()[:2])})));policy.chmod(0o600)
         assert bank_fixtures.invoke(store.root,'trust-delegation-reviewers','--policy',policy)[0] == 0
@@ -127,13 +129,16 @@ class TestBankRequalificationKernel(kernel.PytestKernelFixture):
         closed_inputs.bind_scope(handle,scope,baseline)
         views=construction.views(data,assets(),output/'views',deadline,closed_domain=handle)
         counter=[0]
+        from agent_harness_lab.evaluation.reference_grader import PROGRAM
+        author_script=roles.AUTHOR+"\nPath('oracle/grade.py.txt').write_text("+repr(PROGRAM)+")\n" \
+            +"Path('oracle/expected.json').write_text(json.dumps(dict(complete=True,scenario=2)))\n"
         def transport(credential,body,max_bytes,request_deadline):
             assert credential is None;counter[0]+=1;ident=str(counter[0]);payload=json.loads(body)
             if any(item.get('type')=='function_call_output' for item in payload['input']):
                 return wire.reply([wire.message('final-'+ident)])
             developer=payload['input'][0]['content']
             argv=['/usr/bin/python3','-c',roles.PROPOSER,'good'] if 'You are the proposer' in developer else [
-                '/usr/bin/python3','-c',roles.AUTHOR,'1','complete']
+                '/usr/bin/python3','-c',author_script,'2','complete']
             return wire.reply([wire.call(ident,arguments=json.dumps(dict(argv=argv)))])
         client=responses.Client(settings,None,deadline,transport=transport)
         access=WorkflowAccess(args,output,baseline,client,backend,deadline);self.addCleanup(access.retire)
@@ -151,7 +156,7 @@ class TestBankRequalificationKernel(kernel.PytestKernelFixture):
         # Freeze the actual final plan only after the owned candidate exists.
         runner=evaluator();tasks=manifest['tasks'];family=tasks[0]['family']
         spec=ExperimentSpec('synthetic-renewed-final',tuple((t['id'],t['root'],t['family']) for t in tasks),
-            1,13,2,2,0.,0.,.05,((family,1.),),runner.digest(baseline),runner.digest(frozen),
+            1,13,6,2,0.,0.,.05,((family,1.),),runner.digest(baseline),runner.digest(frozen),
             identity(path.parent,tasks,manifest['grader_bundles']),image)
         manifest['experiment']=asdict(spec);path.write_text(json.dumps(manifest))
         return store,qualified['case_id'],handle,path,baseline,frozen,history,runtime,image,deadline,policy,client

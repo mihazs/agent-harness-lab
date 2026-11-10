@@ -143,7 +143,7 @@ def _check(owned, *, pending=True):
     for path,pin in owned['originals'].items():
         if _input_pin(path,owned['deadline'],owned.get('analysis',False) and path==owned['original_context'])!=pin: raise ValueError('original canonical input changed')
     entry=ledger.construction_record(owned['store'].access_ledger().path,owned['ident'])
-    if (entry['input_binding_sha256']!=_hash(owned['inputs']) or entry['role']!=owned['role']
+    if (entry['input_binding_sha256']!=_hash(owned['inputs']) or entry['role']!=owned.get('ledger_role',owned['role'])
             or entry['parent_assets']!=owned['inputs']['parent_assets']
             or entry['parent_construction_id']!=owned['inputs']['parent_construction_id']
             or (pending and entry['state']!='pending')):
@@ -207,10 +207,18 @@ class WorkflowAccess:
             attach(closed,self)
             _SCOPES[self]['closed_domain']=closed
 
-    def _run(self,role,context,destination,*,candidate=None,focus=None,analysis=False):
+    def _run(self,role,context,destination,*,candidate=None,focus=None,analysis=False,bank_conversion=None):
         if type(analysis) is not bool:raise ValueError('explicit analysis input selection required')
+        if bank_conversion is not None and (role!='evaluator_author' or type(bank_conversion) is not dict
+                or set(bank_conversion)!={'metadata','controls_manifest','output','review_store','declaration'}):
+            raise ValueError('exact author bank conversion inputs required')
         from . import construction
         data=_scope(self); deadline=data['deadline']; store=data['store']
+        if data.get('final_author_started'):raise ValueError('final author scope cannot dispatch further roles')
+        if bank_conversion is not None:
+            from agent_harness_lab.promotion.prerequisites import current as current_scope
+            if current_scope() is None or data['backend'].permission_audit is None:
+                raise ValueError('author conversion requires a live native scope and permission audit')
         context=ledger._path(context); destination=ledger._path(destination)
         paths=[data['baseline'],context,*([ledger._path(candidate)] if candidate is not None else [])]
         _disjoint(store.root,[*paths,destination])
@@ -238,7 +246,9 @@ class WorkflowAccess:
             inputs['closed_input']=stage_input(closed,self,role,context,parent=parent,
                 feedback=data['feedback'][1] if parent is not None else None)
         _scope(self)
-        ident=ledger.begin_construction(store.access_ledger().path,role,_hash(inputs),parent=parent,parents=parents)
+        ledger_role='final_bank_author' if bank_conversion is not None else role
+        if bank_conversion is not None:data['final_author_started']=True
+        ident=ledger.begin_construction(store.access_ledger().path,ledger_role,_hash(inputs),parent=parent,parents=parents)
         data['attempts'].append((ident,role,_hash(inputs)))
         folder=contained(store.root,'constructions/'+ident)
         active=contained(data['output'],'.construction-roles/'+ident)
@@ -266,21 +276,27 @@ class WorkflowAccess:
             if role=='proposer':
                 value.update(candidate_tree_sha256=originals[ledger._path(candidate)],seed_tree_sha256=seed_pin)
             write_bytes(folder/'handoff.json',encoded(value))
-            owned=dict(scope=ref(self),store=store,ident=ident,folder=folder,active=active,role=role,pid=issuer,used=False,
+            owned=dict(scope=ref(self),store=store,ident=ident,folder=folder,active=active,role=role,ledger_role=ledger_role,pid=issuer,used=False,
                 baseline=active/'baseline',context=active/'context',original_context=context,analysis=analysis,deadline=deadline,value=value,inputs=inputs,
                 client=data['client'],backend=data['backend'],settings=data['settings'],settings_path=data['settings_path'],originals=originals,seed_pin=seed_pin)
             handle=_Stage(); _STAGES[handle]=owned
             args=(data['client'],data['backend'],owned['baseline'],owned['context'],active/'work',active/'published',deadline)
             capture=None
-            if closed is not None:
-                from .closed_inputs import owned as closed_owned
+            if closed is not None or bank_conversion is not None:
                 from .construction_seals import begin
-                capture=begin(closed_owned(closed)['scope'],data['client'],data['backend'],role,
+                if closed is not None:
+                    from .closed_inputs import owned as closed_owned
+                    stage_scope=closed_owned(closed)['scope']
+                else:
+                    stage_scope=current_scope()
+                capture=begin(stage_scope,data['client'],data['backend'],role,
                     owned['baseline'],owned['context'],deadline)
             if role=='proposer':
                 _,_,commands=construction.propose(*args,focus=focus,exposure=handle,**({'analysis':True} if analysis else {}))
             else:
-                _,commands=construction.author(*args,derivation=handle,**({'analysis':True} if analysis else {}))
+                options={'analysis':True} if analysis else {}
+                if bank_conversion is not None:options['bank_qualification']=True
+                _,commands=construction.author(*args,derivation=handle,**options)
             if not owned['used']: raise ValueError('canonical role did not consume its actual handoff')
             _check(owned)
             if owned.get('produced_pin')!=_tree_pin(active/'published',deadline):
@@ -290,17 +306,20 @@ class WorkflowAccess:
             if capture is not None:
                 from .construction_seals import finish,read
                 seal=finish(capture,original,destination=active/'published')
-                sealed=read(seal,closed_owned(closed)['scope'])
-            children=[]
+                sealed=read(seal,stage_scope)
+            children=[]; references=None
             if role=='evaluator_author':
                 path=active/'published/manifest.json'; source,manifest_pin=record(path,ledger.MAX_BYTES)
                 original_manifest=next(raw for name,_,raw in original.files if name=='manifest.json')
                 if manifest_pin!=hashlib.sha256(original_manifest).hexdigest():
                     raise ValueError('actual canonical manifest changed during capture')
                 if not 3<=len(source['tasks'])<=5: raise ValueError('canonical author requires the existing bounded task count')
+                if bank_conversion is not None and any(task.get('split')!='heldout' for task in source['tasks']):
+                    raise ValueError('final bank author may produce only held-out tasks')
                 check=lambda:check_deadline(deadline)
                 expected_capture=ledger.snapshot_exposure(original,source['tasks'],source['grader_bundles'],check)
                 captured=ledger.exposure(path.parent,source['tasks'],source['grader_bundles'],check)
+                references=ledger.covered_oracle_references(path.parent,source['tasks'],source['grader_bundles'],check)
                 if captured!=expected_capture or _tree_pin(path.parent,deadline)!=owned['produced_pin']:
                     raise ValueError('actual canonical output changed during asset capture')
                 children,_=captured
@@ -324,13 +343,13 @@ class WorkflowAccess:
             if (_tree_pin(folder/'published',deadline)!=output['tree_sha256']
                     or record(folder/'output.json',ledger.MAX_BYTES)[1]!=_hash(output)):
                 raise ValueError('canonical output changed before registration')
-            ledger.finish_construction(store.access_ledger().path,ident,_hash(inputs),children,_hash(output)); completed=True
+            ledger.finish_construction(store.access_ledger().path,ident,_hash(inputs),children,_hash(output),references=references); completed=True
             owned['output']=output; owned['destination']=destination; owned['consumer_snapshot']=expected
             data['stages'].append(owned)
-            if seal is not None:
+            if closed is not None:
                 from .closed_inputs import add_stage
                 add_stage(closed,self,ident,seal,output)
-            if role=='evaluator_author': data['last_author']=owned
+            if role=='evaluator_author' and bank_conversion is None: data['last_author']=owned
             produced.publish(destination,deadline); owned['published']=True
             _check(owned,pending=False)
             if role=='proposer':
@@ -339,6 +358,11 @@ class WorkflowAccess:
                 if pin!=hashlib.sha256(raw).hexdigest():raise ValueError('published proposal differs from actual producer')
                 _scope(self)
                 return proposal,destination/'candidate',commands
+            if bank_conversion is not None:
+                if seal is None:raise ValueError('live sealed author boundary required for bank conversion')
+                from .author_bank_conversion import convert
+                converted=convert(handle,seal,stage_scope,**bank_conversion)
+                return destination/'manifest.json',commands,converted
             return destination/'manifest.json',commands
         except BaseException:
             if capture is not None:
@@ -356,8 +380,8 @@ class WorkflowAccess:
             raise ValueError('focus is unsupported by the closed input profile')
         return self._run('proposer',context,destination,candidate=candidate,focus=focus,analysis=analysis)
 
-    def author(self,context,destination,*,analysis=False):
-        return self._run('evaluator_author',context,destination,analysis=analysis)
+    def author(self,context,destination,*,analysis=False,bank_conversion=None):
+        return self._run('evaluator_author',context,destination,analysis=analysis,bank_conversion=bank_conversion)
 
     def freeze_candidate(self,candidate,destination):
         data=_scope(self)
@@ -391,6 +415,7 @@ class WorkflowAccess:
 
     def feedback(self,rows):
         data=_scope(self); author=data['last_author']
+        if data.get('final_author_started'):raise ValueError('final author scope cannot issue feedback')
         if author is None: raise ValueError('feedback requires actual same-workflow author custody')
         _check(author,pending=False)
         source,_=record(author['folder']/'published/manifest.json',ledger.MAX_BYTES)

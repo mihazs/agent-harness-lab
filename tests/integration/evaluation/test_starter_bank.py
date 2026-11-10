@@ -17,7 +17,7 @@ BANK=ROOT/'agent_harness_lab/evaluation/fixtures/starter-v1/bank.json'
 class TestStarterBank:
     def test_all_falsifiers_and_alternative_valid_solutions_are_graded(self):
         result=audit_graders(BANK,cooperative=True)
-        assert len(result['checks']) == 29
+        assert len(result['checks']) == 36
         assert all(c['status']=='passed' for c in result['checks'])
         assert result['real_agent_trials'] == 'not_run'
         assert not validate(BANK)['certification_eligible']
@@ -51,7 +51,7 @@ class TestStarterBank:
         with patch('builtins.print') as output:
             assert main(['bank','--starter','--audit','--cooperative-controls']) == 3
         result=json.loads(output.call_args.args[0])
-        assert len(result['grader_audit']['checks']) == 29
+        assert len(result['grader_audit']['checks']) == 36
         assert not result['certification_eligible']
 
     def test_runner_rejects_changed_declared_grader_data_before_agent_launch(self, tmp_path):

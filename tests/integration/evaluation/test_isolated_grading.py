@@ -113,10 +113,11 @@ def test_all_controls_use_fresh_regrading_with_mock_backend(rg):
     with patch.object(SandboxBackend, 'capability', return_value={'status': 'available'}), \
             patch.object(SandboxBackend, 'run', side_effect=execute) as launch:
         result = audit_graders(BANK, sandbox=True)
-    assert launch.call_count == 29
+    assert launch.call_count == 36
     assert result['status'] == 'controls_passed'
+    assert sum(c['control']=='no_op' and c['status']=='passed' for c in result['checks']) == 7
     assert (all(c['regrade']['outcome'] is (c['control'] in ('complete', 'alternative_valid'))
-                        for c in result['checks']))
+                        for c in result['checks'] if c['control']!='no_op'))
     assert not result['automatic_promotion']
 
 
@@ -128,4 +129,5 @@ def test_live_offline_regrading_when_supported(rg):
     assert result['status'] == 'passed'
     audit = audit_graders(BANK, sandbox=True)
     assert audit['status'] == 'controls_passed'
-    assert len(audit['checks']) == 29
+    assert len(audit['checks']) == 36
+    assert sum(c['control']=='no_op' and c['status']=='passed' for c in audit['checks']) == 7

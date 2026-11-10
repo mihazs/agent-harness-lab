@@ -91,3 +91,75 @@ Run `task test:evaluation:bank-qualification`. The canonical `test:installed` ta
 includes the same native tests and forwards `PYTHON`, `LAYOUT_DIR` and
 `EXPECTED_PACKAGE_ROOT`; an actual import-root assertion checks installed layouts.
 All fixtures in these checks are independently synthetic and credential-free.
+
+The descriptive and owned control audits grade a frozen copy of each untouched
+fixture (`no_op`). A valid passing result is rejected as `vacuous_success`;
+malformed, unrunnable, incomplete or timed-out controls cannot qualify. This
+check alone does not establish resistance to superficial changes.
+
+For conditional final-bank qualification, `bank-review intake` also accepts
+`--heldout-controls` pointing to a separate owner-only directory's manifest.
+The manifest is a JSON object with `schema_version: 1`, a `curator` distinct
+from the bank author, nonempty `evidence_refs` in the existing review-reference
+format, and `tasks` mapping every task ID to a list of one to sixteen objects
+with `path` (relative to the manifest) and `sha256` (the control fixture tree
+digest). These are complete workspace snapshots, not executable mutator code.
+At most 100 snapshots are accepted. Each must change bytes actually exported to
+the grader relative to the materialized original fixture. Copies are frozen in
+an owner-only sibling of the bank, never in the grader bundle. Snapshots already
+used in another case in the same review store are refused.
+
+The native audit runs every frozen snapshot in the isolated grader path and
+requires an explicit negative outcome. Its private receipt binds the exact
+control tree, original bank and sandbox execution. An interrupted audit remains
+incomplete. The separate trusted reviewer signs a request binding those receipts,
+the curator and evidence references, and judgments that curation was independent
+and that the task author had not seen the controls before intake. It also binds
+the reviewer's `negative_control_semantics: reviewed` judgment that the supplied
+negative snapshots represent superficial changes that do not fix the intended
+behavior. This is a signed reviewer judgment, not an observation by the grader.
+Earlier signed requests without this judgment cannot qualify. The reviewer
+must differ from both author and curator. These are conditional, authenticated
+human judgments: identity strings, checksums and a private directory do not prove
+who saw the inputs. The native execution receipts do not establish prior author
+isolation or global non-exposure. Operator access, external exposure and control
+semantics outside the selected artifact bytes remain outside observed custody.
+
+Cases without separately frozen controls cannot be audited. Imported banks and
+legacy qualified revisions lack observed author-role custody and cannot establish
+current eligibility. A controller-managed `WorkflowAccess.author` call may pass
+`bank_conversion` with `metadata`, `controls_manifest`, `output`, `review_store`
+and `declaration`. Before its author stage retires, the controller requires a
+live construction seal, native scope and qualified native permission
+boundary, converts the authored held-out tasks while preserving their exact
+fixture and grader trees, and intakes the converted bank through a one-use live
+handoff. The metadata fields are declarations, not findings. The controller
+rejects changed control artifact bytes found in an author input or output; this
+byte comparison does not detect transformed or previously disclosed information.
+Replay checks the construction ledger, native seal, source assets, frozen bank
+and control bytes before conditional signed review or qualification.
+The dedicated final-author ledger role accepts held-out tasks only and closes the
+workflow to later role dispatch and feedback. Only its own verified construction
+is excluded from the development-asset check; matching ordinary development
+assets, prior observations and reservations remain disqualifying.
+
+Current positive final-bank review supports the controller-owned
+`ahl-json-reference-v1` grader only. Its exact program bytes are checked before
+qualification; it runs with Python `-I -S` and reads `result.json` and a nonempty
+strict JSON object in `expected.json`. The result must contain that object's fields
+with matching types and values. Other grader programs remain unqualified. The
+controller records raw file identities and canonical JSON subtree and scalar
+value identities for prior oracle files, in addition to whole-bundle identities.
+It compares these with values in the final reference: a changed bundle, filename,
+JSON key order or surrounding object does not make a matching value fresh.
+Repeated ordinary values can cause conservative blocks. Earlier nonempty ledgers without
+this per-file coverage, prior opaque grader programs, and observations whose
+coverage is unavailable remain unknown and block final-bank qualification.
+Matching common oracle data may also
+block a bank conservatively. This comparison cannot detect embedded substrings,
+semantic transformations or external exposure; it does not establish global
+non-exposure or complete role isolation.
+
+Descriptive audits remain available and do not confer certification or automatic
+promotion authority. The controlled author workflow requires its configured model;
+the bank audit itself makes no model calls.
