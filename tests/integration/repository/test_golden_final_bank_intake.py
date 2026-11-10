@@ -16,6 +16,9 @@ GOLDEN = Path(__file__).resolve().parents[2] / 'support/golden_profiles/conditio
 
 
 def test_saved_synthetic_final_bank_intake_does_not_qualify_a_bank(tmp_path):
+    virtual_history = Path('/synthetic/history')
+    if any(path.is_symlink() for path in (virtual_history, *virtual_history.parents)):
+        pytest.skip('fixed synthetic history locator crosses a host symlink')
     saved = json.loads(GOLDEN.read_text())
     root = tmp_path/'review-store'
     root.mkdir(mode=0o700)
