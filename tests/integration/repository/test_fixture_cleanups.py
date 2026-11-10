@@ -216,3 +216,23 @@ def test_review_helpers_propagate_nested_cleanup_failure(monkeypatch, authority)
     with pytest.raises(RuntimeError, match='synthetic review cleanup failure'):
         with ExitStack() as cleanups:
             helper(cleanups.callback)
+
+
+@pytest.mark.parametrize('module,helper', [
+    ('tests.integration.evaluation.test_regression_controls', 'RegressionControl'),
+    ('tests.integration.evaluation.test_grader_correction', 'GraderCorrection'),
+])
+def test_grader_helpers_propagate_cleanup_failure(monkeypatch, tmp_path, module, helper):
+    from contextlib import ExitStack
+    import importlib
+    from types import SimpleNamespace
+
+    target = importlib.import_module(module)
+    def fail():
+        raise RuntimeError('synthetic grader cleanup failure')
+
+    monkeypatch.setattr(target.tempfile, 'TemporaryDirectory',
+                        lambda: SimpleNamespace(name=str(tmp_path), cleanup=fail))
+    with pytest.raises(RuntimeError, match='synthetic grader cleanup failure'):
+        with ExitStack() as cleanups:
+            getattr(target, helper)(cleanups.callback)

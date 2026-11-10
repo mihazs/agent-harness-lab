@@ -1,11 +1,10 @@
 """Shared synthetic reviewed bank correction."""
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import hashlib
 import json
 
 from agent_harness_lab.evaluation.oracle_history import HistoryStore
 from tests.integration.evaluation import test_grader_correction as corrections
-from tests.support.unittest_cleanups import run_cleanups
 
 
 class BankCorrection:
@@ -42,9 +41,5 @@ class BankCorrection:
 
 @contextmanager
 def bank_correction():
-    fixture = corrections.GraderCorrectionTests()
-    try:
-        fixture.setUp()
-        yield BankCorrection(fixture)
-    finally:
-        run_cleanups(fixture)
+    with ExitStack() as cleanups:
+        yield BankCorrection(corrections.GraderCorrection(cleanups.callback))

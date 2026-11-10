@@ -432,8 +432,8 @@ class TestRegressionDraftKernel(KernelCase):
         assert report['unobserved']['model_compliance'] == 'unknown'
 
     def test_grader_correction_audits_real_controls_without_a_behavioral_failure_claim(self):
-        from tests.integration.evaluation.test_grader_correction import GraderCorrectionTests
-        fixture = GraderCorrectionTests(); fixture.setUp(); self.addCleanup(run_cleanups, fixture)
+        from tests.integration.evaluation.test_grader_correction import GraderCorrection
+        fixture = GraderCorrection(self.addCleanup)
         rootfs = self.root/'runtime'; frozen = pinned_runtime(rootfs)
         fixture.spec_value['image_sha256'] = frozen['sha256']; fixture.write_spec()
         parent = fixture.bank.read_bytes(); proposed = fixture.propose()
@@ -464,8 +464,8 @@ class TestRegressionDraftKernel(KernelCase):
         from agent_harness_lab.evaluation.oracle import identity
         from agent_harness_lab.evaluation.oracle_history import HistoryStore
         from agent_harness_lab.evaluation.plan import ExperimentSpec,schedule
-        from tests.integration.evaluation.test_grader_correction import GraderCorrectionTests
-        fixture = GraderCorrectionTests(); fixture.setUp(); self.addCleanup(run_cleanups, fixture)
+        from tests.integration.evaluation.test_grader_correction import GraderCorrection
+        fixture = GraderCorrection(self.addCleanup)
         rootfs = self.root/'runtime'; frozen = pinned_runtime(rootfs)
         fixture.spec_value['image_sha256'] = frozen['sha256']; fixture.write_spec()
         proposed = fixture.propose()
