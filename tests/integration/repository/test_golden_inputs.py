@@ -1,0 +1,157 @@
+"""Frozen synthetic inputs for actual versioned contract validators.
+
+This initial batch does not yet enumerate all JSON contracts.
+"""
+import json
+from pathlib import Path
+
+import pytest
+
+from agent_harness_lab.diagnostics import audit_sampling, drift, triage_policy
+from agent_harness_lab import config_recommendations
+from agent_harness_lab.evaluation import behavior, interaction_contract, resource_decision
+from agent_harness_lab.evaluation.benchmark import public_export_allowed
+from agent_harness_lab.sources import (agents_validation, claude_rules, commands_inventory, config_inventory,
+                                       harness_inventory, plugins_inventory)
+from tests.unit.evaluation.test_benchmark_contracts import record as public_record
+
+GOLDENS = Path(__file__).resolve().parents[2] / 'support/golden_profiles'
+
+
+def sample(name):
+    return json.loads((GOLDENS / (name + '.json')).read_text())
+
+
+def test_interaction_contract_v1_preserves_clarification_boundary():
+    value = interaction_contract.validate(sample('interaction-contract-v1'))
+    assert (value['endpoint'], value['required_clarifications'], value['permitted_mutations']) == (
+        'interaction_boundary', ['target'], [])
+
+
+def test_resource_noninferiority_v1_preserves_quality_parameters():
+    value = resource_decision.validate(sample('resource-noninferiority-v1'))
+    assert (value['alpha'], value['min_roots']) == (0.05, 10)
+    assert (value['endpoints'][0]['scope'], value['endpoints'][0]['horizon']) == ('all_assigned', 100)
+
+
+def test_final_artifact_effects_v1_preserves_oracle_policy():
+    raw = (GOLDENS/'final-artifact-effects-v1.json').read_text()
+    value = behavior._policy(behavior._load(raw), 'synthetic-task')
+    assert value['exposure'] == 'public_development'
+    assert all(effect['severity'] == 'critical' for effect in value['effects'].values())
+    with pytest.raises(ValueError, match='unsupported behavior policy'):
+        behavior._policy({**value, 'profile': 'unknown-v999'}, 'synthetic-task')
+
+
+def test_triage_policy_v2_preserves_class_order_and_isolation():
+    value = sample('diagnostic-triage-policy-v2')
+    names, forbidden = triage_policy.check_policy(value)
+    assert names == ('instruction_drift', 'no_incident', 'tool_misuse')
+    assert forbidden == {}
+    assert value['classes']['tool_misuse']['severity'] == 'severe'
+
+
+def test_interaction_contract_v1_output_preserves_unknown_and_private_semantics():
+    # This profile also labels an output; it is not a loadable declaration.
+    expected = sample('interaction-contract-v1-output')
+    assert interaction_contract.evaluate({}, {}) == expected
+    assert expected['unknowns'] == ['contract_or_evidence_invalid']
+    assert expected['publication_allowed'] is False
+
+
+def test_audit_sampling_frame_v1_keeps_eligible_units_and_identity():
+    result = audit_sampling.freeze(sample('audit-sampling-frame-v1'))
+    assert result['summary']['eligible_units'] == 1
+    assert result['frame_sha256'] == '9399e979ead7a398d527a109a239664806696ab8dfc0c9ea77491c5b75af7d3b'
+
+
+def test_drift_plan_v1_preserves_policy_identity():
+    assert drift.check_plan(sample('drift-plan-v1')) == 'e4dd0ff9aebf925aa43dcc667d24a333603925f15327430247d781335cf5c6c2'
+
+
+def test_sampling_plan_and_sealed_receipt_v1_keep_review_custody():
+    frame = sample('audit-sampling-frame-v1')
+    plan = sample('audit-sampling-plan-v1')
+    receipt = sample('audit-sampling-receipt-v1')
+    assert audit_sampling.draw(frame, plan) == receipt
+    queue = audit_sampling.review_queue(receipt)
+    assert queue['prediction_masked'] is True
+    assert queue['receipt_sha256'] == receipt['receipt_sha256']
+    assert len(queue['units']) == 1
+    assert receipt['publication_allowed'] is False
+    with pytest.raises(ValueError, match='audit sampling receipt required'):
+        audit_sampling.review_queue({**receipt, 'profile': 'unknown-v999'})
+    with pytest.raises(ValueError, match='invalid audit plan schema'):
+        audit_sampling.draw(frame, {**plan, 'profile': 'unknown-v999'})
+
+
+def test_definition_validation_output_v1_keeps_blocked_private_verdict():
+    finding = agents_validation.Finding(path='.codex/agents/synthetic.toml', runtime='codex', kind='agent',
+        action='create', verdict='blocked', reasons=('missing_required_field',))
+    output = agents_validation.Review((finding,)).document()
+    assert json.loads(json.dumps(output)) == sample('ahl-definition-validation-v1')
+    assert output['verdict'] == 'blocked' and output['publication_allowed'] is False
+
+
+def test_triage_evaluation_v2_preserves_private_synthetic_result():
+    rows = [dict(root_case_id='synthetic-root', split='heldout', label='tool_misuse',
+        scores={'tool_misuse': 0.9, 'instruction_drift': 0.05, 'no_incident': 0.05})]
+    output = triage_policy.evaluate(sample('diagnostic-triage-policy-v2'), rows)
+    assert output == sample('diagnostic-triage-evaluation-v2')
+    assert output['publication_allowed'] is False
+
+
+def test_config_inventory_v1_preserves_empty_private_output(tmp_path):
+    profile = dict(schema_version=1, runtime='codex', version='0.166.0', task_cwd='.')
+    output = config_inventory.capture(tmp_path, profile)
+    assert output == sample('ahl-config-inventory-v1')
+    assert output['publication_allowed'] is False and output['effective'] == 'unknown'
+
+
+def test_config_inventory_v1_loads_into_private_recommendation():
+    value = sample('ahl-config-inventory-v1')
+    output = config_recommendations.recommend(value)
+    assert output == sample('ahl-config-recommendations-v1')
+    assert output['exec_policy'] == 'not_inventoried' and output['publication_allowed'] is False
+    with pytest.raises(ValueError, match='expected a ahl-config-inventory-v1 document'):
+        config_recommendations.recommend({**value, 'profile': 'unknown-v999'})
+
+
+@pytest.mark.parametrize(('name', 'capture', 'field', 'count'), [
+    ('ahl-commands-inventory-v1', commands_inventory.capture, 'entries', 1),
+    ('ahl-plugin-inventory-v1', plugins_inventory.capture, 'plugins', 1),
+    ('ahl-harness-inventory-v1', harness_inventory.capture, 'nodes', 3),
+    ('ahl-claude-rules-v1', claude_rules.capture, 'nodes', 1),
+])
+def test_synthetic_inventory_output_remains_private(tmp_path, name, capture, field, count):
+    files = {'.claude/commands/review.md': '---\ndescription: Review a synthetic task\n---\nReview the synthetic task.\n',
+             '.claude/rules/style.md': 'Use synthetic conventions.\n',
+             '.claude/settings.json': '{"enabledPlugins":{"synthetic@market":true}}\n'}
+    for name_, text in files.items():
+        path = tmp_path/name_; path.parent.mkdir(parents=True, exist_ok=True); path.write_text(text)
+    profile = dict(schema_version=1, runtime='claude-code', version='2.1.317', task_cwd='.')
+    output = json.loads(json.dumps(capture(tmp_path, profile).document()))
+    assert output == sample(name)
+    assert len(output[field]) == count
+    assert output['publication_allowed'] is False
+
+
+@pytest.mark.parametrize('name', ['interaction-contract-v1-output', 'audit-sampling-receipt-v1',
+    'ahl-definition-validation-v1', 'diagnostic-triage-evaluation-v2', 'ahl-config-inventory-v1',
+    'ahl-config-recommendations-v1', 'ahl-commands-inventory-v1', 'ahl-plugin-inventory-v1',
+    'ahl-harness-inventory-v1', 'ahl-claude-rules-v1'])
+def test_private_golden_output_cannot_be_relabelled_as_a_public_benchmark(name):
+    assert not public_export_allowed([sample(name) | public_record() | {'publication_allowed': True}])
+
+
+@pytest.mark.parametrize(('name', 'validator', 'reason'), [
+    ('interaction-contract-v1', interaction_contract.validate, 'unsupported interaction contract'),
+    ('resource-noninferiority-v1', resource_decision.validate, 'unsupported resource contract profile'),
+    ('diagnostic-triage-policy-v2', triage_policy.check_policy, 'invalid triage policy v2 schema'),
+    ('audit-sampling-frame-v1', audit_sampling.freeze, 'invalid audit frame schema'),
+    ('drift-plan-v1', drift.check_plan, 'invalid drift plan v1 schema'),
+])
+def test_unsupported_profile_is_rejected_with_named_reason(name, validator, reason):
+    value = sample(name); value['profile'] = 'unknown-v999'
+    with pytest.raises(ValueError, match=reason):
+        validator(value)
