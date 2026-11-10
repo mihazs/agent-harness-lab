@@ -286,3 +286,33 @@ estimates. The issue still tracks logged budget changes and adaptive sampling
 decisions, cluster designs beyond the declared unit, review-queue export
 integration, and versioned summaries consumed by #15 monitoring and the triage
 gate. Prediction-powered e-values remain an experimental extension for later.
+
+## Opt-in fixed-size hard-budget design
+
+`agent_harness_lab.diagnostics.audit_fixed` is a separate offline design for a
+hard review budget. Its `audit-fixed-plan-v1` requires `frame_sha256`, `seed`,
+`sample_size`, `review_budget`, `policy_sha256`, `model_sha256` and
+`decision_timestamp` alongside its schema and profile. `sample_size` must be
+positive and no greater than either the budget or the number of captured eligible
+units. `draw(frame, plan)` selects exactly that many by 256-bit hash rank; it
+refuses rank collisions instead of redrawing or truncating a sample. The receipt
+records inclusion as the exact rational `sample_size / eligible_units`. This
+design has no targeted oversampling routes.
+
+`review_queue(receipt, frame, plan)` and `estimate(receipt, frame, plan, labels)`
+replay the complete draw against caller-supplied inputs. They do not authenticate
+those inputs, reviewer labels or when the plan was fixed. Every selected unit
+needs a reviewed label for point estimates; missing or nonresponse labels make the
+result inconclusive. The outputs remain private and do not authorize policy
+updates. Existing Poisson v1 and v2 designs are unchanged.
+
+Under the stated ideal assumption that hash ranks are exchangeable uniform draws,
+the selected set is a simple random sample without replacement and each unit's
+inclusion probability is the recorded fraction. Hash behavior and seed selection
+are not independently verified. For the frozen captured eligible population, the
+report estimates incident prevalence and missed-incident rate from sample
+fractions. It uses a conservative bounded-outcome Hoeffding inequality for
+sampling without replacement, with a union bound across the two endpoints; recall
+bounds follow from those simultaneous intervals. A fully reviewed census has zero
+sampling uncertainty. These are conditional design bounds, not guarantees about
+uncaptured interactions, reviewer accuracy, or independently verified lineage.
