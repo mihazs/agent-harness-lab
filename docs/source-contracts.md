@@ -4098,6 +4098,20 @@ completeness and lineage remain unverified. The local file checkpoint does not
 establish task outcomes or complete bank coverage. This profile does not open
 ZIPs, start a service, access a backend or invoke a model.
 
+`local_file/hindsight-mental-models/v1` uses the same bank-scoped descriptor to
+read the manifest and `mental_models.json` from an extracted v1.1.0 transfer;
+the [pinned exporter](https://github.com/vectorize-io/hindsight/blob/a5a619b5ca59c5c39e0f96be6f7a31fabd136bd5/hindsight-api-slim/hindsight_api/engine/transfer/export.py)
+writes bank-scoped rows and counts standalone models separately.
+It retains private, guessable model ID, name, source-query and synthesized
+content fingerprints, plus the reported refresh time when valid. Model rows
+are marked as model hypotheses, not independent facts or task outcomes. The
+manifest's `mental_model_count` excludes page-backing models, so a file can
+legitimately contain more rows; a count larger than the file is refused. A
+missing model file is refused even when the count is zero. The archive producer,
+model relationships and completeness remain unverified. No `reflect`, model,
+backend or network operation occurs. File import checkpoints do not establish
+bank completeness or source validity.
+
 `local_file/hindsight-bank-zip/v1` accepts the same selection descriptor shape
 as the extracted archive profile below, with `archive` naming one explicitly
 selected ZIP file. It reads the ZIP in memory without extracting files. The
