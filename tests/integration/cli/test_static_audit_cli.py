@@ -13,6 +13,44 @@ from tests.support import harness_surface_fixture as fixture
 from tests.unit.surfaces.test_static_audit import WELL_FORMED
 
 
+@pytest.mark.parametrize(('runtime', 'path'), [('claude-code', '.claude/settings.json'), ('codex', '.codex/hooks.json')])
+def test_declared_hook_events_are_reported_without_execution(tmp_path, monkeypatch, capsys, runtime, path):
+    project = tmp_path / 'project'
+    target = project / path
+    target.parent.mkdir(parents=True)
+    target.write_text(json.dumps({'hooks': {event: [{'hooks': [{'type': 'command', 'command': 'never-run'}]}]
+                                           for event in ('PreToolUse', 'SessionStart', 'PreCompact')}}))
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    monkeypatch.setattr(subprocess, 'Popen', lambda *a, **kw: pytest.fail('hook executed'))
+    monkeypatch.setattr(socket, 'socket', lambda *a, **kw: pytest.fail('network used'))
+    assert main(['audit', str(project), '--runtime', runtime, '--json']) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result['hook_events'] == dict(declared=['PreCompact', 'PreToolUse', 'SessionStart'],
+                                         coverage='declared_only', observed_execution='unknown')
+    assert result['publication_allowed'] is False
+
+
+def test_unreadable_hook_event_coverage_stays_unknown(tmp_path, monkeypatch, capsys):
+    project = tmp_path / 'project'
+    target = project / '.claude/settings.json'
+    target.parent.mkdir(parents=True)
+    target.write_text('{bad')
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
+    assert json.loads(capsys.readouterr().out)['hook_events'] == dict(declared=[], coverage='unknown', observed_execution='unknown')
+
+
+def test_excluded_hook_source_keeps_known_events_but_coverage_unknown(tmp_path, monkeypatch, capsys):
+    project = tmp_path / 'project'
+    target = project / '.claude/settings.json'
+    target.parent.mkdir(parents=True)
+    target.write_text(json.dumps({'hooks': {'PreCompact': [{'hooks': [{'type': 'command', 'command': 'never-run'}]}]}}))
+    (target.parent / 'settings.local.json').write_text('{"hooks": {}}')
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
+    assert json.loads(capsys.readouterr().out)['hook_events'] == dict(declared=['PreCompact'], coverage='unknown', observed_execution='unknown')
+
+
 def test_nested_task_reports_conditional_precedence(tmp_path, monkeypatch, capsys):
     project = tmp_path / 'project'
     (project / '.git').mkdir(parents=True)
