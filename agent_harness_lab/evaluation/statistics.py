@@ -50,9 +50,12 @@ def analyze(spec, records, *, cohort_binding=None):
         if (record.baseline_hash, record.candidate_hash, record.grader_hash, record.runtime_hash) != (
                 spec.baseline_hash, spec.candidate_hash, spec.grader_hash, spec.runtime_hash):
             return dict(status='blocked', reason='provenance_mismatch')
+        if (record.status != 'graded' or record.provenance != 'executable_grader'
+                or type(record.critical_regression) is not bool):
+            return dict(status='incomplete', reason='unknown_or_invalid_grade')
         if record.critical_regression:
             return dict(status='rejected', reason='critical_regression')
-        if type(record.outcome) is not bool or record.status != 'graded' or record.provenance != 'executable_grader':
+        if type(record.outcome) is not bool:
             return dict(status='incomplete', reason='unknown_or_invalid_grade')
         trial = expected[record.trial_id]
         roots[(trial['family'], trial['root'])][(trial['task'], trial['repetition'])][trial['version']] = record.outcome

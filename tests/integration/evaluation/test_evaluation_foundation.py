@@ -49,6 +49,17 @@ def test_empty_duplicate_missing_unknown_and_provenance_fail_closed():
         assert analyze(spec, bad)['status'] == 'incomplete'
     assert analyze(spec, [replace(data[0], runtime_hash='different')]+data[1:])['status'] == 'blocked'
     assert analyze(spec, [replace(data[0], critical_regression=True)]+data[1:])['status'] == 'rejected'
+    assert analyze(spec, [replace(data[0], outcome=None, critical_regression=True)]+data[1:])['status'] == 'rejected'
+
+
+@pytest.mark.parametrize('changes', [dict(critical_regression='false'),
+    dict(critical_regression=None), dict(critical_regression=True, provenance='self_report'),
+    dict(critical_regression=True, status='crashed')])
+def test_unverified_critical_regression_remains_incomplete(changes):
+    spec = plan()
+    data = records(spec)
+    result = analyze(spec, [replace(data[0], **changes), *data[1:]])
+    assert (result['status'], result['reason']) == ('incomplete', 'unknown_or_invalid_grade')
 
 
 def test_repeated_related_roots_are_not_independent():
