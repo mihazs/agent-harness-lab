@@ -425,8 +425,9 @@ and otherwise needs all violated. Other combinations are unknown.
 
 Policies reject duplicate/unknown fields, invalid types/numbers, empty groups,
 more than 64 KiB, depth over eight, more than 128 predicate nodes or sequences
-longer than 32 steps. Receipts are bounded to 1 MiB and identify predicates by
-digest and local controller IDs without echoing argv. Live controller handles
+longer than 32 steps. Receipt size is bounded by the policy tree and controller
+ledger limits, and can exceed 1 MiB when many matches are retained. Receipts
+identify predicates by digest and local controller IDs without echoing argv. Live controller handles
 bind policy, task, scheduled trial and scope; JSON imports cannot recreate them.
 Malformed or unsupported evidence is invalid and unknown.
 
