@@ -1,6 +1,7 @@
 """Stage automatic repairs, run frozen acceptance checks, then adopt eligible files."""
 import argparse
 import contextlib
+import errno
 import hashlib
 import json
 import os
@@ -990,6 +991,9 @@ def _run_improvement(args, *, parent_started=None):
                   'budget_exhausted' if isinstance(exc, TimeoutError) or inference_error and str(exc).endswith('_exhausted') else
                   'invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error')
         result = dict(status=status, changed_files=[], failure_class='requires_intervention', error_type=type(exc).__name__)
+        if (isinstance(exc, OSError) and exc.errno == errno.EROFS and isinstance(exc.filename, (str, os.PathLike))
+                and Path(exc.filename).absolute().is_relative_to(args.project.absolute())):
+            result['reason'] = 'target_filesystem_read_only'
         if isinstance(exc,GuardedTransactionError): result.update(exc.receipt)
         if hasattr(args,'_construction_access'):
             try: result['construction_access']=args._construction_access.failure_report()
