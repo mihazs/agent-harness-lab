@@ -67,6 +67,21 @@ def test_codex_hook_matcher_is_candidate_only_when_supported(tmp_path, monkeypat
     assert 'never-run' not in json.dumps(report)
 
 
+@pytest.mark.parametrize('extra', [{'disabled': True}, {'description': 42}])
+def test_codex_unsupported_top_level_fields_remain_unknown(tmp_path, monkeypatch, capsys, extra):
+    project = tmp_path / 'project'
+    settings = project / '.codex/hooks.json'
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps(dict(extra, hooks={'PreToolUse': [{'matcher': 'apply_patch',
+        'hooks': [{'type': 'command', 'command': 'never-run'}]}]})))
+    (project / 'AGENTS.md').write_text('Never edit `.env`.\n')
+    (project / '.env').write_text('synthetic')
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--runtime', 'codex', '--json']) == 0
+    row = json.loads(capsys.readouterr().out)['constraint_references']['files'][0]['constraints'][0]
+    assert row['hook_match'] == row['enforcement'] == 'unknown'
+
+
 @pytest.mark.parametrize('handler', [
     {'type': 'command'}, {'type': 'command', 'command': ''}, {'type': 'command', 'command': '  '},
     {'type': 'command', 'command': 'never-run', 'args': None},

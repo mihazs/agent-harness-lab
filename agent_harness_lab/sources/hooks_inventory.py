@@ -95,6 +95,9 @@ def parse(path, raw, profile):
         events = document.get('hooks', {})
         if form != 'claude_settings':
             unknown = set(document) - {'description', 'hooks'}
+            if form == 'codex_hooks_json':
+                facts['audit_top_level_supported'] = (not unknown and
+                    ('description' not in document or isinstance(document['description'], str)))
             if form == 'plugin_hooks' and 'hooks' not in document: warnings.add('plugin_hooks_wrapper_missing')
             if unknown: warnings.add('unknown_field'); facts['unknown_fields'] = len(unknown)
         if form == 'claude_settings':

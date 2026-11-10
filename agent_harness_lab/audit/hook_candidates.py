@@ -18,6 +18,7 @@ def first_write_candidate(inventory):
             if kind != 'hook' or status != 'parsed': continue
             if inventory.runtime == 'claude-code' and (facts.get('disable_all_hooks_valid') is not True
                     or facts.get('disable_all_hooks') is True): continue
+            if inventory.runtime == 'codex' and facts.get('audit_top_level_supported') is not True: continue
             for index in range(facts.get('handlers', 0)):
                 prefix = f'handler.{index}.'
                 if (facts.get(prefix + 'event') != 'PreToolUse' or facts.get(prefix + 'status') != 'parsed'

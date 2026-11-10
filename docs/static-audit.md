@@ -49,7 +49,8 @@ For Codex, only a project `.codex/hooks.json` command handler with an exact
 `apply_patch` or `^apply_patch$` matcher is considered a candidate. The pinned
 [Codex source](https://github.com/openai/codex/blob/d786ff91fad8e7ddab8653ee07bc6313a6fcb03d/codex-rs/core/src/tools/handlers/apply_patch.rs)
 declares an `apply_patch` pre-tool event; trust, loading and handler behavior are
-not established by this inventory. Other matchers, hook forms and configuration
+not established by this inventory. Unsupported or malformed top-level fields,
+other matchers, hook forms and configuration
 layers remain unknown; no match is not evidence of missing enforcement. Lexical
 cues are not proof of a rule or its enforcement.
 Reference hashes and paths are private and may
