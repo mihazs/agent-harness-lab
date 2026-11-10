@@ -94,8 +94,10 @@ def members(state, claim, evidence=()):
         if (endpoint.key not in records or records[endpoint.key].state != 'present' or endpoint.key in superseded
                 or len(leaves.get(endpoint.key[:2], ())) != 1):
             raise ValueError('lineage endpoint is missing, removed, superseded or ambiguous')
-    if any(ref.key not in records for ref in (*claim.evidence, *evidence)):
-        raise ValueError('lineage evidence is outside the selected cache revision')
+    for ref in (*claim.evidence, *evidence):
+        if (ref.key not in records or records[ref.key].state != 'present' or ref.key in superseded
+                or len(leaves.get(ref.key[:2], ())) != 1):
+            raise ValueError('lineage evidence is missing, removed, superseded or ambiguous')
 
 
 def representative(parent, key):
@@ -243,7 +245,9 @@ class LineageStore(PrivateJournal):
                     stale.append(case_id); continue
                 if events[-1][0]['state'] != 'reviewed': continue
                 reviewed = LineageReview.parse(events[-1][0]['payload']['review'])
-                members(state, claim, reviewed.evidence)
+                try: members(state, claim, reviewed.evidence)
+                except ValueError:
+                    stale.append(case_id); continue
                 row = dict(case_id=case_id, relation=claim.relation, left=claim.left.to_dict(), right=claim.right.to_dict(),
                     review_sha256=events[-1][1], evidence_class='reviewed_link', authentication='operator_attested')
                 if claim.relation == 'independent_case': assertions.append(row); continue
