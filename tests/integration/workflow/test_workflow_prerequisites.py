@@ -437,4 +437,3 @@ class TestPublicControllerPrerequisite(PublicCase,kernel.KernelCase):
         packet=result['implementation_prerequisites'];assert packet['status'] == 'observed', packet
         assert packet['permission_result_capture'] == 'unrequested'
         assert all(row['status']=='verified' for row in packet['checks'].values())
-

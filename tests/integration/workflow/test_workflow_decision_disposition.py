@@ -216,4 +216,3 @@ class TestSingleRunDecision:
         with pytest.raises(ValueError):
             policy.single_run_decision(duplicate, trials[:2], inputs_unchanged=True,
                                        prerequisites=policy.implementation_prerequisites())
-

@@ -823,4 +823,3 @@ class TestHookModeCLI(FakeRuntimeCase):
         assert document['sandbox'] == dict(backend='bubblewrap', status='unavailable',
                                                    reason='linux_bubblewrap_unavailable')
         assert self.invocation() is None
-

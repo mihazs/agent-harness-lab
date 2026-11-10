@@ -309,4 +309,3 @@ class TestWorkflowContract:
         assert document['profile'] == PROFILE
         assert 'lint' not in document
         assert 'codex' not in document
-
