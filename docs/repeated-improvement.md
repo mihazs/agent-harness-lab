@@ -156,7 +156,8 @@ they do not acquire a saved schedule from the seed. Sequential correction replay
 remains unsupported. Schedule inspection proves neither execution nor eligibility
 and grants no permission to resume, retry or apply a candidate.
 
-Controller history accepts the prompt-derived snapshot created by this workflow.
-The separately inspected task-bank evidence format is supported by standalone
-fixed analysis; it is not currently interchangeable with controller-history
-admission. Existing history without a pin remains legacy and independence-unverified.
+Controller history also accepts a selected projection of separately inspected
+task-bank evidence when the manifest binds a current bank authority. Admission,
+reopening, and final analysis revalidate that authority, task selection, and exact
+evidence. An unavailable or changed bank cannot support the pinned analysis.
+Existing history without a pin remains legacy and independence-unverified.
