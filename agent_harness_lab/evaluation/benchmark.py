@@ -117,6 +117,23 @@ def summary(records,*,public=False):
                              'green deterministic CI is not a model capability certificate'])
 
 
+def _trajectory_assertion(assertion, depth, count):
+    count[0] += 1
+    if depth > 8 or count[0] > 128 or not isinstance(assertion, dict):
+        raise ValueError('invalid or oversized trajectory assertion tree')
+    item = {key:assertion.get(key) for key in ('assertion_id','assertion_sha256','status')}
+    if (any(not isinstance(v,str) or not v for v in item.values())
+            or item['status'] not in ('satisfied','violated','unknown')):
+        raise ValueError('trajectory assertion identity/status required')
+    item['coverage_complete'] = assertion.get('coverage_complete') is True
+    children = assertion.get('children', [])
+    if not isinstance(children, list) or len(children) > 32:
+        raise ValueError('invalid trajectory assertion children')
+    if children:
+        item['children'] = [_trajectory_assertion(child, depth + 1, count) for child in children]
+    return item
+
+
 def trajectory_summary(results):
     """Saved JSON is descriptive input; it cannot recreate a live controller receipt."""
     from .trajectory_assertions import PROFILE
@@ -142,13 +159,7 @@ def trajectory_summary(results):
         if not row['task']: raise ValueError('trajectory task identity required')
         reported_assertions = []
         for assertion in assertions:
-            if not isinstance(assertion,dict): raise ValueError('trajectory assertion object required')
-            item = {key:assertion.get(key) for key in ('assertion_id','assertion_sha256','status')}
-            if (any(not isinstance(v,str) or not v for v in item.values())
-                    or item['status'] not in ('satisfied','violated','unknown')):
-                raise ValueError('trajectory assertion identity/status required')
-            item['coverage_complete'] = assertion.get('coverage_complete') is True
-            reported_assertions.append(item)
+            reported_assertions.append(_trajectory_assertion(assertion, 1, [0]))
         row.update(artifact_outcome=grade.get('artifact_outcome') if type(grade.get('artifact_outcome')) is bool else None,
             trajectory_status=receipt.get('status') if receipt.get('status') in ('satisfied','violated','unknown') else 'unknown',
             combined_outcome=grade.get('outcome') if type(grade.get('outcome')) is bool else None,
