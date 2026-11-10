@@ -30,6 +30,7 @@ def test_pending_assignment_observes_late_reviews_without_mapping_labels(tmp_pat
     before=audit_corpus.inspect(receipt,value,store.root,binding)
     case['event_sha256']=before['observations'][0]['event_sha256']
     assert before['observations'][0]['state']=='pending' and before['labels_for_estimation'] is None
+    assert before['profile']=='audit-corpus-observation-v1' and 'latest_event' not in before['observations'][0]
     assert before['assignment_timing']=='unauthenticated' and not before['publication_allowed']
     for reviewer in ('synthetic-reviewer-one','synthetic-reviewer-two'):
         case=store.update(case['case_id'],case['event_sha256'],'claimed',reviewer=reviewer)
@@ -73,6 +74,7 @@ def test_adjudicated_explicit_marker_feeds_estimate_without_outcome_inference(tm
     case['event_sha256']=audit_corpus.inspect(receipt,value,store.root,binding)['observations'][0]['event_sha256']
     pending=audit_corpus.estimate(receipt,value,store.root,binding,rubric)
     assert pending['status']=='inconclusive' and pending['estimates'] is None
+    assert pending['profile']==audit.REPORT_PROFILE_V2 and 'corpus_review_status' not in pending
     marker=label('successful','recovered');marker['symptoms']=['audit-incident']
     for reviewer in ('reviewer-one','reviewer-two'):
         case=store.update(case['case_id'],case['event_sha256'],'claimed',reviewer=reviewer)
@@ -179,3 +181,43 @@ def test_ambiguous_adjudicated_case_remains_inconclusive(tmp_path):
     result=audit_corpus.estimate(receipt,value,store.root,binding,rubric)
     assert result['status']=='inconclusive' and result['estimates'] is None
     assert 'corpus_ineligible_or_ambiguous_observations' in result['limitations']
+
+
+@pytest.mark.parametrize('design',['grid','stratified'])
+def test_recorded_nonresponse_stays_inconclusive_until_late_adjudication(tmp_path,design):
+    from agent_harness_lab.diagnostics import audit_stratified
+    from tests.unit.diagnostics.test_audit_stratified import policy as stratified_plan
+    store,_,case,value,receipt,mapping,rubric=setup_case(tmp_path);options={}
+    if design=='stratified':
+        options['plan']=stratified_plan(value,{'nonalerted':1},1)
+        receipt=audit_stratified.draw(value,options['plan'])
+    binding=audit_corpus.prepare(receipt,value,store.root,mapping,rubric,**options)
+    case['event_sha256']=audit_corpus.inspect(receipt,value,store.root,binding,**options)['observations'][0]['event_sha256']
+    claimed=store.update(case['case_id'],case['event_sha256'],'claimed',reviewer='one')
+    with pytest.raises(ValueError,match='current claimant'):
+        store.update(case['case_id'],claimed['event_sha256'],'nonresponse',reviewer='two')
+    with pytest.raises(ValueError,match='cannot carry'):
+        store.update(case['case_id'],claimed['event_sha256'],'nonresponse',reviewer='one',label=label())
+    absent=store.update(case['case_id'],claimed['event_sha256'],'nonresponse',reviewer='one')
+    observation=audit_corpus.inspect(receipt,value,store.root,binding,**options)
+    assert observation['profile']=='audit-corpus-observation-v2'
+    assert observation['observations'][0]['latest_event']=='nonresponse'
+    with pytest.raises(ValueError,match='transition'):
+        store.update(case['case_id'],absent['event_sha256'],'nonresponse',reviewer='one')
+    report=audit_corpus.estimate(receipt,value,store.root,binding,rubric,**options)
+    assert report['status']=='inconclusive' and report['estimates'] is None
+    assert report['profile']=='audit-corpus-estimate-v2' and report['schema_version']==2
+    assert not public_export_allowed([report])
+    assert report['source_estimate_profile']==(audit.REPORT_PROFILE_V2 if design=='grid' else audit_stratified.REPORT_PROFILE)
+    assert report['corpus_review_status']==dict(reviewed=0,pending=0,nonresponse=1)
+    assert 'audit_assignment_timing_unauthenticated' in report['limitations']
+    if design=='grid':assert report['review_status']['nonresponse']==1
+    answer=label();answer['symptoms']=['audit-incident']
+    case=store.update(case['case_id'],absent['event_sha256'],'submitted',reviewer='one',label=answer)
+    case=store.update(case['case_id'],case['event_sha256'],'claimed',reviewer='two')
+    case=store.update(case['case_id'],case['event_sha256'],'submitted',reviewer='two',label=answer)
+    store.update(case['case_id'],case['event_sha256'],'adjudicated',reviewer='three',label=answer,reason='synthetic')
+    completed=audit_corpus.estimate(receipt,value,store.root,binding,rubric,**options)
+    assert completed['status']=='estimated' and completed['corpus_review_status']['reviewed']==1
+    assert completed['profile']=='audit-corpus-estimate-v2'
+    assert 'reviewer_labels_unauthenticated' in completed['limitations']

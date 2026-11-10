@@ -102,6 +102,7 @@ def transition(state, kind, target, previous_kind=None):
     if state is None: return kind==target=='pending'
     if kind=='audit_assigned': return state=='pending' and previous_kind=='pending' and target=='pending'
     if kind=='claimed': return state in ('pending','submitted') and target=='claimed'
+    if kind=='nonresponse': return state=='claimed' and previous_kind=='claimed' and target=='claimed'
     if kind=='submitted': return state=='claimed' and target in ('submitted','reviewed')
     if kind=='adjudicated': return state=='reviewed' and target=='adjudicated'
     if kind=='exposed': return state!='exposed' and target=='exposed'
@@ -133,6 +134,9 @@ class CorpusStore(PrivateJournal):
                 if payload['reviewer'].casefold() in {inputs['author'].casefold(),*(s['reviewer'].casefold() for s in submissions)}:
                     raise ValueError('separate declared reviewer identity required')
                 claimant=payload['reviewer']
+            elif kind=='nonresponse':
+                _fields(payload,'reviewer'); _identity(payload['reviewer'])
+                if payload['reviewer']!=claimant:raise ValueError('nonresponse differs from review claim')
             elif kind=='submitted':
                 _fields(payload,'reviewer label')
                 if payload['reviewer']!=claimant or len(submissions)>=2: raise ValueError('review claim/submission differs')
@@ -212,16 +216,18 @@ class CorpusStore(PrivateJournal):
             case,inputs,events,submissions,final=self._opened(case_id)
             if expected_event_sha256!=events[-1][1]: raise ValueError('stale corpus event revision')
             if kind=='exposed': _text(reason); payload=dict(reason=reason); target='exposed'
-            elif kind in ('claimed','submitted','adjudicated'):
-                _identity(reviewer); payload=dict(reviewer=reviewer); target=kind
-                if kind!='claimed': payload['label']=annotation(label,inputs)
+            elif kind in ('claimed','nonresponse','submitted','adjudicated'):
+                if kind=='nonresponse' and (label is not None or reason is not None):
+                    raise ValueError('nonresponse cannot carry a label or reason')
+                _identity(reviewer); payload=dict(reviewer=reviewer); target='claimed' if kind=='nonresponse' else kind
+                if kind in ('submitted','adjudicated'): payload['label']=annotation(label,inputs)
                 if kind=='submitted': target='submitted' if not submissions else 'reviewed'
                 if kind=='adjudicated': _text(reason); payload['reason']=reason
             else: raise ValueError('unsupported corpus queue operation')
             if not transition(events[-1][0]['state'],kind,target,events[-1][0]['kind']): raise ValueError('invalid corpus lifecycle transition')
             if kind=='claimed' and reviewer.casefold() in {inputs['author'].casefold(),*(s['reviewer'].casefold() for s in submissions)}:
                 raise ValueError('independent review cannot reuse a declared identity')
-            if kind=='submitted' and reviewer!=events[-1][0]['payload'].get('reviewer'):
+            if kind in ('submitted','nonresponse') and reviewer!=events[-1][0]['payload'].get('reviewer'):
                 raise ValueError('only the current claimant can submit')
             if kind=='adjudicated' and (len(submissions)!=2 or reviewer.casefold() in {inputs['author'].casefold(),*(s['reviewer'].casefold() for s in submissions)}):
                 raise ValueError('adjudication requires a separate declared reviewer')

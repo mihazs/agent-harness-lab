@@ -120,7 +120,8 @@ def _observed(store, rows, binding):
         summary=store._summary(row['case_id'],inputs,events,submissions,final)
         if store._retirement(row['case_id'],inputs,events) is not None:
             raise ValueError('assigned corpus case was exposed')
-        observations.append((row,summary,events[-1][1],final,_eligible(inputs)))
+        observations.append((row,summary,events[-1][1],final,_eligible(inputs),events[-1][0]['kind'],
+                             any(event['kind']=='nonresponse' for event,_ in events)))
     return observations
 
 
@@ -130,10 +131,13 @@ def inspect(receipt, frame, store_path, binding, trusted_heads=None, *, plan=Non
     rows=_assignment(receipt,binding);store=CorpusStore(store_path)
     with store.locked():
         observed=_observed(store,rows,binding)
+        has_nonresponse=any(has_event for _,_,_,_,_,_,has_event in observed)
         observations=[dict(unit_sha256=row['unit_sha256'],case_id=row['case_id'],event_sha256=head,
-                           state=summary['state'],disposition=summary['disposition'])
-                      for row,summary,head,_,_ in observed]
-    return dict(profile='audit-corpus-observation-v1',assignment_sha256=binding['assignment_sha256'],
+                           state=summary['state'],disposition=summary['disposition'],
+                           **({'latest_event':kind} if has_nonresponse else {}))
+                      for row,summary,head,_,_,kind,_ in observed]
+    return dict(profile='audit-corpus-observation-v2' if has_nonresponse else 'audit-corpus-observation-v1',
+        assignment_sha256=binding['assignment_sha256'],
         observations=deepcopy(observations),assignment_timing='unauthenticated',review_authentication='operator_attested',
         reviewer_independence='unverified',frame_origin='unauthenticated',incident_mapping='unavailable',
         labels_for_estimation=None,publication_allowed=False,automatic_policy_update=False)
@@ -147,12 +151,13 @@ def estimate(receipt, frame, store_path, binding, rubric_value, trusted_heads=No
     store=CorpusStore(store_path)
     with store.locked():
         observed=_observed(store,rows,binding);labels=[]
-        for row,summary,_,final,eligible in observed:
+        for row,summary,_,final,eligible,kind,_ in observed:
             matches=set() if final is None else {rubric_value['markers'][key] for key in final['symptoms']
                                                if key in rubric_value['markers']}
             complete=(eligible and summary['state']=='adjudicated' and final is not None and final['outcome']!='unknown'
                       and len(matches)==1)
-            labels.append(dict(unit_sha256=row['unit_sha256'],status='reviewed' if complete else 'pending',
+            status='reviewed' if complete else 'nonresponse' if kind=='nonresponse' else 'pending'
+            labels.append(dict(unit_sha256=row['unit_sha256'],status=status,
                                label=next(iter(matches)) if complete else None))
         batch=dict(receipt_sha256=receipt['receipt_sha256'],labels=labels)
         if receipt['profile']==audit.RECEIPT_PROFILE_V2:
@@ -162,7 +167,12 @@ def estimate(receipt, frame, store_path, binding, rubric_value, trusted_heads=No
             report=audit_stratified.estimate(receipt,frame,plan,batch)
     report['limitations'].extend(('audit_assignment_timing_unauthenticated','audit_rubric_operator_declared',
                                    'corpus_reviewers_independence_unverified','corpus_lineage_binding_unverified'))
-    if any(not eligible for _,_,_,_,eligible in observed):
+    if any(has_event for _,_,_,_,_,_,has_event in observed):
+        report['source_estimate_profile']=report['profile']
+        report['profile']='audit-corpus-estimate-v2';report['schema_version']=2
+        report['corpus_review_status']={status:sum(row['status']==status for row in labels)
+                                        for status in ('reviewed','pending','nonresponse')}
+    if any(not eligible for _,_,_,_,eligible,_,_ in observed):
         report['limitations'].append('corpus_ineligible_or_ambiguous_observations')
     report['assignment_sha256']=binding['assignment_sha256']
     return report
