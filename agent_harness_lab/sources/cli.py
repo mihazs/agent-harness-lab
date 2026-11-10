@@ -11,6 +11,7 @@ from .store import SourceStore
 from .git import GitExport
 from .test_results import PROVIDER as TEST_RESULTS, SOURCE_VERSION as TEST_RESULTS_VERSION, TestResultsExport
 from .claude_mem import PROVIDER as CLAUDE_MEM, SOURCE_VERSION as CLAUDE_MEM_VERSION, ClaudeMemExport
+from .mempalace_search import PROVIDER as MEMPALACE_SEARCH, SOURCE_VERSION as MEMPALACE_SEARCH_VERSION, MemPalaceSearch
 from .mempalace_list import PROVIDER as MEMPALACE_LIST, SOURCE_VERSION as MEMPALACE_LIST_VERSION, MemPalaceList
 from .mempalace import PROVIDER as MEMPALACE, SOURCE_VERSION as MEMPALACE_VERSION, MemPalaceDrawer
 from .mem0 import PROVIDER as MEM0, SOURCE_VERSION as MEM0_VERSION, Mem0Export
@@ -91,6 +92,8 @@ def main(argv):
                 connector = TestResultsExport(args.manifest)
             elif source.provider == CLAUDE_MEM:
                 connector = ClaudeMemExport(args.manifest)
+            elif source.provider == MEMPALACE_SEARCH:
+                connector = MemPalaceSearch(args.manifest)
             elif source.provider == MEMPALACE_LIST:
                 connector = MemPalaceList(args.manifest)
             elif source.provider == MEMPALACE:
@@ -118,6 +121,7 @@ def main(argv):
             registry.register(Capability('local_git', 'git', 'v2', ('development_artifact',)), connector)
             registry.register(Capability('local_file', TEST_RESULTS, TEST_RESULTS_VERSION, ('development_artifact',)), connector)
             registry.register(Capability('local_file', CLAUDE_MEM, CLAUDE_MEM_VERSION, ('contextual_assertion',)), connector)
+            registry.register(Capability('local_file', MEMPALACE_SEARCH, MEMPALACE_SEARCH_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', MEMPALACE_LIST, MEMPALACE_LIST_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', MEMPALACE, MEMPALACE_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', MEM0, MEM0_VERSION, ('contextual_assertion',)), connector)
@@ -156,6 +160,8 @@ def main(argv):
                     result['test_results_summary'] = connector.summary
                 elif isinstance(connector, ClaudeMemExport):
                     result['claude_mem_summary'] = connector.summary
+                elif isinstance(connector, MemPalaceSearch):
+                    result['mempalace_search_summary'] = connector.summary
                 elif isinstance(connector, MemPalaceList):
                     result['mempalace_list_summary'] = connector.summary
                 elif isinstance(connector, MemPalaceDrawer):

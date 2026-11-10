@@ -3739,6 +3739,24 @@ content; reported counts, filtering, producer, version, completeness and
 lineage remain unverified. An empty page does not establish an empty wing.
 Local file import checkpoints do not establish complete source coverage.
 
+`local_file/mempalace-search/v1` separately reads one caller-supplied result
+shaped like the pinned `mempalace_search` response. Its descriptor uses the same
+`schema_version`, `upstream_commit`, `instance`, `export` and `wing_sha256`
+fields, plus `query_sha256` and `max_results` (1–100). The query fingerprint is
+`digest(("mempalace.query", instance, returned_query))`; the returned query
+must be nonempty, at most 512 characters and contain no control characters.
+The returned wing filter and every hit must match the selected wing. A missing
+drawer ID stays unknown; repeated drawer IDs at different positions stay
+distinct search-hit claims and do not establish independent origins. Text is
+fingerprinted as an excerpt because hits can be chunks or hydrated content.
+Fingerprints are private and guessable; paths, text and query are excluded.
+Scores are not interpreted as truth, and retrieval is not evidence of use.
+Reported truncation or vector-disabled flags are retained as claims; source,
+query execution, producer, completeness and lineage remain unverified. No
+search, embedding, backend or network operation is performed by this profile.
+An empty result does not establish that no memory exists. A local import
+checkpoint does not establish source coverage.
+
 ## Offline Claude-Mem exports
 
 Select `local_file/claude-mem-export/v1` in the existing local source declaration,
