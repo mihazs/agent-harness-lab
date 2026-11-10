@@ -36,7 +36,9 @@ def policy_sha256(policy):
 
 
 def _number(value, upper: float | None = 1):
-    return type(value) in (int, float) and math.isfinite(value) and 0 <= value and (upper is None or value <= upper)
+    if type(value) is int:
+        return 0 <= value and (upper is None or value <= upper)
+    return type(value) is float and math.isfinite(value) and 0 <= value and (upper is None or value <= upper)
 
 
 def _count(value):
@@ -115,7 +117,7 @@ def _aggregate(observations, policy, names, forbidden):
         if not isinstance(root, str) or not root or len(root) > 256:
             raise ValueError('triage validation requires declared root IDs')
         label, scores = row.get('label'), row.get('scores')
-        if label is not None and label not in classes:
+        if label is not None and (not isinstance(label,str) or label not in classes):
             raise ValueError('label outside the declared triage taxonomy')
         if not isinstance(scores, dict) or set(scores) != set(names):
             raise ValueError('class scores must cover exactly the declared taxonomy')
@@ -237,6 +239,14 @@ def evaluate(policy, observations, *, report_version=2):
     overflow = max(0, len(abstained)-policy['review_capacity_roots'])
     if overflow:
         failed.append('review_capacity_exceeded')
+    try:
+        total_cost = sum(errors[k]*costs[k] for k in COSTS)
+        if type(total_cost) is float and not math.isfinite(total_cost): total_cost = None
+        if total_cost is not None: json.dumps(total_cost,allow_nan=False)
+    except (OverflowError,ValueError):
+        total_cost = None
+    if total_cost is None:
+        missing.append('cost_total_unrepresentable')
     return dict(schema_version=report_version, profile=REPORT_PROFILE if report_version == 2 else REPORT_PROFILE_V3, role='validate',
         status='rejected' if failed else 'insufficient_evidence', reasons=failed+missing+list(LIMITATIONS),
         policy_sha256=policy_sha256(policy), model_sha256=policy['model_sha256'],
@@ -248,7 +258,7 @@ def evaluate(policy, observations, *, report_version=2):
                          capacity_overflow=overflow, queue_order='max_severe_class_score_then_root_hash'),
         severe_misses=dict(count=len(severe_roots), maximum=policy['max_severe_misses'], **severe_detail,
                            roots_sha256=sorted(severe_roots)),
-        costs=dict(declared=dict(costs), counts=errors, total=sum(errors[k]*costs[k] for k in COSTS)),
+        costs=dict(declared=dict(costs), counts=errors, total=total_cost),
         decisions=report_decisions, decision_threshold_source='frozen_policy',
         threshold_authority='human_preregistered_unverified', threshold_selection='refused_in_validation',
         root_independence='unverified', label_authority='unverified', qualification='descriptive_only',
