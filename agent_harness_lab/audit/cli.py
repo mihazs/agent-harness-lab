@@ -1,0 +1,102 @@
+"""Offline command for the read-only static harness audit."""
+import argparse
+import json
+import sys
+import tempfile
+from pathlib import Path
+
+from agent_harness_lab import audit, surfaces
+from agent_harness_lab.monitoring.state import atomic_json
+from agent_harness_lab.sources import harness_inventory
+from agent_harness_lab.workflow import state_root
+
+
+def _status(status, reasons=()):
+    if status == 'nonconformant':
+        return 'weak'
+    if status == 'conformant':
+        return 'conforms'
+    if any(reason in ('not_checked', 'not_parsed', 'no_parser', 'parse_failed', 'unsupported',
+                      'skill_frontmatter_unsupported', 'command_frontmatter_unsupported', 'no_pinned_capability') for reason in reasons):
+        return 'not_checked'
+    return 'unknown'
+
+
+def _project(inventory, report):
+    dimensions = {row['dimension']: row for row in report.pop('dimensions')}
+    findings = []
+    for row in report['findings']:
+        dimension = ('skills' if row['kind'] == 'skill' else
+                     {'instructions': 'instructions', 'hooks': 'enforcement'}.get(row['dimension']))
+        if dimension is None:
+            continue
+        findings.append(dict(row, dimension=dimension, status=_status(row['status'], (row['reason'],)), observed=row['reason']))
+    report['findings'] = findings
+    context = audit.skills.Context(inventory, '.') if inventory.status == 'declared' else None
+    skill_nodes = [node for node in inventory.nodes if node.kind == 'skill' and not context.supporting(node)
+                   and dict(node.facts).get(surfaces.VENDORED_FACET) is not True] if context else []
+    skill_findings = [row for row in findings if row['dimension'] == 'skills']
+    refused = bool(context and any('commands' in audit._refused(row, inventory.runtime, audit.registry())
+                                   for row in inventory.refusals if row.reason != 'vcs_metadata'))
+    skill_states = {row['status'] for row in skill_findings}
+    if 'weak' in skill_states:
+        skill_status = 'weak'
+    elif refused or 'unknown' in skill_states or not skill_nodes:
+        skill_status = 'unknown'
+    elif 'not_checked' in skill_states:
+        skill_status = 'not_checked'
+    else:
+        skill_status = 'conforms'
+    statuses = {'instructions': _status(dimensions['instructions']['status'], dimensions['instructions']['reasons']),
+                'skills': skill_status,
+                'enforcement': _status(dimensions['hooks']['status'], dimensions['hooks']['reasons'])}
+    report['coverage'] = [{'dimension': name, 'status': statuses.get(name, 'not_checked'), 'notice': audit.NOTICE}
+        for name in ('instructions', 'skills', 'sensors', 'enforcement', 'memory_and_state', 'improvement_loop')]
+    return report
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog='ahl audit', description=(
+        'Check pinned runtime conventions offline. Findings do not measure performance; '
+        'the project is not modified. A private report is written to XDG state.'))
+    parser.add_argument('project', type=Path, help='Existing project directory')
+    parser.add_argument('--runtime', choices=('claude-code', 'codex'), default='codex', help='Runtime profile (default: codex)')
+    parser.add_argument('--json', action='store_true', help='Print the full private JSON report')
+    args = parser.parse_args(argv)
+    try:
+        project = args.project.resolve(strict=True)
+        if not project.is_dir():
+            raise ValueError('project must be an existing directory')
+        destination = (state_root() / 'audits').resolve()
+        if destination == project or project in destination.parents:
+            raise ValueError('audit state directory must be outside the project')
+        profile = dict(schema_version=1, runtime=args.runtime, version=surfaces.PINS[args.runtime], task_cwd='.')
+        inventory = harness_inventory.capture(project, profile)
+        report = _project(inventory, audit.audit(inventory, task_cwd='.').document())
+        candidate = next((row for row in report['findings'] if row['remediation']), None)
+        if report['status'] != 'completed':
+            report['next_action'] = 'Resolve the blocked inventory before using this audit.'
+        elif candidate:
+            report['next_action'] = ('Evaluate a proposed change for finding ' + candidate['id'] + ' with ahl improve; '
+                'the convention check does not establish a performance improvement.')
+        else:
+            report['next_action'] = 'Capture behavioral evidence with ahl analyze and evaluate a proposed change with ahl improve.'
+        destination.mkdir(parents=True, exist_ok=True, mode=0o700)
+        folder = Path(tempfile.mkdtemp(prefix='audit-', dir=destination))
+        report_path = folder / 'report.json'
+        atomic_json(report_path, report)
+        if args.json:
+            print(json.dumps(report, indent=2))
+        else:
+            print('Static convention checks; not evidence of harness performance.')
+            for row in report['coverage']:
+                print(f"{row['dimension']}: {row['status']}")
+            for row in report['findings']:
+                print(f"{row['dimension']}: {row['reason']} ({row['path']}) — {row['remediation'] or 'not checked'}")
+            print(report['next_action'])
+        print(f'Private report: {report_path}', file=sys.stderr)
+        return 0 if report['status'] == 'completed' else 3
+    except (ValueError, OSError, TypeError) as exc:
+        parser.exit(2, f'ahl audit: {exc}\n')
+    except NotImplementedError:
+        parser.exit(3, 'ahl audit: required filesystem capabilities unavailable; no unsafe fallback\n')

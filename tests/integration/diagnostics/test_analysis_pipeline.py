@@ -19,6 +19,7 @@ from agent_harness_lab.evaluation.construction import views
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
 from agent_harness_lab.diagnostics.process_mining import mine
 from tools.diagnose import analyze
+from tests.unit.evaluation.test_benchmark_contracts import record as public_record
 
 
 class Pipeline:
@@ -236,12 +237,12 @@ def test_private_execution_receipt_rejects_relabelled_export_and_supported_wrapp
     assert not public_export_allowed([record])
 
 
-def test_public_execution_and_graph_records_remain_exportable(pipeline):
-    assert public_export_allowed([dict(publication_allowed=True,
-        provenance=PUBLIC_PROVENANCE, execution=dict(exit_code=0))])
+def test_public_flat_record_is_exportable_but_extra_execution_and_graph_fields_are_not(pipeline):
+    public = public_record()
+    assert public_export_allowed([public])
+    assert not public_export_allowed([dict(public, execution=dict(exit_code=0))])
     public_graph = mine(json.dumps(row) for row in pipeline.rows())
-    assert public_export_allowed([dict(public_graph,
-        publication_allowed=True, provenance=PUBLIC_PROVENANCE)])
+    assert not public_export_allowed([dict(public_graph, **public)])
 
 
 def test_partial_capture_and_thin_support_do_not_report_clean_evidence(pipeline):

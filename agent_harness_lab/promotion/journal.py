@@ -19,6 +19,7 @@ import uuid
 from agent_harness_lab.evaluation.integrity import contained, relative
 from agent_harness_lab.surfaces import CONTRACT_KINDS, adoption
 from agent_harness_lab.monitoring.state import atomic_json
+from agent_harness_lab.read_only import require_writable
 
 
 def file_record(path):
@@ -369,6 +370,7 @@ class Journal:
         return self._prepare(before,after,metadata,kind,restores=False,hook_contract=hook_contract)
 
     def _prepare(self,before,after,metadata,kind,*,restores,hook_contract=None):
+        require_writable(self.project)
         names=sorted(before.keys()|after.keys())
         if not names or len(names)>1000: raise ValueError('invalid transaction size')
         for mapping in (before,after):
@@ -417,11 +419,13 @@ class Journal:
             return self._execute(deployment)
 
     def _write_snapshot(self,name,current,target,pre_write=None):
+        require_writable(self.project)
         # The admitted hook unit of the transaction being written; empty outside _execute and _restore_guarded.
         destination=self.owned(name,probe=False,admitted=getattr(self,'_unit',frozenset()))
         if target is None:
             if pre_write: pre_write()
             if file_record(destination)!=current: raise ValueError('target changed during transaction')
+            require_writable(self.project)
             destination.unlink()
         else:
             raw=base64.b64decode(target['content'],validate=True)
@@ -437,12 +441,14 @@ class Journal:
                 temporary.chmod(target['mode'])
                 if file_record(destination)!=current: raise ValueError('target changed during transaction')
                 if pre_write: pre_write()
+                require_writable(self.project)
                 os.replace(temporary,destination)
             finally:
                 self._pending_snapshot=None
                 temporary.unlink(missing_ok=True)
 
     def _restore_guarded(self,record):
+        require_writable(self.project)
         remaining=[]; admitted=self._admitted(record)
         owned=lambda name:self.owned(name,probe=False,admitted=admitted)
         # Inspect every path: interruption may occur after replace but before return.
@@ -462,6 +468,7 @@ class Journal:
                 except BaseException:
                     restored=False
                 if not restored: remaining.append(name)
+        require_writable(self.project)
         pointer_conflict=False
         try:
             if self.active==record['deployment']:
@@ -483,6 +490,7 @@ class Journal:
 
     def _execute(self,deployment,*,pre_write=None):
         # Internal operation for callers already holding the project lock.
+        require_writable(self.project)
         record=self.load(deployment)
         if record.get('guard_rejected'): raise ValueError('rejected guarded transaction cannot be resumed')
         if record['status']=='committed' and self.active==deployment: return record
@@ -552,6 +560,7 @@ class Journal:
             return self._rollback(deployment)
 
     def _rollback(self,deployment):
+        require_writable(self.project)
         active=self.active
         if active:
             latest=self.load(active)
@@ -585,7 +594,9 @@ class Journal:
         """Return an unfinished deployment to its before state as one unit. A foreign edit to any member, or a
         newer deployment, is a conflict raised before any write, so the user's work is preserved."""
         from agent_harness_lab.workflow import project_lock
+        require_writable(self.project)
         with project_lock(self.project):
+            require_writable(self.project)
             record=self.load(deployment)
             if record['status'] not in ('prepared','applying') or record.get('guard_rejected'):
                 raise ValueError('only an unfinished deployment can be recovered')

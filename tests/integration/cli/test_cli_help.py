@@ -8,7 +8,7 @@ import sys
 import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
-COMMANDS = ('analysis', 'mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'experiment', 'experiment-history', 'grader-correction', 'regression', 'regression-review', 'sandbox-check',
+COMMANDS = ('audit', 'analysis', 'mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'experiment', 'experiment-history', 'grader-correction', 'regression', 'regression-review', 'sandbox-check',
             'research-simulate', 'incident-search', 'promotion', 'benchmark-report', 'analyze', 'improve', 'watch', 'doctor', 'init', 'sources')
 
 
@@ -27,6 +27,22 @@ def test_top_level_help_lists_every_command(tmp_path):
     assert 'usage:' in run.stdout
     for name in COMMANDS:
         assert name in run.stdout
+
+
+@pytest.mark.parametrize(('args', 'boundaries'), [
+    (('--help',), ('behavioral candidates stay recommendations', 'except explicit improve --repair-contracts')),
+    (('improve', '--help'), ('behavioral candidates stay recommendations', 'explicit --repair-contracts may apply')),
+    (('watch', '--help'), ('watch has no --repair-contracts and applies no candidate',)),
+])
+def test_help_states_adoption_boundary(tmp_path, args, boundaries):
+    run = run_cli(tmp_path, *args)
+    assert run.returncode == 0, run.stderr
+    assert run.stderr == ''
+    output = ' '.join(run.stdout.lower().split())
+    assert 'adopt supported harness repairs' not in output
+    assert 'continuously improve' not in output
+    for boundary in boundaries:
+        assert boundary in output
 
 
 def test_version(tmp_path):

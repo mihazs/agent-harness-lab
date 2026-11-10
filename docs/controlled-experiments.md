@@ -208,7 +208,12 @@ or unrelated files are restored.
 
 `ahl promotion PROJECT --deployment ID` previews without changing project files.
 `--action rollback` performs the guarded manual rollback; `--action recover`
-resumes a recognized partial transaction. These commands take the project lock.
+restores the before snapshots for a recognized unfinished transaction. These commands
+take the project lock. A process killed after writing a temporary replacement can
+leave an `*.ahl-*` file beside the target; recovery does not delete it. A crash after
+the committed journal record but before the active pointer update is refused by
+`recover` because the record is already committed; it requires inspection. Synthetic process-death checks cover
+these boundaries; they do not establish durability across power loss.
 No automatic rollback or background monitor starts on installation.
 
 Observe-only monitoring uses a frozen exposure window and task-start deployment
