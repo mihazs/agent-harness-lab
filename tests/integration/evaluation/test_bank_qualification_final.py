@@ -55,6 +55,16 @@ class BankQualificationBoundaryTests(unittest.TestCase):
         self.root=Path(folder.name);self.bank,self.declaration=proposal(self.root)
         self.store=self.root/'review'
 
+    def test_missing_held_out_custody_blocks_audit_and_existing_revision(self):
+        store=ReviewStore(self.store)
+        with self.assertRaisesRegex(ValueError,'held-out control custody unavailable'):
+            bankq.audit(store,'unused',None)
+        with self.assertRaisesRegex(ValueError,'held-out control custody unavailable'):
+            bankq.qualify(store,'unused',None,None)
+        with self.assertRaisesRegex(ValueError,'held-out control custody unavailable'):
+            bankq.revision_metadata(self.root/'bank.json')
+        self.assertFalse(self.store.exists())
+
     def test_labels_and_unsigned_intake_never_qualify(self):
         checked=validate(self.bank)
         self.assertTrue(checked['review_declarations_complete'])

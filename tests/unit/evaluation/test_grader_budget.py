@@ -61,7 +61,7 @@ class TestAuditBudget:
         with patch.object(bank_tools.subprocess, 'run', side_effect=subprocess.TimeoutExpired('synthetic', .01)) as launch:
             result = bank_tools.audit_graders(BANK, cooperative=True)
         assert result['status'] == 'grader_error'
-        assert result['control'] == 'broken'
+        assert result['control'] == 'no_op'
         assert result['checks'] == []
         assert launch.call_count == 1
 

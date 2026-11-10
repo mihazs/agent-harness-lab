@@ -91,3 +91,12 @@ Run `task test:evaluation:bank-qualification`. The canonical `test:installed` ta
 includes the same native tests and forwards `PYTHON`, `LAYOUT_DIR` and
 `EXPECTED_PACKAGE_ROOT`; an actual import-root assertion checks installed layouts.
 All fixtures in these checks are independently synthetic and credential-free.
+
+The descriptive and owned control audits grade a frozen copy of each untouched
+fixture (`no_op`). A valid passing result is rejected as `vacuous_success`;
+malformed, unrunnable, incomplete or timed-out controls cannot qualify. This
+check does not establish resistance to superficial changes. Independent,
+private task-specific falsifiers and their provenance remain an open qualification
+requirement. Until that authority exists, final-bank audit and qualification are
+blocked, and existing qualified revisions cannot establish current eligibility.
+Descriptive audits remain available and do not confer certification authority.

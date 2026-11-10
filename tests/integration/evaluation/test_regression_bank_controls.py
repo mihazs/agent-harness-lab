@@ -97,7 +97,7 @@ def test_cooperative_audit_uses_all_reviewed_controls_and_preserves_raw_inputs(b
     frozen = digest(bank.root/'oracle')
     with bank.controlled(): result = bank_tools.audit_graders(bank.path,cooperative=True)
     assert result['status'] == 'controls_passed'
-    assert [c['control'] for c in result['checks']] == [c['state'] for c in bank.controls]
+    assert [c['control'] for c in result['checks']] == ['no_op'] + [c['state'] for c in bank.controls]
     assert digest(bank.root/'oracle') == frozen
     assert all(digest(c['fixture'])==c['digest'] for c in bank.controls)
 
@@ -113,7 +113,7 @@ def test_sandbox_audit_uses_pristine_oracle_and_separate_materialized_artifacts(
     backend.run.side_effect = execute
     with bank.controlled(),patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=backend):
         result = bank_tools.audit_graders(bank.path,sandbox=True)
-    assert result['status'] == 'controls_passed'; assert backend.run.call_count == 5
+    assert result['status'] == 'controls_passed'; assert backend.run.call_count == 6
 
 
 def test_ineligible_revision_refuses_export_and_audit_before_any_side_effect(bank):

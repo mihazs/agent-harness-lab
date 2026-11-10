@@ -23,6 +23,11 @@ PROTOCOL='trusted-lineage-split-and-native-controls-v1'
 PURPOSE=authority.BANK_PURPOSE
 
 
+def require_held_out_controls():
+    # shortcut: held-out control custody is unavailable until its signed intake is implemented.
+    raise ValueError('independent held-out control custody unavailable')
+
+
 def hashed(value):return hashlib.sha256(encoded(value)).hexdigest()
 
 
@@ -163,6 +168,7 @@ def exposure_check(store,case,state,*,reservation_id=None):
 
 
 def audit(store,case_id,backend,*,budget_seconds=60):
+    require_held_out_controls()
     from .bank_qualification_controls import audit as run_audit,consume
     from .decision_receipts import engine
     from .oracle_history import HistoryStore
@@ -225,6 +231,7 @@ def prepare(store,case_id,reviewer):
 
 
 def qualify(store,case_id,request_path,signature_path,*,budget_seconds=30):
+    require_held_out_controls()
     from .oracle_history import HistoryStore
     from .certification_access import _locked
     deadline=deadline_for(budget_seconds)
@@ -269,6 +276,7 @@ def qualify(store,case_id,request_path,signature_path,*,budget_seconds=30):
 
 
 def revision_metadata(path,*,deadline=None):
+    require_held_out_controls()
     from .regression_review import ReviewStore
     path=authority._path(path)
     if path.name!='bank.json' or path.parent.parent.name!='revisions':raise ValueError('original bank revision path required')

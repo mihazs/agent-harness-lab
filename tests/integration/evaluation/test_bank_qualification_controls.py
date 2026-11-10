@@ -72,7 +72,7 @@ class OwnedBankControlKernelTests(kernel.KernelFixture):
         backend=SandboxBackend(cgroup_root=self.cgroup_root,image_root=runtime,image_sha256=pin,disk_bytes=64*1024*1024)
         handle,report=controls.audit(bank,self.root/'audit',backend,time.monotonic()+60)
         self.assertEqual(report['status'],'owned_controls_passed')
-        self.assertEqual([c['observed'] for c in report['checks']],[False,False,True,True,False])
+        self.assertEqual([c['observed'] for c in report['checks']],[False,False,False,True,True,False])
         self.assertTrue(all(len(c['controller']['kernels'])==2 for c in report['checks']))
         with self.assertRaisesRegex(ValueError,'fresh owned'):controls.consume(copy(handle),bank)
         if hasattr(os,'fork'):

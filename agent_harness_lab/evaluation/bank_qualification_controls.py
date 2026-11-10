@@ -12,7 +12,7 @@ from weakref import WeakKeyDictionary
 from agent_harness_lab.private_journal import encoded, record, sync_directory, write_bytes
 from agent_harness_lab.sources.schema import SourceSpec
 from . import controller_receipts
-from .bank_tools import materialize_sources, regrade_artifacts
+from .bank_tools import materialize_sources, negative_outcome, negative_probes, regrade_artifacts
 from .integrity import contained, copy_frozen, digest, tree
 from .regression_controls import STATES, containment
 from .regressions import fields
@@ -68,7 +68,8 @@ def inventory(bank_path):
         for control in controls:
             fixture=contained(bundle,control['fixture'])
             selected.append(dict(state=control['state'],fixture=control['fixture'],digest=digest(fixture)))
-        tasks.append(dict(task=task.task_id,grader_bundle=task.grader_bundle,grader_sha256=task.grader_digest,
+        tasks.append(dict(task=task.task_id,fixture=task.fixture,fixture_digest=task.fixture_digest,
+            grader_bundle=task.grader_bundle,grader_sha256=task.grader_digest,
             grader_version=task.grader_version,artifacts=list(task.artifacts),controls=selected))
     return dict(bank_sha256=pin,tree_sha256=hashed(tree(bank_path.parent,max_files=4096,max_bytes=64*1024*1024)),
         directory_modes=directory_modes(bank_path.parent),tasks=tasks)
@@ -110,6 +111,30 @@ def audit(bank_path,output,backend,deadline):
     with controller_receipts.session():
         for task in bound['tasks']:
             bundle=contained(bank_path.parent,task['grader_bundle'])
+            with tempfile.TemporaryDirectory() as probe_folder:
+                for state, workspace, available in negative_probes(bank_path.parent, task, probe_folder):
+                    _check(deadline)
+                    if inventory(bank_path)!=bound:raise ValueError('frozen bank changed during control audit')
+                    before=digest(workspace)
+                    capture=controller_receipts.begin(source,available,deadline)
+                    try:
+                        run=backend.run(['/usr/bin/true'],workspace,{},'executor',
+                            Limits(seconds=min(5,deadline-time.monotonic())),artifact_allowlist=available)
+                        if run['status']!='completed' or not containment(run,backend.image.sha256,'executor'):
+                            raise ValueError('owned bank probe export unknown')
+                        grade=regrade_artifacts(workspace,available,bundle,task['grader_sha256'],backend,
+                            limits=Limits(seconds=min(5,deadline-time.monotonic())))
+                        if not containment(grade['execution'],backend.image.sha256):
+                            raise ValueError('owned bank probe containment unknown')
+                        observed=negative_outcome(grade['outcome'],grade['execution'].get('exit_code'))
+                        if observed!='passed':raise ValueError(observed)
+                        if grade['grader_identity']['grader_version']!=task['grader_version']:
+                            raise ValueError('owned bank probe grader identity unknown')
+                        capture.close(digest(workspace)==before and inventory(bank_path)==bound)
+                        report['checks'].append(dict(task=task['task'],control=state,expected=False,
+                            observed=False,controller=capture.read()))
+                    finally:
+                        capture.cancel()
             for control in task['controls']:
                 _check(deadline)
                 if inventory(bank_path)!=bound:raise ValueError('frozen bank changed during control audit')
