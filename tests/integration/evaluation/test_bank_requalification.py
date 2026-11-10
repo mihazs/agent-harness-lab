@@ -163,7 +163,8 @@ class TestBankRequalificationKernel(kernel.PytestKernelFixture):
         result=store,qualified['case_id'],handle,path,baseline,frozen,history,runtime,image,deadline,policy,client
         return (*result,backend,scope,settings_path) if controlled else result
 
-    def test_reviewed_bank_reservation_with_live_controlled_comparison(self):
+    @pytest.mark.parametrize('write_failure',['none','before-link','after-link'])
+    def test_reviewed_bank_reservation_with_live_controlled_comparison(self,write_failure):
         from agent_harness_lab.evaluation.comparison_custody import Comparison, bundle_binding
         from agent_harness_lab.private_journal import record
         store,case,domain,path,baseline,candidate,history,runtime,image,deadline,_,client,backend,scope,settings_path=self.owned_case(controlled=True)
@@ -176,7 +177,8 @@ class TestBankRequalificationKernel(kernel.PytestKernelFixture):
         scope.bind(path,baseline,candidate)
         handle=store.requalify_bank(case,domain,path,baseline,candidate,deadline=deadline)
         reserved=history.reserve_access(path,baseline,candidate,parent_deadline=deadline,requalification=handle)
-        original=Comparison.__init__; original_exit=Comparison.__exit__; checks=[]; exits=[]
+        original=Comparison.__init__; original_exit=Comparison.__exit__; original_consume=Comparison.consume_evidence
+        checks=[]; exits=[]; run_ids=[]
         def checked(instance,spec,fixtures,client,deadline,*args,**kwargs):
             if kwargs.get('protected_access') is not None:
                 forged=dict(kwargs,protected_access=copy(kwargs['protected_access']))
@@ -187,14 +189,39 @@ class TestBankRequalificationKernel(kernel.PytestKernelFixture):
                 checks.append('rejected')
             return original(instance,spec,fixtures,client,deadline,*args,**kwargs)
         def closed(instance,*errors):
+            run_ids.append(instance.journal_binding['run_id'])
             exits.append((history.history(history.case(instance.journal_binding['run_id']))[-1][0]['state'],instance._valid()))
+            assert instance.evidence_consumed
+            with pytest.raises(ValueError,match='fresh reviewed-bank comparison evidence required'):
+                instance.consume_evidence(history,json.loads((history.case(instance.journal_binding['run_id'])/'execution/results.json').read_text()))
             return original_exit(instance,*errors)
-        with patch.object(Comparison,'__init__',checked),patch.object(Comparison,'__exit__',closed):
-            result=history.run(path,baseline,candidate,cgroup_root=self.cgroup_root,image_root=runtime,image_sha256=image,
+        def consume(instance,store,result):
+            if write_failure=='none':return original_consume(instance,store,result)
+            from agent_harness_lab.private_journal import write_bytes, sync_directory
+            def interrupted_write(target,raw):
+                write_bytes(target,raw[:10]);raise OSError('synthetic interrupted retirement')
+            def interrupted_sync(target):
+                sync_directory(target);raise OSError('synthetic interrupted retirement')
+            target='write_bytes' if write_failure=='before-link' else 'sync_directory'
+            failure=interrupted_write if write_failure=='before-link' else interrupted_sync
+            with patch('agent_harness_lab.private_journal.'+target,side_effect=failure):
+                return original_consume(instance,store,result)
+        with patch.object(Comparison,'__init__',checked),patch.object(Comparison,'__exit__',closed),patch.object(Comparison,'consume_evidence',consume):
+            arguments=dict(cgroup_root=self.cgroup_root,image_root=runtime,image_sha256=image,
                 disk_bytes=64*1024*1024,budget_seconds=60,parent_deadline=deadline,access_reservation=reserved['reservation_id'],
                 inference_client=client,inference_settings=settings_path,sandbox_backend=backend,workflow_request=request)
+            if write_failure!='none':
+                with pytest.raises(OSError,match='interrupted retirement'):history.run(path,baseline,candidate,**arguments)
+            else:result=history.run(path,baseline,candidate,**arguments)
         assert checks == ['rejected']
         assert exits == [('sealed',True)]
+        if write_failure!='none':
+            partial=history.case(run_ids[0])/'reviewed-comparison-evidence.json'
+            assert partial.exists() == (write_failure=='after-link')
+            if partial.exists():assert json.loads(partial.read_text())['adoption_authority'] is False
+            assert not list(partial.parent.glob('.reviewed-evidence-*'))
+            assert history.show(run_ids[0])['automatic_promotion'] is False
+            return
         assert result['state'] == 'sealed'
         assert result['protected_access']['state'] == 'retired'
         assert result['automatic_promotion'] is False
@@ -204,6 +231,11 @@ class TestBankRequalificationKernel(kernel.PytestKernelFixture):
         assert binding['external_exposure'] == binding['pretraining_exposure'] == 'unknown'
         assert binding['native_identity'] == 'unverified'
         assert binding['certification_authority'] is binding['adoption_authority'] is False
+        retired=json.loads((history.case(result['run_id'])/'reviewed-comparison-evidence.json').read_text())
+        assert retired['run_id']==result['run_id'] and retired['certification_authority'] is retired['adoption_authority'] is False
+        from agent_harness_lab.evaluation.benchmark import public_export_allowed
+        from tests.unit.evaluation.test_benchmark_contracts import record as public_record
+        assert not public_export_allowed([{**public_record(),**retired,'publication_allowed':True}])
         from agent_harness_lab.evaluation.comparison_custody import validate
         _,_,_,spec,execution,_=history.checked(result['run_id'])
         receipt=json.loads((history.case(result['run_id'])/'protected-access.json').read_text())

@@ -794,6 +794,7 @@ class HistoryStore(PrivateJournal):
                 if controlled:
                     self.checked(run_id)
                     if custody.finish(result)!=proof:raise ValueError('live comparison changed during sealed readback')
+                    if custody.protected_access is not None:custody.consume_evidence(self,result)
         except (OSError,ValueError,TypeError,KeyError,subprocess.SubprocessError,KeyboardInterrupt) as error:
             with self.locked():
                 current = self.history(case)

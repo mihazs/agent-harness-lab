@@ -167,6 +167,9 @@ completion. This record is execution evidence only: external and pretraining
 exposure remain unknown, native identity remains unverified, and it grants neither
 certification nor adoption authority. A stored record cannot recreate the live
 reservation handle.
+After sealed readback, the live controller retires that observation once in an
+exclusive private record. An interrupted write grants no authority or new live
+observation. This is not a certification or promotion decision.
 
 Descriptive audits remain available and do not confer certification or automatic
 promotion authority. The controlled author workflow requires its configured model;

@@ -5,6 +5,7 @@ import hashlib
 import json
 import stat
 import os
+from pathlib import Path
 import time
 from weakref import WeakKeyDictionary
 
@@ -86,6 +87,7 @@ class Comparison:
             self.protected_access=(path,deepcopy(receipt))
             self._check_access()
         self.trajectories=trajectories or {};self.seeds=seeds or {}
+        self.evidence_consumed=False
         self.settings_pin=hashed(client.settings)
         self.expected=schedule(spec);self.rows=[];self.active=None;self.pending=[]
         self.latest=None;self.lost=False;self.closed=False;self.token=None
@@ -94,7 +96,7 @@ class Comparison:
     def _state(self):
         return encoded(dict(spec=self.spec.digest,fixtures=self.fixtures,client=id(self.client),settings_pin=self.settings_pin,deadline=self.deadline,
             permission_profile=self.permission_profile,controls=self.controls,bundles=self.bundles,journal_binding=self.journal_binding,protected_access=self.protected_access,trajectories=self.trajectories,seeds=self.seeds,expected=self.expected,rows=self.rows,active=self.active,pending=self.pending,latest=None if self.latest is None else id(self.latest),
-            lost=self.lost,closed=self.closed))
+            lost=self.lost,closed=self.closed,evidence_consumed=self.evidence_consumed))
 
     def _save(self):
         from .controller_receipts import _cache_state
@@ -304,6 +306,38 @@ class Comparison:
                 raise ValueError('reviewed bank reservation changed')
             access_guard(receipt['binding'],state,reservation_id=receipt['reservation_id'],deadline=self.deadline)
         check_deadline(self.deadline)
+
+    def consume_evidence(self,store,result):
+        """Retire one live observation; the durable record never grants promotion authority."""
+        from agent_harness_lab.private_journal import record, sync_directory, write_bytes
+        from .integrity import contained
+        if not self._valid() or self.protected_access is None or self.evidence_consumed:
+            raise ValueError('fresh reviewed-bank comparison evidence required')
+        path,receipt=self.protected_access
+        if store.root != Path(path).parent:
+            raise ValueError('comparison evidence belongs to another history store')
+        run_id=receipt['run_id']; case=store.case(run_id)
+        checked=store.checked(run_id)
+        if checked[-1]!='current' or checked[4]!=result or self.finish(result)['reviewed_bank_reservation']!=_reservation_view(receipt):
+            raise ValueError('sealed comparison evidence changed')
+        self.evidence_consumed=True;self._save()
+        if not self._valid():raise ValueError('comparison scope lost before evidence retirement')
+        value=dict(schema_version=1,profile='ahl-reviewed-comparison-evidence-v1',run_id=run_id,
+            plan_sha256=self.spec.digest,result_sha256=hashed(result),reservation_sha256=hashed(receipt),
+            custody_sha256=record(case/'responses-custody.json',8*1024*1024)[1],
+            publication_allowed=False,certification_authority=False,adoption_authority=False)
+        target=contained(case,'reviewed-comparison-evidence.json')
+        temporary=contained(case,'.reviewed-evidence-'+os.urandom(16).hex())
+        try:
+            write_bytes(temporary,encoded(value))
+            if not self._valid() or store.checked(run_id)!=checked or self.finish(result)['reviewed_bank_reservation']!=_reservation_view(receipt):
+                raise ValueError('comparison evidence changed before retirement')
+            os.link(temporary,target,follow_symlinks=False);sync_directory(case)
+        finally:
+            if temporary.exists():temporary.unlink()
+        if not self._valid() or store.checked(run_id)!=checked or self.finish(result)['reviewed_bank_reservation']!=_reservation_view(receipt):
+            raise ValueError('comparison evidence changed during retirement')
+        return value
 
 
 def validate(value,spec,result,protected_access=None,*,require_reviewed=False):
