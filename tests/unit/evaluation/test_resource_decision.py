@@ -105,6 +105,66 @@ def test_contract_change_creates_a_new_identity():
     assert base['contract_sha256'] == decide(contract(), pairs(60, 10), 'supported')['contract_sha256']
 
 
+def provenance_contract(policy='verified_uncached'):
+    return dict(contract(), schema_version=2, profile='resource-noninferiority-v2', cache_policy=policy)
+
+
+def fresh_rows():
+    rows = pairs(60, 10)
+    for row in rows:
+        for name in ('baseline', 'candidate'):
+            row[name]['provenance'] = dict(execution='new_request', cache_state='verified_uncached',
+                                           measurement_scope_complete=True)
+    return rows
+
+
+def test_provenance_contract_refuses_fast_replay_and_unknown_cache():
+    rows = fresh_rows()
+    rows[0]['candidate']['provenance']['execution'] = 'local_replay'
+    result = decide(provenance_contract(), rows, 'supported')
+    assert result['decision'] == 'blocked'
+    assert result['endpoints'][0]['unknown_reasons'] == {'execution_not_fresh': 1}
+    rows[0]['candidate']['provenance'].update(execution='new_request', cache_state='unknown')
+    assert decide(provenance_contract(), rows, 'supported')['decision'] == 'blocked'
+
+
+def test_provider_cache_is_allowed_only_by_declared_policy_and_complete_measurements():
+    rows = fresh_rows()
+    rows[0]['candidate']['provenance']['cache_state'] = 'provider_cache_used'
+    assert decide(provenance_contract(), rows, 'supported')['decision'] == 'blocked'
+    assert decide(provenance_contract('provider_cache_allowed'), rows, 'supported')['decision'] == 'blocked'
+    rows[0]['baseline']['provenance']['cache_state'] = 'provider_cache_used'
+    result = decide(provenance_contract('provider_cache_allowed'), rows, 'supported')
+    assert result['decision'] == 'improvement'
+    rows[0]['candidate']['provenance']['measurement_scope_complete'] = False
+    assert decide(provenance_contract('provider_cache_allowed'), rows, 'supported')['decision'] == 'blocked'
+
+
+def test_provenance_is_required_and_policy_is_part_of_identity():
+    rows = fresh_rows()
+    cold = decide(provenance_contract(), rows, 'supported')
+    warm = decide(provenance_contract('provider_cache_allowed'), rows, 'supported')
+    assert cold['contract_sha256'] != warm['contract_sha256']
+    del rows[0]['baseline']['provenance']
+    assert decide(provenance_contract(), rows, 'supported')['decision'] == 'blocked'
+    assert decide(contract(), rows, 'supported')['decision'] == 'improvement'  # legacy v1 remains unchanged
+
+
+def test_cached_requests_use_measured_tokens_and_cannot_override_quality():
+    rows = fresh_rows()
+    for row in rows:
+        for arm_name, tokens in (('baseline', 800), ('candidate', 100)):
+            row[arm_name]['provenance']['cache_state'] = 'provider_cache_used'
+            row[arm_name]['measurements']['tokens'] = tokens
+    token_contract = dict(provenance_contract('provider_cache_allowed'), endpoints=[dict(TOKENS, required=True)])
+    result = decide(token_contract, rows, 'supported')
+    assert result['decision'] == 'improvement'
+    assert result['endpoints'][0]['mean_difference'] == pytest.approx(-700)
+    assert decide(token_contract, rows, 'rejected')['decision'] == 'quality_not_verified'
+    del rows[0]['candidate']['measurements']['tokens']
+    assert decide(token_contract, rows, 'supported')['decision'] == 'blocked'
+
+
 @pytest.mark.parametrize('edit', [
     lambda c: c['endpoints'][0].update(kind='currency'),
     lambda c: c['endpoints'][0].update(scope='success_conditional'),

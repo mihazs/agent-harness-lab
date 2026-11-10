@@ -32,5 +32,24 @@ The report carries `contract_sha256`, so any change yields a new identity.
   `improvement` (`efficiency_improvement: true`); otherwise `noninferior`.
 - Advisory endpoints are reported but never affect the decision; absent data shows `unknown`.
 
+## Cache-aware contract (`resource-noninferiority-v2`)
+
+Version 2 adds `cache_policy` to the frozen contract, either `verified_uncached` or
+`provider_cache_allowed`. Each arm supplies `provenance` with `execution` equal to
+`new_request`, `cache_state` equal to `verified_uncached` or `provider_cache_used`, and
+`measurement_scope_complete: true`. A local replay, unknown cache state, missing provenance,
+or incomplete scope makes the endpoint unknown. `verified_uncached` rejects provider cache
+hits; `provider_cache_allowed` allows either declared state when both arms of each pair match.
+Asymmetric cache states block the endpoint. The policy is part
+of the contract digest. Actual measured tokens must include all relevant billed usage; cached
+tokens are not inferred to be free. Quality still gates the final decision.
+
+These fields are caller attestations, not independently verified cache state or custody. A
+caller must only mark the scope complete when the measurements include the declared target
+execution scope, including applicable retries and charges. Replay and regrading are not new
+target executions. This API does not collect cache-read/write categories, verify cache balance,
+or prevent a caller from supplying false provenance. Version 1 remains available with its
+original semantics and does not check provenance.
+
 Not included yet: ratios and cost-per-success (reported as `not_computed`), success-conditional
-latency, currency, cache provenance and report integration.
+latency, currency, automatic provenance capture and report integration.
