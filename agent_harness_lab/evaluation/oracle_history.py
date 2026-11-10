@@ -358,24 +358,40 @@ class HistoryStore(PrivateJournal):
         """Read frozen prior declarations/evidence, without approving old bank applicability."""
         with self.locked(): return self._historical_plan(run_id)
 
+    def _resource_readback(self,checked):
+        case,events,inputs,spec,result,_=checked
+        artifact,pin=record(case/'resource-evidence.json',8*1024*1024)
+        evidence,evidence_pin=record(case/'evidence.json')
+        custody,custody_pin=record(case/'responses-custody.json',8*1024*1024)
+        if (events[-1][0]['payload'] != dict(evidence_sha256=evidence_pin)
+                or pin != evidence['resource_evidence_sha256'] or custody_pin != evidence['responses_custody_sha256']):
+            raise ValueError('sealed resource readback changed')
+        from .resource_history import validate as validate_resource
+        validate_resource(artifact,spec,result,custody)
+        return artifact,pin,custody
+
     def resource_evidence(self,run_id,*,public=False):
-        """Read private v7 resource evidence after the history seal has been checked."""
+        """Read private resource evidence after the history seal has been checked."""
         if public is not False: raise ValueError('resource evidence is private')
         with self.locked():
-            case,events,inputs,spec,result,validity=self.checked(run_id)
-            if inputs['schema_version'] not in (7,8) or validity != 'current':
+            checked=self.checked(run_id)
+            if checked[2]['schema_version'] not in (7,8) or checked[-1] != 'current':
                 raise ValueError('current sealed resource evidence required')
-            artifact,pin=record(case/'resource-evidence.json',8*1024*1024)
-            evidence,evidence_pin=record(case/'evidence.json')
-            custody,custody_pin=record(case/'responses-custody.json',8*1024*1024)
-            if (events[-1][0]['payload'] != dict(evidence_sha256=evidence_pin)
-                    or pin != evidence['resource_evidence_sha256'] or custody_pin != evidence['responses_custody_sha256']):
-                raise ValueError('sealed resource readback changed')
-            from .resource_history import validate as validate_resource
-            validate_resource(artifact,spec,result,custody)
+            artifact,pin,_=self._resource_readback(checked)
             return dict(profile='ahl-resource-evidence-readback-v1',artifact=artifact,artifact_sha256=pin,
                         history='sealed_readback',history_authentication='not_established',provider='unverified',resource_decision='not_computed',
                         publication='private',publication_allowed=False,certification_authority=False,automatic_promotion=False)
+
+    def resource_cache_attestation(self,run_id,attestations,*,public=False):
+        """Bind private caller cache statements to a current sealed v8 history."""
+        if public is not False: raise ValueError('cache attestations are private')
+        with self.locked():
+            checked=self.checked(run_id)
+            if checked[2]['schema_version'] != 8 or checked[-1] != 'current':
+                raise ValueError('current sealed v8 resource evidence required')
+            artifact,_,custody=self._resource_readback(checked)
+            from .resource_cache_attestation import bind
+            return bind(artifact,checked[3],checked[4],custody,attestations)
 
     def _historical_plan(self,run_id,*,event_sha256=None):
         case,events,inputs,spec = self._opened(run_id,current_bank=False)
