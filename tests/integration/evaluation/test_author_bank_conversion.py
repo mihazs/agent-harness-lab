@@ -199,7 +199,7 @@ Path('manifest.json').write_text(json.dumps(dict(skills=[],harness_paths=[],task
     old_request=operator/'old-request.json';old_request.write_bytes(encoded(old))
     subprocess.run(['/usr/bin/ssh-keygen','-Y','sign','-f',str(key),'-n','ahl.final-bank-review.v1',str(old_request)],check=True,timeout=10)
     review_authority.verify(store,old,Path(str(old_request)+'.sig').read_text(),purpose=review_authority.BANK_PURPOSE,deadline=time.monotonic()+10)
-    assert invoke(store.root,'qualify','--case',case,'--request',old_request,'--signature',str(old_request)+'.sig')[0]==2
+    assert invoke(store.root,'qualify','--case',case,'--request',old_request,'--signature',str(old_request)+'.sig')[0]==3
     subprocess.run(['/usr/bin/ssh-keygen','-Y','sign','-f',str(key),'-n','ahl.final-bank-review.v1',str(request)],check=True,timeout=10)
     code,result=invoke(store.root,'qualify','--case',case,'--request',request,'--signature',str(request)+'.sig','--budget-seconds',60)
     assert code==0 and result['qualification']=='qualified_under_protocol'

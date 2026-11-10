@@ -359,6 +359,8 @@ def qualify(store,case_id,request_path,signature_path,*,budget_seconds=30):
     from .certification_access import _locked
     deadline=deadline_for(budget_seconds)
     value,_=record(request_path,authority.MAX_BYTES);review=authority.request_value(store,value,purpose=PURPOSE)
+    if not isinstance(review,dict) or not isinstance(review.get('heldout'),dict) or review['heldout'].get('negative_control_semantics')!='reviewed':
+        raise HeldoutUnavailable('negative control semantics judgment unavailable')
     signature=read_regular(signature_path,16*1024).decode('ascii')
     with store.locked():
         case,inputs,events=opened(store,case_id);controls=require_held_out_controls(case,inputs)
@@ -427,6 +429,8 @@ def revision_metadata(path,*,deadline=None,state=None):
     wrapper,_=record(store.root/'review-auth'/(descriptor['authentication']['record_sha256']+'.json'),2*authority.MAX_BYTES)
     if hashed(wrapper)!=descriptor['authentication']['record_sha256']:raise ValueError('bank authentication record changed')
     request=wrapper['request'];review=authority.request_value(store,request,purpose=PURPOSE)
+    if not isinstance(review,dict) or not isinstance(review.get('heldout'),dict) or review['heldout'].get('negative_control_semantics')!='reviewed':
+        raise HeldoutUnavailable('negative control semantics judgment unavailable')
     expected=dict(case_id=descriptor['case_id'],expected_event_sha256=qualified['previous_sha256'],evidence_sha256=pin,
         reviewer=review['reviewer'],protocol=PROTOCOL,exposure_epoch=review['exposure_epoch'],
         bank_sha256=record(case/'bank/bank.json',1024*1024)[1],declaration=record(case/'declaration.json')[0],
