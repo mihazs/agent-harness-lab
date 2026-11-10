@@ -118,6 +118,9 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
     if derivation is not None:
         instructions += '\nThe controller records construction exposure. Scientific parentage and independence remain unverified; do not claim certification.'
     if bank_qualification:
+        import base64
+        from .reference_grader import PROGRAM
+        program=base64.b64encode(PROGRAM.encode('utf-8')).decode('ascii')
         instructions = instructions.replace('Keep all fixture/control directories disjoint from every grader bundle.',
             'Keep task fixtures and grader_self_tests directories disjoint from every grader bundle.')
         instructions = instructions.replace('covering development, regression and heldout.',
@@ -127,7 +130,10 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
             'complete, alternative_valid and superficial; fixture paths are relative to the bundle. '
             'Its fixture task.json must contain a nonempty prompt string. '
             'The untouched fixture must produce a valid failing grader receipt even when an artifact is absent. '
-            'The controller will separately provide private controls that you cannot see.')
+            'The controller will separately provide private controls that you cannot see. '
+            'For each grader bundle, decode the following base64 bytes exactly into grade.py.txt; '
+            'do not edit them. Set expected.json to a nonempty JSON object. The grader requires '
+            'result.json to contain that object recursively with matching JSON types.\n'+program)
     prompt = ('Construct exposed development variants from the supplied source. No independent or untouched evaluation claim is supported.'
         if variant else 'Construct the descriptive experiment from the supplied baseline and metadata.' if derivation is not None else 'Construct the independent descriptive experiment from the supplied baseline and metadata.')
     inputs=AnalysisInputs(baseline,context) if analysis else {'harness':baseline,'fixture':context}

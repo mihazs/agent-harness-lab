@@ -108,6 +108,18 @@ def test_controller_constructs_exact_grader_commands_after_author_publication(pr
     assert all('grader' not in task for task in manifest['tasks'])
 
 
+def test_final_author_receives_exact_public_grader_bytes(prep):
+    import base64
+    from agent_harness_lab.evaluation.reference_grader import PROGRAM
+    path,_=prep.authored();state=WorkingState(path.parent,prep.deadline)
+    with patch.object(construction,'run_role',return_value=(state,[])) as run:
+        construction.author(Mock(),Mock(),prep.baseline,prep.root/'context',prep.root/'seed',prep.root/'published',
+            prep.deadline,bank_qualification=True)
+    instructions=run.call_args.args[5]
+    assert base64.b64encode(PROGRAM.encode('utf-8')).decode('ascii') in instructions
+    assert 'all with split heldout' in instructions
+
+
 @pytest.mark.parametrize('changes', [
     pytest.param('argv', id='argv'),
     pytest.param('digest', id='digest'),

@@ -113,8 +113,9 @@ def native_qualified_bank(fixture,cgroup):
     from agent_harness_lab.evaluation.permission_audit import PROFILE as PERMISSION_PROFILE
     from agent_harness_lab.evaluation.regression_review import ReviewStore
     from agent_harness_lab.evaluation.sandbox import SandboxBackend
+    from agent_harness_lab.evaluation.reference_grader import PROGRAM
     from agent_harness_lab.promotion import prerequisites
-    from tests.integration.sandbox import test_sandbox_construction as roles, test_sandbox_inference as wire
+    from tests.integration.sandbox import test_sandbox_inference as wire
     from tests.integration.evaluation.test_bank_qualification_final import invoke
 
     root=fixture.root;args=fixture.args
@@ -128,7 +129,28 @@ def native_qualified_bank(fixture,cgroup):
     deadline=time.monotonic()+180
     backend=SandboxBackend(cgroup_root=cgroup,image_root=runtime,image_sha256=image,
         disk_bytes=64*1024*1024,permission_audit=PERMISSION_PROFILE)
-    script=roles.AUTHOR.replace("('development','regression','heldout')","('heldout-a','heldout-b','heldout-c')")+'''\nfrom pathlib import Path\nimport json\nm=Path('manifest.json');v=json.loads(m.read_text())\nfor task in v['tasks']:\n task['split']='heldout';f=Path(task['fixture'])/'task.json';data=json.loads(f.read_text());data['prompt']='Produce '+task['id'];f.write_text(json.dumps(data))\nm.write_text(json.dumps(v))\nbundle=Path('oracle')\n(bundle/'grade.py.txt').write_text("""from pathlib import Path\nimport json,sys\nf=Path(sys.argv[1])/'result.json'\na=json.loads(f.read_text()) if f.exists() else {}\noutcome=a.get('complete') is True and a.get('scenario')==1\nprint(json.dumps(dict(schema_version=1,valid=True,outcome=outcome,grader_id='synthetic',grader_version='v1')))\nsys.exit(0 if outcome else 1)\n""")\ncontrols=[]\nfor state in ('broken','partial','complete','alternative_valid','superficial'):\n d=bundle/state;d.mkdir();(d/'result.json').write_text(json.dumps(dict(complete=state in ('complete','alternative_valid'),scenario=1)))\n controls.append(dict(state=state,fixture=state))\n(bundle/'controls.json').write_text(json.dumps(controls))\n'''
+    script=f'''from pathlib import Path
+import json
+bundle=Path('oracle');bundle.mkdir()
+(bundle/'grade.py.txt').write_text({PROGRAM!r})
+(bundle/'expected.json').write_text(json.dumps(dict(complete=True,scenario=1)))
+tasks=[];tests=[];controls=[]
+for name in ('heldout-a','heldout-b','heldout-c'):
+ fixture=Path(name);fixture.mkdir()
+ (fixture/'task.json').write_text(json.dumps(dict(prompt='Produce '+name,scenario=1)))
+ tasks.append(dict(id=name,split='heldout',fixture=name,prompt='Produce '+name,artifacts=['result.json']))
+ for state in ('broken','partial','complete'):
+  test=Path(name+'-'+state);test.mkdir()
+  (test/'result.json').write_text(json.dumps(dict(complete=state=='complete',scenario=1)))
+  tests.append(dict(task=name,state=state,fixture=str(test)))
+for state in ('broken','partial','complete','alternative_valid','superficial'):
+ folder=bundle/state;folder.mkdir()
+ (folder/'result.json').write_text(json.dumps(dict(complete=state in ('complete','alternative_valid'),scenario=1)))
+ controls.append(dict(state=state,fixture=state))
+(bundle/'controls.json').write_text(json.dumps(controls))
+Path('manifest.json').write_text(json.dumps(dict(skills=[],harness_paths=[],tasks=tasks,grader_self_tests=tests,
+ grader_bundles={{task['id']:dict(path='oracle') for task in tasks}})))
+'''
     calls=[]
     def transport(_key,body,_size,_deadline):
         calls.append(json.loads(body));ident=str(len(calls))
