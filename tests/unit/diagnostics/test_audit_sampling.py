@@ -467,6 +467,19 @@ def test_tampered_receipt_probability_is_refused(population):
         audit.estimate(resealed, labels(resealed, truth))
 
 
+def test_subprecision_random_rate_and_zero_stratum_are_refused():
+    value = frame([unit('synthetic')])
+    with pytest.raises(ValueError, match='inclusion probability'):
+        audit.draw(value, plan(value, rates=dict(random=1e-20)))
+    receipt = audit.draw(value, plan(value, rates=dict(random=.2)))
+    body = {key: item for key, item in receipt.items() if key != 'receipt_sha256'}
+    body['strata'][0]['inclusion_probability'] = 0.0
+    body['draws'] = []
+    resealed = audit._seal(body)
+    with pytest.raises(ValueError, match='inclusion probability'):
+        audit.review_queue(resealed)
+
+
 def test_missing_reviews_are_not_negatives(population):
     value, truth = population
     receipt = audit.draw(value, plan(value))
