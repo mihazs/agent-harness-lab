@@ -12,6 +12,7 @@ import math
 
 POLICY_PROFILE = 'diagnostic-triage-policy-v2'
 REPORT_PROFILE = 'diagnostic-triage-evaluation-v2'
+REPORT_PROFILE_V3 = 'diagnostic-triage-evaluation-v3'
 SEVERITIES = ('severe', 'normal', 'none')
 COSTS = ('false_alert', 'wrong_class', 'missed_alert', 'severe_miss', 'review')
 ROLE_ROOTS = ('fit_roots_sha256', 'calibration_roots_sha256', 'threshold_tuning_roots_sha256')
@@ -136,13 +137,15 @@ def _aggregate(observations, policy, names, forbidden):
     return roots
 
 
-def evaluate(policy, observations):
+def evaluate(policy, observations, *, report_version=2):
     """Describe a frozen v2 policy on held-out roots; supplied labels grant no authority.
 
     ``observations`` may be any iterable (including a generator) of row dicts with
     ``root_case_id``, ``split: heldout``, ``label`` (declared class or None) and
     ``scores`` (one score in [0, 1] per declared class).
     """
+    if type(report_version) is not int or report_version not in (2, 3):
+        raise ValueError('unsupported triage report version')
     names, forbidden = check_policy(policy)
     classes, costs = policy['classes'], policy['costs']
     roots = _aggregate(observations, policy, names, forbidden)
@@ -219,7 +222,12 @@ def evaluate(policy, observations):
                 missing.append(f'class:{name}:{metric}_undefined')
             elif metrics[metric] < classes[name]['min_'+metric]:
                 failed.append(f'class:{name}:{metric}_below_minimum')
-    coverage = decided/labeled if labeled else None
+    # V2 retains its original labeled-root denominator for saved-report replay.
+    # V3 measures decisions on all declared roots, including unlabeled roots.
+    if report_version == 2:
+        coverage = decided/labeled if labeled else None
+    else:
+        coverage = (len(roots)-len(abstained))/len(roots)
     if coverage is None:
         missing.append('coverage_undefined')
     elif coverage < policy['min_coverage']:
@@ -229,7 +237,7 @@ def evaluate(policy, observations):
     overflow = max(0, len(abstained)-policy['review_capacity_roots'])
     if overflow:
         failed.append('review_capacity_exceeded')
-    return dict(schema_version=2, profile=REPORT_PROFILE, role='validate',
+    return dict(schema_version=report_version, profile=REPORT_PROFILE if report_version == 2 else REPORT_PROFILE_V3, role='validate',
         status='rejected' if failed else 'insufficient_evidence', reasons=failed+missing+list(LIMITATIONS),
         policy_sha256=policy_sha256(policy), model_sha256=policy['model_sha256'],
         calibrator_sha256=policy['calibrator_sha256'], unit='declared_root',

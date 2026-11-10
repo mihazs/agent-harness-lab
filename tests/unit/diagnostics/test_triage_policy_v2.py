@@ -41,6 +41,39 @@ def sha(root):
     return hashlib.sha256(root.encode()).hexdigest()
 
 
+@pytest.mark.parametrize('known_label', [NONE, None])
+def test_coverage_counts_unlabeled_decisions_and_abstentions(known_label):
+    decided = row('decided', known_label, NONE)
+    abstained = row('unlabeled-abstention', None, None)
+    result = triage.evaluate(policy(min_coverage=.75), [decided, abstained, abstained], report_version=3)
+    assert result['coverage'] == .5
+    assert result['status'] == 'rejected'
+    assert 'coverage_below_minimum' in result['reasons']
+    assert result['labeled_roots'] == (1 if known_label else 0)
+    assert result['decided_labeled_roots'] == (1 if known_label else 0)
+    assert not result['automatic_promotion'] and not result['publication_allowed']
+    assert not public_export_allowed([result])
+
+
+def test_unlabeled_decisions_have_coverage_but_no_validation_authority():
+    result = triage.evaluate(policy(), [row('unlabeled', None, NONE)], report_version=3)
+    assert result['coverage'] == 1
+    assert result['labeled_roots'] == 0 and result['decided_labeled_roots'] == 0
+    assert result['status'] == 'insufficient_evidence'
+    assert result['certification'] == 'not_issued'
+
+
+def test_legacy_v2_coverage_and_version_validation_are_preserved():
+    rows = [row('decided', NONE, NONE), row('unlabeled-abstention', None, None)]
+    legacy = triage.evaluate(policy(min_coverage=.75), rows)
+    revised = triage.evaluate(policy(min_coverage=.75), rows, report_version=3)
+    assert legacy['profile'] == triage.REPORT_PROFILE and legacy['coverage'] == 1
+    assert 'coverage_below_minimum' not in legacy['reasons']
+    assert revised['profile'] == triage.REPORT_PROFILE_V3 and revised['coverage'] == .5
+    with pytest.raises(ValueError, match='report version'):
+        triage.evaluate(policy(), rows, report_version=True)
+
+
 def test_class_wise_root_grouped_confusion_and_costs():
     rows = [row('s1', SEVERE, SEVERE), row('s2', SEVERE, NORMAL), row('n1', NORMAL, NORMAL),
             row('n2', NORMAL, NONE), row('z1', NONE, NONE), row('z2', NONE, SEVERE),

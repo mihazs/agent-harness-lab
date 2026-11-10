@@ -90,6 +90,13 @@ IDs are not normalized, so fitting, calibration and threshold-tuning lists must 
 exactly the evaluated `root_case_id` strings. Class names may not contain `:` or start
 with `abstained`, which is reserved for abstention outcomes.
 
+The default v2 report measures coverage only among labeled roots. For coverage
+over all distinct declared roots, including unlabeled decisions and abstentions,
+call `evaluate(policy, observations, report_version=3)`. Its separate
+`diagnostic-triage-evaluation-v3` profile uses that denominator for the coverage
+constraint. Historical v2 and v3 coverage values are not directly comparable.
+Neither profile establishes label authority or root independence.
+
 Any failed constraint returns `rejected`. Otherwise the status is
 `insufficient_evidence`, and undefined metrics or classes without validation
 roots are listed as reasons. The report has `qualification: descriptive_only`,
