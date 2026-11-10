@@ -174,8 +174,10 @@ def choose_threshold(rows, probabilities, target=.9):
     return None
 
 
-def evaluate_triage_policy(rows, probabilities, policy):
+def evaluate_triage_policy(rows, probabilities, policy, *, report_version=1):
     """Check a frozen policy descriptively; supplied roots/labels grant no authority."""
+    if type(report_version) is not int or report_version not in (1,2):
+        raise ValueError('unsupported binary triage report version')
     fields = {'schema_version', 'threshold', 'min_precision', 'min_recall', 'min_coverage'}
     if (not isinstance(policy, dict) or set(policy) != fields
             or type(policy['schema_version']) is not int or policy['schema_version'] != 1):
@@ -223,6 +225,9 @@ def evaluate_triage_policy(rows, probabilities, policy):
         precision=counts['tp']/(counts['tp']+counts['fp']) if counts['tp']+counts['fp'] else None,
         recall=counts['tp']/positives if positives else None,
         coverage=accepted/counts['labeled_roots'] if counts['labeled_roots'] else None)
+    if report_version==2:
+        declared=len(root_decisions);decided=sum(not decision['abstain'] for decision in root_decisions)
+        metrics.update(coverage=decided/declared if declared else None,declared_roots=declared,decided_roots=decided)
     failed, missing = [], []
     for name in ('precision', 'recall', 'coverage'):
         if metrics[name] is None:
@@ -231,12 +236,16 @@ def evaluate_triage_policy(rows, probabilities, policy):
             failed.append(name+'_below_minimum')
     if not positives or not negatives:
         missing.append('both_validation_classes_required')
-    return dict(schema_version=1, status='rejected' if failed else 'insufficient_evidence',
+    result=dict(schema_version=1, status='rejected' if failed else 'insufficient_evidence',
         policy_sha256=hashlib.sha256(json.dumps(policy, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest(), metrics=metrics,
         reasons=failed+missing+['independent_validation_not_verified'],
         threshold=policy['threshold'], root_independence='unverified', label_authority='unverified',
         decisions=root_decisions, decision_threshold_source='frozen_policy', unit='declared_root',
         qualification='descriptive_only', automatic_promotion=False)
+    if report_version==2:
+        result.update(schema_version=2,profile='diagnostic-binary-triage-evaluation-v2',
+                      coverage_scope='all_declared_roots',publication_allowed=False)
+    return result
 
 
 def file_sha256(path):
@@ -399,9 +408,12 @@ def main():
     parser.add_argument('--question', help='Atomic hypothesis for NLI entailment; required with --method nli')
     parser.add_argument('--batch-size', type=int, default=8, help='Positive number of examples per embeddings/NLI batch (default: %(default)s)')
     parser.add_argument('--triage-policy', type=Path, help='Existing frozen JSON policy with schema_version, threshold, min_precision, min_recall and min_coverage; evaluate only heldout roots, with no certification authority')
+    parser.add_argument('--triage-report-version', type=int, choices=(1,2), help='Binary triage report: 1 labeled-root coverage (default), 2 all-declared-root coverage; requires --triage-policy')
     parser.add_argument('--max-examples', type=int, help='Optional positive input-row limit; the default reads every example without a row or evidence-text length cap')
     args = parser.parse_args()
     try:
+        if args.triage_report_version is not None and args.triage_policy is None:
+            raise ValueError('--triage-report-version requires --triage-policy')
         if args.batch_size <= 0:
             raise ValueError('batch size must be positive')
         if args.method in ('embeddings', 'nli') and (args.model_path is None or not args.model_path.is_dir()):
@@ -448,7 +460,8 @@ def main():
         if args.triage_policy is not None:
             policy = json.loads(args.triage_policy.read_text())
             heldout = [(r, p) for r, p in zip(rows, probabilities) if r['split'] == 'heldout']
-            result['triage'] = evaluate_triage_policy([r for r, _ in heldout], [p for _, p in heldout], policy)
+            result['triage'] = evaluate_triage_policy([r for r, _ in heldout], [p for _, p in heldout], policy,
+                                                      report_version=args.triage_report_version or 1)
         for split in SPLITS:
             subset = [(r, p) for r, p in zip(rows, probabilities) if r['split'] == split]
             result['splits'][split] = measure([r for r, _ in subset], [p for _, p in subset], threshold)

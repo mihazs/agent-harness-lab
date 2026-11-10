@@ -117,3 +117,52 @@ def test_cli_extreme_policy_rejects_without_traceback(tmp_path):
         '--method','baseline','--triage-policy',str(configuration)],capture_output=True,text=True)
     assert process.returncode==2
     assert 'invalid triage policy constraint' in process.stderr and 'Traceback' not in process.stderr
+
+
+def test_binary_all_root_coverage_includes_unlabeled_abstentions():
+    rows=[row('positive',True),row('negative',False)]+[row(f'unknown-{n}',None) for n in range(98)]
+    scores=[.9,.1]+[.5]*98
+    configured=dict(policy(),threshold=.8,min_coverage=.8)
+    old=bench.evaluate_triage_policy(rows,scores,configured)
+    result=bench.evaluate_triage_policy(rows+[rows[-1]],scores+[scores[-1]],configured,report_version=2)
+    assert old['metrics']['coverage']==1 and 'coverage_below_minimum' not in old['reasons']
+    assert result['metrics']['coverage']==.02 and result['metrics']['declared_roots']==100
+    assert result['metrics']['decided_roots']==2 and result['metrics']['unknown_roots']==98
+    assert result['status']=='rejected' and 'coverage_below_minimum' in result['reasons']
+    assert result['coverage_scope']=='all_declared_roots' and result['publication_allowed'] is False
+    assert result['root_independence']=='unverified' and result['label_authority']=='unverified'
+    assert not result['automatic_promotion']
+
+
+def test_binary_all_root_coverage_never_invents_labels_or_empty_coverage():
+    result=bench.evaluate_triage_policy([row('unknown',None)],[.9],policy(),report_version=2)
+    assert result['metrics']['coverage']==1 and result['metrics']['precision'] is None
+    assert result['metrics']['recall'] is None and result['status']=='insufficient_evidence'
+    abstained=bench.evaluate_triage_policy([row('unknown',None)],[.5],dict(policy(),threshold=.8),report_version=2)
+    assert abstained['metrics']['coverage']==0 and abstained['status']=='rejected'
+    assert 'coverage_below_minimum' in abstained['reasons']
+    empty=bench.evaluate_triage_policy([],[],policy(),report_version=2)
+    assert empty['metrics']['coverage'] is None and 'coverage_undefined' in empty['reasons']
+    for version in (True,0,3):
+        with pytest.raises(ValueError,match='report version'):
+            bench.evaluate_triage_policy([],[],policy(),report_version=version)
+
+
+def test_binary_report_version_cli_requires_policy_and_is_private(tmp_path):
+    from agent_harness_lab.evaluation.benchmark import public_export_allowed
+    from tests.unit.evaluation.test_benchmark_contracts import record
+
+    source,configuration=tmp_path/'examples.jsonl',tmp_path/'policy.json'
+    source.write_text('\n'.join(json.dumps(value) for value in [
+        dict(row('train-positive',True),split='train'),dict(row('train-negative',False),split='train'),
+        row('positive',True),row('negative',False),row('unknown',None)])+'\n')
+    configuration.write_text(json.dumps(dict(policy(),threshold=.8)))
+    command=[sys.executable,'-m','agent_harness_lab','benchmark',str(source),'--method','baseline']
+    missing=subprocess.run([*command,'--triage-report-version','2'],capture_output=True,text=True)
+    assert missing.returncode==2 and 'requires --triage-policy' in missing.stderr
+    process=subprocess.run([*command,'--triage-policy',str(configuration),'--triage-report-version','2'],capture_output=True,text=True)
+    assert process.returncode==0,process.stderr
+    result=json.loads(process.stdout)['triage']
+    assert result['profile']=='diagnostic-binary-triage-evaluation-v2'
+    assert result['metrics']['declared_roots']==3 and result['coverage_scope']=='all_declared_roots'
+    assert not public_export_allowed([{**result,**record(),'publication_allowed':True}])

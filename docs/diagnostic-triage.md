@@ -25,6 +25,15 @@ TP/FP/FN/TN, class-specific abstentions and failed constraints. These decisions
 use `triage.threshold`; the legacy top-level `predictions` use the separate
 descriptive `threshold` and have `threshold_authority: descriptive_smoke_only`.
 
+The default binary report uses its historical labeled-root coverage denominator.
+To evaluate coverage across every distinct declared held-out root, including
+unlabeled abstentions and decisions, pass `--triage-report-version 2` with
+`--triage-policy`. The separate `diagnostic-binary-triage-evaluation-v2` profile
+reports `declared_roots` and `decided_roots`; its coverage is their ratio, or
+null when there are no roots. This changes the coverage constraint's denominator,
+not the labels used for precision and recall. Repeated rows of one root count
+once. The report is private and does not verify labels or root independence.
+
 An observed constraint violation returns `rejected`. Otherwise the result is
 `insufficient_evidence`: supplied root IDs and labels do not establish root
 independence, independent validation, or oracle authority. No policy from this
