@@ -219,8 +219,9 @@ def test_disappearing_runtime_preserves_its_blocked_reason(pinned, phase):
     if phase=='before_controls': assert len(calls) == 1
 
 
+@pytest.mark.parametrize('entry', [('improve',), ('skills', 'invoke')], ids=['cli', 'skill'])
 @pytest.mark.parametrize('interrupted', [pytest.param(False, id='grader-failure'), pytest.param(True, id='interrupted')])
-def test_grader_failure_and_interruption_preserve_target(pinned, interrupted):
+def test_grader_failure_and_interruption_preserve_target(pinned, interrupted, entry):
     runner = evaluator()
     execute = runner.execute
     calls = []
@@ -232,9 +233,10 @@ def test_grader_failure_and_interruption_preserve_target(pinned, interrupted):
         return dict(exit_code=0, stdout='', stderr='', elapsed_seconds=0, timeout=False)
     with patch('agent_harness_lab.cli.evaluator', return_value=runner), patch.object(runner, 'execute', side_effect=stop):
         if interrupted:
-            code, result = invoke(pinned)
+            code, result = invoke(pinned, entry=entry)
             assert (code, result['status']) == (1, 'interrupted')
+            assert len(calls) == 1
         else:
-            with pytest.raises(SystemExit) as stopped: invoke(pinned)
+            with pytest.raises(SystemExit) as stopped: invoke(pinned, entry=entry)
             assert stopped.value.code == 2
     assert (pinned.project/'AGENTS.md').read_text() == 'bad'
