@@ -279,6 +279,8 @@ def evaluation_unchanged(path, receipt):
 
 
 def create(project, config):
+    from .read_only import require_writable
+    require_writable(project)
     if not supported():
         raise NotImplementedError('safe configuration I/O is unavailable')
     validate(config)
@@ -297,6 +299,7 @@ def create(project, config):
                 json.dump(config, stream, indent=2, allow_nan=False); stream.write('\n')
                 stream.flush(); os.fsync(stream.fileno())
             # link is atomic and exclusive: an existing file is never replaced.
+            require_writable(project)
             os.link(temporary, 'ahl.json', src_dir_fd=directory, dst_dir_fd=directory, follow_symlinks=False)
             os.fsync(directory)
         except BaseException:

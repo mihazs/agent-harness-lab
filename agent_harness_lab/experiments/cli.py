@@ -84,6 +84,8 @@ def main(argv):
             markdown,document=render(result)
             if args.history_store is not None and history_summary(args.history_store,records)!=result:
                 raise ValueError('controller report authority changed before output')
+            from agent_harness_lab.read_only import require_writable
+            require_writable(args.output)
             args.output.mkdir(parents=True,exist_ok=False,mode=0o700)
             atomic_json(args.output/'results.json',result)
             for name,content in (('report.md',markdown),('report.html',document)):

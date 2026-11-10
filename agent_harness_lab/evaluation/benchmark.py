@@ -8,6 +8,10 @@ from .history_report import summary as history_summary  # noqa: F401 - re-export
 
 MATCH_FIELDS=('provider','runtime','model_revision','reasoning','task_bank_revision',
               'sandbox_image','permissions','controller_version')
+PUBLIC_STATUSES=('unknown','not_run','not_executed','completed','passed','failed','skipped','inconclusive',
+                 'blocked','incomplete','interrupted','budget_exhausted','execution_error','invalid_input',
+                 'grader_error','timeout','agent_timeout','rejected','supported')
+PUBLIC_EXECUTION_KINDS=('synthetic','replay','real_model','fake_agent')
 
 
 def validate_pair(baseline,candidate,strict=True):
@@ -20,8 +24,25 @@ def validate_pair(baseline,candidate,strict=True):
 
 
 def public_export_allowed(records):
-    if not records or isinstance(records,dict): return False
+    if not isinstance(records,list) or not records: return False
     for record in records:
+        if (not isinstance(record,dict)
+                or not {'baseline_runtime','candidate_runtime','provenance'} <= record.keys()
+                or record.keys() - {'baseline_runtime','candidate_runtime','provenance','status','execution_kind','publication_allowed'}):
+            return False
+        for name in ('baseline_runtime','candidate_runtime'):
+            runtime=record[name]
+            if (not isinstance(runtime,dict) or runtime.keys() - {*MATCH_FIELDS,'effective_settings_verified'}
+                    or not all(isinstance(runtime.get(key),str) and 0 < len(runtime[key]) <= 4096 for key in MATCH_FIELDS)
+                    or 'effective_settings_verified' in runtime and type(runtime['effective_settings_verified']) is not bool):
+                return False
+        provenance=record['provenance']
+        if not isinstance(provenance,dict) or provenance.keys() - {'source_kind','approved_publication','source_ref','derived_from_private'}:
+            return False
+        if (record.get('status','unknown') not in PUBLIC_STATUSES
+                or record.get('execution_kind','synthetic') not in PUBLIC_EXECUTION_KINDS
+                or not isinstance(provenance.get('source_ref'),str) or not 0 < len(provenance['source_ref']) <= 4096):
+            return False
         wrappers=(record,record.get('receipt'),record.get('analysis'),record.get('context'),record.get('binding'),record.get('execution'),record.get('process_mining'),record.get('incident_retrieval'))
         # Preparation contexts carry the private invocation as a known child.
         invocations=tuple(value.get('invocation') for value in wrappers if isinstance(value,dict))
@@ -33,7 +54,8 @@ def public_export_allowed(records):
                         'controller_source_profile','source_capture','live_verification','verified_execution','controller_harness_input','harness_snapshot_binding','implementation_prerequisites','restricted_process_protocol','controlled_instruction_protocol','harness_change_plan','plan_sha256','configured_response_references_sha256',
                         'classifier_selection_allowed','review_event_sha256','protected_access','protected_access_sha256','import_sha256','foreign_claims','proposal_id',
                         'controller_derivation','derivation_id','derivation_binding_sha256','review_authentication','authentication','bank_qualification','construction_access','construction_id',
-                        'closed_input','domain_sha256','qualification_event_sha256','delegation_sha256'))
+                        'closed_input','domain_sha256','qualification_event_sha256','delegation_sha256',
+                        'audit_sha256','harness_inventory_sha256','instruction_precedence'))
                     or metadata.get('algorithm') in ('private-preservation-decision-v1','private-controller-history-report-v1',
                         'guarded-preservation-search-v1','corrected-cohort-qualification-v1')
                     or metadata.get('profile') in ('ahl-harness-change-plan-v1','knowledge-temporal-v1','knowledge-links-v1','proposer-mechanism-admission-v1','mechanism-route-dispositions-v1','mechanism-coverage-v1','ahl-controlled-agents-v1','conditional-finite-bank-sequential-v1','ahl-linux-restricted-process-v1','ahl-implementation-prerequisites-v1','controller-trajectory-v1','diagnostic-corpus-v1','diagnostic-corpus-benchmark-v1','ahl-controller-live-v1','permission-results-v1','protected-diagnostic-access-v1','external-evaluation-data-v1','one-call-improvement-v1','controlled-development-derivation-v1','fixed-root-precision-v1','fixed-root-power-simulation-v1','authenticated-artifact-review-v1','review-authority-policy-v1','conditional-final-bank-v1','owned-final-bank-controls-v1','canonical-construction-access-v1','cross-journal-commit-join-v1','cross-journal-pull-commit-join-v1','git-ref-movement-v1','ai-memory-okf-provenance-v1','ahl-harness-snapshot-binding-v1','precision-sample-size-v1','ci-test-results-v1','claude-mem-export-v1','mem0-oss-export-v1','hindsight-bank-archive-v1','diagnostic-triage-policy-v2','diagnostic-triage-evaluation-v2','cognee-export-v1')
@@ -44,7 +66,8 @@ def public_export_allowed(records):
                         'ahl-analysis-execution-v1','ahl-improve-fixed-bank-v1','ahl-fresh-responses-comparison-v1',
                         'controller-request-reservation-v1','controller-realized-schedule-v1','ahl-skill-invocation-context-v1','ahl-live-construction-stage-v1',
                         'conditional-bank-requalification-v2','conditional-bank-closed-input-domain-v2','ahl-controlled-agents-project-inputs-v1',
-                        'owned-evidence-views-v1','owned-closed-input-closure-v1','ahl-single-run-decision-disposition-v1')
+                        'owned-evidence-views-v1','owned-closed-input-closure-v1','ahl-single-run-decision-disposition-v1',
+                        'ahl-static-audit-v1')
                     or any(key in metadata for key in ('request_sha256','workflow_request_sha256','responses_binding','responses_custody_sha256','request_binding','realized_schedule'))
                     or metadata.get('report_kind')=='controller_trajectory'
                     or metadata.get('outcome_mapping')=='artifact_and_required_v1'

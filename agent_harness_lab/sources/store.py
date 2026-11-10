@@ -313,6 +313,8 @@ class SourceStore:
         elif cursor_before is not None and cursor_after is None:
             raise ValueError('a committed checkpoint cannot be silently reset')
         self._safe_path()
+        from agent_harness_lab.read_only import require_writable
+        require_writable(self.path.parent)
         self.path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         lock = self.path.with_name(self.path.name+'.lock')
         fd = os.open(lock, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600)

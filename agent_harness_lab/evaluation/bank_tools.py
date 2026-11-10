@@ -80,6 +80,8 @@ def export_manifest(bank_path,output,max_trials=24,*,task_ids=None):
     for task in value['tasks']:
         ident=task['task_id']
         if '/' in ident or '\\' in ident or ident in ('.','..'): raise ValueError('unsafe exported task ID')
+    from agent_harness_lab.read_only import require_writable
+    require_writable(output)
     output.mkdir(parents=True,exist_ok=False,mode=0o700)
     tasks=[]; controls=[]; bundles={}
     for task in value['tasks']:

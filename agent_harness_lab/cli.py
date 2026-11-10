@@ -57,6 +57,11 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if 'AHL_MANAGED_PREPARATION' in os.environ:
         argparse.ArgumentParser(prog='ahl').exit(3,'ahl: managed preparation cannot start a CLI operation\n')
+    from .read_only import require_safe_cli_destinations, FrozenProjectError
+    try:
+        require_safe_cli_destinations(argv)
+    except FrozenProjectError as exc:
+        argparse.ArgumentParser(prog='ahl').exit(2, f'ahl: {exc}\n')
     skill_invocation=argv[:2]==['skills','invoke']
     if skill_invocation:argv=['improve',*argv[2:]]
     if argv and argv[0] == 'analysis':
@@ -67,6 +72,9 @@ def main(argv=None):
     if argv and argv[0] == 'rollback':
         from .one_call import rollback_main
         return rollback_main(argv[1:])
+    if argv and argv[0] == 'audit':
+        from .audit.cli import main as audit_main
+        return audit_main(argv[1:])
     if argv and argv[0] == 'sources':
         from agent_harness_lab.sources.cli import main as source_main
         return source_main(argv[1:])
@@ -138,6 +146,7 @@ def main(argv=None):
         'promotion':'Preview rollback, manually roll back or recover an owned journal transaction',
         'benchmark-report':'Summarize explicit benchmark artifacts without inventing missing outcomes',
         'doctor':'Inspect local readiness; probes require opt-in and authentication stays unverified',
+        'audit':'Inspect static harness conventions without execution, network or a model',
         'init':'Preview configuration or exclusively create ahl.json with explicit --write',
         'sources':'Inspect, import and project explicitly selected private source journals',
     }
@@ -222,6 +231,9 @@ def main(argv=None):
         if not args.project.is_dir():
             raise ValueError('project must be an existing directory')
         args.project = args.project.resolve()
+        if args.command != 'analyze':
+            from .read_only import require_writable
+            require_writable(args.project)
         if args.command == 'analyze':
             if args.memory_manifest is not None:
                 if args.authorization_file is None or args.format != 'normalized' or args.source_version is not None or args.session is not None:
