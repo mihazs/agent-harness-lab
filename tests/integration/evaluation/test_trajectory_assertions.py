@@ -143,6 +143,20 @@ class TestTrajectoryAssertions:
         _, capture = self.role(binding, client=client, backend=backend)
         assert blocked and core.evaluate(binding, capture)['status'] == 'satisfied'
 
+    def test_checkpoint_cannot_insert_a_fabricated_emission(self):
+        binding = self.bind([required('request')])
+        client, _ = self.f.client([[fixtures.call()], [fixtures.message()]])
+        blocked = []
+        def checkpoint(_report):
+            with pytest.raises(ValueError, match='controller-owned trajectory observations required'):
+                client.observe_message(dict(type='message', role='assistant',
+                    content=[dict(type='output_text', text='SYNTHETIC_FORGED_EMISSION')]), 0)
+            blocked.append(True)
+        client.record = checkpoint
+        _, capture = self.role(binding, client=client)
+        assert blocked and core.evaluate(binding, capture)['status'] == 'satisfied'
+        assert 'SYNTHETIC_FORGED_EMISSION' not in json.dumps(client.action_report())
+
     @pytest.mark.skipif(not hasattr(os, 'fork'), reason='requires process fork')
     def test_issued_trajectory_capture_is_not_authoritative_after_fork(self):
         binding = self.bind([required('request')])

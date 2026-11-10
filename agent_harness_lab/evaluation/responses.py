@@ -286,7 +286,9 @@ class Client:
         """Return a snapshot of recorded provider usage."""
         return deepcopy(self._usage)
 
-    def observe_message(self,item,item_index):
+    def observe_message(self,item,item_index,*,_authority=None):
+        if self.actions.trajectory is not None and _authority is not _ACTION_TOKEN:
+            raise ValueError('controller-owned trajectory observations required')
         content = item.get('content')
         parts = content if isinstance(content,list) and content else [None]
         omitted = max(0,len(parts)-self.actions.MAX_MESSAGE_PARTS)
@@ -308,7 +310,7 @@ class Client:
         for index,item in enumerate(output):
             if not isinstance(item,dict): continue
             if item.get('type')=='message':
-                self.observe_message(item,index); continue
+                self.observe_message(item,index,_authority=_ACTION_TOKEN); continue
             if item.get('type')=='reasoning': continue
             name = self.actions.text(item.get('name',item.get('type')),256)
             ident = self.actions.text(item.get('call_id'),256)
