@@ -26,5 +26,7 @@ under an owner-only store outside the project, with an opaque campaign ID.
 creation event and returns a private summary. Both operations are offline;
 their status fields explicitly say that budget enforcement, execution, review,
 evaluation and deployment have not occurred. Store locking excludes a second
-controller for that store. Neither operation verifies caller-supplied project
+controller for that store. The project/store separation check observes current
+paths; it does not protect against concurrent renames of their parent directories.
+Use a store whose ancestry remains controlled for the duration of creation. Neither operation verifies caller-supplied project
 identity hashes. A failed or incomplete creation is not an executable campaign.

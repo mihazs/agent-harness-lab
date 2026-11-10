@@ -1,8 +1,10 @@
 """Private offline planned-campaign records; no executor or budget ledger."""
 from pathlib import Path
+import os
 import secrets
 
-from agent_harness_lab.private_journal import PrivateJournal, encoded, record, sync_directory, write_bytes
+from agent_harness_lab.private_journal import PrivateJournal, record, sync_directory
+from agent_harness_lab.evaluation.integrity import create_directory_at
 from .schema import CampaignSpec
 
 
@@ -27,9 +29,14 @@ class CampaignStore(PrivateJournal):
             raise ValueError('campaign store must be outside the project')
         with self.locked(create=True):
             case_id = secrets.token_hex(32); case = self.case(case_id)
-            case.mkdir(mode=0o700,parents=True,exist_ok=False)
-            (case/'events').mkdir(mode=0o700)
-            write_bytes(case/'spec.json',encoded(spec.to_dict()))
+            held = self._locked_store; self._held_store(held)
+            cases = create_directory_at(held,('cases',))
+            try:
+                os.mkdir(case_id,mode=0o700,dir_fd=cases)
+                events_fd = create_directory_at(cases,(case_id,'events'))
+                os.close(events_fd)
+            finally: os.close(cases)
+            self._publish(held,case/'spec.json',spec.to_dict())
             sync_directory(case)
             events = []
             self.append(case,events,'created','planned',dict(spec_sha256=spec.digest))

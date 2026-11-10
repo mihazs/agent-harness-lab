@@ -39,3 +39,39 @@ def test_lock_refuses_concurrent_controller_and_no_stale_lock_deletion(tmp_path)
     with store.locked():
         with pytest.raises(BlockingIOError): CampaignStore(store.root).inspect(created['campaign_id'])
     assert store.inspect(created['campaign_id'])['state'] == 'planned'
+
+
+def test_store_parent_swapped_to_project_symlink_before_create_never_writes_project(tmp_path,monkeypatch):
+    import os
+    import agent_harness_lab.private_journal as journal
+
+    project = tmp_path/'project'; project.mkdir()
+    safe = tmp_path/'safe'; safe.mkdir()
+    store = CampaignStore(safe/'private')
+    original = journal.create_directory_nofollow
+    def swap(path,*args,**kwargs):
+        os.rename(safe,tmp_path/'moved-safe')
+        os.symlink(project,safe)
+        return original(path,*args,**kwargs)
+    monkeypatch.setattr(journal,'create_directory_nofollow',swap)
+    with pytest.raises((ValueError,OSError)):
+        store.create(declaration(),project)
+    assert list(project.iterdir()) == []
+
+
+def test_case_creation_stays_on_locked_store_when_parent_is_swapped(tmp_path,monkeypatch):
+    import os
+    import agent_harness_lab.campaigns.store as campaign_store
+
+    project = tmp_path/'project'; project.mkdir()
+    safe = tmp_path/'safe'; safe.mkdir()
+    store = CampaignStore(safe/'private')
+    original = campaign_store.create_directory_at
+    def swap(*args,**kwargs):
+        os.rename(safe,tmp_path/'moved-safe')
+        os.symlink(project,safe)
+        return original(*args,**kwargs)
+    monkeypatch.setattr(campaign_store,'create_directory_at',swap)
+    with pytest.raises((ValueError,OSError)):
+        store.create(declaration(),project)
+    assert list(project.iterdir()) == []
