@@ -345,7 +345,10 @@ class Client:
                 from agent_harness_lab.promotion.prerequisites import current as current_scope
                 owner=current_scope()
                 if owner is not None:owner._request(self,reservation[2],True)
-            if comparison is not None and comparison.active is not None:comparison.request(self)
+            if comparison is not None and comparison.active is not None:
+                comparison.request(self)
+                from .trial_usage import _confirm
+                _confirm(comparison,self)
             self.actions.update(request_action,disposition='validated')
             disposition = 'validated'
             return value
@@ -356,6 +359,9 @@ class Client:
                 else: self.actions.update(action,dispatch_blocked=True)
             raise
         finally:
+            if comparison is not None:
+                from .trial_usage import _abort
+                _abort(comparison,self)
             if self.actions.trajectory is not None and self.response_transport_invoked and not self.response_items_observed:
                 self.actions.trajectory.request_gap()
             for emission in self.response_emissions:
@@ -412,6 +418,9 @@ class Client:
                 binding=planned
             token=object()
             _REQUEST_CONTEXTS[self]=(os.getpid(),scope,token,False,binding)
+            if comparison is not None and 'comparison' in binding:
+                from .trial_usage import _begin
+                _begin(comparison,self,binding['comparison'])
             if instruction is not None:
                 from agent_harness_lab.promotion.prerequisites import current as current_scope
                 owner=current_scope()
@@ -493,6 +502,11 @@ class Client:
         if details is not None:
             cached = details.get('cached_tokens') if isinstance(details,dict) else None
             reported_usage['cached_input_tokens'] = cached if type(cached) is int and 0 <= cached <= usage['input_tokens'] else None
+        from .comparison_custody import current
+        comparison = current()
+        if comparison is not None:
+            from .trial_usage import _stage
+            _stage(comparison,self,reported_usage)
         self._usage.append(reported_usage)
         self.poisoned = False
         self.pending = False
