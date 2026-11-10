@@ -166,6 +166,9 @@ def _handler(handler, runtime, warnings):
             and all(key not in handler or type(handler[key]) is bool for key in ('async', 'once'))
             and ('onFailure' not in handler or handler['onFailure'] in ('continue', 'block'))
             and ('statusMessage' not in handler or isinstance(handler['statusMessage'], str)))
+        if runtime == 'codex':
+            row['audit_candidate_supported'] = (set(handler) == {'type', 'command'}
+                and isinstance(command, str) and bool(command.strip()))
         if isinstance(command, str) and (args is None or isinstance(args, list) and all(isinstance(a, str) for a in args)):
             row['command_sha256'] = digest([command, args])
         row['resolution'], row['script'], row['anchor'] = resolve(command, args, runtime)

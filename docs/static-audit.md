@@ -45,8 +45,13 @@ path, a well-formed supported command handler in Claude project settings with a
 recognized `PreToolUse` Edit/Write or all-tools matcher is a `hook_candidate_present`.
 Disabled, malformed, conditional and other handler forms stay unknown. The matcher concerns tool names,
 not paths: the handler's behavior, loading, execution and enforcement stay unknown.
-Other matchers and Codex hook matching remain unknown; no match is not evidence
-of missing enforcement. Lexical cues are not proof of a rule or its enforcement.
+For Codex, only a project `.codex/hooks.json` command handler with an exact
+`apply_patch` or `^apply_patch$` matcher is considered a candidate. The pinned
+[Codex source](https://github.com/openai/codex/blob/d786ff91fad8e7ddab8653ee07bc6313a6fcb03d/codex-rs/core/src/tools/handlers/apply_patch.rs)
+declares an `apply_patch` pre-tool event; trust, loading and handler behavior are
+not established by this inventory. Other matchers, hook forms and configuration
+layers remain unknown; no match is not evidence of missing enforcement. Lexical
+cues are not proof of a rule or its enforcement.
 Reference hashes and paths are private and may
 be guessable. Inputs are separate observations, not an atomic snapshot.
 The CLI re-reads eligible checkout instruction files through bounded, no-follow
