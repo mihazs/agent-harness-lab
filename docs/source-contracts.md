@@ -4269,6 +4269,17 @@ the export, not confirmed lineage or current archive state. An absent parent or
 archive timestamp remains unknown; it does not establish a root session or an
 unarchived session. V2 does not migrate or reconcile v1 histories.
 
+An optional export v3 profile uses selection `schema_version: 3` and source
+`version: "v3"`. It adds up to 10,000 individual message metadata claims,
+each with a session-scoped ID fingerprint, its array position and a type from
+the pinned [message schema](https://github.com/anomalyco/opencode/blob/98e4b5343e33aafded479b9ff71c12fd760d9d87/packages/schema/src/session-message.ts);
+unrecognized types become `unknown`. IDs must have the upstream prefix and no
+whitespace. These are unverified claims from the selected file, not proof of
+execution, delivery, lineage or outcomes. The profile does not read message
+contents into claims, verify individual message schemas or establish complete
+capture. Message metadata is private and fingerprints may be guessable. V3 has
+a separate scope and does not migrate v1 or v2 history.
+
 ## OpenCode caller-supplied SQLite backup metadata
 
 `sources.opencode_backup.OpenCodeBackup` reads one explicitly selected local

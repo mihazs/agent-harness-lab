@@ -117,6 +117,7 @@ def main(argv):
             registry.register(Capability('local_file', COGNEE, COGNEE_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', OPENCODE, OPENCODE_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', OPENCODE, 'v2', ('contextual_assertion',)), connector)
+            registry.register(Capability('local_file', OPENCODE, 'v3', ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', OPENCODE_BACKUP, OPENCODE_BACKUP_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', OPENCODE_BACKUP, 'v2', ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', OPENCODE_BACKUP, 'v3', ('contextual_assertion',)), connector)
