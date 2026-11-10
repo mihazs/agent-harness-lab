@@ -4095,6 +4095,8 @@ checkpoint does not verify source coverage, independent origins or outcomes.
 This profile neither downloads nor creates an archive and does not contact a
 Hindsight server or backend. ZIP64, multi-disk and nonstandard directory layouts
 are refused; use the extracted profile when the selected ZIP is unsupported.
+Deflate uses the process's native zlib library without a separate sandbox;
+these bounds do not isolate a compromised native decompressor.
 
 Select `local_file/hindsight-bank-archive/v1` in the existing local source
 declaration, with `data` naming a selection descriptor next to the manifest:
