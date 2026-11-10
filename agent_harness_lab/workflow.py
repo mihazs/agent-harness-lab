@@ -935,19 +935,16 @@ def _run_improvement(args, *, parent_started=None):
     """Persist truthful completion even when a run is interrupted or raises."""
     issuer=os.getpid(); managed=getattr(args,'evaluation_store',None) is not None
     configured=getattr(args,'_configured_responses',False)
-    settings=getattr(args,'project_settings',None)
-    has_pinned_bank=bool(settings and settings['bank']['path']!='starter')
-    started=time.monotonic() if managed or configured or has_pinned_bank else None
-    if (managed or configured) and parent_started is not None: started=min(started,parent_started)
+    started=time.monotonic() if parent_started is None else parent_started
     for name in ('_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256','_configured_started','_budget_started'):
         if hasattr(args,name):delattr(args,name)
-    if started is not None:
-        args._construction_started=started
-        args._budget_started=started
+    args._construction_started=started
+    args._budget_started=started
     if configured: args._configured_started=started
     try:
         from .one_call import contracts, preflight, preflight_plan, check_configuration, REMEDIATION, DEFAULT_REMEDIATION
         check_configuration(args, check_bank=getattr(args, 'repair_contracts', False))
+        if time.monotonic()>=started+args.timeout: raise TimeoutError('configuration exhausted improvement budget')
         if managed:
             from .evaluation.construction_access import selection
             selection(args)
@@ -957,16 +954,16 @@ def _run_improvement(args, *, parent_started=None):
             return contracts(args)
         if hasattr(args, 'project_settings'):
             reason = preflight(args)
-            if configured and time.monotonic()>=started+args.timeout:raise TimeoutError('configured preflight exhausted improvement budget')
+            if time.monotonic()>=started+args.timeout:raise TimeoutError('preflight exhausted improvement budget')
             if reason:
-                output = output_dir(args,deadline=(time.monotonic() if started is None else started)+args.timeout)
+                output = output_dir(args,deadline=started+args.timeout)
                 result = dict(status='blocked', reason=reason, output=str(output), changed_files=[],
                               remediation=REMEDIATION.get(reason, DEFAULT_REMEDIATION),
                               preflight_plan=preflight_plan(args, reason))
                 write_json(output/'workflow.json', result)
                 return result
             check_configuration(args)
-        if started is not None and time.monotonic()>=started+args.timeout:
+        if time.monotonic()>=started+args.timeout:
             raise TimeoutError('construction preflight exhausted improvement budget')
         return _improve(args)
     except BaseException as exc:
@@ -1017,7 +1014,7 @@ def _run_improvement(args, *, parent_started=None):
 
 def improve(args):
     with project_lock(args.project):
-        return _run_improvement(args)
+        return _run_improvement(args, parent_started=getattr(args, '_entry_started', None))
 
 
 def watch_configuration(args):
@@ -1061,8 +1058,8 @@ def watch_configuration(args):
 
 def watch(args):
     issuer=os.getpid(); managed=getattr(args,'evaluation_store',None) is not None
-    timed=managed or getattr(args,'_configured_responses',False)
-    first_started=time.monotonic() if timed else None
+    first_started=getattr(args, '_entry_started', None)
+    if first_started is None: first_started=time.monotonic()
     attempts = getattr(args, 'max_attempts', 3)
     delay = getattr(args, 'retry_delay', 60)
     budget = getattr(args, 'watch_budget', None)
@@ -1078,9 +1075,9 @@ def watch(args):
         while True:
             # The same lock covers scheduling, execution and final checkpoint write.
             with project_lock(args.project):
-                iteration_started=(first_started if first_started is not None else time.monotonic()) if timed else None
+                iteration_started=first_started if first_started is not None else time.monotonic()
                 first_started=None
-                if timed: configuration=watch_configuration(args)
+                configuration=watch_configuration(args)
                 state = checkpoint_state.load(checkpoint)
                 fingerprint = collect(args.project, events=args.events, source_format=args.format)['fingerprint']
                 now = time.time()
@@ -1096,9 +1093,9 @@ def watch(args):
                     state.update(disposition='in_progress', last_attempt=now,
                                  attempt_count=state['attempt_count'] + 1, run_id=uuid.uuid4().hex)
                     write_json(checkpoint, state)
-                    started = iteration_started if timed else time.monotonic()
+                    started = iteration_started
                     try:
-                        result = _run_improvement(options,parent_started=started) if timed else _run_improvement(options)
+                        result = _run_improvement(options,parent_started=started)
                     except (ValueError, OSError, TypeError, KeyError) as exc:
                         if managed and os.getpid()!=issuer: raise
                         result = dict(status='invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error',

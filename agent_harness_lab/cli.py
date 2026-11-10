@@ -248,7 +248,7 @@ def main(argv=None):
     def summarize(result):
         now = time.monotonic()
         budget_start = getattr(args, '_budget_started', None)
-        budget = (max(0, now-budget_start), max(0, args.timeout-(now-budget_start))) if budget_start is not None else None
+        budget = (max(0, now-budget_start), max(0, args.timeout-(now-budget_start))) if budget_start is not None and isinstance(args.timeout, (int, float)) else None
         _improve_summary(result, now-started, budget)
     if skill_invocation:args._invocation_origin='skill'
     from agent_harness_lab.workflow import analyze_project, improve, watch
@@ -265,11 +265,13 @@ def main(argv=None):
             result = analyze_project(args)
         elif args.command == 'watch':
             from .one_call import resolve
+            args._entry_started = time.monotonic()
             resolve(args, explicit)
             return watch(args)
         else:
             from .one_call import resolve
             started = time.monotonic()
+            args._entry_started = started
             resolve(args, explicit)
             if args.timeout <= 0:
                 raise ValueError('timeout must be positive')
