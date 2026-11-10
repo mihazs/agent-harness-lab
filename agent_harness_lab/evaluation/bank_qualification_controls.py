@@ -91,7 +91,7 @@ def _check(deadline):
     if time.monotonic()>=deadline:raise TimeoutError('bank control deadline exhausted')
 
 
-def audit(bank_path,output,backend,deadline):
+def audit(bank_path,output,backend,deadline,*,heldout=None,heldout_sha256=None):
     """Execute and seal actual exports plus grading; consume under the journal writer."""
     if (type(deadline) not in (int,float) or not 0<deadline<=time.monotonic()+300
             or not math.isfinite(deadline)):raise ValueError('bounded finite bank control deadline required')
@@ -103,17 +103,32 @@ def audit(bank_path,output,backend,deadline):
             or any(p.is_symlink() for p in (output,*output.parents))):
         raise ValueError('bank control output and input must remain separate canonical trees')
     bound=inventory(bank_path)
+    if heldout is not None:
+        from .bank_heldout import read
+        heldout=Path(heldout).absolute()
+        selected=read(heldout,heldout_sha256)
+        if set(selected['tasks'])!={task['task'] for task in bound['tasks']}:
+            raise ValueError('held-out tasks differ from bank')
     output.mkdir(mode=0o700,exist_ok=False)
     source=SourceSpec('controller','ahl-controller','v1',hashed(['bank-control-source',str(output)]),
         bound['bank_sha256'],hashed(bound),identity_provenance='source_declared_id',enabled=True)
     report=dict(profile=PROFILE,bank_binding=bound,image_sha256=backend.image.sha256,
         status='incomplete',checks=[],publication_allowed=False,completion_authority=False)
+    if heldout is not None:report['heldout_sha256']=heldout_sha256
     with controller_receipts.session():
         for task in bound['tasks']:
             bundle=contained(bank_path.parent,task['grader_bundle'])
             with tempfile.TemporaryDirectory() as probe_folder:
-                for state, workspace, available in negative_probes(bank_path.parent, task, probe_folder):
+                probes=list(negative_probes(bank_path.parent, task, probe_folder))
+                if heldout is not None:
+                    for index,control in enumerate(selected['tasks'][task['task']]):
+                        workspace=Path(probe_folder)/('heldout-'+str(index))
+                        copy_frozen(contained(heldout,control['path']),workspace,control['sha256'])
+                        materialize_sources(workspace)
+                        probes.append(('heldout',workspace,control['artifacts']))
+                for state, workspace, available in probes:
                     _check(deadline)
+                    if heldout is not None:read(heldout,heldout_sha256)
                     if inventory(bank_path)!=bound:raise ValueError('frozen bank changed during control audit')
                     before=digest(workspace)
                     capture=controller_receipts.begin(source,available,deadline)
@@ -130,7 +145,9 @@ def audit(bank_path,output,backend,deadline):
                         if observed!='passed':raise ValueError(observed)
                         if grade['grader_identity']['grader_version']!=task['grader_version']:
                             raise ValueError('owned bank probe grader identity unknown')
-                        capture.close(digest(workspace)==before and inventory(bank_path)==bound)
+                        unchanged=digest(workspace)==before and inventory(bank_path)==bound
+                        if heldout is not None:read(heldout,heldout_sha256)
+                        capture.close(unchanged)
                         report['checks'].append(dict(task=task['task'],control=state,expected=False,
                             observed=False,controller=capture.read()))
                     finally:
@@ -169,7 +186,7 @@ def audit(bank_path,output,backend,deadline):
     if len(raw)>8*1024*1024:raise ValueError('bank control report exceeds capacity')
     write_bytes(output/'audit.json',raw);sync_directory(output)
     handle=_Audit()
-    _ISSUED[handle]=(os.getpid(),deadline,str(bank_path),str(output),bound,raw)
+    _ISSUED[handle]=(os.getpid(),deadline,str(bank_path),str(output),bound,raw,heldout,heldout_sha256)
     return handle,deepcopy(report)
 
 
@@ -178,10 +195,13 @@ def consume(handle,bank_path):
     if type(handle) is not _Audit:raise ValueError('actual owned bank control completion required')
     value=_ISSUED.pop(handle,None)
     if value is None:raise ValueError('fresh owned bank control completion required')
-    pid,deadline,path,output,bound,raw=value
+    pid,deadline,path,output,bound,raw,heldout,heldout_sha256=value
     _check(deadline)
     if pid!=os.getpid() or str(Path(bank_path).absolute())!=path or inventory(bank_path)!=bound:
         raise ValueError('owned bank control completion scope changed')
+    if heldout is not None:
+        from .bank_heldout import read
+        read(heldout,heldout_sha256)
     from .integrity import read_regular
     from .decision_receipts import private
     private(Path(output),directory=True);private(Path(output)/'audit.json')

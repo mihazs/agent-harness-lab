@@ -23,9 +23,75 @@ PROTOCOL='trusted-lineage-split-and-native-controls-v1'
 PURPOSE=authority.BANK_PURPOSE
 
 
-def require_held_out_controls():
-    # shortcut: held-out control custody is unavailable until its signed intake is implemented.
-    raise ValueError('independent held-out control custody unavailable')
+class HeldoutUnavailable(ValueError):
+    pass
+
+
+def require_held_out_controls(case, inputs):
+    from .bank_heldout import read
+    if inputs.get('schema_version') not in (3,4):
+        raise HeldoutUnavailable('independent held-out control custody unavailable')
+    return read(case/'heldout', inputs['heldout_sha256'])
+
+
+def require_author_boundary(case,inputs,deadline=None):
+    try:return _author_boundary(case,inputs,deadline)
+    except (ValueError,OSError,KeyError,TypeError) as error:
+        raise HeldoutUnavailable('held-out author boundary custody unavailable or changed') from error
+
+
+def _author_boundary(case,inputs,deadline):
+    if inputs.get('schema_version')!=4:
+        raise HeldoutUnavailable('held-out author boundary custody unavailable')
+    from .oracle_history import HistoryStore
+    from .certification_access import construction_record
+    custody=inputs['author_custody']
+    fields(custody,'history_store construction_id output_sha256 proof_sha256 bank_sha256 heldout_sha256 intake_bank_sha256')
+    history=HistoryStore(custody['history_store'])
+    entry=construction_record(history.access_ledger().path,custody['construction_id'])
+    output,pin=record(history.root/'constructions'/custody['construction_id']/'output.json',8*1024*1024)
+    proof=output.get('closed_input',{}).get('proof')
+    if (entry['state']!='complete' or entry['role']!='evaluator_author' or entry['output_binding_sha256']!=pin
+            or pin!=custody['output_sha256'] or hashed(proof)!=custody['proof_sha256']
+            or custody['intake_bank_sha256']!=inputs['bank_sha256'] or custody['heldout_sha256']!=inputs['heldout_sha256']
+            or not isinstance(proof,dict) or proof.get('role')!='evaluator_author' or proof.get('boundary_required') is not True
+            or not proof.get('native') or any(row.get('boundary',{}).get('status')!='qualified' for row in proof['native'])):
+        raise HeldoutUnavailable('held-out author boundary custody changed')
+    from .comparison_custody import snapshot_pin
+    from .derivations import _tree_pin
+    from .working_state import WorkingState
+    from .author_bank_conversion import check_unexposed
+    folder=history.root/'constructions'/custody['construction_id']
+    deadline=min(time.monotonic()+30,deadline) if deadline is not None else time.monotonic()+30
+    if _tree_pin(folder/'published',deadline)!=output['tree_sha256']:
+        raise HeldoutUnavailable('author output custody changed')
+    snapshots={name:WorkingState(folder/path,deadline).snapshot for name,path in
+               (('harness','baseline'),('fixture','context'))}
+    if {name:snapshot_pin(snapshot) for name,snapshot in snapshots.items()}!=proof['input_snapshots']:
+        raise HeldoutUnavailable('author input custody changed')
+    source,_=record(folder/'published/manifest.json',1024*1024)
+    authored={task['id']:task for task in source['tasks'] if task.get('split')=='heldout'}
+    bank,_=record(case/'bank/bank.json',1024*1024)
+    if set(authored)!={task['task_id'] for task in bank['tasks']}:
+        raise HeldoutUnavailable('converted bank task identity changed')
+    for task in bank['tasks']:
+        original=authored[task['task_id']]
+        root=folder/'published'
+        if (task['fixture_digest']!=digest(contained(root,original['fixture']))
+                or task['grader_digest']!=digest(contained(root,source['grader_bundles'][task['task_id']]['path']))
+                or task['artifacts']!=original['artifacts']):
+            raise HeldoutUnavailable('converted author assets changed')
+    controls=require_held_out_controls(case,inputs)
+    seen={raw for snapshot in snapshots.values() for _,_,raw in snapshot.files}
+    seen.update(raw for _,_,raw in WorkingState(folder/'published',deadline).snapshot.files)
+    check_unexposed(case/'bank',controls,case/'heldout',seen)
+    return custody
+
+
+def heldout_judgment(inputs,controls):
+    return dict(controls_sha256=inputs['heldout_sha256'],curator=controls['curator'],
+        evidence_refs=controls['evidence_refs'],independent_curation='reviewed',
+        author_nonexposure_before_intake='reviewed',author_custody=inputs.get('author_custody'))
 
 
 def hashed(value):return hashlib.sha256(encoded(value)).hexdigest()
@@ -72,8 +138,10 @@ def bank_assets(path):
 
 def opened(store,case_id):
     case=store.case(case_id);events=store.history(case);inputs,pin=record(case/'inputs.json')
-    fields(inputs,'schema_version profile declaration_sha256 bank_sha256 directory_modes')
-    if (type(inputs['schema_version']) is not int or inputs['schema_version']!=2 or inputs['profile']!=PROFILE
+    fields(inputs,'schema_version profile declaration_sha256 bank_sha256 directory_modes'
+        + (' heldout_sha256' if inputs.get('schema_version') in (3,4) else '')
+        + (' author_custody' if inputs.get('schema_version')==4 else ''))
+    if (type(inputs['schema_version']) is not int or inputs['schema_version'] not in (2,3,4) or inputs['profile']!=PROFILE
             or hashed(inputs)!=case_id or events[0][0]['payload']!={'inputs_sha256':pin}):
         raise ValueError('invalid final-bank intake binding')
     bank,bank_hash=record(case/'bank/bank.json',1024*1024);spec,spec_hash=record(case/'declaration.json')
@@ -105,7 +173,7 @@ def install_policy(store,path):
     with store.locked(create=True):return authority.install(store,path,source_roots(store),purpose=PURPOSE)
 
 
-def intake(store,bank_path,spec_path):
+def intake(store,bank_path,spec_path,heldout_path=None,*,_conversion=None):
     from .oracle_history import HistoryStore
     bank_path=authority._path(bank_path);bank,_=record(bank_path,1024*1024)
     if 'controller_profile' in bank:raise ValueError('existing development or corrected revisions cannot become final banks')
@@ -115,12 +183,17 @@ def intake(store,bank_path,spec_path):
     history=HistoryStore(spec['history_store'])
     if history.root==store.root or history.root.is_relative_to(store.root) or store.root.is_relative_to(history.root):
         raise ValueError('review and execution stores must not overlap')
+    if heldout_path is not None:
+        from .decision_receipts import private
+        heldout_path=authority._path(heldout_path)
+        private(heldout_path.parent,directory=True)
+        authority._outside(heldout_path.parent,[bank_path.parent,store.root,history.root])
     with history.locked(create=True):pass
     sources=[contained(bank_path.parent,t[f]) for t in bank['tasks'] for f in ('fixture','grader_bundle')]
     if any(store.root.is_relative_to(p) or p.is_relative_to(store.root) or history.root.is_relative_to(p)
            or p.is_relative_to(history.root) for p in sources):raise ValueError('bank source and controllers must not overlap')
     with store.locked(create=True),tempfile.TemporaryDirectory(dir=store.root,prefix='.bank-intake-') as temporary:
-        authority.check_sources(store,sources)
+        authority.check_sources(store,sources+([heldout_path.parent] if heldout_path is not None else []))
         staged=Path(temporary)/'case';staged.mkdir(mode=0o700);(staged/'events').mkdir(mode=0o700)
         target=staged/'bank';target.mkdir(mode=0o700)
         accounting=[0,0]
@@ -129,9 +202,31 @@ def intake(store,bank_path,spec_path):
         from .bank_qualification_controls import directory_modes
         inputs=dict(schema_version=2,profile=PROFILE,declaration_sha256=record(staged/'declaration.json')[1],
             bank_sha256=record(target/'bank.json',1024*1024)[1],directory_modes=directory_modes(target))
+        if heldout_path is not None:
+            from .bank_heldout import freeze
+            _,heldout_pin=freeze(authority._path(heldout_path),bank_path,spec['author'],staged/'heldout')
+            inputs.update(schema_version=3,heldout_sha256=heldout_pin)
+        if _conversion is not None:
+            from .author_bank_conversion import consume
+            if inputs['schema_version']!=3:raise ValueError('held-out controls required for author conversion')
+            custody=consume(_conversion,bank_path,inputs['heldout_sha256'])
+            if Path(custody['history_store'])!=history.root:
+                raise ValueError('author construction and bank history stores differ')
+            custody=dict(custody,intake_bank_sha256=inputs['bank_sha256'])
+            inputs.update(schema_version=4,author_custody=custody)
         case_id=hashed(inputs);write_bytes(staged/'inputs.json',encoded(inputs));sync_tree(staged)
         case=store.case(case_id)
         if case.exists():opened(store,case_id);return summary(store,case_id)
+        if inputs['schema_version'] in (3,4):
+            from .bank_heldout import read
+            current=read(staged/'heldout',inputs['heldout_sha256'])
+            pins={item['sha256'] for items in current['tasks'].values() for item in items}
+            for existing in store.case_ids(256):
+                prior_case=store.case(existing);prior,_=record(prior_case/'inputs.json')
+                if 'heldout_sha256' in prior:
+                    old=read(prior_case/'heldout',prior['heldout_sha256'])
+                    if pins & {item['sha256'] for items in old['tasks'].values() for item in items}:
+                        raise ValueError('held-out control already belongs to another case')
         if len(store.case_ids(256))>=256:raise ValueError('review case capacity exhausted')
         case.parent.mkdir(mode=0o700,exist_ok=True);staged.rename(case);sync_directory(case.parent)
         store.append(case,[],'bank_intake','bank_intake',dict(inputs_sha256=record(case/'inputs.json')[1]))
@@ -168,20 +263,21 @@ def exposure_check(store,case,state,*,reservation_id=None):
 
 
 def audit(store,case_id,backend,*,budget_seconds=60):
-    require_held_out_controls()
     from .bank_qualification_controls import audit as run_audit,consume
     from .decision_receipts import engine
     from .oracle_history import HistoryStore
     from .certification_access import _locked
     deadline=deadline_for(budget_seconds)
     with store.locked():
-        case,_,events=opened(store,case_id)
+        case,inputs,events=opened(store,case_id)
+        require_held_out_controls(case,inputs)
         if events[-1][0]['state']!='bank_intake':raise ValueError('bank audit cannot repeat or resume completed actions')
         spec,_=record(case/'declaration.json');history=HistoryStore(spec['history_store'])
         with _locked(history.access_ledger().path) as (_,state):epoch,assets=exposure_check(store,case,state)
         # Publish intent first: interruption cannot silently repeat paid/native actions.
         store.append(case,events,'bank_audit_started','bank_auditing',{})
-        handle,report=run_audit(case/'bank/bank.json',case/'audit',backend,deadline)
+        handle,report=run_audit(case/'bank/bank.json',case/'audit',backend,deadline,
+            heldout=case/'heldout',heldout_sha256=inputs['heldout_sha256'])
         sealed=consume(handle,case/'bank/bank.json')
         if sealed!=report:raise ValueError('owned native bank audit changed')
         evidence=dict(report=sealed,audit_tree_sha256=digest(case/'audit'),engine_sha256=hashed(engine()),
@@ -209,19 +305,33 @@ def audit_binding(value):
         engine_sha256=value['engine_sha256'],image_sha256=value['image_sha256'],assets_sha256=hashed(value['assets']))
 
 
+def require_heldout_audit(observed,inputs,controls):
+    report=observed['report']
+    if (report.get('heldout_sha256')!=inputs['heldout_sha256']
+            or report.get('status')!='owned_controls_passed'):
+        raise ValueError('held-out execution evidence unavailable')
+    for task,items in controls['tasks'].items():
+        checks=[c for c in report['checks'] if c['task']==task and c['control']=='heldout']
+        if len(checks)!=len(items) or any(c['observed'] is not False for c in checks):
+            raise ValueError('held-out execution incomplete')
+
+
 def prepare(store,case_id,reviewer):
     from .oracle_history import HistoryStore
     from .certification_access import _locked
     text(reviewer)
     with store.locked():
-        case,_,events=opened(store,case_id);spec,_=record(case/'declaration.json')
-        if events[-1][0]['state']!='bank_audited' or reviewer.casefold()==spec['author'].casefold():
+        case,inputs,events=opened(store,case_id);spec,_=record(case/'declaration.json')
+        controls=require_held_out_controls(case,inputs)
+        require_author_boundary(case,inputs)
+        if events[-1][0]['state']!='bank_audited' or reviewer.casefold() in (spec['author'].casefold(),controls['curator'].casefold()):
             raise ValueError('audited bank and separate trusted reviewer required')
-        observed,pin=evidence(store,case,events);history=HistoryStore(spec['history_store'])
+        observed,pin=evidence(store,case,events);require_heldout_audit(observed,inputs,controls)
+        history=HistoryStore(spec['history_store'])
         with _locked(history.access_ledger().path) as (_,state):epoch,_=exposure_check(store,case,state)
         review=dict(case_id=case_id,expected_event_sha256=events[-1][1],evidence_sha256=pin,
             reviewer=dict(identity=reviewer),protocol=PROTOCOL,exposure_epoch=epoch,bank_sha256=record(case/'bank/bank.json',1024*1024)[1],
-            declaration=spec,audit=audit_binding(observed))
+            declaration=spec,audit=audit_binding(observed),heldout=heldout_judgment(inputs,controls))
         value=authority.request(store,review,purpose=PURPOSE)
         folder=store.root/'review-requests';folder.mkdir(mode=0o700,exist_ok=True);pin=hashed(value);path=folder/(pin+'.json')
         if path.exists():
@@ -231,18 +341,20 @@ def prepare(store,case_id,reviewer):
 
 
 def qualify(store,case_id,request_path,signature_path,*,budget_seconds=30):
-    require_held_out_controls()
     from .oracle_history import HistoryStore
     from .certification_access import _locked
     deadline=deadline_for(budget_seconds)
     value,_=record(request_path,authority.MAX_BYTES);review=authority.request_value(store,value,purpose=PURPOSE)
     signature=read_regular(signature_path,16*1024).decode('ascii')
     with store.locked():
-        case,_,events=opened(store,case_id);observed,pin=evidence(store,case,events);spec,_=record(case/'declaration.json')
+        case,inputs,events=opened(store,case_id);controls=require_held_out_controls(case,inputs)
+        require_author_boundary(case,inputs,deadline)
+        observed,pin=evidence(store,case,events);require_heldout_audit(observed,inputs,controls)
+        spec,_=record(case/'declaration.json')
         expected=dict(case_id=case_id,expected_event_sha256=events[-1][1],evidence_sha256=pin,
-            reviewer=review['reviewer'],protocol=PROTOCOL,exposure_epoch=review['exposure_epoch'],bank_sha256=record(case/'bank/bank.json',1024*1024)[1],declaration=spec,audit=audit_binding(observed))
+            reviewer=review['reviewer'],protocol=PROTOCOL,exposure_epoch=review['exposure_epoch'],bank_sha256=record(case/'bank/bank.json',1024*1024)[1],declaration=spec,audit=audit_binding(observed),heldout=heldout_judgment(inputs,controls))
         if (events[-1][0]['state']!='bank_audited' or review!=expected
-                or review['reviewer']['identity'].casefold()==spec['author'].casefold()):raise ValueError('stale or changed bank review')
+                or review['reviewer']['identity'].casefold() in (spec['author'].casefold(),controls['curator'].casefold())):raise ValueError('stale or changed bank review')
         proof=authority.verify(store,value,signature,purpose=PURPOSE,deadline=deadline)
         history=HistoryStore(spec['history_store'])
         with _locked(history.access_ledger().path) as (_,state):
@@ -276,7 +388,6 @@ def qualify(store,case_id,request_path,signature_path,*,budget_seconds=30):
 
 
 def revision_metadata(path,*,deadline=None):
-    require_held_out_controls()
     from .regression_review import ReviewStore
     path=authority._path(path)
     if path.name!='bank.json' or path.parent.parent.name!='revisions':raise ValueError('original bank revision path required')
@@ -291,7 +402,10 @@ def revision_metadata(path,*,deadline=None):
     if (descriptor['profile']!=PROFILE or descriptor['protocol']!=PROTOCOL or metadata_digest(descriptor)!=path.parent.name
             or directory_modes(path.parent)!=descriptor['directory_modes'] or payload_tree(path.parent)!=descriptor['tree_sha256'] or record(path,1024*1024)[1]!=descriptor['bank_manifest_sha256']):
         raise ValueError('qualified bank revision changed')
-    case,_,events=opened(store,descriptor['case_id']);observed,pin=evidence(store,case,events)
+    case,inputs,events=opened(store,descriptor['case_id']);controls=require_held_out_controls(case,inputs)
+    require_author_boundary(case,inputs,deadline)
+    observed,pin=evidence(store,case,events)
+    require_heldout_audit(observed,inputs,controls)
     qualified=next((e for e,_ in events if e['kind']=='bank_qualified'),None)
     if (qualified is None or qualified['previous_sha256']!=descriptor['reviewed_event_sha256']
             or qualified['payload']!={'revision_sha256':path.parent.name,'authentication':descriptor['authentication']}
@@ -301,7 +415,8 @@ def revision_metadata(path,*,deadline=None):
     request=wrapper['request'];review=authority.request_value(store,request,purpose=PURPOSE)
     expected=dict(case_id=descriptor['case_id'],expected_event_sha256=qualified['previous_sha256'],evidence_sha256=pin,
         reviewer=review['reviewer'],protocol=PROTOCOL,exposure_epoch=review['exposure_epoch'],
-        bank_sha256=record(case/'bank/bank.json',1024*1024)[1],declaration=record(case/'declaration.json')[0],audit=audit_binding(observed))
+        bank_sha256=record(case/'bank/bank.json',1024*1024)[1],declaration=record(case/'declaration.json')[0],
+        audit=audit_binding(observed),heldout=heldout_judgment(inputs,controls))
     if review!=expected:raise ValueError('bank review differs from qualification')
     proof=authority.verify(store,request,wrapper['signature'],purpose=PURPOSE,require_current=False,deadline=deadline)
     if proof!=wrapper['proof']:raise ValueError('bank signature proof changed')
@@ -362,12 +477,13 @@ def main(argv=None):
     delegated.add_argument('--budget-seconds',type=float,default=30,help='Whole preparation deadline in seconds, positive and at most 300 (default: %(default)s)')
     propose=actions.add_parser('intake',help='Freeze a declared separate final bank and its authorized lineage judgments',description='Copy exact bank fixtures/grader bundles and a final-bank declaration into a new private case; does not run controls or grant qualification. Prints JSON including the case ID; exit 0 completed, 2 rejected input, 3 blocked/busy.')
     propose.add_argument('--bank',type=Path,required=True,help='Existing bank.json with separate certification-partition tasks and exact fixture/grader digests')
+    propose.add_argument('--heldout-controls',type=Path,help='Private separately curated held-out control manifest')
     propose.add_argument('--declaration',type=Path,required=True,help='Existing schema-1 final-bank declaration JSON: author, history_store, protocol, per-task judgments and explicit exposure unknowns')
     for name in ('audit','prepare-review','qualify','show','retire'):
         descriptions={
             'audit':'Run frozen native offline control checks against the selected pinned image and append actual audit evidence',
             'prepare-review':'Write an unsigned exact bank-review request for the installed reviewer policy; signing stays external',
-            'qualify':'Verify the signed request, current audit and configured-history exposure before recording conditional qualification',
+            'qualify':'Verify signed review, observed author boundary and current audit before conditional qualification',
             'show':'Read current bank case state and qualification metadata without running workers or signing',
             'retire':'Append irreversible retirement of this bank case; does not delete its private history'}
         command=actions.add_parser(name,help=descriptions[name],description=descriptions[name],epilog='Prints private JSON metadata; exit 0 completed, 2 rejected input, 3 blocked/busy/unsupported. Run ahl bank-review --help for the required audit and external-signing sequence.');command.add_argument('--case',required=True,help='Exact SHA-256 bank case ID returned by intake in this --store')
@@ -386,7 +502,7 @@ def main(argv=None):
             elif args.action=='allocate-delegation':result=renewal.allocate_delegation(store)
             else:result=renewal.prepare(store,args.case,args.reviewer,record(args.domain,authority.MAX_BYTES)[0],
                 record(args.runtime,authority.MAX_BYTES)[0],deadline=deadline_for(args.budget_seconds),request_path=args.request)
-        elif args.action=='intake':result=intake(store,args.bank,args.declaration)
+        elif args.action=='intake':result=intake(store,args.bank,args.declaration,args.heldout_controls)
         elif args.action=='audit':
             from .sandbox import SandboxBackend
             backend=SandboxBackend(cgroup_root=args.cgroup_root,image_root=args.image_root,image_sha256=args.image_sha256,disk_bytes=args.disk_bytes)
@@ -400,6 +516,8 @@ def main(argv=None):
         else:
             with store.locked():result=summary(store,args.case)
         print(json.dumps(result,indent=2,allow_nan=False));return 0
+    except HeldoutUnavailable:
+        print(json.dumps(dict(status='blocked',reason='heldout_custody_unavailable',publication_allowed=False)));return 3
     except authority.VerifierUnavailable:
         print(json.dumps(dict(status='unsupported',reason='openssh_review_verifier_unavailable',publication_allowed=False)));return 3
     except (TimeoutError,BlockingIOError):

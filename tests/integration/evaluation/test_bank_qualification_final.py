@@ -41,6 +41,18 @@ def proposal(root):
     return bank,path
 
 
+def heldout_manifest(root,bank):
+    source=root/'independent';source.mkdir(mode=0o700)
+    task=json.loads(bank.read_bytes())['tasks'][0]
+    fixture=source/'control';shutil.copytree(bank.parent/task['fixture'],fixture)
+    (fixture/'result.json').write_text('{"answer":"superficial"}')
+    value=dict(schema_version=1,curator='synthetic-curator',
+        evidence_refs=[dict(ref='synthetic:curation',sha256='b'*64)],
+        tasks={task['task_id']:[dict(path='control',sha256=digest(fixture))]})
+    path=source/'controls.json';path.write_text(json.dumps(value))
+    return path
+
+
 def invoke(store,*args):
     output=io.StringIO()
     with redirect_stdout(output),redirect_stderr(io.StringIO()):
@@ -57,13 +69,63 @@ class BankQualificationBoundaryTests(unittest.TestCase):
 
     def test_missing_held_out_custody_blocks_audit_and_existing_revision(self):
         store=ReviewStore(self.store)
+        case=bankq.intake(store,self.bank,self.declaration)['case_id']
         with self.assertRaisesRegex(ValueError,'held-out control custody unavailable'):
-            bankq.audit(store,'unused',None)
-        with self.assertRaisesRegex(ValueError,'held-out control custody unavailable'):
-            bankq.qualify(store,'unused',None,None)
-        with self.assertRaisesRegex(ValueError,'held-out control custody unavailable'):
-            bankq.revision_metadata(self.root/'bank.json')
-        self.assertFalse(self.store.exists())
+            bankq.audit(store,case,None)
+        self.assertEqual(bankq.summary(store,case)['state'],'bank_intake')
+
+    def test_separate_controls_are_frozen_and_detect_tampering(self):
+        manifest=heldout_manifest(self.root,self.bank)
+        store=ReviewStore(self.store)
+        case_id=bankq.intake(store,self.bank,self.declaration,manifest)['case_id']
+        case,inputs,_=bankq.opened(store,case_id)
+        controls=bankq.require_held_out_controls(case,inputs)
+        self.assertEqual(controls['curator'],'synthetic-curator')
+        task=json.loads((case/'bank/bank.json').read_bytes())['tasks'][0]
+        control=controls['tasks'][task['task_id']][0]
+        from agent_harness_lab.evaluation.bank_tools import run_control
+        run=run_control(case/'heldout'/control['path'],control['artifacts'],
+            case/'bank'/task['grader_bundle'],task['grader_digest'],None,False,5)
+        self.assertEqual(run.returncode,1)
+        self.assertIs(json.loads(run.stdout)['outcome'],False)
+        (case/'heldout'/next(iter(controls['tasks'].values()))[0]['path']/'result.json').write_text('changed')
+        with self.assertRaisesRegex(ValueError,'controls changed'):
+            bankq.require_held_out_controls(case,inputs)
+
+    def test_heldout_requires_a_distinct_curator_and_changed_export(self):
+        manifest=heldout_manifest(self.root,self.bank)
+        value=json.loads(manifest.read_bytes())
+        value['curator']='synthetic-author';manifest.write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError,'curator'):
+            bankq.intake(ReviewStore(self.store),self.bank,self.declaration,manifest)
+        value['curator']='synthetic-curator'
+        fixture=manifest.parent/'control';(fixture/'result.json').unlink()
+        next(iter(value['tasks'].values()))[0]['sha256']=digest(fixture)
+        manifest.write_text(json.dumps(value))
+        with self.assertRaisesRegex(ValueError,'change exported artifacts'):
+            bankq.intake(ReviewStore(self.store),self.bank,self.declaration,manifest)
+
+    def test_missing_heldout_execution_cannot_be_reviewed(self):
+        controls={'tasks':{'synthetic':[{'path':'control'}]}}
+        inputs={'heldout_sha256':'a'*64}
+        observed={'report':{'status':'owned_controls_passed','checks':[]}}
+        with self.assertRaisesRegex(ValueError,'execution evidence unavailable'):
+            bankq.require_heldout_audit(observed,inputs,controls)
+        observed['report']['heldout_sha256']='a'*64
+        with self.assertRaisesRegex(ValueError,'execution incomplete'):
+            bankq.require_heldout_audit(observed,inputs,controls)
+        observed['report']['checks']=[dict(task='synthetic',control='heldout',observed=False)]
+        bankq.require_heldout_audit(observed,inputs,controls)
+
+    def test_qualification_requires_observed_author_boundary(self):
+        with self.assertRaisesRegex(ValueError,'author boundary custody unavailable'):
+            bankq.require_author_boundary(self.root,{'schema_version':3})
+        with self.assertRaisesRegex(ValueError,'author boundary custody unavailable'):
+            bankq.require_author_boundary(self.root,{'schema_version':4,'author_custody':{}})
+        manifest=heldout_manifest(self.root,self.bank)
+        with self.assertRaisesRegex(ValueError,'actual live author conversion handoff'):
+            bankq.intake(ReviewStore(self.store),self.bank,self.declaration,manifest,_conversion={})
+        self.assertEqual(ReviewStore(self.store).case_ids(256),[])
 
     def test_labels_and_unsigned_intake_never_qualify(self):
         checked=validate(self.bank)
@@ -72,7 +134,7 @@ class BankQualificationBoundaryTests(unittest.TestCase):
         code,result=invoke(self.store,'intake','--bank',self.bank,'--declaration',self.declaration)
         self.assertEqual(code,0);self.assertEqual(result['state'],'bank_intake')
         code,_=invoke(self.store,'prepare-review','--case',result['case_id'],'--reviewer','synthetic-reviewer')
-        self.assertEqual(code,2)
+        self.assertEqual(code,3)
         self.assertEqual(bankq.summary(ReviewStore(self.store),result['case_id'])['state'],'bank_intake')
 
     def test_unknown_required_judgment_and_false_global_secrecy_are_refused(self):
@@ -136,7 +198,8 @@ class QualifiedBankKernelTests(kernel.KernelFixture):
             purpose=review_authority.BANK_PURPOSE,reviewers={'synthetic-reviewer':public})))
         policy.chmod(0o600)
         self.assertEqual(invoke(store,'trust-reviewers','--policy',policy)[0],0)
-        code,intaken=invoke(store,'intake','--bank',bank,'--declaration',declaration)
+        heldout=heldout_manifest(self.root,bank)
+        code,intaken=invoke(store,'intake','--bank',bank,'--declaration',declaration,'--heldout-controls',heldout)
         self.assertEqual(code,0);case_id=intaken['case_id']
         code,audited=invoke(store,'audit','--case',case_id,'--cgroup-root',self.cgroup_root,
             '--image-root',runtime,'--image-sha256',pin,'--disk-bytes',64*1024*1024,'--budget-seconds',60)

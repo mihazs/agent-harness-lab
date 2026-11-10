@@ -95,8 +95,46 @@ All fixtures in these checks are independently synthetic and credential-free.
 The descriptive and owned control audits grade a frozen copy of each untouched
 fixture (`no_op`). A valid passing result is rejected as `vacuous_success`;
 malformed, unrunnable, incomplete or timed-out controls cannot qualify. This
-check does not establish resistance to superficial changes. Independent,
-private task-specific falsifiers and their provenance remain an open qualification
-requirement. Until that authority exists, final-bank audit and qualification are
-blocked, and existing qualified revisions cannot establish current eligibility.
-Descriptive audits remain available and do not confer certification authority.
+check alone does not establish resistance to superficial changes.
+
+For conditional final-bank qualification, `bank-review intake` also accepts
+`--heldout-controls` pointing to a separate owner-only directory's manifest.
+The manifest is a JSON object with `schema_version: 1`, a `curator` distinct
+from the bank author, nonempty `evidence_refs` in the existing review-reference
+format, and `tasks` mapping every task ID to a list of one to sixteen objects
+with `path` (relative to the manifest) and `sha256` (the control fixture tree
+digest). These are complete workspace snapshots, not executable mutator code.
+At most 100 snapshots are accepted. Each must change bytes actually exported to
+the grader relative to the materialized original fixture. Copies are frozen in
+an owner-only sibling of the bank, never in the grader bundle. Snapshots already
+used in another case in the same review store are refused.
+
+The native audit runs every frozen snapshot in the isolated grader path and
+requires an explicit negative outcome. Its private receipt binds the exact
+control tree, original bank and sandbox execution. An interrupted audit remains
+incomplete. The separate trusted reviewer signs a request binding those receipts,
+the curator and evidence references, and judgments that curation was independent
+and that the task author had not seen the controls before intake. The reviewer
+must differ from both author and curator. These are conditional, authenticated
+human judgments: identity strings, checksums and a private directory do not prove
+who saw the inputs. The native execution receipts do not establish prior author
+isolation or global non-exposure. Operator access, external exposure and control
+semantics outside the selected artifact bytes remain outside observed custody.
+
+Cases without separately frozen controls cannot be audited. Imported banks and
+legacy qualified revisions lack observed author-role custody and cannot establish
+current eligibility. A controller-managed `WorkflowAccess.author` call may pass
+`bank_conversion` with `metadata`, `controls_manifest`, `output`, `review_store`
+and `declaration`. Before its author stage retires, the controller requires a
+live construction seal, native scope and qualified native permission
+boundary, converts the authored held-out tasks while preserving their exact
+fixture and grader trees, and intakes the converted bank through a one-use live
+handoff. The metadata fields are declarations, not findings. The controller
+rejects changed control artifact bytes found in an author input or output; this
+byte comparison does not detect transformed or previously disclosed information.
+Replay checks the construction ledger, native seal, source assets, frozen bank
+and control bytes before conditional signed review or qualification.
+
+Descriptive audits remain available and do not confer certification or automatic
+promotion authority. The controlled author workflow requires its configured model;
+the bank audit itself makes no model calls.
