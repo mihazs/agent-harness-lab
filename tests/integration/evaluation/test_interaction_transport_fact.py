@@ -17,7 +17,7 @@ from tests.integration.sandbox import test_sandbox_inference as wire
 @pytest.fixture
 def live():
     with ExitStack() as cleanup:
-        fixture=ControllerActionTests();fixture.setUp();cleanup.callback(fixture.doCleanups)
+        fixture=ControllerActionTests();fixture.setUp();cleanup.callback(fixture.close)
         workspace=fixture.root/'work';workspace.mkdir()
         harness=fixture.root/'harness';harness.mkdir();(harness/'AGENTS.md').write_text('synthetic')
         version=evaluator().digest(harness);bundle=custody.bundle_binding(harness,fixture.deadline)
