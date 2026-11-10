@@ -153,8 +153,10 @@ v1 plan, receipts and selection rule remain unchanged by this opt-in design.
 
 `audit_corpus.prepare(receipt, frame, store_path, mapping, rubric)` links every
 v2 sampled unit to one current, pending diagnostic corpus case whose root
-identifier hashes to that unit. It requires a matching caller-supplied frame,
-a rubric digest frozen in each case, and at most 128 assignments. Each case
+identifier hashes to that unit. Stratified receipts use the same API with the
+required keyword `plan=plan`; frame and plan must replay the full receipt.
+Both designs require a matching caller-supplied frame, a rubric digest frozen
+in each case, and at most 128 assignments. Each case
 receives an `audit_assigned` journal event before review. An interrupted partial
 assignment cannot be consumed and can be resumed with the identical mapping.
 `audit_corpus.inspect` reopens the private corpus and reports current review
@@ -162,8 +164,8 @@ state; exposed or superseded cases are refused.
 
 An `audit-corpus-rubric-v1` maps explicit annotation symptom markers to audit
 classes and must declare both an incident class and `no_incident`.
-`audit_corpus.estimate` uses only an adjudicated annotation with exactly one
-mapped class from a corpus case with complete capture, approved permission and
+`audit_corpus.estimate` uses the selected design's estimator and only an
+adjudicated annotation with exactly one mapped class from a corpus case with complete capture, approved permission and
 no declared ambiguity. Missing or conflicting markers and ineligible or ambiguous
 cases stay pending for estimation and make it inconclusive. Corpus outcome categories are never implicitly mapped to audit
 classes. Results reuse the existing sampling estimator and remain private.
