@@ -3,6 +3,9 @@ import json
 import os
 from pathlib import Path
 
+import pytest
+
+from agent_harness_lab import hooks_validation
 from agent_harness_lab.hooks_validation import _decisions, _trace
 
 GOLDEN = Path(__file__).resolve().parents[2] / 'support/golden_profiles/ahl-fake-hook-trace-v1.jsonl'
@@ -18,16 +21,17 @@ def test_saved_fake_hook_trace_uses_the_real_parser_and_rejects_bad_types():
     assert _trace(json.dumps(invalid)) is None
 
 
-def test_saved_fake_trace_report_covers_protocol_selection_without_native_claim(tmp_path):
+@pytest.mark.parametrize('containment_available', [True, False])
+def test_saved_fake_trace_report_covers_protocol_selection_without_native_claim(tmp_path, monkeypatch, containment_available):
     from contextlib import ExitStack
-
-    import pytest
 
     from agent_harness_lab.cli import main
     from agent_harness_lab.hooks_validation import validate
     from tests.integration.surfaces.test_hooks_validation import FakeRuntimeCase
     from tests.unit.evaluation.test_benchmark_contracts import record
 
+    if not containment_available:
+        monkeypatch.setattr(hooks_validation, '_subreaper', lambda value: None)
     with ExitStack() as cleanup:
         fixture = FakeRuntimeCase()
         fixture.addCleanup = cleanup.callback
@@ -41,7 +45,14 @@ def test_saved_fake_trace_report_covers_protocol_selection_without_native_claim(
         normalized = json.loads(json.dumps(actual))
         elapsed = normalized['run'].pop('elapsed_seconds')
         assert isinstance(elapsed, (int, float)) and elapsed >= 0
-        assert normalized == saved
+        containment = actual['workspace_diff']['process_containment']
+        if containment == 'subreaper':
+            assert normalized == saved
+        else:
+            assert containment == 'unavailable'
+            assert 'process_containment_unavailable' in actual['findings']
+            assert actual['candidate']['status'] == 'inconclusive'
+            assert not actual['candidate']['improvement_eligible']
         assert actual['runtime_kind'] == 'fake' and actual['executed']
         assert actual['handlers'] and all(row['trace'] == 'ahl-fake-hook-trace-v1' for row in actual['handlers'])
         assert not actual['publication_allowed'] and not actual['automatic_promotion']
