@@ -59,9 +59,12 @@ def _queue(receipt,frame,trusted_heads,plan):
         raise ValueError('explicit frame and supported audit receipt required')
     if receipt.get('profile')==audit.RECEIPT_PROFILE_V2 and plan is None:
         return audit.review_queue(receipt,trusted_heads,frame=frame)
-    from . import audit_stratified
-    if receipt.get('profile')==audit_stratified.RECEIPT_PROFILE and plan is not None and trusted_heads is None:
-        return audit_stratified.review_queue(receipt,frame,plan)
+    from . import audit_fixed, audit_stratified
+    if plan is not None and trusted_heads is None:
+        if receipt.get('profile')==audit_fixed.RECEIPT_PROFILE:
+            return audit_fixed.review_queue(receipt,frame,plan)
+        if receipt.get('profile')==audit_stratified.RECEIPT_PROFILE:
+            return audit_stratified.review_queue(receipt,frame,plan)
     raise ValueError('explicit frame and supported audit receipt with matching plan required')
 
 
@@ -163,8 +166,9 @@ def estimate(receipt, frame, store_path, binding, rubric_value, trusted_heads=No
         if receipt['profile']==audit.RECEIPT_PROFILE_V2:
             report=audit.estimate(receipt,batch,trusted_heads,frame=frame)
         else:
-            from . import audit_stratified
-            report=audit_stratified.estimate(receipt,frame,plan,batch)
+            from . import audit_fixed, audit_stratified
+            estimator=audit_fixed if receipt['profile']==audit_fixed.RECEIPT_PROFILE else audit_stratified
+            report=estimator.estimate(receipt,frame,plan,batch)
     report['limitations'].extend(('audit_assignment_timing_unauthenticated','audit_rubric_operator_declared',
                                    'corpus_reviewers_independence_unverified','corpus_lineage_binding_unverified'))
     if any(has_event for _,_,_,_,_,_,has_event in observed):

@@ -153,9 +153,9 @@ v1 plan, receipts and selection rule remain unchanged by this opt-in design.
 
 `audit_corpus.prepare(receipt, frame, store_path, mapping, rubric)` links every
 v2 sampled unit to one current, pending diagnostic corpus case whose root
-identifier hashes to that unit. Stratified receipts use the same API with the
-required keyword `plan=plan`; frame and plan must replay the full receipt.
-Both designs require a matching caller-supplied frame, a rubric digest frozen
+identifier hashes to that unit. Fixed-size and stratified receipts use the same
+API with the required keyword `plan=plan`; frame and plan must replay the full
+receipt. All supported designs require a matching caller-supplied frame, a rubric digest frozen
 in each case, and at most 128 assignments. Each case
 receives an `audit_assigned` journal event before review. An interrupted partial
 assignment cannot be consumed and can be resumed with the identical mapping.
