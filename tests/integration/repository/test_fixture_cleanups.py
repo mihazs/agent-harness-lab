@@ -33,11 +33,6 @@ ROWS = [
      ['tests.integration.evaluation.test_preservation_history.PreservationHistoryTests']),
     ('tests.integration.optimization.test_optimization_history', 'owner',
      ['tests.integration.evaluation.test_regression_admission.RegressionAdmissionTests']),
-    ('tests.integration.workflow.test_one_call', 'one', ['tests.integration.workflow.test_one_call.OneCallTests']),
-    ('tests.integration.workflow.test_one_call_boundary', 'one',
-     ['tests.integration.workflow.test_one_call.OneCallTests']),
-    ('tests.integration.workflow.test_one_call_custody', 'one',
-     ['tests.integration.workflow.test_one_call.OneCallTests']),
     ('tests.integration.evaluation.test_regression_replay', 'replay_case',
      ['tests.integration.evaluation.test_regression_replay.RegressionReplayTests']),
     ('tests.integration.evaluation.test_regression_review', 'review',
@@ -134,3 +129,24 @@ def test_nested_admission_cleanup_failure_fails_the_bank_authority_fixture(tmp_p
         source('tests.integration.evaluation.test_oracle_bank_authority', 'fixture', [], wrapped=[admission]))
     run = pytest_run(tmp_path, ['test_cleanup_nested.py'])
     assert 'ERROR ' in run.stdout and 'synthetic per-test cleanup failure' in run.stdout, run.stdout[-4000:]
+
+
+@pytest.mark.parametrize('module', [
+    'tests.integration.workflow.test_one_call',
+    'tests.integration.workflow.test_one_call_boundary',
+    'tests.integration.workflow.test_one_call_custody',
+])
+def test_one_call_fixture_reports_cleanup_failure(tmp_path, module):
+    (tmp_path/'test_one_cleanup.py').write_text(
+        "from tempfile import TemporaryDirectory\n"
+        "import tests.support.one_call as support\n"
+        "class BrokenTemporaryDirectory(TemporaryDirectory):\n"
+        "    def cleanup(self):\n"
+        "        super().cleanup()\n"
+        "        raise RuntimeError('synthetic per-test cleanup failure')\n"
+        "support.TemporaryDirectory = BrokenTemporaryDirectory\n"
+        f"from {module} import one\n"
+        "def test_synthetic(one): pass\n")
+    run = pytest_run(tmp_path, ['test_one_cleanup.py'])
+    assert 'ERROR ' in run.stdout and 'synthetic per-test cleanup failure' in run.stdout, run.stdout[-4000:]
+    assert '1 passed' in run.stdout, run.stdout[-4000:]
