@@ -136,7 +136,7 @@ def test_missing_parent_and_archive_are_unknown(source):
 def test_unsupported_platform_and_timed_out_worker_fail_closed(source):
     _, _, spec, manifest = source
     with patch('agent_harness_lab.sources.opencode_backup.sys.platform', 'unsupported'):
-        with patch('agent_harness_lab.sources.opencode_backup.subprocess.run') as run:
+        with patch('agent_harness_lab.sources.opencode_backup.subprocess.Popen') as run:
             with pytest.raises(ValueError, match='unavailable'): OpenCodeBackup(manifest).read(spec)
             run.assert_not_called()
     with patch('agent_harness_lab.sources.opencode_backup._exchange', side_effect=TimeoutError()):
