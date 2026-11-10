@@ -3375,6 +3375,15 @@ merge occurred, or that a task succeeded. Visibility and source claims remain
 unverified, and reads are non-atomic. Schema 5 has a distinct scope from schemas
 1–4; it retains their issue discussions and MR commit capabilities.
 
+An opt-in selection schema 6 adds `related_issues` for selected merge requests,
+using the [related issues endpoint](https://docs.gitlab.com/api/merge_requests/#list-issues-related-to-the-merge-request).
+These server-reported references can come from several MR surfaces and do not
+establish closure, enforcement, or task outcomes. The same-project, explicit
+selection, authorization, omission and identity checks for closing references
+also apply here. Closing and related references remain distinct claims and share
+a limit of 10,000 returned rows per capture. Visibility and source claims remain
+unverified; reads are non-atomic. Schema 6 has a distinct scope from schemas 1–5.
+
 Use `SourceSpec(kind="api", provider="gitlab", version="v4", root_sha256=digest(base_url),
 project_sha256=selection.project_sha256, scope_sha256=selection.sha256,
 identity_provenance="source_declared_id", enabled=True)` and register
