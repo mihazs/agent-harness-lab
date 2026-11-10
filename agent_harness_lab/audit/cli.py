@@ -142,12 +142,15 @@ def main(argv=None):
                     inventory_comparison='recognized_instruction_files_only', cross_observation_consistency='unknown',
                     publication_allowed=False)
         total = report['declared_instruction_totals']
+        if args.runtime == 'claude-code' and total['status'] == 'declared' and total.get('empty_import'):
+            _instruction_hypothesis(report, 'instruction_empty_import', 'structural',
+                                    'evaluate_empty_instruction_import')
         total['soft_line_budget'] = args.instruction_soft_lines
         if total['status'] == 'declared' and total['lines'] > args.instruction_soft_lines:
             _instruction_hypothesis(report, 'instruction_launch_lines_above_soft_budget', 'count',
                 'evaluate_instruction_budget_reduction', (('lines', total['lines']),
                                                          ('soft_line_budget', args.instruction_soft_lines)))
-        if args.runtime == 'claude-code' and total['status'] == 'declared' and total['files']:
+        if total['status'] == 'declared' and total['files']:
             shape = total['shape']
             if not shape['constraints']:
                 _instruction_hypothesis(report, 'instruction_constraints_not_detected', 'lexical',
@@ -162,6 +165,8 @@ def main(argv=None):
         report['protected_path_inventory'] = protected_paths(project)
         from .permission_candidates import report as permission_candidates
         report['permission_candidates'] = permission_candidates(inventory, report['protected_path_inventory'])
+        from .constraint_scan import capture as constraint_scan
+        report['constraint_references'] = constraint_scan(project, inventory, report['protected_path_inventory'])
         candidate = next((row for row in report['findings'] if row['remediation']), None)
         if report['status'] != 'completed':
             report['next_action'] = 'Resolve the blocked inventory before using this audit.'
@@ -189,6 +194,11 @@ def main(argv=None):
                       f"permission: {candidates[row['path']]}; enforcement: unknown")
             if report['protected_path_inventory']['coverage'] == 'unknown':
                 print('Protected path coverage: unknown')
+            for source in report['constraint_references']['files']:
+                for row in source['constraints']:
+                    print(f"Constraint reference: {json.dumps(source['source_path'], ensure_ascii=True)}:{row['line']}; hook and enforcement: unknown")
+            if report['constraint_references']['status'] != 'completed':
+                print('Constraint reference coverage: unknown')
             for row in report['findings']:
                 print(f"{row['dimension']}: {row['reason']} ({row['path']}) — {row['remediation'] or 'not checked'}")
             print(report['next_action'])

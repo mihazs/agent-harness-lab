@@ -35,6 +35,7 @@ def main(argv):
     experiment_mode=experiment.add_mutually_exclusive_group(required=True)
     experiment_mode.add_argument('--records', type=Path,help='Existing JSON array of TrialRecord objects to analyze; cannot be combined with --preflight')
     experiment_mode.add_argument('--preflight',action='store_true',help='Compute exact frozen-plan precision without running workers or models')
+    experiment_mode.add_argument('--prepare-root-similarity',action='store_true',help='Print a new private plan and evidence for explicit pre-trial review; does not write files')
     experiment_mode.add_argument('--power-model',type=Path,help='Existing JSON synthetic outcome model; simulate fixed-analysis disposition rates without running workers or models')
     experiment.add_argument('--cohorts',type=Path,help='Exact raw frozen preservation manifest; preflight only')
     experiment.add_argument('--root-similarity',type=Path,help='Private root similarity evidence pinned by the frozen plan')
@@ -114,7 +115,15 @@ def main(argv):
             similarity = record(args.root_similarity, 1024 * 1024)[0] if args.root_similarity else None
             if args.power_model is None and (args.simulations is not None or args.simulation_seed is not None):
                 raise ValueError('--simulations and --simulation-seed require --power-model')
-            if args.power_model is not None:
+            if args.prepare_root_similarity:
+                if args.root_bank is None or args.root_similarity is not None or args.cohorts is not None:
+                    raise ValueError('similarity preparation requires --root-bank without existing evidence or cohorts')
+                from .cohorts import MAX_BYTES
+                from .root_similarity import prepare
+                spec = ExperimentSpec.parse(record(args.spec, MAX_BYTES)[0])
+                result = prepare(spec, args.root_bank)
+                code = 0
+            elif args.power_model is not None:
                 if args.cohorts:raise ValueError('--cohorts requires --preflight')
                 from agent_harness_lab.private_journal import record
                 from .cohorts import MAX_BYTES

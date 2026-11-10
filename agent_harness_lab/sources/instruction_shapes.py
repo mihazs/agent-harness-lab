@@ -2,8 +2,9 @@
 import re
 
 CONSTRAINT = re.compile(r'\b(?:always|never|must|shall|required|forbidden)\b', re.IGNORECASE)
-VERIFY = re.compile(r'\b(?:pytest|unittest|npm\s+test|cargo\s+test|go\s+test|make\s+(?:test|check)|'
-                    r'gradle\s+test|mvn\s+test|ruff\s+check)\b', re.IGNORECASE)
+VERIFY = re.compile(r'\b(?:pytest|unittest|npm\s+(?:test|run\s+(?:build|test|check|verify))|'
+                    r'cargo\s+(?:test|build|check)|go\s+(?:test|build)|make\s+(?:test|check|build|verify)|'
+                    r'gradle\s+(?:test|build)|mvn\s+(?:test|verify)|ruff\s+check)\b', re.IGNORECASE)
 HEADING = re.compile(r'^\s{0,3}#{1,6}\s')
 NUMBERED = re.compile(r'^\s{0,3}\d+[.)]\s+')
 FENCE = re.compile(r'^\s{0,3}(`{3,}|~{3,})')

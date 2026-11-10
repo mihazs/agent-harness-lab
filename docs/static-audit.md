@@ -36,6 +36,18 @@ are independently captured snapshots. Rule hashes and paths are private metadata
 The CLI includes this comparison under `permission_candidates`; it is outside
 `audit_sha256` and does not change the enforcement coverage verdict.
 
+The separate private `agent_harness_lab.audit.constraint_references.report()` API
+accepts caller-supplied instruction bytes only when their digest matches a parsed
+checkout inventory node. It emits bounded line-number and hash references for
+lexical hard-constraint cues and exact protected-path references, without line
+text. Loading, hook matching and enforcement remain unknown; lexical cues are not
+proof of a rule or its enforcement. Reference hashes and paths are private and may
+be guessable. Inputs are separate observations, not an atomic snapshot.
+The CLI re-reads eligible checkout instruction files through bounded, no-follow
+access and checks their digests against the inventory. The resulting private
+`constraint_references` observation is outside `audit_sha256`; unavailable files
+leave it incomplete, and its coverage, hook matching and enforcement stay unknown.
+
 The `hook_events` field lists known event names from declared hook handlers. Its
 coverage is `unknown` when hook surfaces are unavailable or could not be parsed;
 otherwise `declared_only` describes inventory coverage, not execution or enforcement.
@@ -278,13 +290,14 @@ Claude's [per-file rule of thumb](https://code.claude.com/docs/en/features-overv
 to the captured launch closure; it is not a validated aggregate threshold.
 Unknown totals never produce this hypothesis.
 
-For a settled, nonempty closure, the CLI also emits lexical hypotheses when it
+For a settled, nonempty Claude or Codex checkout closure, the CLI also emits lexical hypotheses when it
 finds no constraint wording or common verification command, and a structural
 hypothesis for a section with at least five numbered steps or three fenced
 blocks. These are deliberately simple patterns: they can miss equivalent
 wording and match examples. Findings need behavioral evaluation and do not quote
 instruction contents or headings. No shape hypothesis is emitted for an
-unknown closure.
+unknown closure. An empty resolved Claude import also produces a weak
+hypothesis; missing imports and cycles leave totals unknown with a reason.
 
 
 ## Codex declared instruction totals

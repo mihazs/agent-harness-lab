@@ -190,3 +190,35 @@ def grouped_weights(roots, weights, groups):
     for root, weight in zip(roots, weights):
         combined[groups.get(root, root)] += weight
     return list(combined.values())
+
+
+def prepare(spec, bank_path):
+    """Return a new private plan and evidence; never modify the original inputs."""
+    from dataclasses import replace
+    from agent_harness_lab.sources.schema import digest
+    from .plan import ExperimentSpec
+    from .task_bank import inspect
+
+    if not isinstance(spec, ExperimentSpec):
+        raise ValueError('an experiment plan is required')
+    spec.validate()
+    if spec.root_similarity_sha256 is not None:
+        raise ValueError('plan already pins root similarity evidence')
+    if spec.sequential is not None:
+        raise ValueError('root similarity is unsupported for sequential plans')
+    checked = inspect(bank_path)
+    full = checked['content_grouping']['root_similarity']['evidence']
+    if full is None:
+        raise ValueError('bank lacks complete root similarity evidence')
+    indexed = {task['task_id']: task for task in checked['task_index']}
+    if any(task not in indexed or (indexed[task]['root_id'], indexed[task]['family']) != (root, family)
+           for task, root, family in spec.tasks):
+        raise ValueError('selected task roots and families must match the inspected bank')
+    projected = project_evidence(full, [(task, root) for task, root, _ in spec.tasks])
+    prepared = replace(spec, root_similarity_sha256=digest(projected))
+    binding(prepared, projected, bank_path)
+    return dict(schema_version=1, profile='private-root-similarity-preparation-v1',
+                status='prepared_not_frozen', original_plan_sha256=spec.digest,
+                prepared_plan=prepared.to_dict(), prepared_plan_sha256=prepared.digest,
+                root_similarity_evidence=projected, root_independence='unverified',
+                previous_trial_ids_reusable=False, execution_authorized=False, publication_allowed=False)
