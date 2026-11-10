@@ -34,6 +34,8 @@ class TestHistoryReport:
         assert not report['publication_allowed']; assert not report['adoption_authority']
         assert report['pooled_treatment_effect'] is None
         markdown,document=benchmark.render(report)
+        assert report['comparisons'][0]['task_pairs']
+        assert 'Task observations' in markdown and 'Task observations' in document
         for field in ('qualification_dependencies','assumptions','pass_fail','fail_pass','coverage','success_rate'):
             assert field in markdown; assert field in document
         assert '<th scope="col">' in document
@@ -47,9 +49,13 @@ class TestHistoryReport:
         refs=[dict(run_id=f'{index:064x}',receipt_sha256=f'{index+100:064x}') for index in range(9)]
         analysis=dict(status='inconclusive',detail='synthetic analysis '*250000)
         def verified(run_id,receipt_sha256):
-            return dict(receipt=dict(run_id=run_id),analysis=analysis)
-        with patch('agent_harness_lab.evaluation.oracle_history.HistoryStore') as store:
+            return dict(receipt=dict(run_id=run_id,results_sha256='a'*64),analysis=analysis)
+        with patch('agent_harness_lab.evaluation.oracle_history.HistoryStore') as store, \
+                patch('agent_harness_lab.private_journal.record',return_value=({},'a'*64)), \
+                patch.object(history_report,'task_pairs',return_value=[]):
             store.return_value.root=Path('/synthetic-report-store')
+            fake_spec=type('FakeSpec',(),dict(sequential=None))()
+            store.return_value.checked.return_value=(Path('/synthetic-report-store'),None,None,fake_spec,{},'current')
             store.return_value.verify_decision.side_effect=verified
             result=history_report.summary('/synthetic-report-store',refs)
             assert store.return_value.verify_decision.call_count == 2*len(refs)
@@ -89,10 +95,13 @@ class TestHistoryReport:
         entry=report['comparisons'][0]; cohorts=entry['analysis']['preservation']['cohorts']
         value=next(iter(cohorts.values())); cohorts.clear(); cohorts['``|<script>bad</script>']=value
         entry['receipt']['qualification_dependencies']['synthetic-note']='<script>private</script>'
+        entry['task_pairs'][0]['task']='<svg onload=alert(1)>'
         markdown,document=benchmark.render(report)
         assert '\\|' in markdown
         assert '<script>' not in document
         assert '&lt;script&gt;' in document
+        assert '<svg' not in document and '&lt;svg' in document
+        assert "default-src 'none'" in document
         forged=dict(report,publication_allowed=True,
             provenance=dict(source_kind='synthetic',approved_publication=True,source_ref='synthetic',derived_from_private=False))
         assert not benchmark.public_export_allowed([forged])

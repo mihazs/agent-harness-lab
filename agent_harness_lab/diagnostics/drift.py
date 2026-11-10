@@ -38,6 +38,7 @@ STATISTICAL_CHANNELS = ('task_mix', 'performance')
 UNKNOWN = 'unknown'
 OTHER = 'other'
 MAX_CATEGORIES = 64
+MAX_INPUT_RUNS = 100000
 RESERVED = frozenset(('run_id', 'task_root', 'cursor', 'started', 'schema_version', 'capture', 'truncated',
                       'parse_rejected', 'harness_revision', 'outcome', 'outcome_provenance',
                       'requested_model', *STRATUM_FIELDS))
@@ -171,7 +172,8 @@ def _summarize(plan, runs, start, end, revisions=None):
     counts = dict(runs=0, eligible_runs=0, duplicates_suppressed=0, conflicting_duplicates=0, untimed_runs=0,
                   outside_window=0, cursor_unknown=0, cursor_gaps=0, cursor_collisions=0)
     issues, seen, cursors, roots = {}, {}, set(), {}
-    for run in runs:
+    for index, run in enumerate(runs):
+        if index >= MAX_INPUT_RUNS: raise ValueError('drift input run bound exceeded')
         if not isinstance(run, dict) or not isinstance(run.get('run_id'), str) or not run['run_id']:
             raise ValueError('every run requires a run_id')
         signature = hashlib.sha256(json.dumps(run, sort_keys=True, default=repr).encode()).hexdigest()

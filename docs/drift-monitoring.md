@@ -71,6 +71,10 @@ reference window, with root and run IDs reduced to hashes that are not stored. I
 refuses a reference window that has a capture alert or fewer eligible task roots
 than `min_exposure`. `assess(plan, reference, runs, window_index)` checks the plan
 hash and the reference digest, then returns a `drift-receipt-v1`.
+Each call accepts at most 100,000 input runs, including duplicates and runs outside
+the requested window. An over-limit input raises an error and returns no partial
+reference or receipt. This bound limits retained run and root cardinality; it is
+not a per-record byte limit.
 
 | Channel | What it reports | States in this slice |
 | --- | --- | --- |

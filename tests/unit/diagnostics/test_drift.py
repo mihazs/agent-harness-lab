@@ -97,6 +97,12 @@ class TestPlan:
 
 
 class TestReference:
+    def test_input_bound_rejects_without_returning_partial_reference(self, plan, monkeypatch):
+        monkeypatch.setattr(drift, 'MAX_INPUT_RUNS', 3)
+        runs = synthetic_runs(0, 4)
+        with pytest.raises(ValueError, match='drift input run bound exceeded'):
+            drift.freeze_reference(plan, iter(runs))
+
     def test_reference_keeps_counts_and_hashes_only(self, reference):
         text = json.dumps(reference)
         assert 'r-root-' not in text and '"r1"' not in text
@@ -139,6 +145,12 @@ class TestReference:
 
 
 class TestChannels:
+    def test_input_bound_counts_duplicates_and_out_of_window_runs(self, plan, reference, monkeypatch):
+        monkeypatch.setattr(drift, 'MAX_INPUT_RUNS', 3)
+        run = synthetic_runs(100, 1, prefix='c')[0]
+        with pytest.raises(ValueError, match='drift input run bound exceeded'):
+            drift.assess(plan, reference, iter([run, run, {**run, 'run_id': 'outside', 'started': 999}, run]), 0)
+
     def test_no_change_raises_no_alert_and_no_performance_claim(self, plan, reference):
         receipt = drift.assess(plan, reference, synthetic_runs(100, 200, seed=2, prefix='c', cursor0=500), 0)
         capture, mix, performance = channels(receipt)
