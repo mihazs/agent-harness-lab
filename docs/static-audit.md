@@ -357,6 +357,18 @@ default for chain findings, which identify dropped bytes and the crossing file
 when those are settled. The default 200-line soft budget is a configurable
 convention extrapolated to the selected closure, not a validated threshold.
 
+`--codex-budget-boundary` adds a separate private observation when a byte
+budget cuts inside leading whitespace. It models the pinned runtime's lossy
+UTF-8 decoding from bounded re-read bytes that match the selected inventory, and
+may name additional truncated or skipped files. Missing, changed or otherwise
+unsettled inputs leave the observation unknown. This does not modify the core
+audit findings or their identity: the separate observations are not atomic,
+and runtime settings and actual loading remain unknown. Without the option the
+existing report shape is unchanged.
+The direct `budget_boundary.report()` API accepts caller-supplied totals and
+boundary maps; it does not authenticate them or prove that a resolver produced
+them. Its result grants no authority.
+
 For supported instruction findings, `improvement_hint` provides a fixed,
 content-free `focus` string and the audited runtime. Before using it with
 `ahl improve --focus`, select an improvement runtime compatible with the audited
