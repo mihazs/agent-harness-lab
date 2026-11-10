@@ -104,6 +104,13 @@ def observe(trial, endpoint, cache_policy=None, timing_boundary=None, token_scop
     status, value = trial.get('status'), trial.get('measurements', {}).get(endpoint['name'])
     if status not in ('completed', 'agent_timeout'): return None, 'status_' + str(status)
     if not number(value): return None, 'missing_measurement'
+    if token_scoped and endpoint['kind'] == 'measured_tokens':
+        if type(value) is not int: return None, 'invalid_token_count'
+        if endpoint['token_category'] == 'cached_input_tokens':
+            cache_state = provenance['cache_state']
+            if (cache_state == 'uncached' and value != 0
+                    or cache_state == 'provider_cache_used' and value < attempts):
+                return None, 'cache_count_inconsistent'
     if status == 'agent_timeout' and value < endpoint['horizon']: return None, 'censored_below_horizon'
     return min(value, endpoint['horizon']), None
 

@@ -98,6 +98,9 @@ including the cache state, are caller attestations and are not independently aut
 For version 4, `uncached` attests that every included request is uncached, and
 `provider_cache_used` attests that every included request used provider caching. A mixture or
 unknown state must remain unknown; it cannot be represented by either value.
+Token observations must be nonnegative integers. For `cached_input_tokens`, a positive count
+contradicts `uncached`; under `provider_cache_used`, the count cannot be smaller than the
+number of included requests. Contradictory observations remain unknown.
 Results retain the conditional and private-data limitations described above. No automatic bridge
 from live or completed trial summaries to a resource decision is provided. Version 4 results are
 private and explicitly marked as disallowed for publication.

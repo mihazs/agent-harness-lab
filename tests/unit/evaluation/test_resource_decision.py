@@ -311,6 +311,48 @@ def test_v4_provider_cache_policy_is_frozen_and_requires_matched_arm_states():
     assert decide(contract_v4, rows, 'supported')['decision'] == 'blocked'
 
 
+@pytest.mark.parametrize('policy', ['uncached_only', 'provider_cache_allowed'])
+def test_v4_uncached_attestation_cannot_have_positive_cached_tokens(policy):
+    contract_v4 = token_scope_contract('cached_input_tokens'); contract_v4['cache_policy'] = policy
+    rows = token_scope_rows()
+    for row in rows:
+        for name in ('baseline','candidate'):
+            row[name]['measurement_provenance']['tokens']['token_category'] = 'cached_input_tokens'
+            row[name]['measurements']['tokens'] = 0
+    assert decide(contract_v4, rows, 'supported')['decision'] == 'inconclusive'
+    rows[0]['candidate']['measurements']['tokens'] = 1
+    result = decide(contract_v4, rows, 'supported')
+    assert result['decision'] == 'blocked' and result['endpoints'][0]['unknown_reasons'] == {'cache_count_inconsistent': 1}
+
+
+@pytest.mark.parametrize('value', [0, 1])
+def test_v4_cached_request_count_must_cover_all_attested_cached_requests(value):
+    contract_v4 = token_scope_contract('cached_input_tokens'); contract_v4['cache_policy'] = 'provider_cache_allowed'
+    rows = token_scope_rows()
+    for row in rows:
+        for name in ('baseline','candidate'):
+            row[name]['measurement_provenance']['tokens']['token_category'] = 'cached_input_tokens'
+            row[name]['provenance']['cache_state'] = 'provider_cache_used'
+    rows[0]['candidate']['measurements']['tokens'] = value
+    assert decide(contract_v4, rows, 'supported')['endpoints'][0]['unknown_reasons'] == {'cache_count_inconsistent': 1}
+    rows[0]['candidate']['measurements']['tokens'] = 2
+    assert decide(contract_v4, rows, 'supported')['decision'] == 'conditional_improvement'
+
+
+@pytest.mark.parametrize('value', [0.1, True, -1])
+def test_v4_token_counts_must_be_nonnegative_integers(value):
+    rows = token_scope_rows(); rows[0]['candidate']['measurements']['tokens'] = value
+    assert decide(token_scope_contract(), rows, 'supported')['decision'] == 'blocked'
+
+
+def test_v4_large_integer_is_capped_and_v3_fractional_behavior_is_preserved():
+    rows = token_scope_rows(); rows[0]['candidate']['measurements']['tokens'] = 10**12
+    assert decide(token_scope_contract(), rows, 'supported')['endpoints'][0]['capped_observations'] == 1
+    rows[0]['candidate']['measurements']['tokens'] = 0.1
+    legacy = dict(timing_contract(),endpoints=[dict(TOKENS,required=True)])
+    assert decide(legacy, rows, 'supported')['endpoints'][0]['status'] != 'unknown'
+
+
 @pytest.mark.parametrize('change', [dict(token_category='unknown'),dict(token_scope='all_billing')])
 def test_v4_rejects_unsupported_token_contract(change):
     contract_v4 = token_scope_contract(); contract_v4['endpoints'][0].update(change)
