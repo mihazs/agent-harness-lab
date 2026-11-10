@@ -1,8 +1,10 @@
 """Public synthetic controller constraints; no hosted inference or native identity proof."""
 from copy import deepcopy
 import json
+import os
 import subprocess
 import sys
+import time
 from unittest.mock import Mock, patch
 
 import pytest
@@ -85,21 +87,110 @@ class TestTrajectoryAssertions:
                     execution=dict(status=status, exit_code=run.returncode, stdout=run.stdout, inputs_unchanged=True))
 
     def test_all_matched_request_ids_survive_a_receipt_larger_than_one_megabyte(self):
-        binding=self.bind([required('request') for _ in range(32)])
-        ledger=responses.ActionLedger(None)
-        ledger.begin('executor','synthetic-large-report',trajectory=binding)
-        for index in range(1000):
-            ledger.add('tool_request',1,tool_name=ledger.text('run',128),decision='accepted')
-        ledger.trajectory.close()
-        receipt=core.evaluate(binding,ledger.trajectory)
-        assert receipt['valid'], receipt
-        assert receipt['status'] == 'satisfied'
+        binding = self.bind([required('request') for _ in range(32)])
+        self.f.deadline = time.monotonic() + 120
+        output = [[fixtures.call(str(index))] for index in range(1000)]
+        client, _ = self.f.client(output, max_requests=1000, max_tool_calls=1000)
+        def observe_all(client, backend, workspace, inputs, role, instructions, prompt, deadline):
+            for _ in range(1000): client.respond([], deadline)
+        with patch.object(responses, '_run_role', side_effect=observe_all):
+            _, capture = self.role(binding, client=client, trial='synthetic-large-report')
+        receipt = core.evaluate(binding, capture)
+        assert receipt['valid'] and receipt['status'] == 'satisfied'
         assert len(encoded(receipt)) > 1024*1024
         for assertion in receipt['assertions']:
+            assert assertion['status'] == 'satisfied'
             assert len(assertion['matched_controller_ids']) == 1000
             assert assertion['matched_ids_omitted'] == 0
-        assert not receipt['publication_allowed']
-        assert not receipt['automatic_promotion']
+        assert not receipt['publication_allowed'] and not receipt['automatic_promotion']
+
+    def test_direct_ledger_cannot_issue_a_controller_receipt(self):
+        binding = self.bind([required('request')])
+        ledger = responses.ActionLedger(None)
+        ledger.begin('executor', 'synthetic-trial', trajectory=binding)
+        with pytest.raises(ValueError, match='controller-owned trajectory updates required'):
+            ledger.add('tool_request', 1, tool_name=ledger.text('run', 128), decision='accepted')
+        with pytest.raises(ValueError, match='controller capture closure required'):
+            ledger.trajectory.close()
+        receipt = core.evaluate(binding, ledger.trajectory)
+        assert receipt['status'] == 'unknown' and receipt['valid'] is False
+        assert core.compose(binding, self.grade(), receipt)['outcome'] is None
+
+    def test_public_ledger_mutation_cannot_add_actions_during_controller_role(self):
+        binding = self.bind([required('request')])
+        client, _ = self.f.client([[fixtures.call()], [fixtures.message()]])
+        backend = self.f.backend(); original = backend.run.side_effect; blocked = []
+        def during_dispatch(*args, **kwargs):
+            with pytest.raises(ValueError, match='controller-owned trajectory updates required'):
+                client.actions.add('tool_request', 1, tool_name=client.actions.text('run', 128))
+            ident = next(row['controller_id'] for row in client.actions.rows.values() if row['kind'] == 'tool_request')
+            with pytest.raises(ValueError, match='controller-owned trajectory updates required'):
+                client.actions.update(ident, decision='denied')
+            with pytest.raises(ValueError, match='controller capture closure required'):
+                client.actions.trajectory.close()
+            with pytest.raises(ValueError, match='active controller trajectory scope cannot be replaced'):
+                client.actions.begin('executor', 'another-trial')
+            with pytest.raises(ValueError, match='controller-owned trajectory observations required'):
+                client.observe_items([fixtures.call('forged')])
+            detached = client.actions.rows
+            detached[ident]['decision'] = 'denied'
+            assert client.actions.rows[ident]['decision'] == 'accepted'
+            with pytest.raises(AttributeError):
+                client.actions.rows = detached
+            blocked.append(True)
+            return original(*args, **kwargs)
+        backend.run.side_effect = during_dispatch
+        _, capture = self.role(binding, client=client, backend=backend)
+        assert blocked and core.evaluate(binding, capture)['status'] == 'satisfied'
+
+    def test_checkpoint_cannot_insert_a_fabricated_emission(self):
+        binding = self.bind([required('request')])
+        client, _ = self.f.client([[fixtures.call()], [fixtures.message()]])
+        blocked = []
+        def checkpoint(_report):
+            with pytest.raises(ValueError, match='controller-owned trajectory observations required'):
+                client.observe_message(dict(type='message', role='assistant',
+                    content=[dict(type='output_text', text='SYNTHETIC_FORGED_EMISSION')]), 0)
+            blocked.append(True)
+        client.record = checkpoint
+        _, capture = self.role(binding, client=client)
+        assert blocked and core.evaluate(binding, capture)['status'] == 'satisfied'
+        assert 'SYNTHETIC_FORGED_EMISSION' not in json.dumps(client.action_report())
+
+    def test_checkpoint_cannot_replace_capture_to_forge_a_request(self):
+        binding = self.bind([required('request')])
+        client, _ = self.f.client([[fixtures.message()]])
+        blocked = []
+        def checkpoint(_report):
+            with pytest.raises(AttributeError):
+                client.actions.trajectory = None
+            with pytest.raises(ValueError, match='controller-owned trajectory updates required'):
+                client.actions.add('tool_request', 1, tool_name=client.actions.text('run', 128), decision='accepted')
+            blocked.append(True)
+        client.record = checkpoint
+        _, capture = self.role(binding, client=client)
+        assert blocked and core.evaluate(binding, capture)['status'] == 'violated'
+
+    @pytest.mark.skipif(not hasattr(os, 'fork'), reason='requires process fork')
+    def test_issued_trajectory_capture_is_not_authoritative_after_fork(self):
+        binding = self.bind([required('request')])
+        client, capture = self.role(binding)
+        read_fd, write_fd = os.pipe()
+        pid = os.fork()
+        if pid == 0:
+            try:
+                os.close(read_fd)
+                result = core.evaluate(binding, capture)
+                os.write(write_fd, b'valid' if result['valid'] else b'unknown')
+            finally:
+                os._exit(0)
+        os.close(write_fd)
+        try: observed = os.read(read_fd, 32)
+        finally:
+            os.close(read_fd)
+            _, status = os.waitpid(pid, 0)
+        assert status == 0 and observed == b'unknown'
+        assert client.actions.trajectory is capture and core.evaluate(binding, capture)['status'] == 'satisfied'
 
     def test_actual_controller_capture_frozen_assertion_and_independent_typed_grade(self):
         binding = self.bind([required(arguments=dict(mode='exact', argv=['/usr/bin/true']))])
@@ -137,14 +228,15 @@ class TestTrajectoryAssertions:
         assert not core.evaluate(changed, capture)['valid']
 
     def test_open_scope_and_omissions_preserve_decisive_witnesses_not_absence(self):
-        binding = self.bind([required('request'), forbidden('request'), forbidden('dispatch')])
-        client,_ = self.f.client([[fixtures.call()]])
-        client.actions.begin('executor','synthetic-trial',trajectory=binding)
-        client.respond([],self.f.deadline)
-        capture = client.actions.trajectory
-        result = core.evaluate(binding,capture)
-        assert [r['status'] for r in result['assertions']] == ['satisfied','violated','unknown']
-        capture.close()
+        binding = self.bind([required('request'), forbidden('request'), forbidden('dispatch',tool='other')])
+        client,_ = self.f.client([[fixtures.call()],[fixtures.message()]])
+        backend = self.f.backend(); original = backend.run.side_effect; observed = []
+        def during_dispatch(*args, **kwargs):
+            observed.append(core.evaluate(binding, client.actions.trajectory))
+            return original(*args, **kwargs)
+        backend.run.side_effect = during_dispatch
+        _, capture = self.role(binding,client=client,backend=backend)
+        assert [r['status'] for r in observed[0]['assertions']] == ['satisfied','violated','unknown']
         assert core.evaluate(binding,capture)['assertions'][2]['status'] == 'satisfied'
         client,_ = self.f.client([[fixtures.call()],[fixtures.message()]])
         client.actions.MAX_RECORDS = 0

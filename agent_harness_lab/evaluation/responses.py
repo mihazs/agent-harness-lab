@@ -15,6 +15,7 @@ from .integrity import read_regular, unique_object
 _CLIENT_PIDS = WeakKeyDictionary()
 _ROLE_SCOPES = WeakKeyDictionary()
 _REQUEST_CONTEXTS = WeakKeyDictionary()
+_ACTION_TOKEN = object()
 _RESPONDING = WeakKeyDictionary()
 
 # Trusted controller child: its parent can terminate DNS/TLS/header reads at deadline.
@@ -126,10 +127,24 @@ class ActionLedger:
     def __init__(self,credential):
         self.credential = credential
         self.ledger_id = secrets.token_hex(16)
-        self.rows = {}; self.bytes = self.sequence = self.scope_sequence = self.order = 0
-        self.scopes = {}; self.trajectory = None; self.scope = self.begin('unscoped',None)
+        self._rows = {}; self.bytes = self.sequence = self.scope_sequence = self.order = 0
+        self.scopes = {}; self._trajectory = None; self.scope = self.begin('unscoped',None)
+
+    @property
+    def rows(self):
+        """Return a detached view of retained controller actions."""
+        return deepcopy(self._rows)
+
+    @property
+    def trajectory(self):
+        """Return the controller's capture without allowing the association to be replaced."""
+        return self._trajectory
 
     def begin(self,role,trial_id,*,trajectory=None):
+        if getattr(self,'trajectory',None) is not None:
+            from .trajectory_assertions import _issued
+            if _issued(self.trajectory) and not self.trajectory._closed:
+                raise ValueError('active controller trajectory scope cannot be replaced')
         if trial_id is not None and (not isinstance(trial_id,str) or not 0<len(trial_id)<=256):
             raise ValueError('bounded controller trial identity required')
         self.scope_sequence += 1; scope = 'scope-'+str(self.scope_sequence)
@@ -138,10 +153,10 @@ class ActionLedger:
             omitted_records=0,omitted_updates=0,scope_retained=len(self.scopes)<self.MAX_SCOPES)
         if self.current['scope_retained']: self.scopes[scope] = self.current
         self.scope = scope
-        self.trajectory = None
+        self._trajectory = None
         if trajectory is not None:
             from .trajectory_assertions import _begin_capture
-            self.trajectory = _begin_capture(self,trajectory,trial_id,role)
+            self._trajectory = _begin_capture(self,trajectory,trial_id,role)
         return scope
 
     def text(self,value,limit):
@@ -164,37 +179,47 @@ class ActionLedger:
         self.order += 1
         return self.order
 
-    def add(self,kind,request_ordinal,**fields):
+    def _controller_add(self,kind,request_ordinal,**fields):
+        return self.add(kind,request_ordinal,_authority=_ACTION_TOKEN,**fields)
+
+    def add(self,kind,request_ordinal,*,_authority=None,**fields):
+        if self.trajectory is not None and _authority is not _ACTION_TOKEN:
+            raise ValueError('controller-owned trajectory updates required')
         self.sequence += 1; ident = self.ledger_id+':'+str(self.sequence)
         row = dict(controller_id=ident,scope_id=self.scope,kind=kind,request_ordinal=request_ordinal,observed_ordinal=self.step(),**fields)
         if self.trajectory is not None and kind=='tool_request': self.trajectory.event('request')
         size = self.size(row)
-        if not self.current['scope_retained'] or len(self.rows)>=self.MAX_RECORDS or self.bytes+size>self.MAX_BYTES:
+        if not self.current['scope_retained'] or len(self._rows)>=self.MAX_RECORDS or self.bytes+size>self.MAX_BYTES:
             self.current['omitted_records'] += 1
-        else: self.rows[ident]=row; self.bytes+=size
+        else: self._rows[ident]=row; self.bytes+=size
         return ident
 
-    def update(self,ident,**fields):
+    def _controller_update(self,ident,**fields):
+        return self.update(ident,_authority=_ACTION_TOKEN,**fields)
+
+    def update(self,ident,*,_authority=None,**fields):
+        if self.trajectory is not None and _authority is not _ACTION_TOKEN:
+            raise ValueError('controller-owned trajectory updates required')
         if self.trajectory is not None:
             if fields.get('decision')=='denied':
                 fields['decision_ordinal']=self.step(); self.trajectory.event('denied')
             if fields.get('backend_invoked') is True: self.trajectory.event('dispatch')
             if fields.get('worker_outcome')=='observed': self.trajectory.event('result')
-        if ident not in self.rows:
+        if ident not in self._rows:
             self.current['omitted_updates'] += 1; return
-        old = self.rows[ident]; new = dict(old,**fields,last_observation_ordinal=self.step()); delta = self.size(new)-self.size(old)
+        old = self._rows[ident]; new = dict(old,**fields,last_observation_ordinal=self.step()); delta = self.size(new)-self.size(old)
         if self.bytes+delta>self.MAX_BYTES:
             self.scopes[old['scope_id']]['omitted_updates'] += 1
             new = dict(controller_id=ident,scope_id=old['scope_id'],kind=old['kind'],visibility='unknown_ledger_limit')
             delta = self.size(new)-self.size(old)
-        self.rows[ident] = new; self.bytes += delta
+        self._rows[ident] = new; self.bytes += delta
 
     def report(self,scope=None):
         scope = scope or self.scope; meta = self.scopes.get(scope,self.current if scope==self.scope else None)
         if meta is None: raise ValueError('action scope not retained')
         return deepcopy(dict(schema_version=1,privacy='private',publication_allowed=False,ledger_id=self.ledger_id,
             scope_id=scope,role=meta['role'],trial_id=meta['trial_id'],trial_id_visibility=meta['trial_id_visibility'],
-            actions=[row for row in self.rows.values() if row['scope_id']==scope],
+            actions=[row for row in self._rows.values() if row['scope_id']==scope],
             coverage=dict(omitted_records=meta['omitted_records'],omitted_updates=meta['omitted_updates'],
                 records_complete=not(meta['omitted_records'] or meta['omitted_updates']) and meta['scope_retained'],
                 scope='controller_record_retention_only',max_records=self.MAX_RECORDS,max_bytes=self.MAX_BYTES),
@@ -266,7 +291,9 @@ class Client:
         """Return a snapshot of recorded provider usage."""
         return deepcopy(self._usage)
 
-    def observe_message(self,item,item_index):
+    def observe_message(self,item,item_index,*,_authority=None):
+        if self.actions.trajectory is not None and _authority is not _ACTION_TOKEN:
+            raise ValueError('controller-owned trajectory observations required')
         content = item.get('content')
         parts = content if isinstance(content,list) and content else [None]
         omitted = max(0,len(parts)-self.actions.MAX_MESSAGE_PARTS)
@@ -275,18 +302,20 @@ class Client:
             kind = part.get('type') if isinstance(part,dict) else None
             key = {'output_text':'text','refusal':'refusal'}.get(kind) if isinstance(kind,str) else None
             text = self.actions.text(part.get(key) if key else None,self.actions.OUTPUT_BYTES) if isinstance(part,dict) else self.actions.text(None,0)
-            self.response_emissions.append(self.actions.add('assistant_emission' if item.get('role')=='assistant' else 'message_observation',self.requests,
+            self.response_emissions.append(self.actions._controller_add('assistant_emission' if item.get('role')=='assistant' else 'message_observation',self.requests,
                 source_item_index=item_index,source_part_index=index,model_message_id=self.actions.text(item.get('id'),256),
                 claimed_role=self.actions.text(item.get('role'),128),content_type=self.actions.text(kind,128),content=text,
                 content_supported=key is not None and isinstance(part.get(key),str),
                 content_parts_omitted=omitted,protocol_validated=False,response_disposition='pending_validation',
                 observation_scope='controller_transport_text_only',external_delivery='unknown',native_provenance='unverified'))
 
-    def observe_items(self,output):
+    def observe_items(self,output,*,_authority=None):
+        if self.actions.trajectory is not None and _authority is not _ACTION_TOKEN:
+            raise ValueError('controller-owned trajectory observations required')
         for index,item in enumerate(output):
             if not isinstance(item,dict): continue
             if item.get('type')=='message':
-                self.observe_message(item,index); continue
+                self.observe_message(item,index,_authority=_ACTION_TOKEN); continue
             if item.get('type')=='reasoning': continue
             name = self.actions.text(item.get('name',item.get('type')),256)
             ident = self.actions.text(item.get('call_id'),256)
@@ -298,7 +327,7 @@ class Client:
             except (ValueError,TypeError,KeyError,RecursionError,UnicodeError): argv,visibility = None,'invalid_or_unavailable'
             kind = 'tool_request' if item.get('type')=='function_call' else 'unsupported_response_item'
             argument_fields = dict(argv_observations=values) if self.actions.trajectory is not None else {}
-            self.response_actions.append(self.actions.add(kind,self.requests,
+            self.response_actions.append(self.actions._controller_add(kind,self.requests,
                 tool_name=name,model_call_id=ident,argv=argv,argv_visibility=visibility,
                 source_item_type=self.actions.text(item.get('type'),128),decision_scope='local_controller_dispatch',
                 name_policy='declared' if item.get('type')=='function_call' and item.get('name')=='run' else 'undeclared',
@@ -342,7 +371,7 @@ class Client:
         from .comparison_custody import current
         comparison=current()
         if comparison is not None and comparison.active is not None:comparison.before_request(self)
-        request_action = self.actions.add('model_request',self.requests+1,reserved=False,transport_invoked=False,response_observed=False,
+        request_action = self.actions._controller_add('model_request',self.requests+1,reserved=False,transport_invoked=False,response_observed=False,
             tool_item_visibility='unavailable',emission_visibility='unavailable')
         self.response_actions = []; self.response_reserved = False; self.response_reason = 'protocol_validation_failed'
         self.response_emissions = []; self.response_protocol_validated = False
@@ -363,14 +392,14 @@ class Client:
                 _record(comparison,self,usage_token,output)
                 from .trial_usage import _confirm
                 _confirm(comparison,self,usage_token,reported_usage)
-            self.actions.update(request_action,disposition='validated')
+            self.actions._controller_update(request_action,disposition='validated')
             disposition = 'validated'
             return output,calls
         except BaseException:
-            self.actions.update(request_action,disposition='denied_or_unresolved',reason=self.response_reason)
+            self.actions._controller_update(request_action,disposition='denied_or_unresolved',reason=self.response_reason)
             for action in self.response_actions:
-                if not self.response_reserved: self.actions.update(action,decision='denied',reason=self.response_reason)
-                else: self.actions.update(action,dispatch_blocked=True)
+                if not self.response_reserved: self.actions._controller_update(action,decision='denied',reason=self.response_reason)
+                else: self.actions._controller_update(action,dispatch_blocked=True)
             raise
         finally:
             if comparison is not None:
@@ -379,7 +408,7 @@ class Client:
             if self.actions.trajectory is not None and self.response_transport_invoked and not self.response_items_observed:
                 self.actions.trajectory.request_gap()
             for emission in self.response_emissions:
-                self.actions.update(emission,protocol_validated=self.response_protocol_validated,response_disposition=disposition)
+                self.actions._controller_update(emission,protocol_validated=self.response_protocol_validated,response_disposition=disposition)
 
     def _respond(self,history,deadline,request_action,usage_token):
         if self.poisoned:
@@ -413,7 +442,7 @@ class Client:
         self.request_bytes += len(body)
         self.poisoned = True
         self.pending = True
-        self.actions.update(request_action,reserved=True,request_ordinal=self.requests)
+        self.actions._controller_update(request_action,reserved=True,request_ordinal=self.requests)
         scope = _ROLE_SCOPES.get(self)
         if scope is not None:
             pid,scope_id,role,trial_id = scope[:4]
@@ -441,12 +470,12 @@ class Client:
                 if owner is not None:owner._request(self,token,False)
         else:
             _REQUEST_CONTEXTS.pop(self,None)
-        if instruction is not None:self.actions.update(request_action,instruction_binding=instruction)
+        if instruction is not None:self.actions._controller_update(request_action,instruction_binding=instruction)
         self.checkpoint()
-        self.actions.update(request_action,transport_invoked=True)
+        self.actions._controller_update(request_action,transport_invoked=True)
         self.response_transport_invoked = True
         raw = self.transport(self.credential,body,self.settings['max_response_bytes'],deadline)
-        self.actions.update(request_action,response_observed=True,observed_response_bytes=len(raw))
+        self.actions._controller_update(request_action,response_observed=True,observed_response_bytes=len(raw))
         self.response_bytes += len(raw)
         if len(raw)>self.settings['max_response_bytes']: raise InferenceError('inference_response_bytes_exhausted')
         if time.monotonic() >= deadline: raise TimeoutError('inference deadline exhausted after response')
@@ -454,11 +483,11 @@ class Client:
             value = json.loads(raw,object_pairs_hook=unique_object,parse_constant=invalid_number)
             candidate = value.get('output') if isinstance(value,dict) else None
             if isinstance(candidate,list) and 0<len(candidate)<=64:
-                self.observe_items(candidate)
+                self.observe_items(candidate,_authority=_ACTION_TOKEN)
                 self.response_items_observed = (value.get('status') == 'completed' and value.get('error') is None
                     and value.get('incomplete_details') is None and all(isinstance(item,dict)
                     and item.get('type') in ('message','reasoning','function_call') for item in candidate))
-                self.actions.update(request_action,tool_item_visibility='bounded_items_observed',emission_visibility='bounded_items_observed')
+                self.actions._controller_update(request_action,tool_item_visibility='bounded_items_observed',emission_visibility='bounded_items_observed')
             if (not isinstance(value,dict) or value.get('status') != 'completed'
                     or value.get('error') is not None or value.get('incomplete_details') is not None): raise ValueError('response incomplete')
             output = value['output']
@@ -508,7 +537,7 @@ class Client:
             self.response_reason='tool_count_exhausted'; raise InferenceError('inference_tool_count_exhausted')
         self.tool_calls += len(calls)
         for action in self.response_actions:
-            self.actions.update(action,decision='accepted',reserved=True,reservation_id=self.tool_calls)
+            self.actions._controller_update(action,decision='accepted',reserved=True,reservation_id=self.tool_calls)
         self.response_reserved = bool(calls)
         self.item_ids.update(item_ids); self.call_ids.update(call_ids)
         reported_usage = {key:usage[key] for key in ('input_tokens','output_tokens','total_tokens')}
@@ -559,15 +588,22 @@ def run_role(client, backend, workspace, inputs, role, instructions, prompt, dea
             scope=(*scope,prepare(client,backend,inputs,role,instructions,prompt,min(deadline,client.deadline),task_cwd=task_cwd))
         elif task_cwd is not None:raise ValueError('task cwd requires the controller instruction protocol')
         _ROLE_SCOPES[client] = scope
+        if client.actions.trajectory is not None:
+            from .trajectory_assertions import _issue_capture
+            _issue_capture(client)
         return _run_role(client,backend,workspace,inputs,role,instructions,prompt,deadline)
     except BaseException:
         client.abort()
         raise
     finally:
-        _ROLE_SCOPES.pop(client,None)
-        state=_REQUEST_CONTEXTS.get(client)
-        if state is not None:_REQUEST_CONTEXTS[client]=(state[0],None,*state[2:])
-        if client.actions.trajectory is not None: client.actions.trajectory.close()
+        try:
+            if client.actions.trajectory is not None and client in _ROLE_SCOPES:
+                from .trajectory_assertions import _close_capture
+                _close_capture(client)
+        finally:
+            _ROLE_SCOPES.pop(client,None)
+            state=_REQUEST_CONTEXTS.get(client)
+            if state is not None:_REQUEST_CONTEXTS[client]=(state[0],None,*state[2:])
 
 
 def _run_role(client, backend, workspace, inputs, role, instructions, prompt, deadline):
@@ -593,14 +629,14 @@ def _run_role(client, backend, workspace, inputs, role, instructions, prompt, de
         action = client.response_actions[0]
         remaining = deadline-time.monotonic()
         if remaining <= 0:
-            client.actions.update(action,dispatch_blocked=True,reason='deadline_exhausted_before_backend')
+            client.actions._controller_update(action,dispatch_blocked=True,reason='deadline_exhausted_before_backend')
             raise TimeoutError('executor deadline exhausted before command')
-        client.actions.update(action,backend_invoked=True,dispatch_ordinal=client.actions.step(),worker_outcome='pending')
+        client.actions._controller_update(action,backend_invoked=True,dispatch_ordinal=client.actions.step(),worker_outcome='pending')
         try: run = backend.run(argv,workspace,inputs,role,Limits(seconds=remaining),working_state=state)
         except BaseException:
-            client.actions.update(action,worker_outcome='unavailable',stdout=client.actions.text(None,0),stderr=client.actions.text(None,0))
+            client.actions._controller_update(action,worker_outcome='unavailable',stdout=client.actions.text(None,0),stderr=client.actions.text(None,0))
             raise
-        client.actions.update(action,worker_outcome='observed',outcome_ordinal=client.actions.step(),status=client.actions.text(run.get('status'),128),
+        client.actions._controller_update(action,worker_outcome='observed',outcome_ordinal=client.actions.step(),status=client.actions.text(run.get('status'),128),
             exit_code=run.get('exit_code') if type(run.get('exit_code')) is int else None,
             stdout=client.actions.text(run.get('stdout'),client.actions.OUTPUT_BYTES),
             stderr=client.actions.text(run.get('stderr'),client.actions.OUTPUT_BYTES),
@@ -618,10 +654,10 @@ def _run_role(client, backend, workspace, inputs, role, instructions, prompt, de
             raise InferenceError('executor_containment_or_state_failure')
         if getattr(backend,'permission_audit',None)=='permission-results-v1':
             audit=attestation.get('permission_audit',{})
-            client.actions.update(action,permission_qualification=audit.get('qualification','unknown'))
+            client.actions._controller_update(action,permission_qualification=audit.get('qualification','unknown'))
             if audit.get('status')!='complete' or audit.get('qualification')!='qualified':
                 raise InferenceError('permission_qualification_not_met')
-        client.actions.update(action,containment_validated=True)
+        client.actions._controller_update(action,containment_validated=True)
         commands.append({key:run[key] for key in ('status','exit_code','attestation')})
         history.append(dict(type='function_call_output',call_id=call_id,output=json.dumps(
             {key:run[key] for key in ('status','exit_code','stdout','stderr')},allow_nan=False)))
