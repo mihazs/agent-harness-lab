@@ -95,7 +95,15 @@ def _separate(groups, texts, inputs, partition):
     for group in (('root',inputs['root_id']),('incident',inputs['incident_id']),('source',inputs['source_revision_sha256'])):
         if groups.setdefault(group,partition)!=partition: raise ValueError('protected corpus split leakage')
     normalized=' '.join(inputs['summary'].split()).casefold()
-    if texts.setdefault(normalized,partition)!=partition: raise ValueError('copied text aliases leak across protected splits')
+    if (texts.setdefault(('summary',normalized),partition)!=partition
+            or any(other!=partition for other in texts.get(('fragment',normalized),set()))):
+        raise ValueError('copied text aliases leak across protected splits')
+    for item in inputs['evidence']:
+        fragment=' '.join(item['content'].split()).casefold()
+        summary_partition=texts.get(('summary',fragment))
+        if summary_partition is not None and summary_partition!=partition:
+            raise ValueError('copied text aliases leak across protected splits')
+        texts.setdefault(('fragment',fragment),set()).add(partition)
 
 
 def transition(state, kind, target, previous_kind=None):
