@@ -173,6 +173,13 @@ def test_v2_noninferiority_and_regression_decisions_are_conditional():
     assert decide(provenance_contract(), rows, 'supported')['decision'] == 'conditional_regression'
 
 
+@pytest.mark.parametrize('endpoint', [dict(TIME, unit='tokens'), dict(TOKENS, unit='s', required=True)])
+def test_v2_rejects_incompatible_units_without_changing_v1(endpoint):
+    with pytest.raises(ValueError, match='unit does not match kind'):
+        decide(dict(provenance_contract(), endpoints=[endpoint]), fresh_rows(), 'supported')
+    assert decide(contract(endpoint), [], 'supported')['decision'] == 'blocked'
+
+
 def test_cached_requests_use_measured_tokens_and_cannot_override_quality():
     rows = fresh_rows()
     for row in rows:

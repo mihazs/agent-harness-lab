@@ -43,6 +43,8 @@ hits; `provider_cache_allowed` allows either declared state when both arms of ea
 Asymmetric cache states block the endpoint. The policy is part
 of the contract digest. Actual measured tokens must include all relevant billed usage; cached
 tokens are not inferred to be free. Quality still gates the final decision.
+Version 2 accepts seconds (`s`) for elapsed wall time and `tokens` for measured tokens;
+contradictory units are rejected.
 
 These fields are caller attestations, not independently verified cache state or custody. A
 caller must only mark the scope complete when the measurements include the declared target

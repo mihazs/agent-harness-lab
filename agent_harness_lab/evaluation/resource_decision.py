@@ -49,6 +49,8 @@ def validate(contract):
                 or type(e['required']) is not bool or e['scope'] != 'all_assigned'
                 or not number(e['horizon']) or e['horizon'] <= 0 or not number(e['max_increase'])):
             raise ValueError('unsupported resource endpoint declaration')
+        if profile == PROVENANCE_PROFILE and e['unit'] != {'elapsed_wall_seconds': 's', 'measured_tokens': 'tokens'}[e['kind']]:
+            raise ValueError('resource endpoint unit does not match kind')
     return contract
 
 
