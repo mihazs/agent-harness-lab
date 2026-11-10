@@ -53,11 +53,21 @@ def _current(store):
     return {key:opened for key,opened in rows}
 
 
-def prepare(receipt, frame, store_path, mapping, rubric_value, trusted_heads=None):
-    """Bind caller-selected pending cases to a replayed v2 sample, without proving assignment time."""
-    if frame is None or receipt.get('profile')!=audit.RECEIPT_PROFILE_V2:
-        raise ValueError('explicit frame and v2 audit receipt required')
-    audit.review_queue(receipt,trusted_heads,frame=frame)
+def _queue(receipt,frame,trusted_heads,plan):
+    """Replay only the explicitly supported design before touching corpus state."""
+    if frame is None or not isinstance(receipt,dict):
+        raise ValueError('explicit frame and supported audit receipt required')
+    if receipt.get('profile')==audit.RECEIPT_PROFILE_V2 and plan is None:
+        return audit.review_queue(receipt,trusted_heads,frame=frame)
+    from . import audit_stratified
+    if receipt.get('profile')==audit_stratified.RECEIPT_PROFILE and plan is not None and trusted_heads is None:
+        return audit_stratified.review_queue(receipt,frame,plan)
+    raise ValueError('explicit frame and supported audit receipt with matching plan required')
+
+
+def prepare(receipt, frame, store_path, mapping, rubric_value, trusted_heads=None, *, plan=None):
+    """Bind pending cases to a replayed sample, without proving assignment time."""
+    _queue(receipt,frame,trusted_heads,plan)
     if (not isinstance(mapping,list) or not 0<len(mapping)<=MAX_ASSIGNMENTS):
         raise ValueError('bounded nonempty audit assignment mapping required')
     rubric_sha=rubric(rubric_value);store=CorpusStore(store_path);assignments=[]
@@ -114,11 +124,9 @@ def _observed(store, rows, binding):
     return observations
 
 
-def inspect(receipt, frame, store_path, binding, trusted_heads=None):
+def inspect(receipt, frame, store_path, binding, trusted_heads=None, *, plan=None):
     """Read local review lifecycle without inferring labels or authority."""
-    if frame is None or receipt.get('profile')!=audit.RECEIPT_PROFILE_V2:
-        raise ValueError('explicit frame and v2 audit receipt required')
-    audit.review_queue(receipt,trusted_heads,frame=frame)
+    _queue(receipt,frame,trusted_heads,plan)
     rows=_assignment(receipt,binding);store=CorpusStore(store_path)
     with store.locked():
         observed=_observed(store,rows,binding)
@@ -131,11 +139,9 @@ def inspect(receipt, frame, store_path, binding, trusted_heads=None):
         labels_for_estimation=None,publication_allowed=False,automatic_policy_update=False)
 
 
-def estimate(receipt, frame, store_path, binding, rubric_value, trusted_heads=None):
+def estimate(receipt, frame, store_path, binding, rubric_value, trusted_heads=None, *, plan=None):
     """Estimate only from explicit adjudicated markers under the bound caller-declared rubric."""
-    if frame is None or receipt.get('profile')!=audit.RECEIPT_PROFILE_V2:
-        raise ValueError('explicit frame and v2 audit receipt required')
-    audit.review_queue(receipt,trusted_heads,frame=frame)
+    _queue(receipt,frame,trusted_heads,plan)
     rows=_assignment(receipt,binding);rubric_value=deepcopy(rubric_value);rubric_sha=rubric(rubric_value)
     if rubric_sha!=binding['rubric_sha256']:raise ValueError('audit corpus rubric differs from assignment')
     store=CorpusStore(store_path)
@@ -148,7 +154,12 @@ def estimate(receipt, frame, store_path, binding, rubric_value, trusted_heads=No
                       and len(matches)==1)
             labels.append(dict(unit_sha256=row['unit_sha256'],status='reviewed' if complete else 'pending',
                                label=next(iter(matches)) if complete else None))
-        report=audit.estimate(receipt,dict(receipt_sha256=receipt['receipt_sha256'],labels=labels),trusted_heads,frame=frame)
+        batch=dict(receipt_sha256=receipt['receipt_sha256'],labels=labels)
+        if receipt['profile']==audit.RECEIPT_PROFILE_V2:
+            report=audit.estimate(receipt,batch,trusted_heads,frame=frame)
+        else:
+            from . import audit_stratified
+            report=audit_stratified.estimate(receipt,frame,plan,batch)
     report['limitations'].extend(('audit_assignment_timing_unauthenticated','audit_rubric_operator_declared',
                                    'corpus_reviewers_independence_unverified','corpus_lineage_binding_unverified'))
     if any(not eligible for _,_,_,_,eligible in observed):
