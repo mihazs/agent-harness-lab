@@ -1,0 +1,1 @@
+{"schema_version":1,"profile":"audit-sampling-plan-v1","frame_sha256":"9399e979ead7a398d527a109a239664806696ab8dfc0c9ea77491c5b75af7d3b","seed":7,"rates":{"random":1.0},"review_budget":1,"policy_sha256":null,"model_sha256":null,"decision_timestamp":"2026-01-08T01:00:00+00:00"}

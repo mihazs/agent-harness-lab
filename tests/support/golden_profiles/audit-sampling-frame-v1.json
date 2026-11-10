@@ -1,0 +1,1 @@
+{"schema_version":1,"profile":"audit-sampling-frame-v1","scope":"synthetic-source","window":{"start":"2026-01-01T00:00:00+00:00","end":"2026-01-08T00:00:00+00:00"},"units":[{"unit_id":"synthetic-episode","capture":"captured","eligible":true,"alerted":false,"flags":[]}]}

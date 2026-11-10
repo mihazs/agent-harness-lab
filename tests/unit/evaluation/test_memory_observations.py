@@ -69,6 +69,7 @@ def observation_wire(tmp_path, monkeypatch):
 
 def test_public_analysis_reads_scoped_session_and_reports_evidence_gap(observation_wire, tmp_path, capsys):
     wire = observation_wire
+    wire.page_size = 1
     project = tmp_path / 'project'
     project.mkdir()
     output = tmp_path / 'analysis'
@@ -82,6 +83,8 @@ def test_public_analysis_reads_scoped_session_and_reports_evidence_gap(observati
     assert receipt['memory_source']['snapshot_atomicity'] == 'unavailable'
     events = [json.loads(line) for line in (output / 'events.v2.jsonl').read_text().splitlines()]
     assert [row['activity'] for row in events] == ['tool_call', 'tool_result', 'turn_stop']
+    assert [row['event_id'] for row in events] == ['0', '1', '2']
+    assert [call['offset'] for call in wire.calls] == [0, 1, 2, 2, 1, 0]
     assert all(row['outcome'] == 'unknown' and 'tool_name' not in row and not row['lineage_verified'] for row in events)
     artifacts = ''.join(path.read_text() for path in output.iterdir() if path.is_file())
     assert 'SYNTHETIC_PRIVATE_BODY' not in artifacts
@@ -223,3 +226,48 @@ def test_upstream_text_extension_and_unpinned_fields_never_become_tool_metadata(
     for marker in ('SYNTHETIC_TOOL_NAME', 'SYNTHETIC_CALL_ID', 'synthetic-extension'):
         assert marker not in artifacts
     assert json.loads(streams.out)['memory_source']['diagnostic_evidence'] == 'insufficient'
+
+
+def test_source_insufficiency_reaches_receipt_and_next_action(observation_wire, tmp_path, capsys):
+    wire = observation_wire
+    output = tmp_path / 'insufficient'
+    assert main(['analyze', str(tmp_path), '--memory-manifest', str(wire.manifest),
+        '--authorization-file', str(wire.auth), '--output', str(output)]) == 0
+    receipt = json.loads(capsys.readouterr().out)
+    analysis = receipt['analysis']
+    assert analysis['evidence_state'] == 'incomplete'
+    assert any('source insufficiency, not a no-defect outcome' in caveat for caveat in analysis['caveats'])
+    assert receipt['next_action'] == analysis['next_action']
+    assert 'Review caveats' in receipt['next_action'] and 'ahl improve' not in receipt['next_action']
+    assert receipt['memory_source']['remediation'] in ''.join(analysis['caveats'])
+    report = (output / 'report.md').read_text()
+    assert 'source insufficiency, not a no-defect outcome' in report
+    assert 'Run ahl improve' not in report
+
+
+@pytest.mark.parametrize('defect', ['server_version', 'protocol', 'server_name'])
+def test_unsupported_server_version_is_rejected_before_any_observation_read(observation_wire, defect, monkeypatch):
+    wire = observation_wire
+    original = wire.exchange
+    def exchange(origin, target, headers, **kwargs):
+        response, metadata, size = original(origin, target, headers, **kwargs)
+        result = response['result']
+        if 'serverInfo' in result:
+            if defect == 'server_version': result['serverInfo']['version'] = '9.9.9'
+            elif defect == 'protocol': result['protocolVersion'] = '1999-01-01'
+            else: result['serverInfo']['name'] = 'foreign-server'
+        return response, metadata, size
+    monkeypatch.setattr('agent_harness_lab.sources.mcp._json_exchange', exchange)
+    with pytest.raises(TransportError): wire.read()
+    assert not wire.calls
+
+
+def test_missing_post_result_and_body_only_metadata_stay_unknown(observation_wire):
+    wire = observation_wire
+    wire.rows = [dict(id=str(i), session_id=wire.session, kind='pre-tool-use',
+        body='tool_name: SYNTHETIC_TOOL\ntool_call_id: SYNTHETIC_CALL\n---\n[body truncated; 9 chars omitted]')
+        for i in range(2)]
+    records, summary = wire.read()
+    assert [row['activity'] for row in records] == ['tool_call', 'tool_call']
+    assert all(row['outcome'] == 'unknown' and not {'tool_name', 'call_id'} & set(row) for row in records)
+    assert summary['diagnostic_evidence'] == 'insufficient'
