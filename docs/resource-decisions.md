@@ -192,3 +192,11 @@ compares a supplied plan declaration and v4 contract, returning `matched`, `mism
 supplied plan and contract as unverified: it does not authenticate history, establish that
 contract bytes were persisted, recover collection data, or compute a resource decision.
 The live collector uses the same check when a plan includes a resource contract pin.
+
+While a pinned comparison and collector remain live, `UsageCollector.evidence_candidate(result)`
+can prepare a private `ahl-resource-evidence-candidate-v1` object containing the frozen contract,
+plan and schedule digests, canonical result and custody digests, and collected summaries. It
+requires the complete result to pass live comparison custody. The object is explicitly unsealed
+and not persisted: its digests are canonical object digests, not claims about stored file bytes.
+It does not authenticate the provider or establish billing completeness, a resource decision,
+or promotion. Existing v6 history receipts are unchanged and do not seal this object.
