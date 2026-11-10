@@ -115,6 +115,7 @@ def native_qualified_bank(fixture,cgroup):
     from agent_harness_lab.evaluation.sandbox import SandboxBackend
     from agent_harness_lab.promotion import prerequisites
     from tests.integration.sandbox import test_sandbox_construction as roles, test_sandbox_inference as wire
+    from tests.integration.evaluation.test_bank_qualification_final import invoke
 
     root=fixture.root;args=fixture.args
     runtime=root/'native-runtime';image=kernel.pinned_runtime(runtime)['sha256']
@@ -161,15 +162,19 @@ def native_qualified_bank(fixture,cgroup):
         finally:access.retire()
     finally:scope.end()
     store=ReviewStore(root/'review');case=converted['case']['case_id']
-    bankq.audit(store,case,backend,budget_seconds=120)
+    code,audited=invoke(store.root,'audit','--case',case,'--cgroup-root',cgroup,
+        '--image-root',runtime,'--image-sha256',image,'--disk-bytes',64*1024*1024,'--budget-seconds',120)
+    assert code==0 and audited['state']=='bank_audited'
     operator=root/'operator';operator.mkdir(mode=0o700);key=operator/'reviewer'
     subprocess.run(['/usr/bin/ssh-keygen','-q','-t','ed25519','-N','','-f',str(key)],check=True,timeout=10)
     policy=operator/'policy.json';policy.write_text(json.dumps(dict(schema_version=1,profile=review_authority.POLICY,
         purpose=review_authority.BANK_PURPOSE,reviewers={'synthetic-reviewer':' '.join(key.with_suffix('.pub').read_text().split()[:2])})))
-    policy.chmod(0o600);bankq.install_policy(store,policy)
-    prepared=bankq.prepare(store,case,'synthetic-reviewer');request=Path(prepared['request_path'])
+    policy.chmod(0o600);assert invoke(store.root,'trust-reviewers','--policy',policy)[0]==0
+    code,prepared=invoke(store.root,'prepare-review','--case',case,'--reviewer','synthetic-reviewer')
+    assert code==0;request=Path(prepared['request_path'])
     subprocess.run(['/usr/bin/ssh-keygen','-Y','sign','-f',str(key),'-n','ahl.final-bank-review.v1',str(request)],check=True,timeout=10)
-    result=bankq.qualify(store,case,request,Path(str(request)+'.sig'),budget_seconds=60)
+    code,result=invoke(store.root,'qualify','--case',case,'--request',request,'--signature',str(request)+'.sig','--budget-seconds',60)
+    assert code==0 and result['qualification']=='qualified_under_protocol'
     assert result['qualification']=='qualified_under_protocol'
     assert result['external_exposure']=='unknown'
     from agent_harness_lab.evaluation.oracle_history import HistoryStore

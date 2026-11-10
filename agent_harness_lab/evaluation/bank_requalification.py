@@ -244,7 +244,7 @@ def requalify(store,case_id,domain,manifest,baseline,candidate,*,deadline):
             def current():
                 closed_inputs.closure(domain);_check_domain(value);bankq.evidence(store,case,events)
                 _runtime_current(value,review,deadline)
-                if bankq.revision_metadata(Path(binding['bank_qualification']['bank_path']),deadline=deadline)!=review['static_parent']:
+                if bankq.revision_metadata(Path(binding['bank_qualification']['bank_path']),deadline=deadline,state=state)!=review['static_parent']:
                     raise ValueError('bank static policy changed before publication')
                 ledger.check_deadline(deadline)
             store.append(case,events,'bank_requalified','bank_qualified',payload,before_publish=current)
@@ -265,8 +265,9 @@ def reserve(handle,binding,*,deadline):
         case,events,_,_=parent(store,owned['case_id'],deadline)
         if events[-1][1]!=owned['event_sha256']:raise ValueError('requalification event is no longer current')
         with ledger._locked(value['history'].access_ledger().path) as (path,state):
-            _closure_state(value,closure,state);ledger._managed_available(state,binding['assets'])
-            epoch,_=bankq.exposure_check(store,case,state)
+            _closure_state(value,closure,state)
+            epoch,assets=bankq.exposure_check(store,case,state)
+            if assets!=binding['assets']:raise ValueError('requalification bank assets differ from final binding')
             if epoch!=owned['payload']['exposure_epoch']:raise ValueError('requalification exposure epoch changed')
             ident=secrets.token_hex(32)
             renewed=deepcopy(binding)
@@ -276,7 +277,7 @@ def reserve(handle,binding,*,deadline):
             def current():
                 closed_inputs.closure(owned['domain']);_check_domain(value);bankq.evidence(store,case,events)
                 _runtime_current(value,value['authentication']['request']['review'],deadline)
-                if bankq.revision_metadata(Path(binding['bank_qualification']['bank_path']),deadline=deadline)!=owned['payload']['static_parent']:
+                if bankq.revision_metadata(Path(binding['bank_qualification']['bank_path']),deadline=deadline,state=state)!=owned['payload']['static_parent']:
                     raise ValueError('bank static policy changed before access intent publication')
                 ledger.check_deadline(deadline)
             # Publish the consumed intent first. A failed access-ledger write must

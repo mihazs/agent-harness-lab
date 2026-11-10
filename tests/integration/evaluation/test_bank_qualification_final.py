@@ -6,7 +6,6 @@ import json
 import os
 import shutil
 from pathlib import Path
-import subprocess
 import tempfile
 import time
 import unittest
@@ -14,7 +13,7 @@ from unittest.mock import patch
 
 from agent_harness_lab.cli import evaluator, main
 from agent_harness_lab.monitoring import state as monitoring_state
-from agent_harness_lab.evaluation import bank_qualification as bankq, review_authority
+from agent_harness_lab.evaluation import bank_qualification as bankq
 from agent_harness_lab.evaluation.bank_tools import export_manifest
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
 from agent_harness_lab.evaluation.oracle import identity
@@ -24,7 +23,6 @@ from agent_harness_lab.evaluation.regression_review import ReviewStore
 from agent_harness_lab.evaluation.task_bank import validate
 from agent_harness_lab.evaluation.integrity import digest, tree
 from tests.integration.evaluation.test_bank_qualification_controls import make_bank
-from tests.integration.evaluation.test_offline_evaluation import SOLVER
 from tests.integration.sandbox import test_sandbox_kernel as kernel
 
 
@@ -186,51 +184,31 @@ class BankQualificationBoundaryTests(unittest.TestCase):
 @unittest.skipUnless(kernel.ENABLED,'explicit delegated kernel profile required')
 class QualifiedBankKernelTests(kernel.KernelFixture):
     def qualified_comparison(self):
-        bank,declaration=proposal(self.root)
-        store=self.root/'review';runtime=self.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']
-        operator=self.root/'operator';operator.mkdir(mode=0o700)
-        key=operator/'reviewer'
-        subprocess.run(['/usr/bin/ssh-keygen','-q','-t','ed25519','-N','','-C','synthetic','-f',str(key)],
-            stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=5,check=True)
-        public=' '.join(key.with_suffix('.pub').read_text().split()[:2])
-        policy=operator/'policy.json'
-        policy.write_text(json.dumps(dict(schema_version=1,profile=review_authority.POLICY,
-            purpose=review_authority.BANK_PURPOSE,reviewers={'synthetic-reviewer':public})))
-        policy.chmod(0o600)
-        self.assertEqual(invoke(store,'trust-reviewers','--policy',policy)[0],0)
-        heldout=heldout_manifest(self.root,bank)
-        code,intaken=invoke(store,'intake','--bank',bank,'--declaration',declaration,'--heldout-controls',heldout)
-        self.assertEqual(code,0);case_id=intaken['case_id']
-        code,audited=invoke(store,'audit','--case',case_id,'--cgroup-root',self.cgroup_root,
-            '--image-root',runtime,'--image-sha256',pin,'--disk-bytes',64*1024*1024,'--budget-seconds',60)
-        self.assertEqual(code,0);self.assertEqual(audited['state'],'bank_audited')
+        from tests.integration.evaluation.test_author_bank_conversion import native_qualified_bank
+        from tests.integration.sandbox import test_sandbox_construction as roles
+        fixture=roles.ControlledWorkflowTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        actual,qualified,policy,runtime,pin,history=native_qualified_bank(fixture,self.cgroup_root)
+        fixture.fixture.collect.stop();fixture.fixture.state.stop()
+        store=Path(qualified['review_store']);case_id=qualified['case_id']
         self.assertEqual(invoke(store,'audit','--case',case_id,'--cgroup-root',self.cgroup_root,
             '--image-root',runtime,'--image-sha256',pin,'--disk-bytes',64*1024*1024)[0],2)
-        code,prepared=invoke(store,'prepare-review','--case',case_id,'--reviewer','synthetic-reviewer')
-        self.assertEqual(code,0)
-        request=Path(prepared['request_path'])
-        subprocess.run(['/usr/bin/ssh-keygen','-Y','sign','-f',str(key),'-n','ahl.final-bank-review.v1',str(request)],
-            stdin=subprocess.DEVNULL,stdout=subprocess.PIPE,stderr=subprocess.PIPE,timeout=5,check=True)
-        code,qualified=invoke(store,'qualify','--case',case_id,'--request',request,'--signature',str(request)+'.sig')
-        self.assertEqual(code,0);self.assertEqual(qualified['qualification'],'qualified_under_protocol')
         self.assertEqual(qualified['external_exposure'],'unknown')
         self.assertEqual(qualified['pretraining_exposure'],'unknown')
-        actual=store/'revisions'/qualified['revision_sha256']/'bank.json'
         checked=validate(actual)
         self.assertFalse(checked['certification_eligible'])
         self.assertEqual(checked['admission']['qualification'],'qualified_under_protocol')
-        exported=self.root/'export';manifest=export_manifest(actual,exported,max_trials=2)
+        exported=self.root/'export';manifest=export_manifest(actual,exported,max_trials=6)
         runner=evaluator()
         for version in ('baseline','candidate'):
-            harness=self.root/version;harness.mkdir();(harness/'solve.py').write_text(SOLVER)
+            harness=self.root/version;harness.mkdir()
+            (harness/'solve.py').write_text('import json\nfrom pathlib import Path\nPath("result.json").write_text(json.dumps(dict(complete=True,scenario=1)))\n')
         for task in manifest['tasks']:task['offline_executor']=['/usr/bin/python3','-I','/inputs/harness/solve.py']
         tasks=manifest['tasks'];family=tasks[0]['family']
         spec=ExperimentSpec('synthetic-qualified-bank',tuple((t['id'],t['root'],t['family']) for t in tasks),
-            1,13,2,2,0.,0.,.05,((family,1.),),runner.digest(self.root/'baseline'),runner.digest(self.root/'candidate'),
+            1,13,6,2,0.,0.,.05,((family,1.),),runner.digest(self.root/'baseline'),runner.digest(self.root/'candidate'),
             identity(exported,tasks,manifest['grader_bundles']),pin)
         manifest['experiment']=asdict(spec)
         path=exported/'manifest.json';path.write_text(json.dumps(manifest))
-        history=HistoryStore(self.root/'history')
         return actual,qualified,policy,runtime,pin,manifest,spec,path,history
 
     def test_reservation_expiry_after_real_exposure_check_does_not_publish(self):

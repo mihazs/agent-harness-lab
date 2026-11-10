@@ -73,7 +73,7 @@ class BankRequalificationKernelTests(kernel.KernelFixture):
     # The delegated kernel scope and qualified-bank fixtures are TestCase classes shared with
     # other modules (setUpClass, addCleanup), so this class keeps that base.
     def owned_case(self,*,unbound_source=False,focus_check=None):
-        actual,qualified,_,runtime,image,manifest,spec,path,history=bank_fixtures.QualifiedBankKernelTests.qualified_comparison(self)
+        actual,qualified,bank_policy,runtime,image,manifest,spec,path,history=bank_fixtures.QualifiedBankKernelTests.qualified_comparison(self)
         deadline=time.monotonic()+120
         project=self.root/'project';project.mkdir();(project/'AGENTS.md').write_text('Synthetic baseline.')
         project_settings=config.defaults();project_settings['harness_paths']=['AGENTS.md']
@@ -95,8 +95,8 @@ class BankRequalificationKernelTests(kernel.KernelFixture):
             engine_sha256=closed_inputs.pin(engine()),
             methodology_sha256=closed_inputs.tree_pin(assets()/'skills',deadline),
             history_identity_sha256=closed_inputs.store_identity(history.root),sources=[source])
-        store=ReviewStore(self.root/'review');key=self.root/'operator/reviewer'
-        policy=self.root/'operator/renewal-policy.json'
+        store=ReviewStore(Path(qualified['review_store']));key=bank_policy.parent/'reviewer'
+        policy=bank_policy.parent/'renewal-policy.json'
         policy.write_text(json.dumps(dict(schema_version=1,profile=authority.POLICY,purpose=renewal.PURPOSE,
             reviewers={'synthetic-reviewer':' '.join(key.with_suffix('.pub').read_text().split()[:2])})));policy.chmod(0o600)
         assert bank_fixtures.invoke(store.root,'trust-delegation-reviewers','--policy',policy)[0] == 0
@@ -151,7 +151,7 @@ class BankRequalificationKernelTests(kernel.KernelFixture):
         # Freeze the actual final plan only after the owned candidate exists.
         runner=evaluator();tasks=manifest['tasks'];family=tasks[0]['family']
         spec=ExperimentSpec('synthetic-renewed-final',tuple((t['id'],t['root'],t['family']) for t in tasks),
-            1,13,2,2,0.,0.,.05,((family,1.),),runner.digest(baseline),runner.digest(frozen),
+            1,13,6,2,0.,0.,.05,((family,1.),),runner.digest(baseline),runner.digest(frozen),
             identity(path.parent,tasks,manifest['grader_bundles']),image)
         manifest['experiment']=asdict(spec);path.write_text(json.dumps(manifest))
         return store,qualified['case_id'],handle,path,baseline,frozen,history,runtime,image,deadline,policy,client
