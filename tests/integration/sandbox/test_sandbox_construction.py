@@ -1,4 +1,5 @@
 """Synthetic preparation role views and controller-owned authored declarations."""
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -26,7 +27,7 @@ class Preparation(SimpleNamespace):
     """A synthetic baseline under tmp_path; authored() adds a controller-owned grader declaration."""
 
     def authored(self):
-        fixture = fixtures.SandboxedGraderTests(); fixture.setUp(); self.helpers.append(fixture)
+        fixture = fixtures.SandboxedGrader(self.cleanups.callback)
         path,manifest,_ = fixture.controls()
         for task in manifest['tasks']: task.pop('grader')
         path.write_text(json.dumps(manifest))
@@ -36,9 +37,8 @@ class Preparation(SimpleNamespace):
 @pytest.fixture
 def prep(tmp_path):
     baseline = tmp_path/'baseline'; baseline.mkdir(); (baseline/'AGENTS.md').write_text('synthetic baseline')
-    value = Preparation(root=tmp_path,deadline=time.monotonic()+10,baseline=baseline,helpers=[])
-    yield value
-    run_cleanups(*reversed(value.helpers))
+    with ExitStack() as cleanups:
+        yield Preparation(root=tmp_path,deadline=time.monotonic()+10,baseline=baseline,cleanups=cleanups)
 
 
 def test_views_exclude_raw_sources_prior_outcomes_and_event_identity(prep):

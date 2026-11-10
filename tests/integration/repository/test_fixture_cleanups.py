@@ -29,8 +29,6 @@ ROWS = [
     ('tests.integration.evaluation.test_repeated_access_companion', 'kernel_case', [ACCESS_KERNEL]),
     ('tests.integration.sandbox.test_sandbox_construction', 'controlled',
      ['tests.integration.sandbox.test_sandbox_construction.ControlledWorkflowTests']),
-    ('tests.integration.sandbox.test_sandbox_graders', 'grader',
-     ['tests.integration.sandbox.test_sandbox_graders.SandboxedGraderTests']),
     ('tests.integration.sandbox.test_sandbox_inference', 'controller',
      ['tests.integration.sandbox.test_sandbox_inference.ControllerInferenceTests']),
     ('tests.integration.sandbox.test_sandbox_inference', 'evaluation',
@@ -266,3 +264,20 @@ def test_offline_helpers_propagate_cleanup_failure(monkeypatch, tmp_path, module
     with pytest.raises(RuntimeError, match='synthetic offline cleanup failure'):
         with ExitStack() as cleanups:
             getattr(importlib.import_module(module), helper)(cleanups.callback)
+
+
+def test_sandbox_grader_propagates_nested_cleanup_failure(monkeypatch):
+    from contextlib import ExitStack
+    from tests.integration.sandbox import test_sandbox_graders
+
+    def fail():
+        raise RuntimeError('synthetic sandbox grader cleanup failure')
+
+    def broken(add_cleanup):
+        add_cleanup(fail)
+        raise ValueError('synthetic setup failure')
+
+    monkeypatch.setattr(test_sandbox_graders.fixtures, 'OfflineFixture', broken)
+    with pytest.raises(RuntimeError, match='synthetic sandbox grader cleanup failure'):
+        with ExitStack() as cleanups:
+            test_sandbox_graders.SandboxedGrader(cleanups.callback)
