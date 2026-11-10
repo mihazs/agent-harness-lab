@@ -53,7 +53,11 @@ routes. Its stratum is the set of routes it belongs to. Each unit's uniform
 variate comes from SHA-256 of the seed, frame hash and unit hash, so the same
 frame and plan replay to the same receipt offline. A plan whose expected review
 count exceeds `review_budget` is refused. The realized count varies around the
-expected count and is recorded. A genuinely certain route includes all its units.
+expected count and is recorded. For v2, the review queue and estimate include
+`budget` with the expected count, realized selection and an explicit overrun flag.
+The configured budget is not a hard cap; the queue retains every selected unit.
+Truncating or repeatedly redrawing an over-budget sample would change the design.
+A genuinely certain route includes all its units.
 If a combination of non-certain routes rounds to one, the plan is refused rather
 than silently treating it as certain. Legacy replay can differ for a certainty
 stratum when a previous floating-point hash value rounded to exactly one; other
@@ -159,8 +163,9 @@ state; exposed or superseded cases are refused.
 An `audit-corpus-rubric-v1` maps explicit annotation symptom markers to audit
 classes and must declare both an incident class and `no_incident`.
 `audit_corpus.estimate` uses only an adjudicated annotation with exactly one
-mapped class. Missing or conflicting markers stay pending and make estimation
-inconclusive. Corpus outcome categories are never implicitly mapped to audit
+mapped class from a corpus case with complete capture, approved permission and
+no declared ambiguity. Missing or conflicting markers and ineligible or ambiguous
+cases stay pending for estimation and make it inconclusive. Corpus outcome categories are never implicitly mapped to audit
 classes. Results reuse the existing sampling estimator and remain private.
 
 These local events and checksums do not authenticate assignment timing, source

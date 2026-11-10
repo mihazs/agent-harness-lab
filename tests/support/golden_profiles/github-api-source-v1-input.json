@@ -1,0 +1,27 @@
+{
+  "endpoint": "https://api.github.com/repos/synthetic-owner/synthetic-repository",
+  "schema_version": 1,
+  "selection": {
+    "issues": [
+      7
+    ],
+    "pulls": [
+      8
+    ],
+    "repo_id": 42,
+    "schema_version": 1
+  },
+  "source": {
+    "auth_mode": "none",
+    "enabled": true,
+    "identity_provenance": "source_declared_id",
+    "kind": "api",
+    "project_sha256": "885303aebb651e272b1991ef4d13494d18b43a7423d68555692211704a3ca67a",
+    "provider": "github",
+    "read_only": true,
+    "root_sha256": "dee5fe81fbd9ec122012441e5534c3be1d640485cd34f5b7d1afdeeb2f305936",
+    "schema_version": 1,
+    "scope_sha256": "a6dad0ce7729d4ea9758efa3b0e1bf5c2cb3e90a6eae55098d5a666aeb2a0197",
+    "version": "2026-03-10-v1"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "proposal_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "draft_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "runtime_ref": "synthetic-runtime",
+  "snapshot_format": "ahl-tree-v1",
+  "before": {"harness": "before/harness", "config": "before/config", "memory": "before/memory"},
+  "after": {"harness": "after/harness", "config": "after/config", "memory": "after/memory"},
+  "task_start": "recorded",
+  "offline_executor": ["/usr/bin/python3", "-I", "/inputs/harness/harness/solve.py"],
+  "earlier_valid": null
+}

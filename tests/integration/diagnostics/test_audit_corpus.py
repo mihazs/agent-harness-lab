@@ -159,3 +159,23 @@ def test_explicit_no_incident_marker_is_not_inferred_from_outcome(tmp_path):
     store.update(case['case_id'],case['event_sha256'],'adjudicated',reviewer='three',label=answer,reason='synthetic')
     result=audit_corpus.estimate(receipt,value,store.root,binding,rubric)
     assert result['status']=='estimated' and result['estimates']['prevalence']['sampled']==0
+
+
+def test_ambiguous_adjudicated_case_remains_inconclusive(tmp_path):
+    store=CorpusStore(tmp_path/'corpus');incident=sample();incident['ambiguity']=True
+    rubric=dict(schema_version=1,profile='audit-corpus-rubric-v1',
+                markers={'audit-clean':audit.NO_INCIDENT,'audit-incident':'synthetic-incident'})
+    incident['rubric_sha256']=audit_corpus.rubric(rubric);case=store.enqueue(incident)
+    value=frame([unit(incident['root_id'])])
+    receipt=audit.draw(value,plan(value,rates=dict(random=1),schema_version=2,profile=audit.PLAN_PROFILE_V2))
+    mapping=[dict(unit_sha256=audit.unit_sha256(incident['root_id']),case_id=case['case_id'])]
+    binding=audit_corpus.prepare(receipt,value,store.root,mapping,rubric)
+    case['event_sha256']=audit_corpus.inspect(receipt,value,store.root,binding)['observations'][0]['event_sha256']
+    answer=label();answer['symptoms']=['audit-incident']
+    for reviewer in ('one','two'):
+        case=store.update(case['case_id'],case['event_sha256'],'claimed',reviewer=reviewer)
+        case=store.update(case['case_id'],case['event_sha256'],'submitted',reviewer=reviewer,label=answer)
+    store.update(case['case_id'],case['event_sha256'],'adjudicated',reviewer='three',label=answer,reason='synthetic')
+    result=audit_corpus.estimate(receipt,value,store.root,binding,rubric)
+    assert result['status']=='inconclusive' and result['estimates'] is None
+    assert 'corpus_ineligible_or_ambiguous_observations' in result['limitations']
