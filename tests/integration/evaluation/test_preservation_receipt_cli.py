@@ -7,17 +7,13 @@ import pytest
 
 from agent_harness_lab.cli import main
 from tests.integration.evaluation import test_preservation_history as history
-from tests.support.unittest_cleanups import run_cleanups
+from contextlib import ExitStack
 
 
 @pytest.fixture
 def fixture():
-    case=history.PreservationHistoryTests()
-    try:
-        case.setUp()
-        yield case
-    finally:
-        run_cleanups(case)
+    with ExitStack() as cleanups:
+        yield history.PreservationHistory(cleanups)
 
 
 def test_create_verify_and_revoked_receipt_remain_private(fixture):

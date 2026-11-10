@@ -16,50 +16,9 @@ REPEATED_KERNEL = 'tests.integration.evaluation.test_repeated_workflow.RepeatedW
 ACCESS_KERNEL = 'tests.integration.evaluation.test_repeated_access_companion.RepeatedAccessKernel'
 KERNELS = [KERNEL, REPEATED_KERNEL, ACCESS_KERNEL]
 ROWS = [
-    ('tests.integration.evaluation.test_offline_evaluation', 'offline',
-     ['tests.integration.evaluation.test_offline_evaluation.OfflineFixture']),
-    ('tests.integration.evaluation.test_oracle_history', 'history',
-     ['tests.integration.evaluation.test_oracle_history.OracleHistoryTests']),
-    ('tests.integration.evaluation.test_oracle_plan', 'oracle',
-     ['tests.integration.evaluation.test_oracle_plan.OraclePlanTests']),
-    ('tests.integration.evaluation.test_oracle_bank_authority', 'fixture',
-     ['tests.integration.evaluation.test_oracle_bank_authority.OracleBankAuthorityTests']),
     ('tests.integration.evaluation.test_permission_audit', 'case', [KERNEL]),
-    ('tests.integration.evaluation.test_permission_audit', 'inference_fixture',
-     ['tests.integration.sandbox.test_sandbox_inference.ControllerInferenceTests']),
-    ('tests.integration.evaluation.test_permission_audit', 'responses_fixture',
-     ['tests.integration.sandbox.test_sandbox_inference.ResponsesEvaluationTests']),
-    ('tests.integration.optimization.test_optimization_history', 'history',
-     ['tests.integration.evaluation.test_preservation_history.PreservationHistoryTests']),
-    ('tests.integration.optimization.test_optimization_history', 'owner',
-     ['tests.integration.evaluation.test_regression_admission.RegressionAdmissionTests']),
-    ('tests.integration.workflow.test_one_call', 'one', ['tests.integration.workflow.test_one_call.OneCallTests']),
-    ('tests.integration.workflow.test_one_call_boundary', 'one',
-     ['tests.integration.workflow.test_one_call.OneCallTests']),
-    ('tests.integration.workflow.test_one_call_custody', 'one',
-     ['tests.integration.workflow.test_one_call.OneCallTests']),
-    ('tests.integration.evaluation.test_regression_replay', 'replay_case',
-     ['tests.integration.evaluation.test_regression_replay.RegressionReplayTests']),
-    ('tests.integration.evaluation.test_regression_review', 'review',
-     ['tests.integration.evaluation.test_regression_review.ReviewFixture']),
-    ('tests.integration.evaluation.test_review_authority', 'authority',
-     ['tests.integration.evaluation.test_review_authority.ReviewAuthorityFixture']),
-    ('tests.integration.evaluation.test_repeated_workflow', 'admission',
-     ['tests.integration.evaluation.test_repeated_workflow.RepeatedWorkflowAdmission']),
     ('tests.integration.evaluation.test_repeated_workflow', 'kernel_case', [REPEATED_KERNEL]),
-    ('tests.integration.evaluation.test_repeated_access_companion', 'access',
-     ['tests.integration.evaluation.test_repeated_access_companion.RepeatedAccessAdmission']),
     ('tests.integration.evaluation.test_repeated_access_companion', 'kernel_case', [ACCESS_KERNEL]),
-    ('tests.integration.sandbox.test_sandbox_construction', 'controlled',
-     ['tests.integration.sandbox.test_sandbox_construction.ControlledWorkflowTests']),
-    ('tests.integration.sandbox.test_sandbox_graders', 'grader',
-     ['tests.integration.sandbox.test_sandbox_graders.SandboxedGraderTests']),
-    ('tests.integration.sandbox.test_sandbox_inference', 'controller',
-     ['tests.integration.sandbox.test_sandbox_inference.ControllerInferenceTests']),
-    ('tests.integration.sandbox.test_sandbox_inference', 'evaluation',
-     ['tests.integration.sandbox.test_sandbox_inference.ResponsesEvaluationTests']),
-    ('tests.integration.sources.test_source_commit_join', 'github_driver',
-     ['tests.integration.sources.test_source_commit_join.GitHubDriver']),
 ]
 TEMPLATE = '''import contextlib, errno, importlib
 
@@ -78,8 +37,9 @@ for path in {classes!r}:
     module, _, name = path.rpartition('.')
     helper = getattr(importlib.import_module(module), name)
     helper.setUp = set_up
-    if path in {kernels!r}:
-        helper.setUpClass = classmethod(lambda cls: cls.enterClassContext(busy()))
+if set({classes!r}) & set({kernels!r}):
+    import tests.integration.sandbox.test_sandbox_kernel as kernel
+    kernel.kernel_scope = busy
 for path in {wrapped!r}:
     module, _, name = path.rpartition('.')
     helper = getattr(importlib.import_module(module), name)
@@ -129,13 +89,270 @@ def test_kernel_scope_reports_a_busy_class_cleanup(tmp_path, row):
     assert 'RuntimeError: synthetic per-test cleanup failure' in run.stdout, run.stdout[-4000:]
 
 
-def test_nested_admission_cleanup_failure_fails_the_bank_authority_fixture(tmp_path):
-    # The real OracleBankAuthorityTests.setUp runs, so its own release of the nested admission is exercised.
-    admission = 'tests.integration.evaluation.test_regression_admission.RegressionAdmissionTests'
-    (tmp_path/'test_cleanup_nested.py').write_text(
-        source('tests.integration.evaluation.test_oracle_bank_authority', 'fixture', [], wrapped=[admission]))
-    run = pytest_run(tmp_path, ['test_cleanup_nested.py'])
+def test_nested_admission_cleanup_failure_fails_the_bank_authority_fixture(monkeypatch):
+    from tests.integration.evaluation import test_oracle_bank_authority
+    from contextlib import ExitStack
+
+    def fail():
+        raise RuntimeError('synthetic admission cleanup failure')
+
+    def broken(add_cleanup):
+        add_cleanup(fail)
+        raise ValueError('synthetic setup failure')
+
+    monkeypatch.setattr(test_oracle_bank_authority.admissions, 'RegressionAdmission', broken)
+    with pytest.raises(RuntimeError, match='synthetic admission cleanup failure'):
+        with ExitStack() as cleanups:
+            test_oracle_bank_authority.OracleBankAuthority(cleanups.callback)
+
+
+
+@pytest.mark.parametrize('module', [
+    'tests.integration.workflow.test_one_call',
+    'tests.integration.workflow.test_one_call_boundary',
+    'tests.integration.workflow.test_one_call_custody',
+])
+def test_one_call_fixture_reports_cleanup_failure(tmp_path, module):
+    (tmp_path/'test_one_cleanup.py').write_text(
+        "from tempfile import TemporaryDirectory\n"
+        "import tests.support.one_call as support\n"
+        "class BrokenTemporaryDirectory(TemporaryDirectory):\n"
+        "    def cleanup(self):\n"
+        "        super().cleanup()\n"
+        "        raise RuntimeError('synthetic per-test cleanup failure')\n"
+        "support.TemporaryDirectory = BrokenTemporaryDirectory\n"
+        f"from {module} import one\n"
+        "def test_synthetic(one): pass\n")
+    run = pytest_run(tmp_path, ['test_one_cleanup.py'])
     assert 'ERROR ' in run.stdout and 'synthetic per-test cleanup failure' in run.stdout, run.stdout[-4000:]
+    assert '1 passed' in run.stdout, run.stdout[-4000:]
+
+
+def test_preservation_receipt_helper_propagates_nested_cleanup_failure(monkeypatch):
+    from contextlib import ExitStack
+    from tests.support import preservation_receipts
+
+    def fail():
+        raise RuntimeError('synthetic nested cleanup failure')
+
+    def BrokenHistory(add_cleanup):
+        add_cleanup(fail)
+
+    monkeypatch.setattr(preservation_receipts.legacy, 'OracleHistoryTests', BrokenHistory)
+    with pytest.raises(RuntimeError, match='synthetic nested cleanup failure'):
+        with ExitStack() as cleanups:
+            preservation_receipts.PreservationReceipt(cleanups).fixture()
+
+
+def test_preservation_history_propagates_nested_cleanup_failure(monkeypatch):
+    from contextlib import ExitStack
+    from tests.integration.evaluation import test_preservation_history
+
+    def fail():
+        raise RuntimeError('synthetic nested cleanup failure')
+
+    def broken(add_cleanup):
+        add_cleanup(fail)
+        raise ValueError('synthetic setup failure')
+
+    monkeypatch.setattr(test_preservation_history.core.authority, 'OracleBankAuthority', broken)
+    with pytest.raises(RuntimeError, match='synthetic nested cleanup failure'):
+        with ExitStack() as cleanups:
+            test_preservation_history.PreservationHistory(cleanups)
+
+
+def test_replay_fixture_propagates_cleanup_failure(monkeypatch, tmp_path):
+    from contextlib import ExitStack
+    from types import SimpleNamespace
+    from tests.integration.evaluation import test_regression_replay
+
+    def fail():
+        raise RuntimeError('synthetic replay cleanup failure')
+
+    monkeypatch.setattr(test_regression_replay.tempfile, 'TemporaryDirectory',
+                        lambda: SimpleNamespace(name=str(tmp_path), cleanup=fail))
+    with pytest.raises(RuntimeError, match='synthetic replay cleanup failure'):
+        with ExitStack() as cleanups:
+            test_regression_replay.RegressionReplay(cleanups.callback)
+
+
+@pytest.mark.parametrize('authority', [False, True], ids=['review', 'authority'])
+def test_review_helpers_propagate_nested_cleanup_failure(monkeypatch, authority):
+    from contextlib import ExitStack
+    from tests.integration.evaluation import test_regression_review, test_review_authority
+
+    def fail():
+        raise RuntimeError('synthetic review cleanup failure')
+
+    def broken(add_cleanup):
+        add_cleanup(fail)
+        raise ValueError('synthetic setup failure')
+
+    monkeypatch.setattr(test_regression_review.fixtures, 'RegressionReplay', broken)
+    helper = test_review_authority.ReviewAuthorityFixture if authority else test_regression_review.ReviewFixture
+    with pytest.raises(RuntimeError, match='synthetic review cleanup failure'):
+        with ExitStack() as cleanups:
+            helper(cleanups.callback)
+
+
+@pytest.mark.parametrize('module,helper', [
+    ('tests.integration.evaluation.test_regression_controls', 'RegressionControl'),
+    ('tests.integration.evaluation.test_grader_correction', 'GraderCorrection'),
+])
+def test_grader_helpers_propagate_cleanup_failure(monkeypatch, tmp_path, module, helper):
+    from contextlib import ExitStack
+    import importlib
+    from types import SimpleNamespace
+
+    target = importlib.import_module(module)
+    def fail():
+        raise RuntimeError('synthetic grader cleanup failure')
+
+    monkeypatch.setattr(target.tempfile, 'TemporaryDirectory',
+                        lambda: SimpleNamespace(name=str(tmp_path), cleanup=fail))
+    with pytest.raises(RuntimeError, match='synthetic grader cleanup failure'):
+        with ExitStack() as cleanups:
+            getattr(target, helper)(cleanups.callback)
+
+
+def test_requalification_propagates_cleanup_failure(monkeypatch):
+    from contextlib import contextmanager
+    from tests.integration.evaluation import test_cohort_requalification
+
+    @contextmanager
+    def broken():
+        try:
+            yield None
+        finally:
+            raise RuntimeError('synthetic requalification cleanup failure')
+
+    monkeypatch.setattr(test_cohort_requalification, 'bank_correction', broken)
+    with pytest.raises(RuntimeError, match='synthetic requalification cleanup failure'):
+        with test_cohort_requalification.requalification():
+            pass
+
+
+@pytest.mark.parametrize('module,helper', [
+    ('tests.integration.evaluation.test_offline_evaluation', 'OfflineFixture'),
+    ('tests.integration.evaluation.test_oracle_history', 'OracleHistoryTests'),
+    ('tests.integration.evaluation.test_oracle_plan', 'OraclePlanTests'),
+])
+def test_offline_helpers_propagate_cleanup_failure(monkeypatch, tmp_path, module, helper):
+    from contextlib import ExitStack
+    import importlib
+    from types import SimpleNamespace
+    from tests.integration.evaluation import test_offline_evaluation
+
+    def fail():
+        raise RuntimeError('synthetic offline cleanup failure')
+
+    monkeypatch.setattr(test_offline_evaluation.tempfile, 'TemporaryDirectory',
+                        lambda: SimpleNamespace(name=str(tmp_path), cleanup=fail))
+    with pytest.raises(RuntimeError, match='synthetic offline cleanup failure'):
+        with ExitStack() as cleanups:
+            getattr(importlib.import_module(module), helper)(cleanups.callback)
+
+
+def test_sandbox_grader_propagates_nested_cleanup_failure(monkeypatch):
+    from contextlib import ExitStack
+    from tests.integration.sandbox import test_sandbox_graders
+
+    def fail():
+        raise RuntimeError('synthetic sandbox grader cleanup failure')
+
+    def broken(add_cleanup):
+        add_cleanup(fail)
+        raise ValueError('synthetic setup failure')
+
+    monkeypatch.setattr(test_sandbox_graders.fixtures, 'OfflineFixture', broken)
+    with pytest.raises(RuntimeError, match='synthetic sandbox grader cleanup failure'):
+        with ExitStack() as cleanups:
+            test_sandbox_graders.SandboxedGrader(cleanups.callback)
+
+
+@pytest.mark.parametrize('helper', ['ControllerInference', 'ResponsesEvaluation'])
+def test_inference_helpers_propagate_cleanup_failure(monkeypatch, tmp_path, helper):
+    from contextlib import ExitStack
+    from types import SimpleNamespace
+    from tests.integration.sandbox import test_sandbox_inference
+
+    def fail():
+        raise RuntimeError('synthetic inference cleanup failure')
+
+    monkeypatch.setattr(test_sandbox_inference.tempfile, 'TemporaryDirectory',
+                        lambda: SimpleNamespace(name=str(tmp_path), cleanup=fail))
+    with pytest.raises(RuntimeError, match='synthetic inference cleanup failure'):
+        with ExitStack() as cleanups:
+            getattr(test_sandbox_inference, helper)(cleanups.callback)
+
+
+def test_workflow_helper_propagates_cleanup_failure(monkeypatch, tmp_path):
+    from contextlib import ExitStack
+    from types import SimpleNamespace
+    from tests.integration.workflow import test_workflow
+
+    def fail():
+        raise RuntimeError('synthetic workflow cleanup failure')
+
+    monkeypatch.setattr(test_workflow.tempfile, 'TemporaryDirectory',
+                        lambda: SimpleNamespace(name=str(tmp_path), cleanup=fail))
+    with pytest.raises(RuntimeError, match='synthetic workflow cleanup failure'):
+        with ExitStack() as cleanups:
+            test_workflow.WorkflowTests(cleanups.callback)
+
+
+def test_controlled_workflow_propagates_nested_cleanup_failure(monkeypatch):
+    from contextlib import ExitStack
+    from tests.integration.sandbox import test_sandbox_construction
+
+    def fail():
+        raise RuntimeError('synthetic controlled workflow cleanup failure')
+
+    def broken(add_cleanup):
+        add_cleanup(fail)
+        raise ValueError('synthetic setup failure')
+
+    monkeypatch.setattr(test_sandbox_construction.fixtures.workflow_fixtures, 'WorkflowTests', broken)
+    with pytest.raises(RuntimeError, match='synthetic controlled workflow cleanup failure'):
+        with ExitStack() as cleanups:
+            test_sandbox_construction.ControlledWorkflow(cleanups.callback)
+
+
+def test_task_bank_propagates_cleanup_failure(monkeypatch, tmp_path):
+    from contextlib import ExitStack
+    from types import SimpleNamespace
+    from tests.integration.evaluation import test_evaluation_foundation
+
+    def fail():
+        raise RuntimeError('synthetic task bank cleanup failure')
+
+    monkeypatch.setattr(test_evaluation_foundation.tempfile, 'TemporaryDirectory',
+                        lambda: SimpleNamespace(name=str(tmp_path), cleanup=fail))
+    with pytest.raises(RuntimeError, match='synthetic task bank cleanup failure'):
+        with ExitStack() as cleanups:
+            test_evaluation_foundation.TaskBank(cleanups.callback)
+
+
+@pytest.mark.parametrize('module,helper', [
+    ('tests.integration.evaluation.test_repeated_workflow', 'RepeatedWorkflowAdmission'),
+    ('tests.integration.evaluation.test_repeated_access_companion', 'RepeatedAccessAdmission'),
+])
+def test_repeated_admission_propagates_cleanup_failure(monkeypatch, module, helper):
+    from contextlib import ExitStack
+    import importlib
+    from tests.integration.evaluation import test_repeated_workflow
+
+    def fail():
+        raise RuntimeError('synthetic repeated cleanup failure')
+
+    def broken(self):
+        self.addCleanup(fail)
+        raise ValueError('synthetic setup failure')
+
+    monkeypatch.setattr(test_repeated_workflow.PublicFixture, 'configure', broken)
+    with pytest.raises(RuntimeError, match='synthetic repeated cleanup failure'):
+        with ExitStack() as cleanups:
+            getattr(importlib.import_module(module), helper)(cleanups.callback)
 
 
 def test_claude_journal_cleanup_failure_is_raised(tmp_path):
@@ -146,3 +363,13 @@ def test_claude_journal_cleanup_failure_is_raised(tmp_path):
     journal.fixture._cleanups.append(fail)
     with pytest.raises(RuntimeError, match='synthetic per-test cleanup failure'):
         journal.doCleanups()
+def test_github_driver_propagates_cleanup_failure(monkeypatch, tmp_path):
+    (tmp_path/'test_github_cleanup.py').write_text(
+        "from tests.integration.sources.test_source_commit_join import github_driver, GitHubFixture\n"
+        "def fail(): raise RuntimeError('synthetic github cleanup failure')\n"
+        "def setup(self): self.addCleanup(fail)\n"
+        "GitHubFixture.setUp = setup\n"
+        "def test_synthetic(github_driver): pass\n")
+    run = pytest_run(tmp_path, ['test_github_cleanup.py'])
+    assert 'ERROR ' in run.stdout and 'synthetic github cleanup failure' in run.stdout, run.stdout[-4000:]
+    assert '1 passed' in run.stdout, run.stdout[-4000:]

@@ -1,3 +1,4 @@
+from contextlib import ExitStack
 import json
 from pathlib import Path
 import sys
@@ -12,9 +13,9 @@ from tests.integration.evaluation.test_offline_evaluation import OfflineFixture
 
 
 class ConfiguredFixture(OfflineFixture):
-    """The offline fixture with a prepared ahl.json; it stays a unittest.TestCase because emulate() asserts on it."""
-    def setUp(self):
-        super().setUp()
+    """The offline fixture with a prepared ahl.json."""
+    def __init__(self, add_cleanup):
+        super().__init__(add_cleanup)
         self.args.config = self.root/'ahl.json'
         self.value = config.prepare({'harness_paths': ['solve.py'], 'limits': {'seconds': 300, 'trials': 20}})
         self.write_config()
@@ -26,11 +27,9 @@ class ConfiguredFixture(OfflineFixture):
 class TestConfiguredEvaluation:
     @pytest.fixture(autouse=True)
     def _configured(self):
-        self.f = ConfiguredFixture()
-        try:
-            self.f.setUp(); yield
-        finally:
-            self.f.doCleanups()
+        with ExitStack() as cleanups:
+            self.f = ConfiguredFixture(cleanups.callback)
+            yield
 
     def test_explicit_empty_config_cannot_fall_back_to_unconfigured_execution(self):
         self.f.args.config = ''
@@ -150,8 +149,9 @@ class TestConfiguredEvaluation:
         for path, permissions in paths:
             original = path.read_bytes()
             mode = path.stat().st_mode & 0o777
-            def mutate(argv, *args):
+            def mutate(argv, *args, **kwargs):
                 assert argv[1:] == ['--version']
+                assert 'env' in kwargs
                 if permissions:
                     path.chmod(mode ^ 0o100)
                 else:

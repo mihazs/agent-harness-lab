@@ -6,7 +6,6 @@ import hashlib
 import json
 from pathlib import Path
 import time
-import unittest
 from unittest.mock import patch
 
 import pytest
@@ -18,19 +17,14 @@ from agent_harness_lab.evaluation.bank_tools import export_manifest
 from agent_harness_lab.evaluation.oracle import identity
 from agent_harness_lab.evaluation.plan import ExperimentSpec
 from agent_harness_lab.evaluation.sandbox import SandboxBackend
-from tests.integration.evaluation import test_bank_corrections as applications
+from tests.support.bank_correction import bank_correction
 from tests.integration.evaluation import test_offline_evaluation as offline
 
 
-class RequalificationFixture(unittest.TestCase):
-    """Reusable real controller fixture; the initial bank already has structural v2.
-
-    It stays a unittest.TestCase: test_correction_cohorts builds it through setUp() and doCleanups(), and
-    execute() reuses offline.OfflineFixture.emulate, which calls TestCase assertions on it.
-    """
-    def setUp(self):
-        self.application = applications.BankCorrectionTests(); self.application.setUp()
-        self.addCleanup(self.application.doCleanups)
+class RequalificationFixture:
+    """Reusable real controller fixture; the initial bank already has structural v2."""
+    def __init__(self, cleanups):
+        self.application = cleanups.enter_context(bank_correction())
         f = self.application
         self.root, self.history = f.root, f.history
         self.applied = f.apply(); self.bank = f.bank(self.applied)
@@ -53,7 +47,7 @@ class RequalificationFixture(unittest.TestCase):
         (self.export / 'manifest.json').write_bytes(encoded(source))
         with self.workers():
             run = self.history.run(self.export / 'manifest.json', self.before, self.baseline, **self.profile())
-        self.assertEqual(run['state'], 'sealed', run)
+        assert run['state'] == 'sealed', run
         prior_q = self.history.historical_plan(run['run_id'])
         inputs = record(self.history.case(run['run_id']) / 'inputs.json')[0]
         bank = record(self.bank)[0]
@@ -82,7 +76,7 @@ class RequalificationFixture(unittest.TestCase):
         (self.export / 'manifest.json').write_bytes(encoded(source))
         with self.workers():
             run = self.history.run(self.export / 'manifest.json', self.baseline, self.candidate, **self.profile())
-        self.assertEqual(run['state'], 'sealed', run)
+        assert run['state'] == 'sealed', run
         self.prior = self.history.historical_plan(run['run_id'])
         self.protocol_path = self.root / 'qualification-protocol.json'
         self.protocol = dict(schema_version=2, algorithm=core.ALGORITHM, prior_run_id=self.prior['run_id'],
@@ -126,11 +120,8 @@ class RequalificationFixture(unittest.TestCase):
 
 @contextmanager
 def requalification():
-    fixture = RequalificationFixture()
-    try:
-        fixture.setUp(); yield fixture
-    finally:
-        fixture.doCleanups()
+    with ExitStack() as cleanups:
+        yield RequalificationFixture(cleanups)
 
 
 @pytest.fixture(scope='module')

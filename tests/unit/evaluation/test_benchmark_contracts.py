@@ -44,6 +44,15 @@ def test_private_and_mixed_provenance_cannot_export_even_aggregates():
     assert not public_export_allowed([derived])
 
 
+@pytest.mark.parametrize('marker', ['audit_sha256', 'harness_inventory_sha256', 'instruction_precedence'])
+@pytest.mark.parametrize('wrapper', [None, 'receipt', 'analysis', 'context', 'binding'])
+def test_static_audit_markers_block_public_export_in_supported_wrappers(marker, wrapper):
+    item = record()
+    item.update({wrapper: {marker: None, 'publication_allowed': True, 'profile': 'forged'}} if wrapper
+                else {marker: None, 'publication_allowed': True, 'profile': 'forged'})
+    assert not public_export_allowed([item])
+
+
 def test_reports_keep_failures_abstentions_strata_and_escape_html():
     records=[record(status='failed'),record(status='inconclusive'),record(model='<script>',status='skipped')]
     result=summary(records,public=True)

@@ -4,11 +4,18 @@ import argparse
 from pathlib import Path
 import tempfile
 
+if not __package__:
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from agent_harness_lab.read_only import FrozenProjectError, require_writable
+
 NAMES = ('harness-evaluation', 'harness-self-improvement')
 
 
 def install(source, destination, backup_root):
-    source, destination = Path(source).resolve(), Path(destination)
+    source, destination, backup_root = Path(source).resolve(), Path(destination), Path(backup_root)
+    require_writable(destination)
+    require_writable(backup_root)
     pending = []
     for name in NAMES:
         target, link = source / name, destination / name
@@ -23,24 +30,35 @@ def install(source, destination, backup_root):
         pending.append((target, link))
     if not pending:
         return None
+    require_writable(destination)
     destination.mkdir(parents=True, exist_ok=True)
-    backup_root = Path(backup_root)
+    require_writable(backup_root)
     backup_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    require_writable(backup_root)
     backup = Path(tempfile.mkdtemp(prefix='skills-', dir=backup_root))
     moved, installed = [], []
     try:
         for target, link in pending:
             if link.exists():
                 saved = backup / link.name
+                require_writable(destination)
+                require_writable(backup_root)
                 link.rename(saved)
                 moved.append((saved, link))
+            require_writable(destination)
             link.symlink_to(target, target_is_directory=True)
             installed.append(link)
     except BaseException:
-        for link in reversed(installed):
-            link.unlink()
-        for saved, link in reversed(moved):
-            saved.rename(link)
+        try:
+            for link in reversed(installed):
+                require_writable(destination)
+                link.unlink()
+            for saved, link in reversed(moved):
+                require_writable(destination)
+                require_writable(backup_root)
+                saved.rename(link)
+        except FrozenProjectError as exc:
+            raise FrozenProjectError(f'{exc}; recover original files from backup {backup}') from exc
         raise
     return backup
 

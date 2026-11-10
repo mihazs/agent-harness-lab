@@ -185,7 +185,7 @@ class TestRecoveryCheckpoint:
 
 
 @pytest.mark.skipif(not kernel.ENABLED,reason='explicit delegated kernel profile required')
-class RecoveryHistoryTests(repeated.PublicFixture,kernel.KernelFixture):
+class TestRecoveryHistory(repeated.PublicFixture,kernel.PytestKernelFixture):
     def setUp(self):
         super().setUp();self.configure()
 
