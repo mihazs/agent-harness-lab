@@ -68,8 +68,9 @@ leave it incomplete, and its coverage and enforcement stay unknown.
 The `hook_events` field lists known event names from declared hook handlers. Its
 coverage is `unknown` when hook surfaces are unavailable or could not be parsed;
 otherwise `declared_only` describes inventory coverage, not execution or enforcement.
-The private harness inventory also fingerprints event keys in supported Claude skill
-frontmatter hook mappings. Handler content is not retained or interpreted; unsupported
+The private harness inventory also fingerprints observed keys in Claude skill
+frontmatter hook mappings. The reader does not validate nested handler structure;
+the hook declaration remains unknown, and handler content is not retained. Unsupported
 frontmatter and other hook forms remain unknown. These fingerprints do not establish
 that a skill was loaded or a hook ran, and are not included in `hook_events`.
 Memory contents are not read. Other prose-to-hook matching is not checked.

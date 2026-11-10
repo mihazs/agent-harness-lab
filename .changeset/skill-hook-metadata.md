@@ -2,4 +2,4 @@
 "agent-harness-lab": patch
 ---
 
-Inventory bounded private skill frontmatter hook event fingerprints without interpreting handlers.
+Inventory bounded private skill frontmatter hook key fingerprints with unvalidated declarations left unknown.

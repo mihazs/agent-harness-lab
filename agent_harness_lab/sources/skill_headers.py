@@ -89,8 +89,9 @@ def parse(path, raw, profile):
                 facts['embedded_hooks'] = 'not_declared'
             elif isinstance(header['hooks'], shared.Mapping):
                 events = header['hooks'].keys
-                facts.update(embedded_hooks='declared', embedded_hook_events=len(events),
-                             embedded_hook_event_hashes=' '.join(sorted(digest(event) for event in events)))
+                # The reader retains event keys only, not nested handler structure.
+                facts.update(embedded_hook_keys_unvalidated=len(events),
+                             embedded_hook_key_hashes_unvalidated=' '.join(sorted(digest(event) for event in events)))
     if state == 'text':
         facts.update(description_trigger=_TRIGGER.search(text.lower()) is not None, description_tokenizer=TOKENIZER,
             description_tokens=' '.join(hashlib.sha256(word.encode()).hexdigest()[:8] for word in tokens(text)))
