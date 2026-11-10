@@ -429,8 +429,11 @@ Policies reject duplicate/unknown fields, invalid types/numbers, empty groups,
 more than 64 KiB, depth over eight, more than 128 predicate nodes or sequences
 longer than 32 steps. Receipt size is bounded by the policy tree and controller
 ledger limits, and can exceed 1 MiB when many matches are retained. Receipts
-identify predicates by digest and local controller IDs without echoing argv. Live controller handles
-bind policy, task, scheduled trial and scope; JSON imports cannot recreate them.
+identify predicates by digest and local controller IDs without echoing argv. Receipts
+also report each predicate kind and selected controller stage; groups have no
+single stage and retain their children. Imported summaries preserve these labels
+only when they are recognized, and legacy receipts may omit them. Live controller
+handles bind policy, task, scheduled trial and scope; JSON imports cannot recreate them.
 An authoritative trajectory capture is issued and closed by a live controller
 role in its issuing process. Direct ledger construction, public ledger mutation,
 and inherited captures after a fork cannot create that authority. This is not a

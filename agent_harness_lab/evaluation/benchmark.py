@@ -133,6 +133,14 @@ def _trajectory_assertion(assertion, depth, count, parent_id=None, child_index=N
                 or any(char not in '0123456789abcdef' for char in item['assertion_sha256'])):
             raise ValueError('invalid trajectory child identity or digest')
     item['coverage_complete'] = assertion.get('coverage_complete') is True
+    if 'predicate_kind' in assertion or 'selected_stage' in assertion:
+        kind, stage = assertion.get('predicate_kind'), assertion.get('selected_stage')
+        if (not {'predicate_kind', 'selected_stage'} <= assertion.keys()
+                or kind not in ('required', 'forbidden', 'count', 'sequence', 'all_of', 'any_of')
+                or (kind in ('all_of', 'any_of') and stage is not None)
+                or (kind not in ('all_of', 'any_of') and stage not in ('request', 'denied', 'dispatch', 'result'))):
+            raise ValueError('invalid trajectory predicate kind or stage')
+        item.update(predicate_kind=kind, selected_stage=stage)
     children = assertion.get('children', [])
     if not isinstance(children, list) or len(children) > 32:
         raise ValueError('invalid trajectory assertion children')

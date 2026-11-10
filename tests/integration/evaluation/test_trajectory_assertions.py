@@ -352,10 +352,15 @@ class TestTrajectoryAssertions:
         receipt = core.evaluate(binding,capture)
         assert receipt['status'] == 'satisfied'
         assert [r['status'] for r in receipt['assertions'][0]['children']] == ['violated','satisfied']
+        assert receipt['assertions'][0]['predicate_kind'] == 'any_of'
+        assert receipt['assertions'][0]['selected_stage'] is None
+        assert all((child['predicate_kind'], child['selected_stage']) == ('required', 'dispatch')
+                   for child in receipt['assertions'][0]['children'])
         from agent_harness_lab.evaluation import benchmark
         report = benchmark.summary(dict(trajectory_profile=core.PROFILE, trials=[dict(task='synthetic',
             controller_grade=dict(trajectory=receipt))]))
         assert [r['status'] for r in report['trials'][0]['assertions'][0]['children']] == ['violated', 'satisfied']
+        assert report['trials'][0]['assertions'][0]['children'][0]['selected_stage'] == 'dispatch'
         import itertools
         true = dict(kind='count',stage='request',**predicate(),minimum=0,maximum=None)
         false = required('request'); unknown = required('result')

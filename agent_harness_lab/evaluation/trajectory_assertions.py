@@ -331,7 +331,8 @@ def _evaluate_rule(rule, data, name):
     else:
         state, ids, complete = _leaf(rule, data)
         status = 'unknown' if state is None else 'satisfied' if state else 'violated'
-    return dict(assertion_id=name, assertion_sha256=_hash(encoded(rule)), status=status, valid=True,
+    return dict(assertion_id=name, assertion_sha256=_hash(encoded(rule)), predicate_kind=kind,
+        selected_stage=rule.get('stage'), status=status, valid=True,
         matched_controller_ids=ids, matched_ids_omitted=0, coverage_complete=complete,
         reason='predicate_evidence_incomplete' if status == 'unknown' else 'controller_predicate_decided', children=children)
 
