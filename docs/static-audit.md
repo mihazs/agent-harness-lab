@@ -49,7 +49,8 @@ The separate private `agent_harness_lab.audit.constraint_references.report()` AP
 accepts caller-supplied instruction bytes only when their digest matches a parsed
 checkout inventory node. It emits bounded line-number and hash references for
 lexical hard-constraint cues and exact protected-path references, without line
-text. For a direct lexical write constraint mentioning an inventoried protected
+text. For a direct lexical write constraint (including “never weaken”)
+mentioning an inventoried protected
 path, a well-formed supported command handler in Claude project settings with a
 recognized `PreToolUse` Edit/Write or all-tools matcher is a `hook_candidate_present`.
 Disabled, malformed, conditional and other handler forms stay unknown. The matcher concerns tool names,

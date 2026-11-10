@@ -12,7 +12,7 @@ MAX_LINE = 4096
 MAX_CONSTRAINTS = 512
 MAX_COMPARISONS = 10000
 _CONSTRAINT = re.compile(r'\b(?:never|must\s+not|do\s+not)\b', re.IGNORECASE)
-_WRITE_CONSTRAINT = re.compile(r'\b(?:never|must\s+not|do\s+not)\s+(?:edit|write|modify|change)\b', re.IGNORECASE)
+_WRITE_CONSTRAINT = re.compile(r'\b(?:never|must\s+not|do\s+not)\s+(?:edit|write|modify|change|weaken)\b', re.IGNORECASE)
 
 
 def report(inventory, path, raw, protected):
