@@ -727,7 +727,9 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                 result.update(status='requires_intervention',reason='permission_qualification_not_met')
                 break
             compared=repeated.execute(manifest_path,baseline,frozen,args,client,grading)
-            if any(file_state(args.project/name)!=value for name,value in original.items()):
+            current_harness = {str(path.relative_to(args.project)):file_state(path)
+                               for path in harness_files(args.project,allowed_paths(args))}
+            if current_harness != original:
                 raise ValueError('project harness changed during fixed comparison')
             if instruction is not None:
                 # The fixed-bank comparison hands no trial records to the removal gate; see removal_disposition.
