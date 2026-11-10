@@ -275,8 +275,11 @@ class Comparison:
                 or hashed(grade.get('execution'))!=self.active['grade']['run_sha256']
                 or grade.get('outcome') is not self.active['grade']['outcome']):
             raise ValueError('comparison results differ from actual owned completions')
+        from .trial_usage import _prepare_completion, _commit_completion
+        usage_token = _prepare_completion(self,row)
         self.rows.append(dict(trial_sha256=hashed(row),custody=deepcopy(self.active)))
         self.active=None;self.pending=[];self.latest=None;self._save()
+        if usage_token is not None:_commit_completion(self,usage_token)
 
     def finish(self,result):
         if not self._valid() or self.controls or self.active is not None or len(self.rows)!=len(self.expected):
