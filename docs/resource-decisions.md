@@ -200,3 +200,19 @@ requires the complete result to pass live comparison custody. The object is expl
 and not persisted: its digests are canonical object digests, not claims about stored file bytes.
 It does not authenticate the provider or establish billing completeness, a resource decision,
 or promotion. Existing v6 history receipts are unchanged and do not seal this object.
+
+## Optional sealed resource history
+
+For a controlled Responses comparison, `HistoryStore.run(..., resource_contract=contract)`
+can opt into a v7 history when the plan already pins that exact v4 contract. The controller
+collects the private live summaries and seals a versioned resource artifact alongside its
+existing result and custody evidence. `HistoryStore.resource_evidence(run_id)` verifies the
+current sealed history and returns the private artifact; `public=True` is refused. Calls that
+do not supply a resource contract retain the existing history format, including v6.
+
+Missing or interrupted collection does not seal a resource artifact. A private unsealed file
+may remain after interruption and is not accepted by the readback API. The artifact preserves
+unknown request coverage and final totals; it does not authenticate provider data, establish
+complete billing, compute a resource decision, or authorize promotion. V7 history summaries
+and analyses explicitly report the resource gate as not evaluated. The history seal is not a
+security boundary against code with access to the same process or private store.
