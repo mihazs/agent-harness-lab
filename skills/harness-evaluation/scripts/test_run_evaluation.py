@@ -1,4 +1,5 @@
 import json
+import shutil
 from pathlib import Path
 import subprocess
 import sys
@@ -55,6 +56,7 @@ else: print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
                             not t['skill_activation_receipt']['publication_allowed'] and
                             t['skill_activation_receipt']['case_id'] is None for t in data['trials']))
         self.assertTrue(data['inputs_unchanged'])
+        self.assertTrue(all(t['skill_preload_requested'] is False for t in data['trials']))
         self.assertFalse((self.root / 'fixture/artifact').exists())
         self.assertEqual((self.root / 'fixture/original').read_text(), 'preserve')
         self.assertNotEqual((self.root/'out/baseline/case/workspace').resolve(),
@@ -72,6 +74,23 @@ else: print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
         self.assertNotIn('Load these exact', (workspace / 'prompt.txt').read_text())
         self.assertEqual(data['runtime']['codex_version'], 'codex-test 1.0')
         self.assertTrue(data['trials'][0]['injected_skill_hashes'])
+
+    def test_trial_records_distinguish_preload_requests_from_natural_routing(self):
+        for name in ('baseline', 'candidate'):
+            folder = self.root / name / 'example'; folder.mkdir()
+            (folder / 'SKILL.md').write_text('example skill')
+        for preload in (True, False):
+            with self.subTest(preload=preload):
+                try:
+                    result, data = self.run_case(preload=preload, skills=['example'])
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    for trial in data['trials']:
+                        self.assertIs(trial['skill_preload_requested'], preload)
+                        self.assertEqual(trial['skill_activation_receipt']['state'], 'unknown')
+                        prompt = (self.root/'out'/trial['version']/'case/workspace/prompt.txt').read_text()
+                        self.assertEqual('Load these exact evaluation skill files' in prompt, preload)
+                finally:
+                    shutil.rmtree(self.root/'out', ignore_errors=True)
 
     def use_claude_fake(self):
         self.fake.write_text("""#!/usr/bin/env python3

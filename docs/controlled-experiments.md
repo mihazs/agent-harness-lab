@@ -117,9 +117,12 @@ the trial selector must match exactly one result. Receipts are private and must 
 The estimand is the effect of skill availability (intent-to-treat), with all eligible
 trials retained irrespective of their receipt; no receipt alone establishes a causal effect.
 
-Skill injection is availability evidence, not activation. Missing runtime signals
-remain unknown; natural routing, preload, negative routing and transfer are separate
-conditions. `evaluation.skills.paired_transfer(records, policy=...)` compares the
+Skill injection is availability evidence, not activation. Each evaluator trial records
+`skill_preload_requested` as true when the manifest requests a preload prompt for
+at least one explicitly listed skill. False also covers trials with no listed skills;
+this field does not show that a prompt was sent or a skill was discovered or used.
+Missing runtime signals remain unknown; natural routing, preload, negative routing
+and transfer are separate conditions. `evaluation.skills.paired_transfer(records, policy=...)` compares the
 `present` and `absent` arms over task roots matched by task and root identity.
 The policy must declare its target conditions, its unrelated control conditions
 and `max_control_loss` (0 to 1); its SHA-256 is reported. Preload can only be a
