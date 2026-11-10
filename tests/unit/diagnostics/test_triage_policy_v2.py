@@ -302,3 +302,46 @@ def test_integer_total_above_json_digit_limit_is_unknown():
     assert result['costs']['total'] is None and 'cost_total_unrepresentable' in result['reasons']
     assert not result['automatic_promotion'] and not result['publication_allowed']
     json.dumps(result,allow_nan=False)
+
+
+@pytest.mark.parametrize(('first','second'),[
+    ('fit_roots_sha256','calibration_roots_sha256'),
+    ('fit_roots_sha256','threshold_tuning_roots_sha256'),
+    ('calibration_roots_sha256','threshold_tuning_roots_sha256'),
+])
+def test_v4_refuses_declared_cross_role_overlap_without_rewriting_legacy(first,second):
+    shared=sha('synthetic-development-root')
+    model=sha('synthetic-model')
+    configured=policy(model_sha256=model,**{first:[shared],second:[shared]})
+    observations=[dict(row('synthetic-heldout',NONE,NONE),model_sha256=model)]
+    for version in (2,3):
+        assert triage.evaluate(configured,observations,report_version=version)['status']=='insufficient_evidence'
+    with pytest.raises(ValueError,match='role roots overlap'):
+        triage.evaluate(configured,observations,report_version=4)
+
+
+def test_v4_declared_disjointness_does_not_establish_independence_or_publication():
+    configured=policy(fit_roots_sha256=[sha('synthetic-fit')],
+        calibration_roots_sha256=[sha('synthetic-calibration')],threshold_tuning_roots_sha256=[sha('synthetic-tuning')])
+    configured['model_sha256']=sha('synthetic-model')
+    observations=[dict(r,model_sha256=configured['model_sha256']) for r in (row('synthetic-heldout',NONE,NONE),row('synthetic-unlabeled',None,None))]
+    result=triage.evaluate(configured,observations,report_version=4)
+    assert result['profile']=='diagnostic-triage-evaluation-v4'
+    assert result['role_separation']=='declared_hash_lists_disjoint_only' and result['coverage']==.5
+    assert result['root_independence']=='unverified' and result['label_authority']=='unverified'
+    assert result['certification']=='not_issued' and not result['automatic_promotion']
+    assert not public_export_allowed([{**result,**benchmark_fixtures.record(),'publication_allowed':True}])
+    with pytest.raises(ValueError,match='evaluated root appears'):
+        triage.evaluate(configured,[dict(row('synthetic-fit',NONE,NONE),model_sha256=configured['model_sha256'])],report_version=4)
+
+
+def test_v4_requires_policy_and_rows_bound_to_the_same_model_revision():
+    bound, other = sha('synthetic-model'), sha('synthetic-other-model')
+    observations = [dict(row('synthetic-heldout', NONE, NONE), model_sha256=bound)]
+    assert triage.evaluate(policy(model_sha256=bound), observations, report_version=4)['model_sha256'] == bound
+    with pytest.raises(ValueError, match='bound to a model revision'):
+        triage.evaluate(policy(), observations, report_version=4)
+    for rows in ([dict(observations[0], model_sha256=other)], [row('synthetic-heldout', NONE, NONE)]):
+        with pytest.raises(ValueError, match='outside the policy scope'):
+            triage.evaluate(policy(model_sha256=bound), rows, report_version=4)
+        assert triage.evaluate(policy(model_sha256=bound), rows, report_version=3)['status'] == 'insufficient_evidence'
