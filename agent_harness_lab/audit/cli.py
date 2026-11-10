@@ -3,7 +3,6 @@ import argparse
 from dataclasses import asdict
 import json
 import os
-import shlex
 import sys
 import tempfile
 import time
@@ -174,9 +173,8 @@ def main(argv=None):
             report['next_action'] = ('Evaluate a proposed change for finding ' + candidate['id'] + ' with ahl improve; '
                 'the convention check does not establish a performance improvement.')
             if report['improvement_hint'] is not None:
-                agent = 'claude' if args.runtime == 'claude-code' else 'codex'
-                report['next_action'] += (' Optional instruction focus: ahl improve PROJECT --agent ' + agent +
-                                          ' --focus ' + shlex.quote(report['improvement_hint']['focus']))
+                report['next_action'] += (' Select an improvement runtime compatible with the audited ' +
+                    args.runtime + ' and the configured profile before using improvement_hint.focus.')
         else:
             report['next_action'] = 'Capture behavioral evidence with ahl analyze and evaluate a proposed change with ahl improve.'
         destination.mkdir(parents=True, exist_ok=True, mode=0o700)

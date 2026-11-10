@@ -508,30 +508,29 @@ def test_instruction_improvement_hint_contains_only_fixed_content(tmp_path, monk
                         runtime='codex', status='hypothesis', authority='none', publication_allowed=False)
     assert 'SYNTHETIC_PRIVATE_SENTENCE' not in json.dumps(hint)
     assert str(project) not in json.dumps(hint)
-    import shlex
-    argv = shlex.split(report['next_action'].split(' Optional instruction focus: ', 1)[1])
-    assert argv == ['ahl', 'improve', 'PROJECT', '--agent', 'codex', '--focus', hint['focus']]
+    assert 'Select an improvement runtime compatible with the audited codex' in report['next_action']
+    assert '--agent' not in report['next_action'] and '--focus' not in report['next_action']
 
 
-def test_suggested_focus_round_trips_audited_runtime_despite_configured_default(tmp_path, monkeypatch, capsys):
-    import shlex
+def test_focus_hint_does_not_override_controlled_runtime(tmp_path, monkeypatch, capsys):
     from agent_harness_lab import config
 
     project = tmp_path / 'project'
     project.mkdir()
-    (project / 'CLAUDE.md').write_text('@empty.md\n')
-    (project / 'empty.md').write_text(' \n')
-    settings = config.prepare(dict(profile='cooperative', runtime=dict(name='codex', executable='/synthetic/codex')))
+    (project / 'AGENTS.md').write_text('synthetic content\n')
+    (project / '.git').mkdir()
+    runtime = dict(name='responses', inference_settings=str(tmp_path / 'settings.json'),
+                   cgroup_root=str(tmp_path / 'cgroup'), image_root=str(tmp_path / 'image'),
+                   image_sha256='a' * 64, disk_bytes=67108864)
+    settings = config.prepare(dict(profile='cooperative', runtime=runtime))
     config.create(project, settings)
     monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
-    assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
+    assert main(['audit', str(project), '--runtime', 'codex', '--json']) == 0
     report = json.loads(capsys.readouterr().out)
     hint = report['improvement_hint']
-    assert hint['runtime'] == 'claude-code'
-    command = report['next_action'].split(' Optional instruction focus: ', 1)[1]
-    argv = shlex.split(command)
-    assert argv[:3] == ['ahl', 'improve', 'PROJECT']
-    assert argv[3:] == ['--agent', 'claude', '--focus', hint['focus']]
-    default = config.execution_options(project, settings, {'agent': 'auto'}, set())
-    chosen = config.execution_options(project, settings, {'agent': argv[4]}, {'--agent'})
-    assert default['agent'] == 'codex' and chosen['agent'] == 'claude'
+    assert hint['runtime'] == 'codex' and hint['focus'] == (
+        'Investigate whether project instruction constraints need clarification.')
+    assert '--agent' not in report['next_action'] and '--focus' not in report['next_action']
+    assert 'configured profile' in report['next_action']
+    selected = config.execution_options(project, settings, {'agent': 'auto', 'inference_settings': None}, set())
+    assert selected['agent'] == 'responses'

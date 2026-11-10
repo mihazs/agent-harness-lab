@@ -306,11 +306,10 @@ when those are settled. The default 200-line soft budget is a configurable
 convention extrapolated to the selected closure, not a validated threshold.
 
 For supported instruction findings, `improvement_hint` provides a fixed,
-content-free `focus` string that an operator may pass to `ahl improve PROJECT --agent
-RUNTIME --focus`. The suggested command names the audited runtime explicitly
-(`claude` or `codex`); replace `PROJECT` with the intended project. An explicit
-runtime overrides a configured default, while normal profile restrictions still
-apply. It carries no paths, counts, source text or finding identity and does
+content-free `focus` string and the audited runtime. Before using it with
+`ahl improve --focus`, select an improvement runtime compatible with the audited
+runtime and the configured profile. The audit does not select or override an
+improvement runtime. The hint carries no paths, counts, source text or finding identity and does
 not establish a defect or authorize an edit. The report is not automatically
 read by improve: focus is an optional user-selected hint, subject to the normal
 scope, evaluation and promotion checks. Closed-input profiles that prohibit
