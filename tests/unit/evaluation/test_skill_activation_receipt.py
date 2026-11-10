@@ -72,3 +72,11 @@ def test_pinned_native_projection_can_be_linked_to_a_trial(tmp_path):
     assert receipt['state'] == 'activated'
     assert receipt['signals'][0]['confidence'] == 'declared_name'
     assert receipt['trial_binding'] == 'caller_declared_unverified'
+
+
+@pytest.mark.parametrize('source', [dict(source_format='codex', source_version='codex-rollout-0.166.0'),
+                                    dict(source_format='claude', source_version='unrecognized')])
+def test_unsupported_native_capture_cannot_claim_a_signal(source):
+    signal = skill_signal('/synthetic/project', 'Skill', {'skill': 'synthetic'})
+    row = dict(observation(signal), **source)
+    assert activation_receipt([row], case_id=CASE)['state'] == 'unknown'

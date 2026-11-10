@@ -18,6 +18,7 @@ def activation_receipt(events, *, case_id, skill_id=None):
     target, and at least one captured skill signal. Current native adapters mark
     their capture partial, so they cannot establish non-observation.
     """
+    from ..telemetry.claude_native import VERSION as CLAUDE_NATIVE_VERSION
     from ..telemetry.schema import event
     if case_id is not None and (not isinstance(case_id, str) or not case_id):
         raise ValueError('case identity must be nonempty text when supplied')
@@ -30,6 +31,9 @@ def activation_receipt(events, *, case_id, skill_id=None):
             raise ValueError('activation receipt requires one case')
         all_complete &= row.get('capture_complete') is True
         kind, confidence, identity = row.get('skill_signal'), row.get('skill_signal_confidence'), row.get('skill_id')
+        source = (row.get('source_format'), row.get('source_version'))
+        if (source[0] not in (None, 'normalized') and source != ('claude', CLAUDE_NATIVE_VERSION)):
+            continue
         if row['activity'] != 'tool_call' or not identity or (kind, confidence) not in (
                 ('declared_invocation', 'declared_name'), ('file_read', 'full_read_request'),
                 ('file_read', 'partial_read_request')):

@@ -96,8 +96,8 @@ for a single normalized case. `activated` means a declared Skill invocation or
 file-read request was captured, with its signal confidence retained; it does not
 prove that the skill loaded, ran or caused an outcome. A target is `not_observed`
 only with a declared complete capture containing at least one skill signal; otherwise
-missing signals are `unknown`. Current pinned Codex and Claude native captures are
-partial, so they cannot establish non-observation. Evaluator trial results carry an
+missing signals are `unknown`. Codex and unrecognized native sources cannot claim
+Claude skill signals. Current pinned Codex and Claude native captures are partial, so they cannot establish non-observation. Evaluator trial results carry an
 unknown receipt because their stdout has no verified link to pinned native captures.
 `evaluation.skills.attach_activation_receipt(trial, events, case_id=...)` returns
 a trial with a receipt for explicitly selected normalized events; the trial-to-case
