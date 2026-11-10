@@ -171,8 +171,12 @@ cases stay pending for estimation and make it inconclusive. A local operator can
 record `CorpusStore.update(..., kind="nonresponse", reviewer=...)` for the current
 claim. The audit report distinguishes this declared nonresponse from pending
 review, without imputing a label; the same claimant can submit later. This event
-and reviewer identity are unauthenticated local declarations. Older readers that
-do not recognize the new journal event cannot reopen such a case. Corpus outcome categories are never implicitly mapped to audit
+and reviewer identity are unauthenticated local declarations. When any assigned
+case contains this event, observations use `audit-corpus-observation-v2` and
+estimates use `audit-corpus-estimate-v2` with their original estimate profile
+identified separately. Journals without the event retain their existing output
+shapes. Older readers that do not recognize the new journal event cannot reopen
+such a case. Corpus outcome categories are never implicitly mapped to audit
 classes. Results reuse the existing sampling estimator and remain private.
 
 These local events and checksums do not authenticate assignment timing, source
