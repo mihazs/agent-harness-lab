@@ -4,7 +4,7 @@ from collections import defaultdict
 from agent_harness_lab.private_journal import encoded, record_bytes
 from .cohorts import MAX_BYTES, _manifest
 from .plan import schedule
-from .statistics import bound
+from .statistics import bound, incomplete_interval
 
 ARMS = ('baseline', 'candidate')
 TRANSITIONS = ('pass_pass', 'fail_pass', 'pass_fail', 'fail_fail', 'missing', 'invalid', 'unknown')
@@ -87,6 +87,17 @@ def _root_values(tasks, pairs, outcomes):
     return {root: sum(values) / len(values) for root, values in sorted(roots.items())}
 
 
+def _root_ranges(tasks, pairs, outcomes):
+    roots = defaultdict(list)
+    for task, repetition in pairs:
+        baseline, candidate = (outcomes[(task, repetition, arm)] for arm in ARMS)
+        lo = (int(candidate) if type(candidate) is bool else 0) - (int(baseline) if type(baseline) is bool else 1)
+        hi = (int(candidate) if type(candidate) is bool else 1) - (int(baseline) if type(baseline) is bool else 0)
+        roots[tasks[task][0]].append((lo, hi))
+    return [(root, sum(v[0] for v in values) / len(values), sum(v[1] for v in values) / len(values))
+            for root, values in sorted(roots.items())]
+
+
 def analyze(spec, records, binding, *, root_similarity_evidence=None, root_similarity_bank=None):
     """Analyze complete paired data; callers independently verify live qualification."""
     from .root_similarity import binding as similarity_binding
@@ -154,6 +165,28 @@ def analyze(spec, records, binding, *, root_similarity_evidence=None, root_simil
         return dict(result, status='blocked', reason='provenance_mismatch')
     if (coverage['missing_trials'] or coverage['duplicate_records'] or coverage['unexpected_trial_ids']
             or coverage['invalid_records'] or coverage['invalid_grades'] or coverage['unknown_grades']):
+        if not (coverage['duplicate_records'] or coverage['unexpected_trial_ids'] or coverage['invalid_records']):
+            root_ranges = _root_ranges(tasks, pairs, outcomes)
+            family_rows = {family: [row for row in root_ranges if root_families[row[0]] == family] for family in families}
+            family_bounds = {family: incomplete_interval(rows, [1 / len(rows)] * len(rows), adjusted, groups)
+                             for family, rows in family_rows.items()}
+            weighted, weights = [], []
+            for family, weight in sorted(spec.family_weights):
+                weighted.extend(family_rows[family]); weights.extend([weight / len(family_rows[family])] * len(family_rows[family]))
+            cohort_bounds = {}
+            for cohort in manifest['cohorts']:
+                if cohort['required']:
+                    selected = {member['task_id'] for member in cohort['members']}
+                    rows = _root_ranges(tasks, [pair for pair in pairs if pair[0] in selected], outcomes)
+                    cohort_bounds[cohort['cohort_id']] = incomplete_interval(rows, [1 / len(rows)] * len(rows), adjusted, groups)
+            result['missing_outcome_bounds'] = dict(
+                estimand='frozen_family_weighted_mean_of_selected_root_mean_paired_correctness_differences',
+                interpretation='worst_and_best_possible_outcomes_not_imputed',
+                unknown_arms=coverage['missing_trials'] + coverage['invalid_grades'] + coverage['unknown_grades'],
+                primary=incomplete_interval(weighted, weights, adjusted, groups), families=family_bounds,
+                required_cohorts=cohort_bounds, cohort_estimand='equal_selected_cohort_root_mean_paired_difference',
+                method='weighted_root_Hoeffding', assumptions='independent_root_means_unverified',
+                multiplicity='Bonferroni_primary_families_required_cohorts', automatic_promotion=False)
         return dict(result, status='incomplete', reason='missing_duplicate_unknown_or_invalid_trials')
     root_values = _root_values(tasks, pairs, outcomes)
     family_values = {family: {root: value for root, value in root_values.items() if root_families[root] == family}
