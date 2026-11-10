@@ -10,7 +10,7 @@ import pytest
 
 from agent_harness_lab.cli import main
 from agent_harness_lab.sources.opencode import PIN
-from agent_harness_lab.sources.opencode_backup import OpenCodeBackup
+from agent_harness_lab.sources.opencode_backup import OpenCodeBackup, _exchange
 from agent_harness_lab.sources.schema import SourceSpec, digest
 
 INSTANCE, SESSION, PROJECT = 'synthetic-instance', 'ses_synthetic', 'synthetic-project'
@@ -40,7 +40,7 @@ def test_selected_backup_is_private_unverified_and_never_opens_sidecars(source):
     for path in sidecars: path.write_bytes(b'SYNTHETIC_SIDECAR')
     connector = OpenCodeBackup(manifest)
     with patch('socket.socket', side_effect=AssertionError('network')), patch(
-            'agent_harness_lab.sources.opencode_backup.subprocess.run', wraps=subprocess.run) as run:
+            'agent_harness_lab.sources.opencode_backup.subprocess.Popen', wraps=subprocess.Popen) as run:
         snapshot = connector.read(spec)
     assert run.call_args.args[0][1] == '-I'
     assert connector.summary['snapshot_status'] == 'caller_declared_unverified'
@@ -136,12 +136,30 @@ def test_missing_parent_and_archive_are_unknown(source):
 def test_unsupported_platform_and_timed_out_worker_fail_closed(source):
     _, _, spec, manifest = source
     with patch('agent_harness_lab.sources.opencode_backup.sys.platform', 'unsupported'):
-        with patch('agent_harness_lab.sources.opencode_backup.subprocess.run') as run:
+        with patch('agent_harness_lab.sources.opencode_backup.subprocess.Popen') as run:
             with pytest.raises(ValueError, match='unavailable'): OpenCodeBackup(manifest).read(spec)
             run.assert_not_called()
-    with patch('agent_harness_lab.sources.opencode_backup.subprocess.run',
-               side_effect=subprocess.TimeoutExpired('synthetic', 4)):
+    with patch('agent_harness_lab.sources.opencode_backup._exchange', side_effect=TimeoutError()):
         with pytest.raises(ValueError, match='timed out'): OpenCodeBackup(manifest).read(spec)
+
+
+def test_worker_output_is_bounded_while_sending_input(tmp_path):
+    worker = tmp_path/'synthetic_worker.py'
+    worker.write_text('import sys\nsys.stdout.buffer.write(b"x" * 1000000)\nsys.stdout.flush()\n')
+    with pytest.raises(ValueError, match='output exceeds limit'):
+        _exchange(worker, b'x'*1000000)
+
+
+def test_worker_can_read_more_than_pipe_capacity(tmp_path):
+    worker = tmp_path/'synthetic_worker.py'
+    worker.write_text('import sys\nsys.stdin.buffer.read()\nsys.stdout.write("{}")\n')
+    assert _exchange(worker, b'x'*1000000) == b'{}'
+
+
+def test_worker_that_never_returns_is_terminated(tmp_path):
+    worker = tmp_path/'synthetic_worker.py'
+    worker.write_text('import time\ntime.sleep(30)\n')
+    with pytest.raises(TimeoutError): _exchange(worker, b'x')
 
 
 def test_cli_preview_and_import_are_private(source, tmp_path):
