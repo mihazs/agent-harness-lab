@@ -89,6 +89,10 @@ or a coverage drop larger than `max_coverage_drop`. Duplicates and untimed runs 
 counted over all supplied runs, because a run without a trusted time cannot be
 placed in a window. A window with no runs, or fewer than
 `min_exposure` runs, is `insufficient_evidence`.
+Conflicting variants of the same run ID are excluded from the window run count
+rather than selecting the first. Other runs sharing a conflicting root are also ineligible. If a conflicting
+variant has no usable root, all remaining roots are ineligible because the
+conflict cannot be attributed safely. Counts remain descriptive and private.
 
 The task-mix and performance detectors are not implemented yet. Those channels
 always return `insufficient_evidence`, with `statistical_detector_not_implemented`
