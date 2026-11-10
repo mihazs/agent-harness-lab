@@ -4228,3 +4228,34 @@ the shape against a real export; `cogx` archives; sessions and session context;
 code-symbol references; `recall` result import and an opt-in, explicitly
 authorized, resource-marked retrieval mode; verified read-only API semantics;
 bounded cancellation of result streams; further releases and backends.
+
+## OpenCode selected session exports
+
+`sources.opencode.OpenCodeExport` reads one explicitly selected local JSON
+session export. Its v1 profile models the transfer envelope at upstream commit
+[`98e4b5343e33aafded479b9ff71c12fd760d9d87`](https://github.com/anomalyco/opencode/blob/98e4b5343e33aafded479b9ff71c12fd760d9d87/packages/schema/src/session-transfer.ts);
+the corresponding [CLI export handler](https://github.com/anomalyco/opencode/blob/98e4b5343e33aafded479b9ff71c12fd760d9d87/packages/cli/src/commands/handlers/session/export.ts)
+prints the selected session transfer as JSON. The file itself does not certify
+which producer or version made it: the commit is a declared parsing profile,
+not authenticated provenance or a guarantee of compatibility with other builds.
+
+Use a `local_file` `SourceSpec` with provider `opencode-export`, version `v1`,
+`identity_provenance="source_declared_id"`, and a selection descriptor containing
+`schema_version: 1`, `upstream_commit` equal to the pinned commit, `instance`,
+`export` (a path relative to the manifest directory), and `session_sha256` as
+`digest(("opencode.session", instance, session_id))`. The source project hash is
+`digest(("opencode.project", instance, project_id))`; the export must match both
+selected hashes. The ambiguous upstream project ID `global` is refused. These
+bindings are based on claims in the file; they do not verify a checkout or
+producer. The source scope hash is `digest(selection)`.
+
+The bounded reader opens only that file and rechecks it and the declaration; it
+does not run OpenCode, open SQLite, scan a home directory or contact a service.
+It validates the envelope and unique message IDs but does not interpret message
+contents, roles, encrypted reasoning, sidechains or archived state. Its private
+records hold fingerprints and a message count; coverage and lineage remain
+unknown, and no task outcome or independent root is established. Export bytes
+may contain sensitive text, and fingerprints may be guessable: keep the export,
+private cache, and output local. A changed, invalid, out-of-scope or oversized
+export is refused. Cursor and OpenCode SQLite stores are not supported by this
+profile.
