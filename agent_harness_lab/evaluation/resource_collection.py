@@ -6,7 +6,7 @@ import os
 from weakref import WeakKeyDictionary, ref
 
 from .comparison_custody import Comparison, current, hashed
-from .resource_decision import TOKEN_PROFILE, validate
+from .resource_decision import TOKEN_PROFILE, validate, verify_plan_resource_contract
 from .trial_usage import latest_completed_trial_usage
 
 _ACTIVE = WeakKeyDictionary()
@@ -24,7 +24,7 @@ class UsageCollector:
         self._contract = frozen
         self._contract_sha256 = hashlib.sha256(json.dumps(frozen,sort_keys=True,separators=(',', ':')).encode()).hexdigest()
         plan_pin = comparison.spec.resource_contract_sha256
-        if plan_pin is not None and plan_pin != self._contract_sha256:
+        if plan_pin is not None and verify_plan_resource_contract(comparison.spec,frozen)['status'] != 'matched':
             raise ValueError('resource contract differs from experiment plan')
         self._plan_pinned = plan_pin is not None
         self._plan = comparison.spec.digest
