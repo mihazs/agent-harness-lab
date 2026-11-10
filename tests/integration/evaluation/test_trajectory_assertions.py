@@ -12,7 +12,6 @@ from agent_harness_lab.evaluation.integrity import digest
 from agent_harness_lab.private_journal import encoded
 from tests.integration.evaluation import test_controller_actions as actions
 from tests.integration.sandbox import test_sandbox_inference as fixtures
-from tests.support.unittest_cleanups import run_cleanups
 
 
 def predicate(tool='run', arguments=None): return dict(tool=tool, arguments=arguments)
@@ -57,7 +56,7 @@ class TestTrajectoryAssertions:
         self.policy = dict(schema_version=1, profile=core.PROFILE, **self.task, engine=core.engine(),
             outcome_mapping='artifact_and_required_v1', assertions=[])
         yield
-        run_cleanups(self.f.fixture)
+        self.f.doCleanups()
 
     def bind(self, rules):
         self.policy['assertions'] = [dict(id='assertion-'+str(i), required=True, severity='normal', rule=r) for i, r in enumerate(rules)]
