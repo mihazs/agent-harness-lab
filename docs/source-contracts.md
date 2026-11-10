@@ -3384,6 +3384,15 @@ also apply here. Closing and related references remain distinct claims and share
 a limit of 10,000 returned rows per capture. Visibility and source claims remain
 unverified; reads are non-atomic. Schema 6 has a distinct scope from schemas 1–5.
 
+An opt-in selection schema 7 adds `reviewers` for selected merge requests using
+the [reviewers endpoint](https://docs.gitlab.com/api/merge_requests/#retrieve-merge-request-reviewers).
+It records reviewer identity fingerprints and the server-reported `reviewed` or
+`unreviewed` state separately from approvals and comments. Other or missing
+states remain unknown; names and review content are excluded. The endpoint's
+list completeness is unverified and therefore prevents a checkpoint, including
+for an empty list. A reviewer state is not an approval or a task outcome, and
+reads are non-atomic. Schema 7 has a distinct scope from schemas 1–6.
+
 Use `SourceSpec(kind="api", provider="gitlab", version="v4", root_sha256=digest(base_url),
 project_sha256=selection.project_sha256, scope_sha256=selection.sha256,
 identity_provenance="source_declared_id", enabled=True)` and register
