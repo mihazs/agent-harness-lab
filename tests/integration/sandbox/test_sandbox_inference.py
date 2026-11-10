@@ -91,6 +91,29 @@ def test_request_has_only_strict_local_argv_tool_and_stateless_replay(controller
     assert 'SYNTHETIC_CONTROLLER_KEY' not in json.dumps(payload); assert 'SYNTHETIC_CONTROLLER_KEY' not in json.dumps(client.report())
 
 
+@pytest.mark.parametrize(('details','expected'), [
+    (dict(cached_tokens=3), 3), (dict(cached_tokens=0), 0),
+    (dict(cached_tokens=6), None), (dict(cached_tokens=True), None),
+    (dict(), None), ('invalid', None)])
+def test_provider_cache_read_usage_is_preserved_without_guessing_invalid_counts(controller, details, expected):
+    client,transport = controller.client([message()]); value = json.loads(reply([message()]))
+    value['usage']['input_tokens_details'] = details
+    transport.return_value = json.dumps(value).encode()
+    client.respond([],controller.deadline)
+    usage = client.report()['provider_reported_usage'][0]
+    assert usage == dict(input_tokens=5, output_tokens=2, total_tokens=7, cached_input_tokens=expected)
+
+
+def test_missing_cache_usage_stays_absent_and_prior_request_usage_is_retained(controller):
+    client,transport = controller.client([call()]); value = json.loads(reply([call()]))
+    value['usage']['input_tokens_details'] = dict(cached_tokens=3)
+    transport.return_value = json.dumps(value).encode(); client.respond([],controller.deadline)
+    transport.return_value = reply([message()]); client.respond([],controller.deadline)
+    assert client.report()['provider_reported_usage'] == [
+        dict(input_tokens=5,output_tokens=2,total_tokens=7,cached_input_tokens=3),
+        dict(input_tokens=5,output_tokens=2,total_tokens=7)]
+
+
 @pytest.mark.parametrize('output', [
     pytest.param([call(),dict(type='web_search_call',id='hosted')], id='hosted-tool'),
     pytest.param([call(),call('two')], id='two-calls'),
