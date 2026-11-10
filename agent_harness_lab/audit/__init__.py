@@ -238,6 +238,11 @@ def audit(inventory, *, task_cwd=None, collision_threshold=skills.COLLISION_THRE
             if context.supporting(node): continue
             for kind, status, facts in _views(node, runtime):
                 if kind not in table: continue
+                if kind == 'plugin' and (status != 'parsed' or node.declared_state != 'present'
+                        or facts.get('plugin_file') == 'manifest'
+                        or facts.get('plugins_content_not_selected', 0) > 0
+                        or facts.get('plugins_enablement_inherited', 0) > 0):
+                    hook_unknown = True
                 if kind == 'hook':
                     hook_surfaces += 1
                     if node.declared_state != 'present' or status != 'parsed': hook_unknown = True
