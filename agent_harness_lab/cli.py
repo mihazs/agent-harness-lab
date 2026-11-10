@@ -28,6 +28,25 @@ def _progress_reporter(stream=None, clock=None):
     return emit
 
 
+def _improve_summary(result, elapsed):
+    from .one_call import REMEDIATION
+    status = result['status']
+    changes = result.get('changed_files')
+    changed = str(len(changes)) if isinstance(changes, list) else 'unknown'
+    output = result.get('output')
+    artifact = json.dumps(output, ensure_ascii=True) if isinstance(output, str) else 'unavailable'
+    action = REMEDIATION.get(result.get('reason')) or {
+        'applied': 'Review the recorded change and rollback information.',
+        'no_change': 'Review the receipt before choosing further work.',
+        'inconclusive': 'Review the receipt and complete its missing evidence or prerequisites.',
+        'budget_exhausted': 'Review the receipt and adjust the budget before retrying.',
+        'requires_intervention': 'Review the receipt and resolve the reported intervention before retrying.',
+    }.get(status, 'Review the receipt and resolve the reported outcome before retrying.')
+    print(f'ahl: outcome={status} changed_files={changed} artifacts={artifact} '
+          f'elapsed={elapsed:.1f}s remaining_seconds=unknown '
+          f'trials_spent=unknown cost=unknown next={action}', file=sys.stderr, flush=True)
+
+
 def assets():
     checkout = Path(__file__).resolve().parents[1]
     if (checkout / 'skills').is_dir():
@@ -243,11 +262,13 @@ def main(argv=None):
             return watch(args)
         else:
             from .one_call import resolve
+            started = time.monotonic()
             resolve(args, explicit)
             if args.timeout <= 0:
                 raise ValueError('timeout must be positive')
             result = improve(args)
         args._progress(result['status'])
+        if args.command == 'improve': _improve_summary(result, time.monotonic()-started)
         print(json.dumps(result, indent=2))
         from agent_harness_lab.monitoring.state import exit_code
         return exit_code(result['status'])

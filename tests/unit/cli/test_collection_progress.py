@@ -92,3 +92,33 @@ def test_repeated_stage_updates_are_throttled_but_stage_changes_are_immediate():
     assert 'scanned=0' in lines[0]
     assert 'selected=1' in lines[1]
     assert 'events=1000' in lines[2]
+
+
+@pytest.mark.parametrize('changed, expected', [([], 'changed_files=0'), (['private-path'], 'changed_files=1'), (None, None)])
+def test_final_improve_progress_counts_changes_without_paths(case, changed, expected):
+    result = {'status': 'no_change', 'output': str(case.root/'private-output')}
+    if changed is not None: result['changed_files'] = changed
+    output, error = io.StringIO(), io.StringIO()
+    with redirect_stdout(output), redirect_stderr(error), patch('agent_harness_lab.workflow.improve', return_value=result):
+        cli.main(['improve', str(case.project)])
+    assert json.loads(output.getvalue()) == result
+    assert expected in error.getvalue() if expected else 'changed_files=unknown' in error.getvalue()
+    assert 'private-path' not in error.getvalue()
+    assert json.dumps(result['output']) in error.getvalue()
+    assert 'trials_spent=unknown' in error.getvalue()
+    assert 'cost=unknown' in error.getvalue()
+    assert 'next=Review the receipt' in error.getvalue()
+
+
+def test_final_blocked_summary_uses_known_remediation_and_handles_missing_artifacts(case):
+    result = {'status': 'blocked', 'reason': 'select_one_runtime_with_agent'}
+    output, error = io.StringIO(), io.StringIO()
+    with redirect_stdout(output), redirect_stderr(error), patch('agent_harness_lab.workflow.improve', return_value=result):
+        code = cli.main(['improve', str(case.project)])
+    assert code == 3
+    assert json.loads(output.getvalue()) == result
+    assert 'outcome=blocked' in error.getvalue()
+    assert 'artifacts=unavailable' in error.getvalue()
+    assert 'changed_files=unknown' in error.getvalue()
+    assert '--agent codex or --agent claude' in error.getvalue()
+    assert 'remaining_seconds=unknown' in error.getvalue()

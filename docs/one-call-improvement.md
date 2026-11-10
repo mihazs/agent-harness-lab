@@ -49,6 +49,11 @@ project banks, stale bank digests, ambiguous runtimes and insufficient trial
 budgets stop before inference, each with its own `reason` and a matching one-step
 `remediation` in `workflow.json` (the generic text is only a fallback). A configuration file is optional and is not created
 by improve. Configured trials share one ceiling across preparation and both attempts.
+On completion, improve writes its structured receipt to stdout and a concise
+outcome summary to stderr. The summary includes the reported changed-file count,
+artifact directory when available, a next step, and elapsed time. It marks
+unmeasured remaining time, trial spend and cost as unknown. Artifact paths are
+private local information; keep the output within the authorized environment.
 The bundled starter bank is not represented as a target-project certification bank.
 Only configured harness files enter preparation snapshots; candidates outside that
 scope are rejected before evaluation construction. Watch uses the same preflight
