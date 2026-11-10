@@ -39,8 +39,16 @@ Task observations pair sealed trials by the frozen task, root, family and repeat
 They show trial IDs and outcomes without changing the analysis population or
 decision. Incomplete or contradictory outcomes remain unknown; different or
 unavailable measured runtime image or grader identity is not comparable. These
-labels do not explain causes. Event timelines, unplanned records and individual
-resource details are not presented by this table.
+labels do not explain causes. Unplanned records and individual resource details
+are not presented by this table.
+
+When retained for the selected trial, the report shows a bounded per-arm list of
+controller action metadata: record order, request ordinal, kind, decision and
+worker observation. It excludes command arguments, message text and tool output.
+The list is not aligned across arms; missing, malformed or omitted records are
+marked unknown or partial, and display is capped at 128 records per trial. These
+ledger records are not independently authenticated action custody and do not
+prove subprocess actions, hidden reads, transient writes, or causation.
 
 This route always refuses `--public`, before opening private input or creating an
 output directory. Synthetic-looking publication labels cannot authorize export.
