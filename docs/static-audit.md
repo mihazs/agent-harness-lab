@@ -33,6 +33,8 @@ entries in declared Claude project settings. A match is a lexical candidate only
 runtime enforcement stays unknown. Missing matches, unsupported glob syntax,
 private local settings and other runtime layers remain unknown. The two inputs
 are independently captured snapshots. Rule hashes and paths are private metadata.
+The CLI includes this comparison under `permission_candidates`; it is outside
+`audit_sha256` and does not change the enforcement coverage verdict.
 
 The `hook_events` field lists known event names from declared hook handlers. Its
 coverage is `unknown` when hook surfaces are unavailable or could not be parsed;
@@ -283,3 +285,21 @@ blocks. These are deliberately simple patterns: they can miss equivalent
 wording and match examples. Findings need behavioral evaluation and do not quote
 instruction contents or headings. No shape hypothesis is emitted for an
 unknown closure.
+
+
+## Codex declared instruction totals
+
+The private CLI report counts the nonblank selected checkout project chain when
+the default root and filename assumptions are settled and the chain is not
+truncated. It does not include CODEX_HOME or instructions above the checkout,
+and does not establish runtime loading. The resolver reads a separate checked
+filesystem observation; it compares selected file hashes to the inventory, but
+cross-observation consistency remains unknown. Truncated, refused, oversized,
+changed, or otherwise unsettled chains produce unknown totals.
+
+Pass `--codex-project-doc-max-bytes N` to model an operator-declared nonnegative
+byte budget; the CLI does not read or authenticate the runtime's settings. If
+omitted, it models the documented 32 KiB default. A declared limit replaces the
+default for chain findings, which identify dropped bytes and the crossing file
+when those are settled. The default 200-line soft budget is a configurable
+convention extrapolated to the selected closure, not a validated threshold.

@@ -38,7 +38,7 @@ def _project(inventory, report, task_cwd):
         if dimension is None:
             continue
         status = _status(row['status'], (row['reason'],))
-        if (row['reason'] in (audit.chain.TRUNCATED, audit.chain.SKIPPED)
+        if (row['reason'] in (audit.chain.TRUNCATED, audit.chain.SKIPPED, audit.chain.DECLARED_TRUNCATED, audit.chain.DECLARED_SKIPPED)
                 and dict(row['measures']).get('dropped_bytes', 0) > 0):
             status = 'missing'
         findings.append(dict(row, dimension=dimension, status=status, observed=row['reason']))
@@ -86,10 +86,14 @@ def main(argv=None):
     parser.add_argument('--runtime', choices=('claude-code', 'codex'), default='codex', help='Runtime profile (default: codex)')
     parser.add_argument('--task-cwd', default='.', help='Existing project-relative task directory (default: project root)')
     parser.add_argument('--json', action='store_true', help='Print the full private JSON report')
+    parser.add_argument('--codex-project-doc-max-bytes', type=int,
+                        help='Caller-declared Codex byte budget; runtime configuration is not read')
     parser.add_argument('--instruction-soft-lines', type=int, default=200,
-                        help='Claude checkout launch-line convention (default: 200; not a validated threshold)')
+                        help='Checkout instruction-line convention (default: 200; not a validated threshold)')
     args = parser.parse_args(argv)
     try:
+        if args.codex_project_doc_max_bytes is not None and args.runtime != 'codex':
+            raise ValueError('Codex byte budget requires the Codex runtime')
         if args.instruction_soft_lines < 0: raise ValueError('instruction soft-line budget must be nonnegative')
         project = args.project.resolve(strict=True)
         if not project.is_dir():
@@ -104,7 +108,25 @@ def main(argv=None):
             raise ValueError('audit state directory must be outside the project')
         profile = dict(schema_version=1, runtime=args.runtime, version=surfaces.PINS[args.runtime], task_cwd=args.task_cwd)
         inventory = harness_inventory.capture(project, profile)
-        report = _project(inventory, audit.audit(inventory, task_cwd=args.task_cwd).document(), args.task_cwd)
+        report = _project(inventory, audit.audit(inventory, task_cwd=args.task_cwd,
+            codex_project_doc_max_bytes=args.codex_project_doc_max_bytes).document(), args.task_cwd)
+        if args.runtime == 'codex':
+            report['codex_budget_declaration'] = dict(
+                bytes=(args.codex_project_doc_max_bytes if args.codex_project_doc_max_bytes is not None
+                       else audit.chain.CODEX_DEFAULT_BYTES),
+                origin='caller_declared' if args.codex_project_doc_max_bytes is not None else 'assumed_default',
+                runtime_configuration='unknown', publication_allowed=False)
+            try:
+                with Folder(project.parent, time.monotonic() + 30) as folder:
+                    report['declared_instruction_totals'] = instruction_totals.codex(
+                        profile, folder, project.name, inventory, declared_limit=args.codex_project_doc_max_bytes)
+            except (ValueError, OSError, TimeoutError):
+                report['declared_instruction_totals'] = dict(status='unknown', bytes=None, lines=None, files=None,
+                    reasons=['resolution_unavailable'], scope='captured_checkout_project_chain',
+                    settings='caller_declared_budget' if args.codex_project_doc_max_bytes is not None else 'assumed_default',
+                    observed_loading='unknown', snapshot_relation='separate_resolver_observation',
+                    inventory_comparison='selected_instruction_files_only', cross_observation_consistency='unknown',
+                    publication_allowed=False)
         if args.runtime == 'claude-code':
             try:
                 with Folder(project.parent, time.monotonic() + 30) as folder:
@@ -119,25 +141,27 @@ def main(argv=None):
                     settings='assumed_default', observed_loading='unknown', snapshot_relation='separate_resolver_observation',
                     inventory_comparison='recognized_instruction_files_only', cross_observation_consistency='unknown',
                     publication_allowed=False)
-            total = report['declared_instruction_totals']
-            total['soft_line_budget'] = args.instruction_soft_lines
-            if total['status'] == 'declared' and total['lines'] > args.instruction_soft_lines:
-                _instruction_hypothesis(report, 'instruction_launch_lines_above_soft_budget', 'count',
-                    'evaluate_instruction_budget_reduction', (('lines', total['lines']),
-                                                             ('soft_line_budget', args.instruction_soft_lines)))
-            if total['status'] == 'declared' and total['files']:
-                shape = total['shape']
-                if not shape['constraints']:
-                    _instruction_hypothesis(report, 'instruction_constraints_not_detected', 'lexical',
-                                            'evaluate_explicit_instruction_constraints')
-                if not shape['verification_commands']:
-                    _instruction_hypothesis(report, 'instruction_verification_command_not_detected', 'lexical',
-                                            'evaluate_verification_guidance')
-                if shape['procedure_sections']:
-                    _instruction_hypothesis(report, 'instruction_procedure_section_detected', 'structural',
-                                            'evaluate_moving_procedure_to_skill_or_path_rule')
+        total = report['declared_instruction_totals']
+        total['soft_line_budget'] = args.instruction_soft_lines
+        if total['status'] == 'declared' and total['lines'] > args.instruction_soft_lines:
+            _instruction_hypothesis(report, 'instruction_launch_lines_above_soft_budget', 'count',
+                'evaluate_instruction_budget_reduction', (('lines', total['lines']),
+                                                         ('soft_line_budget', args.instruction_soft_lines)))
+        if args.runtime == 'claude-code' and total['status'] == 'declared' and total['files']:
+            shape = total['shape']
+            if not shape['constraints']:
+                _instruction_hypothesis(report, 'instruction_constraints_not_detected', 'lexical',
+                                        'evaluate_explicit_instruction_constraints')
+            if not shape['verification_commands']:
+                _instruction_hypothesis(report, 'instruction_verification_command_not_detected', 'lexical',
+                                        'evaluate_verification_guidance')
+            if shape['procedure_sections']:
+                _instruction_hypothesis(report, 'instruction_procedure_section_detected', 'structural',
+                                        'evaluate_moving_procedure_to_skill_or_path_rule')
         from .protected_paths import capture as protected_paths
         report['protected_path_inventory'] = protected_paths(project)
+        from .permission_candidates import report as permission_candidates
+        report['permission_candidates'] = permission_candidates(inventory, report['protected_path_inventory'])
         candidate = next((row for row in report['findings'] if row['remediation']), None)
         if report['status'] != 'completed':
             report['next_action'] = 'Resolve the blocked inventory before using this audit.'
@@ -159,8 +183,10 @@ def main(argv=None):
             events = report['hook_events']
             print('Declared hook events: ' + (', '.join(events['declared']) or 'none observed') +
                   f" (coverage: {events['coverage']}; execution: unknown)")
+            candidates = {row['path']: row['status'] for row in report['permission_candidates']['paths']}
             for row in report['protected_path_inventory']['paths']:
-                print(f"Protected path candidate: {json.dumps(row['path'], ensure_ascii=True)} ({row['category']}); enforcement: unknown")
+                print(f"Protected path candidate: {json.dumps(row['path'], ensure_ascii=True)} ({row['category']}); "
+                      f"permission: {candidates[row['path']]}; enforcement: unknown")
             if report['protected_path_inventory']['coverage'] == 'unknown':
                 print('Protected path coverage: unknown')
             for row in report['findings']:
