@@ -80,6 +80,21 @@ class UsageCollector:
         if self._plan_pinned: result['experiment_plan_contains_contract_digest'] = True
         return result
 
+    def evidence_candidate(self, result, *, public=False):
+        """Prepare an unsealed private candidate while the owned comparison is live."""
+        if public is not False: raise ValueError('resource evidence candidate is private')
+        report = self.report(result)
+        if not self._plan_pinned: raise ValueError('resource contract must be pinned in the plan')
+        comparison = self._comparison()
+        custody = comparison.finish(result)
+        return dict(profile='ahl-resource-evidence-candidate-v1', plan_sha256=self._plan,
+                    schedule_sha256=self._schedule, resource_contract_sha256=self._contract_sha256,
+                    resource_contract=deepcopy(self._contract), result_canonical_sha256=hashed(result),
+                    custody_canonical_sha256=hashed(custody), samples=deepcopy(report['samples']),
+                    state='live_candidate_unsealed', durability='not_persisted',
+                    source='provider_reported_unverified', quality='unverified', billing_completeness='unknown',
+                    publication='private', publication_allowed=False, certification_authority=False, automatic_promotion=False)
+
 
 def _record_completed(comparison):
     collector = _ACTIVE.get(comparison)
