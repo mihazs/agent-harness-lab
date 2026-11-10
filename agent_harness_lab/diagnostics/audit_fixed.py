@@ -69,16 +69,21 @@ def _recall_interval(prevalence,missed):
             min(1.0,1-missed[0]/prevalence[1])]
 
 
-def estimate(receipt, frame, plan, batch):
-    """Report fixed-frame rates, conditional on exchangeable ranks and complete reviewed labels."""
-    review_queue(receipt,frame,plan)
-    labels=audit._labels(batch,receipt);draws=receipt['draws']; rows=[];pending=0
+def _reviewed(receipt,batch):
+    """Extract reviewed labels without filling missing or nonresponse outcomes."""
+    labels=audit._labels(batch,receipt);draws=receipt['draws'];rows=[];pending=0
     for item in draws:
         status,label=labels.get(item['unit_sha256'],('pending',None))
         if status!='reviewed':pending+=1
         else:rows.append(dict(item,incident=label!=audit.NO_INCIDENT))
-    sampled={d['unit_sha256'] for d in draws}
-    outside=sum(key not in sampled for key in labels)
+    sampled={item['unit_sha256'] for item in draws}
+    return rows,pending,sum(key not in sampled for key in labels)
+
+
+def estimate(receipt, frame, plan, batch):
+    """Report fixed-frame rates, conditional on exchangeable ranks and complete reviewed labels."""
+    review_queue(receipt,frame,plan)
+    draws=receipt['draws'];rows,pending,outside=_reviewed(receipt,batch)
     result=dict(schema_version=1,profile=REPORT_PROFILE,receipt_sha256=receipt['receipt_sha256'],
         estimand=audit.ESTIMAND,population_units=receipt['frame']['eligible_units'],sample_size=len(draws),
         reviewed=len(rows),pending_or_nonresponse=pending,outside_probability_sample=outside,
