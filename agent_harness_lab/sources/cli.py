@@ -15,6 +15,7 @@ from .mempalace_search import PROVIDER as MEMPALACE_SEARCH, SOURCE_VERSION as ME
 from .mempalace_list import PROVIDER as MEMPALACE_LIST, SOURCE_VERSION as MEMPALACE_LIST_VERSION, MemPalaceList
 from .mempalace import PROVIDER as MEMPALACE, SOURCE_VERSION as MEMPALACE_VERSION, MemPalaceDrawer
 from .mem0 import PROVIDER as MEM0, SOURCE_VERSION as MEM0_VERSION, Mem0Export
+from .hindsight_zip import PROVIDER as HINDSIGHT_ZIP, SOURCE_VERSION as HINDSIGHT_ZIP_VERSION, HindsightZipArchive
 from .hindsight import PROVIDER as HINDSIGHT, SOURCE_VERSION as HINDSIGHT_VERSION, HindsightArchive
 from .cognee import PROVIDER as COGNEE, SOURCE_VERSION as COGNEE_VERSION, CogneeExport
 from .opencode import PROVIDER as OPENCODE, SOURCE_VERSION as OPENCODE_VERSION, OpenCodeExport
@@ -100,6 +101,8 @@ def main(argv):
                 connector = MemPalaceDrawer(args.manifest)
             elif source.provider == MEM0:
                 connector = Mem0Export(args.manifest)
+            elif source.provider == HINDSIGHT_ZIP:
+                connector = HindsightZipArchive(args.manifest)
             elif source.provider == HINDSIGHT:
                 connector = HindsightArchive(args.manifest)
             elif source.provider == COGNEE:
@@ -125,6 +128,7 @@ def main(argv):
             registry.register(Capability('local_file', MEMPALACE_LIST, MEMPALACE_LIST_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', MEMPALACE, MEMPALACE_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', MEM0, MEM0_VERSION, ('contextual_assertion',)), connector)
+            registry.register(Capability('local_file', HINDSIGHT_ZIP, HINDSIGHT_ZIP_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', HINDSIGHT, HINDSIGHT_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', COGNEE, COGNEE_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', OPENCODE, OPENCODE_VERSION, ('contextual_assertion',)), connector)
@@ -168,6 +172,8 @@ def main(argv):
                     result['mempalace_summary'] = connector.summary
                 elif isinstance(connector, Mem0Export):
                     result['mem0_summary'] = connector.summary
+                elif isinstance(connector, HindsightZipArchive):
+                    result['hindsight_zip_summary'] = connector.summary
                 elif isinstance(connector, HindsightArchive):
                     result['hindsight_summary'] = connector.summary
                 elif isinstance(connector, CogneeExport):

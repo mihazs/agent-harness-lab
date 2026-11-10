@@ -154,17 +154,20 @@ class HindsightArchive(LocalExport):
         first = None  # release the manifest bytes; consume() is not called again
         self.claims, self.summary = parse(dict(zip(names, decoded)), selection, version, bounds)
         archive_sha256 = digest(dict(zip(names, hashes)))
-        rows = [('hindsight_'+c.claim_type, c.native_id_sha256, digest(asdict(c)), PROVENANCE[c.claim_type], c.recorded_at)
-                for c in self.claims]
-        rows.append(('hindsight_archive', digest(('hindsight_archive', selection['instance'], selection['bank_id'], archive)),
-                     archive_sha256, 'native_field', None))
-        now = datetime.now(timezone.utc).isoformat()
-        records = [EvidenceRecord(source.source_key, native, revision, revision, 'contextual_assertion', kind, now,
-                                  original_at=original, provenance=provenance, capture_completeness='partial')
-                   for kind, native, revision, provenance, original in rows]
-        # The archive hash is part of the checkpoint: a change to any unmodelled field is still a new capture.
-        return Snapshot(digest(dict(self.summary, archive_sha256=archive_sha256, claims=[asdict(c) for c in self.claims])),
-                        tuple(records))
+        native = digest(('hindsight_archive', selection['instance'], selection['bank_id'], archive))
+        return archive_snapshot(source, self.claims, self.summary, native, archive_sha256)
+
+
+def archive_snapshot(source, claims, summary, archive_native, archive_sha256):
+    """Preserve the same partial claim records for either selected archive representation."""
+    rows = [('hindsight_'+c.claim_type, c.native_id_sha256, digest(asdict(c)), PROVENANCE[c.claim_type], c.recorded_at)
+            for c in claims]
+    rows.append(('hindsight_archive', archive_native, archive_sha256, 'native_field', None))
+    now = datetime.now(timezone.utc).isoformat()
+    records = [EvidenceRecord(source.source_key, native, revision, revision, 'contextual_assertion', kind, now,
+                              original_at=original, provenance=provenance, capture_completeness='partial')
+               for kind, native, revision, provenance, original in rows]
+    return Snapshot(digest(dict(summary, archive_sha256=archive_sha256, claims=[asdict(c) for c in claims])), tuple(records))
 
 
 def entries(manifest, bounds):
