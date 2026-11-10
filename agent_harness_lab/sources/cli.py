@@ -112,6 +112,7 @@ def main(argv):
             registry.register(Capability('local_file', HINDSIGHT, HINDSIGHT_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', COGNEE, COGNEE_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', OPENCODE, OPENCODE_VERSION, ('contextual_assertion',)), connector)
+            registry.register(Capability('local_file', OPENCODE, 'v2', ('contextual_assertion',)), connector)
             for version in (CODEX_VERSION, CODEX_ROOT_VERSION):
                 registry.register(Capability('local_file', 'codex-rollout', version, ('behavioral_event',)), connector)
             for version in (CLAUDE_VERSION, CLAUDE_ROOT_VERSION):
