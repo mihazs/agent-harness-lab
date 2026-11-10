@@ -57,6 +57,11 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if 'AHL_MANAGED_PREPARATION' in os.environ:
         argparse.ArgumentParser(prog='ahl').exit(3,'ahl: managed preparation cannot start a CLI operation\n')
+    from .read_only import require_safe_cli_destinations, FrozenProjectError
+    try:
+        require_safe_cli_destinations(argv)
+    except FrozenProjectError as exc:
+        argparse.ArgumentParser(prog='ahl').exit(2, f'ahl: {exc}\n')
     skill_invocation=argv[:2]==['skills','invoke']
     if skill_invocation:argv=['improve',*argv[2:]]
     if argv and argv[0] == 'analysis':
@@ -226,6 +231,9 @@ def main(argv=None):
         if not args.project.is_dir():
             raise ValueError('project must be an existing directory')
         args.project = args.project.resolve()
+        if args.command != 'analyze':
+            from .read_only import require_writable
+            require_writable(args.project)
         if args.command == 'analyze':
             if args.memory_manifest is not None:
                 if args.authorization_file is None or args.format != 'normalized' or args.source_version is not None or args.session is not None:

@@ -39,6 +39,9 @@ def write_json(path, value):
 
 def output_dir(args, *, deadline=None):
     parent = state_root() / 'runs' / identity(args.project)
+    from .read_only import require_external_output
+    require_external_output(args.project, parent if args.output is None else args.output)
+    require_external_output(args.project, tempfile.gettempdir())
     if args.output is None:
         parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         output = Path(tempfile.mkdtemp(prefix='run-', dir=parent))
@@ -61,6 +64,8 @@ def output_dir(args, *, deadline=None):
 @contextlib.contextmanager
 def project_lock(project):
     folder = state_root() / 'locks'
+    from .read_only import require_external_output
+    require_external_output(project, folder)
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = folder / (identity(project) + '.lock')
     try:
@@ -932,6 +937,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
 
 def _run_improvement(args, *, parent_started=None):
     """Persist truthful completion even when a run is interrupted or raises."""
+    from .read_only import require_writable
+    require_writable(args.project)
     issuer=os.getpid(); managed=getattr(args,'evaluation_store',None) is not None
     from .one_call import pinned_bank
     configured=getattr(args,'_configured_responses',False)
@@ -1010,6 +1017,8 @@ def _run_improvement(args, *, parent_started=None):
 
 
 def improve(args):
+    from .read_only import require_writable
+    require_writable(args.project)
     with project_lock(args.project):
         return _run_improvement(args)
 
@@ -1054,6 +1063,8 @@ def watch_configuration(args):
 
 
 def watch(args):
+    from .read_only import require_writable
+    require_writable(args.project)
     issuer=os.getpid(); managed=getattr(args,'evaluation_store',None) is not None
     timed=managed or getattr(args,'_configured_responses',False)
     first_started=time.monotonic() if timed else None
@@ -1072,6 +1083,7 @@ def watch(args):
         while True:
             # The same lock covers scheduling, execution and final checkpoint write.
             with project_lock(args.project):
+                require_writable(args.project)
                 iteration_started=(first_started if first_started is not None else time.monotonic()) if timed else None
                 first_started=None
                 if timed: configuration=watch_configuration(args)

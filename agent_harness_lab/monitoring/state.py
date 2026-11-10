@@ -23,6 +23,8 @@ def atomic_json(path, value, *, before_replace=None):
     if before_replace is not None and not callable(before_replace):
         raise ValueError('atomic publication guard must be callable')
     path = Path(path)
+    from agent_harness_lab.read_only import require_writable
+    require_writable(path.parent)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     descriptor, temporary = tempfile.mkstemp(prefix='.' + path.name, dir=path.parent)
     try:
@@ -32,6 +34,7 @@ def atomic_json(path, value, *, before_replace=None):
             stream.flush()
             os.fsync(stream.fileno())
         if before_replace is not None: before_replace()
+        require_writable(path.parent)
         os.replace(temporary, path)
         directory = os.open(path.parent, os.O_RDONLY)
         try:

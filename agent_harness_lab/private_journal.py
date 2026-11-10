@@ -13,6 +13,8 @@ import tempfile
 from .evaluation.integrity import (contained, create_directory_at, create_directory_nofollow, invalid_constant,
                                    open_beneath, open_directory_nofollow, read_regular, unique_object)
 
+from .read_only import require_writable
+
 MAX_EVENTS = 64
 MAX_METADATA = 256*1024
 
@@ -40,9 +42,17 @@ def sync_directory(path):
 
 
 def write_bytes(path, raw):
+    require_writable(Path(path).parent)
     descriptor = open_beneath(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(descriptor, 'wb') as stream:
         stream.write(raw); stream.flush(); os.fsync(stream.fileno())
+
+
+def _write_guard(root, before_replace):
+    def check():
+        if before_replace is not None: before_replace()
+        require_writable(root)
+    return check
 
 
 def _publish_at(parent, name, value, before_replace):
@@ -77,8 +87,9 @@ def atomic_json(path, value, *, before_replace=None):
     if before_replace is not None and not callable(before_replace):
         raise ValueError('atomic publication guard must be callable')
     path = Path(path)
+    require_writable(path.parent)
     parent = create_directory_nofollow(path.parent)
-    try: return _publish_at(parent, path.name, value, before_replace)
+    try: return _publish_at(parent, path.name, value, _write_guard(path.parent, before_replace))
     finally: os.close(parent)
 
 
@@ -101,6 +112,7 @@ class PrivateJournal:
         publication first re-walks the store path and refuses unless it still names the locked directory
         (a swapped link raises 'input crosses a symlink', a replaced directory 'case store changed while
         locked'); the files themselves are made from the held descriptor, so a later swap cannot move them."""
+        require_writable(self.root)
         if any(p.is_symlink() for p in (self.root, *self.root.parents)):
             raise ValueError('case store crosses a symlink')
         if create: self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -153,10 +165,11 @@ class PrivateJournal:
         if before_replace is not None and not callable(before_replace):
             raise ValueError('atomic publication guard must be callable')
         path = Path(path).absolute()
+        require_writable(self.root)
         if not path.is_relative_to(self.root) or path == self.root: raise ValueError('journal file escapes the case store')
         self._held_store(store)
         parent = create_directory_at(store, path.parent.relative_to(self.root).parts)
-        try: return _publish_at(parent, path.name, value, before_replace)
+        try: return _publish_at(parent, path.name, value, _write_guard(self.root, before_replace))
         finally: os.close(parent)
 
     def case(self, case_id):
