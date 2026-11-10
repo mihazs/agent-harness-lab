@@ -108,7 +108,9 @@ plan's action only when a channel alerts; otherwise it is `observe`.
 total-variation distance between declared reference and current root proportions.
 It requires matching frozen digests, complete capture in both windows, no unknown
 strata or collapsed `other` category, and the plan's minimum root exposure on both
-sides; otherwise the distance is unavailable. This is not a statistical test or
+sides; stratum keys must use the inventory's canonical shape. Otherwise the distance
+is unavailable. Digests detect changes but do not authenticate caller-supplied data.
+This is not a statistical test or
 an alert. Input authority and root independence remain unverified, and the result
 does not establish a regression, cause, or promotion authority.
 

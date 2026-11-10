@@ -389,6 +389,16 @@ def assess(plan, reference, runs, window_index):
     return body
 
 
+def _canonical_stratum(key, fields):
+    if key == OTHER: return True  # The aggregate is recognized but cannot yield a distance.
+    if not isinstance(key, str) or len(key) > 1024: return False
+    try: values = json.loads(key)
+    except (ValueError, TypeError, RecursionError): return False
+    return (isinstance(values, list) and len(values) == len(fields)
+            and all(_known_identity(value) and len(value) <= 128 for value in values)
+            and json.dumps(values) == key)
+
+
 def describe_task_mix(plan, reference, receipt):
     """Compare declared stratum proportions descriptively; this is not a drift test."""
     plan_sha = check_plan(plan)
@@ -411,7 +421,7 @@ def describe_task_mix(plan, reference, receipt):
                 or mix['reference'] != ref_counts or capture['reference_coverage'] != ref_coverage):
             raise ValueError('drift receipt does not match frozen inputs')
         if (not all(isinstance(counts, dict) and len(counts) <= MAX_CATEGORIES + 1
-                    and all(isinstance(key, str) and len(key) <= 1024 and type(value) is int and 0 < value <= MAX_INPUT_RUNS
+                    and all(_canonical_stratum(key, plan['strata']) and type(value) is int and 0 < value <= MAX_INPUT_RUNS
                             for key, value in counts.items()) for counts in (ref_counts, current_counts))
                 or type(ref_unknown) is not int or ref_unknown < 0
                 or type(current_unknown) is not int or current_unknown < 0):

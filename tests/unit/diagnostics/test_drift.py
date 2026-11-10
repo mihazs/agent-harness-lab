@@ -197,6 +197,28 @@ class TestChannels:
         with pytest.raises(ValueError, match='different plan'):
             drift.describe_task_mix(make_plan(max_windows=3), reference, receipt)
 
+    @pytest.mark.parametrize('key', ['not-json', '["lint","model-v1"]', '["unknown", "model-v1"]',
+                                      '["lint"]', '["lint", ["model-v1"]]'])
+    def test_descriptive_mix_rejects_noncanonical_strata_even_with_recomputed_digest(self, plan, reference, key):
+        receipt = drift.assess(plan, reference, synthetic_runs(100, 200, seed=2, prefix='c'), 0)
+        counts = receipt['channels']['task_mix']['current']
+        count = counts.pop(next(iter(counts)))
+        counts[key] = count
+        receipt['sha256'] = drift._digest({k: v for k, v in receipt.items() if k != 'sha256'})
+        with pytest.raises(ValueError, match='invalid task-mix counts'):
+            drift.describe_task_mix(plan, reference, receipt)
+
+    def test_self_consistent_caller_counts_remain_unverified(self, plan, reference):
+        receipt = drift.assess(plan, reference, synthetic_runs(100, 200, seed=2, prefix='c'), 0)
+        counts = receipt['channels']['task_mix']['current']
+        keys = sorted(counts)
+        counts[keys[0]], counts[keys[1]] = 1, 199
+        receipt['sha256'] = drift._digest({k: v for k, v in receipt.items() if k != 'sha256'})
+        result = drift.describe_task_mix(plan, reference, receipt)
+        assert result['status'] == 'descriptive_only' and result['total_variation'] > 0
+        assert result['input_authority'] == result['root_independence'] == 'unverified'
+        assert result['statistical_tested'] is False and result['alert'] is False
+
     def test_input_bound_counts_duplicates_and_out_of_window_runs(self, plan, reference, monkeypatch):
         monkeypatch.setattr(drift, 'MAX_INPUT_RUNS', 3)
         run = synthetic_runs(100, 1, prefix='c')[0]
