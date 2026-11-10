@@ -817,7 +817,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
 
         prerequisite_scope=getattr(args,'_prerequisite_scope',None)
         if prerequisite_scope is not None:prerequisite_scope.bind(manifest_path,baseline,frozen)
-        manifest = json.loads(manifest_path.read_text())
+        manifest_raw = manifest_path.read_bytes()
+        manifest = json.loads(manifest_raw)
         required_trials = 2 * len(manifest["tasks"])
         if required_trials > trials_left:
             result.update(status="budget_exhausted", reason="shared_trial_budget_exhausted")
@@ -856,19 +857,28 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 result.update(status='requires_intervention',reason='permission_qualification_not_met')
                 break
         trials = evaluated['trials']
-        if instruction is not None:
-            result['instruction_removal'] = instruction_validation.removal_disposition(instruction, trials)
         if (controlled or bank is not None) and evaluated.get('status') in ('blocked','budget_exhausted'):
             result.update(status=evaluated['status'],reason=evaluated.get('reason'))
             break
         from agent_harness_lab.promotion.policy import legacy_coverage
-        manifest_raw = manifest_path.read_bytes()
-        if not legacy_coverage(json.loads(manifest_raw), trials):
+        if manifest_path.read_bytes() != manifest_raw:
+            result.pop('instruction_removal',None)
+            result.update(status='incomplete',reason='evaluation_manifest_changed')
+            break
+        if not legacy_coverage(manifest, trials):
+            result.pop('instruction_removal',None)
             result['status'] = 'incomplete'
             result['reason'] = 'missing_or_duplicate_trials'
             break
+        declared_splits = {task['id']:task['split'] for task in manifest['tasks']}
+        if any(trial.get('split') != declared_splits[trial['task']] for trial in trials):
+            result.pop('instruction_removal',None)
+            result.update(status='incomplete',reason='trial_split_mismatch')
+            break
+        if instruction is not None:
+            result['instruction_removal'] = instruction_validation.removal_disposition(instruction, trials)
         # Latest exactly covered evaluation; explained after the loop, never an extra gate input.
-        single_run = dict(manifest=json.loads(manifest_raw), trials=trials, inputs_unchanged=evaluated['inputs_unchanged'],
+        single_run = dict(manifest=manifest, trials=trials, inputs_unchanged=evaluated['inputs_unchanged'],
             bindings=dict(attempt=attempt, evaluation=str(options.output), manifest_sha256=hashlib.sha256(manifest_raw).hexdigest(),
                 results_sha256=_bounded_sha256(Path(options.output) / 'results.json'),
                 baseline_sha256=baseline_hash, candidate_sha256=frozen_hash))
