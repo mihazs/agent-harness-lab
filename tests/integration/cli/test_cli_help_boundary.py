@@ -40,7 +40,7 @@ RUNTIME = ('--format', '--source-version', '--output')
 EXECUTION = ('--focus', '--agent', '--inference-settings', '--codex', '--claude', '--timeout', '--inherit-env', '--sandbox-graders',
              '--cgroup-root', '--image-root', '--image-sha256', '--permission-audit', '--evaluation-store', '--disk-bytes')
 OPTIONS = {
-    'improve': (*COMMON, '--incident-corpus', '--incident-query', *RUNTIME, '--experiment-request', *EXECUTION,
+    'improve': (*COMMON, '--incident-corpus', '--incident-query', *RUNTIME, '--experiment-request', '--from-audit', *EXECUTION,
                 '--repair-contracts'),
     'watch': (*COMMON, *RUNTIME, *EXECUTION, '--interval', '--max-attempts', '--retry-delay', '--watch-budget', '--once'),
 }

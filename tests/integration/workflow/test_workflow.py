@@ -11,6 +11,7 @@ import pytest
 
 from agent_harness_lab.workflow import improve, watch, project_lock, adopt, snapshot, candidate_states, validate_manifest
 from agent_harness_lab.cli import main
+from agent_harness_lab.audit.cli import main as audit_main
 
 FAKE = r'''#!/usr/bin/env python3
 import json, pathlib, sys
@@ -378,3 +379,46 @@ def test_audit_focus_hint_keeps_instruction_validation_in_force(wf, monkeypatch,
     assert Path(result['instruction_validation']).is_file()
     assert (wf.project / 'AGENTS.md').read_text() == 'SYNTHETIC_PRIVATE_SENTENCE\n'
     assert result['status'] == 'inconclusive'
+
+
+def test_rechecked_audit_hypothesis_reaches_paired_evaluation(wf, monkeypatch, capsys):
+    (wf.project/'.git').mkdir()
+    original='bad\n'*100
+    (wf.project/'AGENTS.md').write_text(original)
+    monkeypatch.setenv('XDG_STATE_HOME',str(wf.root/'audit-state'))
+    assert audit_main([str(wf.project),'--json','--improvement-recheck',
+                       '--codex-project-doc-max-bytes','16']) == 0
+    report=json.loads(capsys.readouterr().out)
+    receipt=wf.root/'audit.json';receipt.write_text(json.dumps(report))
+    args=wf.args();args.from_audit=receipt
+    result=improve(args)
+    output=Path(result['output'])
+    assert result['status']=='inconclusive' and result['changed_files']==[]
+    assert (wf.project/'AGENTS.md').read_text()==original
+    assert json.loads((output/'evaluation-0/results.json').read_text())['trials']
+    hypothesis=result['audit_hypothesis']
+    assert hypothesis['hypothesis_source']=='static_convention' and hypothesis['authority']=='none'
+    assert hypothesis['selection']=='caller_declared_freshly_rechecked'
+    assert json.loads((output/'change-plan.json').read_text())['audit_hypothesis']==hypothesis
+    assert json.loads((output/'preparation/context.json').read_text())['focus']==hypothesis['focus']
+    assert 'bad\n' not in repr(hypothesis)
+
+
+def test_audit_recheck_rejects_changed_or_fabricated_findings(wf, monkeypatch, capsys):
+    from agent_harness_lab.audit.recheck import select
+
+    (wf.project/'.git').mkdir();(wf.project/'AGENTS.md').write_text('bad\n'*100)
+    monkeypatch.setenv('XDG_STATE_HOME',str(wf.root/'audit-state'))
+    assert audit_main([str(wf.project),'--json','--improvement-recheck',
+                       '--codex-project-doc-max-bytes','16']) == 0
+    report=json.loads(capsys.readouterr().out);receipt=wf.root/'audit.json'
+    report['findings'][0]['source']='SYNTHETIC_UNTRUSTED_SOURCE'
+    report['findings'][0]['path']='SYNTHETIC_UNTRUSTED_PATH'
+    receipt.write_text(json.dumps(report))
+    checked=select(receipt,wf.project,'codex')
+    assert 'SYNTHETIC_UNTRUSTED' not in repr(checked)
+    with pytest.raises(ValueError,match='Codex runtime'):select(receipt,wf.project,'claude-code')
+    report['findings'][0]['id']='0'*64;receipt.write_text(json.dumps(report))
+    with pytest.raises(ValueError,match='no eligible'):select(receipt,wf.project,'codex')
+    (wf.project/'AGENTS.md').write_text('different')
+    with pytest.raises(ValueError,match='inventory changed'):select(receipt,wf.project,'codex')

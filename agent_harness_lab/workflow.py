@@ -524,6 +524,10 @@ def _improve(args):
             raise ValueError('configured bank changed before preparation')
     original = snapshot(args.project, baseline, allowed_paths=allowed_paths(args))
     candidate_states(baseline, original)
+    if getattr(args,'_audit_hypothesis',None) is not None:
+        from .audit.recheck import select
+        if select(args.from_audit,args.project,args.agent)!=args._audit_hypothesis:
+            raise ValueError('audit hypothesis changed during baseline snapshot')
     shutil.copytree(baseline, candidate)
     if repeated is not None:repeated.freeze_baseline(baseline)
     baseline_hash = runner.digest(baseline)
@@ -900,14 +904,17 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 deferred=['behavioral_application_pending_independent_certification','skill_lifecycle',
                           *surfaces.deferred(surfaces.adopted())])
             common_plan.validate_inventories(candidate_states(baseline,original),candidate_states(frozen,original))
-            write_json(output / 'change-plan.json', attach(dict(schema_version=1, kind='behavioral_candidate',
+            plan_document=dict(schema_version=1, kind='behavioral_candidate',
                 profile='one-call-improvement-v1', publication_allowed=False,
                 baseline_sha256=baseline_hash, candidate_sha256=frozen_hash,
                 operations=[dict(path=name, before=original.get(name), after=proposed.get(name),
                                  profile='one-call-improvement-v1', publication_allowed=False)
                             for name in sorted(original.keys() | proposed.keys())
                             if original.get(name) != proposed.get(name)],
-                evaluation=str(options.output), application_eligible=False),common_plan))
+                evaluation=str(options.output), application_eligible=False)
+            if getattr(args,'_audit_hypothesis',None) is not None:
+                plan_document['audit_hypothesis']=args._audit_hypothesis
+            write_json(output / 'change-plan.json', attach(plan_document,common_plan))
             result['plan'] = str(output / 'change-plan.json')
             result['plan_sha256'] = common_plan.sha256
             result['status'] = 'inconclusive'
@@ -941,6 +948,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             result['decision']=dict(profile=SINGLE_RUN_PROFILE,status='unavailable',reason=type(exc).__name__,
                 publication_allowed=False,automatic_promotion=False,adoption_authority=False)
     result['automatic_promotion']=False
+    if getattr(args,'_audit_hypothesis',None) is not None:
+        result['audit_hypothesis']=args._audit_hypothesis
     if access is not None:
         result['construction_access']=access.report()
         result['publication_allowed']=False
@@ -962,6 +971,8 @@ def _run_improvement(args, *, parent_started=None):
     if configured: args._configured_started=started
     try:
         from .one_call import contracts, preflight, preflight_plan, check_configuration, REMEDIATION, DEFAULT_REMEDIATION
+        if getattr(args,'from_audit',None) is not None and getattr(args,'repair_contracts',False):
+            raise ValueError('audit hypothesis cannot be combined with contract repair')
         check_configuration(args, check_bank=getattr(args, 'repair_contracts', False))
         if time.monotonic()>=started+args.timeout: raise TimeoutError('configuration exhausted improvement budget')
         if managed:
@@ -984,6 +995,13 @@ def _run_improvement(args, *, parent_started=None):
             check_configuration(args)
         if time.monotonic()>=started+args.timeout:
             raise TimeoutError('construction preflight exhausted improvement budget')
+        if getattr(args,'from_audit',None) is not None:
+            if getattr(args,'focus',None) is not None or getattr(args,'repair_contracts',False):
+                raise ValueError('audit hypothesis cannot be combined with focus or contract repair')
+            from .audit.recheck import select
+            args._audit_hypothesis=select(args.from_audit,args.project,args.agent)
+            args.focus=args._audit_hypothesis['focus']
+            if time.monotonic()>=started+args.timeout: raise TimeoutError('audit recheck exhausted improvement budget')
         return _improve(args)
     except BaseException as exc:
         if managed and os.getpid()!=issuer: raise
@@ -1035,6 +1053,9 @@ def _run_improvement(args, *, parent_started=None):
 
 
 def improve(args):
+    if getattr(args,'from_audit',None) is not None:
+        from copy import copy
+        args=copy(args)
     from .read_only import require_writable
     require_writable(args.project)
     with project_lock(args.project):
