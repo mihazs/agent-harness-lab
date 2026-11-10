@@ -67,14 +67,14 @@ def project_lock(project):
     folder = state_root() / 'locks'
     from .read_only import require_external_output
     require_external_output(project, folder)
+    owner = os.getpid()
+    token = f'{owner}:{uuid.uuid4().hex}'
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = folder / (identity(project) + '.lock')
     try:
         descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
         raise ValueError(f'Another run or stale lock exists: {path}; verify its PID before removing it') from None
-    owner = os.getpid()
-    token = f'{owner}:{uuid.uuid4().hex}'
     with os.fdopen(descriptor, 'w') as stream:
         stream.write(token)
     try:
