@@ -68,7 +68,7 @@ latency, currency, automatic provenance capture and report integration.
 
 The Responses controller retains a valid provider-reported `input_tokens_details.cached_tokens`
 as `cached_input_tokens` in the individual request's `provider_reported_usage`. This count is
-included in input tokens; it is not an additional token total. A missing detail stays absent,
-and an invalid or inconsistent value is recorded as unknown (`null`). This is a provider
+included in input tokens; it is not an additional token total. A missing or null detail object
+stays absent, and an invalid or inconsistent count is recorded as unknown (`null`). This is a provider
 observation, not independent verification of cache state, complete billing, or a resource
 comparison. Cache-write charges and unreported retry usage remain unknown.

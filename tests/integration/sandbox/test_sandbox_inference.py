@@ -114,6 +114,13 @@ def test_missing_cache_usage_stays_absent_and_prior_request_usage_is_retained(co
         dict(input_tokens=5,output_tokens=2,total_tokens=7)]
 
 
+def test_null_cache_detail_is_absent(controller):
+    client,transport = controller.client([message()]); value = json.loads(reply([message()]))
+    value['usage']['input_tokens_details'] = None
+    transport.return_value = json.dumps(value).encode(); client.respond([],controller.deadline)
+    assert 'cached_input_tokens' not in client.report()['provider_reported_usage'][0]
+
+
 @pytest.mark.parametrize('output', [
     pytest.param([call(),dict(type='web_search_call',id='hosted')], id='hosted-tool'),
     pytest.param([call(),call('two')], id='two-calls'),
