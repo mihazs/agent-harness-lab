@@ -171,3 +171,37 @@ def test_skill_coverage_uses_skill_nodes_not_command_rows(tmp_path, monkeypatch,
     assert next(row for row in report['coverage'] if row['dimension'] == 'skills')['status'] == expected
     assert all(row['status'] in ('conforms', 'weak', 'missing', 'unknown', 'not_checked') for row in report['findings'])
     assert all(row['dimension'] in ('instructions', 'skills', 'enforcement') for row in report['findings'])
+
+
+@pytest.mark.parametrize(('extra', 'expected'), [(0, 'conforms'), (1, 'missing')])
+def test_codex_chain_dropped_bytes_are_missing_coverage(tmp_path, monkeypatch, capsys, extra, expected):
+    project = tmp_path / 'project'
+    (project / '.git').mkdir(parents=True)
+    (project / 'src').mkdir()
+    (project / 'AGENTS.md').write_bytes(b'a' * 20000)
+    (project / 'src/AGENTS.md').write_bytes(b'b' * (32768 - 20000 + extra))
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--task-cwd', 'src', '--json']) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert next(row for row in report['coverage'] if row['dimension'] == 'instructions')['status'] == expected
+    missing = [row for row in report['findings'] if row['status'] == 'missing']
+    if extra:
+        assert len(missing) == 1
+        assert missing[0]['path'] == 'src/AGENTS.md'
+        assert dict(missing[0]['measures'])['dropped_bytes'] == 1
+    else:
+        assert not missing
+    assert report['publication_allowed'] is False
+
+
+def test_unsettled_dropped_count_does_not_claim_missing_coverage(tmp_path, monkeypatch, capsys):
+    project = tmp_path / 'project'
+    (project / '.git').mkdir(parents=True)
+    (project / 'src').mkdir()
+    (project / 'AGENTS.md').write_bytes(b'a' * (32768 - 10))
+    (project / 'src/AGENTS.md').write_text('\u3000' * 20 + 'content')
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--task-cwd', 'src', '--json']) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert next(row for row in report['coverage'] if row['dimension'] == 'instructions')['status'] == 'weak'
+    assert not any(row['status'] == 'missing' for row in report['findings'])

@@ -14,7 +14,9 @@ evaluation when applicable; it is not an instruction to apply a change.
 The CLI's `coverage` rows summarize six audit areas. Instructions, skills, and
 enforcement use the corresponding inventory evidence; sensors, memory and state,
 and the improvement loop remain `not_checked`. An absent skill is `unknown`,
-not a pass. CLI findings use `weak`, `unknown`, or `not_checked`; coverage can
+not a pass. CLI findings use `weak`, `missing`, `unknown`, or `not_checked`.
+When the modeled default Codex chain drops instruction bytes, coverage is `missing`;
+an unsettled dropped-byte count does not get that label. Coverage can
 also be `conforms`. The library's separate report retains its documented
 `conformant`, `nonconformant`, and `unknown` vocabulary.
 The `hook_events` field lists known event names from declared hook handlers. Its
