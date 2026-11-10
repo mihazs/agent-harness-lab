@@ -3362,6 +3362,19 @@ the server's project, commit and membership claims do not verify task outcomes.
 Schema 4 is a selection profile, separate from the GitLab REST API's `v4`, and
 has a distinct scope from selection schemas 1–3.
 
+An opt-in selection schema 5 adds `closing_issues` for selected merge requests,
+using the [issues that close on merge endpoint](https://docs.gitlab.com/api/merge_requests/#list-issues-that-close-on-merge).
+It records only same-project issue ID and IID fingerprints as server-reported
+references; it does not fetch an issue unless it was independently selected.
+When an independently selected issue has the same IID, its global ID must agree
+before a relation is recorded. Cross-project or external-tracker rows without a
+selected-project identity are omitted and leave coverage incomplete; they are
+never followed. A confidential or unknown-visibility same-project issue
+requires explicit authorization. A returned reference is not proof that an issue closed, that a
+merge occurred, or that a task succeeded. Visibility and source claims remain
+unverified, and reads are non-atomic. Schema 5 has a distinct scope from schemas
+1–4; it retains their issue discussions and MR commit capabilities.
+
 Use `SourceSpec(kind="api", provider="gitlab", version="v4", root_sha256=digest(base_url),
 project_sha256=selection.project_sha256, scope_sha256=selection.sha256,
 identity_provenance="source_declared_id", enabled=True)` and register
@@ -3461,7 +3474,7 @@ coverage; non-HTTPS refusal; GET-only requests; and repeat import and update.
 Live GitLab compatibility, including the exact route parameters GitLab repeats
 in `Link` headers, is not established by these fixtures.
 Still open in #54: independently verified resolution and commit membership, MR
-changes and versions, state events, linked issues, pipelines, jobs and
+changes and versions, state events, other linked issues, pipelines, jobs and
 test reports, confidential-visibility checks per note, absence tombstones and a
 relationship graph.
 
