@@ -128,6 +128,55 @@ class GitLabFixture:
 
 
 class TestGitLabSource(GitLabFixture):
+    def v7_reviewer_selection(self):
+        return replace(self.selection, schema_version=7, capture=('merge_requests', 'reviewers'), issues=())
+
+    def test_v7_reviewer_states_are_private_claims_with_incomplete_coverage(self):
+        self.routes[self.mr_path+'/reviewers'] = [
+            dict(user=dict(id=1, name='SYNTHETIC_PRIVATE_NAME'), state='reviewed'),
+            dict(user=dict(id=2, username='SYNTHETIC_PRIVATE_USER'), state='unreviewed'),
+            dict(user=dict(id=3), state='SYNTHETIC_PRIVATE_UNKNOWN')]
+        client, snapshot = self.read(self.v7_reviewer_selection())
+        nodes = self.nodes(client, 'gitlab_mr_reviewer')
+        assert sorted(n['review_state'] for n in nodes) == ['reviewed', 'unknown', 'unreviewed']
+        assert len([r for r in client.summary['relations'] if r[0] == 'reviewer_state_on']) == 3
+        assert ('reviewers', 'not_observed', 'reviewer_list_completeness_unverified') in self.states(client)
+        assert not snapshot.checkpoint_ready and not client.summary['task_outcomes_verified']
+        assert all(r.causal_status == 'unknown' and r.independence == 'unknown' for r in snapshot.records)
+
+    def test_v7_empty_reviewers_do_not_prove_absence(self):
+        self.routes[self.mr_path+'/reviewers'] = lambda: self.page([])
+        client, snapshot = self.read(self.v7_reviewer_selection())
+        assert not self.nodes(client, 'gitlab_mr_reviewer')
+        assert ('reviewers', 'not_observed', 'reviewer_list_completeness_unverified') in self.states(client)
+        assert not snapshot.checkpoint_ready
+
+    @pytest.mark.parametrize('rows', [None, {}, [dict(user=None)], [dict(user=dict(id=True))],
+        [dict(user=dict(id=1)), dict(user=dict(id=1))]])
+    def test_v7_malformed_or_duplicate_reviewers_fail_closed(self, rows):
+        self.routes[self.mr_path+'/reviewers'] = lambda: self.page(rows)
+        with pytest.raises(TransportError): self.read(self.v7_reviewer_selection())
+
+    @pytest.mark.parametrize('blocked', ['project', 'merge_request', 'reviewers'])
+    def test_v7_unavailable_reviewers_are_visible(self, blocked):
+        selection = self.v7_reviewer_selection()
+        target = {'project': '/api/v4/projects/'+ENCODED, 'merge_request': self.mr_path,
+                  'reviewers': self.mr_path+'/reviewers'}[blocked]
+        self.routes[target] = Response(b'SYNTHETIC_SECRET', 403)
+        client, snapshot = self.read(selection)
+        expected = ('reviewers', 'forbidden', None) if blocked == 'reviewers' else (
+            'reviewers', 'not_observed', blocked+'_unavailable')
+        assert expected in self.states(client) and not snapshot.checkpoint_ready
+
+    def test_v7_reviewers_require_explicit_scope_and_bound(self):
+        with pytest.raises(ValueError): replace(self.selection, schema_version=6,
+            capture=('merge_requests', 'reviewers'), issues=())
+        with pytest.raises(ValueError): replace(self.selection, schema_version=7,
+            capture=('issues', 'reviewers'), merge_requests=())
+        self.routes[self.mr_path+'/reviewers'] = [dict(user=dict(id=1)), dict(user=dict(id=2))]
+        with patch.object(gitlab, 'MAX_UNPAGED_ROWS', 1):
+            with pytest.raises(TransportError): self.read(self.v7_reviewer_selection())
+
     def v5_closing_selection(self):
         return replace(self.selection, schema_version=5, capture=('closing_issues', 'issues', 'merge_requests'))
 
@@ -1005,7 +1054,7 @@ class TestGitLabSource(GitLabFixture):
     @pytest.mark.parametrize('change', [
         dict(capture=('issues',)), dict(capture=('merge_requests', 'issues')), dict(issues=(7, 7)),
         dict(issues=(0,)), dict(capture=('approvals', 'issues', 'notes'), merge_requests=()),
-        dict(capture=('issues', 'merge_requests', 'pipelines')), dict(schema_version=7),
+        dict(capture=('issues', 'merge_requests', 'pipelines')), dict(schema_version=8),
         # A capture that selects no IID would read only the project yet look complete.
         dict(capture=('notes',), issues=(), merge_requests=()), dict(capture=(), issues=(), merge_requests=())],
         ids=['issues-only-without-merge-requests', 'unordered-capture', 'duplicate-iid', 'zero-iid',
