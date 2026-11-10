@@ -238,6 +238,7 @@ def _state(path):
     if not isinstance(state['oracle_references'],dict): raise ValueError('invalid oracle reference index')
     for ident, references in state['oracle_references'].items():
         sha256(ident); _assets(references)
+        if not references: raise ValueError('empty oracle reference coverage')
         if ident not in state['constructions']: raise ValueError('unknown oracle reference construction')
     if state['reference_coverage'] and any(
             entry['state']=='complete' and entry['role'] in ('evaluator_author','final_bank_author')

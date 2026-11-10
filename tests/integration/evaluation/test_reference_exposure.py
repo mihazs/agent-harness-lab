@@ -41,6 +41,36 @@ def test_uncovered_legacy_history_is_never_promoted(tmp_path):
         assert state['reference_coverage'] is False
 
 
+def test_reference_under_another_prior_filename_is_still_detected(tmp_path):
+    prior, _ = assets(tmp_path,'prior','{"unrelated":0}','{"prior":true}')
+    (tmp_path/'prior-oracle'/'renamed.dat').write_text('{"b":2,"a":1}')
+    tasks=[dict(id='prior')]; bundles={'prior':dict(path='prior-oracle')}
+    references=ledger.oracle_references(tmp_path,tasks,bundles)
+    _, candidate=assets(tmp_path,'candidate','{"a":1,"b":2}','{"candidate":true}')
+    path=tmp_path/'ledger.json'; pin='a'*64
+    ident=ledger.begin_construction(path,'evaluator_author',pin)
+    ledger.finish_construction(path,ident,pin,prior,'b'*64,references=references)
+    with ledger._locked(path) as (_,state),pytest.raises(ValueError,match='previously exposed'):
+        ledger.reference_guard(state,candidate,None)
+
+
+def test_unproven_observation_blocks_reference_guard(tmp_path):
+    path=tmp_path/'ledger.json';ledger.admit(path,['a'*64],'b'*64)
+    with ledger._locked(path) as (_,state),pytest.raises(ValueError,match='coverage unavailable'):
+        ledger.reference_guard(state,['c'*64],None)
+
+
+def test_missing_index_is_not_accepted_as_covered(tmp_path):
+    prior, refs=assets(tmp_path,'prior','{"a":1}','{"control":true}')
+    path=tmp_path/'ledger.json'; pin='a'*64
+    ident=ledger.begin_construction(path,'evaluator_author',pin)
+    ledger.finish_construction(path,ident,pin,prior,'b'*64,references=refs)
+    state=json.loads(path.read_text()); state['oracle_references'].pop(ident)
+    path.write_text(json.dumps(state))
+    with pytest.raises(ValueError,match='reference coverage missing'):
+        with ledger._locked(path): pass
+
+
 def test_trusted_program_cannot_import_shadow_modules(tmp_path):
     (tmp_path/'grade.py.txt').write_text(PROGRAM)
     (tmp_path/'expected.json').write_text('{"answer":1}')
