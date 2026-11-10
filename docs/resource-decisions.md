@@ -96,11 +96,15 @@ scope, completeness means all target-controller provider attempts in the declare
 not complete billing. Missing categories or requests are never assumed zero. These declarations,
 including the cache state, are caller attestations and are not independently authenticated.
 For version 4, `uncached` attests that every included request is uncached, and
-`provider_cache_used` attests that every included request used provider caching. A mixture or
+`provider_cache_used` attests that every included request read at least one cached input token;
+cache writes alone do not satisfy that state. A mixture or
 unknown state must remain unknown; it cannot be represented by either value.
 Token observations must be nonnegative integers. For `cached_input_tokens`, a positive count
 contradicts `uncached`; under `provider_cache_used`, the count cannot be smaller than the
 number of included requests. Contradictory observations remain unknown.
+When several categories are supplied for the same arm and scope, complete request counts must
+match, cached input cannot exceed input, and total must equal input plus output when all three
+are present. A missing category is not inferred from the others.
 Results retain the conditional and private-data limitations described above. No automatic bridge
 from live or completed trial summaries to a resource decision is provided. Version 4 results are
 private and explicitly marked as disallowed for publication.

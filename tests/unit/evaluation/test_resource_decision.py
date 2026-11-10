@@ -353,6 +353,54 @@ def test_v4_large_integer_is_capped_and_v3_fractional_behavior_is_preserved():
     assert decide(legacy, rows, 'supported')['endpoints'][0]['status'] != 'unknown'
 
 
+def multi_token_scope():
+    names = ('input_tokens','output_tokens','total_tokens','cached_input_tokens')
+    contract_v4 = token_scope_contract(); contract_v4['cache_policy'] = 'provider_cache_allowed'
+    contract_v4['endpoints'] = [dict(TOKENS,name=name,required=True,token_category=name,
+                                      token_scope='controller_provider_responses') for name in names]
+    rows = token_scope_rows()
+    for row in rows:
+        for name,values in (('baseline',(800,100,900,20)),('candidate',(100,50,150,10))):
+            arm = row[name]; arm['provenance']['cache_state'] = 'provider_cache_used'
+            for category,value in zip(names,values):
+                arm['measurements'][category] = value
+                arm['measurement_provenance'][category] = dict(token_category=category,token_scope='controller_provider_responses',
+                                                                 request_attempts=2,known_requests=2,unknown_requests=0)
+    return contract_v4,rows
+
+
+def test_v4_cross_category_consistency_rejects_cached_greater_than_input():
+    contract_v4,rows = multi_token_scope()
+    assert all(endpoint['status'] != 'unknown' for endpoint in decide(contract_v4,rows,'supported')['endpoints'])
+    rows[0]['candidate']['measurements']['cached_input_tokens'] = 101
+    result = decide(contract_v4,rows,'supported')
+    endpoints = {endpoint['name']:endpoint for endpoint in result['endpoints']}
+    for name in ('input_tokens','cached_input_tokens'):
+        assert endpoints[name]['unknown_reasons'] == {'token_categories_inconsistent': 1}
+    assert result['decision'] == 'blocked'
+
+
+def test_v4_cross_category_total_and_request_counts_must_agree():
+    contract_v4,rows = multi_token_scope()
+    rows[0]['candidate']['measurements']['total_tokens'] = 151
+    endpoints = {endpoint['name']:endpoint for endpoint in decide(contract_v4,rows,'supported')['endpoints']}
+    for name in ('input_tokens','output_tokens','total_tokens'):
+        assert endpoints[name]['unknown_reasons'] == {'token_categories_inconsistent': 1}
+    contract_v4,rows = multi_token_scope()
+    rows[0]['candidate']['measurement_provenance']['output_tokens'].update(request_attempts=3,known_requests=3)
+    result = decide(contract_v4,rows,'supported')
+    assert result['decision'] == 'blocked'
+    assert all(endpoint['unknown_reasons'] == {'token_categories_inconsistent': 1} for endpoint in result['endpoints'])
+
+
+def test_v4_missing_category_is_not_imputed_or_used_to_invent_contradiction():
+    contract_v4,rows = multi_token_scope()
+    del rows[0]['candidate']['measurements']['input_tokens']
+    endpoints = {endpoint['name']:endpoint for endpoint in decide(contract_v4,rows,'supported')['endpoints']}
+    assert endpoints['input_tokens']['unknown_reasons'] == {'missing_measurement': 1}
+    assert endpoints['cached_input_tokens']['status'] != 'unknown'
+
+
 @pytest.mark.parametrize('change', [dict(token_category='unknown'),dict(token_scope='all_billing')])
 def test_v4_rejects_unsupported_token_contract(change):
     contract_v4 = token_scope_contract(); contract_v4['endpoints'][0].update(change)

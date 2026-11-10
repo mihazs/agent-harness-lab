@@ -36,6 +36,45 @@ def number(value):
     return type(value) in (int, float) and math.isfinite(value) and value >= 0
 
 
+def _complete_requests(details):
+    attempts, known, unknown = (details.get(name) for name in ('request_attempts', 'known_requests', 'unknown_requests'))
+    if (any(type(value) is not int or value < 0 for value in (attempts, known, unknown))
+            or attempts == 0 or known + unknown != attempts or unknown != 0): return None
+    return attempts
+
+
+def _token_conflicts(trial, endpoints):
+    measurements, provenance = trial.get('measurements'), trial.get('measurement_provenance')
+    if not isinstance(measurements, dict) or not isinstance(provenance, dict): return set()
+    entries = []
+    for endpoint in endpoints:
+        if endpoint['kind'] != 'measured_tokens': continue
+        name = endpoint['name']; details = provenance.get(name); value = measurements.get(name)
+        if (not isinstance(details, dict) or details.get('token_category') != endpoint['token_category']
+                or details.get('token_scope') != endpoint['token_scope'] or type(value) is not int or value < 0): continue
+        attempts = _complete_requests(details)
+        if attempts is not None: entries.append((name,endpoint['token_category'],value,attempts))
+    conflicts = set()
+    for i, left in enumerate(entries):
+        for right in entries[i+1:]:
+            categories = {left[1]:left[2],right[1]:right[2]}
+            if (left[3] != right[3] or left[1] == right[1] and left[2] != right[2]
+                    or 'input_tokens' in categories and 'cached_input_tokens' in categories
+                    and categories['cached_input_tokens'] > categories['input_tokens']
+                    or 'total_tokens' in categories and any(categories['total_tokens'] < categories[category]
+                        for category in ('input_tokens','output_tokens') if category in categories)):
+                conflicts.update((left[0],right[0]))
+    for attempts in {item[3] for item in entries}:
+        groups = {category:[item for item in entries if item[1] == category and item[3] == attempts]
+                  for category in ('input_tokens','output_tokens','total_tokens')}
+        if all(groups.values()):
+            values = {name:{item[2] for item in group} for name,group in groups.items()}
+            if (any(len(group) != 1 for group in values.values())
+                    or next(iter(values['input_tokens'])) + next(iter(values['output_tokens'])) != next(iter(values['total_tokens']))):
+                conflicts.update(item[0] for group in groups.values() for item in group)
+    return conflicts
+
+
 def validate(contract):
     if not isinstance(contract, dict):
         raise ValueError('resource contract fields mismatch')
@@ -97,10 +136,8 @@ def observe(trial, endpoint, cache_policy=None, timing_boundary=None, token_scop
             if (not isinstance(details, dict) or details.get('token_category') != endpoint['token_category']
                     or details.get('token_scope') != endpoint['token_scope']):
                 return None, 'token_scope_missing_or_mismatch'
-            attempts, known, unknown = (details.get(name) for name in ('request_attempts', 'known_requests', 'unknown_requests'))
-            if (any(type(value) is not int or value < 0 for value in (attempts, known, unknown))
-                    or attempts == 0 or known + unknown != attempts or unknown != 0):
-                return None, 'request_coverage_incomplete'
+            attempts = _complete_requests(details)
+            if attempts is None: return None, 'request_coverage_incomplete'
     status, value = trial.get('status'), trial.get('measurements', {}).get(endpoint['name'])
     if status not in ('completed', 'agent_timeout'): return None, 'status_' + str(status)
     if not number(value): return None, 'missing_measurement'
@@ -115,7 +152,7 @@ def observe(trial, endpoint, cache_policy=None, timing_boundary=None, token_scop
     return min(value, endpoint['horizon']), None
 
 
-def evaluate(endpoint, pairs, alpha, min_roots, cache_policy=None, timing_boundary=None, token_scoped=False):
+def evaluate(endpoint, pairs, alpha, min_roots, cache_policy=None, timing_boundary=None, token_scoped=False, conflicts=None):
     horizon = endpoint['horizon']
     result = dict(name=endpoint['name'], kind=endpoint['kind'], unit=endpoint['unit'], required=endpoint['required'],
                   scope='all_assigned_capped', horizon=horizon, max_increase=endpoint['max_increase'], per_endpoint_alpha=alpha)
@@ -124,8 +161,9 @@ def evaluate(endpoint, pairs, alpha, min_roots, cache_policy=None, timing_bounda
     if token_scoped and endpoint['kind'] == 'measured_tokens':
         result.update(token_category=endpoint['token_category'], token_scope=endpoint['token_scope'])
     roots, reasons, capped = defaultdict(list), Counter(), 0
-    for pair in pairs:
-        base, cand = (observe(pair[arm], endpoint, cache_policy, timing_boundary, token_scoped) for arm in ('baseline', 'candidate'))
+    for index, pair in enumerate(pairs):
+        base, cand = ((None, 'token_categories_inconsistent') if conflicts is not None and endpoint['name'] in conflicts[index][arm]
+                      else observe(pair[arm], endpoint, cache_policy, timing_boundary, token_scoped) for arm in ('baseline', 'candidate'))
         if cache_policy is not None and base[1] is None and cand[1] is None:
             if pair['baseline']['provenance']['cache_state'] != pair['candidate']['provenance']['cache_state']:
                 reasons['asymmetric_cache_state'] += 1
@@ -155,8 +193,11 @@ def decide(contract, pairs, quality_status):
         raise ValueError('paired resource rows required')
     required = sum(e['required'] for e in contract['endpoints'])
     alpha = contract['alpha'] / required  # Bonferroni across required endpoints; advisory ones share the same level
+    token_scoped = contract['profile'] == TOKEN_PROFILE
+    conflicts = [{arm:_token_conflicts(pair[arm],contract['endpoints']) for arm in ('baseline','candidate')}
+                 for pair in pairs] if token_scoped else None
     endpoints = [evaluate(e, pairs, alpha, contract['min_roots'], contract.get('cache_policy'), contract.get('timing_boundary'),
-                          contract['profile'] == TOKEN_PROFILE) for e in contract['endpoints']]
+                          token_scoped, conflicts) for e in contract['endpoints']]
     states = {e['status'] for e in endpoints if e['required']}
     if quality_status != 'supported': decision, reason = 'quality_not_verified', 'quality_unknown' if quality_status is None else 'quality_' + str(quality_status)
     elif 'unknown' in states: decision, reason = 'blocked', 'required_measurement_unknown'
