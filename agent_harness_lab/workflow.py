@@ -581,6 +581,8 @@ def _improve(args):
     trials_left = getattr(args, "trial_limit", config.DEFAULT_TRIALS)
     for attempt in range(1 if bank is not None else 2):
         final_attempt = attempt
+        for key in ('instruction_validation','instruction_reasons','instruction_removal','instruction_removal_reason'):
+            result.pop(key,None)
         instruction = None
         check_configuration(args)
         if remaining() <= 0:
