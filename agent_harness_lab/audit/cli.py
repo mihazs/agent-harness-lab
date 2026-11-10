@@ -99,6 +99,9 @@ def main(argv=None):
             print('Static convention checks; not evidence of harness performance.')
             for row in report['coverage']:
                 print(f"{row['dimension']}: {row['status']}")
+            events = report['hook_events']
+            print('Declared hook events: ' + (', '.join(events['declared']) or 'none observed') +
+                  f" (coverage: {events['coverage']}; execution: unknown)")
             for row in report['findings']:
                 print(f"{row['dimension']}: {row['reason']} ({row['path']}) — {row['remediation'] or 'not checked'}")
             print(report['next_action'])

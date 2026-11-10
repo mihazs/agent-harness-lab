@@ -17,6 +17,10 @@ and the improvement loop remain `not_checked`. An absent skill is `unknown`,
 not a pass. CLI findings use `weak`, `unknown`, or `not_checked`; coverage can
 also be `conforms`. The library's separate report retains its documented
 `conformant`, `nonconformant`, and `unknown` vocabulary.
+The `hook_events` field lists known event names from declared hook handlers. Its
+coverage is `unknown` when hook surfaces are unavailable or could not be parsed;
+otherwise `declared_only` describes inventory coverage, not execution or enforcement.
+Memory contents are not read. Matching prose rules to hooks is not yet checked.
 Try the [offline walkthrough](audit-walkthrough.md) with a deliberately flawed
 synthetic fixture before auditing a real checkout.
 
