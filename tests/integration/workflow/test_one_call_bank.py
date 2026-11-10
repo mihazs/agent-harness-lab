@@ -98,6 +98,25 @@ def test_budget_must_cover_proposal_and_all_paired_tasks_before_dispatch(pinned)
     assert result['reason'] == 'configured_bank_shared_trial_budget_exhausted'
 
 
+@pytest.mark.parametrize('change, expected', [
+    ('malformed', 'configured_bank_invalid_or_unavailable'),
+    ('missing', 'configured_bank_invalid_or_unavailable'),
+    ('symlink', 'configured_bank_invalid_or_unavailable'),
+    ('digest', 'configured_bank_digest_mismatch'),
+])
+def test_invalid_bank_stops_with_actionable_reason_before_dispatch(pinned, change, expected):
+    if change == 'missing': pinned.bank.unlink()
+    elif change == 'symlink':
+        target = pinned.project/'other-bank.json'; target.write_text('{}')
+        pinned.bank.unlink(); pinned.bank.symlink_to(target)
+    elif change == 'malformed': pinned.bank.write_text('{')
+    else: pinned.bank.write_text(pinned.bank.read_text()+'\n')
+    with patch('agent_harness_lab.cli.evaluator', side_effect=AssertionError('no runtime dispatch')):
+        code, result = invoke(pinned)
+    assert (code, result['status'], result['reason']) == (3, 'blocked', expected)
+    assert result['remediation']
+
+
 def test_shared_heldout_fixture_is_allowed_within_bank_but_not_prior_attempt(pinned):
     from agent_harness_lab.workflow import validate_manifest
     declared = json.loads(pinned.bank.read_text())

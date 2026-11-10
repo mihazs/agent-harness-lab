@@ -47,7 +47,10 @@ def preflight(args):
     settings = getattr(args, 'project_settings', None)
     if settings:
         from .evaluation.task_bank import validate
-        reviewed = validate(config.bank_path(args.project, settings))
+        try:
+            reviewed = validate(config.bank_path(args.project, settings))
+        except (ValueError, OSError, TypeError, KeyError):
+            return 'configured_bank_invalid_or_unavailable'
         if reviewed['bank_sha256'] != settings['bank']['sha256']:
             return 'configured_bank_digest_mismatch'
         if settings['profile'] != 'cooperative':
@@ -88,6 +91,7 @@ REMEDIATION = {
     'select_one_runtime_with_agent': 'Several supported runtimes were found; rerun with --agent codex or --agent claude (or set runtime in ahl.json).',
     'agent_runtime_unavailable': 'No requested runtime executable was found; install it or pass its trusted path with --codex or --claude. Authentication is not checked by AHL.',
     'trial_budget_requires_two_preparation_and_six_paired_trials': 'Raise the trial limit to at least 8 in ahl.json limits.trials.',
+    'configured_bank_invalid_or_unavailable': 'Select an accessible valid project bank or use the starter bank; review its configuration before retrying.',
     'configured_bank_digest_mismatch': 'The configured bank changed; review it and set bank.sha256 in ahl.json to its new digest.',
     'configured_profile_does_not_allow_cooperative_improvement': 'ahl.json profile is not cooperative; review it and set profile to cooperative and runtime to {name: codex or claude, executable: <absolute path>} to allow model execution.',
     'configured_bank_requires_cooperative_runtime': 'Pinned project banks run only on the codex or claude runtime; set runtime in ahl.json to {name: codex or claude, executable: <absolute path>}.',
@@ -105,20 +109,20 @@ def pinned_bank(args):
     return config.bank_path(args.project, settings) if settings and settings['bank']['path'] != 'starter' else None
 
 
-def unchanged(args):
+def unchanged(args, *, check_bank=True):
     path = args.project / 'ahl.json'
     expected = getattr(args, 'configuration_sha256', None)
     if not (config.load(path)[1] == expected if expected else not os.path.lexists(path)):
         return False
-    bank = pinned_bank(args)
+    bank = pinned_bank(args) if check_bank else None
     if bank is not None:
         from .evaluation.task_bank import validate
         return validate(bank)['bank_sha256'] == args.project_settings['bank']['sha256']
     return True
 
 
-def check_configuration(args):
-    if hasattr(args, 'project_settings') and not unchanged(args):
+def check_configuration(args, *, check_bank=True):
+    if hasattr(args, 'project_settings') and not unchanged(args, check_bank=check_bank):
         raise ValueError('project configuration changed during improvement')
     references=getattr(args,'_response_references',None)
     if references is not None and config.response_references(args.project,vars(args))!=references:

@@ -934,9 +934,10 @@ All bundles and controls stay outside task fixtures; no grader command is execut
 def _run_improvement(args, *, parent_started=None):
     """Persist truthful completion even when a run is interrupted or raises."""
     issuer=os.getpid(); managed=getattr(args,'evaluation_store',None) is not None
-    from .one_call import pinned_bank
     configured=getattr(args,'_configured_responses',False)
-    started=time.monotonic() if managed or configured or pinned_bank(args) is not None else None
+    settings=getattr(args,'project_settings',None)
+    has_pinned_bank=bool(settings and settings['bank']['path']!='starter')
+    started=time.monotonic() if managed or configured or has_pinned_bank else None
     if (managed or configured) and parent_started is not None: started=min(started,parent_started)
     for name in ('_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256','_configured_started','_budget_started'):
         if hasattr(args,name):delattr(args,name)
@@ -946,7 +947,7 @@ def _run_improvement(args, *, parent_started=None):
     if configured: args._configured_started=started
     try:
         from .one_call import contracts, preflight, check_configuration, REMEDIATION, DEFAULT_REMEDIATION
-        check_configuration(args)
+        check_configuration(args, check_bank=getattr(args, 'repair_contracts', False))
         if managed:
             from .evaluation.construction_access import selection
             selection(args)
@@ -963,6 +964,7 @@ def _run_improvement(args, *, parent_started=None):
                               remediation=REMEDIATION.get(reason, DEFAULT_REMEDIATION))
                 write_json(output/'workflow.json', result)
                 return result
+            check_configuration(args)
         if started is not None and time.monotonic()>=started+args.timeout:
             raise TimeoutError('construction preflight exhausted improvement budget')
         return _improve(args)

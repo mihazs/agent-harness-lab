@@ -45,7 +45,7 @@ private credential only during actual execution; doctor checks metadata only.
 When `ahl.json` exists, its profile, executable, scope and limits constrain the run.
 Explicit CLI runtime/binary/time options take precedence; configuration never
 supplies execution authorization. Offline/unsupported profiles, unintegrated
-project banks, stale bank digests, ambiguous runtimes and insufficient trial
+project banks, invalid or unavailable banks, stale bank digests, ambiguous runtimes and insufficient trial
 budgets stop before inference, each with its own `reason` and a matching one-step
 `remediation` in `workflow.json` (the generic text is only a fallback). A configuration file is optional and is not created
 by improve. Configured trials share one ceiling across preparation and both attempts.
