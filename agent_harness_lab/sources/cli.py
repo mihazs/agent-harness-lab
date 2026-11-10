@@ -15,6 +15,7 @@ from .mem0 import PROVIDER as MEM0, SOURCE_VERSION as MEM0_VERSION, Mem0Export
 from .hindsight import PROVIDER as HINDSIGHT, SOURCE_VERSION as HINDSIGHT_VERSION, HindsightArchive
 from .cognee import PROVIDER as COGNEE, SOURCE_VERSION as COGNEE_VERSION, CogneeExport
 from .opencode import PROVIDER as OPENCODE, SOURCE_VERSION as OPENCODE_VERSION, OpenCodeExport
+from .opencode_backup import PROVIDER as OPENCODE_BACKUP, SOURCE_VERSION as OPENCODE_BACKUP_VERSION, OpenCodeBackup
 from .execution import capture_snapshot
 from .github_config import GitHubConfigured
 from .gitea import PROVIDER as GITEA, GiteaConfigured
@@ -49,6 +50,7 @@ def main(argv):
         'hindsight-bank-archive (one extracted Hindsight v1.1.0 bank transfer archive; no recall, reflect, service or network) and '
         'cognee-export (one selected Cognee v1.6.5 graph JSON export of one dataset; no recall, inference or store). '
         'opencode-export (one selected pinned-shape JSON session export; metadata only). '
+        'opencode-sqlite-backup (one selected caller-supplied backup; metadata only). '
         'API configurations select github, gitea or gitlab (api/gitlab/v4: named issue and merge request IIDs of one '
         'project on an explicit HTTPS instance, GET only, no enumeration). '
         'Example: ahl sources preview --manifest export.json --project-sha256 PROJECT_HASH --scope-sha256 SCOPE_HASH. '
@@ -95,6 +97,8 @@ def main(argv):
                 connector = CogneeExport(args.manifest)
             elif source.provider == OPENCODE:
                 connector = OpenCodeExport(args.manifest)
+            elif source.provider == OPENCODE_BACKUP:
+                connector = OpenCodeBackup(args.manifest)
             elif source.provider == 'claude-jsonl':
                 connector = ClaudeCapture(args.manifest)
             elif source.provider == 'codex-rollout':
@@ -113,6 +117,7 @@ def main(argv):
             registry.register(Capability('local_file', COGNEE, COGNEE_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', OPENCODE, OPENCODE_VERSION, ('contextual_assertion',)), connector)
             registry.register(Capability('local_file', OPENCODE, 'v2', ('contextual_assertion',)), connector)
+            registry.register(Capability('local_file', OPENCODE_BACKUP, OPENCODE_BACKUP_VERSION, ('contextual_assertion',)), connector)
             for version in (CODEX_VERSION, CODEX_ROOT_VERSION):
                 registry.register(Capability('local_file', 'codex-rollout', version, ('behavioral_event',)), connector)
             for version in (CLAUDE_VERSION, CLAUDE_ROOT_VERSION):
@@ -147,6 +152,8 @@ def main(argv):
                     result['cognee_summary'] = connector.summary
                 elif isinstance(connector, OpenCodeExport):
                     result['opencode_summary'] = connector.summary
+                elif isinstance(connector, OpenCodeBackup):
+                    result['opencode_backup_summary'] = connector.summary
                 elif forge is not None:
                     result[forge[1]] = connector.summary
                     result['checkpoint_ready'] = snapshot.checkpoint_ready

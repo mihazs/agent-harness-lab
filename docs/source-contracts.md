@@ -4268,3 +4268,39 @@ optional `time.archived` is a valid timestamp. These are unverified claims in
 the export, not confirmed lineage or current archive state. An absent parent or
 archive timestamp remains unknown; it does not establish a root session or an
 unarchived session. V2 does not migrate or reconcile v1 histories.
+
+## OpenCode caller-supplied SQLite backup metadata
+
+`sources.opencode_backup.OpenCodeBackup` reads one explicitly selected local
+SQLite backup as a bounded byte file and deserializes it into a disposable
+in-memory database in a separate Linux process. Unsupported platforms refuse
+this profile. Before SQLite parses the file, the child sets address-space,
+CPU, file-size and file-descriptor limits; the caller also enforces a wall
+timeout. These resource limits are not syscall, filesystem or network isolation.
+The parent checks the worker's stdout size after collecting the pipe, so this
+does not bound output from arbitrary compromised native code. This reader does
+not claim safety against a SQLite native-code compromise. Its selected
+`session_v2` columns follow the pinned upstream
+[table definition](https://github.com/anomalyco/opencode/blob/98e4b5343e33aafded479b9ff71c12fd760d9d87/packages/core/src/session/sql.ts).
+The declared pin selects the shape to inspect; neither the producer nor its
+version is verified from the file.
+
+The local-file provider is `opencode-sqlite-backup`, version `v1`. Its selection
+contains `schema_version: 1`, `upstream_commit` equal to the pinned commit,
+`instance`, `backup` (relative to the manifest directory), `session_id`,
+`project_id`, and `snapshot_kind: "caller_supplied_backup"`. The source scope is
+`digest(selection)` and the project hash is
+`digest(("opencode.project", instance, project_id))`. The selected IDs are
+private inputs, and the ambiguous project ID `global` is refused.
+
+Supply a previously created consistent backup, never a live database. The reader
+opens only the named file, not its SQLite WAL, shared-memory or journal files;
+it does not invoke OpenCode, create a backup, or change the source. It bounds the
+file and in-memory query, rechecks the file and selection, and refuses malformed,
+unsupported, ambiguous or over-budget input. The caller's backup declaration is
+not proof of consistency: WAL inclusion, freshness, completeness, producer
+version, source identity and lineage remain unverified. Missing archive and
+parent fields remain unknown. The result contains only a hashed session and
+parent claim and a reported archive state; it does not interpret messages or
+parts or verify outcomes. Backup bytes and fingerprints can contain or reveal
+private information; keep the backup, selection, cache and output private.
