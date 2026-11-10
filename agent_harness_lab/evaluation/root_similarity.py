@@ -160,6 +160,30 @@ def binding(spec, supplied, bank_path=None):
     return {root: group[0] for group in groups for root in group}
 
 
+def controller_evidence(spec, source, manifest_path, *, export_root=None):
+    """Recover pinned workflow or bank evidence using current controller inputs."""
+    from agent_harness_lab.sources.schema import digest
+    if spec.root_similarity_sha256 is None:
+        return None, None
+    candidate = manifest_evidence(source)
+    if digest(candidate) == spec.root_similarity_sha256:
+        binding(spec, candidate, manifest_path)
+        return candidate, manifest_path
+    authority = source.get('bank_authority')
+    if not isinstance(authority, dict) or not isinstance(authority.get('bank_path'), str):
+        raise ValueError('bank-derived root similarity requires current bank authority')
+    from .oracle_history import bank_authority
+    from .task_bank import inspect
+    bank_authority(source, export_root=export_root)
+    path = authority['bank_path']
+    full = inspect(path)['content_grouping']['root_similarity']['evidence']
+    if full is None:
+        raise ValueError('current bank lacks complete root similarity evidence')
+    candidate = project_evidence(full, [(task, root) for task, root, _ in spec.tasks])
+    binding(spec, candidate, path)
+    return candidate, path
+
+
 def grouped_weights(roots, weights, groups):
     """Sum weights within a candidate component, preserving endpoint total weight."""
     combined = defaultdict(float)

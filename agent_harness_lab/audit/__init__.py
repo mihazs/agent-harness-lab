@@ -57,6 +57,8 @@ REMEDIATIONS = {
     'hook_unknown_event': ('deterministic_edit', 'rename_or_remove_the_undocumented_event'),
     'hook_unknown_field': ('deterministic_edit', 'remove_undocumented_hook_fields'),
     'hook_unknown_handler_type': ('deterministic_edit', 'use_a_documented_handler_type'),
+    chain.DECLARED_SKIPPED: ('content_edit', 'shorten_the_instruction_chain_or_raise_project_doc_max_bytes'),
+    chain.DECLARED_TRUNCATED: ('content_edit', 'shorten_the_instruction_chain_or_raise_project_doc_max_bytes'),
     chain.SKIPPED: ('content_edit', 'shorten_the_instruction_chain_or_raise_project_doc_max_bytes'),
     chain.TRUNCATED: ('content_edit', 'shorten_the_instruction_chain_or_raise_project_doc_max_bytes'),
     'instruction_empty': ('content_edit', 'add_instructions_or_remove_the_empty_file'),
@@ -195,7 +197,7 @@ def _refused(refusal, runtime, table):
     return DIMENSIONS if any(part in HARNESS_FOLDERS[runtime] for part in parts) else ()
 
 
-def audit(inventory, *, task_cwd=None, collision_threshold=skills.COLLISION_THRESHOLD):
+def audit(inventory, *, task_cwd=None, collision_threshold=skills.COLLISION_THRESHOLD, codex_project_doc_max_bytes=None):
     """One conformance row per dimension over a declared inventory; blocked or unsupported is unknown everywhere.
 
     task_cwd, which must match the inventory's digest, settles the Codex project-doc chain; without it the chain is
@@ -204,7 +206,9 @@ def audit(inventory, *, task_cwd=None, collision_threshold=skills.COLLISION_THRE
     if type(inventory) is not harness_inventory.HarnessInventory: raise ValueError('audit needs a harness inventory')
     if task_cwd is not None and digest(task_cwd) != inventory.task_cwd_sha256: raise ValueError('task_cwd differs from the inventory')
     table, runtime = registry(), inventory.runtime
-    budget = chain.codex(inventory, task_cwd)
+    if codex_project_doc_max_bytes is not None and runtime != 'codex':
+        raise ValueError('Codex byte budget requires the Codex runtime')
+    budget = chain.codex(inventory, task_cwd, declared_limit=codex_project_doc_max_bytes)
     context = skills.Context(inventory, task_cwd) if inventory.status == 'declared' else None
     collisions = context.collisions(collision_threshold) if context else {}
     rows = {dimension: [] for dimension in DIMENSIONS}  # (status, reason) per surface
@@ -233,6 +237,8 @@ def audit(inventory, *, task_cwd=None, collision_threshold=skills.COLLISION_THRE
                             if event is None: hook_unknown = True
                             else: hook_events.add(event)
                 if kind == 'skill' and node.path in context.skills: facts = dict(facts, **context.facts(node))
+                if kind == 'instruction' and runtime == 'codex' and codex_project_doc_max_bytes is not None:
+                    facts = dict(facts, exceeds_default_project_doc_max_bytes=False)
                 verdict, reason = _judge(node, kind, status, facts, runtime, table[kind])
                 dimension, surface, evidence, _ = table[kind]
                 measures, cited, related = (), None, ()
@@ -315,9 +321,11 @@ class Report:
             publication_allowed=False, performance_evidence=False)
 
 
-def run(checkout, runtime, *, task_cwd='.', project_trust='unknown', collision_threshold=skills.COLLISION_THRESHOLD):
+def run(checkout, runtime, *, task_cwd='.', project_trust='unknown', collision_threshold=skills.COLLISION_THRESHOLD,
+        codex_project_doc_max_bytes=None):
     """Inventory the checkout at the runtime's pinned version and audit it; the checkout is only read."""
     if runtime not in surfaces.RUNTIMES: raise ValueError('unknown audit runtime')
     profile = dict(schema_version=1, runtime=runtime, version=surfaces.PINS[runtime], task_cwd=task_cwd)
     if project_trust != 'unknown': profile['project_trust'] = project_trust
-    return audit(harness_inventory.capture(checkout, profile), task_cwd=task_cwd, collision_threshold=collision_threshold)
+    return audit(harness_inventory.capture(checkout, profile), task_cwd=task_cwd, collision_threshold=collision_threshold,
+                 codex_project_doc_max_bytes=codex_project_doc_max_bytes)
