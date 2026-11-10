@@ -24,6 +24,17 @@ def native_metadata(record):
     return {k: v for k, v in record.to_dict().items() if k != 'collected_at'}
 
 
+def validate_outcome_source(record, source):
+    if record.outcome is None: return
+    value = record.outcome
+    if value['kind'] == 'observed' and (source.provider != 'test-results' or record.record_type != 'test_case_result'
+            or record.plane != 'development_artifact' or record.provenance != 'native_field'):
+        raise ValueError('test outcomes require test-result source records')
+    if value['kind'] == 'reported' and (source.provider != 'ahl-metadata'
+            or record.plane not in ('behavioral_event', 'contextual_assertion')):
+        raise ValueError('reported outcome requires a normalized assertion source')
+
+
 def snapshot_cursor(source, before, snapshot):
     return digest(('snapshot-v1', source, before, snapshot))
 
@@ -152,6 +163,7 @@ class SourceStore:
             if not isinstance(entry, dict) or set(entry) != {'source_spec_sha256', 'record'}:
                 raise ValueError('invalid cached evidence envelope')
             record = EvidenceRecord.parse(entry['record'])
+            validate_outcome_source(record, specifications[entry['source_spec_sha256']])
             if sources.get(entry['source_spec_sha256']) != record.source_sha256 or identity(record) in identities:
                 raise ValueError('conflicting cached evidence identity')
             identities.add(identity(record))
@@ -216,6 +228,11 @@ class SourceStore:
                     snapshot_sha256=snapshots['history'].get(cursor) if snapshots['active'] else None,
                     checkpoints=len(state['cursors'].get(key, [])), capture_completeness='unknown',
                     source_read=False, execution_authorized=False)
+        from .outcomes import correlate
+        selected = dict(records=[entry for entry in state['records'] if entry['record']['source_sha256'] == key],
+            supersessions=[edge for edge in state['supersessions'] if edge[0] == key])
+        outcomes = correlate(selected, [])
+        if outcomes['records'] or outcomes['ambiguous_sources']: result['outcome_correlation'] = outcomes
         capture = state['captures'].get(key, {}).get(cursor) if snapshots['active'] else None
         if capture is not None:
             result['source_snapshot_sha256'] = capture['snapshot_sha256']
@@ -352,12 +369,21 @@ class SourceStore:
                     if self._over(count) or not isinstance(record, EvidenceRecord):
                         raise ValueError('invalid or excessive source batch')
                     record = EvidenceRecord.parse(record.to_dict())
+                    validate_outcome_source(record, source)
                     if record.source_sha256 != key:
                         raise ValueError('batch contains another source')
                     prior = existing.get(identity(record))
                     if prior is not None:
-                        if native_metadata(EvidenceRecord.parse(prior)) != native_metadata(record):
-                            raise ValueError('conflicting native revision')
+                        old = EvidenceRecord.parse(prior)
+                        before, after = native_metadata(old), native_metadata(record)
+                        if before != after:
+                            common_before = {k: v for k, v in before.items() if k not in ('schema_version', 'outcome')}
+                            common_after = {k: v for k, v in after.items() if k not in ('schema_version', 'outcome')}
+                            if (common_before != common_after or {old.schema_version, record.schema_version} != {1, 2}
+                                    or (record.outcome or old.outcome or {}).get('kind') != 'observed'):
+                                raise ValueError('conflicting native revision')
+                            if old.schema_version == 1:
+                                prior.update(schema_version=2, outcome=record.outcome)
                         skipped += 1
                     else:
                         existing[identity(record)] = stored = record.to_dict()

@@ -442,3 +442,9 @@ across two attempts and 20 task trials in one whole-run budget, with fresh held-
 refinement. Frozen candidate bytes and the original target state are rechecked
 before adoption. These controls establish observed acceptance under cooperative
 conditions; they are not a proof that a generated grader captures all semantics.
+
+Native Codex/Claude trials use the environment allowlist described in
+[the runtime boundary](../../../docs/runtime-boundary.md). Use `--inherit-env`
+only when custom authentication requires passing the full host environment;
+this can expose unrelated secrets. The private trial receipt records the opt-in,
+environment names and a digest, never values.
