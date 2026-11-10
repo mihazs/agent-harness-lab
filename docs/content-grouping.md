@@ -116,6 +116,22 @@ count and evidence are unavailable. The report flags the incomplete inspection
 and still reports candidates found among the prompts that were available. Counts and evidence are private bank-derived
 outputs. The lexical candidate is not an authenticated lineage finding.
 
+To prepare an explicit selected plan before collecting trials, run:
+
+```sh
+ahl experiment --spec /path/to/plan.json --prepare-root-similarity \
+  --root-bank /path/to/private-bank.json
+```
+
+The command reads the plan and bank without modifying either. Its private JSON
+output contains `prepared_plan` and `root_similarity_evidence`; save these as
+separate new private JSON files for review, without overwriting existing files.
+The prepared plan has a different hash and trial IDs. It is not frozen or
+execution-authorized by this command, and previously collected trials cannot be
+reused. Missing prompt evidence, a mismatched selected task or family, an already
+pinned plan, or a sequential plan is rejected. Treat the output and all digests
+as private bank-derived material.
+
 For a fixed comparison using the whole inspected bank, save the report's
 `content_grouping.root_similarity.evidence` as private JSON and put its reported
 `evidence_sha256` into the plan's `root_similarity_sha256` before freezing it.
