@@ -15,6 +15,7 @@ from .integrity import read_regular, unique_object
 _CLIENT_PIDS = WeakKeyDictionary()
 _ROLE_SCOPES = WeakKeyDictionary()
 _REQUEST_CONTEXTS = WeakKeyDictionary()
+_RESPONDING = WeakKeyDictionary()
 
 # Trusted controller child: its parent can terminate DNS/TLS/header reads at deadline.
 HTTP_CLIENT = r'''import base64,http.client,json,sys
@@ -326,6 +327,12 @@ class Client:
         self.checkpoint()
 
     def respond(self, history, deadline):
+        if self in _RESPONDING: raise ValueError('reentrant inference request denied')
+        _RESPONDING[self] = os.getpid()
+        try: return self._respond_guarded(history,deadline)
+        finally: _RESPONDING.pop(self,None)
+
+    def _respond_guarded(self, history, deadline):
         if _client_pid(self) != os.getpid():
             raise ValueError('inference client requires its issuing process')
         from .comparison_custody import current
@@ -337,18 +344,22 @@ class Client:
         self.response_emissions = []; self.response_protocol_validated = False
         self.response_items_observed = False; self.response_transport_invoked = False
         disposition = 'denied_or_unresolved'
+        usage_token = object()
         try:
-            value = self._respond(history,deadline,request_action)
+            output,calls,reported_usage = self._respond(history,deadline,request_action,usage_token)
             reservation=_REQUEST_CONTEXTS.get(self)
             if reservation is not None and 'instruction_binding' in reservation[4]:
                 _REQUEST_CONTEXTS[self]=(*reservation[:3],True,reservation[4])
                 from agent_harness_lab.promotion.prerequisites import current as current_scope
                 owner=current_scope()
                 if owner is not None:owner._request(self,reservation[2],True)
-            if comparison is not None and comparison.active is not None:comparison.request(self)
+            if comparison is not None and comparison.active is not None:
+                comparison.request(self)
+                from .trial_usage import _confirm
+                _confirm(comparison,self,usage_token,reported_usage)
             self.actions.update(request_action,disposition='validated')
             disposition = 'validated'
-            return value
+            return output,calls
         except BaseException:
             self.actions.update(request_action,disposition='denied_or_unresolved',reason=self.response_reason)
             for action in self.response_actions:
@@ -356,12 +367,15 @@ class Client:
                 else: self.actions.update(action,dispatch_blocked=True)
             raise
         finally:
+            if comparison is not None:
+                from .trial_usage import _abort
+                _abort(comparison,self,usage_token)
             if self.actions.trajectory is not None and self.response_transport_invoked and not self.response_items_observed:
                 self.actions.trajectory.request_gap()
             for emission in self.response_emissions:
                 self.actions.update(emission,protocol_validated=self.response_protocol_validated,response_disposition=disposition)
 
-    def _respond(self,history,deadline,request_action):
+    def _respond(self,history,deadline,request_action,usage_token):
         if self.poisoned:
             self.response_reason='prior_request_unresolved'; raise InferenceError('prior_inference_request_unresolved_no_retry')
         deadline = min(deadline,self.deadline)
@@ -412,6 +426,9 @@ class Client:
                 binding=planned
             token=object()
             _REQUEST_CONTEXTS[self]=(os.getpid(),scope,token,False,binding)
+            if comparison is not None and 'comparison' in binding:
+                from .trial_usage import _begin
+                _begin(comparison,self,binding['comparison'],usage_token)
             if instruction is not None:
                 from agent_harness_lab.promotion.prerequisites import current as current_scope
                 owner=current_scope()
@@ -493,11 +510,11 @@ class Client:
         if details is not None:
             cached = details.get('cached_tokens') if isinstance(details,dict) else None
             reported_usage['cached_input_tokens'] = cached if type(cached) is int and 0 <= cached <= usage['input_tokens'] else None
-        self._usage.append(reported_usage)
+        self._usage.append(deepcopy(reported_usage))
         self.poisoned = False
         self.pending = False
         self.checkpoint()
-        return output,calls
+        return output,calls,reported_usage
 
 
 def _client_pid(client):

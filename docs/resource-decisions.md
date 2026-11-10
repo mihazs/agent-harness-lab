@@ -103,3 +103,14 @@ The summary is private, labels publication as disallowed, and refuses `public=Tr
 controller reports, and assigning to the attribute raises `AttributeError`. Callers that
 previously mutated this view must instead keep their own data. This prevents accidental
 aliasing; it does not authenticate provider usage or isolate code in the same process.
+
+`agent_harness_lab.evaluation.trial_usage.current_trial_usage()` exposes a private, live-only
+view of request usage for the currently admitted fixed comparison trial. It binds request
+ordinals to the active scheduled trial, captures validated provider usage before checkpoint
+callbacks, and releases it only after comparison custody accepts the request. Failed or
+unobserved attempts remain unknown. The view is unavailable outside the active trial, refuses
+public export, and does not expose usage from a previous trial. It is not a durable receipt:
+restart and resume cannot reconstruct its contents. Provider data and trial identity remain
+unverified outside this live controller context, and this view does not authorize promotion or
+establish billing completeness. It is not a security boundary against code in the same process
+and is not automatically used in resource decisions.
