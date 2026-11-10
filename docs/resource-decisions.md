@@ -112,4 +112,5 @@ unobserved attempts remain unknown. The view is unavailable outside the active t
 public export, and does not expose usage from a previous trial. It is not a durable receipt:
 restart and resume cannot reconstruct its contents. Provider data and trial identity remain
 unverified outside this live controller context, and this view does not authorize promotion or
-establish billing completeness. It is not automatically used in resource decisions.
+establish billing completeness. It is not a security boundary against code in the same process
+and is not automatically used in resource decisions.
