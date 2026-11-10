@@ -130,6 +130,95 @@ class GiteaFixture:
 
 
 class TestGiteaSource(GiteaFixture):
+    def v5_files(self):
+        return replace(self.selection, schema_version=5, capture=('files', 'pulls'), issues=())
+
+    def read_files(self):
+        selection = self.v5_files()
+        return self.read(selection, replace(self.spec(selection), version='v5'))
+
+    def file_target(self, page=1):
+        return self.repo_path+f'/pulls/8/files?page={page}&limit=50'
+
+    def file_rows(self):
+        return [dict(filename='SYNTHETIC_PRIVATE_FILE', previous_filename='SYNTHETIC_PRIVATE_OLD',
+            status='renamed', additions=2, deletions=1, changes=3, raw_url='https://untrusted.example.test/private')]
+
+    @pytest.mark.parametrize('total_header', ['X-Total', 'X-Total-Count'])
+    def test_v5_file_metadata_is_private_and_server_reported(self, total_header):
+        self.routes[self.file_target()] = lambda: Response(self.file_rows(),
+            headers={**self.headers, total_header: '1', 'X-HasMore': 'false'})
+        client, snapshot = self.read_files()
+        node, = self.nodes(client, 'gitea_pull_file')
+        assert node['status'] == 'renamed' and node['path_sha256'] == digest('SYNTHETIC_PRIVATE_FILE')
+        assert any(r[0] == 'reported_file_in_pull' for r in client.summary['relations'])
+        assert ('files', 'captured', None) in self.states(client) and snapshot.checkpoint_ready
+        assert not client.summary['task_outcomes_verified'] and 'untrusted.example.test' not in repr(client.summary)
+        assert all(r.causal_status == 'unknown' and r.independence == 'unknown' for r in snapshot.records)
+
+    def test_v5_file_completion_requires_evidence(self):
+        self.routes[self.file_target()] = lambda: Response([], headers=self.headers)
+        client, snapshot = self.read_files()
+        assert ('files', 'pagination_incomplete', 'file_total_unverified') in self.states(client)
+        assert not snapshot.checkpoint_ready
+
+    def test_v5_file_pages_and_late_denial(self):
+        rows = [dict(filename=f'SYNTHETIC_PRIVATE_FILE_{i}') for i in range(50)]
+        self.routes[self.file_target()] = lambda: Response(rows, headers={**self.headers,
+            'X-Total-Count': '51', 'X-HasMore': 'true', 'X-Page': '1'})
+        self.routes[self.file_target(2)] = lambda: Response([dict(filename='SYNTHETIC_PRIVATE_LAST')],
+            headers={**self.headers, 'X-Total-Count': '51', 'X-HasMore': 'false', 'X-Page': '2'})
+        client, snapshot = self.read_files()
+        assert len(self.nodes(client, 'gitea_pull_file')) == 51 and snapshot.checkpoint_ready
+        self.routes[self.file_target(2)] = Response(b'SYNTHETIC_SECRET', 403)
+        client, snapshot = self.read_files()
+        assert ('files', 'pagination_incomplete', 'forbidden') in self.states(client) and not snapshot.checkpoint_ready
+
+    def test_v5_file_identity_is_repository_scoped(self):
+        self.routes[self.file_target()] = lambda: Response(self.file_rows(), headers={**self.headers, 'X-Total': '1'})
+        first, _ = self.read_files()
+        self.build('synthetic-other', 43)
+        target = f'/api/v1/repos/{OWNER}/synthetic-other/pulls/8/files?page=1&limit=50'
+        self.routes[target] = lambda: Response(self.file_rows(), headers={**self.headers, 'X-Total': '1'})
+        selection = replace(self.v5_files(), repo='synthetic-other')
+        second, _ = self.read(selection, replace(self.spec(selection), version='v5'))
+        assert self.nodes(first, 'gitea_pull_file')[0]['native_id_sha256'] != self.nodes(second, 'gitea_pull_file')[0]['native_id_sha256']
+
+    def test_v5_file_duplicate_across_pages_is_rejected(self):
+        rows = [dict(filename=f'SYNTHETIC_PRIVATE_FILE_{i}') for i in range(50)]
+        self.routes[self.file_target()] = Response(rows, headers={**self.headers, 'X-Total-Count': '51', 'X-HasMore': 'true'})
+        self.routes[self.file_target(2)] = Response([rows[0]], headers={**self.headers, 'X-Total-Count': '51', 'X-HasMore': 'false'})
+        with pytest.raises(TransportError): self.read_files()
+
+    @pytest.mark.parametrize('case', ['missing', 'nul', 'too_long', 'duplicate', 'invalid_count', 'conflicting_total'])
+    def test_v5_invalid_files_fail_closed(self, case):
+        rows, headers = self.file_rows(), {**self.headers, 'X-Total': '1', 'X-HasMore': 'false'}
+        if case == 'missing': del rows[0]['filename']
+        if case == 'nul': rows[0]['filename'] = 'x\x00y'
+        if case == 'too_long': rows[0]['previous_filename'] = 'x'*4097
+        if case == 'duplicate': rows.append(dict(rows[0])); headers['X-Total'] = '2'
+        if case == 'invalid_count': rows[0]['additions'] = True
+        if case == 'conflicting_total': headers['X-Total-Count'] = '2'
+        self.routes[self.file_target()] = lambda: Response(rows, headers=headers)
+        with pytest.raises(TransportError): self.read_files()
+
+    @pytest.mark.parametrize('blocked', ['repository', 'issue', 'pull', 'files'])
+    def test_v5_file_unavailable_is_visible(self, blocked):
+        target = {'repository': self.repo_path, 'issue': self.repo_path+'/issues/8',
+            'pull': self.repo_path+'/pulls/8', 'files': self.file_target()}[blocked]
+        self.routes[target] = Response(b'SYNTHETIC_SECRET', 403)
+        client, snapshot = self.read_files()
+        assert any(c['resource'] == 'files' and c['state'] != 'captured' for c in client.summary['coverage'])
+        assert not snapshot.checkpoint_ready
+
+    def test_v5_file_scope_and_bound(self):
+        with pytest.raises(ValueError): replace(self.v5_files(), schema_version=4)
+        with pytest.raises(ValueError): replace(self.v5_files(), capture=('files', 'issues'), issues=(7,), pulls=())
+        self.routes[self.file_target()] = lambda: Response(self.file_rows()+[dict(filename='other')],
+            headers={**self.headers, 'X-Total': '2', 'X-HasMore': 'false'})
+        with patch.object(gitea, 'MAX_PULL_FILES', 1):
+            with pytest.raises(TransportError): self.read_files()
+
     def v4_commits(self):
         return replace(self.selection, schema_version=4, capture=('commits', 'pulls'), issues=())
 
@@ -725,6 +814,20 @@ class TestGiteaConfiguration(GiteaFixture):
                 '--project-sha256', self.source.project_sha256, '--scope-sha256', self.source.scope_sha256, *extra])
         for secret in (*SECRETS, self.base, str(self.root)): assert secret not in output.getvalue()+error.getvalue()
         return code, json.loads(output.getvalue()) if output.getvalue() else None
+
+    def test_v5_files_cli_preview_and_import(self):
+        self.selection = replace(self.selection, schema_version=5, capture=('files', 'pulls'), issues=())
+        self.source = replace(self.spec(self.selection, auth_mode='configured'), version='v5')
+        target = self.repo_path+'/pulls/8/files?page=1&limit=50'
+        self.routes[target] = lambda: Response([dict(filename='SYNTHETIC_PRIVATE_FILE', status='modified')],
+            headers={**self.headers, 'X-Total-Count': '1', 'X-HasMore': 'false'})
+        self.write()
+        env = ('--authorization-env', 'SYNTHETIC_GITEA_AUTHORIZATION')
+        with patch.dict(os.environ, SYNTHETIC_GITEA_AUTHORIZATION='token SYNTHETIC_SECRET'):
+            code, result = self.invoke('preview', *env)
+            assert code == 0 and result['checkpoint_ready']
+            assert result['gitea_summary']['source_version'] == 'v5'
+            assert self.invoke('import', *env)[0] == 0
 
     def test_v4_commit_cli_preview_and_import(self):
         self.selection = replace(self.selection, schema_version=4, capture=('commits', 'pulls'), issues=())
