@@ -24,6 +24,8 @@ common secret, configuration and CI path candidates using checkout metadata only
 it never opens their contents. This private, bounded inventory does not determine
 whether any path is protected. Refused paths leave coverage unknown; rule and hook
 matching is not yet implemented. The walk is not an atomic filesystem snapshot.
+The CLI includes this separately captured inventory under `protected_path_inventory`;
+it is not covered by `audit_sha256`, which binds the harness inventory audit.
 
 The `hook_events` field lists known event names from declared hook handlers. Its
 coverage is `unknown` when hook surfaces are unavailable or could not be parsed;

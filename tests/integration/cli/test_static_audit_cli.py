@@ -13,6 +13,36 @@ from tests.support import harness_surface_fixture as fixture
 from tests.unit.surfaces.test_static_audit import WELL_FORMED
 
 
+def test_audit_reports_private_protected_path_metadata_without_reading_secret(tmp_path, monkeypatch, capsys):
+    project = tmp_path / 'project'
+    project.mkdir()
+    (project / '.env').write_text('SYNTHETIC_SECRET')
+    (project / 'eslint.config.js').write_text('synthetic config')
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    original_open = os.open
+    def safe_open(path, flags, *args, **kwargs):
+        if os.fspath(path) == '.env': pytest.fail('secret file opened')
+        return original_open(path, flags, *args, **kwargs)
+    monkeypatch.setattr(os, 'open', safe_open)
+    assert main(['audit', str(project), '--json']) == 0
+    report = json.loads(capsys.readouterr().out)
+    inventory = report['protected_path_inventory']
+    assert {row['path'] for row in inventory['paths']} == {'.env', 'eslint.config.js'}
+    assert all(row['enforcement'] == 'unknown' and row['content'] == 'not_read' for row in inventory['paths'])
+    assert 'SYNTHETIC_SECRET' not in json.dumps(report)
+    assert inventory['publication_allowed'] is False
+
+
+def test_human_protected_path_output_escapes_control_characters(tmp_path, monkeypatch, capsys):
+    project = tmp_path / 'project'
+    project.mkdir()
+    (project / '.env.\x1b[31m').write_text('synthetic')
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project)]) == 0
+    output = capsys.readouterr().out
+    assert '\x1b' not in output and '\\u001b' in output
+
+
 @pytest.mark.parametrize(('runtime', 'path'), [('claude-code', '.claude/settings.json'), ('codex', '.codex/hooks.json')])
 def test_declared_hook_events_are_reported_without_execution(tmp_path, monkeypatch, capsys, runtime, path):
     project = tmp_path / 'project'
