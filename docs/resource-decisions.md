@@ -114,3 +114,10 @@ restart and resume cannot reconstruct its contents. Provider data and trial iden
 unverified outside this live controller context, and this view does not authorize promotion or
 establish billing completeness. It is not a security boundary against code in the same process
 and is not automatically used in resource decisions.
+
+`agent_harness_lab.evaluation.trial_usage.summarize_current_trial_usage()` aggregates the
+currently visible provider-reported categories for that active trial without exposing raw
+request rows. It reports request coverage and known subtotals, but all trial totals remain
+unknown: more requests may occur before the trial completes. Failed or missing requests and
+unreported cache categories stay unknown. The summary is private, live-only, and does not
+establish quality, billing completeness, or eligibility for a resource decision.

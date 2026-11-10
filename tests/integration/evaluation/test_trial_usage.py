@@ -42,6 +42,8 @@ def test_live_receipt_uses_admitted_trial_and_stages_before_callback(tmp_path):
     callbacks = []
     def checkpoint(report):
         callbacks.append(trial_usage.current_trial_usage())
+        observed = trial_usage.summarize_current_trial_usage()
+        assert all(category['total'] is None for category in observed['usage'].values())
         client.response_protocol_validated = True
         trial_usage._confirm(comparison,client,object(),dict(input_tokens=0,output_tokens=0,total_tokens=0))
         if client._usage: client._usage[0]['input_tokens'] = 0
@@ -56,9 +58,15 @@ def test_live_receipt_uses_admitted_trial_and_stages_before_callback(tmp_path):
         assert all(row['usage'] is None for snapshot in callbacks for row in snapshot['requests'])
         assert receipt['source'] == 'provider_reported_unverified' and receipt['publication_allowed'] is False
         assert receipt['automatic_promotion'] is False and receipt['certification_authority'] is False
+        summary = trial_usage.summarize_current_trial_usage()
+        assert summary['usage']['input_tokens'] == dict(known_subtotal=5,known_requests=1,unknown_requests=0,total=None)
+        assert summary['usage']['cached_input_tokens']['known_subtotal'] == 3
+        assert summary['trial_completion'] == 'unverified' and summary['billing_completeness'] == 'unknown'
+        assert summary['publication_allowed'] is False and summary['automatic_promotion'] is False
         receipt['requests'][0]['usage']['cached_input_tokens'] = 0
         assert trial_usage.current_trial_usage()['requests'][0]['usage']['cached_input_tokens'] == 3
         with pytest.raises(ValueError,match='private'): trial_usage.current_trial_usage(public=True)
+        with pytest.raises(ValueError,match='private'): trial_usage.summarize_current_trial_usage(public=True)
     with pytest.raises(ValueError,match='live admitted'): trial_usage.current_trial_usage()
 
 
@@ -70,6 +78,8 @@ def test_failed_transport_and_forged_trial_id_never_produce_usage(tmp_path):
         with pytest.raises(responses.InferenceError): execute(comparison,client,workspace,harness,deadline)
         receipt = trial_usage.current_trial_usage()
         assert receipt['request_attempts'] == 1 and receipt['requests'][0]['usage'] is None
+        summary = trial_usage.summarize_current_trial_usage()
+        assert summary['usage']['input_tokens'] == dict(known_subtotal=None,known_requests=0,unknown_requests=1,total=None)
     other = tmp_path/'other'; other.mkdir()
     comparison,client,workspace,harness,deadline = comparison_fixture(other,response)
     with comparison:
@@ -93,6 +103,8 @@ def test_new_comparison_with_reused_client_cannot_see_prior_trial_usage(tmp_path
         trial_usage._begin(later,client,forged,object())
         receipt = trial_usage.current_trial_usage()
         assert receipt['request_attempts'] == 0 and receipt['requests'] == []
+        summary = trial_usage.summarize_current_trial_usage()
+        assert all(category['known_subtotal'] is None and category['total'] is None for category in summary['usage'].values())
 
 
 def test_checkpoint_cannot_reenter_transport_before_custody_confirmation(tmp_path):

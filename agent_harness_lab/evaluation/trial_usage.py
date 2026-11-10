@@ -77,3 +77,22 @@ def current_trial_usage(*, public=False):
                 source='provider_reported_unverified', trial_binding='live_comparison_only',
                 billing_completeness='unknown', publication='private', publication_allowed=False,
                 certification_authority=False, automatic_promotion=False)
+
+
+def summarize_current_trial_usage(*, public=False):
+    """Summarize observed request usage while leaving the unfinished trial total unknown."""
+    receipt = current_trial_usage(public=public)
+    from .responses import summarize_provider_usage
+    reported = [row['usage'] for row in receipt['requests'] if row['usage'] is not None]
+    report = dict(runtime='controller-responses-executor-v1',request_attempts=receipt['request_attempts'],
+                  provider_reported_usage=reported)
+    summary = summarize_provider_usage(report)
+    for category in summary['usage'].values():
+        if category['known_requests'] == 0: category['known_subtotal'] = None
+        category['total'] = None
+    return dict(profile='ahl-live-trial-provider-usage-summary-v1', scheduled_trial_sha256=receipt['scheduled_trial_sha256'],
+                request_attempts=summary['request_attempts'], reported_responses=summary['reported_responses'],
+                unreported_attempts=summary['unreported_attempts'], usage=summary['usage'],
+                cached_input_included_in_input=True, cache_write_tokens=None,
+                source='provider_reported_unverified', trial_completion='unverified', billing_completeness='unknown',
+                publication='private', publication_allowed=False, certification_authority=False, automatic_promotion=False)
