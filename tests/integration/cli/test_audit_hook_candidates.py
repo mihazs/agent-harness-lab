@@ -35,19 +35,51 @@ def test_pretool_matcher_is_candidate_only(tmp_path, monkeypatch, capsys, matche
     assert 'SYNTHETIC_SECRET' not in json.dumps(report) and 'never-run' not in json.dumps(report)
 
 
-def test_codex_hook_matcher_remains_unknown(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize(('matcher', 'handler', 'expected'), [
+    ('apply_patch', {'type': 'command', 'command': 'never-run'}, 'hook_candidate_present'),
+    ('^apply_patch$', {'type': 'command', 'command': 'never-run'}, 'hook_candidate_present'),
+    ('*', {'type': 'command', 'command': 'never-run'}, 'unknown'),
+    ('shell', {'type': 'command', 'command': 'never-run'}, 'unknown'),
+    ('apply_patch.*', {'type': 'command', 'command': 'never-run'}, 'unknown'),
+    ('apply_patch', {'type': 'command'}, 'unknown'),
+    ('apply_patch', {'type': 'command', 'command': '  '}, 'unknown'),
+    ('apply_patch', {'type': 'command', 'command': 'never-run', 'timeout': 'fast'}, 'unknown'),
+    ('apply_patch', {'type': 'mcp_tool', 'server': 'synthetic', 'tool': 'synthetic'}, 'unknown'),
+])
+def test_codex_hook_matcher_is_candidate_only_when_supported(tmp_path, monkeypatch, capsys, matcher, handler, expected):
     project = tmp_path / 'project'
     settings = project / '.codex/hooks.json'
     settings.parent.mkdir(parents=True)
-    settings.write_text(json.dumps({'hooks': {'PreToolUse': [{'matcher': 'apply_patch',
-        'hooks': [{'type': 'command', 'command': 'never-run'}]}]}}))
+    settings.write_text(json.dumps({'hooks': {'PreToolUse': [{'matcher': matcher, 'hooks': [handler]}]}}))
+    (project / 'AGENTS.md').write_text('Never edit `.env`.\n')
+    (project / '.env').write_text('synthetic')
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    monkeypatch.setattr(subprocess, 'Popen', lambda *a, **kw: pytest.fail('hook executed'))
+    monkeypatch.setattr(socket, 'socket', lambda *a, **kw: pytest.fail('network used'))
+    assert main(['audit', str(project), '--runtime', 'codex', '--json']) == 0
+    report = json.loads(capsys.readouterr().out)
+    row = report['constraint_references']['files'][0]['constraints'][0]
+    assert row['hook_match'] == expected and row['enforcement'] == 'unknown'
+    if expected == 'hook_candidate_present':
+        assert row['hook_candidate']['matcher_scope'] == 'tool_name_only'
+        assert row['hook_candidate']['path_enforcement'] == row['hook_candidate']['observed_execution'] == 'unknown'
+    assert 'PreToolUse' in report['hook_events']['declared']
+    assert 'never-run' not in json.dumps(report)
+
+
+@pytest.mark.parametrize('extra', [{'disabled': True}, {'description': 42}])
+def test_codex_unsupported_top_level_fields_remain_unknown(tmp_path, monkeypatch, capsys, extra):
+    project = tmp_path / 'project'
+    settings = project / '.codex/hooks.json'
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps(dict(extra, hooks={'PreToolUse': [{'matcher': 'apply_patch',
+        'hooks': [{'type': 'command', 'command': 'never-run'}]}]})))
     (project / 'AGENTS.md').write_text('Never edit `.env`.\n')
     (project / '.env').write_text('synthetic')
     monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
     assert main(['audit', str(project), '--runtime', 'codex', '--json']) == 0
-    report = json.loads(capsys.readouterr().out)
-    assert report['constraint_references']['files'][0]['constraints'][0]['hook_match'] == 'unknown'
-    assert 'PreToolUse' in report['hook_events']['declared']
+    row = json.loads(capsys.readouterr().out)['constraint_references']['files'][0]['constraints'][0]
+    assert row['hook_match'] == row['enforcement'] == 'unknown'
 
 
 @pytest.mark.parametrize('handler', [
