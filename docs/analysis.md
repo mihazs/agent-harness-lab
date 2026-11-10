@@ -162,12 +162,21 @@ Each runtime object supplies `provider`, `runtime`, `model_revision`, `reasoning
 `task_bank_revision`, `sandbox_image`, `permissions`, and `controller_version`.
 The values must match within a pair. The only additional runtime field is
 `effective_settings_verified`; it must be `true` in both objects for the settings
-to be reported as verified.
+to be reported as verified, and must be a boolean when supplied. The eight
+runtime values are nonempty strings of at most 4096 characters.
+
+`status` may be `unknown`, `not_run`, `not_executed`, `completed`, `passed`,
+`failed`, `skipped`, `inconclusive`, `blocked`, `incomplete`, `interrupted`,
+`budget_exhausted`, `execution_error`, `invalid_input`, `grader_error`, `timeout`,
+`agent_timeout`, `rejected`, or `supported`. `execution_kind` may be `synthetic`,
+`replay`, `real_model`, or `fake_agent`. When omitted, these default to `unknown`
+and `synthetic` respectively.
 
 The provenance object contains only `source_kind`, `approved_publication`,
 `source_ref`, and `derived_from_private`. Public export requires `source_kind` to
 be `synthetic` or `public`, `approved_publication` to be `true`, a nonempty
-`source_ref`, and `derived_from_private` to be `false`. These are caller assertions;
+`source_ref` string of at most 4096 characters, and `derived_from_private` to be
+`false`. These are caller assertions;
 the command does not authenticate their origin or prove that data is public.
 Without `--public`, the existing private report input path is unchanged.
 

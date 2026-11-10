@@ -21,7 +21,12 @@ def test_public_benchmark_accepts_only_known_flat_records(tmp_path):
     cases = [base, dict(base, **(private | {'publication_allowed': True})),
         dict(base, profile='unknown-v1'), dict(base, receipt={'publication_allowed': True}),
         dict(base, unrecognized='synthetic'), dict(base, baseline_runtime=runtime | {'unrecognized': 'synthetic'}),
-        dict(base, provenance=base['provenance'] | {'unrecognized': 'synthetic'})]
+        dict(base, provenance=base['provenance'] | {'unrecognized': 'synthetic'}),
+        dict(base, baseline_runtime=runtime | {'model_revision': {'private': 'SYNTHETIC_CANARY'}},
+             candidate_runtime=runtime | {'model_revision': {'private': 'SYNTHETIC_CANARY'}}),
+        dict(base, status='SYNTHETIC_CANARY'), dict(base, execution_kind='SYNTHETIC_CANARY'),
+        dict(base, baseline_runtime=runtime | {'effective_settings_verified': 'true'}),
+        dict(base, provenance=base['provenance'] | {'source_ref': {'private': 'SYNTHETIC_CANARY'}})]
     for index, record in enumerate(cases):
         source = tmp_path/f'{index}.json'; source.write_text(json.dumps([record]))
         output = tmp_path/f'out-{index}'

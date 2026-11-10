@@ -8,6 +8,10 @@ from .history_report import summary as history_summary  # noqa: F401 - re-export
 
 MATCH_FIELDS=('provider','runtime','model_revision','reasoning','task_bank_revision',
               'sandbox_image','permissions','controller_version')
+PUBLIC_STATUSES=('unknown','not_run','not_executed','completed','passed','failed','skipped','inconclusive',
+                 'blocked','incomplete','interrupted','budget_exhausted','execution_error','invalid_input',
+                 'grader_error','timeout','agent_timeout','rejected','supported')
+PUBLIC_EXECUTION_KINDS=('synthetic','replay','real_model','fake_agent')
 
 
 def validate_pair(baseline,candidate,strict=True):
@@ -28,9 +32,16 @@ def public_export_allowed(records):
             return False
         for name in ('baseline_runtime','candidate_runtime'):
             runtime=record[name]
-            if not isinstance(runtime,dict) or runtime.keys() - {*MATCH_FIELDS,'effective_settings_verified'}: return False
+            if (not isinstance(runtime,dict) or runtime.keys() - {*MATCH_FIELDS,'effective_settings_verified'}
+                    or not all(isinstance(runtime.get(key),str) and 0 < len(runtime[key]) <= 4096 for key in MATCH_FIELDS)
+                    or 'effective_settings_verified' in runtime and type(runtime['effective_settings_verified']) is not bool):
+                return False
         provenance=record['provenance']
         if not isinstance(provenance,dict) or provenance.keys() - {'source_kind','approved_publication','source_ref','derived_from_private'}:
+            return False
+        if (record.get('status','unknown') not in PUBLIC_STATUSES
+                or record.get('execution_kind','synthetic') not in PUBLIC_EXECUTION_KINDS
+                or not isinstance(provenance.get('source_ref'),str) or not 0 < len(provenance['source_ref']) <= 4096):
             return False
         wrappers=(record,record.get('receipt'),record.get('analysis'),record.get('context'),record.get('binding'),record.get('execution'),record.get('process_mining'),record.get('incident_retrieval'))
         # Preparation contexts carry the private invocation as a known child.
