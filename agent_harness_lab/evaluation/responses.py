@@ -329,7 +329,11 @@ class Client:
     def respond(self, history, deadline):
         if self in _RESPONDING: raise ValueError('reentrant inference request denied')
         _RESPONDING[self] = os.getpid()
-        try: return self._respond_guarded(history,deadline)
+        try:
+            result=self._respond_guarded(history,deadline)
+            from .interaction_evidence import _finalize
+            _finalize(self)
+            return result
         finally: _RESPONDING.pop(self,None)
 
     def _respond_guarded(self, history, deadline):
@@ -355,6 +359,8 @@ class Client:
                 if owner is not None:owner._request(self,reservation[2],True)
             if comparison is not None and comparison.active is not None:
                 comparison.request(self)
+                from .interaction_evidence import _record
+                _record(comparison,self,usage_token,output)
                 from .trial_usage import _confirm
                 _confirm(comparison,self,usage_token,reported_usage)
             self.actions.update(request_action,disposition='validated')
