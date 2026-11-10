@@ -90,3 +90,24 @@ def test_runner_preflight_accepts_current_bank_evidence_and_blocks_twins(traject
         assert report['reason'] == 'precision_target_infeasible'
         assert report['precision_preflight']['effective_roots'] == 1
         assert report['trials'] == []
+
+
+def test_real_synthetic_bank_authority_is_rechecked_before_evidence_use():
+    import pytest
+    from tests.integration.evaluation.test_oracle_bank_authority import OracleBankAuthority
+
+    with ExitStack() as cleanup:
+        fixture = OracleBankAuthority(cleanup.callback)
+        full = inspect(fixture.bank)['content_grouping']['root_similarity']['evidence']
+        assert full is not None
+        selected = [(task['id'], task['root']) for task in fixture.manifest['tasks']]
+        snapshot = project_evidence(full, selected)
+        from agent_harness_lab.evaluation.plan import ExperimentSpec
+        plan = replace(ExperimentSpec.parse(fixture.manifest['experiment']), root_similarity_sha256=digest(snapshot))
+        fixture.manifest['experiment'] = plan.to_dict()
+        fixture.write_manifest()
+        actual, location = controller_evidence(plan, fixture.manifest, fixture.export/'manifest.json', export_root=fixture.export)
+        assert actual == snapshot and location == str(fixture.bank)
+        fixture.revoke()
+        with pytest.raises(ValueError):
+            controller_evidence(plan, fixture.manifest, fixture.export/'manifest.json', export_root=fixture.export)
