@@ -46,3 +46,13 @@ def test_harness_change_during_tied_evaluation_blocks_stale_no_change(wf,monkeyp
         improve(wf.args())
     assert (wf.project/name).read_text() == 'synthetic concurrent user content\n'
     if name != 'AGENTS.md': assert (wf.project/'AGENTS.md').read_text() == 'good'
+
+
+def test_instruction_context_drift_during_tied_evaluation_blocks_no_change(wf):
+    (wf.project/'AGENTS.md').write_text('good')
+    (wf.project/'app').mkdir()
+    (wf.project/'mode').write_text('drift')
+    with pytest.raises(ValueError,match='Instruction context changed during evaluation'):
+        improve(wf.args())
+    assert (wf.project/'app/AGENTS.md').read_text() == 'drifted\n'
+    assert (wf.project/'AGENTS.md').read_text() == 'good'
