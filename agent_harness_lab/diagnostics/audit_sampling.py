@@ -36,8 +36,12 @@ from datetime import datetime
 
 FRAME_PROFILE = 'audit-sampling-frame-v1'
 PLAN_PROFILE = 'audit-sampling-plan-v1'
+PLAN_PROFILE_V2 = 'audit-sampling-plan-v2'
 RECEIPT_PROFILE = 'audit-sampling-receipt-v1'
+RECEIPT_PROFILE_V2 = 'audit-sampling-receipt-v2'
 REPORT_PROFILE = 'audit-sampling-estimate-v1'
+REPORT_PROFILE_V2 = 'audit-sampling-estimate-v2'
+GRID_SIZE = 2**53
 ESTIMAND = 'captured_eligible_units_in_frame'
 CAPTURES = ('captured', 'missing', 'unknown')
 TARGETED_ROUTES = ('alerted', 'severe', 'uncertain', 'out_of_distribution')
@@ -205,7 +209,8 @@ def _plan(plan, frozen, trusted_heads=None):
     required = 'schema_version profile frame_sha256 seed rates review_budget policy_sha256 model_sha256 decision_timestamp'
     _fields({k: v for k, v in plan.items() if k != 'seed_commitment'} if isinstance(plan, dict) else plan, required,
             'invalid audit plan schema')
-    if type(plan['schema_version']) is not int or plan['schema_version'] != 1 or plan['profile'] != PLAN_PROFILE:
+    if (type(plan['schema_version']) is not int or (plan['schema_version'],plan['profile'])
+            not in ((1,PLAN_PROFILE),(2,PLAN_PROFILE_V2))):
         raise ValueError('invalid audit plan schema')
     if _sha(plan['frame_sha256']) != frozen['frame_sha256']:
         raise ValueError('audit frame changed since the plan was frozen')
@@ -240,6 +245,19 @@ def _probability(routes, rates):
     return probability
 
 
+def _grid_probability(probability):
+    """Return a binary64-exact grid probability and its integer threshold."""
+    threshold = int(probability * GRID_SIZE)
+    if threshold < 1:
+        raise ValueError('inclusion probability is below the sampling grid')
+    return threshold / GRID_SIZE, threshold
+
+
+def _grid_draw(seed, frame_sha, key, threshold):
+    prefix = int(hashlib.sha256(f'{seed}:{frame_sha}:{key}'.encode()).hexdigest()[:16], 16)
+    return prefix >> 11 < threshold
+
+
 def _uniform(seed, frame_sha, key):
     return int(hashlib.sha256(f'{seed}:{frame_sha}:{key}'.encode()).hexdigest()[:16], 16) / 2**64
 
@@ -272,21 +290,26 @@ def draw(frame, plan, trusted_heads=None):
     frozen = freeze(frame)
     rates, anchored = _plan(plan, frozen, trusted_heads)
     strata, draws = {}, []
+    grid = plan['profile'] == PLAN_PROFILE_V2
     for key, unit in frozen['eligible'].items():
         routes = _routes(unit, rates)
         name, probability = '+'.join(routes), _probability(routes, rates)
+        threshold = None
+        if grid: probability, threshold = _grid_probability(probability)
         stratum = strata.setdefault(name, dict(stratum=name, routes=routes, units=0, inclusion_probability=probability, drawn=0))
         stratum['units'] += 1
         # A 64-bit integer divided as a float can round up to 1.0. Certainty
         # strata must still include every eligible unit.
-        if probability == 1 or _uniform(plan['seed'], frozen['frame_sha256'], key) < probability:
+        selected = (_grid_draw(plan['seed'],frozen['frame_sha256'],key,threshold) if grid
+                    else probability == 1 or _uniform(plan['seed'],frozen['frame_sha256'],key) < probability)
+        if selected:
             stratum['drawn'] += 1
             draws.append(dict(unit_sha256=key, stratum=name, alerted=unit['alerted'], inclusion_probability=probability))
     expected = sum(s['units'] * s['inclusion_probability'] for s in strata.values())
     if expected > plan['review_budget']:
         raise ValueError('expected review count exceeds the declared review budget')
     return _seal(dict(
-        schema_version=1, profile=RECEIPT_PROFILE, estimand=ESTIMAND, scope=frozen['scope'], window=frozen['window'],
+        schema_version=2 if grid else 1, profile=RECEIPT_PROFILE_V2 if grid else RECEIPT_PROFILE, estimand=ESTIMAND, scope=frozen['scope'], window=frozen['window'],
         frame_sha256=frozen['frame_sha256'], plan_sha256=_digest(plan), policy_sha256=plan['policy_sha256'],
         model_sha256=plan['model_sha256'], decision_timestamp=plan['decision_timestamp'], seed=plan['seed'],
         seed_commitment=plan.get('seed_commitment'),
@@ -306,7 +329,8 @@ def review_queue(receipt, trusted_heads=None):
 
 
 def _receipt(receipt, trusted_heads=None):
-    if not isinstance(receipt, dict) or receipt.get('profile') != RECEIPT_PROFILE:
+    if (not isinstance(receipt,dict) or type(receipt.get('schema_version')) is not int
+            or (receipt['schema_version'],receipt.get('profile')) not in ((1,RECEIPT_PROFILE),(2,RECEIPT_PROFILE_V2))):
         raise ValueError('audit sampling receipt required')
     body = {k: v for k, v in receipt.items() if k != 'receipt_sha256'}
     if receipt.get('receipt_sha256') != _digest(body):
@@ -330,7 +354,8 @@ def _receipt(receipt, trusted_heads=None):
                 or len(set(routes))!=len(routes) or routes!=['random',*(['alerted'] if 'alerted' in routes else []),
                     *sorted(route for route in routes if route not in ('random','alerted'))]
                 or name!='+'.join(routes) or name in indexed or not _rate(probability)
-                or probability!=_probability(routes,rates)
+                or probability!=(_grid_probability(_probability(routes,rates))[0]
+                    if receipt['profile']==RECEIPT_PROFILE_V2 else _probability(routes,rates))
                 or type(stratum['units']) is not int or not 0<stratum['units']<=MAX_UNITS
                 or type(stratum['drawn']) is not int or not 0<=stratum['drawn']<=stratum['units']):
             raise ValueError('invalid inclusion probability or stratum in audit receipt')
@@ -557,7 +582,9 @@ def estimate(receipt, batch, trusted_heads=None):
     reasons = [r for r, s in (('pending_labels', 'pending'), ('nonresponse', 'nonresponse')) if statuses[s]]
     reviewed_alerts = [r for r in rows if r['alerted']]
     report = dict(
-        schema_version=1, profile=REPORT_PROFILE, receipt_sha256=receipt['receipt_sha256'], estimand=ESTIMAND,
+        schema_version=receipt['schema_version'],
+        profile=REPORT_PROFILE_V2 if receipt['profile']==RECEIPT_PROFILE_V2 else REPORT_PROFILE,
+        receipt_sha256=receipt['receipt_sha256'], estimand=ESTIMAND,
         population_units=population, frame=receipt['frame'], drawn=len(drawn),
         review_status={s: statuses[s] for s in STATUSES},
         weights=_weights([r['inclusion_probability'] for r in rows]),
@@ -565,7 +592,9 @@ def estimate(receipt, batch, trusted_heads=None):
         alert_only=dict(population_support='unsupported', reviewed=len(reviewed_alerts),
                         incidents=sum(r['incident'] for r in reviewed_alerts)),
         observed_false_negatives=sorted(r['unit_sha256'] for r in rows if r['incident'] and not r['alerted']),
-        limitations=[*receipt['limitations'], 'finite_precision_hash_sampling_approximate'],
+        limitations=[*receipt['limitations'], *(('hash_uniform_independence_unverified',
+            'sampling_plan_timing_unauthenticated') if receipt['profile']==RECEIPT_PROFILE_V2
+            else ('finite_precision_hash_sampling_approximate',))],
         publication_allowed=False, automatic_policy_update=False)
     if not rows:
         reasons.append('no_reviewed_draws')
