@@ -204,6 +204,19 @@ class TestTrajectoryAssertions:
         results = core.evaluate(binding, capture)['assertions']
         assert all(result['status'] == 'satisfied' and not result['coverage_complete'] for result in results)
 
+    def test_exact_sequence_coverage_ignores_uncompared_redacted_argument(self):
+        sequence = dict(kind='sequence', stage='dispatch', mode='exact', steps=[
+            predicate(arguments=dict(mode='exact', argv=['safe'])), predicate(tool='other')])
+        redacted_sequence = dict(sequence, steps=[sequence['steps'][0], sequence['steps'][0]])
+        binding = self.bind([sequence, redacted_sequence])
+        output = [[fixtures.call('first', arguments=json.dumps(dict(argv=['safe'])))],
+                  [fixtures.call('second', arguments=json.dumps(dict(argv=['SYNTHETIC_CONTROLLER_KEY'])))],
+                  [fixtures.message()]]
+        _, capture = self.role(binding, output)
+        first, second = core.evaluate(binding, capture)['assertions']
+        assert first['status'] == 'violated' and first['coverage_complete']
+        assert second['status'] == 'unknown' and not second['coverage_complete']
+
     def test_complete_argv_length_distinguishes_absent_index_from_missing_capture(self):
         pattern=dict(mode='partial',argv={'1':'impossible'})
         binding=self.bind([required(arguments=pattern),forbidden(arguments=pattern)])
