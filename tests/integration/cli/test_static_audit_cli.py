@@ -33,6 +33,24 @@ def test_audit_reports_private_protected_path_metadata_without_reading_secret(tm
     assert inventory['publication_allowed'] is False
 
 
+def test_audit_permission_deny_is_a_candidate_not_enforcement(tmp_path, monkeypatch, capsys):
+    project = tmp_path / 'project'
+    settings = project / '.claude/settings.json'
+    settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({'permissions': {'deny': ['Edit(.env)', 'Bash(SYNTHETIC_PRIVATE_COMMAND)']}}))
+    (project / '.env').write_text('SYNTHETIC_SECRET')
+    (project / 'eslint.config.js').write_text('synthetic')
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
+    report = json.loads(capsys.readouterr().out)
+    rows = {row['path']: row for row in report['permission_candidates']['paths']}
+    assert rows['.env']['status'] == 'permission_candidate_present'
+    assert rows['eslint.config.js']['status'] == 'unknown'
+    assert report['permission_candidates']['effective'] == 'unknown'
+    assert all(row['enforcement'] == 'unknown' for row in rows.values())
+    assert 'SYNTHETIC_SECRET' not in json.dumps(report) and 'SYNTHETIC_PRIVATE_COMMAND' not in json.dumps(report)
+
+
 def test_human_protected_path_output_escapes_control_characters(tmp_path, monkeypatch, capsys):
     project = tmp_path / 'project'
     project.mkdir()
