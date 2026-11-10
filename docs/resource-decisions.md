@@ -98,3 +98,8 @@ were attempted. Cached input is already included in input tokens and must not be
 Cache-write tokens and billing completeness remain unknown. This descriptive summary does not
 authenticate provider data or produce a resource decision, and does not change controller reports.
 The summary is private, labels publication as disallowed, and refuses `public=True`.
+
+`Client.usage` is a read-only snapshot: modifying its list or rows does not change later
+controller reports, and assigning to the attribute raises `AttributeError`. Callers that
+previously mutated this view must instead keep their own data. This prevents accidental
+aliasing; it does not authenticate provider usage or isolate code in the same process.
