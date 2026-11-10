@@ -67,6 +67,9 @@ def main(argv=None):
     if argv and argv[0] == 'rollback':
         from .one_call import rollback_main
         return rollback_main(argv[1:])
+    if argv and argv[0] == 'audit':
+        from .audit.cli import main as audit_main
+        return audit_main(argv[1:])
     if argv and argv[0] == 'sources':
         from agent_harness_lab.sources.cli import main as source_main
         return source_main(argv[1:])
@@ -138,6 +141,7 @@ def main(argv=None):
         'promotion':'Preview rollback, manually roll back or recover an owned journal transaction',
         'benchmark-report':'Summarize explicit benchmark artifacts without inventing missing outcomes',
         'doctor':'Inspect local readiness; probes require opt-in and authentication stays unverified',
+        'audit':'Inspect static harness conventions without execution, network or a model',
         'init':'Preview configuration or exclusively create ahl.json with explicit --write',
         'sources':'Inspect, import and project explicitly selected private source journals',
     }

@@ -3,9 +3,18 @@
 `agent_harness_lab.audit` reports, without a model, whether the harness surfaces
 of one checkout follow the conventions the pinned runtime documents. It is the
 cold-start companion of `ahl analyze`: it needs no captured traces, no credentials
-and no runtime. A command-line entry point is planned under
-[issue #328](https://github.com/mihazs/agent-harness-lab/issues/328); this page
-documents the library contract it will print.
+and no runtime. Run `ahl audit PROJECT --runtime codex --json` for a JSON report,
+or omit `--json` for a human-readable summary. `--runtime claude-code` selects
+the other pinned profile; the default is `codex`. A private JSON copy is stored
+under `$XDG_STATE_HOME/agent-harness-lab/audits` (or the usual local state
+directory); the command refuses state storage inside the project. The report
+path is printed to stderr. Exit 0 means completed, 3 means blocked or unsupported,
+and 2 means invalid input or a storage error. `next_action` suggests a behavioral
+evaluation when applicable; it is not an instruction to apply a change.
+The CLI's `coverage` rows summarize the requested audit areas. Instructions and
+enforcement use the inventory's corresponding dimension; skills, sensors, memory
+and state, and the improvement loop remain `not_checked` at this summary level.
+The more detailed `dimensions` and `findings` still include individual skill checks.
 
 ```python
 from agent_harness_lab import audit
