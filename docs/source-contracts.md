@@ -3207,6 +3207,14 @@ version 2 has a different selection scope and does not migrate or reconcile
 version 1 histories. These identifiers remain server-reported claims, not
 authenticated proof, and deleted heads remain unknown.
 
+For v2, if a selected issue or PR cannot be read, including when its repository
+is unavailable, its coverage parent is the
+fingerprint of `("gitea-v2-selection", kind, project_sha256, number)`, where
+`kind` is `gitea_issue` or `gitea_pull`. This is a selected-number reference,
+not a native object identity. Its dependent selected comments, PR, or reviews
+are reported as `not_observed` when their required parent was unavailable.
+When the parent is read, coverage uses its captured native record identity.
+
 Requests go to `/api/v1/version`, `/api/v1/repos/OWNER/REPO`, `.../issues/N`,
 `.../issues/N/comments`, `.../pulls/N` and `.../pulls/N/reviews`. The server
 version is recorded when `/api/v1/version` reports one, otherwise
