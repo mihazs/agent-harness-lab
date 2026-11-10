@@ -659,3 +659,27 @@ def test_non_shell_fences_do_not_create_procedure_hypothesis(tmp_path,monkeypatc
     assert report['declared_instruction_totals']['shape']['procedure_sections'] is False
     assert not any(row['reason']=='instruction_procedure_section_detected' for row in report['findings'])
     assert '"value"' not in json.dumps(report)
+
+
+@pytest.mark.parametrize(('parent','limit','child','expected'), [
+    ('\u00a0'*4,1,'child instruction\n','unknown'),
+    (' '*8,1,'xx','unknown'),
+    (' '*8,1,'x','declared'),
+    ('\u00a0'*4,2,'x','declared'),
+])
+def test_whitespace_budget_prefix_cannot_hide_later_truncation(tmp_path,monkeypatch,capsys,parent,limit,child,expected):
+    project=tmp_path/'project';(project/'.git').mkdir(parents=True);(project/'nested').mkdir()
+    (project/'AGENTS.md').write_text(parent);(project/'nested/AGENTS.md').write_text(child)
+    monkeypatch.setenv('XDG_STATE_HOME',str(tmp_path/'state'))
+    assert main(['audit',str(project),'--json','--task-cwd','nested',
+                 '--codex-project-doc-max-bytes',str(limit)])==0
+    report=json.loads(capsys.readouterr().out);total=report['declared_instruction_totals']
+    assert total['status']==expected and total['observed_loading']=='unknown'
+    if expected=='unknown':
+        assert total['bytes'] is None and total['lines'] is None and total['shape'] is None
+        assert 'truncated_chain_not_counted' in total['reasons']
+        assert not any(row['reason'] in ('instruction_launch_lines_above_soft_budget',
+            'instruction_constraints_not_detected','instruction_verification_command_not_detected',
+            'instruction_procedure_section_detected') for row in report['findings'])
+    else:
+        assert total['bytes']==len(child.encode()) and total['files']==1

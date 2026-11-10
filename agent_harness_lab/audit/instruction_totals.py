@@ -82,6 +82,7 @@ def codex(profile, folder, checkout, inventory, *, declared_limit=None):
     nodes = {n.path: n for n in inventory.nodes if n.origin == 'checkout' and n.kind == 'instruction'}
     refused = {r.path for r in inventory.refusals if r.root == 'checkout'}
     reasons, rows = set(), []
+    remaining = instructions.CODEX_DEFAULT_BYTES if declared_limit is None else declared_limit
     if digest(profile['task_cwd']) != inventory.task_cwd_sha256:
         raise ValueError('task directory differs from the inventory')
     if any(node.trust == 'declared_untrusted' for node in nodes.values()):
@@ -105,8 +106,16 @@ def codex(profile, folder, checkout, inventory, *, declared_limit=None):
                 reasons.add('inventory_content_changed')
                 break
             text = raw.decode('utf-8')
-            if not instructions.codex_blank(raw):
+            blank = instructions.codex_blank(raw)
+            if not blank:
+                if len(raw) > remaining: reasons.add('truncated_chain_not_counted')
+                else: remaining -= len(raw)
                 rows.append((len(raw), len(text.splitlines()), instruction_shapes.analyze(text)))
+            elif 0 < remaining < len(raw):
+                # A byte cut inside UTF-8 whitespace becomes a nonblank replacement
+                # character under Codex's lossy decoder and can exhaust the budget.
+                try: raw[:remaining].decode('utf-8')
+                except UnicodeDecodeError: reasons.add('truncated_chain_not_counted')
             break
     folder.verify()
     if chain.codex(inventory, profile['task_cwd'], declared_limit=declared_limit):
