@@ -87,3 +87,31 @@ def test_manifest_history_recovers_exact_v1_and_v2_pins_without_rewriting_ids(tm
     path.write_text(json.dumps(source))
     with pytest.raises(ValueError):
         controller_evidence(replace(base, root_similarity_sha256=digest(old)), source, path)
+
+
+def test_live_bank_controller_recovers_both_versions_and_refuses_stale_authority():
+    from agent_harness_lab.evaluation.plan import ExperimentSpec
+    from tests.integration.evaluation.test_oracle_bank_authority import OracleBankAuthority
+
+    with ExitStack() as cleanup:
+        fixture = OracleBankAuthority(cleanup.callback)
+        selected = [(task['id'], task['root']) for task in fixture.manifest['tasks']]
+        original = ExperimentSpec.parse(fixture.manifest['experiment'])
+        plans = []
+        for algorithm in (LEGACY_ALGORITHM, ALGORITHM):
+            full = inspect(fixture.bank, similarity_algorithm=algorithm)['content_grouping']['root_similarity']['evidence']
+            snapshot = project_evidence(full, selected)
+            plan = replace(original, root_similarity_sha256=digest(snapshot))
+            fixture.manifest['experiment'] = plan.to_dict(); fixture.write_manifest()
+            actual, location = controller_evidence(plan, fixture.manifest, fixture.export/'manifest.json', export_root=fixture.export)
+            assert actual == snapshot and location == str(fixture.bank)
+            plans.append(plan)
+        mismatch = replace(original, root_similarity_sha256='f'*64)
+        fixture.manifest['experiment'] = mismatch.to_dict(); fixture.write_manifest()
+        with pytest.raises(ValueError):
+            controller_evidence(mismatch, fixture.manifest, fixture.export/'manifest.json', export_root=fixture.export)
+        fixture.revoke()
+        for plan in plans:
+            fixture.manifest['experiment'] = plan.to_dict(); fixture.write_manifest()
+            with pytest.raises(ValueError):
+                controller_evidence(plan, fixture.manifest, fixture.export/'manifest.json', export_root=fixture.export)
