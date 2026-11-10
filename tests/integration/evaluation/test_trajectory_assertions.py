@@ -188,8 +188,21 @@ class TestTrajectoryAssertions:
         _, capture = self.role(binding,[[fixtures.call(arguments=json.dumps(dict(argv=exact['argv'])))],[fixtures.message()]])
         receipt = core.evaluate(binding,capture)
         assert [r['status'] for r in receipt['assertions']] == ['unknown','satisfied']
+        assert not receipt['assertions'][0]['coverage_complete']
+        assert receipt['assertions'][1]['coverage_complete']
         assert core.compose(binding,self.grade(),receipt)['outcome'] is None
         assert 'SYNTHETIC_CONTROLLER_KEY' not in json.dumps(receipt)
+
+    def test_visible_witness_remains_satisfied_when_another_argument_is_redacted(self):
+        rule = required(arguments=dict(mode='exact', argv=['safe']))
+        sequence = dict(kind='sequence', stage='dispatch', mode='subsequence', steps=[predicate(arguments=rule['arguments'])])
+        binding = self.bind([rule, sequence])
+        output = [[fixtures.call('first', arguments=json.dumps(dict(argv=['safe'])))],
+                  [fixtures.call('second', arguments=json.dumps(dict(argv=['SYNTHETIC_CONTROLLER_KEY'])))],
+                  [fixtures.message()]]
+        _, capture = self.role(binding, output)
+        results = core.evaluate(binding, capture)['assertions']
+        assert all(result['status'] == 'satisfied' and not result['coverage_complete'] for result in results)
 
     def test_complete_argv_length_distinguishes_absent_index_from_missing_capture(self):
         pattern=dict(mode='partial',argv={'1':'impossible'})
