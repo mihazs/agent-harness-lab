@@ -142,7 +142,7 @@ def main(argv=None):
                     inventory_comparison='recognized_instruction_files_only', cross_observation_consistency='unknown',
                     publication_allowed=False)
         total = report['declared_instruction_totals']
-        if args.runtime == 'claude-code' and total.get('empty_import'):
+        if args.runtime == 'claude-code' and total['status'] == 'declared' and total.get('empty_import'):
             _instruction_hypothesis(report, 'instruction_empty_import', 'structural',
                                     'evaluate_empty_instruction_import')
         total['soft_line_budget'] = args.instruction_soft_lines

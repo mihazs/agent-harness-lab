@@ -463,3 +463,15 @@ def test_claude_empty_and_missing_import_diagnostics(tmp_path, monkeypatch, caps
     assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
     total = json.loads(capsys.readouterr().out)['declared_instruction_totals']
     assert total['status'] == 'unknown' and 'import_missing' in total['reasons']
+
+
+def test_empty_import_hypothesis_abstains_when_closure_unsettled(tmp_path, monkeypatch, capsys):
+    project = tmp_path / 'project'
+    project.mkdir()
+    (project / 'CLAUDE.md').write_text('@empty.md\n@missing.md\n')
+    (project / 'empty.md').write_text('  \n')
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report['declared_instruction_totals']['status'] == 'unknown'
+    assert not any(row['reason'] == 'instruction_empty_import' for row in report['findings'])
