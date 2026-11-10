@@ -3474,6 +3474,14 @@ different record. A repeated identity within one report is kept as a further
 occurrence with a `duplicate_case_identity` warning; neither occurrence is
 dropped or merged.
 
+A case also produces a version-2 `EvidenceRecord` with structured outcome metadata:
+`passed` means observed test success, `failed` means observed test failure, and all
+other case statuses are `unknown`. The provenance tier is `test_result`; the exact
+source and case revision remain attached. These are source-level observations and
+never verify an agent task. Legacy version-1 evidence records remain readable with
+no outcome field. See [outcome correlation](source-lineage-review.md#reported-and-observed-outcomes)
+for reviewed association and legacy-cache limitations.
+
 `TestResult.status` is one of `passed`, `failed`, `error`, `skipped` or `unknown`,
 and `reported_outcome` keeps the native label:
 

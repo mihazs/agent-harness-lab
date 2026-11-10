@@ -56,12 +56,40 @@ text, timestamps, embeddings or an agent's explanation.
 | --- | --- |
 | `schema_version` | Integer `1` |
 | `left`, `right` | Two distinct exact `RecordRef` objects |
-| `relation` | `same_observation`, `derived_from` or `independent_case` |
+| `relation` | `same_observation`, `derived_from`, `same_execution` or `independent_case` |
 | `author` | Operator identity label |
 | `evidence` | Nonempty array of distinct cache `RecordRef`s |
 
 `derived_from` is directed: the left record derives from the right record.
-Independent-case assertions do not create links or become transitive.
+`same_execution` is an operator-reviewed assertion that two records concern the
+same execution. Independent-case assertions do not create links or become transitive.
+
+### Reported and observed outcomes
+
+The `query` result includes `outcome_correlation` when selected source records carry
+structured outcomes. Test-result imports record parsed JUnit and pytest case statuses:
+`passed` and `failed` become success and failure, while skipped, errored or unknown
+cases stay unknown. Normalized `ahl-metadata` sources may carry a schema-2 record
+with an `outcome` object containing `kind: reported`, `value: success|failure|unknown`
+and `provenance_tier: agent_report|memory_summary`. Schema-1 records retain their
+original representation and have no outcome. Native capture without a structured
+outcome does not acquire one by parsing message bodies.
+
+The correlation keeps source revision and provenance on `reported_outcome` and
+`observed_outcome`. Only a direct, applicable, reviewed `same_execution` link
+associates the two. A success report and failure observation yield a contradiction
+and retain the observed failure. A report without a linked observation is
+`unverified`; conflicting observations are also `unverified` and contradictory.
+Unknown, stale and ambiguous records never become verified outcomes. This private
+report does not assert independent roots, task success, causation or authorization.
+
+Outcome labels retain source-level meaning: a test result reports one test case on
+a caller-declared commit; it does not prove the result belongs to an agent task.
+The normalized agent report and lineage review are source declarations, not
+authenticated facts. Only reviewed correlations against the same frozen cache are
+shown. A pre-existing cache containing a schema-1 revision of a test case cannot
+be silently rewritten as schema 2: importing that revision again is rejected, and
+a separate fresh cache is needed to retain its structured outcome.
 
 | Review field | Value |
 | --- | --- |

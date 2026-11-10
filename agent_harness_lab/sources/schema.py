@@ -40,8 +40,8 @@ class Contract:
             raise ValueError('fields must match the versioned source contract')
         return cls(**value)
 
-    def validate(self, hashes, choices):
-        if type(self.schema_version) is not int or self.schema_version != 1:
+    def validate(self, hashes, choices, versions=(1,)):
+        if type(self.schema_version) is not int or self.schema_version not in versions:
             raise ValueError('unsupported source contract version')
         for name in hashes:
             fingerprint(getattr(self, name))
@@ -100,6 +100,21 @@ class EvidenceRecord(Contract):
     independence: str = 'unknown'
     state: str = 'present'
     schema_version: int = 1
+    outcome: dict | None = None
+
+    @classmethod
+    def parse(cls, value):
+        fields = set(cls.__dataclass_fields__)
+        if not isinstance(value, dict) or set(value) not in (fields, fields - {'outcome'}):
+            raise ValueError('fields must match the versioned source contract')
+        if (value.get('schema_version') == 1) != ('outcome' not in value):
+            raise ValueError('outcome requires source record schema 2')
+        return cls(**value)
+
+    def to_dict(self):
+        result = asdict(self)
+        if self.schema_version == 1: result.pop('outcome')
+        return result
 
     def __post_init__(self):
         self.validate(('source_sha256', 'native_id_sha256', 'revision_sha256', 'content_sha256'), {
@@ -108,7 +123,18 @@ class EvidenceRecord(Contract):
             'capture_completeness': ('unknown', 'partial', 'complete'),
             'causal_status': ('unknown', 'source_declared'),
             'independence': ('unknown', 'shared_lineage', 'reviewed'),
-            'state': ('present', 'tombstone')})
+            'state': ('present', 'tombstone')}, versions=(1, 2))
+        if self.schema_version == 1 and self.outcome is not None:
+            raise ValueError('outcome requires source record schema 2')
+        if self.schema_version == 2:
+            value = self.outcome
+            tiers = {'observed': ('test_result',), 'reported': ('agent_report', 'memory_summary')}
+            if (not isinstance(value, dict) or set(value) != {'kind', 'value', 'provenance_tier'}
+                    or not isinstance(value['kind'], str) or value['kind'] not in tiers
+                    or value['provenance_tier'] not in tiers[value['kind']]
+                    or value['value'] not in ('success', 'failure', 'unknown')
+                    or self.state != 'present'):
+                raise ValueError('invalid source outcome metadata')
         label(self.record_type); timestamp(self.collected_at)
         if self.original_at is not None:
             timestamp(self.original_at)
