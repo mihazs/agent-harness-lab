@@ -37,6 +37,8 @@ def main():
             if action == sqlite3.SQLITE_SELECT: return sqlite3.SQLITE_OK
             if action == sqlite3.SQLITE_READ and arg1 == 'session_v2' and arg2 in allowed and database == 'main' and trigger is None:
                 return sqlite3.SQLITE_OK
+            if (request.get('messages') is True and action == sqlite3.SQLITE_READ and arg1 == 'session_message'
+                    and arg2 == 'session_id' and database == 'main' and trigger is None): return sqlite3.SQLITE_OK
             return sqlite3.SQLITE_DENY
         connection.set_authorizer(authorize)
         deadline = time.monotonic()+1
@@ -54,7 +56,14 @@ def main():
                 any(c.isspace() for c in parent) or parent == session): raise ValueError('invalid parent')
         if archived is not None and (type(archived) not in (int, float) or abs(archived) > 8640000000000000 or
                 not math.isfinite(archived)): raise ValueError('invalid archive')
-        sys.stdout.write(json.dumps({'parent': parent, 'archived': archived}, allow_nan=False))
+        result = {'parent': parent, 'archived': archived}
+        if request.get('messages') is True:
+            count = 0
+            for _ in connection.execute('SELECT 1 FROM session_message WHERE session_id = ? COLLATE BINARY LIMIT 100001', (session,)):
+                count += 1
+                if count > 100000: raise ValueError('message count bound exceeded')
+            result['message_count'] = count
+        sys.stdout.write(json.dumps(result, allow_nan=False))
     finally:
         connection.close()
 
