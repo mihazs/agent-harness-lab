@@ -148,7 +148,7 @@ def test_similarity_snapshot_and_pinned_results_are_not_public_export_records():
                   provenance=dict(source_kind='synthetic', approved_publication=True,
                                   source_ref='synthetic:control', derived_from_private=False))
     assert public_export_allowed([public])
-    snapshot = manifest_evidence({'tasks': [dict(id='one', root='root', prompt='synthetic prompt')]})
+    snapshot = manifest_evidence({'tasks': [dict(id='one', root='root', prompt='synthetic prompt text')]})
     assert not public_export_allowed([dict(public, root_similarity_evidence=snapshot)])
     assert not public_export_allowed([dict(public, root_similarity_sha256=digest(snapshot))])
 

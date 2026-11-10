@@ -72,6 +72,8 @@ def evidence(bank_sha256, revision_sha256, task_roots, prompts):
     rows = sorted([list(row) for row in task_roots])
     if len(prompts) != len(rows):
         raise ValueError('all selected task prompts are required for similarity evidence')
+    if any(not shingles(prompt) for _, prompt in prompts):
+        raise ValueError('each prompt needs at least one lexical shingle for similarity evidence')
     return dict(schema_version=1, algorithm=ALGORITHM, bank_sha256=bank_sha256,
                 grouping_revision_sha256=revision_sha256, task_roots=rows,
                 groups=[list(group) for group in suspected_components(prompts)])
