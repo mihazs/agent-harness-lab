@@ -30,3 +30,15 @@ controller for that store. The project/store separation check observes current
 paths; it does not protect against concurrent renames of their parent directories.
 Use a store whose ancestry remains controlled for the duration of creation. Neither operation verifies caller-supplied project
 identity hashes. A failed or incomplete creation is not an executable campaign.
+
+The offline CLI exposes the same planned-only operations:
+
+```text
+ahl campaign --store PRIVATE_STORE create --spec PRIVATE_SPEC.json --project-root PROJECT
+ahl campaign --store PRIVATE_STORE inspect --campaign CAMPAIGN_ID
+```
+
+Both commands print private JSON. Creation requires a complete v1 specification;
+the specification and output contain private identities. Inspecting does not
+start or resume work. Exit 0 means the requested offline action completed; 2
+means invalid or unavailable input, and 3 means the store lock is busy.

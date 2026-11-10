@@ -96,6 +96,9 @@ def main(argv=None):
     if argv and argv[0] == 'sources':
         from agent_harness_lab.sources.cli import main as source_main
         return source_main(argv[1:])
+    if argv and argv[0] == 'campaign':
+        from agent_harness_lab.campaigns.cli import main as campaign_main
+        return campaign_main(argv[1:])
     if argv and argv[0] == 'regression-review':
         from agent_harness_lab.evaluation.regression_review import main as review_main
         return review_main(argv[1:])
@@ -158,6 +161,7 @@ def main(argv=None):
         'grader-correction':'Record and review corrections without rewriting original graded evidence',
         'regression':'Construct or replay explicit regression tasks with fixed controls',
         'regression-review':'Manage private regression cases, replay evidence and dedicated review transitions',
+        'campaign':'Create and inspect private planned campaigns offline; execution is not implemented',
         'sandbox-check':'Probe explicitly configured offline worker isolation; does not authenticate agents',
         'research-simulate':'Run reproducible synthetic research scenarios without a model service',
         'incident-search':'Search an explicitly approved private incident corpus with a local lexical index',
