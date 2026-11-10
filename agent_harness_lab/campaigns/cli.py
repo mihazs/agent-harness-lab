@@ -13,11 +13,13 @@ def main(argv=None):
         'Create or inspect private planned campaigns offline. No execution, budget enforcement, review, recovery or deployment is implemented. '
         'Project and store ancestry must remain controlled and stable during creation.'))
     parser.add_argument('--store',type=Path,required=True,help='Explicit private owner-only store outside the project')
-    actions = parser.add_subparsers(dest='action',required=True)
-    create = actions.add_parser('create',help='Freeze a supplied specification without launching work')
+    actions = parser.add_subparsers(dest='action',required=True,help='Choose a private planned-campaign operation')
+    create = actions.add_parser('create',help='Freeze a supplied specification without launching work',
+        description='Create a private planned campaign from a supplied specification; no work is launched or budget enforced.')
     create.add_argument('--spec',type=Path,required=True,help='Existing private campaign specification JSON')
     create.add_argument('--project-root',type=Path,required=True,help='Existing project directory; keep its and the store ancestry stable during creation')
-    inspect = actions.add_parser('inspect',help='Inspect one private planned record without launching work')
+    inspect = actions.add_parser('inspect',help='Inspect one private planned record without launching work',
+        description='Inspect a private planned campaign without executing, resuming, reviewing or deploying work.')
     inspect.add_argument('--campaign',required=True,help='Opaque campaign ID returned by create')
     args = parser.parse_args(argv)
     try:
