@@ -346,6 +346,9 @@ and does not establish runtime loading. The resolver reads a separate checked
 filesystem observation; it compares selected file hashes to the inventory, but
 cross-observation consistency remains unknown. Truncated, refused, oversized,
 changed, or otherwise unsettled chains produce unknown totals.
+This includes a budget cut within multibyte whitespace, whose lossy-decoded
+prefix can consume the remaining budget, and a later file exceeding the budget
+after an ignored blank prefix.
 
 Pass `--codex-project-doc-max-bytes N` to model an operator-declared nonnegative
 byte budget; the CLI does not read or authenticate the runtime's settings. If
