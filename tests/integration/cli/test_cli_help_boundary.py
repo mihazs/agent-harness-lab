@@ -17,6 +17,7 @@ TOP_DESCRIPTION = ('Start with ahl analyze . for read-only analysis, or ahl impr
 SUMMARIES = {
     'improve': 'Stage and evaluate harness candidates, then recommend; never applies behavioral changes '
                '(only --repair-contracts may apply bounded skill-header repairs)',
+    'campaign': 'Create and inspect private planned campaigns offline; execution is not implemented',
     'watch': 'Recheck evidence; rerun recommendation-only staging and evaluation on a first pass, changed evidence '
              'or configuration, or a classified transient retry; AHL never writes harness files',
 }
@@ -44,7 +45,7 @@ OPTIONS = {
     'watch': (*COMMON, *RUNTIME, *EXECUTION, '--interval', '--max-attempts', '--retry-delay', '--watch-budget', '--once'),
 }
 SUBCOMMANDS = ('rollback', 'update', 'mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'bank-interchange',
-               'bank-review', 'experiment', 'experiment-history', 'grader-correction', 'regression', 'regression-review',
+               'bank-review', 'experiment', 'experiment-history', 'grader-correction', 'regression', 'regression-review', 'campaign',
                'sandbox-check', 'research-simulate', 'incident-search', 'promotion', 'benchmark-report', 'doctor', 'audit', 'init',
                'sources', 'analyze', 'analysis', 'improve', 'watch')
 # Wording that would imply behavioral auto-adoption or continuous self-modification.

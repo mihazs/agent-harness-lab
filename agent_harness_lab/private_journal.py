@@ -115,9 +115,11 @@ class PrivateJournal:
         require_writable(self.root)
         if any(p.is_symlink() for p in (self.root, *self.root.parents)):
             raise ValueError('case store crosses a symlink')
-        if create: self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
-        elif not self.root.is_dir(): raise ValueError('case store is not initialized')
-        store = open_directory_nofollow(self.root)
+        if create:
+            store = create_directory_nofollow(self.root,mode=0o700)
+        else:
+            if not self.root.is_dir(): raise ValueError('case store is not initialized')
+            store = open_directory_nofollow(self.root)
         try:
             info = os.fstat(store)
             if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:

@@ -382,3 +382,18 @@ convention with no authority. Normal evaluation and adoption gates remain in
 force; a recheck does not guarantee a candidate or a completed evaluation. The
 plan metadata is descriptive, outside the common plan's integrity digest. Evaluation
 feedback is not written back to the audit report.
+
+### Feedback sensor candidates
+
+`ahl audit PROJECT --feedback-sensors` adds a private filename-only inventory for
+recognized test paths, configuration files, task runners and Git hook configurations.
+A candidate's `stage` is a filename convention, not proof that a check exists,
+runs early or executes successfully. Contents and commands are not read by this
+inventory. `coverage` describes only the metadata walk: refused paths make it
+unknown, and unrecognized filenames mean detection completeness is unknown even
+when the walk completed. The `.github/workflows`, `.circleci`, and `.buildkite`
+subtrees are excluded; other hosted configuration paths may not be recognized.
+Instruction-to-command consistency and stale-target
+detection are not checked in this slice. The inventory is a separate metadata
+observation, not an atomic snapshot with other audit inputs. Without the option,
+the existing report shape is unchanged.
