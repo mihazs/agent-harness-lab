@@ -41,6 +41,18 @@ class BackupClaimV2:
     original_at: None = None
 
 
+@dataclass(frozen=True)
+class BackupClaimV3:
+    claim_type: str
+    native_id_sha256: str
+    project_sha256: str
+    parent_sha256: str | None
+    archive_state: str
+    message_count: int
+    part_count: int
+    original_at: None = None
+
+
 def _exchange(worker, payload):
     """Stream input while bounding output and wall time; kill and reap on every failure."""
     process = subprocess.Popen([sys.executable, '-I', str(worker)], stdin=subprocess.PIPE,
@@ -79,10 +91,11 @@ def _exchange(worker, payload):
         if not process.stdout.closed: process.stdout.close()
 
 
-def _session(raw, session, project, *, messages=False):
+def _session(raw, session, project, *, messages=False, parts=False):
     """Run native parsing in a Linux child with enforced resource limits and a wall timeout."""
     if sys.platform != 'linux': raise ValueError('isolated OpenCode backup reader unavailable')
-    request = json.dumps({'session': session, 'project': project, **({'messages': True} if messages else {})}, ensure_ascii=True).encode('ascii')
+    request = json.dumps({'session': session, 'project': project, **({'messages': True} if messages else {}),
+                          **({'parts': True} if parts else {})}, ensure_ascii=True).encode('ascii')
     if len(request) > 16384: raise ValueError('OpenCode selection exceeds IPC bound')
     worker = Path(__file__).with_name('_opencode_backup_worker.py')
     try:
@@ -91,8 +104,10 @@ def _session(raw, session, project, *, messages=False):
         raise ValueError('isolated OpenCode backup reader unavailable or timed out') from None
     try:
         value = json.loads(output)
-        if not isinstance(value, dict) or set(value) != ({'parent', 'archived', 'message_count'} if messages else {'parent', 'archived'}): raise ValueError()
-        if messages and (type(value['message_count']) is not int or not 0 <= value['message_count'] <= 100000): raise ValueError()
+        fields = {'parent', 'archived'} | ({'message_count'} if messages else set()) | ({'part_count'} if parts else set())
+        if not isinstance(value, dict) or set(value) != fields: raise ValueError()
+        for field in fields & {'message_count', 'part_count'}:
+            if type(value[field]) is not int or not 0 <= value[field] <= 100000: raise ValueError()
         return value
     except (ValueError, UnicodeDecodeError):
         raise ValueError('invalid isolated OpenCode backup result') from None
@@ -101,12 +116,12 @@ def _session(raw, session, project, *, messages=False):
 class OpenCodeBackup(LocalExport):
     """Never opens an OpenCode store or SQLite sidecars; backup provenance is caller-declared."""
     def read(self, source):
-        if (source.kind, source.provider) != ('local_file', PROVIDER) or source.version not in ('v1', 'v2'):
+        if (source.kind, source.provider) != ('local_file', PROVIDER) or source.version not in ('v1', 'v2', 'v3'):
             raise ValueError('unsupported OpenCode backup source')
         descriptor, selection = self.selection(source)
         fields = {'schema_version', 'upstream_commit', 'instance', 'backup', 'session_id', 'project_id', 'snapshot_kind'}
         if (not isinstance(selection, dict) or set(selection)-{'limits'} != fields or
-                type(selection['schema_version']) is not int or selection['schema_version'] not in (1, 2) or
+                type(selection['schema_version']) is not int or selection['schema_version'] not in (1, 2, 3) or
                 source.version != f"v{selection['schema_version']}" or
                 selection['upstream_commit'] != PIN or selection['snapshot_kind'] != 'caller_supplied_backup' or
                 digest(selection) != source.scope_sha256):
@@ -121,7 +136,8 @@ class OpenCodeBackup(LocalExport):
         if source.project_sha256 != project_hash: raise ValueError('OpenCode selected project mismatch')
         bounds = limits(selection.get('limits'), LIMITS)
         rows = []
-        def consume(position, raw, backup_hash): rows.append(_session(raw, session, project, messages=source.version == 'v2'))
+        def consume(position, raw, backup_hash): rows.append(_session(raw, session, project,
+            messages=source.version in ('v2', 'v3'), parts=source.version == 'v3'))
         backup_hash, = self.capture(source, descriptor, selection, [contained(self.manifest.parent, selection['backup'])],
             bounds['max_backup_bytes'], consume, 'OpenCode backup changed during capture', read_regular, regular_sha256)
         result = rows.pop()
@@ -131,13 +147,19 @@ class OpenCodeBackup(LocalExport):
         self.claims = [BackupClaim('session', native, project_hash, parent_hash, 'reported_archived' if archived is not None else 'unknown')]
         if source.version == 'v2':
             self.claims = [BackupClaimV2('session', native, project_hash, parent_hash, self.claims[0].archive_state, result['message_count'])]
+        elif source.version == 'v3':
+            self.claims = [BackupClaimV3('session', native, project_hash, parent_hash, self.claims[0].archive_state,
+                result['message_count'], result['part_count'])]
         self.summary = dict(schema_version=1, provider=PROVIDER, source_version=source.version,
             snapshot_status='caller_declared_unverified', producer_version='unverified', capture_completeness='unknown',
             source_identity='source_declared_unverified', parent_sha256=parent_hash, archive_state=self.claims[0].archive_state,
             task_outcomes_verified=False, warnings=['snapshot_consistency_unverified', 'wal_not_read',
                 'producer_version_unverified', 'lineage_unknown', 'completeness_unknown'])
-        if source.version == 'v2':
+        if source.version in ('v2', 'v3'):
             self.summary['message_count'] = result['message_count']
             self.summary['warnings'].append('message_rows_not_validated')
+        if source.version == 'v3':
+            self.summary['part_count'] = result['part_count']
+            self.summary['warnings'].append('part_rows_not_validated')
         return claim_snapshot(source, 'opencode_backup_', self.claims, lambda c: 'native_field',
             digest(('opencode.backup', instance, selection['backup'])), backup_hash, self.summary)

@@ -64,6 +64,65 @@ def v2(source):
     return backup, spec, manifest
 
 
+def v3(source):
+    backup, selection, spec, manifest = source
+    selection['schema_version'] = 3
+    (manifest.parent/'selection.json').write_text(json.dumps(selection))
+    spec = SourceSpec(**{**spec.to_dict(), 'version': 'v3', 'scope_sha256': digest(selection)})
+    manifest.write_text(json.dumps(dict(schema_version=1, source=spec.to_dict(), data='selection.json')))
+    return backup, spec, manifest
+
+
+def test_v3_counts_selected_parts_without_reading_bodies_or_claiming_relationships(source):
+    backup, spec, manifest = v3(source)
+    with sqlite3.connect(backup) as db:
+        db.execute('CREATE TABLE session_message (session_id TEXT, data TEXT)')
+        db.execute('INSERT INTO session_message VALUES (?, ?)', (SESSION, SECRET))
+        db.execute('CREATE TABLE session_part (session_id TEXT COLLATE NOCASE, data TEXT)')
+        db.executemany('INSERT INTO session_part VALUES (?, ?)', [(SESSION, SECRET), (SESSION, SECRET),
+            (SESSION.upper(), SECRET), ('ses_other', SECRET)])
+    connector = OpenCodeBackup(manifest)
+    snapshot = connector.read(spec)
+    assert (connector.summary['message_count'], connector.summary['part_count']) == (1, 2)
+    assert {'message_rows_not_validated', 'part_rows_not_validated', 'lineage_unknown'} <= set(connector.summary['warnings'])
+    assert connector.summary['capture_completeness'] == 'unknown'
+    assert all((r.causal_status, r.independence) == ('unknown', 'unknown') for r in snapshot.records)
+    assert SECRET not in repr((connector.summary, connector.claims, snapshot))
+
+
+def test_v3_missing_parts_and_view_into_other_tables_fail_closed(source):
+    backup, spec, manifest = v3(source)
+    with sqlite3.connect(backup) as db: db.execute('CREATE TABLE session_message (session_id TEXT)')
+    with pytest.raises(ValueError): OpenCodeBackup(manifest).read(spec)
+    with sqlite3.connect(backup) as db:
+        db.execute('CREATE TABLE secret_parts (session_id TEXT)')
+        db.execute('CREATE VIEW session_part AS SELECT session_id FROM secret_parts')
+    with pytest.raises(ValueError): OpenCodeBackup(manifest).read(spec)
+
+
+def test_v3_refuses_excess_part_rows(source):
+    backup, spec, manifest = v3(source)
+    with sqlite3.connect(backup) as db:
+        db.execute('CREATE TABLE session_message (session_id TEXT)')
+        db.execute('CREATE TABLE session_part (session_id TEXT)')
+        db.executemany('INSERT INTO session_part VALUES (?)', ((SESSION,) for _ in range(100001)))
+    with pytest.raises(ValueError): OpenCodeBackup(manifest).read(spec)
+
+
+def test_v3_cli_preview_reports_unverified_part_count(source):
+    backup, spec, manifest = v3(source)
+    with sqlite3.connect(backup) as db:
+        db.execute('CREATE TABLE session_message (session_id TEXT)')
+        db.execute('CREATE TABLE session_part (session_id TEXT)')
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        code = main(['sources', 'preview', '--manifest', str(manifest), '--project-sha256', spec.project_sha256,
+            '--scope-sha256', spec.scope_sha256])
+    assert code == 0
+    summary = json.loads(output.getvalue())['opencode_backup_summary']
+    assert summary['part_count'] == 0 and summary['capture_completeness'] == 'unknown'
+
+
 def test_v2_counts_only_selected_session_rows_as_unverified_metadata(source):
     backup, spec, manifest = v2(source)
     with sqlite3.connect(backup) as db:
