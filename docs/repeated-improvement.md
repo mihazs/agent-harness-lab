@@ -39,6 +39,7 @@ The request is strict JSON with these fields:
 | `effect_margin`, `family_margin`, `alpha` | Frozen decision margins and error level |
 | `family_weights` | Object mapping every selected family to its positive frozen weight |
 | `precision_half_width` | Explicit analytic target, or JSON `null` |
+| `root_similarity` | Optional boolean; `true` freezes local prompt-similarity candidates |
 | `operator_review` | Bounded operator declaration; retained as **unverified** |
 | `cache_policy` | `fresh_controller_calls_provider_cache_unknown` |
 
@@ -55,6 +56,17 @@ before sandbox, credential or model access. The request also refuses shared call
 for proposer publication and every fresh worker trial. Actual consumption may exhaust
 the budget sooner; time feasibility remains unknown. This analytic check is not power or a
 prediction of provider cost or completion time.
+
+Set `root_similarity` to `true` to compute candidate relationships from the
+selected manifest prompts before dispatch. The plan pins that private snapshot;
+preflight uses grouped weights and blocks if its criteria cannot be met. Stored
+history recomputes the snapshot from the frozen manifest before final analysis,
+and changed or missing evidence cannot support a decision. Only the evidence
+digest is added to the plan; prompts, candidate groupings, and digests remain
+private. A match indicates possible dependence, and no match proves independence.
+Omitting the option or setting it to `false` preserves legacy behavior and does
+not perform this additional check. The check is not supported by sequential
+plans or the power simulator.
 
 The proposer receives its existing minimal metadata and baseline views. It cannot
 see the private bank, request, history or settings. Once the candidate is frozen,
@@ -141,3 +153,8 @@ Legacy histories without this binding report unknown with null trials and digest
 they do not acquire a saved schedule from the seed. Sequential correction replay
 remains unsupported. Schedule inspection proves neither execution nor eligibility
 and grants no permission to resume, retry or apply a candidate.
+
+Controller history accepts the prompt-derived snapshot created by this workflow.
+The separately inspected task-bank evidence format is supported by standalone
+fixed analysis; it is not currently interchangeable with controller-history
+admission. Existing history without a pin remains legacy and independence-unverified.
