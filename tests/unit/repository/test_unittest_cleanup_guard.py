@@ -1,7 +1,10 @@
-"""Prevent hand-driven unittest cleanup from silently swallowing errors."""
+"""Prevent hand-driven unittest cleanup from silently swallowing errors.
+
+Computed attribute names and dynamically resolved aliases remain unverified.
+"""
 import ast
-import os
 from pathlib import Path
+import subprocess
 import pytest
 
 REPO = Path(__file__).resolve().parents[3]
@@ -51,15 +54,21 @@ def bare_references(source):
 
 def test_test_helpers_never_call_unittest_cleanups_bare():
     found = []
-    for root, directories, files in os.walk(REPO):
-        directories[:] = [name for name in directories if name not in
-                          {'.git', '.venv', '.pytest_cache', '__pycache__', 'node_modules', 'artifacts', 'build', 'dist'}]
-        for name in files:
-            if not name.endswith('.py'): continue
-            path = Path(root)/name
-            if path.is_relative_to(REPO/'tests/support'): continue
-            relative = path.relative_to(REPO).as_posix()
-            found.extend((relative, line, name) for line, name in bare_references(path.read_text()))
+    try:
+        checkout=subprocess.run(['git','-C',str(REPO),'rev-parse','--show-toplevel'],
+            capture_output=True,text=True,check=False)
+    except FileNotFoundError:
+        pytest.skip('tracked cleanup guard requires Git checkout metadata')
+    if checkout.returncode or Path(checkout.stdout.strip()).resolve()!=REPO.resolve():
+        pytest.skip('tracked cleanup guard requires Git checkout metadata')
+    paths=subprocess.check_output(['git','-C',str(REPO),'ls-files','-z','--',
+        ':(glob)tests/**/*.py',':(glob)skills/**/test_*.py']).split(b'\0')
+    for raw in paths:
+        if not raw:continue
+        path=REPO/Path(raw.decode('utf-8'))
+        if path.is_relative_to(REPO/'tests/support'):continue
+        relative=path.relative_to(REPO).as_posix()
+        found.extend((relative, line, name) for line, name in bare_references(path.read_text()))
     allowed=RUNNER_ALLOWLIST | OWNER_ALLOWLIST
     assert all(allowed.values()), 'every exception needs a cleanup ownership explanation'
     assert len(found)==len(set(found)), 'multiple cleanup references at one allowlisted location are unsupported'
@@ -73,8 +82,22 @@ def test_guard_detects_direct_bound_and_reflective_cleanup_references():
 
 
 def test_guard_rejects_a_new_bare_call(tmp_path,monkeypatch):
-    (tmp_path/'new_test.py').write_text('case.doCleanups()\n')
+    subprocess.run(['git','init','-q',str(tmp_path)],check=True)
+    tests=tmp_path/'tests';tests.mkdir()
+    (tests/'tracked.py').write_text('pass\n')
+    subprocess.run(['git','-C',str(tmp_path),'add','tests/tracked.py'],check=True)
+    (tests/'untracked.py').write_text('case.doCleanups()\n')
+    (tmp_path/'.gitignore').write_text('tests/ignored.py\n')
+    (tests/'ignored.py').write_text('case.doClassCleanups()\n')
     monkeypatch.setitem(globals(),'REPO',tmp_path)
     monkeypatch.setitem(globals(),'OWNER_ALLOWLIST',{})
+    test_test_helpers_never_call_unittest_cleanups_bare()
+    subprocess.run(['git','-C',str(tmp_path),'add','tests/untracked.py'],check=True)
     with pytest.raises(AssertionError,match='route unittest cleanup'):
+        test_test_helpers_never_call_unittest_cleanups_bare()
+
+
+def test_guard_skips_without_checkout_metadata(tmp_path,monkeypatch):
+    monkeypatch.setitem(globals(),'REPO',tmp_path)
+    with pytest.raises(pytest.skip.Exception,match='requires Git checkout metadata'):
         test_test_helpers_never_call_unittest_cleanups_bare()

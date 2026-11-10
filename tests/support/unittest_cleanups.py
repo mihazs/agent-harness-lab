@@ -22,7 +22,7 @@ def run_cleanups(*cases):
             function, args, kwargs = case._cleanups.pop()
             try:
                 function(*args, **kwargs)
-            except Exception as error:
+            except BaseException as error:
                 errors.append(error)
     _raise(errors, 'unittest cleanups')
 
