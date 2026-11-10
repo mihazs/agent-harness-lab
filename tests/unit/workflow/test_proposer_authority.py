@@ -42,6 +42,16 @@ def test_model_authority_claims_cannot_promote(claim):
 
 
 @pytest.mark.parametrize('claim', ATTACKS)
+def test_model_claims_cannot_turn_a_qualified_recommendation_into_adoption(claim, monkeypatch):
+    # Simulate trusted controller qualification so the final recommendation branch is reached.
+    monkeypatch.setattr(policy, 'isolation_qualification', lambda scope: 'qualified')
+    decision = policy.decide(specification(), dict(status='supported', oracle_validity='current', **claim),
+        effective_runtime_verified=True, graders_audited=True, lineage_reviewed=True, certification_reserved=True)
+    assert (decision.status, decision.reason) == ('recommended', 'fixed_final_evidence_supports_declared_claim')
+    assert decision.automatic is False
+
+
+@pytest.mark.parametrize('claim', ATTACKS)
 def test_model_authority_claims_cannot_change_review_plan(claim):
     plan = HarnessChangePlan.create({}, {'AGENTS.md': ('a' * 64, 0o644)},
         references={name: None for name in REFERENCE_NAMES}, diagnosis=claim,
