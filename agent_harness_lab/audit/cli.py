@@ -166,7 +166,7 @@ def main(argv=None):
         report['protected_path_inventory'] = protected_paths(project)
         from .permission_candidates import report as permission_candidates
         report['permission_candidates'] = permission_candidates(inventory, report['protected_path_inventory'])
-        report['improvement_hint'] = improvement_hint.from_findings(report['findings'])
+        report['improvement_hint'] = improvement_hint.from_findings(report['findings'], args.runtime)
         candidate = next((row for row in report['findings'] if row['remediation']), None)
         if report['status'] != 'completed':
             report['next_action'] = 'Resolve the blocked inventory before using this audit.'
@@ -174,8 +174,9 @@ def main(argv=None):
             report['next_action'] = ('Evaluate a proposed change for finding ' + candidate['id'] + ' with ahl improve; '
                 'the convention check does not establish a performance improvement.')
             if report['improvement_hint'] is not None:
-                report['next_action'] += (' Optional instruction focus: ahl improve PROJECT --focus ' +
-                                          shlex.quote(report['improvement_hint']['focus']) + '.')
+                agent = 'claude' if args.runtime == 'claude-code' else 'codex'
+                report['next_action'] += (' Optional instruction focus: ahl improve PROJECT --agent ' + agent +
+                                          ' --focus ' + shlex.quote(report['improvement_hint']['focus']))
         else:
             report['next_action'] = 'Capture behavioral evidence with ahl analyze and evaluate a proposed change with ahl improve.'
         destination.mkdir(parents=True, exist_ok=True, mode=0o700)

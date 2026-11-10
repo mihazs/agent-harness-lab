@@ -14,10 +14,13 @@ HINTS = {
 }
 
 
-def from_findings(findings):
+def from_findings(findings, runtime):
     """Return only an allowlisted fixed hint, with no report path, contents, counts or finding identity."""
+    if runtime not in ('claude-code', 'codex'):
+        raise ValueError('unsupported audit runtime')
     for row in findings:
         reason = row.get('reason')
         if row.get('dimension') == 'instructions' and row.get('status') in ('weak', 'missing') and reason in HINTS:
-            return dict(reason=reason, focus=HINTS[reason], status='hypothesis', authority='none', publication_allowed=False)
+            return dict(reason=reason, focus=HINTS[reason], runtime=runtime, status='hypothesis', authority='none',
+                        publication_allowed=False)
     return None

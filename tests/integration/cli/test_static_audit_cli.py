@@ -505,7 +505,33 @@ def test_instruction_improvement_hint_contains_only_fixed_content(tmp_path, monk
     hint = report['improvement_hint']
     assert hint == dict(reason='instruction_constraints_not_detected',
                         focus='Investigate whether project instruction constraints need clarification.',
-                        status='hypothesis', authority='none', publication_allowed=False)
+                        runtime='codex', status='hypothesis', authority='none', publication_allowed=False)
     assert 'SYNTHETIC_PRIVATE_SENTENCE' not in json.dumps(hint)
     assert str(project) not in json.dumps(hint)
-    assert '--focus' in report['next_action']
+    import shlex
+    argv = shlex.split(report['next_action'].split(' Optional instruction focus: ', 1)[1])
+    assert argv == ['ahl', 'improve', 'PROJECT', '--agent', 'codex', '--focus', hint['focus']]
+
+
+def test_suggested_focus_round_trips_audited_runtime_despite_configured_default(tmp_path, monkeypatch, capsys):
+    import shlex
+    from agent_harness_lab import config
+
+    project = tmp_path / 'project'
+    project.mkdir()
+    (project / 'CLAUDE.md').write_text('@empty.md\n')
+    (project / 'empty.md').write_text(' \n')
+    settings = config.prepare(dict(profile='cooperative', runtime=dict(name='codex', executable='/synthetic/codex')))
+    config.create(project, settings)
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
+    report = json.loads(capsys.readouterr().out)
+    hint = report['improvement_hint']
+    assert hint['runtime'] == 'claude-code'
+    command = report['next_action'].split(' Optional instruction focus: ', 1)[1]
+    argv = shlex.split(command)
+    assert argv[:3] == ['ahl', 'improve', 'PROJECT']
+    assert argv[3:] == ['--agent', 'claude', '--focus', hint['focus']]
+    default = config.execution_options(project, settings, {'agent': 'auto'}, set())
+    chosen = config.execution_options(project, settings, {'agent': argv[4]}, {'--agent'})
+    assert default['agent'] == 'codex' and chosen['agent'] == 'claude'
