@@ -39,7 +39,9 @@ Task observations pair sealed trials by the frozen task, root, family and repeat
 They show trial IDs and outcomes without changing the analysis population or
 decision. Incomplete or contradictory outcomes remain unknown; different or
 unavailable measured runtime image or grader identity is not comparable. These
-labels do not explain causes. Unplanned records and individual resource details
+labels do not explain causes. In HTML, open the keyboard-accessible status groups
+to browse subsets; the frozen analysis and its decision do not change. Markdown
+retains the full table. Unplanned records and individual resource details
 are not presented by this table.
 
 When retained for the selected trial, the report shows a bounded per-arm list of

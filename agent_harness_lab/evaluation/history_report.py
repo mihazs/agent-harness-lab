@@ -153,13 +153,19 @@ def render(result):
         pair_headings=('Task','Root','Family','Repeat','Baseline outcome / trial','Candidate outcome / trial','Observed comparison')
         lines+=['','### Task observations','','Statuses describe recorded results, not causation or a changed analysis population.','',
                 '| '+' | '.join(pair_headings)+' |','| '+' | '.join('---' for _ in pair_headings)+' |']
-        pair_html=[]
+        pair_html={status:[] for status in ('regressed','improved','unchanged','unknown','not comparable')}
         for pair in entry['task_pairs']:
             def label(side):
                 return 'unknown' if side is None else side['outcome']+' / '+side['trial_id']
             values=(pair['task'],pair['root'],pair['family'],pair['repetition'],label(pair['baseline']),label(pair['candidate']),pair['status'])
             lines.append('| '+' | '.join(_cell(value) for value in values)+' |')
-            pair_html.append('<tr>'+''.join('<td>'+html.escape(str(value))+'</td>' for value in values)+'</tr>')
+            status=pair['status'] if pair['status'] in pair_html else 'unknown'
+            pair_html[status].append('<tr>'+''.join('<td>'+html.escape(str(value))+'</td>' for value in values)+'</tr>')
+        pair_groups=[]
+        for status,items in pair_html.items():
+            headers=''.join('<th scope="col">'+html.escape(value)+'</th>' for value in pair_headings)
+            pair_groups.append('<details><summary>'+html.escape(status)+' ('+str(len(items))+')</summary>'
+                +'<table><thead><tr>'+headers+'</tr></thead><tbody>'+''.join(items)+'</tbody></table></details>')
         timeline_html=[]
         lines+=['','### Recorded action metadata','','Rows are per trial, unaligned across arms, and do not authenticate action custody.','']
         for pair in entry['task_pairs']:
@@ -181,9 +187,8 @@ def render(result):
         sections.append('<section><h2>Comparison '+html.escape(receipt['run_id'])+'</h2><p>Disposition: '
             +html.escape(analysis['status'])+' / '+html.escape(str(analysis.get('reason','unknown')))
             +'</p><table><thead><tr>'+''.join('<th scope="col">'+html.escape(value)+'</th>' for value in headings)
-            +'</tr></thead><tbody>'+''.join(rows)+'</tbody></table><h3>Task observations</h3><p>Recorded outcomes, not causation.</p><table><thead><tr>'
-            +''.join('<th scope="col">'+html.escape(value)+'</th>' for value in pair_headings)
-            +'</tr></thead><tbody>'+''.join(pair_html)+'</tbody></table><h3>Recorded action metadata</h3><p>Per trial; unaligned across arms and not authenticated action custody.</p>'
+            +'</tr></thead><tbody>'+''.join(rows)+'</tbody></table><h3>Task observations</h3><p>Browse by observed status; these observations do not establish causation. The analysis population and decision remain unchanged.</p>'
+            +''.join(pair_groups)+'<h3>Recorded action metadata</h3><p>Per trial; unaligned across arms and not authenticated action custody.</p>'
             +''.join(timeline_html)+'<details><summary>Current qualification and analysis</summary><pre>'
             +html.escape(raw)+'</pre></details></section>')
     markdown='\n'.join(lines)+'\n'
