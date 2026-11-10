@@ -322,7 +322,7 @@ def external(roots, checkout):
 
 
 def _v2_fact(key):
-    return (key.startswith(('config.permission_deny.', 'embedded_hook'))
+    return (key.startswith(('config.permission_deny.', 'embedded_hook', 'manifest_hooks_key_', 'plugin.manifest_hooks_key_'))
             or key in ('config.permission_deny_state', 'disable_all_hooks_valid', 'audit_top_level_supported')
             or key.endswith(('.matcher_group_supported', '.audit_candidate_supported')))
 

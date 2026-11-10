@@ -69,7 +69,8 @@ def parse_manifest(path, raw, profile):
                  agent_plugin_schema=isinstance(schema, str) and schema.startswith(AGENT_PLUGIN_SCHEMA))
     if name == 'plugin.json':
         facts.update(name_declared=isinstance(value.get('name'), str),
-                     component_keys=sum(key in value for key in COMPONENT_KEYS))
+                     component_keys=sum(key in value for key in COMPONENT_KEYS),
+                     manifest_hooks_key_unvalidated='hooks' in value)
     else:
         entries = value.get('plugins')
         facts['marketplace_entries'] = len(entries) if isinstance(entries, list) else None
@@ -108,6 +109,7 @@ class _CheckoutWalk(harness_inventory._Walk):
         raw = self.read(descriptor, name, info)
         status, facts = harness_inventory.parse(self.parsers.get(kind, (None, None))[1], path, raw, self.profile)
         facts, layout = dict(facts), _layout(path, kind, raw)
+        if self.schema_version == 1: facts = {key: value for key, value in facts.items() if not harness_inventory._v2_fact(key)}
         if set(facts) & set(layout): raise ValueError('plugin layout facts collide with parser facts')
         self.facts += len(facts) + len(layout)
         if self.facts > harness_inventory.MAX_FACTS: raise harness_inventory._Blocked('fact_bound_exceeded')
@@ -303,9 +305,10 @@ def manifest(nodes, refusals, runtime):
 def _root(plugin_id): return 'plugin:' + plugin_id.replace('@', ':')
 
 
-def capture(checkout, profile, *, plugin_checkouts=None, include_local=False):
+def capture(checkout, profile, *, plugin_checkouts=None, include_local=False, schema_version=1):
     """Declared enablement of one checkout plus caller-selected plugin checkouts; a bound overflow is blocked."""
     harness_inventory.validate(profile)
+    if type(schema_version) is not int or schema_version not in (1, 2): raise ValueError('unsupported inventory schema')
     selected = config.plugin_checkouts(plugin_checkouts)
     roots = dict(harness_inventory.external({_root(k): v for k, v in selected.items()}, checkout))
     paths = sorted(roots.values())
@@ -319,7 +322,7 @@ def capture(checkout, profile, *, plugin_checkouts=None, include_local=False):
         return PluginInventory(**identity, status='blocked', blocked_reason='declaration_bound_exceeded')
     if set(selected) - {p.plugin_id for p in plugins if p.enabled is True}:
         raise ValueError('a plugin checkout must name a plugin the checkout declares enabled')
-    walk, checkouts = _CheckoutWalk(profile), []
+    walk, checkouts = _CheckoutWalk(profile, schema_version), []
     for plugin_id in sorted(selected):
         # Node and refusal lists accumulate across checkouts so MAX_FILES, like every walk bound, is shared.
         oid, first, refused = head(roots[_root(plugin_id)]), len(walk.nodes), len(walk.refusals)
@@ -330,7 +333,8 @@ def capture(checkout, profile, *, plugin_checkouts=None, include_local=False):
         files = tuple(HarnessFile(n.path_sha256, n.content_sha256, n.mode, None, None) for n in nodes)
         snapshot = HarnessSnapshot(digest(oid), files)
         inventory = harness_inventory.HarnessInventory(runtime, profile['version'], digest(profile), digest('.'),
-            'declared', nodes, refusals, harness_sha256=snapshot.sha256, external_roots=(_root(plugin_id),))
+            'declared', nodes, refusals, harness_sha256=snapshot.sha256, external_roots=(_root(plugin_id),),
+            schema_version=schema_version)
         checkouts.append(PluginCheckout(plugin_id, digest(oid), snapshot.sha256, manifest(nodes, refusals, runtime), inventory))
     plugins = [replace(p, resolution='external_repository') if p.enabled is True and p.plugin_id in selected else p
                for p in plugins]
