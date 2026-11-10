@@ -43,7 +43,7 @@ class GitLabSelection(Contract):
     schema_version: int = 1
 
     def __post_init__(self):
-        if type(self.schema_version) is not int or self.schema_version not in (1, 2): raise ValueError('unsupported GitLab selection version')
+        if type(self.schema_version) is not int or self.schema_version not in (1, 2, 3): raise ValueError('unsupported GitLab selection version')
         instance_root(self.base_url, API_PREFIX)
         if type(self.project) is int: integer(self.project, minimum=1)
         else: project_path(self.project)
@@ -56,8 +56,9 @@ class GitLabSelection(Contract):
             if tuple(sorted(set(numbers))) != numbers: raise ValueError('GitLab IIDs must be unique and ascending')
         # Issues and merge requests have separate IID sequences, so one IID may name both.
         if (('issues' in self.capture) != bool(self.issues) or ('merge_requests' in self.capture) != bool(self.merge_requests)
-                or any(kind in self.capture for kind in ('approvals', 'discussions')) and not self.merge_requests
-                or 'discussions' in self.capture and self.schema_version != 2 or not (self.issues or self.merge_requests)):
+                or 'approvals' in self.capture and not self.merge_requests
+                or 'discussions' in self.capture and (self.schema_version == 1 or self.schema_version == 2 and not self.merge_requests)
+                or not (self.issues or self.merge_requests)):
             raise ValueError('GitLab capture kinds must match the explicitly selected IIDs')
 
     @classmethod
@@ -245,9 +246,9 @@ class GitLabAPI:
         return dict(parent_sha256=parent, approved=approved if type(approved) is bool else 'unknown', **counts,
             approvers_sha256=sorted(a for a in actors if a is not None), approvers_unidentified=actors.count(None))
 
-    def _discussions(self, ledger, key, iid, owner, parent, budget, seen_notes):
-        """Capture one MR's bounded discussion metadata and its nested note claims."""
-        target = f'{self.project_root}/merge_requests/{iid}/discussions'
+    def _discussions(self, ledger, key, iid, owner, parent, budget, seen_notes, *, noteable, collection):
+        """Capture one selected issue or MR's bounded discussions and nested note claims."""
+        target = f'{self.project_root}/{collection}/{iid}/discussions'
         def identity(row):
             native = row.get('id')
             if not isinstance(native, str) or not native or len(native) > 256:
@@ -264,13 +265,15 @@ class GitLabAPI:
                 native = integer(value.get('id'), minimum=1)
                 if native in seen_notes: raise ValueError('GitLab discussion note repeated')
                 seen_notes.add(native)
-                notes.append((native, self._note(value, 'MergeRequest', iid, owner, parent)))
+                notes.append((native, self._note(value, noteable, iid, owner, parent)))
             return dict(parent_sha256=parent, individual_note=row['individual_note'], note_count=len(notes)), notes
-        rows, outcome = self._list(target, ledger, dict(id=str(self.project_id), merge_request_iid=str(iid)), project,
+        iid_field = 'issue_iid' if noteable == 'Issue' else 'merge_request_iid'
+        rows, outcome = self._list(target, ledger, dict(id=str(self.project_id), **{iid_field: str(iid)}), project,
             query=dict(per_page=PAGE_SIZE), identity=identity)
         ledger.note('discussions', outcome, parent)
         for native, (thread_node, notes) in rows:
-            thread = ledger.emit(key('gitlab_discussion', (iid, native)), 'gitlab_discussion', thread_node)
+            thread_identity = (iid, native) if self.selection.schema_version == 2 else (noteable, iid, native)
+            thread = ledger.emit(key('gitlab_discussion', thread_identity), 'gitlab_discussion', thread_node)
             ledger.relations.add(('discussion_on', thread, parent))
             for note_id, note in notes:
                 kind = 'gitlab_system_note' if note['system'] else 'gitlab_note'
@@ -297,8 +300,8 @@ class GitLabAPI:
                     parent, target = key(kind, iid), f'{self.project_root}/{collection}/{iid}'
                     node = ledger.read(kind[len('gitlab_'):], target, lambda raw, n=iid, p=parse: p(raw, n), parent)
                     if node is None:
-                        if kind == 'gitlab_merge_request' and 'discussions' in selection.capture:
-                            ledger.note('discussions', ('not_observed', 'merge_request_unavailable'), parent)
+                        if 'discussions' in selection.capture and (kind == 'gitlab_merge_request' or selection.schema_version == 3):
+                            ledger.note('discussions', ('not_observed', kind[len('gitlab_'):]+'_unavailable'), parent)
                         continue
                     reads.append((kind, target, parse, iid, node)); ledger.emit(parent, kind, node, node['created_at'])
                     if 'notes' in selection.capture:
@@ -315,8 +318,9 @@ class GitLabAPI:
                             ledger.relations.add(('system_event_on' if note['system'] else 'conversation_on', child, parent))
                     if kind == 'gitlab_merge_request' and 'approvals' in selection.capture:
                         self._approval(ledger, key, iid, node, parent)
-                    if kind == 'gitlab_merge_request' and 'discussions' in selection.capture:
-                        self._discussions(ledger, key, iid, node, parent, discussion_budget, discussion_notes)
+                    if 'discussions' in selection.capture and (kind == 'gitlab_merge_request' or selection.schema_version == 3):
+                        self._discussions(ledger, key, iid, node, parent, discussion_budget, discussion_notes,
+                            noteable=noteable, collection=collection)
             # Readbacks narrow, but cannot remove, the window for a change between non-atomic reads.
             for kind, target, parse, iid, before in reads:
                 after = ledger.read('readback', target, lambda raw, n=iid, p=parse: p(raw, n), key(kind, iid))
@@ -324,11 +328,14 @@ class GitLabAPI:
             if ledger.read('readback', self.project_root, self._project) not in (None, project):
                 raise ValueError('GitLab project changed during capture')
         elif 'discussions' in selection.capture:
-            for iid in selection.merge_requests:
-                parent = digest(('gitlab.selection', selection.project_sha256, 'merge_request', iid))
-                ledger.note('discussions', ('not_observed', 'project_unavailable'), parent)
+            selected = (('merge_request', selection.merge_requests),)
+            if selection.schema_version == 3: selected += (('issue', selection.issues),)
+            for kind, iids in selected:
+                for iid in iids:
+                    parent = digest(('gitlab.selection', selection.project_sha256, kind, iid))
+                    ledger.note('discussions', ('not_observed', 'project_unavailable'), parent)
         ready = ledger.ready
-        if selection.schema_version == 2:
+        if selection.schema_version in (2, 3):
             system_notes = sum(node['kind'] == 'gitlab_system_note' for node in ledger.nodes.values())
         warnings = ['selected_resources_only', 'merge_closure_approval_not_task_outcome', 'readbacks_non_atomic',
             'system_note_coverage_unverified', 'merge_and_squash_shas_not_ancestry',
