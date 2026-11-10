@@ -259,3 +259,20 @@ root independence. Similarity detection is heuristic. The private binding helper
 reports quality as unknown, grouping as unchecked, and the resource decision and
 gate as not evaluated. No favorable decision or automatic promotion follows from
 this policy binding.
+
+## Conditional grouped resource bounds
+
+The private `resource_grouped_bound.compute` helper computes a versioned bound
+for one endpoint of a plan-pinned v4 resource contract. It requires all assigned
+paired rows and revalidates the plan-pinned similarity evidence against the current
+bank or manifest. It averages repeated task differences within each root, applies
+frozen family weights uniformly across roots in each family, and sums weights for
+suspected-related roots before calculating
+the bound. Missing, stale, incomplete, asymmetric, unsupported sequential, or
+numerically unusable evidence leaves the bound unknown. The helper refuses public
+output and does not change the v1–v4 decision behavior.
+
+Resource measurements and cache states are caller-supplied and unverified; the
+similarity detector is heuristic and root independence is unverified. This helper
+does not assess quality, issue a resource decision, or authorize promotion. It is
+not an adapter from sealed trial evidence and does not establish billing completeness.
