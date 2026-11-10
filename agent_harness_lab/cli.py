@@ -219,7 +219,9 @@ def main(argv=None):
             command.add_argument('--source-project-sha256',help='Exact project identity SHA-256 used to select metadata from --source-cache')
             command.add_argument('--source-scope-sha256',help='Exact authorized scope SHA-256 paired with --source-project-sha256 for the private journal')
         if name != 'analyze':
-            if name=='improve':command.add_argument('--experiment-request',type=Path,help='Explicit private fixed development/regression bank request; recommendation only')
+            if name=='improve':
+                command.add_argument('--experiment-request',type=Path,help='Explicit private fixed development/regression bank request; recommendation only')
+                command.add_argument('--from-audit',type=Path,help='Private audit report with recheck parameters; re-audits before proposing a convention hypothesis')
             command.add_argument('--focus', help='Optional focus hint; discovery does not require one')
             command.add_argument('--agent', choices=('auto', 'codex', 'claude', 'responses'), default='auto',help='Execution backend; auto resolves the supported configured or unambiguous local runtime; Responses needs explicit settings and isolation')
             command.add_argument('--inference-settings', type=Path, help='Schema-1 controlled Responses settings JSON, including credential_file and shared request/tool/output caps; requires the explicit isolated worker configuration')

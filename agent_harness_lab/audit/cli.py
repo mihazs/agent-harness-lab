@@ -86,12 +86,15 @@ def main(argv=None):
     parser.add_argument('--runtime', choices=('claude-code', 'codex'), default='codex', help='Runtime profile (default: codex)')
     parser.add_argument('--task-cwd', default='.', help='Existing project-relative task directory (default: project root)')
     parser.add_argument('--json', action='store_true', help='Print the full private JSON report')
+    parser.add_argument('--improvement-recheck', action='store_true', help='Include declared parameters for a later fresh audit recheck')
     parser.add_argument('--codex-project-doc-max-bytes', type=int,
                         help='Caller-declared Codex byte budget; runtime configuration is not read')
     parser.add_argument('--instruction-soft-lines', type=int, default=200,
                         help='Checkout instruction-line convention (default: 200; not a validated threshold)')
     args = parser.parse_args(argv)
     try:
+        if args.improvement_recheck and args.runtime != 'codex':
+            raise ValueError('improvement recheck currently supports Codex only')
         if args.codex_project_doc_max_bytes is not None and args.runtime != 'codex':
             raise ValueError('Codex byte budget requires the Codex runtime')
         if args.instruction_soft_lines < 0: raise ValueError('instruction soft-line budget must be nonnegative')
@@ -173,6 +176,10 @@ def main(argv=None):
             next_action='Review applicable permissions and pre-tool hooks for each protected path; '
                         'static tool-name candidates do not establish path enforcement.')
         report['improvement_hint'] = improvement_hint.from_findings(report['findings'], args.runtime)
+        if args.improvement_recheck:
+            report['improvement_recheck'] = dict(profile='ahl-audit-recheck-parameters-v1', runtime=args.runtime,
+                task_cwd=args.task_cwd, codex_project_doc_max_bytes=args.codex_project_doc_max_bytes,
+                publication_allowed=False, authority='none')
         from .constraint_scan import capture as constraint_scan
         report['constraint_references'] = constraint_scan(project, inventory, report['protected_path_inventory'])
         candidate = next((row for row in report['findings'] if row['remediation']), None)

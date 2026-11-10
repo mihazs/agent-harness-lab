@@ -362,3 +362,23 @@ scope, evaluation and promotion checks. Closed-input profiles that prohibit
 focus reject it; the hint does not override those profiles. An improvement run
 may invoke a model or agent and supply it with authorized project data, unlike
 the offline audit. The content-free hint does not change that exposure.
+
+### Rechecking a convention for improvement
+
+For an explicitly requested improvement, `ahl audit PROJECT --improvement-recheck`
+includes the declared runtime, task directory and Codex byte budget in its private
+report. Pass its `report.json` to `ahl improve PROJECT --from-audit REPORT` to
+re-audit the checkout and use an eligible Codex instruction-budget finding as a
+fixed, content-free proposer focus. This currently supports only Codex truncation
+and skipped-file findings; other conventions are not eligible. It cannot be combined
+with `--focus` or deterministic contract repair.
+
+The supplied report is an untrusted selection and its parameters are caller
+assertions. The recheck requires a matching inventory and freshly observed
+finding, and repeats the observation around the baseline snapshot. These are
+separate observations, not an atomic snapshot or proof of runtime loading.
+The private result and any resulting change plan label the hypothesis as a static
+convention with no authority. Normal evaluation and adoption gates remain in
+force; a recheck does not guarantee a candidate or a completed evaluation. The
+plan metadata is descriptive, outside the common plan's integrity digest. Evaluation
+feedback is not written back to the audit report.
