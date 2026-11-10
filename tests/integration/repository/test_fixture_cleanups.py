@@ -29,8 +29,6 @@ ROWS = [
      ['tests.integration.sandbox.test_sandbox_inference.ControllerInferenceTests']),
     ('tests.integration.evaluation.test_permission_audit', 'responses_fixture',
      ['tests.integration.sandbox.test_sandbox_inference.ResponsesEvaluationTests']),
-    ('tests.integration.optimization.test_optimization_history', 'history',
-     ['tests.integration.evaluation.test_preservation_history.PreservationHistoryTests']),
     ('tests.integration.optimization.test_optimization_history', 'owner',
      ['tests.integration.evaluation.test_regression_admission.RegressionAdmissionTests']),
     ('tests.integration.evaluation.test_regression_replay', 'replay_case',
@@ -168,3 +166,22 @@ def test_preservation_receipt_helper_propagates_nested_cleanup_failure(monkeypat
     with pytest.raises(RuntimeError, match='synthetic nested cleanup failure'):
         with ExitStack() as cleanups:
             preservation_receipts.PreservationReceipt(cleanups).fixture()
+
+
+def test_preservation_history_propagates_nested_cleanup_failure(monkeypatch):
+    from contextlib import ExitStack
+    import unittest
+    from tests.integration.evaluation import test_preservation_history
+
+    def fail():
+        raise RuntimeError('synthetic nested cleanup failure')
+
+    class BrokenCohort(unittest.TestCase):
+        def setUp(self):
+            self.addCleanup(fail)
+            raise ValueError('synthetic setup failure')
+
+    monkeypatch.setattr(test_preservation_history.core.authority, 'OracleBankAuthorityTests', BrokenCohort)
+    with pytest.raises(RuntimeError, match='synthetic nested cleanup failure'):
+        with ExitStack() as cleanups:
+            test_preservation_history.PreservationHistory(cleanups)

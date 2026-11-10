@@ -2,7 +2,7 @@
 from copy import deepcopy
 import hashlib
 import json
-import unittest
+from contextlib import ExitStack
 from unittest.mock import patch
 
 import pytest
@@ -15,13 +15,13 @@ from tests.integration.evaluation import test_oracle_bank_authority as authority
 from tests.support.unittest_cleanups import run_cleanups
 
 
-class PreservationCohortTests(unittest.TestCase):
+class PreservationCohort:
     """Hosts the qualified cohort fixture that other modules build on; it defines no tests of its own."""
 
-    def setUp(self):
+    def __init__(self, add_cleanup):
         self.fixture = authority.OracleBankAuthorityTests()
+        add_cleanup(run_cleanups, self.fixture)
         self.fixture.setUp()
-        self.addCleanup(run_cleanups, self.fixture)
         f = self.fixture
         self.root = f.root
         self.prior_run = f.run_history()[0]
@@ -63,23 +63,15 @@ class PreservationCohortTests(unittest.TestCase):
 
 @pytest.fixture
 def cohort():
-    case = PreservationCohortTests()
-    try:
-        case.setUp()
-        yield case
-    finally:
-        run_cleanups(case)
+    with ExitStack() as cleanups:
+        yield PreservationCohort(cleanups.callback)
 
 
 @pytest.fixture(scope='module')
 def shared_cohort():
     """One qualified fixture for cases that only capture a deep-copied manifest and expect a refusal."""
-    case = PreservationCohortTests()
-    try:
-        case.setUp()
-        yield case
-    finally:
-        run_cleanups(case)
+    with ExitStack() as cleanups:
+        yield PreservationCohort(cleanups.callback)
 
 
 def test_actual_sealed_qualification_pins_and_same_store_lock_revalidation(cohort):

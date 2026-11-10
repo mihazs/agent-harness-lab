@@ -13,9 +13,11 @@ class PreservationReceipt:
         self.addCleanup = cleanups.callback
 
     def fixture(self,cohort=False):
-        fixture=cohorts.PreservationHistoryTests() if cohort else legacy.OracleHistoryTests()
+        if cohort:
+            return cohorts.PreservationHistory(self.cleanups).f
+        fixture=legacy.OracleHistoryTests()
         self.cleanups.callback(run_cleanups,fixture); fixture.setUp()
-        return fixture.f if cohort else fixture
+        return fixture
 
     def receipt(self,fixture):
         summary,calls=fixture.run_history(); assert summary['state']=='sealed',summary

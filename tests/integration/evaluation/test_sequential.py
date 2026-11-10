@@ -501,8 +501,8 @@ class TestSequentialOnline(SequentialOnline):
         with pytest.raises(ValueError):self.store.show(result['run_id'])
 
     def test_qualified_cohort_uses_schema5_and_live_revocation_still_blocks(self):
-        f=qualified.PreservationHistoryTests();f.setUp()
-        try:
+        with ExitStack() as cleanups:
+            f=qualified.PreservationHistory(cleanups)
             plan=replace(f.spec,sequential=core.config(2,10,1))
             f.f.manifest['experiment']=plan.to_dict();f.f.write_manifest()
             result,_=f.f.run_history();assert result['state'] == 'sealed', result
@@ -512,7 +512,6 @@ class TestSequentialOnline(SequentialOnline):
             assert 'cohort:preserved' in receipt['receipt']['analysis_disposition']['required_endpoints']
             f.f.revoke()
             with pytest.raises(ValueError):f.f.store.verify_decision(result['run_id'],receipt['receipt_sha256'])
-        finally:run_cleanups(f)
 
     def test_legacy_workflow_refuses_before_controls(self):
         from agent_harness_lab.workflow import validate_manifest

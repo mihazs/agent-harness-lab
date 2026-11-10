@@ -11,7 +11,7 @@ import agent_harness_lab
 from agent_harness_lab.evaluation.plan import ExperimentSpec
 from agent_harness_lab.private_journal import record
 from tests.integration.evaluation import test_preservation_history as history
-from tests.support.unittest_cleanups import run_cleanups
+from contextlib import ExitStack
 
 
 PREFIX="""import json,sys
@@ -37,14 +37,11 @@ def behavior_history():
             shutil.copytree(pack/task[key],destination)
         bank['tasks']=[task]; admission.parent.write_text(json.dumps(bank))
         return original(admission,**changes)
-    value=history.PreservationHistoryTests()
-    try:
+    with ExitStack() as cleanups:
         with patch.object(authority.admissions.RegressionAdmissionTests,'accept',new=add_task), \
                 patch.object(authority.offline,'SOLVER',PREFIX+authority.offline.SOLVER):
-            value.setUp()
+            value=history.PreservationHistory(cleanups)
         yield value
-    finally:
-        run_cleanups(value)
 
 
 @pytest.mark.parametrize('missing',[pytest.param(False,id='observed'),pytest.param(True,id='missing')])

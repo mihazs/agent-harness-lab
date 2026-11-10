@@ -344,9 +344,9 @@ except OSError: pass
 class TestRegressionDraftKernel(KernelCase):
     def test_preservation_qualification_uses_real_prior_and_fresh_pinned_workers(self):
         from dataclasses import replace
-        from tests.integration.evaluation.test_preservation_cohorts import PreservationCohortTests
+        from tests.integration.evaluation.test_preservation_cohorts import PreservationCohort
         from agent_harness_lab.evaluation.plan import ExperimentSpec
-        fixture=PreservationCohortTests(); fixture.setUp(); self.addCleanup(run_cleanups, fixture)
+        fixture=PreservationCohort(self.addCleanup)
         value=fixture.fixture; runtime=self.root/'runtime'; pinned=pinned_runtime(runtime)
         value.image_hash=pinned['sha256']; value.install_plan()
         profile=dict(cgroup_root=self.cgroup_root,image_root=runtime,image_sha256=pinned['sha256'],

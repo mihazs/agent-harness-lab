@@ -1,4 +1,5 @@
 """Actual synthetic offline comparisons; no native identity or model claims."""
+from contextlib import ExitStack
 from copy import deepcopy
 from dataclasses import replace
 import hashlib
@@ -41,9 +42,8 @@ def resources(fixture):
 
 @pytest.fixture
 def history():
-    source=fixtures.PreservationHistoryTests(); source.setUp()
-    yield source.f
-    run_cleanups(source)
+    with ExitStack() as cleanups:
+        yield fixtures.PreservationHistory(cleanups).f
 
 
 def search_context(fixture,allowed=('solve.py','nested/new.txt')):
