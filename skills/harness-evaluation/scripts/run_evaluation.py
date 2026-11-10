@@ -713,7 +713,7 @@ def _evaluate(args):
         root = versions[version]
         remaining = (sequential_controller.root_deadline-time.monotonic() if sequential_controller is not None
                      else budget - (time.monotonic() - started))
-        record = dict(scheduled, split=task['split'])
+        record = dict(scheduled, split=task['split'], skill_preload_requested=bool(skills and task.get('preload_skills', True)))
         record['skill_activation_receipt'] = activation_receipt([], case_id=None)
         audit_offset=len(backend.permission_reports) if permission_audit is not None else 0
         record.setdefault('root',task.get('root'))
@@ -757,7 +757,7 @@ def _evaluate(args):
         else:
             argv, environment = trial_command(agent, binary, plugin if agent == 'claude' else None, skills, trial, workspace, config,
                                               native_environment(agent, inherit_env))
-        prompt = ('Load these exact evaluation skill files before the task: ' + ', '.join(loaded) + '\n' if loaded and task.get('preload_skills', True) else '')
+        prompt = ('Load these exact evaluation skill files before the task: ' + ', '.join(loaded) + '\n' if record['skill_preload_requested'] else '')
         if manifest.get('no_nested_agents', False):
             prompt += 'Do not launch child agents or nested model trials; the parent owns the evaluation budget.\n'
         prompt += 'Operate only in this fixture workspace. Do not modify external files.\n' + task['prompt']
