@@ -11,7 +11,8 @@ folder (.claude/skills, .agents/skills, skills or a nested <dir>/.claude/skills)
   where Codex rejects a skill without one (missing_name); any name must be the directory name in lowercase
   letters, digits and hyphens, at most 64 characters (invalid_name).
 - link only to files the bundle holds (dangling_reference) and stay inside it (reference_escapes_bundle). Only
-  inline Markdown links outside code are read, percent-decoded and normalized; a directory target needs a file
+  inline links and used single-line full/collapsed reference definitions outside code are read, percent-decoded
+  and normalized; a directory target needs a file
   below it; URLs, anchors and absolute paths are not bundle references.
 - leave no newly added asset unmentioned in SKILL.md (orphan_asset): the path or the file name must appear in
   the text as a whole name; ambiguous basenames require a bundle-relative path.
@@ -37,6 +38,9 @@ _FENCE = re.compile(r'[ \t]*(`{3,}|~{3,})(.*)$')
 _SPAN = re.compile(r'`[^`\n]*`')
 _LINK = re.compile(r'\]\((?:<([^>\n]*)>|([^)\s>]*))')
 _EXTERNAL = re.compile(r'^(?:[A-Za-z][A-Za-z0-9+.-]*:|#|/|\?)')
+_REF_DEFINITION = re.compile(r'(?m)^ {0,3}\[([^]\n]+)\]:[ \t]*(?:<([^>\n]+)>|([^\s<>]+))')
+_REF_USE = re.compile(r'\[([^]\n]+)\]\[([^]\n]*)\]')
+_COMMENT = re.compile(r'<!--(?:.*?-->|.*\Z)',re.S)
 
 
 @dataclass(frozen=True)
@@ -87,9 +91,21 @@ def _unfenced(text):
 def _references(text):
     """Bundle-relative link targets of the Markdown outside code, decoded and normalized, without fragments or queries."""
     text = _SPAN.sub('', '\n'.join(_unfenced(text)))
+    reference_text = _COMMENT.sub('',text)
+    normalize_label = lambda value:' '.join(value.split()).casefold()
+    definitions = {}
+    for label,angled,bare in _REF_DEFINITION.findall(reference_text):
+        definitions.setdefault(normalize_label(label),angled or bare)
+    targets = [angled or bare for angled,bare in _LINK.findall(text)]
+    for match in _REF_USE.finditer(reference_text):
+        start = match.start(); before = start
+        while before and reference_text[before-1] == '\\': before -= 1
+        if (start-before) % 2: continue
+        shown,label = match.groups()
+        target = definitions.get(normalize_label(label or shown))
+        if target is not None: targets.append(target)
     found = []
-    for angled, bare in _LINK.findall(text):
-        target = angled or bare
+    for target in targets:
         if _EXTERNAL.match(target): continue
         target = unquote(re.split('[#?]', target, maxsplit=1)[0])
         if target and not _EXTERNAL.match(target): found.append(posixpath.normpath(target))
