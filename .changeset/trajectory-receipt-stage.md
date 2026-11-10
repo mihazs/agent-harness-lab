@@ -2,4 +2,4 @@
 "agent-harness-lab": patch
 ---
 
-Include bounded predicate kind and selected stage in private trajectory receipts.
+Offer version 2 private trajectory receipts with bounded predicate kind and selected stage labels.

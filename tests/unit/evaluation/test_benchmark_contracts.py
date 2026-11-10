@@ -82,7 +82,16 @@ def test_trajectory_summary_rejects_invalid_predicate_metadata(metadata):
     assertion = dict(assertion_id='synthetic', assertion_sha256='a'*64, status='unknown') | metadata
     with pytest.raises(ValueError, match='invalid trajectory predicate'):
         summary(dict(trajectory_profile='controller-trajectory-v1', trials=[dict(task='synthetic',
-            controller_grade=dict(trajectory=dict(assertions=[assertion])))]))
+            controller_grade=dict(trajectory=dict(profile='controller-trajectory-receipt-v2', assertions=[assertion])))]))
+
+
+def test_legacy_trajectory_summary_ignores_unrecognized_extra_metadata():
+    assertion = dict(assertion_id='synthetic', assertion_sha256='a'*64, status='unknown',
+                     predicate_kind='SYNTHETIC_SECRET', selected_stage='SYNTHETIC_SECRET')
+    report = summary(dict(trajectory_profile='controller-trajectory-v1', trials=[dict(task='synthetic',
+        controller_grade=dict(trajectory=dict(profile='controller-trajectory-v1', assertions=[assertion])))]))
+    assert 'predicate_kind' not in report['trials'][0]['assertions'][0]
+    assert 'SYNTHETIC_SECRET' not in str(report)
 
 
 def test_mismatched_and_unverified_runtime_blocks():

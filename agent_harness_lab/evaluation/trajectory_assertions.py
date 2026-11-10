@@ -9,6 +9,7 @@ from agent_harness_lab.private_journal import encoded, record
 from .integrity import digest
 
 PROFILE = 'controller-trajectory-v1'
+RECEIPT_V2_PROFILE = 'controller-trajectory-receipt-v2'
 MAX_BYTES = 65536
 STAGES = ('request', 'denied', 'dispatch', 'result')
 ORDINAL = dict(request='observed_ordinal', denied='decision_ordinal', dispatch='dispatch_ordinal', result='outcome_ordinal')
@@ -320,10 +321,11 @@ def _leaf(rule, data):
     return state, matched, evidence_complete
 
 
-def _evaluate_rule(rule, data, name):
+def _evaluate_rule(rule, data, name, *, receipt_version=1):
     kind = rule['kind']; children = []
     if kind in ('all_of', 'any_of'):
-        children = [_evaluate_rule(child, data, name+'/'+str(i)) for i, child in enumerate(rule['children'])]
+        children = [_evaluate_rule(child, data, name+'/'+str(i), receipt_version=receipt_version)
+                    for i, child in enumerate(rule['children'])]
         states = [c['status'] for c in children]
         if kind == 'all_of': status = 'violated' if 'violated' in states else 'satisfied' if all(s == 'satisfied' for s in states) else 'unknown'
         else: status = 'satisfied' if 'satisfied' in states else 'violated' if all(s == 'violated' for s in states) else 'unknown'
@@ -331,32 +333,35 @@ def _evaluate_rule(rule, data, name):
     else:
         state, ids, complete = _leaf(rule, data)
         status = 'unknown' if state is None else 'satisfied' if state else 'violated'
-    return dict(assertion_id=name, assertion_sha256=_hash(encoded(rule)), predicate_kind=kind,
-        selected_stage=rule.get('stage'), status=status, valid=True,
+    result = dict(assertion_id=name, assertion_sha256=_hash(encoded(rule)), status=status, valid=True,
         matched_controller_ids=ids, matched_ids_omitted=0, coverage_complete=complete,
         reason='predicate_evidence_incomplete' if status == 'unknown' else 'controller_predicate_decided', children=children)
+    if receipt_version == 2: result.update(predicate_kind=kind, selected_stage=rule.get('stage'))
+    return result
 
 
 class _Receipt(dict):
     pass
 
 
-def _unknown(binding, reason):
+def _unknown(binding, reason, receipt_version=1):
     policy = binding.get('policy', {}) if isinstance(binding, dict) else {}
     if not isinstance(policy, dict): policy = {}
-    return dict(schema_version=1, profile=PROFILE, policy_sha256=binding.get('policy_sha256') if isinstance(binding, dict) else None,
+    return dict(schema_version=receipt_version, profile=PROFILE if receipt_version == 1 else RECEIPT_V2_PROFILE,
+        policy_sha256=binding.get('policy_sha256') if isinstance(binding, dict) else None,
         **{k:policy.get(k) for k in ('task_id', 'root_id', 'family')}, status='unknown', valid=False,
         critical_violation=False, required_observation_unknown=True, assertions=[], reason=reason,
         publication_allowed=False, automatic_promotion=False, native_identity='unverified', history_authority='unverified')
 
 
-def evaluate(binding, owned_capture):
+def evaluate(binding, owned_capture, *, receipt_version=1):
     """Only controller-issued live captures establish trajectory predicate evidence."""
+    if type(receipt_version) is not int or receipt_version not in (1, 2): raise ValueError('unsupported trajectory receipt version')
     try:
         binding = _binding(binding)
         if (type(owned_capture) is not _OwnedCapture or not _issued(owned_capture)
                 or encoded(owned_capture._binding) != encoded(binding)):
-            return _unknown(binding, 'owned_controller_capture_required')
+            return _unknown(binding, 'owned_controller_capture_required', receipt_version)
         data = owned_capture.snapshot()
         _text(data['trial_id'], 256)
         ids = [r['controller_id'] for r in data['rows']]
@@ -364,12 +369,13 @@ def evaluate(binding, owned_capture):
             raise ValueError('duplicate/wrong controller identity')
         assertions = []
         for spec in binding['policy']['assertions']:
-            result = _evaluate_rule(spec['rule'], data, spec['id'])
+            result = _evaluate_rule(spec['rule'], data, spec['id'], receipt_version=receipt_version)
             result.update(required=spec['required'], severity=spec['severity']); assertions.append(result)
         required = [a for a in assertions if a['required']]
         status = ('violated' if any(a['status'] == 'violated' for a in required) else
                   'unknown' if any(a['status'] == 'unknown' for a in required) else 'satisfied')
-        receipt = _Receipt(schema_version=1, profile=PROFILE, policy_sha256=binding['policy_sha256'],
+        receipt = _Receipt(schema_version=receipt_version, profile=PROFILE if receipt_version == 1 else RECEIPT_V2_PROFILE,
+            policy_sha256=binding['policy_sha256'],
             bundle_sha256=binding['bundle_sha256'], **{k:binding['policy'][k] for k in ('task_id', 'root_id', 'family')},
             trial_id=data['trial_id'], ledger_id=data['ledger_id'], scope_id=data['scope_id'], status=status, valid=True,
             critical_violation=any(a['severity'] == 'critical' and a['status'] == 'violated' for a in assertions),
@@ -379,12 +385,13 @@ def evaluate(binding, owned_capture):
         receipt._capture = owned_capture
         return receipt
     except (ValueError, TypeError, KeyError, AttributeError, RecursionError, UnicodeError, OSError):
-        return _unknown(binding, 'trajectory_evidence_invalid_or_unsupported')
+        return _unknown(binding, 'trajectory_evidence_invalid_or_unsupported', receipt_version)
 
 
 def compose(binding, artifact_grade, receipt):
     """Combine a live receipt with the runner's independent actual artifact grade."""
-    try: valid_receipt = type(receipt) is _Receipt and encoded(evaluate(binding, receipt._capture)) == encoded(receipt)
+    try: valid_receipt = (type(receipt) is _Receipt
+            and encoded(evaluate(binding, receipt._capture, receipt_version=receipt.get('schema_version'))) == encoded(receipt))
     except (ValueError, TypeError, AttributeError, RecursionError, UnicodeError): valid_receipt = False
     artifact_outcome = None
     try:
@@ -400,7 +407,9 @@ def compose(binding, artifact_grade, receipt):
     except (ValueError, TypeError, KeyError, AttributeError, RecursionError, UnicodeError): pass
     known_violation = valid_receipt and (receipt['status'] == 'violated' or receipt['critical_violation'])
     outcome = False if artifact_outcome is False or known_violation else True if artifact_outcome is True and valid_receipt and receipt['status'] == 'satisfied' else None
-    return dict(schema_version=1, profile=PROFILE, outcome_mapping='artifact_and_required_v1', outcome=outcome,
+    result_version = receipt['schema_version'] if valid_receipt else 1
+    return dict(schema_version=result_version, profile=PROFILE if result_version == 1 else RECEIPT_V2_PROFILE,
+        outcome_mapping='artifact_and_required_v1', outcome=outcome,
         artifact_outcome=artifact_outcome, artifact_valid=artifact_outcome is not None,
         valid=valid_receipt and artifact_outcome is not None, trajectory=deepcopy(dict(receipt)) if valid_receipt else _unknown(binding, 'live_receipt_required'),
         critical_violation=bool(valid_receipt and receipt['critical_violation']),

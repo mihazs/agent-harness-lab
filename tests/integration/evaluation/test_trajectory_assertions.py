@@ -349,7 +349,19 @@ class TestTrajectoryAssertions:
     def test_group_truth_tables_and_alternate_paths_preserve_children(self):
         binding = self.bind([dict(kind='any_of',children=[required(arguments=dict(mode='exact',argv=['other'])),required()])])
         _, capture = self.role(binding)
-        receipt = core.evaluate(binding,capture)
+        old = core.evaluate(binding,capture)
+        assert old['schema_version'] == 1 and old['profile'] == core.PROFILE
+        assert 'predicate_kind' not in old['assertions'][0]
+        assert 'selected_stage' not in old['assertions'][0]['children'][0]
+        receipt = core.evaluate(binding,capture,receipt_version=2)
+        assert receipt['schema_version'] == 2 and receipt['profile'] == core.RECEIPT_V2_PROFILE
+        projected = deepcopy(dict(receipt))
+        projected.update(schema_version=1, profile=core.PROFILE)
+        def strip_labels(item):
+            item.pop('predicate_kind'); item.pop('selected_stage')
+            for child in item['children']: strip_labels(child)
+        for item in projected['assertions']: strip_labels(item)
+        assert projected == dict(old)
         assert receipt['status'] == 'satisfied'
         assert [r['status'] for r in receipt['assertions'][0]['children']] == ['violated','satisfied']
         assert receipt['assertions'][0]['predicate_kind'] == 'any_of'
@@ -361,6 +373,14 @@ class TestTrajectoryAssertions:
             controller_grade=dict(trajectory=receipt))]))
         assert [r['status'] for r in report['trials'][0]['assertions'][0]['children']] == ['violated', 'satisfied']
         assert report['trials'][0]['assertions'][0]['children'][0]['selected_stage'] == 'dispatch'
+        grade = self.grade()
+        assert core.compose(binding, grade, old)['outcome'] is True
+        composed = core.compose(binding, grade, receipt)
+        assert composed['outcome'] is True and composed['profile'] == core.RECEIPT_V2_PROFILE
+        with pytest.raises(ValueError, match='unsupported trajectory receipt version'):
+            core.evaluate(binding, capture, receipt_version=True)
+        unknown = core.evaluate(binding, None, receipt_version=2)
+        assert unknown['profile'] == core.RECEIPT_V2_PROFILE and unknown['valid'] is False
         import itertools
         true = dict(kind='count',stage='request',**predicate(),minimum=0,maximum=None)
         false = required('request'); unknown = required('result')

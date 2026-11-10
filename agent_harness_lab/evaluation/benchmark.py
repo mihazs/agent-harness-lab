@@ -117,7 +117,7 @@ def summary(records,*,public=False):
                              'green deterministic CI is not a model capability certificate'])
 
 
-def _trajectory_assertion(assertion, depth, count, parent_id=None, child_index=None):
+def _trajectory_assertion(assertion, depth, count, parent_id=None, child_index=None, *, include_v2=False):
     count[0] += 1
     if depth > 8 or count[0] > 128 or not isinstance(assertion, dict):
         raise ValueError('invalid or oversized trajectory assertion tree')
@@ -133,7 +133,7 @@ def _trajectory_assertion(assertion, depth, count, parent_id=None, child_index=N
                 or any(char not in '0123456789abcdef' for char in item['assertion_sha256'])):
             raise ValueError('invalid trajectory child identity or digest')
     item['coverage_complete'] = assertion.get('coverage_complete') is True
-    if 'predicate_kind' in assertion or 'selected_stage' in assertion:
+    if include_v2:
         kind, stage = assertion.get('predicate_kind'), assertion.get('selected_stage')
         if (not {'predicate_kind', 'selected_stage'} <= assertion.keys()
                 or kind not in ('required', 'forbidden', 'count', 'sequence', 'all_of', 'any_of')
@@ -145,14 +145,14 @@ def _trajectory_assertion(assertion, depth, count, parent_id=None, child_index=N
     if not isinstance(children, list) or len(children) > 32:
         raise ValueError('invalid trajectory assertion children')
     if children:
-        item['children'] = [_trajectory_assertion(child, depth + 1, count, item['assertion_id'], index)
+        item['children'] = [_trajectory_assertion(child, depth + 1, count, item['assertion_id'], index, include_v2=include_v2)
                             for index, child in enumerate(children)]
     return item
 
 
 def trajectory_summary(results):
     """Saved JSON is descriptive input; it cannot recreate a live controller receipt."""
-    from .trajectory_assertions import PROFILE
+    from .trajectory_assertions import PROFILE, RECEIPT_V2_PROFILE
     if results.get('trajectory_profile') != PROFILE:
         raise ValueError('unsupported controller trajectory report')
     trials = results.get('trials')
@@ -175,7 +175,7 @@ def trajectory_summary(results):
         if not row['task']: raise ValueError('trajectory task identity required')
         reported_assertions = []
         for assertion in assertions:
-            reported_assertions.append(_trajectory_assertion(assertion, 1, [0]))
+            reported_assertions.append(_trajectory_assertion(assertion, 1, [0], include_v2=receipt.get('profile') == RECEIPT_V2_PROFILE))
         row.update(artifact_outcome=grade.get('artifact_outcome') if type(grade.get('artifact_outcome')) is bool else None,
             trajectory_status=receipt.get('status') if receipt.get('status') in ('satisfied','violated','unknown') else 'unknown',
             combined_outcome=grade.get('outcome') if type(grade.get('outcome')) is bool else None,
