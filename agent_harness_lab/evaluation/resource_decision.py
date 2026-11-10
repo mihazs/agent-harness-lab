@@ -15,7 +15,11 @@ from .statistics import bound
 PROFILE = 'resource-noninferiority-v1'
 PROVENANCE_PROFILE = 'resource-noninferiority-v2'
 TIMING_PROFILE = 'resource-noninferiority-v3'
-ATTESTED_PROFILES = (PROVENANCE_PROFILE, TIMING_PROFILE)
+TOKEN_PROFILE = 'resource-noninferiority-v4'
+ATTESTED_PROFILES = (PROVENANCE_PROFILE, TIMING_PROFILE, TOKEN_PROFILE)
+TIMED_PROFILES = (TIMING_PROFILE, TOKEN_PROFILE)
+TOKEN_CATEGORIES = ('input_tokens', 'output_tokens', 'total_tokens', 'cached_input_tokens')
+TOKEN_SCOPE = 'controller_provider_responses'
 TIMING_COMPONENTS = {'setup', 'queueing', 'retries', 'tool_calls', 'user_wait', 'extraction', 'grading'}
 TIMING_INTERVAL = 'target_subprocess_launch_through_collection'
 KINDS = ('elapsed_wall_seconds', 'measured_tokens')  # currency needs frozen dated rates: not supported yet
@@ -37,15 +41,15 @@ def validate(contract):
         raise ValueError('resource contract fields mismatch')
     profile = contract.get('profile')
     keys = CONTRACT_KEYS | ({'cache_policy'} if profile in ATTESTED_PROFILES else set())
-    if profile == TIMING_PROFILE: keys |= {'timing_boundary'}
+    if profile in TIMED_PROFILES: keys |= {'timing_boundary'}
     if set(contract) != keys:
         raise ValueError('resource contract fields mismatch')
-    expected_version = 3 if profile == TIMING_PROFILE else 2 if profile == PROVENANCE_PROFILE else 1
+    expected_version = 4 if profile == TOKEN_PROFILE else 3 if profile == TIMING_PROFILE else 2 if profile == PROVENANCE_PROFILE else 1
     if type(contract['schema_version']) is not int or contract['schema_version'] != expected_version or profile not in (PROFILE, *ATTESTED_PROFILES):
         raise ValueError('unsupported resource contract profile')
     if profile in ATTESTED_PROFILES and contract['cache_policy'] not in ('uncached_only', 'provider_cache_allowed'):
         raise ValueError('unsupported resource cache policy')
-    if profile == TIMING_PROFILE:
+    if profile in TIMED_PROFILES:
         boundary = contract['timing_boundary']
         if not valid_timing_boundary(boundary):
             raise ValueError('complete timing boundary required')
@@ -54,7 +58,8 @@ def validate(contract):
     if type(contract['min_roots']) is not int or contract['min_roots'] < 1:
         raise ValueError('min_roots must be a positive integer')
     endpoints = contract['endpoints']
-    if not isinstance(endpoints, list) or not endpoints or not all(isinstance(e, dict) and set(e) == ENDPOINT_KEYS for e in endpoints):
+    if not isinstance(endpoints, list) or not endpoints or not all(isinstance(e, dict) and set(e) == (
+            ENDPOINT_KEYS | ({'token_category', 'token_scope'} if profile == TOKEN_PROFILE and e.get('kind') == 'measured_tokens' else set())) for e in endpoints):
         raise ValueError('resource endpoints fields mismatch')
     if len({e['name'] for e in endpoints}) != len(endpoints) or not any(e['required'] is True for e in endpoints):
         raise ValueError('unique endpoint names and one required endpoint needed')
@@ -65,10 +70,13 @@ def validate(contract):
             raise ValueError('unsupported resource endpoint declaration')
         if profile in ATTESTED_PROFILES and e['unit'] != {'elapsed_wall_seconds': 's', 'measured_tokens': 'tokens'}[e['kind']]:
             raise ValueError('resource endpoint unit does not match kind')
+        if profile == TOKEN_PROFILE and e['kind'] == 'measured_tokens' and (
+                e['token_category'] not in TOKEN_CATEGORIES or e['token_scope'] != TOKEN_SCOPE):
+            raise ValueError('unsupported frozen token category or scope')
     return contract
 
 
-def observe(trial, endpoint, cache_policy=None, timing_boundary=None):
+def observe(trial, endpoint, cache_policy=None, timing_boundary=None, token_scoped=False):
     """Return (capped value, None) or (None, reason); a timeout below the horizon is censored."""
     if cache_policy is not None:
         provenance = trial.get('provenance')
@@ -83,6 +91,16 @@ def observe(trial, endpoint, cache_policy=None, timing_boundary=None):
             observed = provenance.get('timing_boundary')
             if not valid_timing_boundary(observed) or observed != timing_boundary:
                 return None, 'timing_boundary_missing_or_mismatch'
+        if token_scoped and endpoint['kind'] == 'measured_tokens':
+            entries = trial.get('measurement_provenance')
+            details = entries.get(endpoint['name']) if isinstance(entries, dict) else None
+            if (not isinstance(details, dict) or details.get('token_category') != endpoint['token_category']
+                    or details.get('token_scope') != endpoint['token_scope']):
+                return None, 'token_scope_missing_or_mismatch'
+            attempts, known, unknown = (details.get(name) for name in ('request_attempts', 'known_requests', 'unknown_requests'))
+            if (any(type(value) is not int or value < 0 for value in (attempts, known, unknown))
+                    or attempts == 0 or known + unknown != attempts or unknown != 0):
+                return None, 'request_coverage_incomplete'
     status, value = trial.get('status'), trial.get('measurements', {}).get(endpoint['name'])
     if status not in ('completed', 'agent_timeout'): return None, 'status_' + str(status)
     if not number(value): return None, 'missing_measurement'
@@ -90,15 +108,17 @@ def observe(trial, endpoint, cache_policy=None, timing_boundary=None):
     return min(value, endpoint['horizon']), None
 
 
-def evaluate(endpoint, pairs, alpha, min_roots, cache_policy=None, timing_boundary=None):
+def evaluate(endpoint, pairs, alpha, min_roots, cache_policy=None, timing_boundary=None, token_scoped=False):
     horizon = endpoint['horizon']
     result = dict(name=endpoint['name'], kind=endpoint['kind'], unit=endpoint['unit'], required=endpoint['required'],
                   scope='all_assigned_capped', horizon=horizon, max_increase=endpoint['max_increase'], per_endpoint_alpha=alpha)
     if timing_boundary is not None and endpoint['kind'] == 'elapsed_wall_seconds':
         result['timing_boundary'] = dict(timing_boundary)
+    if token_scoped and endpoint['kind'] == 'measured_tokens':
+        result.update(token_category=endpoint['token_category'], token_scope=endpoint['token_scope'])
     roots, reasons, capped = defaultdict(list), Counter(), 0
     for pair in pairs:
-        base, cand = (observe(pair[arm], endpoint, cache_policy, timing_boundary) for arm in ('baseline', 'candidate'))
+        base, cand = (observe(pair[arm], endpoint, cache_policy, timing_boundary, token_scoped) for arm in ('baseline', 'candidate'))
         if cache_policy is not None and base[1] is None and cand[1] is None:
             if pair['baseline']['provenance']['cache_state'] != pair['candidate']['provenance']['cache_state']:
                 reasons['asymmetric_cache_state'] += 1
@@ -128,7 +148,8 @@ def decide(contract, pairs, quality_status):
         raise ValueError('paired resource rows required')
     required = sum(e['required'] for e in contract['endpoints'])
     alpha = contract['alpha'] / required  # Bonferroni across required endpoints; advisory ones share the same level
-    endpoints = [evaluate(e, pairs, alpha, contract['min_roots'], contract.get('cache_policy'), contract.get('timing_boundary')) for e in contract['endpoints']]
+    endpoints = [evaluate(e, pairs, alpha, contract['min_roots'], contract.get('cache_policy'), contract.get('timing_boundary'),
+                          contract['profile'] == TOKEN_PROFILE) for e in contract['endpoints']]
     states = {e['status'] for e in endpoints if e['required']}
     if quality_status != 'supported': decision, reason = 'quality_not_verified', 'quality_unknown' if quality_status is None else 'quality_' + str(quality_status)
     elif 'unknown' in states: decision, reason = 'blocked', 'required_measurement_unknown'
@@ -148,4 +169,6 @@ def decide(contract, pairs, quality_status):
                             inference_basis='conditional_on_caller_inputs')
         if decision in ('improvement', 'noninferior', 'regression'):
             result['decision'] = 'conditional_' + decision
+    if contract['profile'] == TOKEN_PROFILE:
+        result.update(publication='private', publication_allowed=False)
     return result
