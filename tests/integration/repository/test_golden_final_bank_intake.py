@@ -48,7 +48,9 @@ def test_saved_synthetic_final_bank_intake_does_not_qualify_a_bank(tmp_path):
     assert not actual['publication_allowed'] and 'qualification' not in actual
     task, = json.loads((bank_root/'bank.json').read_text())['tasks']
     assert task['source_kind'] == 'synthetic' and task['independence'] == 'reviewed'
-    assert validate(bank_root/'bank.json')['certification_eligible'] is False
+    validation = validate(bank_root/'bank.json')
+    assert validation['review_declarations_complete'] is True
+    assert validation['certification_eligible'] is False and validation['certification_status'] == 'unverified'
     bad = inputs | {'profile': 'conditional-final-bank-v0'}
     (case/'inputs.json').write_text(json.dumps(bad))
     with store.locked(), pytest.raises(ValueError, match='invalid final-bank intake binding'):
