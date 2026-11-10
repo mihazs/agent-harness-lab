@@ -3351,6 +3351,17 @@ project. Thread identities distinguish issue from merge request even when the
 IID and server-reported discussion ID coincide. The same bounds, privacy,
 non-atomic read and unknown-outcome limits apply.
 
+An opt-in selection schema 4 adds `commits` for selected merge requests, using
+the [MR commits endpoint](https://docs.gitlab.com/api/merge_requests/#retrieve-merge-request-commits).
+The reader records a full commit SHA fingerprint and a scoped, server-reported
+membership relation for each returned row, with up to 10,000 rows per capture.
+It does not read commit titles, messages or authors into claims, infer ancestry,
+or verify membership against local Git. Missing parents, access failures and
+incomplete pages remain visible and prevent a checkpoint. Reads are non-atomic;
+the server's project, commit and membership claims do not verify task outcomes.
+Schema 4 is a selection profile, separate from the GitLab REST API's `v4`, and
+has a distinct scope from selection schemas 1–3.
+
 Use `SourceSpec(kind="api", provider="gitlab", version="v4", root_sha256=digest(base_url),
 project_sha256=selection.project_sha256, scope_sha256=selection.sha256,
 identity_provenance="source_declared_id", enabled=True)` and register
@@ -3449,8 +3460,8 @@ identity; nested path encoding and `..` or encoded-slash refusal; 401/403/404/42
 coverage; non-HTTPS refusal; GET-only requests; and repeat import and update.
 Live GitLab compatibility, including the exact route parameters GitLab repeats
 in `Link` headers, is not established by these fixtures.
-Still open in #54: independently verified resolution, MR
-commits, changes and versions, state events, linked issues, pipelines, jobs and
+Still open in #54: independently verified resolution and commit membership, MR
+changes and versions, state events, linked issues, pipelines, jobs and
 test reports, confidential-visibility checks per note, absence tombstones and a
 relationship graph.
 
