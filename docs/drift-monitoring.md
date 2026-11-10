@@ -104,6 +104,16 @@ and `tested: false`, plus `capture_alert_in_window` or `exposure_below_minimum`
 where they apply. Their failure rates are descriptive. The receipt's `action` is the
 plan's action only when a channel alerts; otherwise it is `observe`.
 
+`describe_task_mix(plan, reference, receipt)` optionally reports the descriptive
+total-variation distance between declared reference and current root proportions.
+It requires matching frozen digests, complete capture in both windows, no unknown
+strata or collapsed `other` category, and the plan's minimum root exposure on both
+sides; stratum keys must use the inventory's canonical shape. Otherwise the distance
+is unavailable. Digests detect changes but do not authenticate caller-supplied data.
+This is not a statistical test or
+an alert. Input authority and root independence remain unverified, and the result
+does not establish a regression, cause, or promotion authority.
+
 Every receipt states `regression_label: not_established`, `causal_claim: false`,
 `automatic_rollback: false`, `promotion_authority: none` and
 `publication_allowed: false`. A drift alert is a reason to look, not evidence that
