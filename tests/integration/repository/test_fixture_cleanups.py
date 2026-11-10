@@ -150,3 +150,21 @@ def test_one_call_fixture_reports_cleanup_failure(tmp_path, module):
     run = pytest_run(tmp_path, ['test_one_cleanup.py'])
     assert 'ERROR ' in run.stdout and 'synthetic per-test cleanup failure' in run.stdout, run.stdout[-4000:]
     assert '1 passed' in run.stdout, run.stdout[-4000:]
+
+
+def test_preservation_receipt_helper_propagates_nested_cleanup_failure(monkeypatch):
+    from contextlib import ExitStack
+    import unittest
+    from tests.support import preservation_receipts
+
+    def fail():
+        raise RuntimeError('synthetic nested cleanup failure')
+
+    class BrokenHistory(unittest.TestCase):
+        def setUp(self):
+            self.addCleanup(fail)
+
+    monkeypatch.setattr(preservation_receipts.legacy, 'OracleHistoryTests', BrokenHistory)
+    with pytest.raises(RuntimeError, match='synthetic nested cleanup failure'):
+        with ExitStack() as cleanups:
+            preservation_receipts.PreservationReceipt(cleanups).fixture()
