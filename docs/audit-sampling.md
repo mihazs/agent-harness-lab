@@ -115,6 +115,29 @@ the frame, seed, reviewer labels or author of a self-sealed receipt. The receipt
 gives reviewers only the drawn unit hashes in hash order, without alert status,
 stratum or score, to reduce anchoring.
 
+## Opt-in finite-grid design
+
+Set `schema_version` to `2` and `profile` to `audit-sampling-plan-v2` to opt
+into the versioned grid design. The same frame, route and review-budget rules
+apply. For each stratum, the combined nominal route probability is rounded down
+to an integer threshold on a 53-bit grid; the recorded inclusion probability is
+that threshold divided by `2**53`. A zero threshold is refused. The first 53
+hash bits are compared as an integer with the threshold, so under a uniformly
+distributed hash the recorded probability is exactly the fraction of grid points
+selected. A route with probability one selects every grid point.
+
+The receipt and estimate profiles are `audit-sampling-receipt-v2` and
+`audit-sampling-estimate-v2`. Estimates use the effective recorded probabilities,
+not the unrounded requested rates. Hash uniformity and independence across units
+are assumptions, not authenticated facts; seed choice and reviewer-label limits
+still apply. A seed commitment alone does not establish when the full sampling
+plan was fixed; `sampling_plan_timing_unauthenticated` remains in the v2 report.
+On reopening, every listed v2 draw must satisfy the recorded seed, frame hash
+and grid threshold. Without the full frame, this cannot verify membership or
+prove that selected units were not omitted. Internal receipt checks do not
+authenticate its source. The default
+v1 plan, receipts and selection rule remain unchanged by this opt-in design.
+
 ## Estimates
 
 `estimate(receipt, batch)` takes labels bound to one receipt:

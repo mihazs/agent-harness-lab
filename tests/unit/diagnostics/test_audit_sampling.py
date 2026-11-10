@@ -605,3 +605,62 @@ def test_receipts_and_reports_are_private_and_carry_no_raw_ids(population):
         assert 'episode-0' not in json.dumps(record)
         assert not public_export_allowed([record])
     assert report['automatic_policy_update'] is False and receipt['automatic_policy_update'] is False
+
+
+def test_v2_grid_probability_is_exactly_the_hash_threshold():
+    probability, threshold = audit._grid_probability(.2)
+    assert probability.as_integer_ratio()[0] * audit.GRID_SIZE == threshold * probability.as_integer_ratio()[1]
+    class Prefix:
+        def __init__(self, value): self.value = value
+        def hexdigest(self): return f'{self.value << 11:016x}' + '0' * 48
+    for value, expected in ((0, True), (threshold-1, True), (threshold, False), (audit.GRID_SIZE-1, False)):
+        with patch.object(audit.hashlib, 'sha256', return_value=Prefix(value)):
+            assert audit._grid_draw(1, 'a'*64, 'b'*64, threshold) is expected
+    with pytest.raises(ValueError, match='below the sampling grid'):
+        audit._grid_probability(2**-54)
+
+
+def test_v2_draw_records_effective_grid_probability_and_replays():
+    value = frame([unit(f'synthetic-{n}', alerted=n%2==0) for n in range(30)])
+    policy = plan(value, rates=dict(random=.2, alerted=.5), schema_version=2, profile=audit.PLAN_PROFILE_V2)
+    receipt = audit.draw(value, policy)
+    assert receipt == audit.draw(value, policy)
+    assert receipt['profile'] == audit.RECEIPT_PROFILE_V2 and receipt['schema_version'] == 2
+    for stratum in receipt['strata']:
+        nominal = audit._probability(stratum['routes'], policy['rates'])
+        actual, threshold = audit._grid_probability(nominal)
+        assert stratum['inclusion_probability'] == actual and actual * audit.GRID_SIZE == threshold
+    batch = reviewed(receipt, set())
+    result = audit.estimate(receipt, batch)
+    assert result['profile'] == audit.REPORT_PROFILE_V2
+    assert 'hash_uniform_independence_unverified' in result['limitations']
+    assert 'sampling_plan_timing_unauthenticated' in result['limitations']
+    assert not public_export_allowed([result])
+    altered = json.loads(json.dumps(receipt)); altered['strata'][0]['inclusion_probability'] = .01
+    altered = audit._seal({k:v for k,v in altered.items() if k!='receipt_sha256'})
+    with pytest.raises(ValueError, match='inclusion probability'):
+        audit.review_queue(altered)
+
+
+def test_v2_rejects_positive_below_grid_and_retains_v1_profile():
+    value = frame([unit('synthetic')])
+    policy = plan(value, rates=dict(random=2**-54), schema_version=2, profile=audit.PLAN_PROFILE_V2)
+    with pytest.raises(ValueError, match='inclusion probability'):
+        audit.draw(value, policy)
+    legacy = audit.draw(value, plan(value, rates=dict(random=1)))
+    assert legacy['profile'] == audit.RECEIPT_PROFILE and legacy['schema_version'] == 1
+    assert audit.review_queue(legacy)['receipt_sha256'] == legacy['receipt_sha256']
+
+
+def test_v2_rejects_resealed_draw_failing_grid_predicate():
+    value = frame([unit(f'synthetic-{n}') for n in range(60)])
+    policy = plan(value, rates=dict(random=.5), schema_version=2, profile=audit.PLAN_PROFILE_V2)
+    receipt = audit.draw(value, policy)
+    drawn = {item['unit_sha256'] for item in receipt['draws']}
+    eligible = audit.freeze(value)['eligible']
+    omitted = next(key for key in eligible if key not in drawn)
+    assert drawn and not audit._grid_draw(policy['seed'],receipt['frame_sha256'],omitted,audit.GRID_SIZE//2)
+    body = json.loads(json.dumps({key:item for key,item in receipt.items() if key!='receipt_sha256'}))
+    body['draws'][0]['unit_sha256'] = omitted
+    with pytest.raises(ValueError, match='grid predicate'):
+        audit.review_queue(audit._seal(body))
