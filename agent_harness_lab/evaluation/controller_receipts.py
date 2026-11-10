@@ -280,7 +280,7 @@ def _kernel_finished(ticket, run, argv, exports):
         if scope is not None:scope.lost=True
         return
     if permission is not None:
-        permission={key:permission[key] for key in ('profile','status','qualification','role_coverage','setup_coverage')}
+        permission={key:permission.get(key) for key in ('profile','status','qualification','role_coverage','setup_coverage','worker_executable_sha256')}
     from .runtime_boundary import qualify
     boundary=qualify(boundary_contract,boundary_observation if boundary_contract is not None and boundary_contract['image_sha256']==image['sha256'] else None,
         work_identity,scratch.seeded_bytes,group,permission,ticket.stage)
