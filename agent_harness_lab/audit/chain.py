@@ -7,8 +7,9 @@ project_doc_max_bytes budget. A file larger than the remaining budget is truncat
 what it loaded, and once the budget is exhausted every later file is skipped. Separators and the CODEX_HOME file
 use no budget.
 
-The chain is followed only at the documented defaults (a 32 KiB budget, project root marker .git, no fallback
-names): a configured budget, marker or fallback list is never read. It is settled only when the checkout root holds
+The chain assumes the default project root marker .git and no fallback names. The byte budget is the
+documented 32 KiB default unless the caller explicitly declares a different value; runtime configuration,
+markers and fallback lists are never read. It is settled only when the checkout root holds
 .git, task_cwd is known and every scope's selection was parsed. The walk stops at the first scope it cannot settle,
 such as a refused (symlinked) candidate, which Codex would follow, so only budget outcomes the earlier files
 already decide are reported, and an explicitly untrusted project, which loads no project docs, reports none.
@@ -24,6 +25,8 @@ SOURCE = next(row.doc_url for row in surfaces.CAPABILITIES
               if row.surface == 'instructions' and row.runtime == 'codex' and row.item.startswith('project_doc_max_bytes'))
 TRUNCATED = 'instruction_chain_truncated_at_default_project_doc_bytes'
 SKIPPED = 'instruction_chain_skipped_at_default_project_doc_bytes'
+DECLARED_TRUNCATED = 'instruction_chain_truncated_at_declared_project_doc_bytes'
+DECLARED_SKIPPED = 'instruction_chain_skipped_at_declared_project_doc_bytes'
 
 
 def _recover(inventory):
@@ -34,9 +37,14 @@ def _recover(inventory):
     return next((c for c in sorted(candidates) if digest(c) == inventory.task_cwd_sha256), None)
 
 
-def codex(inventory, task_cwd=None):
-    """{path: (reason, measures)} for chain files the default budget truncates or skips; {} when unsettled."""
+def codex(inventory, task_cwd=None, *, declared_limit=None):
+    """{path: (reason, measures)} for chain files the declared or default budget truncates or skips."""
+    if declared_limit is not None and (type(declared_limit) is not int or declared_limit < 0):
+        raise ValueError('invalid declared Codex project document byte limit')
     if inventory.runtime != 'codex' or inventory.status != 'declared': return {}
+    limit = CODEX_DEFAULT_BYTES if declared_limit is None else declared_limit
+    truncated = TRUNCATED if declared_limit is None else DECLARED_TRUNCATED
+    skipped = SKIPPED if declared_limit is None else DECLARED_SKIPPED
     if task_cwd is None: task_cwd = _recover(inventory)
     if task_cwd is None or digest(task_cwd) != inventory.task_cwd_sha256: return {}
     refused = {r.path for r in inventory.refusals if r.root == 'checkout'}
@@ -45,7 +53,7 @@ def codex(inventory, task_cwd=None):
     if any(n.trust == 'declared_untrusted' for n in nodes.values()): return {}  # Codex loads no project docs
     parts = PurePosixPath(task_cwd).parts if task_cwd != '.' else ()
     scopes = [PurePosixPath(*parts[:depth]) for depth in range(len(parts) + 1)]
-    remaining, found = CODEX_DEFAULT_BYTES, {}
+    remaining, found = limit, {}
     for scope in scopes:
         selected = None
         for name in GLOBAL_NAMES:
@@ -60,24 +68,24 @@ def codex(inventory, task_cwd=None):
             return found
         blank = leading == size
         if remaining == 0:  # Codex stops at the first file after exhaustion; a blank one loses nothing
-            if not blank: found[selected.path] = (SKIPPED, _measures(0, size))
+            if not blank: found[selected.path] = (skipped, _measures(0, size, limit))
             continue
         if size > remaining:
             # A prefix that ends inside the leading whitespace run is blank and uses no budget unless it cuts a
             # multi-byte character, which the facts do not record, so its loaded bytes and later files are unsettled.
             if remaining < leading:
-                if not blank: found[selected.path] = (TRUNCATED, (('budget_bytes', CODEX_DEFAULT_BYTES),))
+                if not blank: found[selected.path] = (truncated, (('budget_bytes', limit),))
                 return found
             # A prefix that is exactly the whitespace run ends on a character boundary: blank, so Codex loads none of
             # the file and the budget carries on unchanged.
             if remaining == leading:
-                found[selected.path] = (TRUNCATED, _measures(0, size))
+                found[selected.path] = (truncated, _measures(0, size, limit))
                 continue
-            found[selected.path] = (TRUNCATED, _measures(remaining, size - remaining))
+            found[selected.path] = (truncated, _measures(remaining, size - remaining, limit))
             remaining = 0
         elif not blank: remaining -= size
     return found
 
 
-def _measures(loaded, dropped):
-    return (('budget_bytes', CODEX_DEFAULT_BYTES), ('dropped_bytes', dropped), ('loaded_bytes', loaded))
+def _measures(loaded, dropped, limit):
+    return (('budget_bytes', limit), ('dropped_bytes', dropped), ('loaded_bytes', loaded))
