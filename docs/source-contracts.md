@@ -3342,6 +3342,15 @@ checkpoint; if the project is unavailable, a scoped selection fingerprint in
 coverage is not a claimed native MR identity. Source/version, complete system
 note coverage, and execution binding remain unverified.
 
+An opt-in selection schema 3 extends `discussions` to each selected issue as
+well as each selected merge request; it also supports issue-only selections.
+Its distinct scope leaves schema 1 and 2 histories unchanged. The reader uses
+the selected issue's paginated `/discussions` endpoint and checks each nested
+note against that issue's global identity and, when present, its IID and
+project. Thread identities distinguish issue from merge request even when the
+IID and server-reported discussion ID coincide. The same bounds, privacy,
+non-atomic read and unknown-outcome limits apply.
+
 Use `SourceSpec(kind="api", provider="gitlab", version="v4", root_sha256=digest(base_url),
 project_sha256=selection.project_sha256, scope_sha256=selection.sha256,
 identity_provenance="source_declared_id", enabled=True)` and register
@@ -3440,7 +3449,7 @@ identity; nested path encoding and `..` or encoded-slash refusal; 401/403/404/42
 coverage; non-HTTPS refusal; GET-only requests; and repeat import and update.
 Live GitLab compatibility, including the exact route parameters GitLab repeats
 in `Link` headers, is not established by these fixtures.
-Still open in #54: issue discussions and independently verified resolution, MR
+Still open in #54: independently verified resolution, MR
 commits, changes and versions, state events, linked issues, pipelines, jobs and
 test reports, confidential-visibility checks per note, absence tombstones and a
 relationship graph.
