@@ -55,6 +55,78 @@ def v2(source):
     return export, payload, spec, manifest
 
 
+def v3(source):
+    export, payload, selection, spec, manifest = source
+    selection['schema_version'] = 3
+    (manifest.parent/'selection.json').write_text(json.dumps(selection))
+    spec = SourceSpec(**{**spec.to_dict(), 'version': 'v3', 'scope_sha256': digest(selection)})
+    manifest.write_text(json.dumps({'schema_version': 1, 'source': spec.to_dict(), 'data': 'selection.json'}))
+    return export, payload, spec, manifest
+
+
+def test_v3_message_metadata_is_scoped_unverified_and_private(source):
+    export, payload, spec, manifest = v3(source)
+    payload['messages'].extend([{'id': 'msg_assistant', 'type': 'assistant', 'content': [{'text': SECRET}]},
+                                {'id': 'msg_other', 'type': SECRET, 'text': SECRET},
+                                {'id': 'msg_idle', 'type': 'idle', 'outcome': 'succeeded'}])
+    export.write_text(json.dumps(payload))
+    connector = OpenCodeExport(manifest)
+    snapshot = connector.read(spec)
+    claims = [c for c in connector.claims if c.claim_type == 'message']
+    assert [c.kind for c in claims] == ['user', 'assistant', 'unknown', 'idle']
+    assert [c.position for c in claims] == [0, 1, 2, 3]
+    assert len({c.native_id_sha256 for c in claims}) == 4
+    assert all(c.session_sha256 == connector.claims[0].native_id_sha256 for c in claims)
+    assert all((r.plane, r.causal_status, r.independence) == ('contextual_assertion', 'unknown', 'unknown') for r in snapshot.records)
+    assert not connector.summary['task_outcomes_verified']
+    assert connector.summary['producer_version'] == 'unverified'
+    for private in (SECRET, SESSION, PROJECT, 'msg_assistant', 'succeeded'):
+        assert private not in repr((connector.summary, connector.claims, snapshot))
+
+
+@pytest.mark.parametrize('message_id', ['other', 'msg_bad space', 'msg_\nprivate'])
+def test_v3_message_identity_must_match_minimum_pinned_shape(source, message_id):
+    export, payload, spec, manifest = v3(source)
+    payload['messages'][0]['id'] = message_id
+    export.write_text(json.dumps(payload))
+    with pytest.raises(ValueError): OpenCodeExport(manifest).read(spec)
+
+
+def test_v3_cli_preview_remains_private(source):
+    _, _, spec, manifest = v3(source)
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        code = main(['sources', 'preview', '--manifest', str(manifest), '--project-sha256', spec.project_sha256,
+                     '--scope-sha256', spec.scope_sha256])
+    assert code == 0
+    assert json.loads(output.getvalue())['records'] == 3
+    assert all(s not in output.getvalue() for s in (SECRET, SESSION, PROJECT))
+
+
+def test_v3_same_message_id_in_different_sessions_has_distinct_identity(source):
+    export, payload, spec, manifest = v3(source)
+    connector = OpenCodeExport(manifest)
+    connector.read(spec)
+    first = next(c.native_id_sha256 for c in connector.claims if c.claim_type == 'message')
+    payload['info']['id'] = 'ses_other'
+    export.write_text(json.dumps(payload))
+    selection_path = manifest.parent/'selection.json'
+    selection = json.loads(selection_path.read_text())
+    selection['session_sha256'] = digest(('opencode.session', INSTANCE, 'ses_other'))
+    selection_path.write_text(json.dumps(selection))
+    spec = SourceSpec(**{**spec.to_dict(), 'scope_sha256': digest(selection)})
+    manifest.write_text(json.dumps({'schema_version': 1, 'source': spec.to_dict(), 'data': 'selection.json'}))
+    connector.read(spec)
+    assert first != next(c.native_id_sha256 for c in connector.claims if c.claim_type == 'message')
+
+
+def test_v3_message_claim_count_is_bounded(source):
+    export, payload, spec, manifest = v3(source)
+    payload['messages'] = [{'id': f'msg_{index}', 'type': 'user'} for index in range(10001)]
+    export.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match='claim bound'): OpenCodeExport(manifest).read(spec)
+
+
 def test_v2_parent_and_archive_are_reported_unverified_claims(source):
     export, payload, spec, manifest = v2(source)
     payload['info']['parentID'] = 'ses_synthetic_parent'
