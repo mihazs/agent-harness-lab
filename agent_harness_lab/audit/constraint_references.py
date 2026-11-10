@@ -2,7 +2,7 @@
 import hashlib
 import re
 
-from agent_harness_lab.audit import permission_candidates
+from agent_harness_lab.audit import hook_candidates, permission_candidates
 from agent_harness_lab.evaluation.integrity import relative
 from agent_harness_lab.sources import harness_inventory
 
@@ -12,6 +12,7 @@ MAX_LINE = 4096
 MAX_CONSTRAINTS = 512
 MAX_COMPARISONS = 10000
 _CONSTRAINT = re.compile(r'\b(?:never|must\s+not|do\s+not)\b', re.IGNORECASE)
+_WRITE_CONSTRAINT = re.compile(r'\b(?:never|must\s+not|do\s+not)\s+(?:edit|write|modify|change)\b', re.IGNORECASE)
 
 
 def report(inventory, path, raw, protected):
@@ -33,6 +34,7 @@ def report(inventory, path, raw, protected):
     if not isinstance(protected, dict) or not isinstance(protected.get('paths'), list) or len(protected['paths']) > harness_inventory.MAX_ENTRIES:
         raise ValueError('bounded protected-path inventory required')
     permissions = permission_candidates.report(inventory, protected)
+    hook = hook_candidates.first_write_candidate(inventory)
     paths = []
     for item in permissions['paths']:
         if (not isinstance(item, dict) or not isinstance(item.get('path'), str) or len(item['path']) > MAX_LINE
@@ -55,8 +57,10 @@ def report(inventory, path, raw, protected):
         for candidate, status in paths:
             if re.search(r'(?<![\w./-])' + re.escape(candidate) + r'(?![\w/-]|\.[\w])', line):
                 references.append(dict(path=candidate, permission=status))
+        candidate = hook if references and _WRITE_CONSTRAINT.search(line) else None
         rows.append(dict(line=number, line_sha256=hashlib.sha256(line.encode('utf-8')).hexdigest(),
-                         protected_paths=references, hook_match='unknown', enforcement='unknown'))
+                         protected_paths=references, hook_match='hook_candidate_present' if candidate else 'unknown',
+                         hook_candidate=candidate, enforcement='unknown'))
     return dict(profile=PROFILE, source_path=path, source_sha256=source, constraints=rows,
                 matching='lexical_hypothesis', observed_loading='unknown', enforcement='unknown',
                 publication_allowed=False)
