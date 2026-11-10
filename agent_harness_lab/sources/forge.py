@@ -67,7 +67,7 @@ class CaptureLedger:
         if not isinstance(version, str) or VERSION.fullmatch(version) is None: return None, 'unrecognized'
         return version, 'reported'
 
-    def listing(self, collection, query, size, *, total_header, following, project):
+    def listing(self, collection, query, size, *, total_header, following, project, identity=None):
         """Forward offset listing; returns (native id, projected node) pairs and an explicit (state, basis) outcome.
 
         ``following(headers, page)`` returns the next page number (or None) and whether the
@@ -89,11 +89,12 @@ class CaptureLedger:
             if count is not None:
                 if total is not None and count != total: return rows, ('pagination_incomplete', 'total_count_changed')
                 total = count
+            natives = []
             for item in value:
-                native = integer(item.get('id'), minimum=1)
+                native = integer(item.get('id'), minimum=1) if identity is None else identity(item)
                 if native in seen: raise ValueError('duplicate listing identity')
-                seen.add(native)
-            rows.extend((item['id'], project(item)) for item in value)
+                seen.add(native); natives.append(native)
+            rows.extend((native, project(item)) for native, item in zip(natives, value))
             length = len(value); del value
             after, final = following(headers, page)
             if after is None: break
