@@ -129,6 +129,22 @@ Carlo results, not coverage guarantees for real tasks. The interval also does
 not account for selecting among candidates; candidate-count multiplicity is
 separate work.
 
+When fixed-final analysis has missing or ungraded scheduled arms, it remains
+incomplete and cannot promote. It reports an identified range for the frozen
+family-weighted mean of paired root differences, plus pessimistic and optimistic
+Hoeffding limits. These are worst- and best-case bounds over unknown binary
+outcomes, not assigned grades; the point estimate is unknown. The sampling limits
+still assume independent root means and do not account for candidate selection.
+For compatibility, an entirely empty record list has the legacy incomplete
+response; callers can request its full-range bounds with `include_empty_bounds=True`.
+If the adjusted confidence calculation is numerically unrepresentable, its outer
+limits fall back to the full range and report `conservative_fallback`.
+Preservation analysis also reports bounds for each required frozen cohort, using
+equal selected-root weights and the required-cohort Bonferroni allocation. It
+does so only with valid frozen membership and unambiguous records; qualification
+and independence remain unverified. Optional cohorts remain descriptive. Sequential
+analysis does not yet provide these bounds.
+
 The power simulator's roots are independent by construction, so its result says nothing about
 real task dependence. No worker, model or grader runs, nothing is observed,
 certified or adopted, and the plan, margins, method and budgets are unchanged. A
