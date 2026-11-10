@@ -7,15 +7,12 @@ import pytest
 
 from agent_harness_lab.cli import main
 from agent_harness_lab.promotion.journal import Journal, file_record, snapshot_record
-from tests.integration.workflow.test_one_call import OneCallTests
-from tests.support.unittest_cleanups import run_cleanups
+from tests.support.one_call import one as one
 
 
 @pytest.fixture
-def project():
-    one = OneCallTests(); one.setUp()
-    yield one
-    run_cleanups(one)
+def project(one):
+    return one
 
 
 def call(argv):

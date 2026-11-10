@@ -6,7 +6,7 @@ from pathlib import Path
 import shutil
 import tempfile
 from types import SimpleNamespace
-import unittest
+from contextlib import ExitStack
 from unittest.mock import Mock, patch
 
 import pytest
@@ -30,18 +30,13 @@ def grader(structural, version='v1'):
             "sys.exit(0 if outcome else 1)\n")
 
 
-class GraderCorrectionTests(unittest.TestCase):
-    """A proposed synthetic oracle correction beside its parent bank, controls and fake backend.
+class GraderCorrection:
+    """A proposed synthetic oracle correction beside its parent bank and controls."""
 
-    test_bank_corrections, test_correction_cohorts, test_grader_correction_cli and test_sandbox_kernel
-    instantiate this class and call setUp and doCleanups directly, so it keeps that TestCase
-    interface and holds no tests; the cases below receive it through the case fixture.
-    """
+    emulate = staticmethod(control_tests.emulate)
 
-    emulate = control_tests.RegressionControlTests.emulate
-
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+    def __init__(self, add_cleanup):
+        self.temp = tempfile.TemporaryDirectory(); add_cleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         starter = Path(agent_harness_lab.__file__).parent/'evaluation/fixtures/starter-v1'
         task = next(t for t in json.loads((starter/'bank.json').read_text())['tasks'] if t['task_id']=='regression')
@@ -117,9 +112,8 @@ class GraderCorrectionTests(unittest.TestCase):
 
 @pytest.fixture
 def case():
-    fixture = GraderCorrectionTests(); fixture.setUp()
-    yield fixture
-    fixture.doCleanups()
+    with ExitStack() as cleanups:
+        yield GraderCorrection(cleanups.callback)
 
 
 def test_actual_old_defect_new_controls_and_separate_review_without_task_failure(case):

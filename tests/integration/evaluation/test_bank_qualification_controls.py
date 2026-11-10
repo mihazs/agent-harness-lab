@@ -65,7 +65,7 @@ class BankControlBoundaryTests(unittest.TestCase):
 
 
 @unittest.skipUnless(kernel.ENABLED,'explicit delegated kernel profile required')
-class OwnedBankControlKernelTests(kernel.KernelFixture):
+class OwnedBankControlKernelTests(kernel.UnittestKernelFixture):
     def test_actual_controls_issue_one_process_owned_completion(self):
         bank=make_bank(self.root/'bank')
         runtime=self.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']

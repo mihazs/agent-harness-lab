@@ -1,61 +1,15 @@
 """Controller-loaded instruction requests; synthetic wire, no provider calls."""
-from copy import deepcopy
 import hashlib
 import json
-import os
-from pathlib import Path
-import tempfile
-import time
-from types import SimpleNamespace
-import unittest
 from unittest.mock import patch
 
 import pytest
 
-import agent_harness_lab
 from agent_harness_lab.evaluation import responses
 from tests.integration.sandbox import test_sandbox_inference as wire
 
 PROTOCOL='ahl-controlled-agents-v1'
 
-
-class InstructionFixture:
-    def setUp(self):
-        expected=os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
-        if expected:self.assertTrue(Path(agent_harness_lab.__file__).resolve().is_relative_to(Path(expected).resolve()))
-        folder=tempfile.TemporaryDirectory();self.addCleanup(folder.cleanup);self.root=Path(folder.name)
-        self.harness=self.root/'harness';self.harness.mkdir();(self.harness/'AGENTS.md').write_text('SYNTHETIC_GUIDANCE')
-        self.work=self.root/'work';self.work.mkdir();self.deadline=time.monotonic()+10
-        self.settings=dict(schema_version=1,model='synthetic',credential_file=str(self.root/'unused'),max_requests=3,
-            max_tool_calls=3,max_output_tokens=100,max_request_bytes=32768,max_response_bytes=16384,instruction_protocol=PROTOCOL)
-        self.receipts=[];self.bodies=[]
-        self.backend=SimpleNamespace(image=SimpleNamespace(sha256='a'*64))
-
-    def client(self,transport=None):
-        def final(*args):
-            self.bodies.append(args[1]);return wire.reply([wire.message(str(len(self.bodies)))])
-        return responses.Client(self.settings,None,self.deadline,transport=transport or final,
-            record=lambda value:self.receipts.append(deepcopy(value)))
-
-    def run_role(self,client):
-        return responses.run_role(client,self.backend,self.work,{'harness':self.harness},'executor',
-            'Synthetic controller executor.','Synthetic task.',self.deadline,trial_id='synthetic-trial')
-
-
-
-class _Instructions(InstructionFixture,unittest.TestCase):
-    """Hosts InstructionFixture for the pytest cases below; it defines no tests of its own.
-
-    test_instruction_context and test_scope_receipt_encoding mix InstructionFixture into their
-    own TestCase classes, so the fixture keeps its setUp, addCleanup and assert* interface.
-    """
-
-
-@pytest.fixture
-def ctx():
-    case=_Instructions();case.setUp()
-    yield case
-    case.doCleanups()
 
 
 def test_optional_settings_contract_accepts_only_the_named_protocol(ctx):
@@ -125,9 +79,9 @@ class TestInstructionContextControls:
             with pytest.raises(ValueError):ctx.run_role(client)
         assert client.requests==0;assert ctx.bodies==[]
 
-    def test_new_client_does_not_restart_existing_scope_budget(self,ctx):
+    def test_new_client_does_not_restart_existing_scope_budget(self,ctx,request):
         from agent_harness_lab.promotion.prerequisites import _begin
-        scope=_begin(ctx.harness,'a'*64,ctx.deadline);ctx.addCleanup(scope.end)
+        scope=_begin(ctx.harness,'a'*64,ctx.deadline);request.addfinalizer(scope.end)
         ctx.run_role(ctx.client());replacement=ctx.client()
         with pytest.raises(ValueError):ctx.run_role(replacement)
         assert replacement.requests==0;assert len(ctx.bodies)==1
@@ -137,17 +91,17 @@ class TestInstructionContextControls:
         with pytest.raises(ValueError):client.respond([],ctx.deadline)
         assert client.requests==0;assert ctx.bodies==[]
 
-    def test_scope_metadata_bound_is_checked_before_charging(self,ctx):
+    def test_scope_metadata_bound_is_checked_before_charging(self,ctx,request):
         from agent_harness_lab.promotion import prerequisites
-        scope=prerequisites._begin(ctx.harness,'a'*64,ctx.deadline);ctx.addCleanup(scope.end)
+        scope=prerequisites._begin(ctx.harness,'a'*64,ctx.deadline);request.addfinalizer(scope.end)
         client=ctx.client()
         with patch.object(prerequisites,'MAX_BYTES',1):
             with pytest.raises(ValueError):ctx.run_role(client)
         assert client.requests==0;assert ctx.bodies==[]
 
-    def test_duplicate_completion_cannot_complete_an_owned_scope_twice(self,ctx):
+    def test_duplicate_completion_cannot_complete_an_owned_scope_twice(self,ctx,request):
         from agent_harness_lab.promotion.prerequisites import _begin
-        scope=_begin(ctx.harness,'a'*64,ctx.deadline);ctx.addCleanup(scope.end)
+        scope=_begin(ctx.harness,'a'*64,ctx.deadline);request.addfinalizer(scope.end)
         def transport(*args):ctx.bodies.append(args[1]);return wire.reply([wire.message('duplicate')])
         client=ctx.client(transport);ctx.run_role(client)
         with pytest.raises(responses.InferenceError):ctx.run_role(client)
@@ -183,9 +137,9 @@ class TestInstructionContextControls:
         assert json.loads(ctx.bodies[0])['input'][0]['content']=='Synthetic proposer policy.'
         assert ctx.receipts[-1]['request_binding']['instruction_binding']['instruction_file'] is None
 
-    def test_scope_keeps_actual_owned_request_and_stale_settings_cannot_be_read(self,ctx):
+    def test_scope_keeps_actual_owned_request_and_stale_settings_cannot_be_read(self,ctx,request):
         from agent_harness_lab.promotion.prerequisites import _begin
-        scope=_begin(ctx.harness,'a'*64,ctx.deadline);ctx.addCleanup(scope.end)
+        scope=_begin(ctx.harness,'a'*64,ctx.deadline);request.addfinalizer(scope.end)
         client=ctx.client();ctx.run_role(client)
         request=scope.read()['instruction_requests'][0]
         assert request['complete']
@@ -229,7 +183,7 @@ EXECUTOR="from pathlib import Path;import json,sys;Path('result.json').write_tex
 
 
 @pytest.mark.skipif(not kernel.ENABLED,reason='explicit delegated kernel profile required')
-class InstructionProtocolKernelTests(repeated.PublicFixture,kernel.KernelFixture):
+class TestInstructionProtocolKernel(repeated.PublicFixture,kernel.PytestKernelFixture):
     def setUp(self):
         super().setUp();self.configure();self.settings_value['instruction_protocol']=PROTOCOL
         self.settings.write_bytes(encoded(self.settings_value));self.instructions=[];self.remove=False;self.change_configuration=False;self.replies=[]

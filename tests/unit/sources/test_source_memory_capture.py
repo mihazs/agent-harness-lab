@@ -1,4 +1,5 @@
 """Synthetic stateless ai-memory wire; no actual memories, keys or live server."""
+from contextlib import ExitStack
 from copy import deepcopy
 from dataclasses import replace
 import json
@@ -13,17 +14,17 @@ from agent_harness_lab.sources.memory_capture import MCPPageCapture
 from agent_harness_lab.sources.registry import Capability, Registry
 from agent_harness_lab.sources.store import SourceStore
 from agent_harness_lab.sources.transport import TransportError
-from tests.support.unittest_cleanups import run_cleanups
 from tests.unit.sources import test_source_mcp as fixtures
 
 
 class TestMemoryCapture:
     @pytest.fixture(autouse=True)
-    def _capture(self, tmp_path):
+    def _capture(self, tmp_path, request):
         expected=os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
         if expected and not Path(capture.__file__).resolve().is_relative_to(Path(expected).resolve()):
             raise AssertionError('MCP capture imported wrong package layout')
-        self.f=fixtures.MCPReaderTests();self.f.setUp()
+        cleanups=ExitStack();request.addfinalizer(cleanups.close)
+        self.f=fixtures.MCPReaderFixture();self.f.setup(cleanups.callback)
         self.scope=dict(project_sha256=self.f.source.project_sha256,scope_sha256=self.f.source.scope_sha256)
         self.store=SourceStore(tmp_path/'private/cache.json',**self.scope)
         self.pages={p:dict(path=p,body='SYNTHETIC_PRIVATE_BODY',page_id='synthetic-native-version',
@@ -33,7 +34,6 @@ class TestMemoryCapture:
         self.calls=[];self.after=None
         self.f.wire.side_effect=self.exchange
         yield
-        run_cleanups(self.f)
 
     def exchange(self,origin,target,headers,**kwargs):
         request=json.loads(kwargs['body']);self.calls.append(request)

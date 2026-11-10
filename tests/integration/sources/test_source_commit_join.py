@@ -1,15 +1,14 @@
 """Synthetic cross-journal commit joins; matching SHAs never prove repository or outcome."""
+from contextlib import ExitStack
 from dataclasses import replace
 import json
 import os
 from pathlib import Path
 import re
 import subprocess
-import unittest
 
 import pytest
 
-from tests.support.unittest_cleanups import run_cleanups
 from tests.unit.sources.test_source_github import GitHubFixture
 
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
@@ -325,16 +324,12 @@ class TestPullCommitJoin(CommitJoinFixture):
             assert not public_export_allowed([{**report, 'provenance': provenance}])
 
 
-class GitHubDriver(GitHubFixture, unittest.TestCase):
-    """Drives GitHubFixture by hand; it needs TestCase assertions and addCleanup, released with run_cleanups."""
-    def runTest(self): pass
-
-
 @pytest.fixture
 def github_driver():
-    driver = GitHubDriver(); driver.setUp()
-    yield driver
-    run_cleanups(driver)
+    with ExitStack() as cleanups:
+        driver = GitHubFixture(); driver.addCleanup = cleanups.callback
+        driver.setUp()
+        yield driver
 
 
 @pytest.mark.skipif(not Path('/usr/bin/git').is_file(), reason='explicit system Git is required')

@@ -15,7 +15,6 @@ from agent_harness_lab.optimization.budget import Budget
 from agent_harness_lab.optimization.history_evidence import HistorySearchContext
 from agent_harness_lab.optimization.search import CandidateRecord, search
 from agent_harness_lab.private_journal import encoded, record
-from tests.support.unittest_cleanups import run_cleanups
 
 
 def candidate(name='baseline', content=None):
@@ -282,10 +281,8 @@ class TestSearchActualHistory:
     @pytest.fixture
     def f(self):
         from tests.integration.evaluation import test_preservation_history as fixtures
-        helper = fixtures.PreservationHistoryTests()
-        helper.setUp()
-        yield helper.f
-        run_cleanups(helper)
+        with ExitStack() as cleanups:
+            yield fixtures.PreservationHistory(cleanups).f
 
     def test_sparse_actual_receipt_retains_no_op_then_revocation_blocks_cached_return(self, f):
         context = HistorySearchContext(str(f.store.root), str(f.baseline), str(f.export/'manifest.json'),
