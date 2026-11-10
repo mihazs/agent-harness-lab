@@ -17,6 +17,8 @@ and the improvement loop remain `not_checked`. An absent skill is `unknown`,
 not a pass. CLI findings use `weak`, `unknown`, or `not_checked`; coverage can
 also be `conforms`. The library's separate report retains its documented
 `conformant`, `nonconformant`, and `unknown` vocabulary.
+Try the [offline walkthrough](audit-walkthrough.md) with a deliberately flawed
+synthetic fixture before auditing a real checkout.
 
 ```python
 from agent_harness_lab import audit
