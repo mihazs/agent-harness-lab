@@ -50,6 +50,25 @@ def test_partial_nested_reference_value_is_not_fresh(tmp_path):
         ledger.reference_guard(state,expected(tmp_path,'distinct'),None)
 
 
+@pytest.mark.parametrize(('prior_zero','candidate_zero'), [('-0.0','0.0'),('0.0','-0.0')])
+def test_signed_float_zero_matches_grader_and_blocks_reference_reuse(tmp_path,prior_zero,candidate_zero):
+    prior,refs=assets(tmp_path,'prior','{"answer":'+prior_zero+'}','{"old":"control"}')
+    assets(tmp_path,'candidate','{"answer":'+candidate_zero+'}','{"new":"control"}')
+    assets(tmp_path,'integer','{"answer":0}','{"other":"control"}')
+    oracle=tmp_path/'prior-oracle'
+    (tmp_path/'result.json').write_text('{"answer":'+candidate_zero+'}')
+    run=subprocess.run([sys.executable,'-I','-S',str(oracle/'grade.py.txt'),str(tmp_path),
+        str(oracle/'expected.json')],capture_output=True,text=True,timeout=5)
+    assert run.returncode==0 and json.loads(run.stdout)['outcome'] is True
+    path=tmp_path/'ledger.json';pin='a'*64
+    ident=ledger.begin_construction(path,'evaluator_author',pin)
+    ledger.finish_construction(path,ident,pin,prior,'b'*64,references=refs)
+    with ledger._locked(path) as (_,state):
+        with pytest.raises(ValueError,match='previously exposed'):
+            ledger.reference_guard(state,expected(tmp_path,'candidate'),None)
+        ledger.reference_guard(state,expected(tmp_path,'integer'),None)
+
+
 def test_reference_index_limit_leaves_development_uncovered(tmp_path):
     assets(tmp_path,'prior','{"answer":"original"}','{"control":"old"}')
     (tmp_path/'prior-oracle'/'expected.json').write_text(json.dumps({'answer':list(range(3100))}))

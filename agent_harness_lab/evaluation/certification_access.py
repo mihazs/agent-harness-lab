@@ -97,6 +97,7 @@ def _reference_values(raw,result):
     while pending:
         current=pending.pop(); count+=1
         if count>3000: raise ValueError('oracle reference value limit exceeded')
+        if type(current) is float and current==0.0:current=0.0
         raw_value=encoded(current); total+=len(raw_value)
         if total>16*1024*1024: raise ValueError('oracle reference byte limit exceeded')
         result.add(hashed(['oracle-json-value-v2',hashlib.sha256(raw_value).hexdigest()]))
