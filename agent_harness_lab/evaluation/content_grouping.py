@@ -40,10 +40,17 @@ def fixture_content(root, expected, remaining=None):
 
 
 def inspect_bank(root, tasks, bank_sha256):
-    buckets = {}; receipts = []; issues = []; identities = []; total = 0; overlaps = 0
+    buckets = {}; receipts = []; issues = []; identities = []; total = 0; overlaps = 0; prompts = []
     for task in sorted(tasks, key=lambda task:task.task_id):
         content, prompt, consumed = fixture_content(contained(root, task.fixture), task.fixture_digest, None)
         total += consumed
+        if prompt is not None:
+            fixture = contained(root, task.fixture)
+            raw = read_regular(contained(fixture, 'task.json'), None)
+            parsed = json.loads(raw.decode('utf-8'), object_pairs_hook=unique_object)
+            if text_fingerprint(parsed['prompt']) != prompt or digest(fixture, max_files=None, max_bytes=None, max_entries=None, max_depth=None) != task.fixture_digest:
+                raise ValueError('fixture changed during similarity inspection')
+            prompts.append((task.root_id, parsed['prompt']))
         ref = RecordRef(bank_sha256, metadata_digest(task.task_id), task.fixture_digest)
         identities.append(dict(subject=ref.to_dict(), fixture=content.to_dict(), prompt=None if prompt is None else prompt.to_dict()))
         for kind, fingerprint in (('fixture', content), ('prompt', prompt)):
@@ -58,6 +65,18 @@ def inspect_bank(root, tasks, bank_sha256):
                 partition_boundary=prior[0].partition != task.partition, kind=kind,
                 receipt_sha256=receipt.sha256))
     revision = metadata_digest(dict(algorithm=FIXTURE_ALGORITHM, bank_sha256=bank_sha256, fingerprints=identities))
+    from .root_similarity import evidence as similarity_evidence
+    roots_available = all(hasattr(t, 'root_id') for t in tasks)
+    similarity = similarity_evidence(bank_sha256, revision, [(t.task_id, t.root_id) for t in tasks], prompts) if roots_available and len(prompts) == len(tasks) else None
+    roots = {t.root_id for t in tasks} if roots_available else set()
+    groups = [] if similarity is None else similarity['groups']
+    flagged = {root for group in groups for root in group}
+    issues.extend(dict(task=t.task_id, status='independence_unverified', reason='suspected_near_duplicate')
+                  for t in tasks if roots_available and t.root_id in flagged)
     return dict(schema_version=1, algorithm=FIXTURE_ALGORITHM, revision_sha256=revision, checked_tasks=len(tasks),
+        root_similarity=dict(status='complete' if similarity is not None else 'incomplete',
+            nominal_roots=len(roots) if roots_available else None, effective_roots=None if similarity is None else len(roots) - sum(len(g)-1 for g in groups),
+            evidence=similarity, evidence_sha256=None if similarity is None else metadata_digest(similarity),
+            independence='unverified'),
         input_bytes=total, overlaps=overlaps, receipts=receipts, receipts_truncated=False,
         independent_roots=None, lineage_verified=False, publication_allowed=False), issues

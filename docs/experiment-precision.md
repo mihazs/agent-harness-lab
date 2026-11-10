@@ -125,3 +125,12 @@ real task dependence. No worker, model or grader runs, nothing is observed,
 certified or adopted, and the plan, margins, method and budgets are unchanged. A
 low supported rate is not evidence of noninferiority. The report stays private
 (`publication_allowed` is false) and `automatic_promotion` remains false.
+
+For an optional frozen root-similarity check, see
+[Suspected root similarity](content-grouping.md#suspected-root-similarity). When
+candidate roots are present, the preflight combines their weights for each
+endpoint; the reported effective count is a heuristic planning count and does not
+verify independence. A pinned plan needs both the original evidence and its
+current bank even when no candidates were found. Evidence-bound execution also
+fails closed when the effective-root criteria cannot be met without a precision
+target.

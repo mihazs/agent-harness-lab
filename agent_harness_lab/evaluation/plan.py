@@ -27,6 +27,7 @@ class ExperimentSpec:
     cohort_manifest_sha256: str | None = None
     precision_half_width: float | None = None
     sequential: dict | None = None
+    root_similarity_sha256: str | None = None
 
     def validate(self):
         if not self.tasks or self.profile not in ('descriptive_smoke', 'certification'):
@@ -64,6 +65,12 @@ class ExperimentSpec:
         target=self.precision_half_width
         if target is not None and (type(target) not in (int,float) or not 0<target<=1 or not math.isfinite(target)):
             raise ValueError('precision half-width must be finite and in (0, 1]')
+        similarity = self.root_similarity_sha256
+        if similarity is not None and (not isinstance(similarity, str) or len(similarity) != 64
+                or any(c not in '0123456789abcdef' for c in similarity)):
+            raise ValueError('root similarity evidence requires an exact lowercase SHA-256')
+        if similarity is not None and self.sequential is not None:
+            raise ValueError('root similarity evidence is unsupported in sequential plans')
         cohort = self.cohort_manifest_sha256
         if cohort is not None and (not isinstance(cohort,str) or len(cohort)!=64
                 or any(c not in '0123456789abcdef' for c in cohort)):
@@ -74,6 +81,7 @@ class ExperimentSpec:
         if self.cohort_manifest_sha256 is None: value.pop('cohort_manifest_sha256')
         if self.precision_half_width is None: value.pop('precision_half_width')
         if self.sequential is None: value.pop('sequential')
+        if self.root_similarity_sha256 is None: value.pop('root_similarity_sha256')
         return value
 
     @property
