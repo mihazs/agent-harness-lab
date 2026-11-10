@@ -91,8 +91,13 @@ def estimate(receipt, frame, plan, batch):
     missed=sum(row['incident'] and not row['alerted'] for row in rows)
     prevalence=incidents/n;missed_rate=missed/n
     pi=_interval(incidents,n,population);mi=_interval(missed,n,population)
-    recall=None if not incidents else 1-missed/incidents
+    recall=None if not incidents else (incidents-missed)/incidents
     recall_interval=_recall_interval(pi,mi)
+    if recall is not None:
+        # A census has no sampling uncertainty; use one computation for both
+        # point and endpoints. Otherwise only widen the derived interval.
+        recall_interval=([recall,recall] if n==population else
+                         [min(recall_interval[0],recall),max(recall_interval[1],recall)])
     return dict(result,status='estimated',reason=None,estimates=dict(
         prevalence=dict(estimate=prevalence,ci95=pi),missed_incident_rate=dict(estimate=missed_rate,ci95=mi),
         triage_recall=dict(estimate=recall,ci95=recall_interval),

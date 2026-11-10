@@ -85,3 +85,19 @@ def test_hypergeometric_population_enumeration_keeps_simultaneous_coverage():
                 if pi[0]<=(missed+alerted)/n<=pi[1] and mi[0]<=missed/n<=mi[1] and ri[0]<=alerted/(missed+alerted)<=ri[1]:
                     covered+=mass
         assert covered>=.95
+
+
+def test_all_small_census_recall_points_match_their_intervals():
+    for population in range(1,11):
+        for incidents in range(population+1):
+            for missed in range(incidents+1):
+                value=frame([unit(f'synthetic-{n}',alerted=n>=missed) for n in range(population)])
+                plan=policy(value,k=population,budget=population);receipt=fixed.draw(value,plan)
+                incident_ids={audit.unit_sha256(f'synthetic-{n}') for n in range(incidents)}
+                report=fixed.estimate(receipt,value,plan,labels(receipt,incidents=incident_ids))
+                result=report['estimates']['triage_recall']
+                if incidents:
+                    expected=(incidents-missed)/incidents
+                    assert result['estimate']==expected and result['ci95']==[expected,expected]
+                else:
+                    assert result['estimate'] is None and result['ci95']==[0.0,1.0]
