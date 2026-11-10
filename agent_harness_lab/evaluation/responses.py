@@ -448,7 +448,12 @@ class Client:
             self.actions.update(action,decision='accepted',reserved=True,reservation_id=self.tool_calls)
         self.response_reserved = bool(calls)
         self.item_ids.update(item_ids); self.call_ids.update(call_ids)
-        self.usage.append({key:usage[key] for key in ('input_tokens','output_tokens','total_tokens')})
+        reported_usage = {key:usage[key] for key in ('input_tokens','output_tokens','total_tokens')}
+        details = usage.get('input_tokens_details')
+        if details is not None:
+            cached = details.get('cached_tokens') if isinstance(details,dict) else None
+            reported_usage['cached_input_tokens'] = cached if type(cached) is int and 0 <= cached <= usage['input_tokens'] else None
+        self.usage.append(reported_usage)
         self.poisoned = False
         self.pending = False
         self.checkpoint()
