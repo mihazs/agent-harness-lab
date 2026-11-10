@@ -1,11 +1,5 @@
 # Changelog
 
-## 0.152.0
-
-### Minor Changes
-
-- Preserve reported and observed outcome claims separately across reviewed source links, and surface contradictions without promoting unverified reports to outcomes.
-
 ## 0.151.0
 
 ### Minor Changes
