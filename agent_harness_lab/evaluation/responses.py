@@ -255,10 +255,15 @@ class Client:
         self.pending = False
         self.record = record
         self.item_ids,self.call_ids = set(),set()
-        self.usage = []
+        self._usage = []
         self.actions = ActionLedger(credential)
         self.response_actions = []; self.response_reserved = False; self.response_reason = 'protocol_validation_failed'
         self.response_emissions = []; self.response_protocol_validated = False
+
+    @property
+    def usage(self):
+        """Return a snapshot of recorded provider usage."""
+        return deepcopy(self._usage)
 
     def observe_message(self,item,item_index):
         content = item.get('content')
@@ -300,7 +305,7 @@ class Client:
 
     def report(self):
         value = dict(runtime='controller-responses-executor-v1',request_attempts=self.requests,tool_call_reservations=self.tool_calls,
-            requested_model=self.settings['model'],effective_model_verified=False,provider_reported_usage=list(self.usage),
+            requested_model=self.settings['model'],effective_model_verified=False,provider_reported_usage=self.usage,
             request_bytes=self.request_bytes,response_bytes_observed=self.response_bytes,
             reserved_output_tokens=self.requests*self.settings['max_output_tokens'],
             limits={key:self.settings[key] for key in ('max_requests','max_tool_calls','max_output_tokens','max_request_bytes','max_response_bytes')},
@@ -427,7 +432,9 @@ class Client:
             candidate = value.get('output') if isinstance(value,dict) else None
             if isinstance(candidate,list) and 0<len(candidate)<=64:
                 self.observe_items(candidate)
-                self.response_items_observed = all(isinstance(item,dict) and item.get('type') in ('message','reasoning','function_call') for item in candidate)
+                self.response_items_observed = (value.get('status') == 'completed' and value.get('error') is None
+                    and value.get('incomplete_details') is None and all(isinstance(item,dict)
+                    and item.get('type') in ('message','reasoning','function_call') for item in candidate))
                 self.actions.update(request_action,tool_item_visibility='bounded_items_observed',emission_visibility='bounded_items_observed')
             if (not isinstance(value,dict) or value.get('status') != 'completed'
                     or value.get('error') is not None or value.get('incomplete_details') is not None): raise ValueError('response incomplete')
@@ -486,7 +493,7 @@ class Client:
         if details is not None:
             cached = details.get('cached_tokens') if isinstance(details,dict) else None
             reported_usage['cached_input_tokens'] = cached if type(cached) is int and 0 <= cached <= usage['input_tokens'] else None
-        self.usage.append(reported_usage)
+        self._usage.append(reported_usage)
         self.poisoned = False
         self.pending = False
         self.checkpoint()

@@ -413,18 +413,23 @@ and satisfies forbidden `all`. Incomplete relevant coverage remains unknown.
 
 Positive witnesses, count lower bounds already reached and observed counts above
 a maximum can decide despite omissions. Absence, upper-bound satisfaction and
-exact sequences require closed, predicate-relevant coverage. Request, denial,
-dispatch and backend-result order use their own controller ordinals; no concurrent
+exact sequences require closed, predicate-relevant coverage. Incomplete or error
+responses leave request coverage unknown even if some output items were observed.
+Observed requests can still be decisive witnesses. Request, denial, dispatch and
+backend-result order use their own controller ordinals; no concurrent
 dependency is reconstructed. Missing, redacted, clipped or invalidly encoded
 compared arguments stay unknown. A backend result establishes a return observation,
 not semantic success. Group truth tables preserve every child: `all_of` fails on
 any violation and otherwise needs all satisfied; `any_of` passes on any satisfaction
 and otherwise needs all violated. Other combinations are unknown.
+Receipt `coverage_complete` also requires the fields compared by the predicate to
+be available; a decisive observed witness can still decide when coverage is incomplete.
 
 Policies reject duplicate/unknown fields, invalid types/numbers, empty groups,
 more than 64 KiB, depth over eight, more than 128 predicate nodes or sequences
-longer than 32 steps. Receipts are bounded to 1 MiB and identify predicates by
-digest and local controller IDs without echoing argv. Live controller handles
+longer than 32 steps. Receipt size is bounded by the policy tree and controller
+ledger limits, and can exceed 1 MiB when many matches are retained. Receipts
+identify predicates by digest and local controller IDs without echoing argv. Live controller handles
 bind policy, task, scheduled trial and scope; JSON imports cannot recreate them.
 Malformed or unsupported evidence is invalid and unknown.
 

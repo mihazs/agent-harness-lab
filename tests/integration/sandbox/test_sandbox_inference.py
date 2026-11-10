@@ -174,6 +174,40 @@ def test_provider_usage_summary_refuses_public_export(controller):
         responses.summarize_provider_usage(client.report(), public=True)
 
 
+def test_controller_usage_reports_are_snapshots_even_if_consumer_mutates_them(controller):
+    client,transport = controller.client([message()]); value = json.loads(reply([message()]))
+    value['usage']['input_tokens_details'] = dict(cached_tokens=3)
+    transport.return_value = json.dumps(value).encode()
+    def alter_checkpoint(report):
+        if report['provider_reported_usage']:
+            report['provider_reported_usage'][0]['cached_input_tokens'] = 0
+    client.record = alter_checkpoint
+    client.respond([],controller.deadline)
+    report = client.report()
+    assert report['provider_reported_usage'][0]['cached_input_tokens'] == 3
+    report['provider_reported_usage'][0]['input_tokens'] = 0
+    report['provider_reported_usage'].clear()
+    saved = client.report()['provider_reported_usage']
+    assert saved == [dict(input_tokens=5,output_tokens=2,total_tokens=7,cached_input_tokens=3)]
+    assert responses.summarize_provider_usage(client.report())['usage']['cached_input_tokens']['total'] == 3
+
+
+def test_controller_usage_property_is_a_snapshot_during_checkpoints(controller):
+    client,transport = controller.client([message()]); value = json.loads(reply([message()]))
+    value['usage']['input_tokens_details'] = dict(cached_tokens=3)
+    transport.return_value = json.dumps(value).encode()
+    def alter_usage(report):
+        if client.usage:
+            client.usage[0]['input_tokens'] = 0
+            client.usage.clear()
+    client.record = alter_usage
+    client.respond([],controller.deadline)
+    assert client.usage == [dict(input_tokens=5,output_tokens=2,total_tokens=7,cached_input_tokens=3)]
+    snapshot = client.usage; snapshot[0]['cached_input_tokens'] = 0
+    assert responses.summarize_provider_usage(client.report())['usage']['cached_input_tokens']['total'] == 3
+    with pytest.raises(AttributeError): client.usage = []
+
+
 @pytest.mark.parametrize('output', [
     pytest.param([call(),dict(type='web_search_call',id='hosted')], id='hosted-tool'),
     pytest.param([call(),call('two')], id='two-calls'),

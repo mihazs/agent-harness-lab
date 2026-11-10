@@ -167,6 +167,20 @@ class TestTrajectoryAssertions:
         _, capture = self.role(binding,backend=backend,trial='backend-failed')
         assert [r['status'] for r in core.evaluate(binding,capture)['assertions']] == ['violated','violated','unknown']
 
+    @pytest.mark.parametrize('problem', [dict(status='incomplete'), dict(error={'message': 'synthetic'}),
+                                         dict(incomplete_details={'reason': 'synthetic'})])
+    def test_incomplete_response_does_not_prove_missing_requests(self, problem):
+        binding = self.bind([forbidden('request', tool='unseen'), forbidden('request', tool='run'),
+                             forbidden('dispatch', tool='run')])
+        client, _ = self.f.client([])
+        response = dict(status='completed', output=[fixtures.call()],
+                        usage=dict(input_tokens=5, output_tokens=2, total_tokens=7)) | problem
+        client.transport = Mock(return_value=json.dumps(response).encode())
+        _, capture = self.role(binding, client=client)
+        receipt = core.evaluate(binding, capture)
+        assert [row['status'] for row in receipt['assertions']] == ['unknown', 'violated', 'satisfied']
+        assert not receipt['assertions'][0]['coverage_complete']
+
     def test_partial_argv_compares_only_selected_visible_indices(self):
         exact = dict(mode='exact',argv=['/usr/bin/true','SYNTHETIC_CONTROLLER_KEY'])
         partial = dict(mode='partial',argv={'0':'/usr/bin/true'})
@@ -174,8 +188,21 @@ class TestTrajectoryAssertions:
         _, capture = self.role(binding,[[fixtures.call(arguments=json.dumps(dict(argv=exact['argv'])))],[fixtures.message()]])
         receipt = core.evaluate(binding,capture)
         assert [r['status'] for r in receipt['assertions']] == ['unknown','satisfied']
+        assert not receipt['assertions'][0]['coverage_complete']
+        assert receipt['assertions'][1]['coverage_complete']
         assert core.compose(binding,self.grade(),receipt)['outcome'] is None
         assert 'SYNTHETIC_CONTROLLER_KEY' not in json.dumps(receipt)
+
+    def test_visible_witness_remains_satisfied_when_another_argument_is_redacted(self):
+        rule = required(arguments=dict(mode='exact', argv=['safe']))
+        sequence = dict(kind='sequence', stage='dispatch', mode='subsequence', steps=[predicate(arguments=rule['arguments'])])
+        binding = self.bind([rule, sequence])
+        output = [[fixtures.call('first', arguments=json.dumps(dict(argv=['safe'])))],
+                  [fixtures.call('second', arguments=json.dumps(dict(argv=['SYNTHETIC_CONTROLLER_KEY'])))],
+                  [fixtures.message()]]
+        _, capture = self.role(binding, output)
+        results = core.evaluate(binding, capture)['assertions']
+        assert all(result['status'] == 'satisfied' and not result['coverage_complete'] for result in results)
 
     def test_complete_argv_length_distinguishes_absent_index_from_missing_capture(self):
         pattern=dict(mode='partial',argv={'1':'impossible'})
