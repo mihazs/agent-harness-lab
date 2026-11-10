@@ -122,6 +122,22 @@ class TestConfiguredResponses:
         assert args.agent == 'responses'
         assert '--inherit-env' in result['remediation']
 
+    @pytest.mark.parametrize('entry', [('improve',), ('skills', 'invoke'), ('watch', '--once')])
+    def test_public_cli_rejects_inheritance_before_responses_preparation(self, entry, capsys, monkeypatch):
+        from agent_harness_lab.cli import main
+        from agent_harness_lab.evaluation import cgroup, responses
+        self.configured()
+        monkeypatch.setenv('HOME', str(self.root))
+        with patch.object(workflow, 'state_root', return_value=self.root/'state'), \
+                patch.object(cgroup, 'delegated', return_value=self.cgroup), \
+                patch.object(responses, 'read_credential', side_effect=AssertionError('no authentication read')), \
+                patch.object(workflow, '_improve', side_effect=AssertionError('no charged preparation')):
+            assert main([*entry, str(self.project), '--inherit-env']) == 3
+        result = json.loads(capsys.readouterr().out)
+        assert (result['status'], result['reason']) == ('blocked', 'responses_inherit_env_unsupported')
+        assert result['preflight_plan']['requested_runtime'] == 'responses'
+        assert result['changed_files'] == []
+
     @pytest.mark.parametrize('reference,paths',[pytest.param('private/responses.json',['AGENTS.md','private'],id='relative-in-directory'),
         pytest.param(None,['private/responses.json'],id='absolute-exact-path'),
         pytest.param('private/responses.json',['private/responses.json'],id='relative-exact-path')])

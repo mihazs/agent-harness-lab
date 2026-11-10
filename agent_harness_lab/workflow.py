@@ -386,7 +386,7 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
                 available = remaining()
                 if available <= 0:
                     raise TimeoutError('Improvement budget exhausted before grader self-test')
-                run = runner.execute(argv, path.parent, min(30, available))
+                run = runner.execute(argv, path.parent, min(30, available), env=runner.native_environment('grader'))
                 if any(file_state(p) != value for p, value in before.items()):
                     raise ValueError('Grader modified its own frozen program during self-test')
                 expected = check['state'] == 'complete'
@@ -639,7 +639,10 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             if remaining() <= 0:
                 result['status'] = 'budget_exhausted'
                 break
-            run = runner.execute(command, prepare, remaining(), prompt,env=runner.managed_environment(output.name))
+            environment = runner.managed_environment(output.name, agent, getattr(args,'inherit_env',False))
+            write_json(output / f'preparation-{attempt}.environment.json',
+                       runner.environment_receipt(environment, getattr(args,'inherit_env',False), output))
+            run = runner.execute(command, prepare, remaining(), prompt, env=environment)
             (output / f'preparation-{attempt}.jsonl').write_text(run.pop('stdout'))
             (output / f'preparation-{attempt}.stderr').write_text(run.pop('stderr'))
             check = dict(run, stdout=(output / f'preparation-{attempt}.jsonl').read_text())
@@ -783,7 +786,10 @@ Graders must print schema_version=1, valid=true, outcome=boolean, grader_id and 
 with exit0 for true and exit1 for false. Broken/partial controls must produce a valid false grade.
 All bundles and controls stay outside task fixtures; no grader command is executed on the host.
 """
-            construction = runner.execute(command, evaluation, remaining(), evaluation_prompt,env=runner.managed_environment(output.name))
+            environment = runner.managed_environment(output.name, agent, getattr(args,'inherit_env',False))
+            write_json(output / f'evaluation-construction-{attempt}.environment.json',
+                       runner.environment_receipt(environment, getattr(args,'inherit_env',False), output))
+            construction = runner.execute(command, evaluation, remaining(), evaluation_prompt, env=environment)
             (output / f'evaluation-construction-{attempt}.jsonl').write_text(construction.pop('stdout'))
             (output / f'evaluation-construction-{attempt}.stderr').write_text(construction.pop('stderr'))
             check = dict(construction, stdout=(output / f'evaluation-construction-{attempt}.jsonl').read_text())
@@ -816,7 +822,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             check_scope(args, proposed, original)
         options = argparse.Namespace(manifest=str(manifest_path), baseline=str(baseline),
             candidate=str(frozen), output=str(output / f'evaluation-{attempt}'),
-            agent=agent, codex=args.codex, claude=args.claude, parent_deadline=started + args.timeout)
+            agent=agent, codex=args.codex, claude=args.claude, parent_deadline=started + args.timeout,
+            inherit_env=getattr(args,'inherit_env',False))
         if bank is not None: options.config = args.project/'ahl.json'
         if grading is not None:
             options.sandbox_graders = True
@@ -1040,7 +1047,7 @@ def watch_configuration(args):
             args._response_references=config.response_references(args.project,vars(resolved))
         args=resolved
     settings = {k: getattr(args, k, None) for k in ('agent', 'codex', 'claude', 'timeout', 'format',
-                'focus', 'max_attempts', 'retry_delay', 'watch_budget', 'sandbox_graders',
+                'focus', 'max_attempts', 'retry_delay', 'watch_budget', 'sandbox_graders', 'inherit_env',
                 'image_sha256', 'disk_bytes', 'permission_audit', 'configuration_sha256', 'trial_limit')}
     for key in ('cgroup_root', 'image_root'):
         value = getattr(args, key, None)
