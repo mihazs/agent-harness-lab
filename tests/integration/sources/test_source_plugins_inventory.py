@@ -88,6 +88,33 @@ class TestPluginInventory:
         assert local.local_settings == 'read'
         assert ('private@synthetic-market', '.claude/settings.local.json') in {(p.plugin_id, p.source) for p in local.plugins}
 
+    def test_selected_manifest_hook_key_is_versioned_and_unvalidated(self):
+        manifest = self.plugin / '.claude-plugin/plugin.json'
+        manifest.write_text(json.dumps({'name': 'synthetic', 'hooks': {'PreToolUse': 'SYNTHETIC_SECRET'}}))
+        selected = {'deploy@synthetic-market': str(self.plugin)}
+        old = self.capture(plugin_checkouts=selected).checkouts[0].inventory
+        new = self.capture(plugin_checkouts=selected, schema_version=2).checkouts[0].inventory
+        old_node = next(n for n in old.nodes if n.path == '.claude-plugin/plugin.json')
+        new_node = next(n for n in new.nodes if n.path == '.claude-plugin/plugin.json')
+        assert 'manifest_hooks_key_unvalidated' not in dict(old_node.facts)
+        assert dict(new_node.facts)['manifest_hooks_key_unvalidated'] is True
+        assert new.document()['profile'] == 'ahl-harness-inventory-v2' and old.sha256 != new.sha256
+        assert 'SYNTHETIC_SECRET' not in str(new.document())
+
+    def test_selected_plugin_v1_matches_prechange_full_inventory(self):
+        files = {'.claude-plugin/plugin.json': json.dumps({'name': 'synthetic', 'hooks': {'PreToolUse': 'SYNTHETIC_SECRET'}}),
+                 'hooks/hooks.json': json.dumps({'hooks': {'PreToolUse': [{'matcher': 'Edit', 'hooks': [
+                     {'type': 'command', 'command': 'never-run'}]}]}}),
+                 'skills/sample/SKILL.md': '---\nname: sample\ndescription: synthetic\nhooks:\n  PreToolUse:\n'
+                     '    - hooks:\n        - type: command\n          command: never-run\n---\n'}
+        plugin = plugin_checkout(self.base / 'legacy', files)
+        inventory = self.capture(plugin_checkouts={'deploy@synthetic-market': str(plugin)}).checkouts[0].inventory
+        # Full serialized inventory digest captured from the pre-change implementation.
+        assert inventory.sha256 == 'b50af9b4fb3a9ec42827153cc0eb52a5baf07f4274e3acc201c26c6cd9bec49b'
+        nodes = {node.path: dict(node.facts) for node in inventory.nodes}
+        assert nodes['hooks/hooks.json']['handler.0.audit_candidate_supported'] is True
+        assert nodes['skills/sample/SKILL.md']['embedded_hooks'] == 'unknown'
+
     def test_selected_checkout_components_are_inventoried_as_a_separate_snapshot(self):
         value = self.capture(plugin_checkouts={'deploy@synthetic-market': str(self.plugin)})
         checkout, = value.checkouts

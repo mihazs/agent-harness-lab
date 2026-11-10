@@ -81,6 +81,10 @@ Embedded skill or agent hooks that have not been fully inspected leave event
 coverage unknown, even when other declared events are reported.
 Enabled or inherited plugins whose content was not selected, and plugin manifests
 whose hook components are not fully resolved, also leave event coverage unknown.
+For explicitly selected plugin checkouts, `plugins_inventory.capture(...,
+schema_version=2)` records whether a plugin manifest has a `hooks` key. Its value
+is unvalidated and not retained. An absent key says nothing about default plugin
+hooks, loading or enforcement; the audit CLI does not select plugin checkouts.
 Memory contents are not read. Other prose-to-hook matching is not checked.
 Try the [offline walkthrough](audit-walkthrough.md) with a deliberately flawed
 synthetic fixture before auditing a real checkout.
