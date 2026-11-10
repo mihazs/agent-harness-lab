@@ -14,6 +14,7 @@ from agent_harness_lab.cli import main
 from agent_harness_lab.evaluation import benchmark, power, sequential
 from agent_harness_lab.evaluation.plan import ExperimentSpec, schedule
 from agent_harness_lab.evaluation.power import MODEL_SCHEMA, simulate, wilson
+from agent_harness_lab.evaluation.statistics import bound
 
 
 def plan(n=100, repeats=1, families=('family',)):
@@ -27,6 +28,20 @@ def outcome(baseline, effect, **kwargs):
 
 
 class PowerSimulationTests(unittest.TestCase):
+    def test_fixed_interval_coverage_requires_independent_roots(self):
+        # Predeclared synthetic check: 1,000 draws, 100 roots, seed 394, alpha .05
+        # split across primary and family endpoints; true paired mean is zero.
+        rng = random.Random(394)
+        covered = [0, 0]
+        for _ in range(1000):
+            independent = [1 if rng.getrandbits(1) else -1 for _ in range(100)]
+            shared_family = [1 if rng.getrandbits(1) else -1] * 100
+            for index, values in enumerate((independent, shared_family)):
+                interval = bound(values, [.01] * 100, .025)
+                covered[index] += interval['low'] <= 0 <= interval['high']
+        self.assertGreaterEqual(covered[0], 950)
+        self.assertEqual(covered[1], 0)
+
     def test_replay_is_deterministic_and_separates_roots_from_repeats(self):
         spec, declared = plan(20, 3), outcome(.4, .2, root_spread=.2, repeat_correlation=.5)
         first = simulate(spec, declared, simulations=30, seed=5)
