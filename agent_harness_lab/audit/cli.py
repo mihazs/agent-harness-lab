@@ -142,12 +142,15 @@ def main(argv=None):
                     inventory_comparison='recognized_instruction_files_only', cross_observation_consistency='unknown',
                     publication_allowed=False)
         total = report['declared_instruction_totals']
+        if args.runtime == 'claude-code' and total.get('empty_import'):
+            _instruction_hypothesis(report, 'instruction_empty_import', 'structural',
+                                    'evaluate_empty_instruction_import')
         total['soft_line_budget'] = args.instruction_soft_lines
         if total['status'] == 'declared' and total['lines'] > args.instruction_soft_lines:
             _instruction_hypothesis(report, 'instruction_launch_lines_above_soft_budget', 'count',
                 'evaluate_instruction_budget_reduction', (('lines', total['lines']),
                                                          ('soft_line_budget', args.instruction_soft_lines)))
-        if args.runtime == 'claude-code' and total['status'] == 'declared' and total['files']:
+        if total['status'] == 'declared' and total['files']:
             shape = total['shape']
             if not shape['constraints']:
                 _instruction_hypothesis(report, 'instruction_constraints_not_detected', 'lexical',

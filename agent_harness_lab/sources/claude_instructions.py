@@ -267,7 +267,7 @@ def capture(profile, scopes, selected, folder, checkout, *, audit_facts=None):
         if audit_facts is not None and size <= SKIPPED_BYTES:
             audit_facts[key] = (nodes[key].content_sha256, size, len(text.splitlines()),
                                 any(reason is not None for _, reason in imports(text)), path_of[key],
-                                instruction_shapes.analyze(text))
+                                instruction_shapes.analyze(text), not text.strip())
         return text
     def locate(target, conditional):
         if target not in probed:

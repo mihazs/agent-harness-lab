@@ -44,6 +44,13 @@ def claude(profile, folder, checkout, *, expected=None):
             if edge.kind == 'import_cycle': reasons.add('import_cycle')
             elif edge.kind == 'imports' and edge.target_sha256 not in active:
                 reasons.add('import_unresolved')
+                target = observed.get(edge.target_sha256)
+                if target is not None and target.reason in ('import_missing', 'import_depth_limit',
+                        'import_target_unreadable', 'external_import_not_captured', 'non_utf8_import'):
+                    reasons.add(target.reason)
+    empty_import = any(edge.kind == 'imports' and edge.source_sha256 in active
+                       and edge.target_sha256 in active and edge.target_sha256 in facts
+                       and facts[edge.target_sha256][6] for edge in inventory.edges)
     complete = not reasons
     return dict(status='declared' if complete else 'unknown',
                 bytes=sum(facts[key][1] for key in active) if complete else None,
@@ -52,7 +59,7 @@ def claude(profile, folder, checkout, *, expected=None):
                 shape=(dict(constraints=any(facts[key][5][0] for key in active),
                             verification_commands=any(facts[key][5][1] for key in active),
                             procedure_sections=any(facts[key][5][2] for key in active)) if complete else None),
-                reasons=sorted(reasons), scope='captured_checkout_launch_files',
+                reasons=sorted(reasons), empty_import=empty_import, scope='captured_checkout_launch_files',
                 settings='caller_declared' if 'instruction_files' in profile else 'assumed_default',
                 observed_loading='unknown', snapshot_relation='separate_resolver_observation',
                 inventory_comparison='recognized_instruction_files_only',
