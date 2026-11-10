@@ -669,6 +669,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         if access is None:proposal = json.loads(proposal_path.read_text())
         if not isinstance(proposal, dict):
             raise ValueError('Proposal must be an object')
+        check_configuration(args)
         current_harness = {str(path.relative_to(args.project)):file_state(path)
                            for path in harness_files(args.project,allowed_paths(args))}
         if current_harness != original:
