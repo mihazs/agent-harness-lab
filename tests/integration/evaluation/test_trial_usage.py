@@ -42,7 +42,8 @@ def test_live_receipt_uses_admitted_trial_and_stages_before_callback(tmp_path):
     callbacks = []
     def checkpoint(report):
         callbacks.append(trial_usage.current_trial_usage())
-        trial_usage._stage(comparison,client,dict(input_tokens=0,output_tokens=2,total_tokens=2))
+        client.response_protocol_validated = True
+        trial_usage._confirm(comparison,client,object(),dict(input_tokens=0,output_tokens=0,total_tokens=0))
         if client._usage: client._usage[0]['input_tokens'] = 0
     client.record = checkpoint
     with comparison:
@@ -89,6 +90,25 @@ def test_new_comparison_with_reused_client_cannot_see_prior_trial_usage(tmp_path
     with later:
         later.before(later.expected[0],workspace,harness,client)
         forged = dict(scheduled_trial_sha256=comparison_custody.hashed(later.expected[0]),trial_id=later.expected[0]['trial_id'])
-        trial_usage._begin(later,client,forged)
+        trial_usage._begin(later,client,forged,object())
         receipt = trial_usage.current_trial_usage()
         assert receipt['request_attempts'] == 0 and receipt['requests'] == []
+
+
+def test_checkpoint_cannot_reenter_transport_before_custody_confirmation(tmp_path):
+    calls = []
+    def transport(*args): calls.append(1); return response(*args)
+    comparison,client,workspace,harness,deadline = comparison_fixture(tmp_path,transport)
+    denied = []
+    def checkpoint(report):
+        if not report['request_pending'] and report['provider_reported_usage']:
+            with pytest.raises(ValueError,match='reentrant'):
+                client.respond([],deadline)
+            denied.append(True)
+    client.record = checkpoint
+    with comparison:
+        comparison.before(comparison.expected[0],workspace,harness,client)
+        execute(comparison,client,workspace,harness,deadline)
+        receipt = trial_usage.current_trial_usage()
+        assert denied and len(calls) == 1
+        assert receipt['request_attempts'] == 1 and receipt['requests'][0]['usage']['total_tokens'] == 7

@@ -13,7 +13,7 @@ def _owned(comparison, client):
             and not comparison.controls and comparison._valid())
 
 
-def _begin(comparison, client, binding):
+def _begin(comparison, client, binding, token):
     if not _owned(comparison, client): return
     from .responses import _REQUEST_CONTEXTS, _ROLE_SCOPES
     context = _REQUEST_CONTEXTS.get(client)
@@ -29,36 +29,31 @@ def _begin(comparison, client, binding):
         state = dict(pid=os.getpid(), trial=trial, rows=[])
         _LIVE[comparison] = state
     if any(row['request_ordinal'] == client.requests for row in state['rows']): return
-    state['rows'].append(dict(request_ordinal=client.requests, usage=None, pending=True))
+    state['rows'].append(dict(request_ordinal=client.requests, usage=None, pending=True, token=token))
 
 
-def _pending_row(comparison, client):
+def _pending_row(comparison, client, token):
     state = _LIVE.get(comparison)
     if (not _owned(comparison, client) or state is None or state['pid'] != os.getpid()
             or state['trial'] != hashed(comparison.active['scheduled']) or not state['rows']): return None
     row = state['rows'][-1]
-    return row if row['request_ordinal'] == client.requests and row['pending'] else None
+    return row if row['request_ordinal'] == client.requests and row['pending'] and row['token'] is token else None
 
 
-def _stage(comparison, client, usage):
-    row = _pending_row(comparison, client)
-    if row is not None and client.response_protocol_validated and 'staged' not in row:
-        row['staged'] = deepcopy(usage)
-
-
-def _confirm(comparison, client):
-    row = _pending_row(comparison, client)
+def _confirm(comparison, client, token, usage):
+    row = _pending_row(comparison, client, token)
     if row is not None and client.requests in comparison.active['requests']:
-        row['usage'] = row.pop('staged', None)
+        row['usage'] = deepcopy(usage)
         row['pending'] = False
+        row.pop('token', None)
 
 
-def _abort(comparison, client):
+def _abort(comparison, client, token):
     state = _LIVE.get(comparison)
     if state is None or state['pid'] != os.getpid() or not state['rows']: return
     row = state['rows'][-1]
-    if row['request_ordinal'] == client.requests and row['pending']:
-        row.pop('staged', None)
+    if row['request_ordinal'] == client.requests and row['pending'] and row['token'] is token:
+        row.pop('token', None)
         row['pending'] = False
 
 
