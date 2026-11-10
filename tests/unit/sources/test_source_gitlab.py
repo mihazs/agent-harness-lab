@@ -128,6 +128,87 @@ class GitLabFixture:
 
 
 class TestGitLabSource(GitLabFixture):
+    def v8_diff_selection(self):
+        return replace(self.selection, schema_version=8, capture=('diffs', 'merge_requests'), issues=())
+
+    def diff_rows(self):
+        return [dict(old_path='SYNTHETIC_PRIVATE_OLD', new_path='SYNTHETIC_PRIVATE_NEW',
+            diff='SYNTHETIC_PRIVATE_DIFF', new_file=False, renamed_file=True, deleted_file=False)]
+
+    def test_v8_diff_projection_is_private_and_incomplete(self):
+        self.routes[self.mr_path+'/diffs?page=1&per_page=100'] = self.diff_rows()
+        client, snapshot = self.read(self.v8_diff_selection())
+        node, = self.nodes(client, 'gitlab_mr_diff_file')
+        assert node['renamed_file'] is True and node['new_file'] is False
+        assert node['old_path_sha256'] == digest('SYNTHETIC_PRIVATE_OLD')
+        assert any(r[0] == 'reported_diff_file_on_mr' for r in client.summary['relations'])
+        assert ('diffs', 'pagination_incomplete', 'server_diff_limit_unverified') in self.states(client)
+        assert not snapshot.checkpoint_ready and not client.summary['task_outcomes_verified']
+        assert all(r.causal_status == 'unknown' and r.independence == 'unknown' for r in snapshot.records)
+
+    def test_v8_empty_diff_does_not_prove_no_changes(self):
+        self.routes[self.mr_path+'/diffs?page=1&per_page=100'] = lambda: self.page([])
+        client, snapshot = self.read(self.v8_diff_selection())
+        assert not self.nodes(client, 'gitlab_mr_diff_file') and not snapshot.checkpoint_ready
+        assert ('diffs', 'pagination_incomplete', 'server_diff_limit_unverified') in self.states(client)
+
+    @pytest.mark.parametrize('case', ['missing_path', 'nul_path', 'long_path', 'duplicate'])
+    def test_v8_invalid_or_duplicate_diff_fails_closed(self, case):
+        rows = self.diff_rows()
+        if case == 'missing_path': del rows[0]['old_path']
+        if case == 'nul_path': rows[0]['new_path'] = 'x\x00y'
+        if case == 'long_path': rows[0]['new_path'] = 'x'*4097
+        if case == 'duplicate': rows.append(dict(rows[0]))
+        self.routes[self.mr_path+'/diffs?page=1&per_page=100'] = rows
+        with pytest.raises(TransportError): self.read(self.v8_diff_selection())
+
+    def test_v8_diff_pagination_and_late_denial_remain_visible(self):
+        target = self.mr_path+'/diffs'
+        first = [dict(old_path=f'old-{i}', new_path=f'new-{i}') for i in range(100)]
+        self.routes[target+'?page=1&per_page=100'] = lambda: self.page(first, **{'X-Total': '101', 'X-Page': '1', 'X-Next-Page': '2'})
+        self.routes[target+'?page=2&per_page=100'] = lambda: self.page([dict(old_path='last-old', new_path='last-new')],
+            **{'X-Total': '101', 'X-Page': '2', 'X-Next-Page': ''})
+        client, snapshot = self.read(self.v8_diff_selection())
+        assert len(self.nodes(client, 'gitlab_mr_diff_file')) == 101 and not snapshot.checkpoint_ready
+        self.routes[target+'?page=2&per_page=100'] = Response(b'SYNTHETIC_SECRET', 403)
+        client, snapshot = self.read(self.v8_diff_selection())
+        assert ('diffs', 'pagination_incomplete', 'forbidden') in self.states(client) and not snapshot.checkpoint_ready
+
+    def test_v8_duplicate_diff_across_pages_fails_closed(self):
+        target = self.mr_path+'/diffs'
+        first = [dict(old_path=f'old-{i}', new_path=f'new-{i}') for i in range(100)]
+        self.routes[target+'?page=1&per_page=100'] = self.page(first, **{'X-Total': '101', 'X-Page': '1', 'X-Next-Page': '2'})
+        self.routes[target+'?page=2&per_page=100'] = self.page([first[0]], **{'X-Total': '101', 'X-Page': '2', 'X-Next-Page': ''})
+        with pytest.raises(TransportError): self.read(self.v8_diff_selection())
+
+    def test_v8_diff_identity_is_project_scoped(self):
+        selection = self.v8_diff_selection()
+        self.routes[self.mr_path+'/diffs?page=1&per_page=100'] = self.diff_rows()
+        first, _ = self.read(selection)
+        path = 'synthetic-group/other-project'
+        self.build(43, path)
+        self.routes['/api/v4/projects/43/merge_requests/7/diffs?page=1&per_page=100'] = self.diff_rows()
+        second, _ = self.read(replace(selection, project=path))
+        assert self.nodes(first, 'gitlab_mr_diff_file')[0]['native_id_sha256'] != self.nodes(second, 'gitlab_mr_diff_file')[0]['native_id_sha256']
+
+    @pytest.mark.parametrize('blocked', ['project', 'merge_request', 'diffs'])
+    def test_v8_unavailable_diffs_are_visible(self, blocked):
+        target = {'project': '/api/v4/projects/'+ENCODED, 'merge_request': self.mr_path,
+                  'diffs': self.mr_path+'/diffs?page=1&per_page=100'}[blocked]
+        self.routes[target] = Response(b'SYNTHETIC_SECRET', 403)
+        client, snapshot = self.read(self.v8_diff_selection())
+        expected = ('diffs', 'forbidden', None) if blocked == 'diffs' else ('diffs', 'not_observed', blocked+'_unavailable')
+        assert expected in self.states(client) and not snapshot.checkpoint_ready
+
+    def test_v8_diffs_require_scope_and_bound(self):
+        with pytest.raises(ValueError): replace(self.selection, schema_version=7,
+            capture=('diffs', 'merge_requests'), issues=())
+        with pytest.raises(ValueError): replace(self.selection, schema_version=8,
+            capture=('diffs', 'issues'), merge_requests=())
+        self.routes[self.mr_path+'/diffs?page=1&per_page=100'] = self.diff_rows()+[dict(old_path='x', new_path='y')]
+        with patch.object(gitlab, 'MAX_MR_DIFFS', 1):
+            with pytest.raises(TransportError): self.read(self.v8_diff_selection())
+
     def v7_reviewer_selection(self):
         return replace(self.selection, schema_version=7, capture=('merge_requests', 'reviewers'), issues=())
 
@@ -1054,7 +1135,7 @@ class TestGitLabSource(GitLabFixture):
     @pytest.mark.parametrize('change', [
         dict(capture=('issues',)), dict(capture=('merge_requests', 'issues')), dict(issues=(7, 7)),
         dict(issues=(0,)), dict(capture=('approvals', 'issues', 'notes'), merge_requests=()),
-        dict(capture=('issues', 'merge_requests', 'pipelines')), dict(schema_version=8),
+        dict(capture=('issues', 'merge_requests', 'pipelines')), dict(schema_version=9),
         # A capture that selects no IID would read only the project yet look complete.
         dict(capture=('notes',), issues=(), merge_requests=()), dict(capture=(), issues=(), merge_requests=())],
         ids=['issues-only-without-merge-requests', 'unordered-capture', 'duplicate-iid', 'zero-iid',

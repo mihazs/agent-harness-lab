@@ -3393,6 +3393,17 @@ list completeness is unverified and therefore prevents a checkpoint, including
 for an empty list. A reviewer state is not an approval or a task outcome, and
 reads are non-atomic. Schema 7 has a distinct scope from schemas 1–6.
 
+An opt-in selection schema 8 adds `diffs` for selected merge requests using the
+[diffs endpoint](https://docs.gitlab.com/api/merge_requests/#list-merge-request-diffs).
+The reader stores only path fingerprints and server-reported new, renamed and
+deleted flags, with a limit of 10,000 returned files per capture. Fingerprints
+can be guessable and must remain private. The response contains diff text while
+being read under transport byte limits; diff text and paths are excluded from
+the resulting records. GitLab can limit the file list without a reliable marker,
+so coverage remains incomplete and blocks checkpoints even for an empty list.
+The claims do not verify content, ancestry, execution or outcomes; reads are
+non-atomic. Schema 8 has a distinct scope from schemas 1–7.
+
 Use `SourceSpec(kind="api", provider="gitlab", version="v4", root_sha256=digest(base_url),
 project_sha256=selection.project_sha256, scope_sha256=selection.sha256,
 identity_provenance="source_declared_id", enabled=True)` and register

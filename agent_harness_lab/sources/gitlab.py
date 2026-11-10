@@ -11,9 +11,10 @@ PROVIDER = 'gitlab'
 SOURCE_VERSION = 'v4'
 API_PREFIX = '/api/v4'
 PAGE_SIZE = 100
+MAX_MR_DIFFS = 10000
 MAX_MR_COMMITS = 10000
 MAX_MR_CLOSING_ISSUES = 10000
-CAPTURE = ('approvals', 'closing_issues', 'commits', 'discussions', 'issues', 'merge_requests', 'notes', 'related_issues', 'reviewers')
+CAPTURE = ('approvals', 'closing_issues', 'commits', 'diffs', 'discussions', 'issues', 'merge_requests', 'notes', 'related_issues', 'reviewers')
 ISSUE_STATES = ('opened', 'closed')
 MERGE_STATES = ('opened', 'closed', 'locked', 'merged')
 VISIBILITY = ('private', 'internal', 'public')
@@ -45,7 +46,7 @@ class GitLabSelection(Contract):
     schema_version: int = 1
 
     def __post_init__(self):
-        if type(self.schema_version) is not int or self.schema_version not in (1, 2, 3, 4, 5, 6, 7): raise ValueError('unsupported GitLab selection version')
+        if type(self.schema_version) is not int or self.schema_version not in (1, 2, 3, 4, 5, 6, 7, 8): raise ValueError('unsupported GitLab selection version')
         instance_root(self.base_url, API_PREFIX)
         if type(self.project) is int: integer(self.project, minimum=1)
         else: project_path(self.project)
@@ -59,10 +60,11 @@ class GitLabSelection(Contract):
         # Issues and merge requests have separate IID sequences, so one IID may name both.
         if (('issues' in self.capture) != bool(self.issues) or ('merge_requests' in self.capture) != bool(self.merge_requests)
                 or 'approvals' in self.capture and not self.merge_requests
-                or 'commits' in self.capture and (self.schema_version not in (4, 5, 6, 7) or not self.merge_requests)
-                or 'closing_issues' in self.capture and (self.schema_version not in (5, 6, 7) or not self.merge_requests)
-                or 'related_issues' in self.capture and (self.schema_version not in (6, 7) or not self.merge_requests)
-                or 'reviewers' in self.capture and (self.schema_version != 7 or not self.merge_requests)
+                or 'commits' in self.capture and (self.schema_version not in (4, 5, 6, 7, 8) or not self.merge_requests)
+                or 'closing_issues' in self.capture and (self.schema_version not in (5, 6, 7, 8) or not self.merge_requests)
+                or 'related_issues' in self.capture and (self.schema_version not in (6, 7, 8) or not self.merge_requests)
+                or 'reviewers' in self.capture and (self.schema_version not in (7, 8) or not self.merge_requests)
+                or 'diffs' in self.capture and (self.schema_version != 8 or not self.merge_requests)
                 or 'discussions' in self.capture and (self.schema_version == 1 or self.schema_version == 2 and not self.merge_requests)
                 or not (self.issues or self.merge_requests)):
             raise ValueError('GitLab capture kinds must match the explicitly selected IIDs')
@@ -364,7 +366,7 @@ class GitLabAPI:
         ledger.emit(digest(('gitlab_instance', selection.instance_sha256)), 'gitlab_instance',
             dict(instance_sha256=selection.instance_sha256, server_version=version or 'unknown', server_version_state=version_state))
         project = ledger.read('project', f'{API_PREFIX}/projects/{selection.selector}', self._project)
-        reads, system_notes, discussion_budget, discussion_notes, commit_budget, closing_budget = [], 0, [0, 0], set(), [0], [0]
+        reads, system_notes, discussion_budget, discussion_notes, commit_budget, closing_budget, diff_budget = [], 0, [0, 0], set(), [0], [0], [0]
         if project is not None:
             scope = project['project_sha256']
 
@@ -377,7 +379,7 @@ class GitLabAPI:
                     parent, target = key(kind, iid), f'{self.project_root}/{collection}/{iid}'
                     node = ledger.read(kind[len('gitlab_'):], target, lambda raw, n=iid, p=parse: p(raw, n), parent)
                     if node is None:
-                        if 'discussions' in selection.capture and (kind == 'gitlab_merge_request' or selection.schema_version in (3, 4, 5, 6, 7)):
+                        if 'discussions' in selection.capture and (kind == 'gitlab_merge_request' or selection.schema_version in (3, 4, 5, 6, 7, 8)):
                             ledger.note('discussions', ('not_observed', kind[len('gitlab_'):]+'_unavailable'), parent)
                         if kind == 'gitlab_merge_request' and 'commits' in selection.capture:
                             ledger.note('commits', ('not_observed', 'merge_request_unavailable'), parent)
@@ -387,6 +389,8 @@ class GitLabAPI:
                             ledger.note('related_issues', ('not_observed', 'merge_request_unavailable'), parent)
                         if kind == 'gitlab_merge_request' and 'reviewers' in selection.capture:
                             ledger.note('reviewers', ('not_observed', 'merge_request_unavailable'), parent)
+                        if kind == 'gitlab_merge_request' and 'diffs' in selection.capture:
+                            ledger.note('diffs', ('not_observed', 'merge_request_unavailable'), parent)
                         continue
                     reads.append((kind, target, parse, iid, node)); ledger.emit(parent, kind, node, node['created_at'])
                     if 'notes' in selection.capture:
@@ -405,11 +409,13 @@ class GitLabAPI:
                         self._approval(ledger, key, iid, node, parent)
                     if kind == 'gitlab_merge_request' and 'reviewers' in selection.capture:
                         self._reviewers(ledger, key, iid, parent)
-                    if 'discussions' in selection.capture and (kind == 'gitlab_merge_request' or selection.schema_version in (3, 4, 5, 6, 7)):
+                    if 'discussions' in selection.capture and (kind == 'gitlab_merge_request' or selection.schema_version in (3, 4, 5, 6, 7, 8)):
                         self._discussions(ledger, key, iid, node, parent, discussion_budget, discussion_notes,
                             noteable=noteable, collection=collection)
                     if kind == 'gitlab_merge_request' and 'commits' in selection.capture:
                         self._commits(ledger, key, iid, parent, commit_budget)
+                    if kind == 'gitlab_merge_request' and 'diffs' in selection.capture:
+                        self._diffs(ledger, key, iid, parent, diff_budget)
                     if kind == 'gitlab_merge_request' and 'closing_issues' in selection.capture:
                         self._issue_references(ledger, key, iid, parent, closing_budget)
                     if kind == 'gitlab_merge_request' and 'related_issues' in selection.capture:
@@ -423,7 +429,7 @@ class GitLabAPI:
         else:
             if 'discussions' in selection.capture:
                 selected = (('merge_request', selection.merge_requests),)
-                if selection.schema_version in (3, 4, 5, 6, 7): selected += (('issue', selection.issues),)
+                if selection.schema_version in (3, 4, 5, 6, 7, 8): selected += (('issue', selection.issues),)
                 for kind, iids in selected:
                     for iid in iids:
                         parent = digest(('gitlab.selection', selection.project_sha256, kind, iid))
@@ -444,8 +450,12 @@ class GitLabAPI:
                 for iid in selection.merge_requests:
                     parent = digest(('gitlab.selection', selection.project_sha256, 'merge_request', iid))
                     ledger.note('reviewers', ('not_observed', 'project_unavailable'), parent)
+            if 'diffs' in selection.capture:
+                for iid in selection.merge_requests:
+                    parent = digest(('gitlab.selection', selection.project_sha256, 'merge_request', iid))
+                    ledger.note('diffs', ('not_observed', 'project_unavailable'), parent)
         ready = ledger.ready
-        if selection.schema_version in (2, 3, 4, 5, 6, 7):
+        if selection.schema_version in (2, 3, 4, 5, 6, 7, 8):
             system_notes = sum(node['kind'] == 'gitlab_system_note' for node in ledger.nodes.values())
         warnings = ['selected_resources_only', 'merge_closure_approval_not_task_outcome', 'readbacks_non_atomic',
             'system_note_coverage_unverified', 'merge_and_squash_shas_not_ancestry',
@@ -455,6 +465,7 @@ class GitLabAPI:
         if 'closing_issues' in selection.capture: warnings.append('closing_issue_visibility_unverified')
         if 'related_issues' in selection.capture: warnings.append('related_issue_visibility_unverified')
         if 'reviewers' in selection.capture: warnings.append('reviewer_states_server_reported_unverified')
+        if 'diffs' in selection.capture: warnings.append('diff_file_list_and_content_unverified')
         if version is None: warnings.append('server_version_unknown')
         if ledger.unsupported: warnings.append('approvals_endpoint_unsupported')
         if not ready: warnings.append('capture_blocked_or_incomplete')
@@ -467,6 +478,30 @@ class GitLabAPI:
             task_outcomes_verified=False, warnings=warnings)
         self.summary = summary
         return ledger.snapshot(summary, SOURCE_VERSION, 'gitlab-rest-v4')
+
+    def _diffs(self, ledger, key, iid, parent, budget):
+        """Capture only fingerprints of returned file paths and server-reported change flags."""
+        target = f'{self.project_root}/merge_requests/{iid}/diffs'
+        def identity(row):
+            paths = (row.get('old_path'), row.get('new_path'))
+            if any(not isinstance(path, str) or not path or len(path) > 4096 or '\x00' in path for path in paths):
+                raise ValueError('invalid GitLab diff path')
+            return digest(('gitlab.mr_diff_paths', self.selection.instance_sha256, self.project_id, iid, *paths))
+        def project(row):
+            budget[0] += 1
+            if budget[0] > MAX_MR_DIFFS: raise ValueError('excessive GitLab file diffs')
+            flags = {name: row[name] if type(row.get(name)) is bool else 'unknown'
+                for name in ('new_file', 'renamed_file', 'deleted_file')}
+            return dict(parent_sha256=parent, old_path_sha256=text_hash(row['old_path']),
+                new_path_sha256=text_hash(row['new_path']), **flags)
+        rows, outcome = self._list(target, ledger, dict(id=str(self.project_id), merge_request_iid=str(iid)), project,
+            query=dict(per_page=PAGE_SIZE), identity=identity)
+        # GitLab documents a server-side diff limit that can omit rows without a reliable marker.
+        if outcome[0] == 'captured': outcome = ('pagination_incomplete', 'server_diff_limit_unverified')
+        ledger.note('diffs', outcome, parent)
+        for native, node in rows:
+            child = ledger.emit(key('gitlab_mr_diff_file', (iid, native)), 'gitlab_mr_diff_file', node)
+            ledger.relations.add(('reported_diff_file_on_mr', child, parent))
 
     def _reviewers(self, ledger, key, iid, parent):
         """Capture bounded server-reported reviewer states, without user names or review contents."""
