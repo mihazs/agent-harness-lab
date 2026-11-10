@@ -89,3 +89,11 @@ included in input tokens; it is not an additional token total. A missing or null
 stays absent, and an invalid or inconsistent count is recorded as unknown (`null`). This is a provider
 observation, not independent verification of cache state, complete billing, or a resource
 comparison. Cache-write charges and unreported retry usage remain unknown.
+
+`agent_harness_lab.evaluation.responses.summarize_provider_usage(report)` optionally summarizes
+the saved controller report as `controller-provider-usage-summary-v1`. Per-category totals are
+available only when every request attempt has that category; known subtotals and coverage
+remain visible otherwise. Missing or failed responses are unknown, including when no requests
+were attempted. Cached input is already included in input tokens and must not be added again.
+Cache-write tokens and billing completeness remain unknown. This descriptive summary does not
+authenticate provider data or produce a resource decision, and does not change controller reports.

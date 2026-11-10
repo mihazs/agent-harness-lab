@@ -121,6 +121,52 @@ def test_null_cache_detail_is_absent(controller):
     assert 'cached_input_tokens' not in client.report()['provider_reported_usage'][0]
 
 
+def test_provider_usage_summary_preserves_covered_and_missing_cache_categories(controller):
+    client,transport = controller.client([call()]); value = json.loads(reply([call()]))
+    value['usage']['input_tokens_details'] = dict(cached_tokens=3)
+    transport.return_value = json.dumps(value).encode(); client.respond([],controller.deadline)
+    transport.return_value = reply([message()]); client.respond([],controller.deadline)
+    summary = responses.summarize_provider_usage(client.report())
+    assert summary['source'] == 'provider_reported_unverified' and summary['billing_completeness'] == 'unknown'
+    assert summary['usage']['input_tokens'] == dict(known_subtotal=10, known_requests=2, unknown_requests=0, total=10)
+    assert summary['usage']['cached_input_tokens'] == dict(known_subtotal=3, known_requests=1, unknown_requests=1, total=None)
+    assert summary['cached_input_included_in_input'] is True and summary['cache_write_tokens'] is None
+    assert summary['automatic_promotion'] is False
+
+
+def test_provider_usage_summary_does_not_count_failed_requests_as_free(controller):
+    client,transport = controller.client([call()]); client.respond([],controller.deadline)
+    transport.return_value = b'{"status":"incomplete"}'
+    with pytest.raises(responses.InferenceError): client.respond([],controller.deadline)
+    summary = responses.summarize_provider_usage(client.report())
+    assert summary['unreported_attempts'] == 1
+    assert summary['usage']['input_tokens'] == dict(known_subtotal=5, known_requests=1, unknown_requests=1, total=None)
+    assert summary['usage']['cached_input_tokens']['total'] is None
+
+
+def test_provider_usage_summary_keeps_reported_zero_distinct_from_missing(controller):
+    client,transport = controller.client([message()]); value = json.loads(reply([message()]))
+    value['usage']['input_tokens_details'] = dict(cached_tokens=0)
+    transport.return_value = json.dumps(value).encode(); client.respond([],controller.deadline)
+    cached = responses.summarize_provider_usage(client.report())['usage']['cached_input_tokens']
+    assert cached == dict(known_subtotal=0, known_requests=1, unknown_requests=0, total=0)
+
+
+@pytest.mark.parametrize('edit', [lambda r: r.update(request_attempts=True), lambda r: r.update(request_attempts=0),
+                                 lambda r: r['provider_reported_usage'][0].update(cached_input_tokens=6),
+                                 lambda r: r['provider_reported_usage'][0].update(total_tokens=8)])
+def test_provider_usage_summary_rejects_inconsistent_saved_reports(controller, edit):
+    client,_ = controller.client([message()]); client.respond([],controller.deadline)
+    report = client.report(); edit(report)
+    with pytest.raises(ValueError): responses.summarize_provider_usage(report)
+
+
+def test_provider_usage_summary_with_no_attempts_does_not_claim_zero_usage(controller):
+    client,_ = controller.client([message()])
+    summary = responses.summarize_provider_usage(client.report())
+    assert all(value['total'] is None for value in summary['usage'].values())
+
+
 @pytest.mark.parametrize('output', [
     pytest.param([call(),dict(type='web_search_call',id='hosted')], id='hosted-tool'),
     pytest.param([call(),call('two')], id='two-calls'),

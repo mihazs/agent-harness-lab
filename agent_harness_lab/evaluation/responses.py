@@ -211,6 +211,38 @@ def run_arguments(item):
     return argv
 
 
+def summarize_provider_usage(report):
+    """Summarize recorded request usage without treating missing attempts as free."""
+    if not isinstance(report,dict) or report.get('runtime') != 'controller-responses-executor-v1':
+        raise ValueError('unsupported controller usage report')
+    attempts,rows = report.get('request_attempts'),report.get('provider_reported_usage')
+    if type(attempts) is not int or not 0 <= attempts <= 1000 or not isinstance(rows,list) or len(rows) > attempts:
+        raise ValueError('invalid controller request coverage')
+    fields = ('input_tokens','output_tokens','total_tokens','cached_input_tokens')
+    counts = {name:[] for name in fields}
+    for row in rows:
+        if not isinstance(row,dict): raise ValueError('invalid provider usage record')
+        for name in fields[:3]:
+            if type(row.get(name)) is not int or not 0 <= row[name] <= 10**12:
+                raise ValueError('invalid provider usage record')
+        if row['input_tokens'] + row['output_tokens'] != row['total_tokens']:
+            raise ValueError('inconsistent provider usage totals')
+        cached = row.get('cached_input_tokens')
+        if cached is not None and (type(cached) is not int or not 0 <= cached <= row['input_tokens']):
+            raise ValueError('invalid provider cached input usage')
+        for name in fields: counts[name].append(row.get(name))
+    result = {}
+    for name,values in counts.items():
+        known = [value for value in values if value is not None]
+        missing = attempts - len(known)
+        result[name] = dict(known_subtotal=sum(known), known_requests=len(known), unknown_requests=missing,
+                            total=sum(known) if attempts and not missing else None)
+    return dict(profile='controller-provider-usage-summary-v1', source='provider_reported_unverified',
+                request_attempts=attempts, reported_responses=len(rows), unreported_attempts=attempts-len(rows),
+                usage=result, cached_input_included_in_input=True, cache_write_tokens=None, billing_completeness='unknown',
+                automatic_promotion=False)
+
+
 class Client:
     def __init__(self, settings, credential, deadline, *, transport=None, record=None, configuration_sha256=None, configuration_references_sha256=None):
         _CLIENT_PIDS[self] = (os.getpid(),configuration_sha256,deepcopy(settings),deadline,deepcopy(TOOL),configuration_references_sha256) if settings.get('instruction_protocol') is not None else os.getpid()
