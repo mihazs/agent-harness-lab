@@ -225,3 +225,10 @@ def test_configured_zero_budget_skips_nonblank_file(checkout):
 def test_invalid_declared_limit_is_rejected(checkout, limit):
     with pytest.raises(ValueError):
         audit.run(checkout({'AGENTS.md': text(64)}), 'codex', codex_project_doc_max_bytes=limit)
+
+
+def test_a_chain_one_byte_below_the_default_budget_loses_nothing(checkout):
+    root = checkout({'AGENTS.md': text(20000), 'src/AGENTS.md': text(BUDGET - 20001)})
+    report = audit.run(root, 'codex', task_cwd='src')
+    assert budget_findings(report) == {}
+    assert instruction_row(report).status == 'conformant'
