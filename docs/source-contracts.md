@@ -3703,6 +3703,30 @@ SARIF, coverage and lint reports; joins from a result to a Git/GitHub commit or
 PR-head record; correlated rerun replicates; expired-artifact coverage warnings;
 and cross-source reporting.
 
+## Offline MemPalace drawer result
+
+`local_file/mempalace-drawer/v1` reads one explicitly selected JSON file in the
+shape of the [v3.7.0 `mempalace_get_drawer` result](https://github.com/MemPalace/mempalace/blob/7db7e0bd428087056a0c249889108bcb6381b8f8/mempalace/mcp_server.py).
+It does not start or contact a worker, open a backend, run embeddings, or infer
+that the caller-supplied file was actually produced by MemPalace. In the normal
+local export manifest, select a descriptor containing:
+
+```json
+{"schema_version": 1, "upstream_commit": "7db7e0bd428087056a0c249889108bcb6381b8f8", "instance": "synthetic-instance", "export": "drawer.json", "drawer_sha256": "<fingerprint>"}
+```
+
+The source project fingerprint is `digest(("mempalace.wing", instance, wing))`;
+the selected drawer fingerprint is `digest(("mempalace.drawer", instance, wing,
+drawer_id))`. They are caller-declared scope checks, not producer authentication.
+An empty or absent wing is refused even though the upstream result can omit it.
+The resulting private record contains body, wing, room and drawer fingerprints;
+these can be guessable and must remain private. Raw content and metadata are
+excluded. Chunk metadata does not establish origin or independent cases. The
+producer, version, completeness and lineage remain unverified; a memory claim is
+not a verified task outcome. The adapter does not interpret the Markdown export,
+whose unescaped fields cannot safely delimit arbitrary drawer contents. Live
+retrieval and complete palace coverage remain outside this profile.
+
 ## Offline Claude-Mem exports
 
 Select `local_file/claude-mem-export/v1` in the existing local source declaration,
