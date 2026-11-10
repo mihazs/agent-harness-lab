@@ -3223,6 +3223,8 @@ commit and whether it matches the captured PR head. Fingerprints can be
 guessable. Comment IDs must be unique and bind to the reported review; a head
 match is not an execution or outcome claim. The endpoint's list completeness is
 unverified, including for an empty response, so the capture blocks checkpoints.
+The server may not expose every review to the current viewer, and visibility of
+pending reviews and their comments is unverified.
 The new selection has a separate scope; v1 and v2 histories are unchanged.
 
 For v2, a review listing returning 404 remains `not_found` and blocks a
