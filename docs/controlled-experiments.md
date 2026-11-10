@@ -91,6 +91,32 @@ A composed patch gets a new identity and needs interaction evaluation. Missing
 metrics do not become free execution or superior performance. Pareto point
 estimates are development selection, not a causal or confidence claim.
 
+`evaluation.skills.activation_receipt` builds a private `ahl-skill-activation-receipt-v1`
+for a single normalized case. `activated` means a declared Skill invocation or
+file-read request was captured, with its signal confidence retained; it does not
+prove that the skill loaded, ran or caused an outcome. A target is `not_observed`
+only with a declared complete capture containing at least one skill signal; otherwise
+missing signals are `unknown`. Codex and unrecognized native sources cannot claim
+Claude skill signals. Current pinned Codex and Claude native captures are partial, so they cannot establish non-observation. Evaluator trial results carry an
+unknown receipt because their stdout has no verified link to pinned native captures.
+`evaluation.skills.attach_activation_receipt(trial, events, case_id=...)` returns
+a trial with a receipt for explicitly selected normalized events; the trial-to-case
+attribution is caller-declared and unverified, and mixed case IDs are rejected.
+Raw CLI stdout does not verify that linkage. The supported CLI takes an evaluator
+`results.json` and a normalized events JSONL (for example, `events.v2.jsonl` from
+`ahl analyze`) and prints a private receipt without modifying either input:
+
+```sh
+ahl skills activation-receipt --results RESULTS --events EVENTS --task TASK \
+  --version candidate --repetition 0 --case-id CASE_ID
+```
+
+The caller selects the case and remains responsible for the unverified association.
+Both inputs must be regular files with no symlink in their path, each at most 64 MiB;
+the trial selector must match exactly one result. Receipts are private and must not be published.
+The estimand is the effect of skill availability (intent-to-treat), with all eligible
+trials retained irrespective of their receipt; no receipt alone establishes a causal effect.
+
 Skill injection is availability evidence, not activation. Missing runtime signals
 remain unknown; natural routing, preload, negative routing and transfer are separate
 conditions. `evaluation.skills.paired_transfer(records, policy=...)` compares the
