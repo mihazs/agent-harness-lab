@@ -120,7 +120,16 @@ of power at or above .9, a small effect with 100 roots stays inconclusive, known
 or one-family harms are rejected and any critical regression rejects a large
 benefit. These checks hold for the synthetic model only.
 
-Simulated roots are independent by construction, so the result says nothing about
+A separate fixed-interval check draws 100 paired root differences of −1 or +1
+with true mean zero, 1,000 times with seed 394. With independent roots, the
+Bonferroni-adjusted interval covered zero in 996 draws. When all roots instead
+share one family-level draw, it covered zero in 0 draws: the nominal bound does
+not apply to that dependent design. These observed rates are synthetic Monte
+Carlo results, not coverage guarantees for real tasks. The interval also does
+not account for selecting among candidates; candidate-count multiplicity is
+separate work.
+
+The power simulator's roots are independent by construction, so its result says nothing about
 real task dependence. No worker, model or grader runs, nothing is observed,
 certified or adopted, and the plan, margins, method and budgets are unchanged. A
 low supported rate is not evidence of noninferiority. The report stays private
