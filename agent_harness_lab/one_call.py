@@ -46,6 +46,8 @@ def resolve(args, explicit):
 def preflight(args):
     args._preflight_requested_runtime = args.agent
     args._preflight_runtimes = None
+    if args.agent == 'responses' and getattr(args, 'inherit_env', False):
+        return 'responses_inherit_env_unsupported'
     settings = getattr(args, 'project_settings', None)
     if settings:
         from .evaluation.task_bank import validate
@@ -94,6 +96,7 @@ def preflight(args):
 
 # One actionable step per preflight reason; no step grants authorization or changes a setting itself.
 REMEDIATION = {
+    'responses_inherit_env_unsupported': 'Remove --inherit-env when using the Responses runtime.',
     'select_one_runtime_with_agent': 'Several supported runtimes were found; rerun with --agent codex or --agent claude (or set runtime in ahl.json).',
     'agent_runtime_unavailable': 'No requested runtime executable was found; install it or pass its trusted path with --codex or --claude. Authentication is not checked by AHL.',
     'trial_budget_requires_two_preparation_and_six_paired_trials': 'Raise the trial limit to at least 8 in ahl.json limits.trials.',
