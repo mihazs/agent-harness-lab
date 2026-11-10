@@ -209,6 +209,7 @@ def audit(inventory, *, task_cwd=None, collision_threshold=skills.COLLISION_THRE
     collisions = context.collisions(collision_threshold) if context else {}
     rows = {dimension: [] for dimension in DIMENSIONS}  # (status, reason) per surface
     findings, vendored, unattributed = [], 0, 0
+    hook_events, hook_unknown, hook_surfaces = set(), False, 0
 
     def record(dimension, verdict, reason, path, kind, evidence, surface, measures=(), cited=None, related=()):
         rows[dimension].append((verdict, reason))
@@ -223,6 +224,14 @@ def audit(inventory, *, task_cwd=None, collision_threshold=skills.COLLISION_THRE
             if context.supporting(node): continue
             for kind, status, facts in _views(node, runtime):
                 if kind not in table: continue
+                if kind == 'hook':
+                    hook_surfaces += 1
+                    if node.declared_state != 'present' or status != 'parsed': hook_unknown = True
+                    else:
+                        for index in range(facts.get('handlers', 0)):
+                            event = facts.get(f'handler.{index}.event')
+                            if event is None: hook_unknown = True
+                            else: hook_events.add(event)
                 if kind == 'skill' and node.path in context.skills: facts = dict(facts, **context.facts(node))
                 verdict, reason = _judge(node, kind, status, facts, runtime, table[kind])
                 dimension, surface, evidence, _ = table[kind]
@@ -239,6 +248,7 @@ def audit(inventory, *, task_cwd=None, collision_threshold=skills.COLLISION_THRE
         for refusal in inventory.refusals:
             if refusal.reason == 'vcs_metadata': continue  # .git is never a harness surface
             dimensions = _refused(refusal, runtime, table)
+            if 'hooks' in dimensions: hook_unknown = True
             unattributed += not dimensions
             for dimension in dimensions:
                 surface = next(row[1] for row in table.values() if row[0] == dimension)
@@ -258,6 +268,8 @@ def audit(inventory, *, task_cwd=None, collision_threshold=skills.COLLISION_THRE
     return Report(runtime, inventory.version, inventory.sha256, inventory.status, blocked,
         tuple(dimensions), tuple(findings), vendored, unattributed,
         instruction_precedence=precedence.report(inventory, task_cwd),
+        hook_events=dict(declared=sorted(hook_events), coverage='unknown' if blocked or hook_unknown or not hook_surfaces else 'declared_only',
+                         observed_execution='unknown'),
         skill_collision_threshold_permille=round(collision_threshold * 1000))
 
 
@@ -273,6 +285,7 @@ class Report:
     vendored_surfaces: int
     unattributed_refusals: int
     instruction_precedence: dict | None = None
+    hook_events: dict | None = None
     skill_collision_rule: str = skills.COLLISION_RULE
     skill_collision_threshold_permille: int = round(skills.COLLISION_THRESHOLD * 1000)
     skill_tokenizer: str = TOKENIZER

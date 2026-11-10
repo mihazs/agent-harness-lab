@@ -19,12 +19,16 @@ When the modeled default Codex chain drops instruction bytes, coverage is `missi
 an unsettled dropped-byte count does not get that label. Coverage can
 also be `conforms`. The library's separate report retains its documented
 `conformant`, `nonconformant`, and `unknown` vocabulary.
-
 The separate `agent_harness_lab.audit.protected_paths.capture()` inventory lists
 common secret, configuration and CI path candidates using checkout metadata only;
 it never opens their contents. This private, bounded inventory does not determine
 whether any path is protected. Refused paths leave coverage unknown; rule and hook
 matching is not yet implemented. The walk is not an atomic filesystem snapshot.
+
+The `hook_events` field lists known event names from declared hook handlers. Its
+coverage is `unknown` when hook surfaces are unavailable or could not be parsed;
+otherwise `declared_only` describes inventory coverage, not execution or enforcement.
+Memory contents are not read. Matching prose rules to hooks is not yet checked.
 Try the [offline walkthrough](audit-walkthrough.md) with a deliberately flawed
 synthetic fixture before auditing a real checkout.
 
