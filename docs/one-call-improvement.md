@@ -55,6 +55,24 @@ scope are rejected before evaluation construction. Watch uses the same preflight
 and binds its checkpoint to the resolved configuration. Restart watch after changing
 configuration; it never silently widens an active run's scope.
 
+## Profile and platform support
+
+The table describes ordinary behavioral `ahl improve` with an `ahl.json` file;
+preflight can still block a row for an invalid bank, missing capability or budget.
+
+| Profile and runtime | Platform | Current behavior |
+| --- | --- | --- |
+| `offline`, `none` | Supported POSIX filesystem APIs | Doctor and configuration preview work; behavioral improvement blocks before inference. |
+| `cooperative`, `codex` or `claude` | Supported POSIX filesystem APIs | A trusted absolute executable is required in configuration. The runtime is cooperative, and authentication remains unverified. |
+| `cooperative`, `responses` | Linux and supported POSIX filesystem APIs | Requires explicitly configured controlled-worker references and passing capability checks. A configured nonstarter project bank is not supported on this path. |
+| `isolated` | Supported POSIX filesystem APIs | Doctor reports the isolation certification prerequisites as blocked; configured behavioral improvement stops at preflight. |
+| Any | Other platforms or missing required filesystem APIs | Safe configuration I/O is unavailable; use a supported host. |
+
+Supported configuration I/O requires descriptor-relative, no-follow POSIX
+filesystem operations. See `ahl doctor . --json` for local readiness checks;
+its output does not verify authentication or certify isolation. The explicit
+`--repair-contracts` mode below has a separate deterministic, model-free contract.
+
 ## Harness surface classification
 
 `agent_harness_lab/surfaces.py` is the only owner of the writable allowlist.
