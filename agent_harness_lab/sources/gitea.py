@@ -263,8 +263,9 @@ class GiteaAPI:
                 if 'reviews' not in selection.capture: continue
                 rows, outcome = self._list(f'{self.repo_path}/pulls/{number}/reviews', ledger,
                     lambda row, n=number, p=parent, head=node['head']['sha256']: self._review(row, n, p, head))
-                # Reviews absent from a server (404 on an already-read PR) are a declared capability gap, not a block.
-                if outcome == ('not_found', None): outcome = ('unsupported_endpoint', 'review_listing_not_found')
+                # Preserve v1's capability assumption; v2 cannot infer why a listing returned 404.
+                if selection.schema_version == 1 and outcome == ('not_found', None):
+                    outcome = ('unsupported_endpoint', 'review_listing_not_found')
                 ledger.note('reviews', outcome, parent)
                 for native, review in rows:
                     unrecognized |= review['state'] == 'unknown'
