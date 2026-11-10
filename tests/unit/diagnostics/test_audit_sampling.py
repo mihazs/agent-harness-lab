@@ -664,3 +664,60 @@ def test_v2_rejects_resealed_draw_failing_grid_predicate():
     body['draws'][0]['unit_sha256'] = omitted
     with pytest.raises(ValueError, match='grid predicate'):
         audit.review_queue(audit._seal(body))
+
+
+def test_v2_frame_replay_detects_omitted_and_nonmember_draws():
+    value=frame([unit(f'synthetic-{n}') for n in range(80)])
+    policy=plan(value,rates=dict(random=.5),schema_version=2,profile=audit.PLAN_PROFILE_V2)
+    receipt=audit.draw(value,policy)
+    assert receipt['drawn']>1
+    assert audit.review_queue(receipt,frame=value)['frame_check']=='matched_caller_supplied_frame'
+    batch=reviewed(receipt,set())
+    report=audit.estimate(receipt,batch,frame=value)
+    assert report['frame_check']=='matched_caller_supplied_frame'
+    assert 'frame_origin_unauthenticated' in report['limitations']
+    without=audit.estimate(receipt,batch)
+    assert without['frame_check']=='not_supplied'
+    assert 'frame_membership_and_draw_completeness_unverified' in without['limitations']
+    body=json.loads(json.dumps({key:item for key,item in receipt.items() if key!='receipt_sha256'}))
+    body['draws'].pop();body['drawn']-=1;body['strata'][0]['drawn']-=1
+    body['weights']=audit._weights([row['inclusion_probability'] for row in body['draws']])
+    missing=audit._seal(body)
+    audit.review_queue(missing)  # Internal receipt checks cannot reconstruct absent frame members.
+    with pytest.raises(ValueError, match='frame replay'):
+        audit.review_queue(missing,frame=value)
+    body=json.loads(json.dumps({key:item for key,item in receipt.items() if key!='receipt_sha256'}))
+    eligible=audit.freeze(value)['eligible']
+    alien=next(audit.unit_sha256(f'alien-{n}') for n in range(1000)
+               if audit.unit_sha256(f'alien-{n}') not in eligible
+               and audit._grid_draw(policy['seed'],receipt['frame_sha256'],audit.unit_sha256(f'alien-{n}'),audit.GRID_SIZE//2))
+    body['draws'][0]['unit_sha256']=alien
+    forged=audit._seal(body)
+    audit.review_queue(forged)
+    with pytest.raises(ValueError, match='frame replay'):
+        audit.estimate(forged,reviewed(forged,set()),frame=value)
+
+
+def test_v2_frame_replay_rejects_changed_frame_and_keeps_legacy_api():
+    value=frame([unit(f'synthetic-{n}') for n in range(10)])
+    policy=plan(value,rates=dict(random=1),schema_version=2,profile=audit.PLAN_PROFILE_V2)
+    receipt=audit.draw(value,policy)
+    changed=frame([*value['units'],unit('other')])
+    with pytest.raises(ValueError, match='frame differs'):
+        audit.review_queue(receipt,frame=changed)
+    legacy=audit.draw(value,plan(value,rates=dict(random=1)))
+    with pytest.raises(ValueError, match='requires a v2'):
+        audit.review_queue(legacy,frame=value)
+    assert 'frame_check' not in audit.review_queue(legacy)
+
+
+def test_v2_late_labels_keep_same_frame_and_never_impute_pending():
+    value=frame([unit(f'synthetic-{n}') for n in range(4)])
+    receipt=audit.draw(value,plan(value,rates=dict(random=1),schema_version=2,profile=audit.PLAN_PROFILE_V2))
+    truth={key:audit.NO_INCIDENT for key in audit.freeze(value)['eligible']}
+    pending=audit.estimate(receipt,labels(receipt,truth,status=['pending']),frame=value)
+    assert pending['status']=='inconclusive' and pending['estimates'] is None
+    completed=audit.estimate(receipt,labels(receipt,truth),frame=value)
+    assert completed['status']=='estimated' and completed['receipt_sha256']==pending['receipt_sha256']
+    assert 'reviewer_labels_unauthenticated' in completed['limitations']
+    assert 'frame_origin_unauthenticated' in completed['limitations']

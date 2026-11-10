@@ -321,11 +321,14 @@ def draw(frame, plan, trusted_heads=None):
         automatic_policy_update=False))
 
 
-def review_queue(receipt, trusted_heads=None):
+def review_queue(receipt, trusted_heads=None, *, frame=None):
     """Reviewer queue: hashes in hash order, without alert status, stratum or score."""
     _receipt(receipt, trusted_heads)
-    return dict(receipt_sha256=receipt['receipt_sha256'], prediction_masked=True,
-                units=sorted(d['unit_sha256'] for d in receipt['draws']), publication_allowed=False)
+    checked=_frame_check(receipt,frame)
+    value=dict(receipt_sha256=receipt['receipt_sha256'], prediction_masked=True,
+               units=sorted(d['unit_sha256'] for d in receipt['draws']), publication_allowed=False)
+    if receipt['profile']==RECEIPT_PROFILE_V2:value['frame_check']=checked
+    return value
 
 
 def _receipt(receipt, trusted_heads=None):
@@ -394,6 +397,30 @@ def _receipt(receipt, trusted_heads=None):
             or any(s['drawn']!=counts[s['stratum']] or s['inclusion_probability']==1 and s['drawn']!=s['units']
                    for s in strata)):
         raise ValueError('audit receipt draw or population counts differ')
+
+
+def _frame_check(receipt, frame):
+    """Replay the v2 design against caller-supplied frame data, without authenticating it."""
+    if frame is None:return 'not_supplied'
+    if receipt['profile']!=RECEIPT_PROFILE_V2:
+        raise ValueError('frame replay requires a v2 audit receipt')
+    frozen=freeze(frame)
+    if (frozen['frame_sha256']!=receipt['frame_sha256'] or frozen['summary']!=receipt['frame']
+            or frozen['scope']!=receipt['scope'] or frozen['window']!=receipt['window']):
+        raise ValueError('audit frame differs from receipt')
+    counts=Counter(); selected={}
+    for key,unit in frozen['eligible'].items():
+        routes=_routes(unit,receipt['rates']); name='+'.join(routes)
+        probability,threshold=_grid_probability(_probability(routes,receipt['rates']))
+        counts[name]+=1
+        if _grid_draw(receipt['seed'],frozen['frame_sha256'],key,threshold):
+            selected[key]=(name,unit['alerted'],probability)
+    if counts!={row['stratum']:row['units'] for row in receipt['strata']}:
+        raise ValueError('audit frame strata differ from receipt')
+    actual={row['unit_sha256']:(row['stratum'],row['alerted'],row['inclusion_probability']) for row in receipt['draws']}
+    if actual!=selected:
+        raise ValueError('audit frame replay differs from receipt draws')
+    return 'matched_caller_supplied_frame'
 
 
 def _labels(batch, receipt):
@@ -567,9 +594,10 @@ def _composition(receipt, rows, missing, outside):
                 outside_probability_sample=outside)
 
 
-def estimate(receipt, batch, trusted_heads=None):
+def estimate(receipt, batch, trusted_heads=None, *, frame=None):
     """Design-aware prevalence, missed-incident and triage-recall estimates for one sealed receipt."""
     _receipt(receipt, trusted_heads)
+    frame_check=_frame_check(receipt,frame)
     labels = _labels(batch, receipt)
     drawn = {d['unit_sha256']: d for d in receipt['draws']}
     outside = sum(1 for key in labels if key not in drawn)
@@ -604,6 +632,10 @@ def estimate(receipt, batch, trusted_heads=None):
             'sampling_plan_timing_unauthenticated') if receipt['profile']==RECEIPT_PROFILE_V2
             else ('finite_precision_hash_sampling_approximate',))],
         publication_allowed=False, automatic_policy_update=False)
+    if receipt['profile']==RECEIPT_PROFILE_V2:
+        report['frame_check']=frame_check
+        report['limitations'].append('frame_origin_unauthenticated')
+        if frame is None:report['limitations'].append('frame_membership_and_draw_completeness_unverified')
     if not rows:
         reasons.append('no_reviewed_draws')
     if reasons:
