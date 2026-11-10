@@ -382,9 +382,20 @@ def parse(path, raw, profile):
               '.codex/config.toml': 'codex_config'}.get(path)
     if reader is not None:
         if len(raw) > inventory.MAX_CONFIG_BYTES: raise ValueError('runtime configuration exceeds its byte bound')
+        document = _decode(reader, raw)
         counts = {}
-        for surface, item, _ in READERS[reader](_decode(reader, raw), 'project'):
+        for surface, item, _ in READERS[reader](document, 'project'):
             counts[f'{surface}_{item}'] = counts.get(f'{surface}_{item}', 0) + 1
+        if reader == 'claude_settings':
+            permissions = document.get('permissions', {})
+            denies = permissions.get('deny', []) if isinstance(permissions, dict) else None
+            if (isinstance(denies, list) and len(denies) <= 512
+                    and all(isinstance(row, str) and len(row) <= 4096 for row in denies)):
+                counts['permission_deny_state'] = 'parsed'
+                counts.update({f'permission_deny.{index}': digest(('ahl-permission-deny-v1', row))
+                               for index, row in enumerate(denies)})
+            else:
+                counts['permission_deny_state'] = 'unknown'
         return 'parsed', counts
     if path.endswith('.md') and '/.claude/output-styles/' in '/' + path:
         facts = _style(path, raw.decode('utf-8'))
