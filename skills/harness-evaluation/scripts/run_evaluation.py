@@ -186,6 +186,43 @@ def agent_command(agent, binary, plugin=None, skills=(), *, skill_homes=None):
     return argv + ['-']
 
 
+def native_environment(agent, inherit=False, environ=None):
+    """Filter the cooperative runtime's host environment unless inheritance was requested."""
+    source = os.environ if environ is None else environ
+    if inherit:
+        return dict(source)
+    common = {'PATH', 'HOME', 'LANG', 'LANGUAGE', 'TERM', 'COLORTERM', 'TERMINFO', 'TMPDIR', 'LC_ALL', 'LC_CTYPE', 'LC_NUMERIC', 'LC_TIME', 'LC_COLLATE',
+              'LC_MONETARY', 'LC_MESSAGES', 'LC_PAPER', 'LC_NAME', 'LC_ADDRESS', 'LC_TELEPHONE',
+              'LC_MEASUREMENT', 'LC_IDENTIFICATION'}
+    auth = {'CODEX_API_KEY'} if agent == 'codex' else {
+        'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN',
+        'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL',
+        'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL'}
+    if agent == 'claude':
+        providers = {
+            'CLAUDE_CODE_USE_BEDROCK': {'AWS_PROFILE', 'AWS_REGION', 'AWS_DEFAULT_REGION',
+                'AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN', 'AWS_BEARER_TOKEN_BEDROCK',
+                'AWS_CONFIG_FILE', 'AWS_SHARED_CREDENTIALS_FILE', 'AWS_WEB_IDENTITY_TOKEN_FILE', 'AWS_ROLE_ARN'},
+            'CLAUDE_CODE_USE_VERTEX': {'GOOGLE_APPLICATION_CREDENTIALS', 'ANTHROPIC_VERTEX_PROJECT_ID',
+                'ANTHROPIC_VERTEX_BASE_URL', 'CLOUD_ML_REGION'},
+            'CLAUDE_CODE_USE_FOUNDRY': {'ANTHROPIC_FOUNDRY_API_KEY', 'ANTHROPIC_FOUNDRY_AUTH_TOKEN',
+                'ANTHROPIC_FOUNDRY_RESOURCE', 'ANTHROPIC_FOUNDRY_BASE_URL', 'AZURE_CLIENT_ID',
+                'AZURE_TENANT_ID', 'AZURE_CLIENT_SECRET', 'AZURE_CONFIG_DIR'},
+        }
+        for enabled, names in providers.items():
+            if source.get(enabled) in ('1', 'true'):
+                auth |= {enabled} | names
+    return {key: value for key, value in source.items() if key in common or key in auth}
+
+
+def environment_receipt(environment, inherited, run_root):
+    def digest(values):
+        return hashlib.sha256(json.dumps(values, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+    normalized = {key: value.replace(str(run_root), '<run>') for key, value in environment.items()}
+    return dict(names=sorted(environment), sha256=digest(environment), comparison_sha256=digest(normalized),
+                inherited=inherited)
+
+
 def trial_command(agent, binary, plugin, skills, trial, workspace, defaults, environ=None):
     """Argv and environment for one cooperative trial with the gated user-layer exclusions requested.
 
@@ -217,9 +254,13 @@ def _evaluate(args):
     parent_deadline = getattr(args, 'parent_deadline', None)
     if parent_deadline is not None and (type(parent_deadline) not in (int, float) or not math.isfinite(parent_deadline)):
         raise ValueError('parent deadline must be a finite monotonic timestamp')
+    inherit_env = getattr(args, 'inherit_env', False)
+    if type(inherit_env) is not bool: raise ValueError('environment inheritance must be explicit')
     sandbox_graders = getattr(args, 'sandbox_graders', False)
     if type(sandbox_graders) is not bool: raise ValueError('sandbox grader mode must be explicit')
     controlled = args.agent == 'responses'
+    if inherit_env and args.agent not in ('codex', 'claude'):
+        raise ValueError('--inherit-env applies only to cooperative native agents')
     supplied_client = getattr(args,'inference_client',None)
     supplied_backend = getattr(args,'sandbox_backend',None)
     if not controlled and (supplied_client is not None or supplied_backend is not None):
@@ -523,7 +564,8 @@ def _evaluate(args):
         blocked = 'inference_sandbox_unavailable'
     available = budget - (time.monotonic() - started)
     if available <= 0: blocked = 'preflight_budget_exhausted'
-    version_info = dict(exit_code=None, stdout='') if offline or controlled or blocked else execute([binary, '--version'], manifest_path.parent, min(timeout, available))
+    version_info = dict(exit_code=None, stdout='') if offline or controlled or blocked else execute(
+        [binary, '--version'], manifest_path.parent, min(timeout, available), env=native_environment(agent, inherit_env))
     config_path = Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex'))) / 'config.toml'
     config = {}
     try:
@@ -551,6 +593,7 @@ def _evaluate(args):
     if authentication is not None:
         results['runtime']['codex_authentication'] = authentication
     if agent in ('codex', 'claude'):
+        results['runtime']['environment_inherited'] = inherit_env
         application_modules()
         from agent_harness_lab.evaluation import trial_surfaces
         results['isolation'] = trial_surfaces.descriptor('claude-code' if agent == 'claude' else 'codex', config)
@@ -707,7 +750,8 @@ def _evaluate(args):
         if offline or controlled:
             argv = task['offline_executor'] if offline else None
         else:
-            argv, environment = trial_command(agent, binary, plugin if agent == 'claude' else None, skills, trial, workspace, config)
+            argv, environment = trial_command(agent, binary, plugin if agent == 'claude' else None, skills, trial, workspace, config,
+                                              native_environment(agent, inherit_env))
         prompt = ('Load these exact evaluation skill files before the task: ' + ', '.join(loaded) + '\n' if loaded and task.get('preload_skills', True) else '')
         if manifest.get('no_nested_agents', False):
             prompt += 'Do not launch child agents or nested model trials; the parent owns the evaluation budget.\n'
@@ -757,6 +801,7 @@ def _evaluate(args):
                 continue
             run['timeout'] = run['status'] == 'timeout'
         else:
+            record['environment'] = environment_receipt(environment, inherit_env, output)
             run = execute(argv, workspace, min(timeout, remaining), prompt, env=environment)
         trace = trial / ('stdout.txt' if offline or controlled else 'trace.jsonl')
         trace.write_text(run.pop('stdout'))
@@ -914,6 +959,7 @@ def main():
                         help='Executor: cooperative codex/claude, Linux offline fixture commands without inference, or controlled responses (default: %(default)s)')
     parser.add_argument('--codex', default='codex', help='Codex executable name/path for --agent codex (default: %(default)s)')
     parser.add_argument('--claude', default='claude', help='Claude Code executable name/path for --agent claude (default: %(default)s)')
+    parser.add_argument('--inherit-env', action='store_true', help='Pass the host environment to native trials; records this opt-in and exposes host secrets')
     parser.add_argument('--sandbox-graders', action='store_true', help='Require fresh offline frozen artifact graders for cooperative codex/claude trials; does not isolate the agent CLI')
     parser.add_argument('--inference-settings', type=Path, help='Existing private Responses settings JSON referencing a credential file and shared request/tool caps; required only with --agent responses')
     parser.add_argument('--cgroup-root', type=Path, help='Existing delegated cgroup v2 subtree for isolated roles/graders; required with --agent responses')

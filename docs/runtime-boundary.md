@@ -60,3 +60,40 @@ Use `task test:runtime:boundary` for ordinary transport/report controls and
 `task test:runtime:boundary:kernel` for synthetic Responses transport with real
 pinned workers, all four roles, source fanout and missing-startup-fact rejection.
 These checks use no provider, credentials or native-agent session.
+
+## Cooperative native trial environment
+
+The Codex and Claude trial runner and its version probe pass only `PATH`, `HOME`,
+`TMPDIR`, `TERM`, `TERMINFO`, `COLORTERM`, `LANG`, `LANGUAGE`, standard `LC_*`
+locale variables, plus runtime authentication variables. Codex receives
+`CODEX_API_KEY`; its temporary `CODEX_HOME` still does not include saved logins.
+Claude receives `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`
+and `ANTHROPIC_AUTH_TOKEN`; the existing `HOME` continues to support saved login.
+When Claude explicitly enables Bedrock, Vertex or Foundry in the parent, the runner
+also passes the selected provider's connection and authentication variables:
+
+- Bedrock: `CLAUDE_CODE_USE_BEDROCK`, `AWS_PROFILE`, `AWS_REGION`,
+  `AWS_DEFAULT_REGION`, `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`,
+  `AWS_SESSION_TOKEN`, `AWS_BEARER_TOKEN_BEDROCK`, `AWS_CONFIG_FILE`,
+  `AWS_SHARED_CREDENTIALS_FILE`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_ROLE_ARN`.
+- Vertex: `CLAUDE_CODE_USE_VERTEX`, `GOOGLE_APPLICATION_CREDENTIALS`,
+  `ANTHROPIC_VERTEX_PROJECT_ID`, `ANTHROPIC_VERTEX_BASE_URL`, `CLOUD_ML_REGION`.
+- Foundry: `CLAUDE_CODE_USE_FOUNDRY`, `ANTHROPIC_FOUNDRY_API_KEY`,
+  `ANTHROPIC_FOUNDRY_AUTH_TOKEN`, `ANTHROPIC_FOUNDRY_RESOURCE`,
+  `ANTHROPIC_FOUNDRY_BASE_URL`, `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
+  `AZURE_CLIENT_SECRET`, `AZURE_CONFIG_DIR`.
+
+Claude also receives `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`, and
+`ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, and
+`ANTHROPIC_DEFAULT_HAIKU_MODEL`. Advanced provider settings,
+custom credential chains and model-specific regional overrides may need
+`--inherit-env`, which passes the full parent environment and can expose unrelated
+secrets to the agent.
+Each launched trial records that opt-in, sorted environment names and a SHA-256 of
+the sorted, compact JSON environment; it records no environment values. A second
+comparison digest replaces the private run root in values with `<run>` so separate
+runs can check parity without discarding the exact digest. The hash
+can reveal low-entropy values by guessing, so keep results private. The receipt
+records the requested subprocess environment, not later agent or hook changes.
+These processes retain access to host files and network; this does not establish
+isolation and does not change unknown boundary qualification.

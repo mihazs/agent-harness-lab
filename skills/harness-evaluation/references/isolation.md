@@ -48,10 +48,10 @@ is inherited and what is unknown:
 
 - Claude Code inherits authentication stored outside settings files, project and
   managed permission rules and sandbox settings, managed settings and hooks, and
-  environment variables. User `CLAUDE.md`, auto memory and user plugins and
-  skills are unknown.
-- Codex inherits environment variables, system configuration layers and
-  `HOME/.agents/skills`. Hooks without trust entries are unknown.
+  allowlisted environment variables (or the full host environment with
+  `--inherit-env`). User `CLAUDE.md`, auto memory and user plugins and skills are unknown.
+- Codex inherits allowlisted environment variables (or the full host environment
+  with `--inherit-env`), system configuration layers and `HOME/.agents/skills`. Hooks without trust entries are unknown.
 
 ## Reporting
 

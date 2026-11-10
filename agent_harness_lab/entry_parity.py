@@ -34,10 +34,13 @@ ALLOWED_DIFFERENCES = {
     'change-plan.json': ('plan_sha256', 'harness_change_plan.affected_controls_sha256',
                          'harness_change_plan.references.evidence'),
     # Measured trial durations, and the digest of a manifest that carries the
-    # remaining budget.
+    # remaining budget. Exact environment digests include the unique temporary Codex home;
+    # the normalized comparison digest remains checked.
     'evaluation-*/results.json': ('elapsed_seconds', 'manifest_sha256',
-                                  'trials.*.execution.elapsed_seconds', 'trials.*.grader.elapsed_seconds'),
-    'feedback-*.json': ('trials.*.execution.elapsed_seconds', 'trials.*.grader.elapsed_seconds'),
+                                  'trials.*.execution.elapsed_seconds', 'trials.*.grader.elapsed_seconds',
+                                  'trials.*.environment.sha256'),
+    'feedback-*.json': ('trials.*.execution.elapsed_seconds', 'trials.*.grader.elapsed_seconds',
+                        'trials.*.environment.sha256'),
     'preparation/evaluation-*/manifest.json': ('budget_seconds', 'timeout_seconds'),
     # Descriptive invocation context given to preparation children: the entry
     # origin, the parent run identity and the remaining budget.

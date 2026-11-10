@@ -36,7 +36,7 @@ else: print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
         self.grader = self.root / 'grade.py'
         self.grader.write_text("import pathlib,sys; p=pathlib.Path(sys.argv[1]); assert (p/'artifact').read_text()=='done'; assert (p/'original').read_text()=='preserve'\n")
 
-    def run_case(self, mode='ok', grader=None, timeout=2, preload=True, skills=None, agent='codex', harness_paths=None):
+    def run_case(self, mode='ok', grader=None, timeout=2, preload=True, skills=None, agent='codex', harness_paths=None, extra_args=()):
         manifest = dict(tasks=[dict(id='case', split='development', fixture='fixture',
                                    prompt=mode, preload_skills=preload, grader=grader or [sys.executable, str(self.grader), '{workspace}'])],
                         timeout_seconds=timeout, skills=skills or [], harness_paths=harness_paths or [])
@@ -44,7 +44,7 @@ else: print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
         result = subprocess.run([sys.executable, str(RUNNER), '--manifest', str(self.root / 'manifest.json'),
                                  '--baseline', str(self.root / 'baseline'), '--candidate', str(self.root / 'candidate'),
                                  '--output', str(self.root / 'out'), '--codex', str(self.fake),
-                                 '--agent', agent, '--claude', str(self.fake)], capture_output=True, text=True)
+                                 '--agent', agent, '--claude', str(self.fake), *extra_args], capture_output=True, text=True)
         return result, json.loads((self.root / 'out/results.json').read_text())
 
     def test_artifacts_are_graded_and_inputs_preserved(self):
@@ -375,6 +375,29 @@ class TrialSurfaceTests(unittest.TestCase):
         self.assertEqual(argv[-1], '-')
         self.assert_no_user_layers(argv, environment)
 
+    def test_comparison_digest_normalizes_only_the_run_root(self):
+        first = {'CODEX_HOME': '/first/run/home', 'CODEX_API_KEY': 'synthetic-key'}
+        second = {'CODEX_HOME': '/second/run/home', 'CODEX_API_KEY': 'synthetic-key'}
+        a = self.runner.environment_receipt(first, False, '/first/run')
+        b = self.runner.environment_receipt(second, False, '/second/run')
+        self.assertNotEqual(a['sha256'], b['sha256'])
+        self.assertEqual(a['comparison_sha256'], b['comparison_sha256'])
+        second['CODEX_API_KEY'] = 'different-synthetic-key'
+        self.assertNotEqual(a['comparison_sha256'],
+                            self.runner.environment_receipt(second, False, '/second/run')['comparison_sha256'])
+
+    def test_claude_passes_only_enabled_provider_credentials(self):
+        source = {'PATH': '/bin', 'CLAUDE_CODE_USE_BEDROCK': '1', 'AWS_PROFILE': 'synthetic-profile',
+                  'AWS_SECRET_ACCESS_KEY': 'synthetic-key', 'GOOGLE_APPLICATION_CREDENTIALS': 'synthetic-path',
+                  'AHL_TEST_CANARY': 'synthetic-canary', 'LC_SECRET': 'synthetic-canary'}
+        selected = self.runner.native_environment('claude', environ=source)
+        self.assertEqual(selected['AWS_SECRET_ACCESS_KEY'], 'synthetic-key')
+        self.assertEqual(selected['AWS_PROFILE'], 'synthetic-profile')
+        self.assertNotIn('GOOGLE_APPLICATION_CREDENTIALS', selected)
+        self.assertNotIn('AHL_TEST_CANARY', selected)
+        self.assertNotIn('LC_SECRET', selected)
+        self.assertNotIn('AWS_SECRET_ACCESS_KEY', self.runner.native_environment('codex', environ=source))
+
     def test_unverified_or_missing_capability_rows_never_claim_isolation(self):
         from unittest.mock import patch
         from dataclasses import replace
@@ -443,7 +466,9 @@ class TrialWorkspaceTests(unittest.TestCase):
     def run_isolated(self, **options):
         import os
         from unittest.mock import patch
-        environ = {**os.environ, 'HOME': str(self.home), 'CODEX_HOME': str(self.user_codex)}
+        environ = {'PATH': '/usr/bin:/bin', 'HOME': str(self.home), 'CODEX_HOME': str(self.user_codex)}
+        for key, value in (('CODEX_API_KEY', 'synthetic-key'), ('AHL_TEST_CANARY', 'synthetic-canary')):
+            if os.environ.get(key) == value: environ[key] = value
         with patch.dict('os.environ', environ, clear=True):
             return self.run_case(**options)
 
@@ -475,6 +500,46 @@ class TrialWorkspaceTests(unittest.TestCase):
             seen = json.loads((case / 'workspace/env.json').read_text())
             self.assertEqual(seen['CODEX_HOME'], str(case / 'codex-home'))
             self.assertNotIn('secret', (case / 'codex-home/config.toml').read_text())
+
+    def test_native_trial_environment_is_filtered_and_receipted(self):
+        import hashlib
+        from unittest.mock import patch
+        with patch.dict('os.environ', {'CODEX_API_KEY': 'synthetic-key', 'AHL_TEST_CANARY': 'synthetic-canary'}):
+            result, data = self.run_isolated()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for trial in data['trials']:
+            seen = json.loads((self.root / 'out' / trial['version'] / 'case/workspace/env.json').read_text())
+            self.assertEqual(seen['CODEX_API_KEY'], 'synthetic-key')
+            self.assertNotIn('AHL_TEST_CANARY', seen)
+            receipt = trial['environment']
+            self.assertFalse(receipt['inherited'])
+            self.assertEqual(receipt['names'], sorted(seen))
+            expected = hashlib.sha256(json.dumps(seen, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
+            self.assertEqual(receipt['sha256'], expected)
+            self.assertNotIn('synthetic-key', json.dumps(receipt))
+
+    def test_version_probe_also_filters_parent_environment(self):
+        from unittest.mock import patch
+        self.fake.write_text(self.fake.read_text().replace(
+            "if '--version' in sys.argv:",
+            "if '--version' in sys.argv: pathlib.Path(__file__).with_name('version-env.json').write_text(json.dumps(dict(__import__('os').environ)))\nif '--version' in sys.argv:"))
+        with patch.dict('os.environ', {'AHL_TEST_CANARY': 'synthetic-canary'}):
+            result, _ = self.run_isolated()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        seen = json.loads((self.root / 'version-env.json').read_text())
+        self.assertNotIn('AHL_TEST_CANARY', seen)
+
+    def test_native_trial_environment_opt_in_is_recorded(self):
+        from unittest.mock import patch
+        with patch.dict('os.environ', {'AHL_TEST_CANARY': 'synthetic-canary'}):
+            result, data = self.run_isolated(extra_args=['--inherit-env'])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(data['runtime']['environment_inherited'])
+        for trial in data['trials']:
+            seen = json.loads((self.root / 'out' / trial['version'] / 'case/workspace/env.json').read_text())
+            self.assertEqual(seen['AHL_TEST_CANARY'], 'synthetic-canary')
+            self.assertTrue(trial['environment']['inherited'])
+            self.assertNotIn('synthetic-canary', json.dumps(trial['environment']))
 
     def use_codex_banner(self):
         self.fake.write_text(self.fake.read_text().replace("print('codex-test 1.0')", "print('codex-cli 0.166.0')"))
