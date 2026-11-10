@@ -1,9 +1,9 @@
 """Synthetic companion integration; repeated plan math is conditional, never certification."""
+from contextlib import ExitStack
 from pathlib import Path
 import tempfile
 import time
 from types import SimpleNamespace
-import unittest
 from unittest.mock import patch
 
 import pytest
@@ -14,13 +14,13 @@ from agent_harness_lab.evaluation.integrity import digest
 from agent_harness_lab.private_journal import encoded,record
 from tests.integration.evaluation import test_repeated_workflow as fixtures
 from tests.integration.sandbox import test_sandbox_kernel as kernel
-from tests.support.unittest_cleanups import run_class_cleanups,run_cleanups
 
 
-class RepeatedAccessAdmission(fixtures.PublicFixture,unittest.TestCase):
+class RepeatedAccessAdmission(fixtures.PublicFixture):
     """Hosts PublicFixture with an explicit evaluation store for the admission cases below; it defines no tests."""
 
-    def setUp(self):
+    def __init__(self, add_cleanup):
+        self.addCleanup=add_cleanup
         self.temp=tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name); self.cgroup_root=self.root/'no-cgroup'; self.configure()
         self.selected=self.root/'selected-history'
@@ -36,9 +36,8 @@ class RepeatedAccessAdmission(fixtures.PublicFixture,unittest.TestCase):
 
 @pytest.fixture
 def access():
-    value=RepeatedAccessAdmission();value.setUp()
-    yield value
-    run_cleanups(value)
+    with ExitStack() as cleanups:
+        yield RepeatedAccessAdmission(cleanups.callback)
 
 
 def test_request_uses_the_explicit_same_store_instead_of_a_new_output_store(access):
@@ -116,16 +115,15 @@ class RepeatedAccessKernel(fixtures.PublicFixture,kernel.KernelFixture):
 
 @pytest.fixture(scope='module')
 def kernel_scope():
-    RepeatedAccessKernel.setUpClass()
-    yield
-    run_class_cleanups(RepeatedAccessKernel)
+    with kernel.kernel_scope() as root:
+        yield root
 
 
 @pytest.fixture
 def kernel_case(kernel_scope):
-    value=RepeatedAccessKernel();value.setUp()
-    yield value
-    run_cleanups(value)
+    with ExitStack() as cleanups:
+        value=RepeatedAccessKernel(); value.cgroup_root=kernel_scope; value.addCleanup=cleanups.callback
+        value.setUp(); yield value
 
 
 @kernel_only

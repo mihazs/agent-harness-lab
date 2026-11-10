@@ -106,11 +106,15 @@ def test_analysis_alias_runs_all_default_methods_and_reports_insufficient_author
 
 
 def test_empty_history_is_explicit_and_does_not_require_configuration(pipeline):
-    code, receipt, _ = pipeline.invoke()
+    with patch('socket.socket', side_effect=AssertionError('unexpected network')), \
+            patch('subprocess.Popen', side_effect=AssertionError('unexpected process')):
+        code, receipt, err = pipeline.invoke()
     assert code == 0
     assert receipt['analysis']['evidence_state'] == 'empty'
     assert all(row['status'] == 'no_events' for row in receipt['analysis']['algorithms'])
-    assert 'current-source' in receipt['next_action']
+    assert 'ahl audit' in receipt['next_action'] and 'model costs' in receipt['next_action']
+    assert 'No data. Evidence coverage: 0 events, 0 cases' in err
+    assert err.count('Next: ') == 1
     assert not (pipeline.project/'ahl.json').exists()
 
 

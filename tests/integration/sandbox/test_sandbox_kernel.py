@@ -24,7 +24,6 @@ from agent_harness_lab.evaluation.integrity import artifacts, digest
 from agent_harness_lab.evaluation.sandbox import Limits, SandboxBackend
 from agent_harness_lab.evaluation.image import MOUNT_DIRS, scan
 from tests.integration.evaluation.test_offline_evaluation import OfflineFixture
-from tests.support.unittest_cleanups import run_cleanups
 
 ENABLED = bool(os.environ.get('AHL_TEST_CGROUP_ROOT')) or os.environ.get('AHL_TEST_SYSTEMD_SCOPE') == '1'
 
@@ -82,22 +81,29 @@ class KernelHelpers:
         assert_complete(run)
 
 
-class KernelFixture(KernelHelpers, unittest.TestCase):
-    """unittest host of the kernel scope for the other kernel modules' cases; it defines no tests.
-
-    Those modules subclass it, and two of them call KernelCase methods below with an instance as `self`,
-    so KernelCase keeps this interface: root, work, backend, cgroup_root, run_code, assert_complete and
-    addCleanup.
-    """
-    @classmethod
-    def setUpClass(cls):
-        cls.cgroup_root = cls.enterClassContext(kernel_scope())
-
+class KernelFixture(KernelHelpers):
+    """Shared kernel setup for pytest and standard-library canaries."""
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.work = self.root/'work'; self.work.mkdir()
         self.backend = SandboxBackend(cgroup_root=self.cgroup_root)
+
+
+class UnittestKernelFixture(KernelFixture, unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.cgroup_root = cls.enterClassContext(kernel_scope())
+
+
+class PytestKernelFixture(KernelFixture):
+    @pytest.fixture(autouse=True)
+    def _native_kernel(self):
+        with ExitStack() as cleanups:
+            self.cgroup_root = cleanups.enter_context(kernel_scope())
+            self.addCleanup = cleanups.callback
+            self.setUp()
+            yield
 
 
 @pytest.fixture(scope='module')
@@ -247,7 +253,7 @@ sys.exit(0 if outcome else 1)
 class OfflineKernel(KernelCase):
     """KernelCase plus the offline evaluation fixture; self.root is that fixture's directory."""
     def prepare(self):
-        self.f = OfflineFixture(); self.f.setUp(); self.addCleanup(run_cleanups, self.f)
+        self.f = OfflineFixture(self.addCleanup)
         self.root = self.f.root
 
 
@@ -344,9 +350,9 @@ except OSError: pass
 class TestRegressionDraftKernel(KernelCase):
     def test_preservation_qualification_uses_real_prior_and_fresh_pinned_workers(self):
         from dataclasses import replace
-        from tests.integration.evaluation.test_preservation_cohorts import PreservationCohortTests
+        from tests.integration.evaluation.test_preservation_cohorts import PreservationCohort
         from agent_harness_lab.evaluation.plan import ExperimentSpec
-        fixture=PreservationCohortTests(); fixture.setUp(); self.addCleanup(run_cleanups, fixture)
+        fixture=PreservationCohort(self.addCleanup)
         value=fixture.fixture; runtime=self.root/'runtime'; pinned=pinned_runtime(runtime)
         value.image_hash=pinned['sha256']; value.install_plan()
         profile=dict(cgroup_root=self.cgroup_root,image_root=runtime,image_sha256=pinned['sha256'],
@@ -432,8 +438,8 @@ class TestRegressionDraftKernel(KernelCase):
         assert report['unobserved']['model_compliance'] == 'unknown'
 
     def test_grader_correction_audits_real_controls_without_a_behavioral_failure_claim(self):
-        from tests.integration.evaluation.test_grader_correction import GraderCorrectionTests
-        fixture = GraderCorrectionTests(); fixture.setUp(); self.addCleanup(run_cleanups, fixture)
+        from tests.integration.evaluation.test_grader_correction import GraderCorrection
+        fixture = GraderCorrection(self.addCleanup)
         rootfs = self.root/'runtime'; frozen = pinned_runtime(rootfs)
         fixture.spec_value['image_sha256'] = frozen['sha256']; fixture.write_spec()
         parent = fixture.bank.read_bytes(); proposed = fixture.propose()
@@ -464,8 +470,8 @@ class TestRegressionDraftKernel(KernelCase):
         from agent_harness_lab.evaluation.oracle import identity
         from agent_harness_lab.evaluation.oracle_history import HistoryStore
         from agent_harness_lab.evaluation.plan import ExperimentSpec,schedule
-        from tests.integration.evaluation.test_grader_correction import GraderCorrectionTests
-        fixture = GraderCorrectionTests(); fixture.setUp(); self.addCleanup(run_cleanups, fixture)
+        from tests.integration.evaluation.test_grader_correction import GraderCorrection
+        fixture = GraderCorrection(self.addCleanup)
         rootfs = self.root/'runtime'; frozen = pinned_runtime(rootfs)
         fixture.spec_value['image_sha256'] = frozen['sha256']; fixture.write_spec()
         proposed = fixture.propose()
@@ -693,8 +699,8 @@ class TestControlledWorkflowKernel(KernelCase):
             HistoryStore(selected).reserve_access(path,baseline,candidate)
 
     def test_controlled_workflow_role_views_deny_source_key_candidate_and_prior_heldout_reads(self):
-        from tests.integration.sandbox.test_sandbox_construction import ControlledWorkflowTests, PROPOSER, AUTHOR, EXECUTOR, wire, workflow, responses
-        fixture = ControlledWorkflowTests(); fixture.setUp(); self.addCleanup(run_cleanups, fixture)
+        from tests.integration.sandbox.test_sandbox_construction import ControlledWorkflow, PROPOSER, AUTHOR, EXECUTOR, wire, workflow, responses
+        fixture = ControlledWorkflow(self.addCleanup)
         rootfs = self.root/'runtime'; frozen = pinned_runtime(rootfs)
         fixture.args.cgroup_root = self.cgroup_root; fixture.args.image_root = rootfs
         fixture.args.image_sha256 = frozen['sha256']; fixture.args.disk_bytes = 64*1024*1024; fixture.args.timeout = 60
@@ -807,11 +813,10 @@ SOURCE_MODES = ('valid', 'artifact_swap', 'copy', 'mutation', 'input_digest', 'n
 
 @pytest.mark.skipif(not ENABLED, reason='requires explicit delegated kernel canaries; use task test:sandbox:kernel')
 class TestTrajectoryKernel(KernelCase):
-    def test_trajectory_assertions_use_real_workers_and_independent_artifact_grades(self):
+    def test_trajectory_assertions_use_real_workers_and_independent_artifact_grades(self, trajectory):
         from dataclasses import replace
-        from tests.integration.evaluation.test_trajectory_evaluation import TrajectoryEvaluationTests
         from agent_harness_lab.evaluation import responses
-        fixture = TrajectoryEvaluationTests(); fixture.setUp(); self.addCleanup(run_cleanups, fixture)
+        fixture = trajectory
         runtime = self.root/'runtime'; frozen = pinned_runtime(runtime)
         fixture.plan = replace(fixture.plan,runtime_hash=frozen['sha256'])
         fixture.freeze()
@@ -856,13 +861,12 @@ class TestTrajectoryKernel(KernelCase):
             assert action['backend_invoked']; assert action['containment_validated']
         assert 'SYNTHETIC_CONTROLLER_KEY' not in json.dumps(result)
 
-    def test_live_controller_sources_join_actual_workers_to_fresh_graders(self):
+    def test_live_controller_sources_join_actual_workers_to_fresh_graders(self, trajectory):
         from dataclasses import replace
-        from tests.integration.evaluation.test_trajectory_evaluation import TrajectoryEvaluationTests
         from agent_harness_lab.evaluation import responses
         from agent_harness_lab.sources.controller import SourceSink
         from agent_harness_lab.sources.schema import digest as source_digest
-        fixture=TrajectoryEvaluationTests(); fixture.setUp(); self.addCleanup(run_cleanups, fixture)
+        fixture = trajectory
         runtime=self.root/'runtime'; frozen=pinned_runtime(runtime)
         fixture.plan=replace(fixture.plan,runtime_hash=frozen['sha256']); fixture.freeze()
         args=fixture.f.args

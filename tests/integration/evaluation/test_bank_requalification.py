@@ -29,6 +29,7 @@ from tests.integration.sandbox import test_sandbox_kernel as kernel
 from tests.integration.sandbox import test_sandbox_construction as roles
 from tests.integration.sandbox import test_sandbox_inference as wire
 from tests.integration.evaluation import test_bank_qualification_final as bank_fixtures
+from tests.support.unittest_cleanups import run_cleanups
 
 
 def test_serialized_or_copied_authority_cannot_reserve():
@@ -69,11 +70,12 @@ def test_private_domain_and_stage_profiles_cannot_be_relabelled_for_export(profi
 
 
 @pytest.mark.skipif(not kernel.ENABLED,reason='explicit delegated native scope required')
-class BankRequalificationKernelTests(kernel.KernelFixture):
-    # The delegated kernel scope and qualified-bank fixtures are TestCase classes shared with
-    # other modules (setUpClass, addCleanup), so this class keeps that base.
+class TestBankRequalificationKernel(kernel.PytestKernelFixture):
     def owned_case(self,*,unbound_source=False,focus_check=None):
-        actual,qualified,bank_policy,runtime,image,manifest,spec,path,history=bank_fixtures.QualifiedBankKernelTests.qualified_comparison(self)
+        bank_case=bank_fixtures.QualifiedBankKernelTests()
+        bank_case.root,bank_case.cgroup_root=self.root,self.cgroup_root
+        self.addCleanup(run_cleanups,bank_case)
+        actual,qualified,bank_policy,runtime,image,manifest,spec,path,history=bank_case.qualified_comparison()
         deadline=time.monotonic()+120
         project=self.root/'project';project.mkdir();(project/'AGENTS.md').write_text('Synthetic baseline.')
         project_settings=config.defaults();project_settings['harness_paths']=['AGENTS.md']

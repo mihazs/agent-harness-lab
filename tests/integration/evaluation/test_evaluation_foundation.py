@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 from dataclasses import replace
 import json
 import math
@@ -6,7 +7,6 @@ import os
 from pathlib import Path
 import random
 import tempfile
-import unittest
 from unittest.mock import patch
 
 import pytest
@@ -95,15 +95,11 @@ def test_seeded_null_simulation_false_promotions():
     assert upper <= .05  # Predeclared acceptable false-promotion rate.
 
 
-class TaskBankTests(unittest.TestCase):
-    """A synthetic two-task bank: one development task and one certification task.
+class TaskBank:
+    """A synthetic bank with one development and one certification task."""
 
-    test_bank_inspection, test_source_grouping and other modules instantiate this class and
-    call setUp and doCleanups directly, so it keeps that TestCase interface and holds no tests.
-    """
-
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+    def __init__(self, add_cleanup):
+        self.temp = tempfile.TemporaryDirectory(); add_cleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.tasks = []
         for i, partition in enumerate(('development','certification')):
@@ -124,9 +120,8 @@ class TaskBankTests(unittest.TestCase):
 
 @pytest.fixture
 def bank():
-    fixture = TaskBankTests(); fixture.setUp()
-    yield fixture
-    fixture.doCleanups()
+    with ExitStack() as cleanups:
+        yield TaskBank(cleanups.callback)
 
 
 def test_declared_reviewed_bank_remains_unqualified_and_detects_mutated_oracle(bank):

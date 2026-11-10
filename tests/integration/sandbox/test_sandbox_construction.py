@@ -1,4 +1,5 @@
 """Synthetic preparation role views and controller-owned authored declarations."""
+from contextlib import ExitStack
 import json
 import os
 from pathlib import Path
@@ -6,7 +7,6 @@ import subprocess
 import tempfile
 import time
 from types import SimpleNamespace
-import unittest
 from unittest.mock import Mock, patch
 
 import pytest
@@ -19,14 +19,13 @@ from agent_harness_lab.workflow import improve, watch_configuration
 from agent_harness_lab.evaluation.working_state import WorkingState
 from tests.integration.sandbox import test_sandbox_graders as fixtures
 from tests.integration.sandbox import test_sandbox_inference as wire
-from tests.support.unittest_cleanups import run_cleanups
 
 
 class Preparation(SimpleNamespace):
     """A synthetic baseline under tmp_path; authored() adds a controller-owned grader declaration."""
 
     def authored(self):
-        fixture = fixtures.SandboxedGraderTests(); fixture.setUp(); self.helpers.append(fixture)
+        fixture = fixtures.SandboxedGrader(self.cleanups.callback)
         path,manifest,_ = fixture.controls()
         for task in manifest['tasks']: task.pop('grader')
         path.write_text(json.dumps(manifest))
@@ -36,9 +35,8 @@ class Preparation(SimpleNamespace):
 @pytest.fixture
 def prep(tmp_path):
     baseline = tmp_path/'baseline'; baseline.mkdir(); (baseline/'AGENTS.md').write_text('synthetic baseline')
-    value = Preparation(root=tmp_path,deadline=time.monotonic()+10,baseline=baseline,helpers=[])
-    yield value
-    run_cleanups(*reversed(value.helpers))
+    with ExitStack() as cleanups:
+        yield Preparation(root=tmp_path,deadline=time.monotonic()+10,baseline=baseline,cleanups=cleanups)
 
 
 def test_views_exclude_raw_sources_prior_outcomes_and_event_identity(prep):
@@ -173,15 +171,11 @@ Path('result.json').write_text(json.dumps(dict(complete=good or task['split']=='
 '''
 
 
-class ControlledWorkflowTests(unittest.TestCase):
-    """A public improve run whose four roles use a synthetic controller transport and cooperative workers.
+class ControlledWorkflow:
+    """A public improve run with synthetic transport and cooperative workers."""
 
-    Many evaluation, workflow and kernel modules instantiate this class and call setUp, transport, execute,
-    run_controlled and doCleanups, so it keeps that TestCase interface and holds no tests.
-    """
-
-    def setUp(self):
-        self.fixture = fixtures.workflow_fixtures.WorkflowTests(); self.fixture.setUp(); self.addCleanup(run_cleanups, self.fixture)
+    def __init__(self, add_cleanup):
+        self.fixture = fixtures.workflow_fixtures.WorkflowTests(add_cleanup)
         self.root,self.project = self.fixture.root,self.fixture.project
         self.args = self.fixture.args(); self.args.agent = 'responses'
         self.args.cgroup_root = self.root/'delegation'; self.args.image_root = self.root/'image'
@@ -261,9 +255,8 @@ class ControlledWorkflowTests(unittest.TestCase):
 
 @pytest.fixture
 def controlled():
-    value = ControlledWorkflowTests(); value.setUp()
-    yield value
-    run_cleanups(value)
+    with ExitStack() as cleanups:
+        yield ControlledWorkflow(cleanups.callback)
 
 
 def test_all_roles_share_one_client_and_budget_without_exposing_candidates_to_author(controlled):

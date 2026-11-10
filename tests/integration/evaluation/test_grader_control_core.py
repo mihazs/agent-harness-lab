@@ -13,8 +13,7 @@ from tests.integration.evaluation import test_regression_controls as control_tes
 class TestGraderControlCore:
     @pytest.fixture(autouse=True)
     def _controls(self, tmp_path):
-        # emulate() asserts through the TestCase API, so it runs bound to a RegressionControlTests instance.
-        self.emulate = control_tests.RegressionControlTests().emulate
+        self.emulate = control_tests.emulate
         self.root = tmp_path; self.bundle = self.root/'oracle'; self.bundle.mkdir()
         self.expected = '{"count":3,"preserved":true}'
         (self.bundle/'expected.json').write_text(self.expected)

@@ -17,7 +17,6 @@ from agent_harness_lab.evaluation import benchmark, responses
 from agent_harness_lab.evaluation.plan import schedule
 from agent_harness_lab.evaluation.precision import preflight
 from tests.unit.evaluation import test_preservation_analysis as preservation
-from tests.integration.evaluation import test_trajectory_evaluation as runner_fixtures
 
 
 def plan(n=100, repeats=1):
@@ -109,10 +108,8 @@ class TestPrecision:
 
 class TestPrecisionRunner:
     @pytest.fixture(autouse=True)
-    def _trajectory(self):
-        self.f=runner_fixtures.TrajectoryEvaluationTests(); self.f.setUp()
-        yield
-        self.f.doCleanups()
+    def _trajectory(self, trajectory):
+        self.f = trajectory
 
     @pytest.mark.parametrize('target',[pytest.param(None,id='no-target'),pytest.param(.1,id='target-0.1')])
     def test_expired_inherited_deadline_preserves_budget_report_without_dispatch(self,target):

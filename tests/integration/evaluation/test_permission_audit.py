@@ -1,4 +1,5 @@
 """Synthetic kernel permission-result observations, never inference or task truth."""
+from contextlib import ExitStack
 import errno
 from unittest.mock import patch,Mock
 import os
@@ -17,7 +18,6 @@ from agent_harness_lab.evaluation import permission_audit as audit_module
 from agent_harness_lab.evaluation.permission_audit import PROFILE
 from agent_harness_lab.evaluation.sandbox import SandboxBackend,Limits
 from tests.integration.sandbox import test_sandbox_kernel as kernel
-from tests.support.unittest_cleanups import run_class_cleanups, run_cleanups
 
 
 kernel_only = pytest.mark.skipif(not kernel.ENABLED, reason='requires explicit delegated permission-audit kernel profile')
@@ -46,16 +46,15 @@ class PermissionKernelTests(kernel.KernelFixture):
 
 @pytest.fixture(scope='module')
 def kernel_scope():
-    PermissionKernelTests.setUpClass()
-    yield
-    run_class_cleanups(PermissionKernelTests)
+    with kernel.kernel_scope() as root:
+        yield root
 
 
 @pytest.fixture
 def case(kernel_scope):
-    value=PermissionKernelTests(); value.setUp()
-    yield value
-    run_cleanups(value)
+    with ExitStack() as cleanups:
+        value=PermissionKernelTests(); value.cgroup_root=kernel_scope; value.addCleanup=cleanups.callback
+        value.setUp(); yield value
 
 
 @kernel_only
@@ -276,7 +275,7 @@ print(r,flush=True)
 @kernel_only
 def test_actual_runner_keeps_task_success_separate_and_blocks_qualification(case):
     from tests.integration.evaluation.test_offline_evaluation import OfflineFixture, SOLVER
-    fixture=OfflineFixture();fixture.setUp();case.addCleanup(run_cleanups,fixture)
+    fixture=OfflineFixture(case.addCleanup)
     task=fixture.manifest['tasks'][1];fixture.manifest['tasks']=[task]
     fixture.manifest['grader_bundles']={task['id']:fixture.manifest['grader_bundles'][task['id']]}
     fixture.write_manifest()
@@ -296,15 +295,15 @@ def test_actual_runner_keeps_task_success_separate_and_blocks_qualification(case
 @kernel_only
 def test_actual_controlled_workflow_qualifies_all_four_roles(case):
     from tests.integration.sandbox import test_sandbox_construction as construction
-    original=construction.ControlledWorkflowTests.setUp;fixtures=[];runs=[];backends=[]
-    def setup(fixture):
-        original(fixture);fixture.args.permission_audit=PROFILE;fixtures.append(fixture)
+    original=construction.ControlledWorkflow.__init__;fixtures=[];runs=[];backends=[]
+    def setup(fixture, add_cleanup):
+        original(fixture, add_cleanup);fixture.args.permission_audit=PROFILE;fixtures.append(fixture)
     def factory(*args,**options):
         backend=SandboxBackend(*args,**options);backends.append(backend);execute=backend.run
         def capture(*args,**kwargs):
             run=execute(*args,**kwargs);runs.append((args[2],run));return run
         backend.run=capture;return backend
-    with patch.object(construction.ControlledWorkflowTests,'setUp',setup),patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=factory):
+    with patch.object(construction.ControlledWorkflow,'__init__',setup),patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=factory):
         kernel.ControlledWorkflowKernelTests.test_controlled_workflow_role_views_deny_source_key_candidate_and_prior_heldout_reads(case)
     report=json.loads((fixtures[0].args._run_output/'workflow.json').read_text())
     assert report['isolation_qualification']['qualification'] == 'qualified', report
@@ -329,7 +328,7 @@ def test_actual_controlled_workflow_qualifies_all_four_roles(case):
 def test_denied_proposer_or_author_stops_provider_continuation(case, role, constant, count):
     from tests.integration.sandbox import test_sandbox_construction as construction
     denied="import pathlib\ntry:pathlib.Path('/inputs/harness/AGENTS.md').write_text('bad')\nexcept OSError:pass\n"
-    fixture=construction.ControlledWorkflowTests();fixture.setUp();case.addCleanup(run_cleanups,fixture)
+    fixture=construction.ControlledWorkflow(case.addCleanup)
     fixture.args.permission_audit=PROFILE;fixture.args.cgroup_root=case.cgroup_root
     fixture.args.image_root=case.root/'image';fixture.args.image_sha256=case.backend.image.sha256
     fixture.args.disk_bytes=67108864;fixture.args.timeout=60
@@ -483,9 +482,8 @@ def test_monitor_rejects_wrong_controller_parent_before_read_or_launch():
 @pytest.fixture
 def inference_fixture():
     from tests.integration.sandbox import test_sandbox_inference as inference
-    fixture=inference.ControllerInferenceTests();fixture.setUp()
-    yield fixture
-    run_cleanups(fixture)
+    with ExitStack() as cleanups:
+        yield inference.ControllerInference(cleanups.callback)
 
 
 @pytest.mark.parametrize('observed', [pytest.param(observed, id=observed) for observed in ('violated','unknown','qualified')])
@@ -526,10 +524,9 @@ def test_known_private_audit_markers_cannot_be_exported_with_forged_labels(marke
 
 @pytest.fixture
 def responses_fixture():
-    from tests.integration.sandbox.test_sandbox_inference import ResponsesEvaluationTests
-    fixture=ResponsesEvaluationTests();fixture.setUp()
-    yield fixture
-    run_cleanups(fixture)
+    from tests.integration.sandbox.test_sandbox_inference import ResponsesEvaluation
+    with ExitStack() as cleanups:
+        yield ResponsesEvaluation(cleanups.callback)
 
 
 @pytest.mark.parametrize('requested, actual', [pytest.param(None, PROFILE, id='backend-only'),

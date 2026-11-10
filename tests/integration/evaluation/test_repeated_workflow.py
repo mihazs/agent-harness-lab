@@ -1,5 +1,5 @@
 """Fresh fixed-bank public improvement; synthetic transport, actual opt-in kernel workers."""
-from contextlib import redirect_stderr,redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from copy import copy
 import gc
 import hashlib
@@ -9,7 +9,7 @@ import os
 import shutil
 import time
 from pathlib import Path
-import unittest
+from types import SimpleNamespace
 from unittest.mock import patch,Mock
 
 import pytest
@@ -22,7 +22,6 @@ from agent_harness_lab.private_journal import encoded,record
 from tests.integration.sandbox import test_sandbox_kernel as kernel
 from tests.integration.sandbox import test_sandbox_construction as roles
 from tests.integration.workflow import test_workflow as workflow_fixture
-from tests.support.unittest_cleanups import run_class_cleanups,run_cleanups
 
 GRADER="""from pathlib import Path
 import json,sys
@@ -50,7 +49,7 @@ class PublicFixture:
         import agent_harness_lab
         expected=os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
         if expected:assert Path(agent_harness_lab.__file__).resolve().is_relative_to(Path(expected).resolve())
-        self.f=workflow_fixture.WorkflowTests();self.f.setUp();self.addCleanup(run_cleanups,self.f)
+        self.f=workflow_fixture.WorkflowTests(self.addCleanup)
         self.project=self.f.project
         self.bank=self.root/'bank';self.bank.mkdir()
         oracle=self.bank/'oracle';oracle.mkdir()
@@ -119,11 +118,12 @@ class PublicFixture:
         return code,result
 
 
-class RepeatedWorkflowAdmission(PublicFixture,unittest.TestCase):
+class RepeatedWorkflowAdmission(PublicFixture):
     """Hosts PublicFixture without kernel workers for the admission cases below; it defines no tests."""
 
-    def setUp(self):
+    def __init__(self, add_cleanup):
         import tempfile
+        self.addCleanup=add_cleanup
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name);self.cgroup_root=self.root/'no-cgroup';self.configure()
 
@@ -136,9 +136,9 @@ class RepeatedWorkflowAdmission(PublicFixture,unittest.TestCase):
         proposer=("from pathlib import Path\nimport json\nPath('candidate/AGENTS.md').write_text('good\\n')\n"+nested+
             "Path('proposal.json').write_text(json.dumps(dict(status='candidate',mechanisms=['synthetic'],falsifiers=['artifact'],"
             "instruction_plan="+repr(plan)+")))\n")
-        helper=roles.ControlledWorkflowTests();helper.root=self.root;helper.roles=[]
+        helper=SimpleNamespace(root=self.root,roles=[])
         backend=Mock(permission_audit=None);backend.capability.return_value=dict(status='available')
-        backend.run.side_effect=helper.execute
+        backend.run.side_effect=roles.ControlledWorkflow.execute.__get__(helper)
         def execute(request,*args):
             self.compared=True
             if drift:(self.project/'app/AGENTS.md').write_text('Synthetic drifted guidance.\n')
@@ -159,9 +159,8 @@ class RepeatedWorkflowAdmission(PublicFixture,unittest.TestCase):
 
 @pytest.fixture
 def admission():
-    value=RepeatedWorkflowAdmission();value.setUp()
-    yield value
-    run_cleanups(value)
+    with ExitStack() as cleanups:
+        yield RepeatedWorkflowAdmission(cleanups.callback)
 
 
 @pytest.mark.parametrize('index, malform', [
@@ -191,9 +190,9 @@ def test_unmet_precision_blocks_before_probe_key_and_model(admission):
 
 
 def test_fully_labeled_cooperative_backend_cannot_seal_a_comparison(admission):
-    helper=roles.ControlledWorkflowTests();helper.root=admission.root;helper.roles=[]
+    helper=SimpleNamespace(root=admission.root,roles=[])
     backend=Mock(permission_audit=None);backend.capability.return_value=dict(status='available')
-    backend.run.side_effect=helper.execute
+    backend.run.side_effect=roles.ControlledWorkflow.execute.__get__(helper)
     with patch.object(roles,'EXECUTOR',EXECUTOR),patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=backend):
         code,result=admission.invoke(admission.root/'image','a'*64,admission.root/'output')
     assert (code,result['status']) == (1,'incomplete'), result
@@ -447,16 +446,15 @@ class RepeatedWorkflowKernel(PublicFixture,kernel.KernelFixture):
 
 @pytest.fixture(scope='module')
 def kernel_scope():
-    RepeatedWorkflowKernel.setUpClass()
-    yield
-    run_class_cleanups(RepeatedWorkflowKernel)
+    with kernel.kernel_scope() as root:
+        yield root
 
 
 @pytest.fixture
 def kernel_case(kernel_scope):
-    value=RepeatedWorkflowKernel();value.setUp()
-    yield value
-    run_cleanups(value)
+    with ExitStack() as cleanups:
+        value=RepeatedWorkflowKernel(); value.cgroup_root=kernel_scope; value.addCleanup=cleanups.callback
+        value.setUp(); yield value
 
 
 @kernel_only

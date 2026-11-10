@@ -1,4 +1,5 @@
 """Owned permission-wire/source composition; actual workers, synthetic tasks only."""
+from contextlib import ExitStack
 import os
 import signal
 import gc
@@ -17,7 +18,6 @@ from agent_harness_lab.sources.controller import SourceSink
 from agent_harness_lab.sources.schema import digest
 from tests.integration.sandbox import test_sandbox_kernel as kernel
 from tests.integration.sandbox import test_sandbox_inference as inference_fixtures
-from tests.support.unittest_cleanups import run_class_cleanups, run_cleanups
 
 
 
@@ -71,7 +71,7 @@ class CompositionHost(kernel.KernelFixture):
         return sink,capture,saved
 
     def run_actual(self):
-        fixture=inference_fixtures.ResponsesEvaluationTests(); fixture.setUp(); self.addCleanup(run_cleanups,fixture)
+        fixture=inference_fixtures.ResponsesEvaluation(self.addCleanup)
         task=next(row for row in fixture.fixture.manifest['tasks'] if row['id']=='adversarial-input')
         fixture.fixture.manifest['tasks']=[task]
         fixture.fixture.manifest['grader_bundles']={task['id']:fixture.fixture.manifest['grader_bundles'][task['id']]}
@@ -108,16 +108,15 @@ kernel_only=pytest.mark.skipif(not kernel.ENABLED,reason='explicit delegated ker
 
 @pytest.fixture(scope='module')
 def kernel_scope():
-    CompositionHost.setUpClass()
-    yield
-    run_class_cleanups(CompositionHost)
+    with kernel.kernel_scope() as root:
+        yield root
 
 
 @pytest.fixture
 def case(kernel_scope):
-    value=CompositionHost();value.setUp()
-    yield value
-    run_cleanups(value)
+    with ExitStack() as cleanups:
+        value=CompositionHost(); value.cgroup_root=kernel_scope; value.addCleanup=cleanups.callback
+        value.setUp(); yield value
 
 
 @kernel_only

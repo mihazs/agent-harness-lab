@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import tempfile
 from types import SimpleNamespace
-import unittest
+from contextlib import ExitStack
 from unittest.mock import Mock, patch
 
 import agent_harness_lab
@@ -15,7 +15,6 @@ from agent_harness_lab.evaluation.integrity import digest
 from agent_harness_lab.evaluation.regression_controls import audit
 from tests.integration.evaluation.test_regression_proposals import proposal
 from tests.support.optional_pytest import pytest
-from tests.support.unittest_cleanups import run_cleanups
 
 
 def make_draft(root, image_sha256='e' * 64):
@@ -37,27 +36,30 @@ def make_draft(root, image_sha256='e' * 64):
     return source, draft
 
 
-class RegressionControlTests(unittest.TestCase):
-    """Hosts the draft, fake backend and emulate() that other modules reuse; it defines no tests of its own."""
+def emulate(argv, workspace, inputs, role, limits):
+    assert role == 'grader'; assert set(inputs) == {'oracle', 'fixture'}
+    translated = [arg.replace('/inputs/oracle', str(inputs['oracle'])).replace('/inputs/fixture', str(inputs['fixture'])) for arg in argv]
+    run = subprocess.run(translated, cwd=workspace, env={'PATH':'/usr/bin:/bin'}, capture_output=True, text=True, timeout=limits.seconds)
+    return dict(status='completed' if run.returncode == 0 else 'failed', exit_code=run.returncode,
+        stdout=run.stdout, stderr=run.stderr, inputs_unchanged=True,
+        attestation=dict(backend='bubblewrap-offline-v1', role='grader', network='none',
+            aggregate_disk_bound_verified=True, cgroup_v2={'empty_after_cleanup':True},
+            runtime_image=dict(sha256='e'*64, verified_before=True, verified_after=True)))
 
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+
+class RegressionControl:
+    """Synthetic draft and fake backend for regression controls."""
+
+    emulate = staticmethod(emulate)
+
+    def __init__(self, add_cleanup):
+        self.temp = tempfile.TemporaryDirectory(); add_cleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.source, self.draft = make_draft(self.root)
         self.output = self.root/'review'
         self.backend = SimpleNamespace(cgroup_root=self.root/'cgroup', disk_bytes=64*1024*1024,
             image=SimpleNamespace(root=self.root/'image', sha256='e'*64),
-            capability=Mock(return_value={'status':'available'}), run=Mock(side_effect=self.emulate))
-
-    def emulate(self, argv, workspace, inputs, role, limits):
-        self.assertEqual(role, 'grader'); self.assertEqual(set(inputs), {'oracle', 'fixture'})
-        translated = [arg.replace('/inputs/oracle', str(inputs['oracle'])).replace('/inputs/fixture', str(inputs['fixture'])) for arg in argv]
-        run = subprocess.run(translated, cwd=workspace, env={'PATH':'/usr/bin:/bin'}, capture_output=True, text=True, timeout=limits.seconds)
-        return dict(status='completed' if run.returncode == 0 else 'failed', exit_code=run.returncode,
-            stdout=run.stdout, stderr=run.stderr, inputs_unchanged=True,
-            attestation=dict(backend='bubblewrap-offline-v1', role='grader', network='none',
-                aggregate_disk_bound_verified=True, cgroup_v2={'empty_after_cleanup':True},
-                runtime_image=dict(sha256='e'*64, verified_before=True, verified_after=True)))
+            capability=Mock(return_value={'status':'available'}), run=Mock(side_effect=emulate))
 
     def run_audit(self, **kwargs):
         return audit(self.source, self.draft, self.output, self.backend, **kwargs)
@@ -69,12 +71,8 @@ class RegressionControlTests(unittest.TestCase):
 
 @pytest.fixture
 def case():
-    value = RegressionControlTests()
-    try:
-        value.setUp()
-        yield value
-    finally:
-        run_cleanups(value)
+    with ExitStack() as cleanups:
+        yield RegressionControl(cleanups.callback)
 
 
 def test_complete_frozen_controls_pass_without_admission_or_historical_verification(case):

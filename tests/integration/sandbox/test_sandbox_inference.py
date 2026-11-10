@@ -8,12 +8,11 @@ import subprocess
 import tempfile
 import time
 from types import SimpleNamespace
-import unittest
+from contextlib import ExitStack
 from unittest.mock import MagicMock, Mock, patch
 from agent_harness_lab.evaluation import responses
 # derivation_raw_assessment.py, run with python -m unittest, imports call, message and reply from here.
 from tests.support.optional_pytest import pytest
-from tests.support.unittest_cleanups import run_cleanups
 
 
 def call(ident='one', **changes):
@@ -32,15 +31,11 @@ def reply(output):
     return json.dumps(dict(status='completed',output=output,usage=dict(input_tokens=5,output_tokens=2,total_tokens=7))).encode()
 
 
-class ControllerInferenceTests(unittest.TestCase):
-    """Owner-only synthetic controller settings and a credential in a temporary directory.
+class ControllerInference:
+    """Owner-only synthetic controller settings and a temporary credential."""
 
-    Analysis, controller-action and permission-audit modules instantiate this class and call setUp, client and
-    doCleanups, so it keeps that TestCase interface and holds no tests.
-    """
-
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+    def __init__(self, add_cleanup):
+        self.temp = tempfile.TemporaryDirectory(); add_cleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.key = self.root/'synthetic-key'; self.key.write_text('SYNTHETIC_CONTROLLER_KEY\n'); self.key.chmod(0o600)
         self.settings = dict(schema_version=1,model='synthetic-model',credential_file=str(self.key),max_requests=3,
@@ -55,9 +50,8 @@ class ControllerInferenceTests(unittest.TestCase):
 
 @pytest.fixture
 def controller():
-    value = ControllerInferenceTests(); value.setUp()
-    yield value
-    run_cleanups(value)
+    with ExitStack() as cleanups:
+        yield ControllerInference(cleanups.callback)
 
 
 @pytest.mark.parametrize('changes', [
@@ -225,16 +219,12 @@ def test_receipt_reserves_before_dispatch_and_preserves_ambiguous_request(contro
     assert 'SYNTHETIC_CONTROLLER_KEY' not in json.dumps(receipts)
 
 
-class ResponsesEvaluationTests(unittest.TestCase):
-    """An offline paired evaluation that runs the responses agent through a synthetic controller transport.
+class ResponsesEvaluation:
+    """Offline paired evaluation using a synthetic controller transport."""
 
-    Many evaluation, source and permission-audit modules instantiate this class and call setUp, transport,
-    execute and doCleanups, so it keeps that TestCase interface and holds no tests.
-    """
-
-    def setUp(self):
+    def __init__(self, add_cleanup):
         from tests.integration.evaluation import test_offline_evaluation as fixtures
-        self.fixture = fixtures.OfflineFixture(); self.fixture.setUp(); self.addCleanup(run_cleanups, self.fixture)
+        self.fixture = fixtures.OfflineFixture(add_cleanup)
         self.root,self.runner,self.args = self.fixture.root,self.fixture.runner,self.fixture.args
         self.args.agent = 'responses'; self.args.cgroup_root = self.root/'delegation'
         self.args.image_root = self.root/'image'; self.args.image_sha256 = 'a'*64; self.args.disk_bytes = 65536
@@ -279,9 +269,8 @@ class ResponsesEvaluationTests(unittest.TestCase):
 
 @pytest.fixture
 def evaluation():
-    value = ResponsesEvaluationTests(); value.setUp()
-    yield value
-    run_cleanups(value)
+    with ExitStack() as cleanups:
+        yield ResponsesEvaluation(cleanups.callback)
 
 
 def test_actual_paired_controller_path_executes_both_arms_and_regrades_final_artifacts(evaluation):

@@ -1,5 +1,6 @@
 """Describe actual analysis work and evidence gaps without granting edit authority."""
 from collections import Counter
+from .exit_guidance import REMEDIATION
 
 
 def summarize(data):
@@ -89,13 +90,13 @@ def summarize(data):
         caveats.append('Some timestamp metadata is invalid; capture order is retained.')
     if not events and not outcomes and not (caveats and data.get('sources')):
         state = 'empty'
-        action = 'Run ahl improve . for current-source inspection, or supply an authorized capture with --events PATH.'
+        action = REMEDIATION['no_data']
     elif caveats:
         state = 'incomplete'
-        action = 'Review caveats in analysis.json; restore missing coverage or remove explicit limits before interpreting absence of findings.'
+        action = REMEDIATION['analysis_incomplete']
     else:
         state = 'observed'
-        action = 'Run ahl improve . to inspect current contracts and evaluate supported candidates.'
+        action = REMEDIATION['analysis_observed']
     return dict(schema_version=1, profile='ahl-analysis-execution-v1',
                 evidence_state=state, events=events, cases=analysis['cases'],
                 reported_roots=roots, findings=len(analysis['findings']),

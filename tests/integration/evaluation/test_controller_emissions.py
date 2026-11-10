@@ -154,7 +154,7 @@ class TestControllerEmissions:
         assert responses.ActionLedger('').text(None,8192) == dict(text=None,visibility='unavailable',observed_text_utf8_bytes=None)
 
     def test_actual_paired_runner_retains_emissions_without_grading_text_as_success(self):
-        fixture = fixtures.ResponsesEvaluationTests(); fixture.setUp(); self.cleanups.callback(fixture.doCleanups)
+        fixture = fixtures.ResponsesEvaluation(self.cleanups.callback)
         def transport(*args):
             value = json.loads(fixture.transport(*args))
             for item in value['output']:

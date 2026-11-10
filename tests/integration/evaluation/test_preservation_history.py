@@ -5,7 +5,7 @@ import json
 import shutil
 import time
 from types import SimpleNamespace
-import unittest
+from contextlib import ExitStack
 from unittest.mock import patch
 
 import pytest
@@ -15,14 +15,13 @@ from agent_harness_lab.private_journal import record
 from agent_harness_lab.evaluation import oracle_history as controller,cohort_history
 from agent_harness_lab.evaluation.sandbox import SandboxBackend
 from tests.integration.evaluation import test_preservation_cohorts as core
-from tests.support.unittest_cleanups import run_cleanups
 
 
-class PreservationHistoryTests(unittest.TestCase):
+class PreservationHistory:
     """Hosts the cohort-pinned history fixture that other modules build on; it defines no tests of its own."""
 
-    def setUp(self):
-        self.core=core.PreservationCohortTests(); self.core.setUp(); self.addCleanup(run_cleanups,self.core)
+    def __init__(self, cleanups):
+        self.core=core.PreservationCohort(cleanups.callback)
         self.f=self.core.fixture
         self.f.baseline=self.f.candidate
         next_candidate=self.f.root/'next-candidate'; shutil.copytree(self.f.candidate,next_candidate)
@@ -38,12 +37,8 @@ class PreservationHistoryTests(unittest.TestCase):
 
 @pytest.fixture
 def history():
-    case=PreservationHistoryTests()
-    try:
-        case.setUp()
-        yield case
-    finally:
-        run_cleanups(case)
+    with ExitStack() as cleanups:
+        yield PreservationHistory(cleanups)
 
 
 def test_same_store_membership_freezes_before_dispatch_and_stays_private(history):

@@ -182,7 +182,7 @@ class BankQualificationBoundaryTests(unittest.TestCase):
 
 
 @unittest.skipUnless(kernel.ENABLED,'explicit delegated kernel profile required')
-class QualifiedBankKernelTests(kernel.KernelFixture):
+class QualifiedBankKernelTests(kernel.UnittestKernelFixture):
     def qualified_comparison(self):
         from tests.integration.evaluation.test_author_bank_conversion import native_qualified_bank
         from tests.integration.sandbox import test_sandbox_construction as roles
