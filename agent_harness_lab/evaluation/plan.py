@@ -29,6 +29,7 @@ class ExperimentSpec:
     sequential: dict | None = None
     root_similarity_sha256: str | None = None
     resource_contract_sha256: str | None = None
+    resource_quality_policy_sha256: str | None = None
 
     def validate(self):
         if not self.tasks or self.profile not in ('descriptive_smoke', 'certification'):
@@ -80,6 +81,10 @@ class ExperimentSpec:
         if resource is not None and (not isinstance(resource,str) or len(resource)!=64
                 or any(c not in '0123456789abcdef' for c in resource)):
             raise ValueError('resource contract requires an exact lowercase SHA-256')
+        quality = self.resource_quality_policy_sha256
+        if quality is not None and (self.resource_contract_sha256 is None or not isinstance(quality,str)
+                or len(quality)!=64 or any(c not in '0123456789abcdef' for c in quality)):
+            raise ValueError('resource quality policy requires a pinned contract and exact lowercase SHA-256')
 
     def to_dict(self):
         value = asdict(self)
@@ -88,6 +93,7 @@ class ExperimentSpec:
         if self.sequential is None: value.pop('sequential')
         if self.root_similarity_sha256 is None: value.pop('root_similarity_sha256')
         if self.resource_contract_sha256 is None: value.pop('resource_contract_sha256')
+        if self.resource_quality_policy_sha256 is None: value.pop('resource_quality_policy_sha256')
         return value
 
     @property
