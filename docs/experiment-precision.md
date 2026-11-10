@@ -129,7 +129,7 @@ Carlo results, not coverage guarantees for real tasks. The interval also does
 not account for selecting among candidates; candidate-count multiplicity is
 separate work.
 
-Simulated roots are independent by construction, so the result says nothing about
+The power simulator's roots are independent by construction, so its result says nothing about
 real task dependence. No worker, model or grader runs, nothing is observed,
 certified or adopted, and the plan, margins, method and budgets are unchanged. A
 low supported rate is not evidence of noninferiority. The report stays private
