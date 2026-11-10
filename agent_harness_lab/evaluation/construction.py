@@ -120,6 +120,8 @@ Only run(argv) is available. The controller freezes inputs, grades offline and o
     if bank_qualification:
         instructions = instructions.replace('Keep all fixture/control directories disjoint from every grader bundle.',
             'Keep task fixtures and grader_self_tests directories disjoint from every grader bundle.')
+        instructions = instructions.replace('covering development, regression and heldout.',
+            'all with split heldout; do not create development or regression tasks.')
         instructions += ('\nFor each heldout task, include controls.json inside its frozen grader bundle. '
             'It must list exactly five objects with state and fixture fields, one for each of broken, partial, '
             'complete, alternative_valid and superficial; fixture paths are relative to the bundle. '

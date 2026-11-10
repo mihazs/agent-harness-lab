@@ -188,7 +188,7 @@ def _state(path):
             if ident in state['derivations']: raise ValueError('ambiguous construction identity')
             fields(entry,'profile state role parent_construction_id parent_assets input_binding_sha256 children output_binding_sha256')
             sha256(entry['input_binding_sha256'])
-            if entry['profile']!=CONSTRUCTION_PROFILE or entry['role'] not in ('proposer','evaluator_author') or entry['state'] not in ('pending','complete','unresolved'):
+            if entry['profile']!=CONSTRUCTION_PROFILE or entry['role'] not in ('proposer','evaluator_author','final_bank_author') or entry['state'] not in ('pending','complete','unresolved'):
                 raise ValueError('invalid canonical construction state/role')
             for key in ('parent_assets','children'): _assets(entry[key])
             parent=entry['parent_construction_id']
@@ -202,7 +202,7 @@ def _state(path):
                     raise ValueError('canonical feedback requires an actual completed author source')
             if entry['state']=='complete':
                 sha256(entry['output_binding_sha256'])
-                if (entry['role']=='evaluator_author') != bool(entry['children']):
+                if (entry['role'] in ('evaluator_author','final_bank_author')) != bool(entry['children']):
                     raise ValueError('only authored scientific output supplies child assets')
             elif entry['children'] or entry['output_binding_sha256'] is not None:
                 raise ValueError('incomplete construction cannot claim output')
@@ -259,11 +259,12 @@ def _save(path, state, *, deadline=None,before_publish=None):
 def reserve(path, binding,*,deadline=None):
     _binding(binding)
     with _locked(path) as (path, state):
-        _managed_available(state,binding['assets'])
         if 'bank_qualification' in binding:
             if str(path)!=binding['access_ledger']:raise ValueError('qualified bank access controller changed')
             from .bank_qualification import access_guard
-            access_guard(binding,state,deadline=deadline)
+            final_author=access_guard(binding,state,deadline=deadline)
+            _managed_available(state,binding['assets'],final_author=final_author)
+        else:_managed_available(state,binding['assets'])
 
         if (set(binding['assets']) & set(state['observed_assets'])
                 or any(set(binding['assets']) & set(e['binding']['assets']) for e in state['reservations'].values())):
@@ -290,7 +291,6 @@ def admit(path, assets, run_id, *, ident=None, binding=None,deadline=None):
                 raise ValueError('known protected assets require their reservation; retirement cannot be bypassed')
             for asset in assets: state['observed_assets'].setdefault(asset, run_id)
         else:
-            _managed_available(state,assets)
             entry=state['reservations'].get(ident)
             if entry is not None and entry['binding'].get('bank_qualification',{}).get('renewal') is not None:
                 stored=deepcopy(entry['binding'])
@@ -300,7 +300,9 @@ def admit(path, assets, run_id, *, ident=None, binding=None,deadline=None):
             if 'bank_qualification' in binding:
                 if str(path)!=binding['access_ledger']:raise ValueError('qualified bank access controller changed')
                 from .bank_qualification import access_guard
-                access_guard(binding,state,reservation_id=ident,deadline=deadline)
+                final_author=access_guard(binding,state,reservation_id=ident,deadline=deadline)
+                _managed_available(state,assets,final_author=final_author)
+            else:_managed_available(state,assets)
 
             entry = state['reservations'].get(ident)
             if entry is None or entry['binding'] != binding or entry['state'] != 'reserved':
@@ -317,12 +319,12 @@ def admit(path, assets, run_id, *, ident=None, binding=None,deadline=None):
     return handle, receipt
 
 
-def _managed_available(state,assets):
-    for entry in [*state.get('derivations',{}).values(),*state.get('constructions',{}).values()]:
+def _managed_available(state,assets,*,final_author=None):
+    for ident,entry in [*state.get('derivations',{}).items(),*state.get('constructions',{}).items()]:
 
         if entry['state']!='complete':
             raise ValueError('managed access blocked by pending or unresolved owned derivation')
-        if set(assets)&set(entry['children']):
+        if set(assets)&set(entry['children']) and not (ident==final_author and entry.get('role')=='final_bank_author'):
             raise ValueError('known may-derived development assets cannot receive fresh managed access')
 
 
@@ -376,7 +378,7 @@ def _finish(path,index,ident,input_pin,children,output_pin):
         entry=state.get(index,{}).get(ident)
         if entry is None or entry['state']!='pending' or entry['input_binding_sha256']!=input_pin:
             raise ValueError('construction transaction is not the actual pending invocation')
-        if children is not None and (index=='derivations' or entry['role']=='evaluator_author') and not children:
+        if children is not None and (index=='derivations' or entry['role'] in ('evaluator_author','final_bank_author')) and not children:
             raise ValueError('actual scientific output assets required')
         if children and index=='constructions' and entry['role']=='proposer':
             raise ValueError('proposal cannot claim authored scientific output')
@@ -387,7 +389,7 @@ def _finish(path,index,ident,input_pin,children,output_pin):
 
 def begin_construction(path,role,input_pin,*,parent=None,parents=None):
     sha256(input_pin); parents=[] if parents is None else parents; _assets(parents)
-    if role not in ('proposer','evaluator_author'): raise ValueError('unsupported canonical construction role')
+    if role not in ('proposer','evaluator_author','final_bank_author'): raise ValueError('unsupported canonical construction role')
     with _locked(path) as (path,state):
         for entry in [*state.get('derivations',{}).values(),*state.get('constructions',{}).values()]:
             if entry['state']!='complete': raise ValueError('canonical construction requires unresolved work to be reconciled')

@@ -34,13 +34,13 @@ def require_held_out_controls(case, inputs):
     return read(case/'heldout', inputs['heldout_sha256'])
 
 
-def require_author_boundary(case,inputs,deadline=None):
-    try:return _author_boundary(case,inputs,deadline)
+def require_author_boundary(case,inputs,deadline=None,state=None):
+    try:return _author_boundary(case,inputs,deadline,state)
     except (ValueError,OSError,KeyError,TypeError) as error:
         raise HeldoutUnavailable('held-out author boundary custody unavailable or changed') from error
 
 
-def _author_boundary(case,inputs,deadline):
+def _author_boundary(case,inputs,deadline,state):
     if inputs.get('schema_version')!=4:
         raise HeldoutUnavailable('held-out author boundary custody unavailable')
     from .oracle_history import HistoryStore
@@ -48,10 +48,11 @@ def _author_boundary(case,inputs,deadline):
     custody=inputs['author_custody']
     fields(custody,'history_store construction_id output_sha256 proof_sha256 bank_sha256 heldout_sha256 intake_bank_sha256')
     history=HistoryStore(custody['history_store'])
-    entry=construction_record(history.access_ledger().path,custody['construction_id'])
+    entry=(construction_record(history.access_ledger().path,custody['construction_id']) if state is None
+           else state.get('constructions',{}).get(custody['construction_id']))
     output,pin=record(history.root/'constructions'/custody['construction_id']/'output.json',8*1024*1024)
     proof=output.get('closed_input',{}).get('proof')
-    if (entry['state']!='complete' or entry['role']!='evaluator_author' or entry['output_binding_sha256']!=pin
+    if (not isinstance(entry,dict) or entry['state']!='complete' or entry['role']!='final_bank_author' or entry['output_binding_sha256']!=pin
             or pin!=custody['output_sha256'] or hashed(proof)!=custody['proof_sha256']
             or custody['intake_bank_sha256']!=inputs['bank_sha256'] or custody['heldout_sha256']!=inputs['heldout_sha256']
             or not isinstance(proof,dict) or proof.get('role')!='evaluator_author' or proof.get('boundary_required') is not True
@@ -237,7 +238,9 @@ def exposure_check(store,case,state,*,reservation_id=None):
     from .certification_access import _managed_available
     from .oracle_history import HistoryStore
     spec,_=record(case/'declaration.json');history=HistoryStore(spec['history_store'])
-    assets=bank_assets(case/'bank/bank.json');_managed_available(state,assets)
+    inputs,_=record(case/'inputs.json')
+    custody=require_author_boundary(case,inputs,state=state)
+    assets=bank_assets(case/'bank/bank.json');_managed_available(state,assets,final_author=custody['construction_id'])
     selected=set(assets);snapshot=deepcopy(state)
     if reservation_id is not None:snapshot['reservations'].pop(reservation_id,None)
     if selected&set(snapshot['observed_assets']) or any(selected&set(e['binding']['assets']) for e in snapshot['reservations'].values()):
@@ -387,7 +390,7 @@ def qualify(store,case_id,request_path,signature_path,*,budget_seconds=30):
         return summary(store,case_id,deadline=deadline)
 
 
-def revision_metadata(path,*,deadline=None):
+def revision_metadata(path,*,deadline=None,state=None):
     from .regression_review import ReviewStore
     path=authority._path(path)
     if path.name!='bank.json' or path.parent.parent.name!='revisions':raise ValueError('original bank revision path required')
@@ -403,7 +406,7 @@ def revision_metadata(path,*,deadline=None):
             or directory_modes(path.parent)!=descriptor['directory_modes'] or payload_tree(path.parent)!=descriptor['tree_sha256'] or record(path,1024*1024)[1]!=descriptor['bank_manifest_sha256']):
         raise ValueError('qualified bank revision changed')
     case,inputs,events=opened(store,descriptor['case_id']);controls=require_held_out_controls(case,inputs)
-    require_author_boundary(case,inputs,deadline)
+    require_author_boundary(case,inputs,deadline,state)
     observed,pin=evidence(store,case,events)
     require_heldout_audit(observed,inputs,controls)
     qualified=next((e for e,_ in events if e['kind']=='bank_qualified'),None)
@@ -427,6 +430,7 @@ def revision_metadata(path,*,deadline=None):
         qualification='qualified_under_protocol',protocol=PROTOCOL,qualification_event_sha256=next(pin for e,pin in events if e is qualified),
         case_id=descriptor['case_id'],review_store=str(store.root),history_store=descriptor['history_store'],
         exposure_epoch=review['exposure_epoch'],assets=observed['assets'],image_sha256=observed['image_sha256'],
+        final_author_construction_id=inputs['author_custody']['construction_id'],
         independence='trusted_review_judgment',external_exposure='unknown',pretraining_exposure='unknown',publication_allowed=False)
 
 
@@ -442,17 +446,20 @@ def access_guard(binding,state,*,reservation_id=None,deadline=None):
     qualification=binding.get('bank_qualification')
     if qualification is None:return
     from .bank_requalification import access_guard as renewal_guard
-    if renewal_guard(binding,state,reservation_id=reservation_id,deadline=deadline):return
-    path=Path(qualification['bank_path']);actual=revision_metadata(path,deadline=deadline)
+    if renewal_guard(binding,state,reservation_id=reservation_id,deadline=deadline):
+        return qualification['metadata']['final_author_construction_id']
+    path=Path(qualification['bank_path']);actual=revision_metadata(path,deadline=deadline,state=state)
     if not actual['current_eligible'] or actual!=qualification['metadata']:
         raise ValueError('protected bank qualification is stale or revoked')
     if actual['history_store']!=str(Path(binding['access_ledger']).parent):raise ValueError('qualified bank belongs to another history controller')
     from .regression_review import ReviewStore
     store=ReviewStore(actual['review_store']);case=store.case(actual['case_id'])
-    epoch,_=exposure_check(store,case,state,reservation_id=reservation_id)
+    epoch,assets=exposure_check(store,case,state,reservation_id=reservation_id)
+    if assets!=binding['assets']:raise ValueError('qualified bank assets differ from reservation')
     if epoch!=actual['exposure_epoch']:raise ValueError('qualified exposure epoch changed')
     from .certification_access import check_deadline
     check_deadline(deadline)
+    return actual['final_author_construction_id']
 
 
 def main(argv=None):

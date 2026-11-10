@@ -134,6 +134,10 @@ rejects changed control artifact bytes found in an author input or output; this
 byte comparison does not detect transformed or previously disclosed information.
 Replay checks the construction ledger, native seal, source assets, frozen bank
 and control bytes before conditional signed review or qualification.
+The dedicated final-author ledger role accepts held-out tasks only and closes the
+workflow to later role dispatch and feedback. Only its own verified construction
+is excluded from the development-asset check; matching ordinary development
+assets, prior observations and reservations remain disqualifying.
 
 Descriptive audits remain available and do not confer certification or automatic
 promotion authority. The controlled author workflow requires its configured model;

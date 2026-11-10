@@ -302,7 +302,7 @@ def access_guard(binding,state,*,reservation_id=None,deadline=None):
     if renewal is None:
         if consumed:raise ValueError('bank has a consumed conditional access intent')
         return False
-    metadata=bankq.revision_metadata(path,deadline=deadline)
+    metadata=bankq.revision_metadata(path,deadline=deadline,state=state)
     if (renewal.get('profile')!=PROFILE or renewal.get('review_store')!=str(store.root)
             or renewal.get('case_id')!=metadata['case_id'] or reservation_id!=renewal.get('reservation_id')
             or not consumed or consumed[-1][0]['payload'].get('renewal')!=renewal
@@ -318,7 +318,8 @@ def access_guard(binding,state,*,reservation_id=None,deadline=None):
     if (payload['static_parent']!=metadata or review['static_parent']!=metadata
             or ledger.hashed({**binding,'bank_qualification':{key:value for key,value in qualification.items() if key!='renewal'}})!=payload['binding_sha256']):
         raise ValueError('conditional bank static parent or final binding changed')
-    epoch,_=bankq.exposure_check(store,case,state,reservation_id=reservation_id)
+    epoch,assets=bankq.exposure_check(store,case,state,reservation_id=reservation_id)
+    if assets!=binding['assets']:raise ValueError('renewed bank assets differ from reservation')
     if epoch!=payload['exposure_epoch']:raise ValueError('conditional bank exposure epoch changed')
     ledger.check_deadline(deadline)
     return True
