@@ -6,6 +6,8 @@ from weakref import WeakKeyDictionary
 from .comparison_custody import current, hashed
 
 _LIVE = WeakKeyDictionary()
+_PREPARED = WeakKeyDictionary()
+_COMPLETED = WeakKeyDictionary()
 
 
 def _owned(comparison, client):
@@ -96,3 +98,46 @@ def summarize_current_trial_usage(*, public=False):
                 cached_input_included_in_input=True, cache_write_tokens=None,
                 source='provider_reported_unverified', trial_completion='unverified', billing_completeness='unknown',
                 publication='private', publication_allowed=False, certification_authority=False, automatic_promotion=False)
+
+
+def _prepare_completion(comparison, row):
+    """Snapshot the active trial; no completed view exists until custody commits it."""
+    if not _owned(comparison, comparison.client): return None
+    receipt = current_trial_usage()
+    summary = summarize_current_trial_usage()
+    scheduled = comparison.active['scheduled']
+    observed = [item['request_ordinal'] for item in receipt['requests']]
+    bound = (receipt['unobserved_attempts'] == 0 and observed == comparison.active['requests']
+             and receipt['request_attempts'] == len(observed))
+    token = object()
+    _PREPARED[comparison] = dict(token=token, pid=os.getpid(), trial=hashed(scheduled), row=hashed(row),
+                                 summary=summary, request_coverage='matched' if bound else 'unknown')
+    return token
+
+
+def _commit_completion(comparison, token):
+    staged = _PREPARED.pop(comparison, None)
+    if (staged is None or staged['token'] is not token or staged['pid'] != os.getpid()
+            or current() is not comparison or comparison.active is not None or not comparison._valid()
+            or not comparison.rows): return
+    completed = comparison.rows[-1]
+    if completed['trial_sha256'] != staged['row'] or hashed(completed['custody']['scheduled']) != staged['trial']:
+        return
+    _COMPLETED[comparison] = dict(pid=os.getpid(), trial=staged['trial'], row=staged['row'],
+                                  summary=staged['summary'], request_coverage=staged['request_coverage'])
+
+
+def latest_completed_trial_usage(*, public=False):
+    """Return the latest live custody-accepted trial summary, never a durable receipt."""
+    if public is not False: raise ValueError('completed trial usage is private')
+    comparison = current()
+    if (comparison is None or comparison.active is not None or not comparison._valid() or not comparison.rows):
+        raise ValueError('live completed comparison trial required')
+    value = _COMPLETED.get(comparison)
+    if (value is None or value['pid'] != os.getpid() or comparison.rows[-1]['trial_sha256'] != value['row']
+            or hashed(comparison.rows[-1]['custody']['scheduled']) != value['trial']):
+        raise ValueError('live completed trial usage unavailable')
+    summary = deepcopy(value['summary'])
+    summary.update(profile='ahl-completed-trial-provider-usage-v1', trial_completion='live_custody_accepted',
+                   request_binding_coverage=value['request_coverage'], durable=False)
+    return summary

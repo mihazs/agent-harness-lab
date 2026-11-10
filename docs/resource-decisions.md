@@ -121,3 +121,12 @@ request rows. It reports request coverage and known subtotals, but all trial tot
 unknown: more requests may occur before the trial completes. Failed or missing requests and
 unreported cache categories stay unknown. The summary is private, live-only, and does not
 establish quality, billing completeness, or eligibility for a resource decision.
+
+`agent_harness_lab.evaluation.trial_usage.latest_completed_trial_usage()` returns a private,
+live-only summary of the latest trial after comparison custody accepts its worker and grade
+observations. It is unavailable during another active trial or after the comparison closes.
+Request binding coverage is reported separately from measurement availability; missing usage
+remains unknown, and all final totals remain unknown. This sidecar is not part of the existing
+durable custody receipt and cannot be recovered after restart. Provider data remain unverified;
+the sidecar does not establish cost, billing completeness, a quality decision, or promotion.
+It is not a security boundary against other code in the same process.
