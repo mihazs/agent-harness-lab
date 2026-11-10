@@ -467,15 +467,21 @@ freezes what the binary pass means), `required_clarifications` (a subset of
 or `{"kind":"interaction"}`. `contract_sha256` is the identity to store with the
 task; any change invalidates earlier comparisons.
 
-`evaluate(contract, evidence)` takes runner-observed evidence: `capture` states
+`evaluate(contract, evidence)` takes caller-supplied evidence declarations; it
+does not authenticate their origin or establish that a runner observed them.
+`capture` declares
 whether the `transcript` and side-effect `receipts` are `complete`, `partial` or
 `missing`, and how the run `termination` ended; `events` are `clarification_request`,
 `clarification_reply`, `mutation`, `stop` and `claim` records; `state` holds initial
 and final digests. It returns three-valued `interaction_requirement_satisfied`,
 `whole_task_completed` and `state_preserved`, plus `passed` under the endpoint.
 Asking at a declared boundary can satisfy the interaction without marking the
-task complete, and ask, reply, act passes only after the final-state postconditions
-hold. Violations are named separately (`missed_necessary_clarification`,
+task complete. A required reply counts only after its matching request; an action
+must follow that reply, and whole-task completion additionally requires the
+final-state postconditions. A complete transcript with no matching reply cannot
+establish completion even if the final state matches; partial order stays unknown.
+The optional `completion_blocker` identifies an absent or unknown required reply.
+Violations are named separately (`missed_necessary_clarification`,
 `unnecessary_clarification`, `acted_before_clarification`, `prohibited_mutation`,
 `protected_state_changed`, `stop_not_deliberate_or_not_authorized`,
 `abnormal_termination`).
