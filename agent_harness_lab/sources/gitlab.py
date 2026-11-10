@@ -11,13 +11,13 @@ PROVIDER = 'gitlab'
 SOURCE_VERSION = 'v4'
 API_PREFIX = '/api/v4'
 PAGE_SIZE = 100
-CAPTURE = ('approvals', 'issues', 'merge_requests', 'notes')
+CAPTURE = ('approvals', 'discussions', 'issues', 'merge_requests', 'notes')
 ISSUE_STATES = ('opened', 'closed')
 MERGE_STATES = ('opened', 'closed', 'locked', 'merged')
 VISIBILITY = ('private', 'internal', 'public')
 # Ascending creation order keeps offset pages stable while new notes are appended.
 NOTE_QUERY = dict(order_by='created_at', sort='asc', per_page=PAGE_SIZE)
-CONTEXTUAL = ('gitlab_issue', 'gitlab_note', 'gitlab_approvals')
+CONTEXTUAL = ('gitlab_issue', 'gitlab_note', 'gitlab_approvals', 'gitlab_discussion')
 # One namespace or project path segment: no leading separator, dot segments, encodings or trailing dot.
 SEGMENT = re.compile(r'[A-Za-z0-9_](?:[A-Za-z0-9_.-]{0,253}[A-Za-z0-9_-])?')
 MAX_DEPTH = 21
@@ -43,7 +43,7 @@ class GitLabSelection(Contract):
     schema_version: int = 1
 
     def __post_init__(self):
-        if type(self.schema_version) is not int or self.schema_version != 1: raise ValueError('unsupported GitLab selection version')
+        if type(self.schema_version) is not int or self.schema_version not in (1, 2): raise ValueError('unsupported GitLab selection version')
         instance_root(self.base_url, API_PREFIX)
         if type(self.project) is int: integer(self.project, minimum=1)
         else: project_path(self.project)
@@ -56,7 +56,8 @@ class GitLabSelection(Contract):
             if tuple(sorted(set(numbers))) != numbers: raise ValueError('GitLab IIDs must be unique and ascending')
         # Issues and merge requests have separate IID sequences, so one IID may name both.
         if (('issues' in self.capture) != bool(self.issues) or ('merge_requests' in self.capture) != bool(self.merge_requests)
-                or 'approvals' in self.capture and not self.merge_requests or not (self.issues or self.merge_requests)):
+                or any(kind in self.capture for kind in ('approvals', 'discussions')) and not self.merge_requests
+                or 'discussions' in self.capture and self.schema_version != 2 or not (self.issues or self.merge_requests)):
             raise ValueError('GitLab capture kinds must match the explicitly selected IIDs')
 
     @classmethod
@@ -126,11 +127,11 @@ class GitLabAPI:
     @property
     def project_root(self): return f'{API_PREFIX}/projects/{self.project_id}'
 
-    def _list(self, collection, ledger, echoed, project):
+    def _list(self, collection, ledger, echoed, project, *, query=NOTE_QUERY, identity=None):
         """Offset page/per_page listing of projected rows; X-Next-Page and a Link rel="next" must agree when both are sent."""
         def following(headers, page):
             linked = next_page(self.transport, headers.get('link'), collection, page,
-                {k: str(v) for k, v in NOTE_QUERY.items()}, echoed=echoed)
+                {k: str(v) for k, v in query.items()}, echoed=echoed)
             if headers.get('x-page') not in (None, str(page)) or headers.get('x-per-page') not in (None, str(PAGE_SIZE)):
                 raise ValueError('GitLab page headers disagree with the request')
             declared = headers.get('x-next-page')
@@ -140,7 +141,7 @@ class GitLabAPI:
             if after not in (None, page+1) or linked not in (None, after):
                 raise ValueError('GitLab pagination skipped a page or disagreed with its Link header')
             return after, after is None
-        return ledger.listing(collection, NOTE_QUERY, PAGE_SIZE, total_header='x-total', following=following, project=project)
+        return ledger.listing(collection, query, PAGE_SIZE, total_header='x-total', following=following, project=project, identity=identity)
 
     def _actor(self, value):
         if value is None: return None
@@ -244,6 +245,38 @@ class GitLabAPI:
         return dict(parent_sha256=parent, approved=approved if type(approved) is bool else 'unknown', **counts,
             approvers_sha256=sorted(a for a in actors if a is not None), approvers_unidentified=actors.count(None))
 
+    def _discussions(self, ledger, key, iid, owner, parent, budget, seen_notes):
+        """Capture one MR's bounded discussion metadata and its nested note claims."""
+        target = f'{self.project_root}/merge_requests/{iid}/discussions'
+        def identity(row):
+            native = row.get('id')
+            if not isinstance(native, str) or not native or len(native) > 256:
+                raise ValueError('invalid GitLab discussion identity')
+            return digest(('gitlab.discussion', self.selection.instance_sha256, native))
+        def project(row):
+            budget[0] += 1
+            if budget[0] > 10000 or type(row.get('individual_note')) is not bool or not isinstance(row.get('notes'), list):
+                raise ValueError('invalid or excessive GitLab discussions')
+            notes = []
+            for value in row['notes']:
+                budget[1] += 1
+                if budget[1] > 10000 or not isinstance(value, dict): raise ValueError('invalid or excessive GitLab discussion notes')
+                native = integer(value.get('id'), minimum=1)
+                if native in seen_notes: raise ValueError('GitLab discussion note repeated')
+                seen_notes.add(native)
+                notes.append((native, self._note(value, 'MergeRequest', iid, owner, parent)))
+            return dict(parent_sha256=parent, individual_note=row['individual_note'], note_count=len(notes)), notes
+        rows, outcome = self._list(target, ledger, dict(id=str(self.project_id), merge_request_iid=str(iid)), project,
+            query=dict(per_page=PAGE_SIZE), identity=identity)
+        ledger.note('discussions', outcome, parent)
+        for native, (thread_node, notes) in rows:
+            thread = ledger.emit(key('gitlab_discussion', (iid, native)), 'gitlab_discussion', thread_node)
+            ledger.relations.add(('discussion_on', thread, parent))
+            for note_id, note in notes:
+                kind = 'gitlab_system_note' if note['system'] else 'gitlab_note'
+                child = ledger.emit(key(kind, note_id), kind, note, note['created_at'])
+                ledger.relations.add(('note_in_discussion', child, thread))
+
     def _capture(self, source):
         selection = self.selection
         ledger = CaptureLedger(source, self.transport, self.authorization, CONTEXTUAL)
@@ -251,7 +284,7 @@ class GitLabAPI:
         ledger.emit(digest(('gitlab_instance', selection.instance_sha256)), 'gitlab_instance',
             dict(instance_sha256=selection.instance_sha256, server_version=version or 'unknown', server_version_state=version_state))
         project = ledger.read('project', f'{API_PREFIX}/projects/{selection.selector}', self._project)
-        reads, system_notes = [], 0
+        reads, system_notes, discussion_budget, discussion_notes = [], 0, [0, 0], set()
         if project is not None:
             scope = project['project_sha256']
 
@@ -263,7 +296,10 @@ class GitLabAPI:
                 for iid in iids:
                     parent, target = key(kind, iid), f'{self.project_root}/{collection}/{iid}'
                     node = ledger.read(kind[len('gitlab_'):], target, lambda raw, n=iid, p=parse: p(raw, n), parent)
-                    if node is None: continue
+                    if node is None:
+                        if kind == 'gitlab_merge_request' and 'discussions' in selection.capture:
+                            ledger.note('discussions', ('not_observed', 'merge_request_unavailable'), parent)
+                        continue
                     reads.append((kind, target, parse, iid, node)); ledger.emit(parent, kind, node, node['created_at'])
                     if 'notes' in selection.capture:
                         rows, outcome = self._list(f'{target}/notes', ledger, dict(id=str(self.project_id), noteable_id=str(iid)),
@@ -279,16 +315,25 @@ class GitLabAPI:
                             ledger.relations.add(('system_event_on' if note['system'] else 'conversation_on', child, parent))
                     if kind == 'gitlab_merge_request' and 'approvals' in selection.capture:
                         self._approval(ledger, key, iid, node, parent)
+                    if kind == 'gitlab_merge_request' and 'discussions' in selection.capture:
+                        self._discussions(ledger, key, iid, node, parent, discussion_budget, discussion_notes)
             # Readbacks narrow, but cannot remove, the window for a change between non-atomic reads.
             for kind, target, parse, iid, before in reads:
                 after = ledger.read('readback', target, lambda raw, n=iid, p=parse: p(raw, n), key(kind, iid))
                 if after not in (None, before): raise ValueError('GitLab issue or merge request changed during capture')
             if ledger.read('readback', self.project_root, self._project) not in (None, project):
                 raise ValueError('GitLab project changed during capture')
+        elif 'discussions' in selection.capture:
+            for iid in selection.merge_requests:
+                parent = digest(('gitlab.selection', selection.project_sha256, 'merge_request', iid))
+                ledger.note('discussions', ('not_observed', 'project_unavailable'), parent)
         ready = ledger.ready
+        if selection.schema_version == 2:
+            system_notes = sum(node['kind'] == 'gitlab_system_note' for node in ledger.nodes.values())
         warnings = ['selected_resources_only', 'merge_closure_approval_not_task_outcome', 'readbacks_non_atomic',
-            'discussions_not_captured', 'system_note_coverage_unverified', 'merge_and_squash_shas_not_ancestry',
+            'system_note_coverage_unverified', 'merge_and_squash_shas_not_ancestry',
             'execution_binding_unknown']
+        if 'discussions' not in selection.capture: warnings.insert(3, 'discussions_not_captured')
         if version is None: warnings.append('server_version_unknown')
         if ledger.unsupported: warnings.append('approvals_endpoint_unsupported')
         if not ready: warnings.append('capture_blocked_or_incomplete')

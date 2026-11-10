@@ -128,6 +128,86 @@ class GitLabFixture:
 
 
 class TestGitLabSource(GitLabFixture):
+    def discussion_selection(self):
+        return replace(self.selection, schema_version=2,
+            capture=('approvals', 'discussions', 'issues', 'merge_requests', 'notes'))
+
+    def discussion_rows(self):
+        root, system = self.routes[notes(self.mr_path)]
+        nested = dict(root, id=9003, resolvable=True, resolved=False)
+        return [dict(id='synthetic-thread-a', individual_note=False, notes=[dict(root), nested]),
+                dict(id='synthetic-thread-b', individual_note=True, notes=[dict(system)])]
+
+    def test_v2_discussions_bind_nested_notes_without_duplicate_records_or_outcome(self):
+        selection = self.discussion_selection()
+        self.routes[self.mr_path+'/discussions?page=1&per_page=100'] = self.discussion_rows()
+        client, snapshot = self.read(selection)
+        assert len(self.nodes(client, 'gitlab_discussion')) == 2
+        assert len(self.nodes(client, 'gitlab_note')) == 3
+        assert len(self.nodes(client, 'gitlab_system_note')) == 2
+        assert any(note['resolvable'] is True and note['resolved'] is False for note in self.nodes(client, 'gitlab_note'))
+        assert len([r for r in client.summary['relations'] if r[0] == 'note_in_discussion']) == 3
+        assert ('discussions', 'captured', None) in self.states(client)
+        assert 'discussions_not_captured' not in client.summary['warnings']
+        assert snapshot.checkpoint_ready and not client.summary['task_outcomes_verified']
+        assert all(r.causal_status == 'unknown' and r.independence == 'unknown' for r in snapshot.records)
+        assert all('synthetic-thread' not in repr(n) for n in client.summary['nodes'])
+
+    def test_v2_discussions_do_not_implicitly_read_notes(self):
+        selection = replace(self.selection, schema_version=2, capture=('discussions', 'merge_requests'), issues=())
+        self.routes[self.mr_path+'/discussions?page=1&per_page=100'] = self.discussion_rows()
+        client, snapshot = self.read(selection)
+        assert snapshot.checkpoint_ready and len(self.nodes(client, 'gitlab_discussion')) == 2
+        assert not any('/notes?' in target for target in self.targets)
+        assert not client.summary['task_outcomes_verified']
+
+    def test_v2_discussion_pagination_and_unavailable_are_visible(self):
+        selection = self.discussion_selection()
+        target = self.mr_path+'/discussions'
+        first = [dict(id=f'thread-{i}', individual_note=True, notes=[]) for i in range(100)]
+        self.routes[target+'?page=1&per_page=100'] = lambda: self.page(first, **{'X-Total': '101', 'X-Page': '1', 'X-Next-Page': '2'})
+        self.routes[target+'?page=2&per_page=100'] = lambda: self.page([dict(id='thread-100', individual_note=True, notes=[])],
+            **{'X-Total': '101', 'X-Page': '2', 'X-Next-Page': ''})
+        client, snapshot = self.read(selection)
+        assert len(self.nodes(client, 'gitlab_discussion')) == 101 and snapshot.checkpoint_ready
+        self.routes[target+'?page=2&per_page=100'] = Response(b'SYNTHETIC_SECRET', 403)
+        client, snapshot = self.read(selection)
+        assert ('discussions', 'pagination_incomplete', 'forbidden') in self.states(client)
+        assert not snapshot.checkpoint_ready
+
+    @pytest.mark.parametrize('blocked', ['project', 'merge_request', 'discussions'])
+    def test_v2_unavailable_discussion_parent_keeps_unknown_coverage(self, blocked):
+        selection = self.discussion_selection()
+        target = {'project': '/api/v4/projects/'+ENCODED, 'merge_request': self.mr_path,
+                  'discussions': self.mr_path+'/discussions?page=1&per_page=100'}[blocked]
+        self.routes[target] = Response(b'SYNTHETIC_SECRET', 403)
+        client, snapshot = self.read(selection)
+        expected = ('discussions', 'forbidden', None) if blocked == 'discussions' else (
+            'discussions', 'not_observed', blocked+'_unavailable')
+        assert expected in self.states(client)
+        assert not snapshot.checkpoint_ready
+        if blocked != 'discussions': assert not any('/discussions?' in target for target in self.targets)
+
+    @pytest.mark.parametrize('case', ['foreign_note', 'duplicate_note', 'duplicate_thread', 'invalid_thread'])
+    def test_v2_invalid_discussion_identity_or_parent_fails_closed(self, case):
+        rows = self.discussion_rows()
+        if case == 'foreign_note': rows[0]['notes'][0]['noteable_id'] = 123456
+        if case == 'duplicate_note': rows[1]['notes'].append(dict(rows[0]['notes'][0]))
+        if case == 'duplicate_thread': rows[1]['id'] = rows[0]['id']
+        if case == 'invalid_thread': rows[0]['id'] = ''
+        self.routes[self.mr_path+'/discussions?page=1&per_page=100'] = rows
+        with pytest.raises(TransportError): self.read(self.discussion_selection())
+
+    def test_discussions_require_v2_and_selected_merge_request(self):
+        with pytest.raises(ValueError): replace(self.selection, capture=('discussions', 'issues', 'merge_requests', 'notes'))
+        with pytest.raises(ValueError): replace(self.selection, schema_version=2, capture=('discussions', 'issues'), merge_requests=())
+
+    def test_v2_discussion_nested_notes_are_bounded(self):
+        rows = self.discussion_rows()
+        prototype = rows[0]['notes'][0]
+        rows[0]['notes'] = [dict(prototype, id=10000+index) for index in range(10001)]
+        self.routes[self.mr_path+'/discussions?page=1&per_page=100'] = rows
+        with pytest.raises(TransportError): self.read(self.discussion_selection())
     def test_capture_keeps_issues_merge_requests_notes_system_notes_and_approvals_without_grading(self):
         client, snapshot = self.read()
         assert {r.record_type for r in snapshot.records} == {'gitlab_instance', 'gitlab_project', 'gitlab_issue',
@@ -490,7 +570,7 @@ class TestGitLabSource(GitLabFixture):
     @pytest.mark.parametrize('change', [
         dict(capture=('issues',)), dict(capture=('merge_requests', 'issues')), dict(issues=(7, 7)),
         dict(issues=(0,)), dict(capture=('approvals', 'issues', 'notes'), merge_requests=()),
-        dict(capture=('issues', 'merge_requests', 'pipelines')), dict(schema_version=2),
+        dict(capture=('issues', 'merge_requests', 'pipelines')), dict(schema_version=3),
         # A capture that selects no IID would read only the project yet look complete.
         dict(capture=('notes',), issues=(), merge_requests=()), dict(capture=(), issues=(), merge_requests=())],
         ids=['issues-only-without-merge-requests', 'unordered-capture', 'duplicate-iid', 'zero-iid',
@@ -583,6 +663,23 @@ class TestGitLabConfiguration(GitLabFixture):
                 '--project-sha256', self.source.project_sha256, '--scope-sha256', self.source.scope_sha256, *extra])
         for secret in (*SECRETS, self.base, str(self.dir)): assert secret not in output.getvalue()+error.getvalue()
         return code, json.loads(output.getvalue()) if output.getvalue() else None
+
+    def test_v2_configured_discussion_preview_and_import(self):
+        self.selection = replace(self.selection, schema_version=2,
+            capture=('approvals', 'discussions', 'issues', 'merge_requests', 'notes'))
+        self.source = self.spec(self.selection, auth_mode='configured')
+        self.write()
+        self.routes[self.mr_path+'/discussions?page=1&per_page=100'] = [
+            dict(id='synthetic-thread', individual_note=True, notes=[dict(self.routes[notes(self.mr_path)][0])])]
+        env = ('--authorization-env', 'SYNTHETIC_GITLAB_AUTHORIZATION')
+        with patch.dict(os.environ, SYNTHETIC_GITLAB_AUTHORIZATION='Bearer SYNTHETIC_SECRET'):
+            code, result = self.invoke('preview', *env)
+            assert code == 0 and result['checkpoint_ready']
+            assert any(c['resource'] == 'discussions' and c['state'] == 'captured'
+                for c in result['gitlab_summary']['coverage'])
+            assert self.invoke('import', *env)[0] == 0
+            assert self.invoke('import', *env)[1]['imported'] == 0
+            assert 'synthetic-thread' not in self.journal.read_text()
 
     def test_cli_probe_preview_and_import_read_only_the_named_variable(self):
         env = ('--authorization-env', 'SYNTHETIC_GITLAB_AUTHORIZATION')

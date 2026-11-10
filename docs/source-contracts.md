@@ -3320,13 +3320,27 @@ digits, `_`, `-` and `.`, cannot start with `-` or `.`, cannot end with `.`,
 segments, backslashes and queries are refused, so an encoded slash or a `..`
 cannot leave the selected project. The path is sent once, URL-encoded as the
 `:id` of `/api/v4/projects/:id`; every later request uses the numeric ID that read
-returned. `capture` is an ascending subset of `approvals`, `issues`,
+returned. In selection schema 1, `capture` is an ascending subset of `approvals`, `issues`,
 `merge_requests` and `notes`. `issues` and `merge_requests` must appear exactly
 when IIDs are selected, `approvals` requires merge requests, and a selection
 with no IID at all (for example `capture=("notes",)`) is refused. Issues and merge
 requests have separate IID sequences, so one IID may be selected as both. Nothing
 is listed, searched or enumerated: there is no group, project, issue or merge
 request listing.
+
+An opt-in selection schema 2 also accepts `discussions` in `capture` when at
+least one merge request is selected; its distinct selection hash keeps schema 1
+history separate. It GETs each selected MR's paginated `/discussions` endpoint
+and records hashed thread identities and nested note metadata. Each nested note
+must name the selected MR's global identity and, when present, its IID and
+project. A note also returned by `/notes` uses the same native record identity;
+conflicting projections fail the capture. Thread and note counts are each
+limited to 10,000 per capture. Note and thread text never enters the summary.
+Resolution fields are server claims, not proof of task success. Missing access,
+incomplete pagination or an unavailable parent remain visible and prevent a
+checkpoint; if the project is unavailable, a scoped selection fingerprint in
+coverage is not a claimed native MR identity. Source/version, complete system
+note coverage, and execution binding remain unverified.
 
 Use `SourceSpec(kind="api", provider="gitlab", version="v4", root_sha256=digest(base_url),
 project_sha256=selection.project_sha256, scope_sha256=selection.sha256,
@@ -3426,7 +3440,7 @@ identity; nested path encoding and `..` or encoded-slash refusal; 401/403/404/42
 coverage; non-HTTPS refusal; GET-only requests; and repeat import and update.
 Live GitLab compatibility, including the exact route parameters GitLab repeats
 in `Link` headers, is not established by these fixtures.
-Still open in #54: threaded discussions and `DiscussionNote` resolution, MR
+Still open in #54: issue discussions and independently verified resolution, MR
 commits, changes and versions, state events, linked issues, pipelines, jobs and
 test reports, confidential-visibility checks per note, absence tombstones and a
 relationship graph.
