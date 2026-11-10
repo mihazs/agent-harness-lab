@@ -71,7 +71,9 @@ def test_private_domain_and_stage_profiles_cannot_be_relabelled_for_export(profi
 @pytest.mark.skipif(not kernel.ENABLED,reason='explicit delegated native scope required')
 class TestBankRequalificationKernel(kernel.PytestKernelFixture):
     def owned_case(self,*,unbound_source=False,focus_check=None):
-        actual,qualified,_,runtime,image,manifest,spec,path,history=bank_fixtures.QualifiedBankKernelTests.qualified_comparison(self)
+        bank_case=bank_fixtures.QualifiedBankKernelTests()
+        bank_case.root,bank_case.cgroup_root=self.root,self.cgroup_root
+        actual,qualified,_,runtime,image,manifest,spec,path,history=bank_case.qualified_comparison()
         deadline=time.monotonic()+120
         project=self.root/'project';project.mkdir();(project/'AGENTS.md').write_text('Synthetic baseline.')
         project_settings=config.defaults();project_settings['harness_paths']=['AGENTS.md']
