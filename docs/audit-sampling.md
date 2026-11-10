@@ -145,6 +145,29 @@ submitted in a later batch against the same receipt; pending labels remain
 inconclusive and reviewer labels remain unauthenticated. The default
 v1 plan, receipts and selection rule remain unchanged by this opt-in design.
 
+## Local review lifecycle linkage
+
+`audit_corpus.prepare(receipt, frame, store_path, mapping, rubric)` links every
+v2 sampled unit to one current, pending diagnostic corpus case whose root
+identifier hashes to that unit. It requires a matching caller-supplied frame,
+a rubric digest frozen in each case, and at most 128 assignments. Each case
+receives an `audit_assigned` journal event before review. An interrupted partial
+assignment cannot be consumed and can be resumed with the identical mapping.
+`audit_corpus.inspect` reopens the private corpus and reports current review
+state; exposed or superseded cases are refused.
+
+An `audit-corpus-rubric-v1` maps explicit annotation symptom markers to audit
+classes and must declare both an incident class and `no_incident`.
+`audit_corpus.estimate` uses only an adjudicated annotation with exactly one
+mapped class. Missing or conflicting markers stay pending and make estimation
+inconclusive. Corpus outcome categories are never implicitly mapped to audit
+classes. Results reuse the existing sampling estimator and remain private.
+
+These local events and checksums do not authenticate assignment timing, source
+identity, the caller-supplied frame, rubric semantics, reviewer identities or
+independence. Estimates explicitly retain those limitations. No automatic policy
+update is authorized.
+
 ## Estimates
 
 `estimate(receipt, batch)` takes labels bound to one receipt:
