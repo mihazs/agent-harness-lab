@@ -11,7 +11,8 @@ from agent_harness_lab.diagnostics import audit_sampling, drift, triage_policy
 from agent_harness_lab import config_recommendations
 from agent_harness_lab.evaluation import behavior, interaction_contract, resource_decision
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
-from agent_harness_lab.sources import agents_validation, config_inventory
+from agent_harness_lab.sources import (agents_validation, claude_rules, commands_inventory, config_inventory,
+                                       harness_inventory, plugins_inventory)
 from tests.unit.evaluation.test_benchmark_contracts import record as public_record
 
 GOLDENS = Path(__file__).resolve().parents[2] / 'support/golden_profiles'
@@ -116,9 +117,23 @@ def test_config_inventory_v1_loads_into_private_recommendation():
         config_recommendations.recommend({**value, 'profile': 'unknown-v999'})
 
 
+@pytest.mark.parametrize(('name', 'capture', 'runtime', 'version'), [
+    ('ahl-commands-inventory-v1', commands_inventory.capture, 'claude-code', '2.1.317'),
+    ('ahl-plugin-inventory-v1', plugins_inventory.capture, 'claude-code', '2.1.317'),
+    ('ahl-harness-inventory-v1', harness_inventory.capture, 'codex', '0.166.0'),
+    ('ahl-claude-rules-v1', claude_rules.capture, 'claude-code', '2.1.317'),
+])
+def test_empty_synthetic_inventory_output_remains_private(tmp_path, name, capture, runtime, version):
+    profile = dict(schema_version=1, runtime=runtime, version=version, task_cwd='.')
+    output = json.loads(json.dumps(capture(tmp_path, profile).document()))
+    assert output == sample(name)
+    assert output['publication_allowed'] is False
+
+
 @pytest.mark.parametrize('name', ['interaction-contract-v1-output', 'audit-sampling-receipt-v1',
     'ahl-definition-validation-v1', 'diagnostic-triage-evaluation-v2', 'ahl-config-inventory-v1',
-    'ahl-config-recommendations-v1'])
+    'ahl-config-recommendations-v1', 'ahl-commands-inventory-v1', 'ahl-plugin-inventory-v1',
+    'ahl-harness-inventory-v1', 'ahl-claude-rules-v1'])
 def test_private_golden_output_cannot_be_relabelled_as_a_public_benchmark(name):
     assert not public_export_allowed([sample(name) | public_record() | {'publication_allowed': True}])
 
