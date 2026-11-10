@@ -107,7 +107,7 @@ def main(argv=None):
         if destination == project or project in destination.parents:
             raise ValueError('audit state directory must be outside the project')
         profile = dict(schema_version=1, runtime=args.runtime, version=surfaces.PINS[args.runtime], task_cwd=args.task_cwd)
-        inventory = harness_inventory.capture(project, profile)
+        inventory = harness_inventory.capture(project, profile, schema_version=2)
         report = _project(inventory, audit.audit(inventory, task_cwd=args.task_cwd,
             codex_project_doc_max_bytes=args.codex_project_doc_max_bytes).document(), args.task_cwd)
         if args.runtime == 'codex':

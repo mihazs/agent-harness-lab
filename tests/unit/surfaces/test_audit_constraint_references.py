@@ -18,7 +18,7 @@ def setup_project(tmp_path):
     (tmp_path / '.env').write_text('SYNTHETIC_SECRET')
     (tmp_path / 'eslint.config.js').write_text('synthetic')
     profile = dict(schema_version=1, runtime='claude-code', version=surfaces.PINS['claude-code'], task_cwd='.')
-    inventory = harness_inventory.capture(tmp_path, profile)
+    inventory = harness_inventory.capture(tmp_path, profile, schema_version=2)
     protected = protected_paths.capture(tmp_path)
     return inventory, protected, raw
 
@@ -42,7 +42,7 @@ def test_changed_source_and_oversized_constraint_fail_closed(tmp_path):
     (tmp_path / 'CLAUDE.md').write_bytes(long)
     profile = dict(schema_version=1, runtime='claude-code', version=surfaces.PINS['claude-code'], task_cwd='.')
     with pytest.raises(ValueError, match='bound exceeded'):
-        constraint_references.report(harness_inventory.capture(tmp_path, profile), 'CLAUDE.md', long, permissions)
+        constraint_references.report(harness_inventory.capture(tmp_path, profile, schema_version=2), 'CLAUDE.md', long, permissions)
 
 
 def test_longer_path_does_not_match_prefix(tmp_path):
@@ -50,5 +50,5 @@ def test_longer_path_does_not_match_prefix(tmp_path):
     raw = b'Never edit .env.local.\n'
     (tmp_path / 'CLAUDE.md').write_bytes(raw)
     profile = dict(schema_version=1, runtime='claude-code', version=surfaces.PINS['claude-code'], task_cwd='.')
-    result = constraint_references.report(harness_inventory.capture(tmp_path, profile), 'CLAUDE.md', raw, protected)
+    result = constraint_references.report(harness_inventory.capture(tmp_path, profile, schema_version=2), 'CLAUDE.md', raw, protected)
     assert result['constraints'][0]['protected_paths'] == []
