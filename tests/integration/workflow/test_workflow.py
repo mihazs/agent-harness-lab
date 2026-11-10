@@ -1,17 +1,16 @@
+from contextlib import ExitStack
 import argparse
 import json
 from pathlib import Path
 import subprocess
 import sys
 import tempfile
-import unittest
 from unittest.mock import patch
 
 import pytest
 
 from agent_harness_lab.workflow import improve, watch, project_lock, adopt, snapshot, candidate_states, validate_manifest
 from agent_harness_lab.cli import main
-from tests.support.unittest_cleanups import run_cleanups
 
 FAKE = r'''#!/usr/bin/env python3
 import json, pathlib, sys
@@ -64,11 +63,11 @@ print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
 '''
 
 
-class WorkflowTests(unittest.TestCase):
-    """Synthetic project and fake agent. Other tests build it through setUp() and release it with run_cleanups; it holds no tests."""
-    def setUp(self):
+class WorkflowTests:
+    """Synthetic project and fake agent."""
+    def __init__(self, add_cleanup):
         self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
+        add_cleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.project = self.root / 'project'
         self.project.mkdir()
@@ -78,12 +77,12 @@ class WorkflowTests(unittest.TestCase):
         self.agent.chmod(0o700)
         self.state = patch('agent_harness_lab.workflow.state_root', return_value=self.root/'state')
         self.state.start()
-        self.addCleanup(self.state.stop)
+        add_cleanup(self.state.stop)
         self.collect = patch('agent_harness_lab.workflow.collect', return_value=dict(
             analysis=dict(events=0,cases=0,field_coverage={},findings=[],recurring_sequences=[],
                           limitations=[],deferred_mechanisms={}),evaluation_failures=[],fingerprint='one',caveats=[]))
         self.collect.start()
-        self.addCleanup(self.collect.stop)
+        add_cleanup(self.collect.stop)
 
     def args(self):
         return argparse.Namespace(project=self.project,events=None,format='normalized',output=None,
@@ -92,9 +91,8 @@ class WorkflowTests(unittest.TestCase):
 
 @pytest.fixture
 def wf():
-    value = WorkflowTests(); value.setUp()
-    yield value
-    run_cleanups(value)
+    with ExitStack() as cleanups:
+        yield WorkflowTests(cleanups.callback)
 
 
 def test_cooperative_evaluation_recommends_without_adoption(wf):

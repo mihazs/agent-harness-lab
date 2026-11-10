@@ -9,7 +9,6 @@ from unittest.mock import patch
 
 import pytest
 
-from tests.support.unittest_cleanups import run_cleanups
 from tests.integration.sandbox import test_sandbox_graders as fixtures
 
 
@@ -96,9 +95,8 @@ def test_parent_cannot_enlarge_manifest_budget(deadline):
 
 @pytest.fixture
 def workflow():
-    fixture = fixtures.workflow_fixtures.WorkflowTests(); fixture.setUp()
-    yield fixture
-    run_cleanups(fixture)
+    with ExitStack() as cleanups:
+        yield fixtures.workflow_fixtures.WorkflowTests(cleanups.callback)
 
 
 def test_improve_forwards_its_original_deadline_to_evaluation(workflow):

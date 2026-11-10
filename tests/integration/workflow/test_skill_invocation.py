@@ -20,7 +20,6 @@ from agent_harness_lab.evaluation import responses
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
 from agent_harness_lab.promotion.journal import Journal
 from tests.integration.workflow import test_workflow as fixtures
-from tests.support.unittest_cleanups import run_cleanups
 
 
 def invoke(argv):
@@ -36,7 +35,7 @@ def make_fixture():
     """Builds synthetic workflow projects and releases each with its cleanups, in reverse order, after the test."""
     with ExitStack() as stack:
         def make():
-            fixture=fixtures.WorkflowTests();fixture.setUp();stack.callback(run_cleanups,fixture)
+            fixture=fixtures.WorkflowTests(stack.callback)
             return fixture
         yield make
 

@@ -50,7 +50,7 @@ class PublicFixture:
         import agent_harness_lab
         expected=os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
         if expected:assert Path(agent_harness_lab.__file__).resolve().is_relative_to(Path(expected).resolve())
-        self.f=workflow_fixture.WorkflowTests();self.f.setUp();self.addCleanup(run_cleanups,self.f)
+        self.f=workflow_fixture.WorkflowTests(self.addCleanup)
         self.project=self.f.project
         self.bank=self.root/'bank';self.bank.mkdir()
         oracle=self.bank/'oracle';oracle.mkdir()

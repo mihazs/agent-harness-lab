@@ -13,7 +13,6 @@ from agent_harness_lab.cli import main
 from agent_harness_lab import config
 from agent_harness_lab.promotion.journal import Journal
 from agent_harness_lab.one_call import structural_candidate
-from tests.support.unittest_cleanups import run_cleanups
 from tests.support.one_call import one as one
 
 
@@ -283,18 +282,17 @@ def test_watch_honors_the_same_offline_preflight(one):
 
 
 @pytest.fixture
-def configured_workflow(one):
+def configured_workflow(one, request):
     """Builds cooperative WorkflowTests projects inside the one-call state patch; cleans them up first."""
     from tests.integration.workflow.test_workflow import WorkflowTests
-    made = []
+    cleanups = contextlib.ExitStack(); request.addfinalizer(cleanups.close)
     def build(trials=20):
-        fixture=WorkflowTests(); fixture.setUp(); made.append(fixture)
+        fixture=WorkflowTests(cleanups.callback)
         (fixture.project/'CLAUDE.md').write_text('SYNTHETIC_OUT_OF_SCOPE')
         config.create(fixture.project,config.prepare(dict(profile='cooperative',
             runtime=dict(name='codex',executable=str(fixture.agent)),harness_paths=['AGENTS.md'],limits=dict(trials=trials))))
         return fixture
     yield build
-    run_cleanups(*reversed(made))
 
 
 def test_configured_scope_is_frozen_before_preparation(configured_workflow):

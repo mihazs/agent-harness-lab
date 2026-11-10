@@ -169,7 +169,7 @@ class ControlledWorkflowTests(unittest.TestCase):
     """
 
     def setUp(self):
-        self.fixture = fixtures.workflow_fixtures.WorkflowTests(); self.fixture.setUp(); self.addCleanup(run_cleanups, self.fixture)
+        self.fixture = fixtures.workflow_fixtures.WorkflowTests(self.addCleanup)
         self.root,self.project = self.fixture.root,self.fixture.project
         self.args = self.fixture.args(); self.args.agent = 'responses'
         self.args.cgroup_root = self.root/'delegation'; self.args.image_root = self.root/'image'

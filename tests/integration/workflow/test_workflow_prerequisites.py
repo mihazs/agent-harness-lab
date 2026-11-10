@@ -24,7 +24,6 @@ from tests.integration.sandbox import test_sandbox_kernel as kernel
 from tests.integration.sandbox.test_sandbox_kernel import cgroup_root  # noqa: F401  (module-scoped pytest fixture of kernel.KernelCase)
 from tests.integration.sandbox import test_sandbox_construction as roles
 from tests.integration.workflow import test_workflow as workflow_fixture
-from tests.support.unittest_cleanups import run_cleanups
 
 
 class PublicCase:
@@ -68,7 +67,7 @@ class PublicCase:
         return packet
 
     def run_public(self,*,mode='real',source=False,consumer=None,audited=True):
-        fixture=workflow_fixture.WorkflowTests();fixture.setUp();self.addCleanup(run_cleanups,fixture)
+        fixture=workflow_fixture.WorkflowTests(self.addCleanup)
         case=self.root/('case-'+str(len(list(self.root.glob('case-*')))));case.mkdir()
         runtime=case/'runtime'
         if mode=='fake':runtime.mkdir();pin=dict(sha256='a'*64)

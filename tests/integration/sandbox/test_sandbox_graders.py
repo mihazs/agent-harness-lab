@@ -13,7 +13,6 @@ import pytest
 
 from tests.integration.evaluation import test_offline_evaluation as fixtures
 from tests.integration.workflow import test_workflow as workflow_fixtures
-from tests.support.unittest_cleanups import run_cleanups
 from agent_harness_lab.workflow import improve, validate_manifest, watch_configuration
 from agent_harness_lab.evaluation.integrity import digest
 
@@ -250,14 +249,12 @@ print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
 
 @pytest.fixture
 def wf():
-    fixture = workflow_fixtures.WorkflowTests(); fixture.setUp()
-    try:
+    with ExitStack() as cleanups:
+        fixture = workflow_fixtures.WorkflowTests(cleanups.callback)
         fixture.agent.write_text(WORKFLOW_AGENT)
         args = fixture.args(); args.sandbox_graders = True
         with patch.dict(os.environ, {'CODEX_HOME':str(fixture.root/'no-user-config')}):
             yield SimpleNamespace(fixture=fixture, root=fixture.root, project=fixture.project, args=args)
-    finally:
-        run_cleanups(fixture)
 
 
 def test_improve_routes_controls_and_trials_through_same_selected_grader_boundary(wf):

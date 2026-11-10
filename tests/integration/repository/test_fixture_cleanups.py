@@ -289,3 +289,18 @@ def test_inference_helpers_propagate_cleanup_failure(monkeypatch, tmp_path, help
     with pytest.raises(RuntimeError, match='synthetic inference cleanup failure'):
         with ExitStack() as cleanups:
             getattr(test_sandbox_inference, helper)(cleanups.callback)
+
+
+def test_workflow_helper_propagates_cleanup_failure(monkeypatch, tmp_path):
+    from contextlib import ExitStack
+    from types import SimpleNamespace
+    from tests.integration.workflow import test_workflow
+
+    def fail():
+        raise RuntimeError('synthetic workflow cleanup failure')
+
+    monkeypatch.setattr(test_workflow.tempfile, 'TemporaryDirectory',
+                        lambda: SimpleNamespace(name=str(tmp_path), cleanup=fail))
+    with pytest.raises(RuntimeError, match='synthetic workflow cleanup failure'):
+        with ExitStack() as cleanups:
+            test_workflow.WorkflowTests(cleanups.callback)

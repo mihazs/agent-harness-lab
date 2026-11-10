@@ -13,15 +13,14 @@ import pytest
 from agent_harness_lab import config
 from agent_harness_lab.cli import evaluator, main
 from tests.integration.evaluation.test_offline_evaluation import SOLVER
-from tests.support.unittest_cleanups import run_cleanups
 
 
 @pytest.fixture
-def pinned(monkeypatch):
+def pinned(monkeypatch, request):
     """A WorkflowTests project whose cooperative config pins a copy of the starter bank."""
     from tests.integration.workflow.test_workflow import WorkflowTests
-    pinned = SimpleNamespace(fixture=WorkflowTests())
-    pinned.fixture.setUp()
+    cleanups = contextlib.ExitStack(); request.addfinalizer(cleanups.close)
+    pinned = SimpleNamespace(fixture=WorkflowTests(cleanups.callback))
     monkeypatch.setenv('CODEX_HOME', str(pinned.fixture.root/'codex-home'))
     pinned.project = pinned.fixture.project
     pinned.bank = pinned.project/'task-bank/bank.json'
@@ -55,7 +54,6 @@ else:
 print(json.dumps(dict(type='turn.completed',usage=dict(output_tokens=1))))
 '''.replace('exec(SOLVER)', 'exec('+repr(SOLVER)+')'))
     yield pinned
-    run_cleanups(pinned.fixture)
 
 
 def write_config(pinned):

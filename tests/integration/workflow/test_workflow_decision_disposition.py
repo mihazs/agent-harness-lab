@@ -3,7 +3,7 @@ from copy import deepcopy
 import hashlib
 import io
 import json
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,7 +13,6 @@ from tests.integration.workflow import test_workflow as workflow_fixture
 from agent_harness_lab.cli import main
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
 from agent_harness_lab.promotion import policy
-from tests.support.unittest_cleanups import run_cleanups
 
 # Same synthetic agent; one added mode keeps the candidate failing on both attempts.
 FAILING = workflow_fixture.FAKE.replace("'worse' if mode=='refine' and c['attempt']==0",
@@ -32,11 +31,11 @@ FORBIDDEN = {'recommended', 'supported', 'eligible', 'applied', 'certified', 'ad
 class TestDefaultDecisionDisposition:
     @pytest.fixture(autouse=True)
     def _workflow(self):
-        base = workflow_fixture.WorkflowTests(); base.setUp()  # Synthetic fixture only; its cases are not inherited.
-        self.root, self.project, self.agent = base.root, base.project, base.agent
-        self.agent.write_text(FAILING)
-        yield
-        run_cleanups(base)
+        with ExitStack() as cleanups:
+            base = workflow_fixture.WorkflowTests(cleanups.callback)
+            self.root, self.project, self.agent = base.root, base.project, base.agent
+            self.agent.write_text(FAILING)
+            yield
 
     def run_cli(self, extra=()):
         output = self.root / 'run'
