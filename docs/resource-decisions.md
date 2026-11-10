@@ -227,3 +227,18 @@ category. Otherwise the total is unknown. An absent cached-input detail remains 
 no cache state or quality status is inferred. Provider-reported counts are unverified,
 may omit billing outside the controlled Responses requests, and are not a resource
 decision or promotion authority. Calls without this option preserve v6 and v7 behavior.
+
+## Private cache-state attestations
+
+For a current sealed v8 history, `HistoryStore.resource_cache_attestation(run_id,
+attestations)` binds caller-supplied `scheduled_trial_sha256`, `request_ordinal`,
+and `cache_state` statements to the sealed request scope. Accepted states are
+`uncached` and `provider_cache_used`; the latter means a cache hit on each attested
+request, not merely a cache write. Missing statements, unmatched request coverage,
+mixed states within a trial, differing paired-arm states, or a contradiction with
+a complete reported cached-token count produce `unknown` for both arms. Unknown or duplicate request identifiers are refused.
+
+The resulting private versioned view is not persisted or authenticated. Its cache
+states are caller-attested and unverified; token counts do not establish them. It
+makes no quality, resource-decision, billing, or promotion claim and must not be
+published. Earlier history versions are not accepted by this API.

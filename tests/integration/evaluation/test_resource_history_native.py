@@ -158,3 +158,26 @@ def test_versioned_coverage_seals_and_reopens_without_authority(kernel_case):
             else:
                 assert category['total'] is None
     assert store.analyze(run_id)['resource_decision'] == 'not_computed'
+
+
+@kernel_only
+def test_cache_attestation_uses_sealed_request_scope_and_stays_private(kernel_case):
+    contract = token_scope_contract(); pin = resource_decision.decide(contract, [], 'supported')['contract_sha256']
+    original_spec,original_run = repeated_workflow.ExperimentSpec,HistoryStore.run
+    def plan(*args,**kwargs): return original_spec(*args,**kwargs,resource_contract_sha256=pin)
+    def run(store,*args,**kwargs): return original_run(store,*args,**kwargs,resource_contract=contract,resource_coverage=True)
+    runtime = kernel_case.root/'runtime'; image = kernel.pinned_runtime(runtime)['sha256']
+    with patch.object(repeated_workflow,'ExperimentSpec',plan), patch.object(HistoryStore,'run',run):
+        code,result = kernel_case.invoke(runtime,image,kernel_case.root/'output',source=True)
+    assert code == 3
+    store = HistoryStore(kernel_case.root/'output/private-history'); run_id = result['controller_run_id']
+    artifact = store.resource_evidence(run_id)['artifact']
+    custody = json.loads((store.case(run_id)/'responses-custody.json').read_text())
+    supplied = [dict(scheduled_trial_sha256=sample['scheduled_trial_sha256'],request_ordinal=ordinal,cache_state='uncached')
+                for sample,row in zip(artifact['candidate']['samples'],custody['rows']) for ordinal in row['custody']['requests']]
+    view = store.resource_cache_attestation(run_id,supplied)
+    assert view['source'] == 'caller_attested_unverified' and view['resource_decision'] == 'not_computed'
+    assert not view['publication_allowed'] and not view['automatic_promotion'] and not view['durable']
+    assert all(item['cache_state'] == 'uncached' for item in view['trials'])
+    with pytest.raises(ValueError,match='private'): store.resource_cache_attestation(run_id,supplied,public=True)
+    with pytest.raises(ValueError,match='unknown or duplicate'): store.resource_cache_attestation(run_id,supplied+supplied[:1])
