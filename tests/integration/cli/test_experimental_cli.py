@@ -10,6 +10,31 @@ from agent_harness_lab.cli import main
 from agent_harness_lab.diagnostics.retrieval import Incident
 
 
+def test_public_benchmark_accepts_only_known_flat_records(tmp_path):
+    from agent_harness_lab.evaluation.benchmark import MATCH_FIELDS
+    from agent_harness_lab.evaluation.interaction_contract import evaluate
+    runtime = dict.fromkeys(MATCH_FIELDS, 'synthetic'); runtime['effective_settings_verified'] = True
+    base = dict(baseline_runtime=runtime, candidate_runtime=runtime, status='not_run', execution_kind='fake_agent',
+        provenance=dict(source_kind='synthetic', approved_publication=True, source_ref='synthetic', derived_from_private=False))
+    private = evaluate({}, {})
+    assert private['publication_allowed'] is False
+    cases = [base, dict(base, **(private | {'publication_allowed': True})),
+        dict(base, profile='unknown-v1'), dict(base, receipt={'publication_allowed': True}),
+        dict(base, unrecognized='synthetic'), dict(base, baseline_runtime=runtime | {'unrecognized': 'synthetic'}),
+        dict(base, provenance=base['provenance'] | {'unrecognized': 'synthetic'})]
+    for index, record in enumerate(cases):
+        source = tmp_path/f'{index}.json'; source.write_text(json.dumps([record]))
+        output = tmp_path/f'out-{index}'
+        if index == 0:
+            assert main(['benchmark-report', '--input', str(source), '--output', str(output), '--public']) == 0
+            assert (output/'results.json').is_file()
+        else:
+            with pytest.raises(SystemExit) as exc:
+                main(['benchmark-report', '--input', str(source), '--output', str(output), '--public'])
+            assert exc.value.code == 2
+            assert not output.exists()
+
+
 def test_simulation_entrypoint_does_not_require_model_or_credentials():
     command=[sys.executable,'-m','agent_harness_lab','research-simulate','--tasks','10','--scenario','delayed']
     run=subprocess.run(command,capture_output=True,text=True)

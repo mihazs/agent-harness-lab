@@ -20,8 +20,18 @@ def validate_pair(baseline,candidate,strict=True):
 
 
 def public_export_allowed(records):
-    if not records or isinstance(records,dict): return False
+    if not isinstance(records,list) or not records: return False
     for record in records:
+        if (not isinstance(record,dict)
+                or not {'baseline_runtime','candidate_runtime','provenance'} <= record.keys()
+                or record.keys() - {'baseline_runtime','candidate_runtime','provenance','status','execution_kind','publication_allowed'}):
+            return False
+        for name in ('baseline_runtime','candidate_runtime'):
+            runtime=record[name]
+            if not isinstance(runtime,dict) or runtime.keys() - {*MATCH_FIELDS,'effective_settings_verified'}: return False
+        provenance=record['provenance']
+        if not isinstance(provenance,dict) or provenance.keys() - {'source_kind','approved_publication','source_ref','derived_from_private'}:
+            return False
         wrappers=(record,record.get('receipt'),record.get('analysis'),record.get('context'),record.get('binding'),record.get('execution'),record.get('process_mining'),record.get('incident_retrieval'))
         # Preparation contexts carry the private invocation as a known child.
         invocations=tuple(value.get('invocation') for value in wrappers if isinstance(value,dict))
