@@ -54,8 +54,15 @@ Model suggestions cannot become gold labels through this API.
 Fitting, calibration, threshold, development, validation and certification are
 distinct partition roles. Current heads cannot reuse root, incident or exact
 source-revision identities across partitions. Whitespace/case-normalized copied
-summaries also fail across protected boundaries even with new root IDs. These
-checks detect explicit aliases; semantic independence remains unverified.
+summaries also fail across protected boundaries even with new root IDs. A full
+summary that exactly matches a normalized evidence fragment in another partition
+also blocks export, regardless of which appears first. Shared evidence fragments
+alone do not trigger this check. These checks detect explicit aliases only;
+semantic independence remains unverified. Existing stores or exported manifests
+with newly detected cross-field matches can fail validation after this change.
+The development export omits protected-only records, so its consumer cannot
+reconstruct or independently check aliases involving omitted protected data; the
+complete private store is required for that check.
 Near-duplicate decisions and verified #58 lineage receipts are not yet integrated.
 
 An `exposed` event retires a protected item to effective development use. This
