@@ -4304,3 +4304,13 @@ parent fields remain unknown. The result contains only a hashed session and
 parent claim and a reported archive state; it does not interpret messages or
 parts or verify outcomes. Backup bytes and fingerprints can contain or reveal
 private information; keep the backup, selection, cache and output private.
+
+An optional backup v2 profile uses `schema_version: 2` in the selection and
+`version: "v2"` on the source. In addition to the v1 metadata, it counts rows
+in the pinned `session_message` table whose `session_id` exactly matches the
+selected session. The reader counts at most 100,000 rows, subject to its existing
+query budgets, and refuses a missing table or an over-budget result. It does not
+read message bodies or validate individual rows. The count describes only the
+caller-supplied backup and does not establish complete capture, producer version,
+lineage, independence or outcomes. V2 uses a separate scope and does not migrate
+or reconcile v1 history.

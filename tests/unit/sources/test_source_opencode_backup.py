@@ -55,6 +55,60 @@ def test_selected_backup_is_private_unverified_and_never_opens_sidecars(source):
         assert private not in repr((connector.summary, connector.claims, snapshot))
 
 
+def v2(source):
+    backup, selection, spec, manifest = source
+    selection['schema_version'] = 2
+    (manifest.parent/'selection.json').write_text(json.dumps(selection))
+    spec = SourceSpec(**{**spec.to_dict(), 'version': 'v2', 'scope_sha256': digest(selection)})
+    manifest.write_text(json.dumps(dict(schema_version=1, source=spec.to_dict(), data='selection.json')))
+    return backup, spec, manifest
+
+
+def test_v2_counts_only_selected_session_rows_as_unverified_metadata(source):
+    backup, spec, manifest = v2(source)
+    with sqlite3.connect(backup) as db:
+        db.execute('CREATE TABLE session_message (session_id TEXT COLLATE NOCASE, data TEXT)')
+        db.executemany('INSERT INTO session_message VALUES (?, ?)', [(SESSION, SECRET), (SESSION, SECRET),
+            (SESSION.upper(), SECRET), ('ses_other', SECRET)])
+    connector = OpenCodeBackup(manifest)
+    snapshot = connector.read(spec)
+    assert connector.summary['message_count'] == 2
+    assert 'message_rows_not_validated' in connector.summary['warnings']
+    assert connector.summary['capture_completeness'] == 'unknown'
+    assert connector.summary['snapshot_status'] == 'caller_declared_unverified'
+    assert all((r.causal_status, r.independence) == ('unknown', 'unknown') for r in snapshot.records)
+    assert SECRET not in repr((connector.summary, connector.claims, snapshot))
+
+
+def test_v2_missing_message_table_and_too_many_rows_fail_closed(source):
+    backup, spec, manifest = v2(source)
+    with pytest.raises(ValueError): OpenCodeBackup(manifest).read(spec)
+    with sqlite3.connect(backup) as db:
+        db.execute('CREATE TABLE session_message (session_id TEXT)')
+        db.executemany('INSERT INTO session_message VALUES (?)', ((SESSION,) for _ in range(100001)))
+    with pytest.raises(ValueError): OpenCodeBackup(manifest).read(spec)
+
+
+def test_v2_rejects_view_using_other_tables(source):
+    backup, spec, manifest = v2(source)
+    with sqlite3.connect(backup) as db:
+        db.execute('CREATE TABLE secret_messages (session_id TEXT)')
+        db.execute('CREATE VIEW session_message AS SELECT session_id FROM secret_messages')
+    with pytest.raises(ValueError): OpenCodeBackup(manifest).read(spec)
+
+
+def test_v2_cli_preview_reports_descriptive_count(source):
+    backup, spec, manifest = v2(source)
+    with sqlite3.connect(backup) as db: db.execute('CREATE TABLE session_message (session_id TEXT)')
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        code = main(['sources', 'preview', '--manifest', str(manifest), '--project-sha256', spec.project_sha256,
+            '--scope-sha256', spec.scope_sha256])
+    assert code == 0
+    summary = json.loads(output.getvalue())['opencode_backup_summary']
+    assert summary['message_count'] == 0 and summary['capture_completeness'] == 'unknown'
+
+
 def test_wrong_scope_and_changed_backup_are_refused(source):
     _, _, spec, manifest = source
     with patch('agent_harness_lab.sources.opencode_backup.regular_sha256', return_value='0'*64):
