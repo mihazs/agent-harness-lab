@@ -256,3 +256,35 @@ def test_v1_binary_policy_is_unchanged_and_rejects_v2():
         bench.evaluate_triage_policy(rows, scores, policy())
     with pytest.raises(ValueError):
         triage.evaluate(v1, [])
+
+
+@pytest.mark.parametrize('value',[10**1000,-10**1000])
+def test_extreme_integer_scores_and_thresholds_are_rejected_without_overflow(value):
+    with pytest.raises(ValueError,match='score'):
+        triage.evaluate(policy(),[row('synthetic',NONE,NONE,score=value)])
+    configured=policy();configured['classes'][NONE]['threshold']=value
+    with pytest.raises(ValueError,match='constraint'):
+        triage.evaluate(configured,[row('synthetic',NONE,NONE)])
+
+
+def test_finite_cost_overflow_is_explicit_unknown_not_nonfinite_json():
+    configured=policy();configured['costs']['false_alert']=1e308
+    result=triage.evaluate(configured,[row('synthetic-a',NONE,SEVERE),row('synthetic-b',NONE,SEVERE)])
+    assert result['costs']['counts']['false_alert']==2
+    assert result['costs']['total'] is None and 'cost_total_unrepresentable' in result['reasons']
+    assert result['status'] in ('rejected','insufficient_evidence') and not result['automatic_promotion']
+    json.dumps(result,allow_nan=False)
+
+
+def test_large_integer_cost_remains_exact():
+    configured=policy();configured['costs']['false_alert']=10**1000
+    result=triage.evaluate(configured,[row('synthetic',NONE,SEVERE)])
+    assert result['costs']['total']==10**1000
+    assert 'cost_total_unrepresentable' not in result['reasons']
+    json.dumps(result,allow_nan=False)
+
+
+@pytest.mark.parametrize('label',[[],{}])
+def test_non_scalar_label_is_rejected_as_taxonomy_mismatch(label):
+    with pytest.raises(ValueError,match='label outside'):
+        triage.evaluate(policy(),[row('synthetic',label,NONE)])
