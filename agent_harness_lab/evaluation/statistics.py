@@ -35,6 +35,24 @@ def bound(values, weights, alpha, *, roots=None, groups=None):
                 independent_roots=len(effective), method='weighted_root_Hoeffding', alpha=alpha)
 
 
+def incomplete_interval(rows, weights, adjusted, groups):
+    """Enclose root-level outcome ranges with a conservative sampling interval."""
+    from .root_similarity import grouped_weights
+    root_ids = [row[0] for row in rows]
+    low = sum(row[1] * weight for row, weight in zip(rows, weights))
+    high = sum(row[2] * weight for row, weight in zip(rows, weights))
+    combined = grouped_weights(root_ids, weights, groups)
+    try:
+        width = radius(combined, adjusted)
+        if not math.isfinite(width): raise ValueError('unrepresentable width')
+        pessimistic, optimistic, numeric = max(-1, low - width), min(1, high + width), 'computed'
+    except (OverflowError, ZeroDivisionError, ValueError):
+        pessimistic, optimistic, numeric = -1, 1, 'conservative_fallback'
+    return dict(estimate=None, identified_low=low, identified_high=high,
+                pessimistic_low=pessimistic, optimistic_high=optimistic, numeric_status=numeric,
+                independent_roots=len(combined))
+
+
 def incomplete_bounds(spec, expected, records, groups):
     """Bound the frozen paired estimand without assigning outcomes to ungraded arms."""
     roots = defaultdict(lambda: defaultdict(dict))
@@ -56,20 +74,7 @@ def incomplete_bounds(spec, expected, records, groups):
             high += (1 if candidate is None else candidate) - (0 if baseline is None else baseline)
         families[family].append((root, low / len(pairs), high / len(pairs)))
     adjusted = spec.alpha / (len(families) + 1)
-    def interval(rows, weights):
-        root_ids = [row[0] for row in rows]
-        from .root_similarity import grouped_weights
-        low = sum(row[1] * weight for row, weight in zip(rows, weights))
-        high = sum(row[2] * weight for row, weight in zip(rows, weights))
-        try:
-            width = radius(grouped_weights(root_ids, weights, groups), adjusted)
-            if not math.isfinite(width): raise ValueError('unrepresentable width')
-            pessimistic, optimistic, numeric = max(-1, low - width), min(1, high + width), 'computed'
-        except (OverflowError, ZeroDivisionError, ValueError):
-            pessimistic, optimistic, numeric = -1, 1, 'conservative_fallback'
-        return dict(estimate=None, identified_low=low, identified_high=high,
-                    pessimistic_low=pessimistic, optimistic_high=optimistic, numeric_status=numeric,
-                    independent_roots=len(grouped_weights(root_ids, weights, groups)))
+    def interval(rows, weights): return incomplete_interval(rows, weights, adjusted, groups)
     endpoints = {family: interval(rows, [1 / len(rows)] * len(rows)) for family, rows in families.items()}
     rows, weights = [], []
     for family, weight in spec.family_weights:

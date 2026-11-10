@@ -139,7 +139,11 @@ For compatibility, an entirely empty record list has the legacy incomplete
 response; callers can request its full-range bounds with `include_empty_bounds=True`.
 If the adjusted confidence calculation is numerically unrepresentable, its outer
 limits fall back to the full range and report `conservative_fallback`.
-Sequential and preservation/cohort analyses do not yet provide these bounds.
+Preservation analysis also reports bounds for each required frozen cohort, using
+equal selected-root weights and the required-cohort Bonferroni allocation. It
+does so only with valid frozen membership and unambiguous records; qualification
+and independence remain unverified. Optional cohorts remain descriptive. Sequential
+analysis does not yet provide these bounds.
 
 The power simulator's roots are independent by construction, so its result says nothing about
 real task dependence. No worker, model or grader runs, nothing is observed,
