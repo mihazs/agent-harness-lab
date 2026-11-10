@@ -66,7 +66,8 @@ same execution. Independent-case assertions do not create links or become transi
 
 ### Reported and observed outcomes
 
-The `query` result includes `outcome_correlation` when selected source records carry
+The `sources status` result shows unlinked structured outcomes for its selected source.
+The lineage `query` result includes `outcome_correlation` when selected source records carry
 structured outcomes. Test-result imports record parsed JUnit and pytest case statuses:
 `passed` and `failed` become success and failure, while skipped, errored or unknown
 cases stay unknown. Normalized `ahl-metadata` sources may carry a schema-2 record

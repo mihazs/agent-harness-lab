@@ -228,6 +228,11 @@ class SourceStore:
                     snapshot_sha256=snapshots['history'].get(cursor) if snapshots['active'] else None,
                     checkpoints=len(state['cursors'].get(key, [])), capture_completeness='unknown',
                     source_read=False, execution_authorized=False)
+        from .outcomes import correlate
+        selected = dict(records=[entry for entry in state['records'] if entry['record']['source_sha256'] == key],
+            supersessions=[edge for edge in state['supersessions'] if edge[0] == key])
+        outcomes = correlate(selected, [])
+        if outcomes['records'] or outcomes['ambiguous_sources']: result['outcome_correlation'] = outcomes
         capture = state['captures'].get(key, {}).get(cursor) if snapshots['active'] else None
         if capture is not None:
             result['source_snapshot_sha256'] = capture['snapshot_sha256']

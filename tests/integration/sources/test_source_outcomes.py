@@ -186,3 +186,12 @@ def test_duplicate_reviewed_links_do_not_duplicate_observations(sources):
     row, = correlate(state, links)['records']
     assert len(row['observed_outcome']) == 1
     assert row['reviewed_case_ids'] == ['review-1', 'review-2']
+
+
+def test_source_status_exposes_report_only_without_lineage_store(sources):
+    _, cache, _, _, _, _, agent = sources
+    status = cache.status(agent)
+    row, = status['outcome_correlation']['records']
+    assert row['outcome'] == 'unverified' and row['observed_outcome'] == []
+    assert row['reported_outcome']['provenance_tier'] == 'agent_report'
+    assert not status['outcome_correlation']['task_outcomes_verified']
