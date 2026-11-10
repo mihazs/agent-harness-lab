@@ -9,7 +9,7 @@ import pytest
 
 from agent_harness_lab.diagnostics import audit_sampling, drift, triage_policy
 from agent_harness_lab import config_recommendations
-from agent_harness_lab.evaluation import interaction_contract, resource_decision
+from agent_harness_lab.evaluation import behavior, interaction_contract, resource_decision
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
 from agent_harness_lab.sources import agents_validation, config_inventory
 from tests.unit.evaluation.test_benchmark_contracts import record as public_record
@@ -31,6 +31,15 @@ def test_resource_noninferiority_v1_preserves_quality_parameters():
     value = resource_decision.validate(sample('resource-noninferiority-v1'))
     assert (value['alpha'], value['min_roots']) == (0.05, 10)
     assert (value['endpoints'][0]['scope'], value['endpoints'][0]['horizon']) == ('all_assigned', 100)
+
+
+def test_final_artifact_effects_v1_preserves_oracle_policy():
+    raw = (GOLDENS/'final-artifact-effects-v1.json').read_text()
+    value = behavior._policy(behavior._load(raw), 'synthetic-task')
+    assert value['exposure'] == 'public_development'
+    assert all(effect['severity'] == 'critical' for effect in value['effects'].values())
+    with pytest.raises(ValueError, match='unsupported behavior policy'):
+        behavior._policy({**value, 'profile': 'unknown-v999'}, 'synthetic-task')
 
 
 def test_triage_policy_v2_preserves_class_order_and_isolation():
