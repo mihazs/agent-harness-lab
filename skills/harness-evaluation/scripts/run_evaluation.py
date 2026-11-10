@@ -57,8 +57,8 @@ def write_results(path, results):
         raise
 
 
-def managed_environment(parent_id):
-    environment=dict(os.environ)
+def managed_environment(parent_id, agent, inherit=False):
+    environment=native_environment(agent, inherit)
     environment['AHL_MANAGED_PREPARATION']=str(parent_id)
     return environment
 
@@ -194,10 +194,10 @@ def native_environment(agent, inherit=False, environ=None):
     common = {'PATH', 'HOME', 'LANG', 'LANGUAGE', 'TERM', 'COLORTERM', 'TERMINFO', 'TMPDIR', 'LC_ALL', 'LC_CTYPE', 'LC_NUMERIC', 'LC_TIME', 'LC_COLLATE',
               'LC_MONETARY', 'LC_MESSAGES', 'LC_PAPER', 'LC_NAME', 'LC_ADDRESS', 'LC_TELEPHONE',
               'LC_MEASUREMENT', 'LC_IDENTIFICATION'}
-    auth = {'CODEX_API_KEY'} if agent == 'codex' else {
+    auth = {'CODEX_API_KEY', 'CODEX_HOME'} if agent == 'codex' else ({
         'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_OAUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN',
         'ANTHROPIC_BASE_URL', 'ANTHROPIC_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL',
-        'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL'}
+        'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL'} if agent == 'claude' else set())
     if agent == 'claude':
         providers = {
             'CLAUDE_CODE_USE_BEDROCK': {'AWS_PROFILE', 'AWS_REGION', 'AWS_DEFAULT_REGION',
@@ -219,6 +219,8 @@ def environment_receipt(environment, inherited, run_root):
     def digest(values):
         return hashlib.sha256(json.dumps(values, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
     normalized = {key: value.replace(str(run_root), '<run>') for key, value in environment.items()}
+    if normalized.get('AHL_MANAGED_PREPARATION') == Path(run_root).name:
+        normalized['AHL_MANAGED_PREPARATION'] = '<run>'
     return dict(names=sorted(environment), sha256=digest(environment), comparison_sha256=digest(normalized),
                 inherited=inherited)
 
@@ -832,7 +834,9 @@ def _evaluate(args):
                         record.update(status='grader_error', error=str(exc))
                 else:
                     grader = [a.replace('{workspace}', str(workspace)).replace('{trace}', str(trace)) for a in task['grader']]
-                    grade = execute(grader, manifest_path.parent, min(timeout, remaining))
+                    grader_env = native_environment('grader')
+                    record['grader_environment'] = environment_receipt(grader_env, False, output)
+                    grade = execute(grader, manifest_path.parent, min(timeout, remaining), env=grader_env)
                     record['grader'] = grade
                     record['status'] = grading_status(grade,typed=bool(frozen_bundles))
         if binding is not None:

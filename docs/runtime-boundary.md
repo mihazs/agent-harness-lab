@@ -63,10 +63,11 @@ These checks use no provider, credentials or native-agent session.
 
 ## Cooperative native trial environment
 
-The Codex and Claude trial runner and its version probe pass only `PATH`, `HOME`,
+The Codex and Claude preparation children, trial runner and version probe pass only `PATH`, `HOME`,
 `TMPDIR`, `TERM`, `TERMINFO`, `COLORTERM`, `LANG`, `LANGUAGE`, standard `LC_*`
 locale variables, plus runtime authentication variables. Codex receives
-`CODEX_API_KEY`; its temporary `CODEX_HOME` still does not include saved logins.
+`CODEX_API_KEY` and `CODEX_HOME`; preparation can use the existing saved login.
+The trial replaces `CODEX_HOME` with a temporary one that does not include it.
 Claude receives `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN`, `ANTHROPIC_API_KEY`
 and `ANTHROPIC_AUTH_TOKEN`; the existing `HOME` continues to support saved login.
 When Claude explicitly enables Bedrock, Vertex or Foundry in the parent, the runner
@@ -90,11 +91,14 @@ custom credential chains and model-specific regional overrides may need
 `--inherit-env` on `ahl evaluate`, `ahl improve`, `ahl watch`, or
 `ahl skills invoke`. This passes the full parent environment and can expose
 unrelated secrets to the agent. Watch treats the flag as execution configuration.
-Each launched trial records that opt-in, sorted environment names and a SHA-256 of
+Preparation and each launched trial record that opt-in, sorted environment names and a SHA-256 of
 the sorted, compact JSON environment; it records no environment values. A second
 comparison digest replaces the private run root in values with `<run>` so separate
 runs can check parity without discarding the exact digest. The hash
 can reveal low-entropy values by guessing, so keep results private. The receipt
 records the requested subprocess environment, not later agent or hook changes.
+Unsandboxed grader self-tests and trial graders receive only the platform allowlist,
+without runtime credentials; `--inherit-env` does not apply to graders. Trial
+grader receipts record their environment names and digests.
 These processes retain access to host files and network; this does not establish
 isolation and does not change unknown boundary qualification.

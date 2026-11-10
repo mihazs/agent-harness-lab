@@ -38,9 +38,11 @@ ALLOWED_DIFFERENCES = {
     # the normalized comparison digest remains checked.
     'evaluation-*/results.json': ('elapsed_seconds', 'manifest_sha256',
                                   'trials.*.execution.elapsed_seconds', 'trials.*.grader.elapsed_seconds',
-                                  'trials.*.environment.sha256'),
+                                  'trials.*.environment.sha256', 'trials.*.grader_environment.sha256'),
     'feedback-*.json': ('trials.*.execution.elapsed_seconds', 'trials.*.grader.elapsed_seconds',
-                        'trials.*.environment.sha256'),
+                        'trials.*.environment.sha256', 'trials.*.grader_environment.sha256'),
+    'preparation-*.environment.json': ('sha256',),
+    'evaluation-construction-*.environment.json': ('sha256',),
     'preparation/evaluation-*/manifest.json': ('budget_seconds', 'timeout_seconds'),
     # Descriptive invocation context given to preparation children: the entry
     # origin, the parent run identity and the remaining budget.

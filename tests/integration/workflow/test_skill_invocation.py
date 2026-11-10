@@ -126,7 +126,7 @@ class TestSkillInvocation:
 
     def test_child_environment_is_passed_to_popen_without_mutating_parent(self):
         runner=cli.evaluator();before=dict(os.environ)
-        environment=runner.managed_environment('synthetic-parent')
+        environment=runner.managed_environment('synthetic-parent', 'codex')
         result=runner.execute([sys.executable,'-c','import os; print(os.environ["AHL_MANAGED_PREPARATION"])'],Path.cwd(),10,env=environment)
         assert (result['exit_code'],result['stdout'].strip()) == (0,'synthetic-parent')
         assert dict(os.environ) == before
@@ -153,18 +153,23 @@ class TestSkillInvocation:
             assert context['remaining_trials'] <= 24
             assert not context['execution_authority']
         # Trial children get only their own temporary CODEX_HOME, never the preparation marker.
-        trials=[environment for _,environment,argv in calls if environment is not None and '--version' not in argv
-                and 'AHL_MANAGED_PREPARATION' not in environment]
+        trials=[environment for _,environment,argv in calls if environment is not None and argv[0] == str(fixture.agent)
+                and '--version' not in argv and 'AHL_MANAGED_PREPARATION' not in environment]
         assert trials;assert all(Path(value['CODEX_HOME']).name=='codex-home' for value in trials)
 
     @pytest.mark.parametrize('prefix', [['improve'], ['watch'], ['skills','invoke']])
     @pytest.mark.parametrize('inherit', [False, True])
     def test_native_environment_opt_in_reaches_trials(self, prefix, inherit, make_fixture):
-        fixture = make_fixture(); runner = cli.evaluator(); execute = runner.execute; children = []
-        synthetic = {'PATH': '/usr/bin:/bin', 'HOME': str(fixture.root), 'AHL_TEST_CANARY': 'synthetic-canary'}
+        fixture = make_fixture(); runner = cli.evaluator(); execute = runner.execute; children = []; preparations = []; graders = []
+        synthetic = {'PATH': '/usr/bin:/bin', 'HOME': str(fixture.root), 'AHL_TEST_CANARY': 'synthetic-canary',
+                     'CODEX_API_KEY': 'synthetic-key', 'CODEX_HOME': str(fixture.root / 'synthetic-codex-home')}
         def observed(argv, cwd, timeout, stdin=None, **kwargs):
             environment = kwargs.get('env')
-            if environment is not None and 'CODEX_HOME' in environment and '--version' not in argv:
+            if any(Path(arg).name == 'grade.py' for arg in argv):
+                graders.append(environment)
+            if environment is not None and 'AHL_MANAGED_PREPARATION' in environment:
+                preparations.append(environment)
+            elif environment is not None and 'CODEX_HOME' in environment and '--version' not in argv:
                 children.append(environment)
             return execute(argv, cwd, timeout, stdin, **kwargs)
         options = ['--inherit-env'] if inherit else []
@@ -176,7 +181,18 @@ class TestSkillInvocation:
         assert code in (0, 3)
         assert children
         assert all(('AHL_TEST_CANARY' in env) == inherit for env in children)
+        assert len(preparations) == 2
+        assert len(graders) >= 15  # Nine self-tests and six baseline/candidate graders.
+        assert all(env is not None and 'AHL_TEST_CANARY' not in env and 'CODEX_API_KEY' not in env for env in graders)
+        assert all(('AHL_TEST_CANARY' in env) == inherit and env['CODEX_API_KEY'] == 'synthetic-key'
+                   and env['CODEX_HOME'] == synthetic['CODEX_HOME'] for env in preparations)
         result = json.loads(stdout)
+        for name in ('preparation-0.environment.json', 'evaluation-construction-0.environment.json'):
+            env_receipt = json.loads((Path(result['output']) / name).read_text())
+            assert env_receipt['inherited'] is inherit
+            assert 'AHL_MANAGED_PREPARATION' in env_receipt['names']
+            assert 'synthetic-key' not in json.dumps(env_receipt)
+
         evaluation = Path(result['output']) / 'evaluation-0/results.json'
         receipt = json.loads(evaluation.read_text())
         assert receipt['runtime']['environment_inherited'] is inherit
