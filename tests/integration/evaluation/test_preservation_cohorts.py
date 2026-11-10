@@ -12,16 +12,13 @@ from agent_harness_lab.evaluation.integrity import digest
 from agent_harness_lab.evaluation.oracle_history import HistoryStore
 from agent_harness_lab.private_journal import record
 from tests.integration.evaluation import test_oracle_bank_authority as authority
-from tests.support.unittest_cleanups import run_cleanups
 
 
 class PreservationCohort:
     """Hosts the qualified cohort fixture that other modules build on; it defines no tests of its own."""
 
     def __init__(self, add_cleanup):
-        self.fixture = authority.OracleBankAuthorityTests()
-        add_cleanup(run_cleanups, self.fixture)
-        self.fixture.setUp()
+        self.fixture = authority.OracleBankAuthority(add_cleanup)
         f = self.fixture
         self.root = f.root
         self.prior_run = f.run_history()[0]

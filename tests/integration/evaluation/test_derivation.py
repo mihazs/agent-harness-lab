@@ -324,7 +324,7 @@ class TestDerivation(DerivationHarness):
                 assert not public_export_allowed([record])
 
     def test_actual_controlled_bank_pins_are_retained_without_reapproving_revoked_history(self):
-        f=authorities.OracleBankAuthorityTests(); f.setUp(); self.cleanups.callback(f.doCleanups)
+        f=authorities.OracleBankAuthority(self.cleanups.callback)
         reservation=f.store.reserve_access(f.export/'manifest.json',f.baseline,f.candidate)
         resources=dict(cgroup_root=f.root/'delegation',image_root=f.root/'image',image_sha256=f.image_hash,disk_bytes=64*1024*1024)
         with patch.object(SandboxBackend,'capability',return_value={'status':'available'}),patch.object(SandboxBackend,'run',side_effect=f.execute):

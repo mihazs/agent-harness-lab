@@ -22,8 +22,6 @@ ROWS = [
      ['tests.integration.evaluation.test_oracle_history.OracleHistoryTests']),
     ('tests.integration.evaluation.test_oracle_plan', 'oracle',
      ['tests.integration.evaluation.test_oracle_plan.OraclePlanTests']),
-    ('tests.integration.evaluation.test_oracle_bank_authority', 'fixture',
-     ['tests.integration.evaluation.test_oracle_bank_authority.OracleBankAuthorityTests']),
     ('tests.integration.evaluation.test_permission_audit', 'case', [KERNEL]),
     ('tests.integration.evaluation.test_permission_audit', 'inference_fixture',
      ['tests.integration.sandbox.test_sandbox_inference.ControllerInferenceTests']),
@@ -114,7 +112,7 @@ def test_kernel_scope_reports_a_busy_class_cleanup(tmp_path, row):
 
 def test_nested_admission_cleanup_failure_fails_the_bank_authority_fixture(monkeypatch):
     from tests.integration.evaluation import test_oracle_bank_authority
-    from tests.support.unittest_cleanups import run_cleanups
+    from contextlib import ExitStack
 
     def fail():
         raise RuntimeError('synthetic admission cleanup failure')
@@ -124,11 +122,9 @@ def test_nested_admission_cleanup_failure_fails_the_bank_authority_fixture(monke
         raise ValueError('synthetic setup failure')
 
     monkeypatch.setattr(test_oracle_bank_authority.admissions, 'RegressionAdmission', broken)
-    case = test_oracle_bank_authority.OracleBankAuthorityTests()
-    with pytest.raises(ValueError, match='synthetic setup failure'):
-        case.setUp()
     with pytest.raises(RuntimeError, match='synthetic admission cleanup failure'):
-        run_cleanups(case)
+        with ExitStack() as cleanups:
+            test_oracle_bank_authority.OracleBankAuthority(cleanups.callback)
 
 
 
@@ -173,18 +169,16 @@ def test_preservation_receipt_helper_propagates_nested_cleanup_failure(monkeypat
 
 def test_preservation_history_propagates_nested_cleanup_failure(monkeypatch):
     from contextlib import ExitStack
-    import unittest
     from tests.integration.evaluation import test_preservation_history
 
     def fail():
         raise RuntimeError('synthetic nested cleanup failure')
 
-    class BrokenCohort(unittest.TestCase):
-        def setUp(self):
-            self.addCleanup(fail)
-            raise ValueError('synthetic setup failure')
+    def broken(add_cleanup):
+        add_cleanup(fail)
+        raise ValueError('synthetic setup failure')
 
-    monkeypatch.setattr(test_preservation_history.core.authority, 'OracleBankAuthorityTests', BrokenCohort)
+    monkeypatch.setattr(test_preservation_history.core.authority, 'OracleBankAuthority', broken)
     with pytest.raises(RuntimeError, match='synthetic nested cleanup failure'):
         with ExitStack() as cleanups:
             test_preservation_history.PreservationHistory(cleanups)

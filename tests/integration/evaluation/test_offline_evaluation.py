@@ -54,8 +54,8 @@ class OfflineFixture(unittest.TestCase):
         return json.loads((self.root/'output/results.json').read_text())
 
     def emulate(self, argv, workspace, inputs, role, limits):
-        self.assertEqual(set(inputs), {'harness'} if role == 'executor' else {'fixture', 'oracle'})
-        self.assertFalse(any('grader' in str(p.relative_to(workspace)) for p in workspace.rglob('*')))
+        assert set(inputs) == ({'harness'} if role == 'executor' else {'fixture', 'oracle'})
+        assert not any('grader' in str(p.relative_to(workspace)) for p in workspace.rglob('*'))
         translated = list(argv)
         for name, path in inputs.items():
             translated = [arg.replace('/inputs/'+name, str(path)) for arg in translated]
