@@ -32,7 +32,11 @@ def _project(inventory, report, task_cwd):
                      {'instructions': 'instructions', 'hooks': 'enforcement'}.get(row['dimension']))
         if dimension is None:
             continue
-        findings.append(dict(row, dimension=dimension, status=_status(row['status'], (row['reason'],)), observed=row['reason']))
+        status = _status(row['status'], (row['reason'],))
+        if (row['reason'] in (audit.chain.TRUNCATED, audit.chain.SKIPPED)
+                and dict(row['measures']).get('dropped_bytes', 0) > 0):
+            status = 'missing'
+        findings.append(dict(row, dimension=dimension, status=status, observed=row['reason']))
     report['findings'] = findings
     context = audit.skills.Context(inventory, task_cwd) if inventory.status == 'declared' else None
     skill_nodes = [node for node in inventory.nodes if node.kind == 'skill' and not context.supporting(node)
@@ -49,7 +53,9 @@ def _project(inventory, report, task_cwd):
         skill_status = 'not_checked'
     else:
         skill_status = 'conforms'
-    statuses = {'instructions': _status(dimensions['instructions']['status'], dimensions['instructions']['reasons']),
+    missing_instructions = any(row['dimension'] == 'instructions' and row['status'] == 'missing' for row in findings)
+    statuses = {'instructions': 'missing' if missing_instructions else _status(
+                    dimensions['instructions']['status'], dimensions['instructions']['reasons']),
                 'skills': skill_status,
                 'enforcement': _status(dimensions['hooks']['status'], dimensions['hooks']['reasons'])}
     report['coverage'] = [{'dimension': name, 'status': statuses.get(name, 'not_checked'), 'notice': audit.NOTICE}
