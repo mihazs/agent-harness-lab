@@ -923,7 +923,8 @@ for commits it captured. Each role in `roles` is one of:
 | --- | --- |
 | `current` | The edge joins the current PR and commit revisions in the latest checkpoint |
 | `superseded` | An earlier checkpoint of the same journal had the edge between the same native IDs, but the latest does not |
-| `unobserved` | No checkpoint of the journal has the edge |
+| `unobserved` | No checkpoint has an eligible native-shaped edge for this role |
+| `conflicted` | The latest checkpoint has a matching nonconforming claim, even if it also has a native-shaped claim |
 
 `roles` is `null` when the commit identity is `unlinked` or `unknown`, or when the PR
 was never observed or has ambiguous current revisions. A `superseded` head is the
@@ -939,7 +940,14 @@ join matched and at least one role is current. It is `stale` with reason
 with reason `pull_not_in_current_checkpoint` when the PR left the latest checkpoint.
 It is `unknown` when the PR is unobserved (`pull_unobserved`) or has ambiguous current
 revisions (`ambiguous_pull_revision`), and also when neither checkpoint ever showed a
-role (`pull_role_unobserved`). A missing edge is not proof that the commit is outside
+role (`pull_role_unobserved`). Current matching edges with heuristic, conflicted,
+wrong-namespace, wrong-resolver or incomplete endpoint-evidence claims make the
+result `unknown` (`pull_role_evidence_untrusted`); `untrusted_roles` identifies
+their role names. `prior_untrusted_roles` reports such earlier claims without
+promoting them to superseded native roles. Resolver v2 accepts only the GitHub
+importer’s candidate `native_fields` edge shape with both endpoint references;
+this is a structural check, not authentication of the local journal. Previously
+matched nonconforming claims may now be unknown. A missing edge is not proof that the commit is outside
 the PR, so this case is never `unlinked`. A `matched` report carries one candidate
 `receipts` entry per current role. Each uses the role's relation, namespace
 `git-github.pull-commit` and basis `source_declaration`. Its endpoints are the GitHub
@@ -3392,6 +3400,17 @@ states remain unknown; names and review content are excluded. The endpoint's
 list completeness is unverified and therefore prevents a checkpoint, including
 for an empty list. A reviewer state is not an approval or a task outcome, and
 reads are non-atomic. Schema 7 has a distinct scope from schemas 1–6.
+
+An opt-in selection schema 8 adds `diffs` for selected merge requests using the
+[diffs endpoint](https://docs.gitlab.com/api/merge_requests/#list-merge-request-diffs).
+The reader stores only path fingerprints and server-reported new, renamed and
+deleted flags, with a limit of 10,000 returned files per capture. Fingerprints
+can be guessable and must remain private. The response contains diff text while
+being read under transport byte limits; diff text and paths are excluded from
+the resulting records. GitLab can limit the file list without a reliable marker,
+so coverage remains incomplete and blocks checkpoints even for an empty list.
+The claims do not verify content, ancestry, execution or outcomes; reads are
+non-atomic. Schema 8 has a distinct scope from schemas 1–7.
 
 Use `SourceSpec(kind="api", provider="gitlab", version="v4", root_sha256=digest(base_url),
 project_sha256=selection.project_sha256, scope_sha256=selection.sha256,

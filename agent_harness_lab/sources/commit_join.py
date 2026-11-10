@@ -7,7 +7,7 @@ from .schema import EvidenceRecord, SourceSpec, digest
 PROFILE = 'cross-journal-commit-join-v1'
 RESOLVER_VERSION = 'git-github-commit-join-v1'
 PULL_PROFILE = 'cross-journal-pull-commit-join-v1'
-PULL_RESOLVER_VERSION = 'git-github-pull-commit-join-v1'
+PULL_RESOLVER_VERSION = 'git-github-pull-commit-join-v2'
 FULL_SHA = re.compile('[0-9a-f]{40}')
 # Native GitHub edges from a PR to a commit; commit_on runs commit -> PR in the GitHub graph.
 ROLES = (('head', 'pr_head_commit'), ('base', 'pr_base_commit'), ('merge_result', 'pr_merge_commit'),
@@ -101,14 +101,18 @@ def join_commit(git_source, git_store, github_source, github_store, *, repositor
 
 
 def _roles(graph, pull, commit, identity):
-    """Roles whose native GitHub edge joins this PR and commit under one endpoint identity."""
-    found = set()
+    """Collect native-shaped roles and separately surface conflicting claims."""
+    found, untrusted = set(), set()
     for join in graph.joins if graph is not None else ():
         for role, relation in ROLES:
             if join.relation != relation or join.right is None: continue
             ends = (join.right, join.left) if relation == 'commit_on' else (join.left, join.right)
-            if (identity(ends[0]), identity(ends[1])) == (pull, commit): found.add(role)
-    return found
+            if (identity(ends[0]), identity(ends[1])) != (pull, commit): continue
+            native = (join.namespace == 'github.native' and join.resolver_version == 'github-claims-v1'
+                      and join.status == 'candidate' and join.basis == 'native_fields' and join.reason == 'not_validated'
+                      and {ref.key for ref in join.evidence} == {join.left.key, join.right.key})
+            (found if native else untrusted).add(role)
+    return found, untrusted
 
 
 def join_pull_commit(git_source, git_store, github_source, github_store, *, repository_id, pull_id, commit_sha):
@@ -121,17 +125,20 @@ def join_pull_commit(git_source, git_store, github_source, github_store, *, repo
     if type(pull_id) is not int or pull_id < 1: raise ValueError('invalid GitHub pull request identity')
     status, reason, key, git, hub, _ = _join(git_source, git_store, github_source, github_store,
         repository_id, commit_sha, pull_id)
-    roles, receipts = None, ()
+    roles, receipts, untrusted, prior_untrusted = None, (), set(), set()
     if status in ('matched', 'stale') and hub['observations']['github_pull'] in ('current', 'stale'):
         pull, commit = hub['refs'].get('github_pull'), hub['refs'].get('github_commit')
-        current = _roles(hub['graph'], pull.key, commit.key, lambda r: r.key) if pull and commit else set()
+        current, untrusted = _roles(hub['graph'], pull.key, commit.key, lambda r: r.key) if pull and commit else (set(),set())
         natives = tuple((github_source.source_key, digest(v)) for v in (('github_pull', repository_id, pull_id),
             ('github_commit', repository_id, commit_sha)))
-        prior = set().union(*(_roles(g, *natives, lambda r: (r.source_sha256, r.native_id_sha256)) for g in hub['prior']))
-        roles = {role: 'current' if role in current else 'superseded' if role in prior else 'unobserved' for role, _ in ROLES}
+        previous = [_roles(g,*natives,lambda r: (r.source_sha256,r.native_id_sha256)) for g in hub['prior']]
+        prior = set().union(*(found for found,_ in previous))
+        prior_untrusted = set().union(*(invalid for _,invalid in previous))
+        roles = {role: 'conflicted' if role in untrusted else 'current' if role in current else 'superseded' if role in prior else 'unobserved' for role, _ in ROLES}
     if status == 'matched':
         observed = hub['observations']['github_pull']
-        status, reason = (('unknown', 'ambiguous_pull_revision') if observed == 'ambiguous'
+        status, reason = (('unknown', 'pull_role_evidence_untrusted') if untrusted
+            else ('unknown', 'ambiguous_pull_revision') if observed == 'ambiguous'
             else ('unknown', 'pull_unobserved') if observed == 'unobserved'
             else ('stale', 'pull_not_in_current_checkpoint') if observed == 'stale'
             else ('matched', 'exact_pull_commit_role') if 'current' in roles.values()
@@ -142,4 +149,5 @@ def join_pull_commit(git_source, git_store, github_source, github_store, *, repo
             receipts = tuple(JoinReceipt(*((local, pull) if relation == 'commit_on' else (pull, local)), relation,
                 'git-github.pull-commit', PULL_RESOLVER_VERSION, evidence) for role, relation in ROLES if roles[role] == 'current')
     return _report(status, reason, key, commit_sha, git, hub, receipts, PULL_PROFILE, PULL_RESOLVER_VERSION,
-        pull_id_sha256=digest(('github_pull', repository_id, pull_id)) if repository_id is not None else None, roles=roles)
+        pull_id_sha256=digest(('github_pull', repository_id, pull_id)) if repository_id is not None else None,
+        roles=roles,untrusted_roles=sorted(untrusted),prior_untrusted_roles=sorted(prior_untrusted))
