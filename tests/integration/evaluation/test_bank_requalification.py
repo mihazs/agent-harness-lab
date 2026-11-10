@@ -218,7 +218,9 @@ class TestBankRequalificationKernel(kernel.PytestKernelFixture):
         if write_failure!='none':
             partial=history.case(run_ids[0])/'reviewed-comparison-evidence.json'
             assert partial.exists() == (write_failure=='after-link')
-            if partial.exists():assert json.loads(partial.read_text())['adoption_authority'] is False
+            if partial.exists():
+                interrupted=json.loads(partial.read_text())
+                assert interrupted['adoption_authority'] is False and interrupted['retirement_completion']=='unknown'
             assert not list(partial.parent.glob('.reviewed-evidence-*'))
             assert history.show(run_ids[0])['automatic_promotion'] is False
             return
@@ -233,6 +235,7 @@ class TestBankRequalificationKernel(kernel.PytestKernelFixture):
         assert binding['certification_authority'] is binding['adoption_authority'] is False
         retired=json.loads((history.case(result['run_id'])/'reviewed-comparison-evidence.json').read_text())
         assert retired['run_id']==result['run_id'] and retired['certification_authority'] is retired['adoption_authority'] is False
+        assert retired['retirement_completion']=='unknown'
         from agent_harness_lab.evaluation.benchmark import public_export_allowed
         from tests.unit.evaluation.test_benchmark_contracts import record as public_record
         assert not public_export_allowed([{**public_record(),**retired,'publication_allowed':True}])

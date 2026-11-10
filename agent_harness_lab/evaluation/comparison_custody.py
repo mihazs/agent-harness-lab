@@ -325,7 +325,7 @@ class Comparison:
         value=dict(schema_version=1,profile='ahl-reviewed-comparison-evidence-v1',run_id=run_id,
             plan_sha256=self.spec.digest,result_sha256=hashed(result),reservation_sha256=hashed(receipt),
             custody_sha256=record(case/'responses-custody.json',8*1024*1024)[1],
-            publication_allowed=False,certification_authority=False,adoption_authority=False)
+            retirement_completion='unknown',publication_allowed=False,certification_authority=False,adoption_authority=False)
         target=contained(case,'reviewed-comparison-evidence.json')
         temporary=contained(case,'.reviewed-evidence-'+os.urandom(16).hex())
         try:
