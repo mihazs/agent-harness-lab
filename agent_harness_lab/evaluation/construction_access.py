@@ -307,7 +307,7 @@ class WorkflowAccess:
                 from .construction_seals import finish,read
                 seal=finish(capture,original,destination=active/'published')
                 sealed=read(seal,stage_scope)
-            children=[]
+            children=[]; references=None
             if role=='evaluator_author':
                 path=active/'published/manifest.json'; source,manifest_pin=record(path,ledger.MAX_BYTES)
                 original_manifest=next(raw for name,_,raw in original.files if name=='manifest.json')
@@ -319,6 +319,7 @@ class WorkflowAccess:
                 check=lambda:check_deadline(deadline)
                 expected_capture=ledger.snapshot_exposure(original,source['tasks'],source['grader_bundles'],check)
                 captured=ledger.exposure(path.parent,source['tasks'],source['grader_bundles'],check)
+                references=ledger.oracle_references(path.parent,source['tasks'],source['grader_bundles'],check)
                 if captured!=expected_capture or _tree_pin(path.parent,deadline)!=owned['produced_pin']:
                     raise ValueError('actual canonical output changed during asset capture')
                 children,_=captured
@@ -342,7 +343,7 @@ class WorkflowAccess:
             if (_tree_pin(folder/'published',deadline)!=output['tree_sha256']
                     or record(folder/'output.json',ledger.MAX_BYTES)[1]!=_hash(output)):
                 raise ValueError('canonical output changed before registration')
-            ledger.finish_construction(store.access_ledger().path,ident,_hash(inputs),children,_hash(output)); completed=True
+            ledger.finish_construction(store.access_ledger().path,ident,_hash(inputs),children,_hash(output),references=references); completed=True
             owned['output']=output; owned['destination']=destination; owned['consumer_snapshot']=expected
             data['stages'].append(owned)
             if closed is not None:

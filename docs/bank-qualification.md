@@ -139,6 +139,20 @@ workflow to later role dispatch and feedback. Only its own verified construction
 is excluded from the development-asset check; matching ordinary development
 assets, prior observations and reservations remain disqualifying.
 
+Current positive final-bank review supports the controller-owned
+`ahl-json-reference-v1` grader only. Its exact program bytes are checked before
+qualification; it runs with Python `-I -S` and reads `result.json` and a nonempty
+strict JSON object in `expected.json`. The result must contain that object's fields
+with matching types and values. Other grader programs remain unqualified. The
+controller records raw and canonical JSON content identities for oracle files,
+in addition to whole-bundle identities. A changed bundle, filename or JSON key
+order does not make a matching reference fresh. Earlier nonempty ledgers without
+this per-file coverage, and observations whose coverage is unavailable, remain
+unknown and block final-bank qualification. Matching common oracle data may also
+block a bank conservatively. This comparison cannot detect embedded substrings,
+semantic transformations or external exposure; it does not establish global
+non-exposure or complete role isolation.
+
 Descriptive audits remain available and do not confer certification or automatic
 promotion authority. The controlled author workflow requires its configured model;
 the bank audit itself makes no model calls.

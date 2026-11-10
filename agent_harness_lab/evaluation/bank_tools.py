@@ -173,7 +173,9 @@ def regrade_artifacts(workspace, allowlist, bundle, expected_digest, backend, *,
         remaining = limits.seconds - (time.monotonic() - started)
         if remaining <= 0:
             raise TimeoutError('regrading budget exhausted before launch')
-        run = backend.run(['/usr/bin/python3', '-I', '/inputs/oracle/grade.py.txt',
+        from .reference_grader import PROGRAM
+        isolated = ['-I', '-S'] if (oracle/'grade.py.txt').read_bytes() == PROGRAM.encode() else ['-I']
+        run = backend.run(['/usr/bin/python3', *isolated, '/inputs/oracle/grade.py.txt',
                            '/inputs/fixture', '/inputs/oracle/expected.json'],
                           scratch, {'fixture': fixture, 'oracle': oracle}, 'grader',
                           replace(limits, seconds=remaining))

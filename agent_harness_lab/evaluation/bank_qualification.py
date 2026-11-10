@@ -82,6 +82,8 @@ def _author_boundary(case,inputs,deadline,state):
                 or task['grader_digest']!=digest(contained(root,source['grader_bundles'][task['task_id']]['path']))
                 or task['artifacts']!=original['artifacts']):
             raise HeldoutUnavailable('converted author assets changed')
+        from .reference_grader import validate
+        validate(contained(case/'bank',task['grader_bundle']))
     controls=require_held_out_controls(case,inputs)
     seen={raw for snapshot in snapshots.values() for _,_,raw in snapshot.files}
     seen.update(raw for _,_,raw in WorkingState(folder/'published',deadline).snapshot.files)
@@ -237,9 +239,17 @@ def intake(store,bank_path,spec_path,heldout_path=None,*,_conversion=None):
 def exposure_check(store,case,state,*,reservation_id=None):
     from .certification_access import _managed_available
     from .oracle_history import HistoryStore
+    if state.get('reference_coverage') is not True:
+        raise HeldoutUnavailable('prior oracle reference coverage unavailable')
     spec,_=record(case/'declaration.json');history=HistoryStore(spec['history_store'])
     inputs,_=record(case/'inputs.json')
     custody=require_author_boundary(case,inputs,state=state)
+    from .certification_access import oracle_references, reference_guard
+    bank,_=record(case/'bank/bank.json',1024*1024)
+    tasks=[dict(id=task['task_id']) for task in bank['tasks']]
+    bundles={task['task_id']:dict(path=task['grader_bundle']) for task in bank['tasks']}
+    references=set(oracle_references(case/'bank',tasks,bundles))
+    reference_guard(state,references,custody['construction_id'])
     assets=bank_assets(case/'bank/bank.json');_managed_available(state,assets,final_author=custody['construction_id'])
     selected=set(assets);snapshot=deepcopy(state)
     if reservation_id is not None:snapshot['reservations'].pop(reservation_id,None)

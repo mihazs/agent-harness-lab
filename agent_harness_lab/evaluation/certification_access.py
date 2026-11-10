@@ -3,6 +3,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 import fcntl
 import hashlib
+import json
 import math
 import os
 from pathlib import Path
@@ -12,7 +13,7 @@ from weakref import WeakKeyDictionary
 
 from agent_harness_lab.monitoring.state import atomic_json
 from agent_harness_lab.private_journal import encoded, record, sync_directory
-from .integrity import contained, relative, tree
+from .integrity import contained, relative, tree, read_regular, unique_object, invalid_constant
 from .plan import ExperimentSpec
 from .regressions import fields, sha256
 from .decision_receipts import private as _private
@@ -84,6 +85,27 @@ def snapshot_exposure(snapshot,tasks,bundles,check=lambda:None):
     return _exposure(tasks,bundles,lambda name:snapshot_tree(snapshot,name),check)
 
 
+def oracle_references(root, tasks, bundles, check=lambda: None):
+    from .reference_grader import PROGRAM
+    result=set()
+    for task in tasks:
+        folder=contained(root,bundles[task['id']]['path'])
+        for path,info in tree(folder).items():
+            check(); raw=read_regular(contained(folder,path),10*1024*1024)
+            if hashlib.sha256(raw).hexdigest()!=info['sha256']:
+                raise ValueError('oracle changed during reference capture')
+            if raw==PROGRAM.encode(): continue
+            result.add(hashed(['oracle-file-raw-v1',info['sha256']]))
+            try:
+                value=json.loads(raw,object_pairs_hook=unique_object,parse_constant=invalid_constant)
+                canonical=encoded(value)
+            except (ValueError,TypeError,RecursionError,UnicodeError,OverflowError):
+                continue
+            result.add(hashed(['oracle-file-json-v1',hashlib.sha256(canonical).hexdigest()]))
+    result=sorted(result); _assets(result)
+    return result
+
+
 def capture(manifest, baseline, candidate, check=lambda: None,*,access_ledger=None,deadline=None):
 
     """Read actual frozen content, never a supplied qualification receipt."""
@@ -132,10 +154,10 @@ def capture(manifest, baseline, candidate, check=lambda: None,*,access_ledger=No
 
 
 def _state(path):
-    if not path.exists(): return dict(schema_version=2, profile=PROFILE, reservations={}, observed_assets={})
+    if not path.exists(): return dict(schema_version=5, profile=PROFILE, reservations={}, observed_assets={}, derivations={}, constructions={}, reference_coverage=True, oracle_references={})
     _private(path); state, _ = record(path, MAX_BYTES)
-    fields(state, 'schema_version profile reservations observed_assets'+(' derivations' if state.get('schema_version') in (3,4) else '')+(' constructions' if state.get('schema_version')==4 else ''))
-    if type(state['schema_version']) is not int or state['schema_version'] not in (2,3,4) or state['profile'] != PROFILE:
+    fields(state, 'schema_version profile reservations observed_assets'+(' derivations' if state.get('schema_version') in (3,4,5) else '')+(' constructions' if state.get('schema_version') in (4,5) else '')+(' reference_coverage oracle_references' if state.get('schema_version')==5 else ''))
+    if type(state['schema_version']) is not int or state['schema_version'] not in (2,3,4,5) or state['profile'] != PROFILE:
 
         raise ValueError('legacy access state cannot authorize managed diagnostics')
     if not isinstance(state['reservations'], dict): raise ValueError('invalid access reservation index')
@@ -151,7 +173,7 @@ def _state(path):
         assets = set(entry['binding']['assets'])
         if used & assets: raise ValueError('managed assets were reserved more than once')
         used.update(assets)
-    if state['schema_version'] in (3,4):
+    if state['schema_version'] in (3,4,5):
 
         derivations=state['derivations']
         if not isinstance(derivations,dict): raise ValueError('invalid derivation index')
@@ -180,7 +202,7 @@ def _state(path):
             while current is not None:
                 if current in seen or len(seen)>64: raise ValueError('cyclic or excessive derivation ancestry')
                 seen.add(current); current=derivations[current]['source_derivation_id']
-    if state['schema_version']==4:
+    if state['schema_version'] in (4,5):
         constructions=state['constructions']
         if not isinstance(constructions,dict): raise ValueError('invalid canonical construction index')
         for ident,entry in constructions.items():
@@ -207,6 +229,20 @@ def _state(path):
             elif entry['children'] or entry['output_binding_sha256'] is not None:
                 raise ValueError('incomplete construction cannot claim output')
 
+    if state['schema_version'] != 5:
+        covered=not any(state.get(key) for key in ('reservations','observed_assets','derivations','constructions'))
+        state.update(schema_version=5,reference_coverage=covered,oracle_references={})
+        state.setdefault('derivations',{}); state.setdefault('constructions',{})
+    elif type(state['reference_coverage']) is not bool:
+        raise ValueError('invalid oracle reference coverage')
+    if not isinstance(state['oracle_references'],dict): raise ValueError('invalid oracle reference index')
+    for ident, references in state['oracle_references'].items():
+        sha256(ident); _assets(references)
+        if ident not in state['constructions']: raise ValueError('unknown oracle reference construction')
+    if state['reference_coverage'] and any(
+            entry['state']=='complete' and entry['role'] in ('evaluator_author','final_bank_author')
+            and ident not in state['oracle_references'] for ident,entry in state['constructions'].items()):
+        raise ValueError('completed author reference coverage missing')
     return state
 
 
@@ -264,7 +300,9 @@ def reserve(path, binding,*,deadline=None):
             from .bank_qualification import access_guard
             final_author=access_guard(binding,state,deadline=deadline)
             _managed_available(state,binding['assets'],final_author=final_author)
-        else:_managed_available(state,binding['assets'])
+        else:
+            _managed_available(state,binding['assets'])
+            state['reference_coverage']=False
 
         if (set(binding['assets']) & set(state['observed_assets'])
                 or any(set(binding['assets']) & set(e['binding']['assets']) for e in state['reservations'].values())):
@@ -287,6 +325,7 @@ def admit(path, assets, run_id, *, ident=None, binding=None,deadline=None):
         if assets != binding['assets']: raise ValueError('managed access assets differ')
     with _locked(path) as (path, state):
         if ident is None:
+            state['reference_coverage']=False
             if any(set(assets) & set(e['binding']['assets']) for e in state['reservations'].values()):
                 raise ValueError('known protected assets require their reservation; retirement cannot be bypassed')
             for asset in assets: state['observed_assets'].setdefault(asset, run_id)
@@ -328,12 +367,20 @@ def _managed_available(state,assets,*,final_author=None):
             raise ValueError('known may-derived development assets cannot receive fresh managed access')
 
 
+def reference_guard(state,references,final_author):
+    if state.get('reference_coverage') is not True:
+        raise ValueError('prior oracle reference coverage unavailable')
+    if any(set(references)&set(values) for ident,values in state['oracle_references'].items() if ident!=final_author):
+        raise ValueError('known oracle reference was previously exposed')
+
+
 def begin_derivation(path,root_run_id,input_binding_sha256,parents,source_derivation_id=None):
     sha256(root_run_id); sha256(input_binding_sha256)
     if not isinstance(parents,list) or not parents or len(parents)>3000 or parents!=sorted(set(parents)):
         raise ValueError('bounded actual derivation parent assets required')
     for parent in parents: sha256(parent)
     with _locked(path) as (path,state):
+        state['reference_coverage']=False
         known=set(state['observed_assets'])
         for entry in state['reservations'].values():
             if set(parents)&set(entry['binding']['assets']) and entry['state']!='retired':
@@ -370,7 +417,7 @@ def finish_derivation(path,ident,input_binding_sha256,children=None,output_bindi
     return _finish(path,'derivations',ident,input_binding_sha256,children,output_binding_sha256)
 
 
-def _finish(path,index,ident,input_pin,children,output_pin):
+def _finish(path,index,ident,input_pin,children,output_pin,references=None):
     sha256(ident); sha256(input_pin)
     if children is not None:
         _assets(children); sha256(output_pin)
@@ -384,6 +431,10 @@ def _finish(path,index,ident,input_pin,children,output_pin):
             raise ValueError('proposal cannot claim authored scientific output')
         entry.update(state='unresolved' if children is None else 'complete',children=[] if children is None else children,
             output_binding_sha256=output_pin)
+        if index=='constructions' and children is not None and entry['role'] in ('evaluator_author','final_bank_author'):
+            if references is None: state['reference_coverage']=False
+            else:
+                _assets(references); state['oracle_references'][ident]=references
         _save(path,state)
 
 
@@ -400,7 +451,7 @@ def begin_construction(path,role,input_pin,*,parent=None,parents=None):
             if (role!='proposer' or source is None or source['role']!='evaluator_author' or source['state']!='complete'
                     or not parents or not set(parents)<=set(source['children'])):
                 raise ValueError('feedback requires completed owned author assets')
-        state.update(schema_version=4); state.setdefault('derivations',{}); state.setdefault('constructions',{})
+        state.update(schema_version=5); state.setdefault('derivations',{}); state.setdefault('constructions',{})
         ident=secrets.token_hex(32)
         if ident in state['derivations'] or ident in state['constructions']: raise ValueError('construction identity collision')
         state['constructions'][ident]=dict(profile=CONSTRUCTION_PROFILE,state='pending',role=role,parent_construction_id=parent,parent_assets=parents,
@@ -416,8 +467,8 @@ def construction_record(path,ident):
         return deepcopy(value)
 
 
-def finish_construction(path,ident,input_pin,children=None,output_pin=None):
-    return _finish(path,'constructions',ident,input_pin,children,output_pin)
+def finish_construction(path,ident,input_pin,children=None,output_pin=None,*,references=None):
+    return _finish(path,'constructions',ident,input_pin,children,output_pin,references)
 
 
 def known_derivations(path,assets):

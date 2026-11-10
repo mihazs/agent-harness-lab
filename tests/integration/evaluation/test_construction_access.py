@@ -171,7 +171,7 @@ class TestConstructionAccess(ConstructionAccessHarness):
         assert [s['role'] for s in observed['stages']] == ['proposer','evaluator_author']
         assert all(s['scientific_parentage']=='unknown' for s in observed['stages'])
         state=json.loads((self.store/'protected-access.json').read_bytes())
-        assert state['schema_version'] == 4; assert len(state['constructions']) == 2
+        assert state['schema_version'] == 5; assert len(state['constructions']) == 2
         assert all(s['state']=='complete' for s in state['constructions'].values())
         assert any(s['children'] for s in state['constructions'].values())
         assert observed['qualification'] == 'unverified'; assert not observed['publication_allowed']
@@ -505,12 +505,16 @@ class TestConstructionAccess(ConstructionAccessHarness):
         previous=variant.DerivationHarness(); previous.setUp(); self.cleanups.callback(previous.doCleanups)
         run_id=previous.parent(); generated=previous.derive(source_run=run_id)
         path=previous.f.store.root/'protected-access.json'; before=json.loads(path.read_bytes())
-        assert before['schema_version'] == 3
+        before['schema_version']=3
+        before.pop('constructions'); before.pop('reference_coverage'); before.pop('oracle_references')
+        from agent_harness_lab.monitoring.state import atomic_json
+        atomic_json(path,before)
         historical=previous.f.store.historical_plan(run_id)
         self.f.args.evaluation_store=previous.f.store.root
         result=self.f.run_controlled(); assert result['status'] == 'inconclusive'
         after=json.loads(path.read_bytes())
-        assert after['schema_version'] == 4; assert before['derivations'] == after['derivations']
+        assert after['schema_version'] == 5; assert before['derivations'] == after['derivations']
+        assert after['reference_coverage'] is False
         assert previous.f.store.historical_plan(run_id) == historical
         assert previous.f.store.derivation_status(generated['derivation_id'])['state'] == 'complete'
 
