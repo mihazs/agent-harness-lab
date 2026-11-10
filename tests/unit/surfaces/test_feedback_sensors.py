@@ -41,5 +41,10 @@ def test_hosted_ci_paths_are_not_sensor_candidates(tmp_path):
     (workflow/'test_job.py').write_text('SYNTHETIC_CONTENT')
     (workflow/'package.json').write_text('SYNTHETIC_CONTENT')
     (workflow/'tests').mkdir()
+    for name in ('.circleci','.buildkite'):
+        directory=tmp_path/name;directory.mkdir()
+        (directory/'test_job.py').write_text('SYNTHETIC_CONTENT')
+        (directory/'package.json').write_text('SYNTHETIC_CONTENT')
+        (directory/'tests').mkdir()
     (tmp_path/'.gitlab-ci.yml').write_text('SYNTHETIC_CONTENT')
     assert feedback_sensors.capture(tmp_path)['candidates']==[]
