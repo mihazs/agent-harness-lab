@@ -41,7 +41,9 @@ after rechecking its evidence, and an absent match still does not establish
 independence. This warning does not change the frozen plan or legacy execution
 behavior. To prepare a new bound plan before trials, follow the
 [private root-similarity preparation](content-grouping.md#suspected-root-similarity)
-procedure; previously collected trial IDs cannot be reused.
+procedure; previously collected trial IDs cannot be reused. This reporting
+change also changes the analysis engine identity: explicitly regenerate controller
+decision receipts, and do not cold-resume sequential runs pinned to an older engine.
 
 Without a target, legacy descriptive execution remains available even when the
 report says `infeasible`: this means its selected design cannot meet the frozen
