@@ -100,6 +100,7 @@ def _separate(groups, texts, inputs, partition):
 
 def transition(state, kind, target, previous_kind=None):
     if state is None: return kind==target=='pending'
+    if kind=='audit_assigned': return state=='pending' and previous_kind=='pending' and target=='pending'
     if kind=='claimed': return state in ('pending','submitted') and target=='claimed'
     if kind=='submitted': return state=='claimed' and target in ('submitted','reviewed')
     if kind=='adjudicated': return state=='reviewed' and target=='adjudicated'
@@ -122,7 +123,12 @@ class CorpusStore(PrivateJournal):
         submissions=[]; claimant=None; final=None
         for event,_ in events[1:]:
             payload=event['payload']; kind=event['kind']
-            if kind=='claimed':
+            if kind=='audit_assigned':
+                _fields(payload,'assignment_sha256 receipt_sha256 rubric_sha256 unit_sha256')
+                for pin in payload.values(): _sha(pin)
+                if payload['rubric_sha256']!=inputs['rubric_sha256']:
+                    raise ValueError('audit assignment rubric differs from corpus case')
+            elif kind=='claimed':
                 _fields(payload,'reviewer'); _identity(payload['reviewer'])
                 if payload['reviewer'].casefold() in {inputs['author'].casefold(),*(s['reviewer'].casefold() for s in submissions)}:
                     raise ValueError('separate declared reviewer identity required')
