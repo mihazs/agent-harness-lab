@@ -117,16 +117,22 @@ def test_config_inventory_v1_loads_into_private_recommendation():
         config_recommendations.recommend({**value, 'profile': 'unknown-v999'})
 
 
-@pytest.mark.parametrize(('name', 'capture', 'runtime', 'version'), [
-    ('ahl-commands-inventory-v1', commands_inventory.capture, 'claude-code', '2.1.317'),
-    ('ahl-plugin-inventory-v1', plugins_inventory.capture, 'claude-code', '2.1.317'),
-    ('ahl-harness-inventory-v1', harness_inventory.capture, 'codex', '0.166.0'),
-    ('ahl-claude-rules-v1', claude_rules.capture, 'claude-code', '2.1.317'),
+@pytest.mark.parametrize(('name', 'capture', 'field', 'count'), [
+    ('ahl-commands-inventory-v1', commands_inventory.capture, 'entries', 1),
+    ('ahl-plugin-inventory-v1', plugins_inventory.capture, 'plugins', 1),
+    ('ahl-harness-inventory-v1', harness_inventory.capture, 'nodes', 3),
+    ('ahl-claude-rules-v1', claude_rules.capture, 'nodes', 1),
 ])
-def test_empty_synthetic_inventory_output_remains_private(tmp_path, name, capture, runtime, version):
-    profile = dict(schema_version=1, runtime=runtime, version=version, task_cwd='.')
+def test_synthetic_inventory_output_remains_private(tmp_path, name, capture, field, count):
+    files = {'.claude/commands/review.md': '---\ndescription: Review a synthetic task\n---\nReview the synthetic task.\n',
+             '.claude/rules/style.md': 'Use synthetic conventions.\n',
+             '.claude/settings.json': '{"enabledPlugins":{"synthetic@market":true}}\n'}
+    for name_, text in files.items():
+        path = tmp_path/name_; path.parent.mkdir(parents=True, exist_ok=True); path.write_text(text)
+    profile = dict(schema_version=1, runtime='claude-code', version='2.1.317', task_cwd='.')
     output = json.loads(json.dumps(capture(tmp_path, profile).document()))
     assert output == sample(name)
+    assert len(output[field]) == count
     assert output['publication_allowed'] is False
 
 
