@@ -1,6 +1,7 @@
 """Human-readable, descriptive exit guidance; it never grants execution authority."""
 
 REMEDIATION = {
+    'responses_inherit_env_unsupported': 'Remove --inherit-env when using the Responses runtime.',
     'no_data': 'Run ahl audit . for a zero-model-cost static convention check; ahl improve may incur model costs.',
     'analysis_incomplete': 'Review caveats in analysis.json; restore missing coverage or remove explicit limits before interpreting absence of findings.',
     'analysis_observed': 'Review the captured evidence and assess a candidate with ahl improve when ready.',
@@ -79,7 +80,7 @@ STATUS_ACTION = {
 }
 
 
-def summary(result):
+def guidance(result):
     status = result.get('status')
     analysis = result.get('analysis') or {}
     evidence = analysis.get('evidence_state')
@@ -99,4 +100,9 @@ def summary(result):
     events = analysis.get('events')
     cases = analysis.get('cases')
     coverage = f'{events} events, {cases} cases' if type(events) is int and type(cases) is int else 'unavailable'
+    return category, coverage, action
+
+
+def summary(result):
+    category, coverage, action = guidance(result)
     return f'{category}. Evidence coverage: {coverage}; capture completeness remains unverified. Next: {action}'

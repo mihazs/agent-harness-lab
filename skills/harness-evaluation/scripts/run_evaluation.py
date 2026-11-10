@@ -655,6 +655,8 @@ def _evaluate(args):
         grade = trajectory_assertions.compose(binding, record.get('grader'), receipt)
         record['controller_grade'] = grade
         return grade
+    application_modules()
+    from agent_harness_lab.evaluation.skills import activation_receipt
     for scheduled in ordered:
         if sequential_controller is not None:
             try:
@@ -667,6 +669,7 @@ def _evaluate(args):
         remaining = (sequential_controller.root_deadline-time.monotonic() if sequential_controller is not None
                      else budget - (time.monotonic() - started))
         record = dict(scheduled, split=task['split'])
+        record['skill_activation_receipt'] = activation_receipt([], case_id=None)
         audit_offset=len(backend.permission_reports) if permission_audit is not None else 0
         record.setdefault('root',task.get('root'))
         record.setdefault('family',task.get('family'))

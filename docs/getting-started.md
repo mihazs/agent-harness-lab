@@ -2,6 +2,10 @@
 
 [Documentation index](README.md) · [Installation](installation.md)
 
+In this tutorial, you will run an offline diagnosis on a synthetic fixture, inspect
+the report, and learn what its finding can and cannot establish. No credentials or
+package installation are needed.
+
 ## Problem and input
 
 A developer sees repeated reads and wants to inspect them before changing project
@@ -12,7 +16,9 @@ result and state identifiers. It contains no project history or real file conten
 Input: [repeated-observation.jsonl](../examples/repeated-observation.jsonl).
 Full actual output: [repeated-observation-report.md](../examples/repeated-observation-report.md).
 
-## Reproduce
+<a id="reproduce"></a>
+
+## Run the diagnosis
 
 With Git, a POSIX shell and Python 3.11+, clone the public repository and enter it:
 
@@ -31,7 +37,9 @@ output directory on every attempt. `findings.json` contains machine-readable res
 and the input SHA-256. This explicit-input command does not inspect native sessions,
 run model inference or modify instructions. No package installation is needed.
 
-## Observed result and interpretation
+<a id="observed-result-and-interpretation"></a>
+
+## Interpret the result
 
 The report contains four events, one case, one `duplicate_observation` finding and
 zero recurring sequences. The finding references events 2 and 4; it has status
