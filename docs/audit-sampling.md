@@ -198,6 +198,14 @@ model or policy ran, that frame alert flags are genuine, or that frame origin,
 reviewer identity, assignment timing or labels are authenticated. This is not
 a drift detector or a causal claim.
 
+For any supported corpus audit, `audit_corpus.estimate(...,
+include_composition=True)` adds a private `audit-reviewed-composition-v1` view;
+`triage_audit_observation` accepts the same option. It counts adjudicated sampled
+non-alerts by explicitly mapped incident class and separately shows unresolved
+reviews. These are unweighted review-composition counts, not population prevalence
+or validated incidents. The opt-in wrapper has a distinct profile; default report
+shapes and the underlying design-aware estimate do not change.
+
 ## Estimates
 
 `estimate(receipt, batch)` takes labels bound to one receipt:

@@ -210,6 +210,10 @@ def test_recorded_nonresponse_stays_inconclusive_until_late_adjudication(tmp_pat
     assert not public_export_allowed([report])
     assert report['source_estimate_profile']==(audit.REPORT_PROFILE_V2 if design=='grid' else audit_stratified.REPORT_PROFILE)
     assert report['corpus_review_status']==dict(reviewed=0,pending=0,nonresponse=1)
+    composition=audit_corpus.estimate(receipt,value,store.root,binding,rubric,include_composition=True,**options)
+    assert composition['review_composition']['nonresponse']==1
+    assert composition['review_composition']['observed_missed_by_class']=={}
+    assert composition['audit_report']==report and not public_export_allowed([composition])
     assert 'audit_assignment_timing_unauthenticated' in report['limitations']
     if design=='grid':assert report['review_status']['nonresponse']==1
     answer=label();answer['symptoms']=['audit-incident']

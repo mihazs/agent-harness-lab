@@ -1,4 +1,5 @@
 """Private local audit-to-corpus observations; declarations are not authenticated authority."""
+from collections import Counter
 from copy import deepcopy
 
 from . import audit_sampling as audit
@@ -146,8 +147,9 @@ def inspect(receipt, frame, store_path, binding, trusted_heads=None, *, plan=Non
         labels_for_estimation=None,publication_allowed=False,automatic_policy_update=False)
 
 
-def estimate(receipt, frame, store_path, binding, rubric_value, trusted_heads=None, *, plan=None):
+def estimate(receipt, frame, store_path, binding, rubric_value, trusted_heads=None, *, plan=None, include_composition=False):
     """Estimate only from explicit adjudicated markers under the bound caller-declared rubric."""
+    if type(include_composition) is not bool:raise ValueError('explicit boolean composition option required')
     _queue(receipt,frame,trusted_heads,plan)
     rows=_assignment(receipt,binding);rubric_value=deepcopy(rubric_value);rubric_sha=rubric(rubric_value)
     if rubric_sha!=binding['rubric_sha256']:raise ValueError('audit corpus rubric differs from assignment')
@@ -179,4 +181,20 @@ def estimate(receipt, frame, store_path, binding, rubric_value, trusted_heads=No
     if any(not eligible for _,_,_,_,eligible,_,_ in observed):
         report['limitations'].append('corpus_ineligible_or_ambiguous_observations')
     report['assignment_sha256']=binding['assignment_sha256']
-    return report
+    if not include_composition:return report
+    # Only locally adjudicated markers in the selected sample enter these
+    # descriptive counts. They are not population estimates or validated labels.
+    by_unit={item['unit_sha256']:item for item in receipt['draws']};missed=Counter()
+    for item in labels:
+        if (item['status']=='reviewed' and item['label']!=audit.NO_INCIDENT
+                and by_unit[item['unit_sha256']]['alerted'] is False):
+            missed[item['label']]+=1
+    composition=dict(profile='audit-reviewed-composition-v1',
+        interpretation='unweighted_review_composition_not_population_estimate',
+        reviewed=sum(item['status']=='reviewed' for item in labels),
+        pending=sum(item['status']=='pending' for item in labels),
+        nonresponse=sum(item['status']=='nonresponse' for item in labels),
+        observed_missed_by_class=dict(sorted(missed.items())),publication_allowed=False)
+    return dict(schema_version=1,profile='audit-corpus-composition-observation-v1',
+        audit_report=report,review_composition=composition,reviewer_labels='unauthenticated',
+        publication_allowed=False,automatic_policy_update=False)

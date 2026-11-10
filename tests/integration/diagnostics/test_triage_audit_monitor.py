@@ -38,6 +38,11 @@ def test_triage_audit_monitor_replays_local_review_without_authority(tmp_path,de
     assert result['policy_application']=='not_observed' and result['alert_decisions']=='caller_declared_unverified'
     assert result['action']=='observe_only' and result['promotion_authority']=='none'
     assert not result['automatic_rollback'] and not result['automatic_policy_update'] and not public_export_allowed([result])
+    pending=triage_audit_observation(triage,receipt,value,store.root,binding,rubric,include_composition=True,**options)
+    assert pending['profile']=='triage-audit-monitor-composition-v1'
+    assert pending['audit_report']['audit_report']['status']=='inconclusive'
+    assert pending['audit_report']['review_composition']['observed_missed_by_class']=={}
+    assert pending['audit_report']['review_composition']['pending']==1 and not public_export_allowed([pending])
     wrong=triage_fixture(model_sha256='d'*64)
     with pytest.raises(ValueError,match='policy or model declaration'):
         triage_audit_observation(wrong,receipt,value,tmp_path/'missing',binding,rubric,**options)
@@ -61,3 +66,9 @@ def test_triage_audit_monitor_replays_local_review_without_authority(tmp_path,de
     assert result['audit_report']['status']=='estimated' and result['action']=='observe_only'
     assert 'reviewer_labels_unauthenticated' in result['audit_report']['limitations']
     assert result['assignment_timing']=='unauthenticated' and result['frame_origin']=='unauthenticated'
+    observed=triage_audit_observation(triage,receipt,value,store.root,binding,rubric,include_composition=True,**options)
+    view=observed['audit_report'];composition=view['review_composition']
+    assert view['audit_report']==result['audit_report']
+    assert composition['observed_missed_by_class']=={'tool_misuse':1}
+    assert composition['interpretation']=='unweighted_review_composition_not_population_estimate'
+    assert view['reviewer_labels']=='unauthenticated' and not public_export_allowed([observed])
