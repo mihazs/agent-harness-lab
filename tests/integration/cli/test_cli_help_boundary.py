@@ -76,7 +76,7 @@ def flat(text):
 
 
 COMMANDS = ('top', 'improve', 'watch')
-DOCS = ('README.md', 'docs/cli-help.md', 'docs/workflows.md')
+DOCS = ('README.md', 'docs/cli-help.md', 'docs/workflows.md', 'docs/command-reference.md')
 
 
 @pytest.fixture(scope='module')

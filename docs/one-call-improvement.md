@@ -52,14 +52,13 @@ After any exactly covered evaluation, `workflow.json` also carries a `decision`
 block explaining that outcome; see
 [single-run dispositions](decision-receipts.md#default-improve-single-run-dispositions).
 
-No manual analyze/manifest/evaluate sequence is required. Select `--agent codex`
-or `--agent claude` if both runtimes are available. Authentication remains the
-runtime's responsibility; AHL does not inspect credential contents.
+No manual analyze/manifest/evaluate sequence is required. If both runtimes are
+available, `--agent codex` or `--agent claude` selects one. Authentication remains
+the runtime's responsibility; AHL does not inspect credential contents.
 
-For an already prepared controlled Responses environment, persist its settings
-and worker references in the [Responses configuration variant](onboarding.md#configure-controlled-responses-once).
-Then plain `ahl improve .` resolves that pipeline without a native agent
-executable or repeated resource flags. Its broker reads the explicitly selected
+For an already prepared controlled Responses environment, the [Responses configuration variant](onboarding.md#configure-controlled-responses-once)
+persists its settings and worker references. Plain `ahl improve .` resolves that
+pipeline without a native agent executable or repeated resource flags. Its broker reads the explicitly selected
 private credential only during actual execution; doctor checks metadata only.
 
 When `ahl.json` exists, its profile, executable, scope and limits constrain the run.
@@ -71,8 +70,8 @@ by improve. Configured trials share one ceiling across preparation and both atte
 The bundled starter bank is not represented as a target-project certification bank.
 Only configured harness files enter preparation snapshots; candidates outside that
 scope are rejected before evaluation construction. Watch uses the same preflight
-and binds its checkpoint to the resolved configuration. Restart watch after changing
-configuration; it never silently widens an active run's scope.
+and binds its checkpoint to the resolved configuration. A watch restart is required after configuration changes; it never silently widens
+an active run's scope.
 
 ## Harness surface classification
 
@@ -601,9 +600,7 @@ one, and runtime activation are not checked or claimed.
 
 ## Independently verified format repair
 
-```sh
-ahl improve . --repair-contracts
-```
+See [repair a supported skill header](repair-skill-header.md) for the commands.
 
 This explicit mode performs a narrow deterministic evaluation and application
 without a model: remove a UTF-8 BOM before an otherwise valid minimal SKILL.md
@@ -622,11 +619,8 @@ It does not rename skills, delete instructions, install hooks or call a model.
 A project configuration with `recommendation_only: true` produces a staged plan
 and preserves target files. Without that restriction, requesting this explicit
 repair authorizes the supported reversible transformation. The existing private
-journal records the exact deployment and verifies installed bytes. Restore it with:
-
-```sh
-ahl rollback DEPLOYMENT_ID --project /path/to/project
-```
+journal records the exact deployment and verifies installed bytes. The same guide
+describes rollback.
 
 Rollback preserves intervening edits by reporting a conflict. The deployment ID
 and journal location are included in the repair result. Runtime activation stays
