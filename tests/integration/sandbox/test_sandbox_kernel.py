@@ -81,22 +81,29 @@ class KernelHelpers:
         assert_complete(run)
 
 
-class KernelFixture(KernelHelpers, unittest.TestCase):
-    """unittest host of the kernel scope for the other kernel modules' cases; it defines no tests.
-
-    Those modules subclass it, and two of them call KernelCase methods below with an instance as `self`,
-    so KernelCase keeps this interface: root, work, backend, cgroup_root, run_code, assert_complete and
-    addCleanup.
-    """
-    @classmethod
-    def setUpClass(cls):
-        cls.cgroup_root = cls.enterClassContext(kernel_scope())
-
+class KernelFixture(KernelHelpers):
+    """Shared kernel setup for pytest and standard-library canaries."""
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.work = self.root/'work'; self.work.mkdir()
         self.backend = SandboxBackend(cgroup_root=self.cgroup_root)
+
+
+class UnittestKernelFixture(KernelFixture, unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.cgroup_root = cls.enterClassContext(kernel_scope())
+
+
+class PytestKernelFixture(KernelFixture):
+    @pytest.fixture(autouse=True)
+    def _native_kernel(self):
+        with ExitStack() as cleanups:
+            self.cgroup_root = cleanups.enter_context(kernel_scope())
+            self.addCleanup = cleanups.callback
+            self.setUp()
+            yield
 
 
 @pytest.fixture(scope='module')

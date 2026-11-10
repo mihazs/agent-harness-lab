@@ -1,5 +1,5 @@
 """Fresh fixed-bank public improvement; synthetic transport, actual opt-in kernel workers."""
-from contextlib import ExitStack,redirect_stderr,redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from copy import copy
 import gc
 import hashlib
@@ -22,7 +22,6 @@ from agent_harness_lab.private_journal import encoded,record
 from tests.integration.sandbox import test_sandbox_kernel as kernel
 from tests.integration.sandbox import test_sandbox_construction as roles
 from tests.integration.workflow import test_workflow as workflow_fixture
-from tests.support.unittest_cleanups import run_class_cleanups,run_cleanups
 
 GRADER="""from pathlib import Path
 import json,sys
@@ -447,16 +446,15 @@ class RepeatedWorkflowKernel(PublicFixture,kernel.KernelFixture):
 
 @pytest.fixture(scope='module')
 def kernel_scope():
-    RepeatedWorkflowKernel.setUpClass()
-    yield
-    run_class_cleanups(RepeatedWorkflowKernel)
+    with kernel.kernel_scope() as root:
+        yield root
 
 
 @pytest.fixture
 def kernel_case(kernel_scope):
-    value=RepeatedWorkflowKernel();value.setUp()
-    yield value
-    run_cleanups(value)
+    with ExitStack() as cleanups:
+        value=RepeatedWorkflowKernel(); value.cgroup_root=kernel_scope; value.addCleanup=cleanups.callback
+        value.setUp(); yield value
 
 
 @kernel_only

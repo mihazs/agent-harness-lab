@@ -69,9 +69,7 @@ def test_private_domain_and_stage_profiles_cannot_be_relabelled_for_export(profi
 
 
 @pytest.mark.skipif(not kernel.ENABLED,reason='explicit delegated native scope required')
-class BankRequalificationKernelTests(kernel.KernelFixture):
-    # The delegated kernel scope and qualified-bank fixtures are TestCase classes shared with
-    # other modules (setUpClass, addCleanup), so this class keeps that base.
+class TestBankRequalificationKernel(kernel.PytestKernelFixture):
     def owned_case(self,*,unbound_source=False,focus_check=None):
         actual,qualified,_,runtime,image,manifest,spec,path,history=bank_fixtures.QualifiedBankKernelTests.qualified_comparison(self)
         deadline=time.monotonic()+120

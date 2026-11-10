@@ -18,7 +18,6 @@ from agent_harness_lab.evaluation import permission_audit as audit_module
 from agent_harness_lab.evaluation.permission_audit import PROFILE
 from agent_harness_lab.evaluation.sandbox import SandboxBackend,Limits
 from tests.integration.sandbox import test_sandbox_kernel as kernel
-from tests.support.unittest_cleanups import run_class_cleanups, run_cleanups
 
 
 kernel_only = pytest.mark.skipif(not kernel.ENABLED, reason='requires explicit delegated permission-audit kernel profile')
@@ -47,16 +46,15 @@ class PermissionKernelTests(kernel.KernelFixture):
 
 @pytest.fixture(scope='module')
 def kernel_scope():
-    PermissionKernelTests.setUpClass()
-    yield
-    run_class_cleanups(PermissionKernelTests)
+    with kernel.kernel_scope() as root:
+        yield root
 
 
 @pytest.fixture
 def case(kernel_scope):
-    value=PermissionKernelTests(); value.setUp()
-    yield value
-    run_cleanups(value)
+    with ExitStack() as cleanups:
+        value=PermissionKernelTests(); value.cgroup_root=kernel_scope; value.addCleanup=cleanups.callback
+        value.setUp(); yield value
 
 
 @kernel_only

@@ -183,7 +183,7 @@ EXECUTOR="from pathlib import Path;import json,sys;Path('result.json').write_tex
 
 
 @pytest.mark.skipif(not kernel.ENABLED,reason='explicit delegated kernel profile required')
-class InstructionProtocolKernelTests(repeated.PublicFixture,kernel.KernelFixture):
+class TestInstructionProtocolKernel(repeated.PublicFixture,kernel.PytestKernelFixture):
     def setUp(self):
         super().setUp();self.configure();self.settings_value['instruction_protocol']=PROTOCOL
         self.settings.write_bytes(encoded(self.settings_value));self.instructions=[];self.remove=False;self.change_configuration=False;self.replies=[]

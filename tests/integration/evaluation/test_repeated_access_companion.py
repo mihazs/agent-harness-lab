@@ -14,7 +14,6 @@ from agent_harness_lab.evaluation.integrity import digest
 from agent_harness_lab.private_journal import encoded,record
 from tests.integration.evaluation import test_repeated_workflow as fixtures
 from tests.integration.sandbox import test_sandbox_kernel as kernel
-from tests.support.unittest_cleanups import run_class_cleanups,run_cleanups
 
 
 class RepeatedAccessAdmission(fixtures.PublicFixture):
@@ -116,16 +115,15 @@ class RepeatedAccessKernel(fixtures.PublicFixture,kernel.KernelFixture):
 
 @pytest.fixture(scope='module')
 def kernel_scope():
-    RepeatedAccessKernel.setUpClass()
-    yield
-    run_class_cleanups(RepeatedAccessKernel)
+    with kernel.kernel_scope() as root:
+        yield root
 
 
 @pytest.fixture
 def kernel_case(kernel_scope):
-    value=RepeatedAccessKernel();value.setUp()
-    yield value
-    run_cleanups(value)
+    with ExitStack() as cleanups:
+        value=RepeatedAccessKernel(); value.cgroup_root=kernel_scope; value.addCleanup=cleanups.callback
+        value.setUp(); yield value
 
 
 @kernel_only

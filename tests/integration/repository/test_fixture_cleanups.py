@@ -37,8 +37,9 @@ for path in {classes!r}:
     module, _, name = path.rpartition('.')
     helper = getattr(importlib.import_module(module), name)
     helper.setUp = set_up
-    if path in {kernels!r}:
-        helper.setUpClass = classmethod(lambda cls: cls.enterClassContext(busy()))
+if set({classes!r}) & set({kernels!r}):
+    import tests.integration.sandbox.test_sandbox_kernel as kernel
+    kernel.kernel_scope = busy
 for path in {wrapped!r}:
     module, _, name = path.rpartition('.')
     helper = getattr(importlib.import_module(module), name)
