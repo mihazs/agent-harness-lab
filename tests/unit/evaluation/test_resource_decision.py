@@ -195,6 +195,51 @@ def test_cached_requests_use_measured_tokens_and_cannot_override_quality():
     assert decide(token_contract, rows, 'supported')['decision'] == 'blocked'
 
 
+def timing_contract():
+    return dict(provenance_contract(), schema_version=3, profile='resource-noninferiority-v3',
+                timing_boundary=dict(interval='target_subprocess_launch_through_collection', setup=False, queueing=False, retries=True, tool_calls=True,
+                                     user_wait=False, extraction=False, grading=False))
+
+
+def timing_rows():
+    rows = fresh_rows()
+    for row in rows:
+        for name in ('baseline', 'candidate'):
+            row[name]['provenance']['timing_boundary'] = dict(timing_contract()['timing_boundary'])
+    return rows
+
+
+def test_v3_timing_boundary_is_frozen_reported_and_conditional():
+    contract_v3 = timing_contract(); rows = timing_rows()
+    result = decide(contract_v3, rows, 'supported')
+    assert result['decision'] == 'conditional_improvement' and result['efficiency_improvement'] is False
+    assert result['endpoints'][0]['timing_boundary'] == contract_v3['timing_boundary']
+    contract_v3['timing_boundary']['grading'] = True
+    changed = decide(contract_v3, rows, 'supported')
+    assert changed['contract_sha256'] != result['contract_sha256'] and changed['decision'] == 'blocked'
+    assert changed['endpoints'][0]['unknown_reasons'] == {'timing_boundary_missing_or_mismatch': 200}
+
+
+def test_v3_refuses_missing_mismatched_and_nonboolean_arm_boundaries():
+    rows = timing_rows()
+    del rows[0]['candidate']['provenance']['timing_boundary']
+    result = decide(timing_contract(), rows, 'supported')
+    assert result['decision'] == 'blocked'
+    assert result['endpoints'][0]['unknown_reasons'] == {'timing_boundary_missing_or_mismatch': 1}
+    rows = timing_rows(); rows[0]['candidate']['provenance']['timing_boundary']['grading'] = 0
+    assert decide(timing_contract(), rows, 'supported')['decision'] == 'blocked'
+    rows = timing_rows(); rows[0]['candidate']['provenance']['timing_boundary']['grading'] = True
+    assert decide(timing_contract(), rows, 'supported')['decision'] == 'blocked'
+
+
+@pytest.mark.parametrize('edit', [lambda b: b.pop('grading'), lambda b: b.update(retries=None), lambda b: b.update(other=False),
+                                 lambda b: b.update(interval='unknown')])
+def test_v3_requires_complete_explicit_boolean_timing_boundary(edit):
+    value = timing_contract(); edit(value['timing_boundary'])
+    with pytest.raises(ValueError, match='complete timing boundary'):
+        decide(value, timing_rows(), 'supported')
+
+
 @pytest.mark.parametrize('edit', [
     lambda c: c['endpoints'][0].update(kind='currency'),
     lambda c: c['endpoints'][0].update(scope='success_conditional'),
