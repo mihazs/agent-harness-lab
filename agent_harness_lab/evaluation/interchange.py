@@ -285,6 +285,8 @@ def import_local(mapping_path, source_path, output, *, registry_path=None):
             if info.st_uid!=os.geteuid() or stat.S_IMODE(info.st_mode)!=0o600 or read_regular(path,8*MAX_BYTES)!=raw:
                 raise ValueError('existing private import ownership/bytes/modes changed')
         unchanged(); return report
+    from agent_harness_lab.read_only import require_writable
+    require_writable(output)
     output.parent.mkdir(parents=True,exist_ok=True)
     stage=Path(tempfile.mkdtemp(prefix='.interchange-',dir=output.parent))
     try:

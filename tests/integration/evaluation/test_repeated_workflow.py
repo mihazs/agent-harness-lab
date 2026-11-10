@@ -110,10 +110,13 @@ class PublicFixture:
             return original(args)
         def read_key(*args):
             self.key_reads+=1;return None
-        with patch.object(workflow,'improve',side_effect=controlled),patch.object(responses,'read_credential',side_effect=read_key),patch.object(responses,'request',side_effect=self.transport),redirect_stdout(io.StringIO()):
+        stdout=io.StringIO()
+        with patch.object(workflow,'improve',side_effect=controlled),patch.object(responses,'read_credential',side_effect=read_key),patch.object(responses,'request',side_effect=self.transport),redirect_stdout(stdout):
             code=cli.main(self.arguments(runtime,pin,output))
         assert (self.project/'AGENTS.md').read_text() == 'bad'
-        return code,json.loads((output/'workflow.json').read_text())
+        result=json.loads(stdout.getvalue())
+        if (output/'workflow.json').exists(): assert json.loads((output/'workflow.json').read_text()) == result
+        return code,result
 
 
 class RepeatedWorkflowAdmission(PublicFixture,unittest.TestCase):
@@ -363,11 +366,40 @@ def test_expiry_during_actual_bank_digest_is_budget_exhaustion(admission):
 
 
 def test_expired_request_stops_before_probe_key_and_model(admission):
-    times=iter((0,151))
-    with patch.object(workflow.time,'monotonic',side_effect=lambda:next(times,151)),patch(
+    from agent_harness_lab import one_call
+    resolve=one_call.resolve;clock=time.monotonic;resolved=[False]
+    def slow_resolve(*args):
+        result=resolve(*args);resolved[0]=True;return result
+    with patch.object(one_call,'resolve',side_effect=slow_resolve),patch.object(
+            workflow.time,'monotonic',side_effect=lambda:clock()+(151 if resolved[0] else 0)),patch(
             'agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=AssertionError('no expired probe')):
         code,result=admission.invoke(admission.root/'image','a'*64,admission.root/'output')
     assert (code,result['status']) == (1,'budget_exhausted');assert admission.calls == [];assert admission.key_reads == 0
+
+
+@pytest.mark.parametrize('command,extra', [('improve', ['--repair-contracts']), ('watch', ['--once'])])
+def test_slow_resolution_consumes_first_run_budget(admission, command, extra):
+    from agent_harness_lab import one_call
+    resolve=one_call.resolve;clock=time.monotonic;resolved=[False]
+    def slow_resolve(*args):
+        result=resolve(*args);resolved[0]=True;return result
+    stdout=io.StringIO()
+    with patch.object(one_call,'resolve',side_effect=slow_resolve),patch.object(
+            workflow.time,'monotonic',side_effect=lambda:clock()+(151 if resolved[0] else 0)),patch.object(
+            one_call,'contracts',side_effect=AssertionError('no expired repair')),patch.object(
+            workflow,'_improve',side_effect=AssertionError('no expired preparation')),redirect_stdout(stdout):
+        code=cli.main([command,str(admission.project),'--timeout','150',*extra])
+    assert code == 1
+    assert json.loads(stdout.getvalue())['status'] == 'budget_exhausted'
+    assert admission.calls == [] and admission.key_reads == 0
+
+
+def test_invalid_configuration_before_timeout_resolution_reports_input_error(admission, capsys):
+    (admission.project/'ahl.json').write_text('{')
+    with pytest.raises(SystemExit) as error:
+        cli.main(['improve',str(admission.project)])
+    assert error.value.code == 2
+    assert 'invalid' in capsys.readouterr().err.lower()
 
 
 def test_protected_split_is_refused_before_proposer(admission):

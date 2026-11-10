@@ -8,7 +8,7 @@ import sys
 import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
-COMMANDS = ('analysis', 'mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'experiment', 'experiment-history', 'grader-correction', 'regression', 'regression-review', 'sandbox-check',
+COMMANDS = ('audit', 'analysis', 'mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'experiment', 'experiment-history', 'grader-correction', 'regression', 'regression-review', 'sandbox-check',
             'research-simulate', 'incident-search', 'promotion', 'benchmark-report', 'analyze', 'improve', 'watch', 'doctor', 'init', 'sources')
 
 

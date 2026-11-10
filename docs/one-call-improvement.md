@@ -23,6 +23,26 @@ no nonexecutable subset is applied and all target bytes and modes are preserved.
 Behavioral plans remain review-only with their actual certification prerequisite;
 the shared contract adds no application command or new eligible repair.
 
+A project owner can create a `.ahl-read-only` marker in the project root to
+freeze AHL-driven changes. The marker takes precedence over flags and settings:
+`improve` (including skill invocation and `--repair-contracts`), `watch`,
+`init --write`, skill installation, promotion, recovery and rollback refuse to write. Remove the
+marker to permit those operations again. `analyze` and the static audit remain
+available; analysis output and its state directory must be outside the project.
+A marker also covers descendant projects; their outputs must be outside the
+marked directory. Any marker type, including a dangling symlink, activates the
+freeze. CLI output, export, cache and store destinations inside the marked
+directory are refused, including through symlinks; shared journal and JSON
+writers enforce the same guard. Select an external directory for private state.
+
+The marker is a cooperative guard, not a filesystem sandbox. Keep it in place
+before starting an operation: another process can change it between a check and
+a filesystem operation. If a freeze appears during a multi-file transaction,
+recovery may require removing the marker and manually resolving the recorded
+conflict. If installation is interrupted by a freeze, the error names the backup
+location so the owner can recover the files after removing the marker. Agent
+processes already running and other tools are not controlled.
+
 `ahl improve .` collects scoped evidence, prepares candidate and independent
 evaluation sessions, freezes inputs, executes paired tasks and writes a local
 `workflow.json`. A favorable behavioral comparison now also writes a versioned
@@ -32,27 +52,52 @@ After any exactly covered evaluation, `workflow.json` also carries a `decision`
 block explaining that outcome; see
 [single-run dispositions](decision-receipts.md#default-improve-single-run-dispositions).
 
-No manual analyze/manifest/evaluate sequence is required. Select `--agent codex`
-or `--agent claude` if both runtimes are available. Authentication remains the
-runtime's responsibility; AHL does not inspect credential contents.
+No manual analyze/manifest/evaluate sequence is required. If both runtimes are
+available, `--agent codex` or `--agent claude` selects one. Authentication remains
+the runtime's responsibility; AHL does not inspect credential contents.
 
-For an already prepared controlled Responses environment, persist its settings
-and worker references in the [Responses configuration variant](onboarding.md#configure-controlled-responses-once).
-Then plain `ahl improve .` resolves that pipeline without a native agent
-executable or repeated resource flags. Its broker reads the explicitly selected
+For an already prepared controlled Responses environment, the [Responses configuration variant](onboarding.md#configure-controlled-responses-once)
+persists its settings and worker references. Plain `ahl improve .` resolves that
+pipeline without a native agent executable or repeated resource flags. Its broker reads the explicitly selected
 private credential only during actual execution; doctor checks metadata only.
 
 When `ahl.json` exists, its profile, executable, scope and limits constrain the run.
 Explicit CLI runtime/binary/time options take precedence; configuration never
 supplies execution authorization. Offline/unsupported profiles, unintegrated
-project banks, stale bank digests, ambiguous runtimes and insufficient trial
-budgets stop before inference. A configuration file is optional and is not created
+project banks, invalid or unavailable banks, stale bank digests, ambiguous runtimes and insufficient trial
+budgets stop before inference, each with its own `reason` and a matching one-step
+`remediation` in `workflow.json` (the generic text is only a fallback). A configuration file is optional and is not created
 by improve. Configured trials share one ceiling across preparation and both attempts.
+On completion, improve writes its structured receipt to stdout and a concise
+outcome summary to stderr. The summary includes the reported changed-file count,
+artifact directory when available, a next step, and elapsed time. Once a
+controller budget clock starts, it also reports measured time spent and time
+remaining; otherwise those values are unknown. Trial spend and cost remain
+unknown because reservations are not execution or billing observations. Artifact
+paths are private local information; keep the output within the authorized environment.
 The bundled starter bank is not represented as a target-project certification bank.
 Only configured harness files enter preparation snapshots; candidates outside that
 scope are rejected before evaluation construction. Watch uses the same preflight
-and binds its checkpoint to the resolved configuration. Restart watch after changing
-configuration; it never silently widens an active run's scope.
+and binds its checkpoint to the resolved configuration. A watch restart is required after configuration changes; it never silently widens
+an active run's scope.
+
+## Profile and platform support
+
+The table describes ordinary behavioral `ahl improve` with an `ahl.json` file;
+preflight can still block a row for an invalid bank, missing capability or budget.
+
+| Profile and runtime | Platform | Current behavior |
+| --- | --- | --- |
+| `offline`, `none` | Supported POSIX filesystem APIs | Doctor and configuration preview work; behavioral improvement blocks before inference. |
+| `cooperative`, `codex` or `claude` | Supported POSIX filesystem APIs | A trusted absolute executable is required in configuration. The runtime is cooperative, and authentication remains unverified. |
+| `cooperative`, `responses` | Linux and supported POSIX filesystem APIs | Requires explicitly configured controlled-worker references and passing capability checks. A configured nonstarter project bank is not supported on this path. |
+| `isolated` | Supported POSIX filesystem APIs | Doctor reports the isolation certification prerequisites as blocked; configured behavioral improvement stops at preflight. |
+| Any | Other platforms or missing required filesystem APIs | Safe configuration I/O is unavailable; use a supported host. |
+
+Supported configuration I/O requires descriptor-relative, no-follow POSIX
+filesystem operations. See `ahl doctor . --json` for local readiness checks;
+its output does not verify authentication or certify isolation. The explicit
+`--repair-contracts` mode below has a separate deterministic, model-free contract.
 
 ## Harness surface classification
 
@@ -581,9 +626,7 @@ one, and runtime activation are not checked or claimed.
 
 ## Independently verified format repair
 
-```sh
-ahl improve . --repair-contracts
-```
+See [repair a supported skill header](repair-skill-header.md) for the commands.
 
 This explicit mode performs a narrow deterministic evaluation and application
 without a model: remove a UTF-8 BOM before an otherwise valid minimal SKILL.md
@@ -602,11 +645,8 @@ It does not rename skills, delete instructions, install hooks or call a model.
 A project configuration with `recommendation_only: true` produces a staged plan
 and preserves target files. Without that restriction, requesting this explicit
 repair authorizes the supported reversible transformation. The existing private
-journal records the exact deployment and verifies installed bytes. Restore it with:
-
-```sh
-ahl rollback DEPLOYMENT_ID --project /path/to/project
-```
+journal records the exact deployment and verifies installed bytes. The same guide
+describes rollback.
 
 Rollback preserves intervening edits by reporting a conflict. The deployment ID
 and journal location are included in the repair result. Runtime activation stays
