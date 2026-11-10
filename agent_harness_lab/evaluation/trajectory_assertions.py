@@ -1,7 +1,9 @@
 """Frozen three-valued constraints over owned controller observations, not effects."""
 from copy import deepcopy
 import hashlib
+import os
 from pathlib import Path
+import weakref
 
 from agent_harness_lab.private_journal import encoded, record
 from .integrity import digest
@@ -11,6 +13,7 @@ MAX_BYTES = 65536
 STAGES = ('request', 'denied', 'dispatch', 'result')
 ORDINAL = dict(request='observed_ordinal', denied='decision_ordinal', dispatch='dispatch_ordinal', result='outcome_ordinal')
 _TOKEN = object()
+_ISSUED = weakref.WeakKeyDictionary()
 
 
 def _hash(raw): return hashlib.sha256(raw).hexdigest()
@@ -162,7 +165,8 @@ class _OwnedCapture:
     def request_gap(self):
         self._request_gaps += 1
 
-    def close(self):
+    def close(self, token=None):
+        if token is not _TOKEN: raise ValueError('controller capture closure required')
         if self._closed: return
         self._closed = True
         self._data = self.snapshot(); self._seal = _hash(encoded(self._data))
@@ -181,6 +185,36 @@ def _begin_capture(ledger, binding, trial_id, role):
     from .responses import ActionLedger
     if type(ledger) is not ActionLedger: raise ValueError('actual controller ledger required')
     return _OwnedCapture(_TOKEN, ledger, binding, trial_id, role)
+
+
+def _issue_capture(client):
+    from . import responses
+    scope = responses._ROLE_SCOPES.get(client)
+    capture = client.actions.trajectory
+    if (responses._client_pid(client) != os.getpid() or scope is None or scope[0] != os.getpid()
+            or type(capture) is not _OwnedCapture or capture._ledger is not client.actions
+            or capture._scope != scope[1] or capture._role != scope[2] or capture._trial != scope[3]):
+        raise ValueError('active controller role required for trajectory capture')
+    _ISSUED[capture] = (os.getpid(), weakref.ref(client), weakref.ref(capture._ledger), capture._scope, capture._trial, capture._role)
+
+
+def _close_capture(client):
+    from . import responses
+    capture = client.actions.trajectory
+    if capture in _ISSUED:
+        scope = responses._ROLE_SCOPES.get(client)
+        if not _issued(capture) or scope is None or scope[1] != capture._scope:
+            raise ValueError('active controller trajectory scope required')
+        capture.close(_TOKEN)
+
+
+def _issued(capture):
+    issued = _ISSUED.get(capture)
+    if issued is None: return False
+    pid, ref, ledger_ref, scope, trial, role = issued
+    client, ledger = ref(), ledger_ref()
+    return (pid == os.getpid() and client is not None and client.actions is ledger
+            and capture._ledger is ledger and capture._scope == scope and capture._trial == trial and capture._role == role)
 
 
 def _observed(value):
@@ -319,7 +353,8 @@ def evaluate(binding, owned_capture):
     """Only controller-issued live captures establish trajectory predicate evidence."""
     try:
         binding = _binding(binding)
-        if type(owned_capture) is not _OwnedCapture or encoded(owned_capture._binding) != encoded(binding):
+        if (type(owned_capture) is not _OwnedCapture or not _issued(owned_capture)
+                or encoded(owned_capture._binding) != encoded(binding)):
             return _unknown(binding, 'owned_controller_capture_required')
         data = owned_capture.snapshot()
         _text(data['trial_id'], 256)
