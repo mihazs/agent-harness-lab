@@ -7,14 +7,19 @@ import json
 import os
 from pathlib import Path
 import stat
+import time
 
-from agent_harness_lab import audit
-from agent_harness_lab.audit import chain, improvement_hint
+from agent_harness_lab import audit, surfaces
+from agent_harness_lab.audit import chain, improvement_hint, instruction_totals
 from agent_harness_lab.evaluation.integrity import open_directory_nofollow, relative
+from agent_harness_lab.sources import harness_inventory
+from agent_harness_lab.sources.git_view import Folder
 
 REASONS=frozenset((chain.TRUNCATED, chain.SKIPPED, chain.DECLARED_TRUNCATED, chain.DECLARED_SKIPPED))
 ROUTING='skill_routing_collision'
 ROUTING_FOCUS='Investigate overlapping skill descriptions and evaluate whether routing distinguishes the skills.'
+PROCEDURE='instruction_procedure_section_detected'
+PROCEDURE_SOURCE='https://code.claude.com/docs/en/features-overview'
 
 
 def select(path, project, runtime):
@@ -44,16 +49,27 @@ def select(path, project, runtime):
     if not isinstance(findings,list): raise ValueError('invalid audit findings')
     selected={(row.get('id'),row.get('reason')) for row in findings if isinstance(row,dict)
               and isinstance(row.get('reason'),str)
-              and ((row.get('dimension')=='instructions' and row.get('reason') in REASONS)
+              and ((row.get('dimension')=='instructions' and row.get('reason') in REASONS | {PROCEDURE})
                    or (row.get('dimension')=='skills' and row.get('reason')==ROUTING))
               and row.get('status') in ('weak','missing') and isinstance(row.get('id'),str)}
-    fresh=audit.run(project,'codex',task_cwd=cwd,codex_project_doc_max_bytes=limit)
+    profile=dict(schema_version=1,runtime='codex',version=surfaces.PINS['codex'],task_cwd=cwd)
+    inventory=harness_inventory.capture(project,profile,schema_version=2)
+    fresh=audit.audit(inventory,task_cwd=cwd,codex_project_doc_max_bytes=limit)
     if fresh.status!='completed' or report.get('harness_inventory_sha256')!=fresh.harness_inventory_sha256:
         raise ValueError('audit inventory changed or is unavailable')
     finding=next((row for row in fresh.findings if (row.id,row.reason) in selected
                   and row.status=='nonconformant'
                   and ((row.reason in REASONS and row.dimension=='instructions')
                        or (row.reason==ROUTING and row.dimension=='commands'))),None)
+    if finding is None and (audit.digest(['instructions','.','instruction',PROCEDURE]),PROCEDURE) in selected:
+        with Folder(project.parent,time.monotonic()+30) as folder:
+            totals=instruction_totals.codex(profile,folder,project.name,inventory,declared_limit=limit)
+        if totals['status']=='declared' and totals['files'] and totals['shape']['procedure_sections']:
+            return dict(profile='ahl-audit-hypothesis-v1',hypothesis_source='static_convention',
+                finding_id=audit.digest(['instructions','.','instruction',PROCEDURE]),reason=PROCEDURE,
+                convention_source=PROCEDURE_SOURCE,inventory_sha256=fresh.harness_inventory_sha256,
+                focus=improvement_hint.HINTS[PROCEDURE],selection='caller_declared_freshly_rechecked',
+                snapshot_relation='separate_observation',authority='none',publication_allowed=False)
     if finding is None: raise ValueError('no eligible current audit finding')
     return dict(profile='ahl-audit-hypothesis-v1',hypothesis_source='static_convention',
                 finding_id=finding.id, reason=finding.reason, convention_source=finding.source,

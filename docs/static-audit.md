@@ -370,9 +370,12 @@ For an explicitly requested improvement, `ahl audit PROJECT --improvement-rechec
 includes the declared runtime, task directory and Codex byte budget in its private
 report. Pass its `report.json` to `ahl improve PROJECT --from-audit REPORT` to
 re-audit the checkout and use an eligible finding as a fixed, content-free
-proposer focus. Codex truncation, skipped-file and skill-description collision
-findings are eligible; other conventions are not. Routing collisions are lexical
-hypotheses, not evidence of a routing failure. It cannot be combined
+proposer focus. Codex truncation, skipped-file, instruction procedure-shape and
+skill-description collision findings are eligible; other conventions are not.
+The procedure shape and routing collisions are lexical hypotheses, not evidence
+that a skill is needed or that routing failed. The procedure check re-observes
+selected instruction files separately and rejects the hypothesis if that observation
+is unsettled or the chain is truncated. It cannot be combined
 with `--focus` or deterministic contract repair.
 
 The supplied report is an untrusted selection and its parameters are caller
