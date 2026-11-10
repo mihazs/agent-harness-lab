@@ -321,13 +321,21 @@ def draw(frame, plan, trusted_heads=None):
         automatic_policy_update=False))
 
 
+def _budget_status(receipt):
+    """Describe the realized draw without truncating or redrawing a probability sample."""
+    return dict(limit='expected_draws_only',review_budget=receipt['review_budget'],
+                expected_draws=receipt['expected_draws'],selected=receipt['drawn'],
+                realized_exceeds_budget=receipt['drawn']>receipt['review_budget'])
+
+
 def review_queue(receipt, trusted_heads=None, *, frame=None):
     """Reviewer queue: hashes in hash order, without alert status, stratum or score."""
     _receipt(receipt, trusted_heads)
     checked=_frame_check(receipt,frame)
     value=dict(receipt_sha256=receipt['receipt_sha256'], prediction_masked=True,
                units=sorted(d['unit_sha256'] for d in receipt['draws']), publication_allowed=False)
-    if receipt['profile']==RECEIPT_PROFILE_V2:value['frame_check']=checked
+    if receipt['profile']==RECEIPT_PROFILE_V2:
+        value['frame_check']=checked;value['budget']=_budget_status(receipt)
     return value
 
 
@@ -634,6 +642,8 @@ def estimate(receipt, batch, trusted_heads=None, *, frame=None):
         publication_allowed=False, automatic_policy_update=False)
     if receipt['profile']==RECEIPT_PROFILE_V2:
         report['frame_check']=frame_check
+        report['budget']=_budget_status(receipt)
+        report['limitations'].append('review_budget_not_hard_cap')
         report['limitations'].append('frame_origin_unauthenticated')
         if frame is None:report['limitations'].append('frame_membership_and_draw_completeness_unverified')
     if not rows:

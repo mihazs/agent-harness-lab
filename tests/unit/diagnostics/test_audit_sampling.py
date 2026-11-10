@@ -721,3 +721,19 @@ def test_v2_late_labels_keep_same_frame_and_never_impute_pending():
     assert completed['status']=='estimated' and completed['receipt_sha256']==pending['receipt_sha256']
     assert 'reviewer_labels_unauthenticated' in completed['limitations']
     assert 'frame_origin_unauthenticated' in completed['limitations']
+
+
+def test_v2_reports_realized_budget_overrun_without_censoring_draws():
+    value=frame([unit('synthetic-a'),unit('synthetic-b')])
+    policy=plan(value,rates=dict(random=.5),budget=1,schema_version=2,profile=audit.PLAN_PROFILE_V2)
+    receipt=next(r for r in (audit.draw(value,dict(policy,seed=seed)) for seed in range(100)) if r['drawn']>1)
+    queue=audit.review_queue(receipt,frame=value)
+    assert queue['budget']==dict(limit='expected_draws_only',review_budget=1,expected_draws=1.0,
+                                  selected=2,realized_exceeds_budget=True)
+    assert len(queue['units'])==2
+    truth={item['unit_sha256']:audit.NO_INCIDENT for item in receipt['draws']}
+    report=audit.estimate(receipt,labels(receipt,truth),frame=value)
+    assert report['budget']==queue['budget'] and report['review_status']['reviewed']==2
+    assert 'review_budget_not_hard_cap' in report['limitations']
+    legacy=audit.draw(value,plan(value,rates=dict(random=1),budget=2))
+    assert 'budget' not in audit.review_queue(legacy)
