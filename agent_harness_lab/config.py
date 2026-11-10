@@ -146,6 +146,21 @@ def execution_options(project,settings,requested,explicit):
     return result
 
 
+def resolve(project, requested=None, explicit=(), *, proposed=None):
+    """Resolve validated project settings and invocation defaults without writing or granting authority."""
+    path = Path(project) / 'ahl.json'
+    if proposed is not None:
+        settings, digest, source = validate(proposed), None, 'proposed'
+    elif os.path.lexists(path):
+        settings, digest = load(path)
+        source = 'project'
+    else:
+        settings, digest, source = None, None, 'defaults'
+    return dict(settings=settings, configuration_sha256=digest, source=source,
+                options=execution_options(project, settings, requested, set(explicit)) if requested is not None else {},
+                trial_limit=settings['limits']['trials'] if settings else DEFAULT_TRIALS)
+
+
 def reference_metadata(path,*,private=False,directory=False):
     path=Path(path).absolute()
     if '..' in path.parts or any(part.is_symlink() for part in (path,*path.parents)):raise ValueError('controlled reference crosses a symlink or traversal')

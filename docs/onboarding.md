@@ -149,6 +149,13 @@ owns the existing full-profile capability preflight and credential read, once,
 under the shared parent budget. It creates the evaluation internally; no manual
 manifest or experiment-request sequence is required.
 
+When no project configuration exists, improve resolves bounded limits in memory
+and discovers a single supported native runtime; it does not create `ahl.json`.
+`ahl init` previews an offline template intended for explicit persistence, so
+writing that template disables behavioral improvement until a cooperative
+profile and trusted runtime are configured. Doctor inspects the offline template
+when no project configuration is present and never certifies runtime authentication.
+
 Explicit invocation options override configured defaults. A native runtime
 override does not inherit Responses configuration references. Shared image,
 cgroup and disk CLI options remain valid for native `--sandbox-graders`;

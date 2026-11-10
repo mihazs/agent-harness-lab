@@ -30,17 +30,15 @@ def invocation_context(args,output,deadline,*,remaining_seconds=None,remaining_t
 
 def resolve(args, explicit):
     """Resolve execution intent without treating project data as authorization."""
-    path = args.project / 'ahl.json'
-    loaded = config.load(path) if os.path.lexists(path) else None
-    settings = loaded[0] if loaded else None
     requested=getattr(args,'_configuration_invocation',None)
     if requested is None:requested={name:getattr(args,name,None) for name in config.INVOCATION_OPTIONS}
     args._configuration_invocation=dict(requested);args._configuration_explicit=frozenset(explicit)
-    selected=config.execution_options(args.project,settings,requested,explicit)
-    for name,value in selected.items():setattr(args,name,value)
-    args.trial_limit = settings['limits']['trials'] if settings else config.DEFAULT_TRIALS
+    resolved=config.resolve(args.project,requested,explicit)
+    settings=resolved['settings']
+    for name,value in resolved['options'].items():setattr(args,name,value)
+    args.trial_limit = resolved['trial_limit']
     args.project_settings = settings
-    args.configuration_sha256 = loaded[1] if loaded else None
+    args.configuration_sha256 = resolved['configuration_sha256']
     args._configured_responses=bool(settings and settings['runtime']['name']=='responses' and args.agent=='responses')
     return settings
 
