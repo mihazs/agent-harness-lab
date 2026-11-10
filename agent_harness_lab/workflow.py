@@ -899,14 +899,15 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                             if t['version'] == 'baseline' and t['split'] == 'regression')
         improvement = any(t['status'] == 'failed' for t in trials
                           if t['version'] == 'baseline' and t['split'] == 'development')
-        if evaluated['inputs_unchanged'] and candidate_pass and controls_pass and improvement:
+        if evaluated['inputs_unchanged'] and candidate_pass and controls_pass:
             current_harness = {str(path.relative_to(args.project)):file_state(path)
                                for path in harness_files(args.project,allowed_paths(args))}
             if current_harness != original:
-                raise ValueError('Project harness changed during evaluation; recommendation is stale')
+                raise ValueError('Project harness changed during evaluation; result is stale')
             if instruction is not None and instruction_validation.current(instruction, proposal.get('instruction_plan'),
                     baseline, frozen, project=args.project, deadline=started+args.timeout):
-                raise ValueError('Instruction context changed during evaluation; recommendation is stale')
+                raise ValueError('Instruction context changed during evaluation; result is stale')
+        if evaluated['inputs_unchanged'] and candidate_pass and controls_pass and improvement:
             removal = result.get('instruction_removal') if instruction is not None else None
             if removal is not None and removal.get('required') and removal['disposition'] != 'recommended':
                 # Removed active guidance is recommended only under faithful passing behavioral controls.
