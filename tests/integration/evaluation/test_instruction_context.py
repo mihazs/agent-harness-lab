@@ -100,11 +100,8 @@ class ManifestCwd:
 
 @pytest.fixture
 def manifest():
-    f = inference_fixtures.ResponsesEvaluationTests(); f.setUp()
-    try:
-        yield ManifestCwd(f)
-    finally:
-        f.doCleanups()
+    with contextlib.ExitStack() as cleanups:
+        yield ManifestCwd(inference_fixtures.ResponsesEvaluation(cleanups.callback))
 
 
 @pytest.mark.parametrize('agent', [pytest.param('codex', id='codex'), pytest.param('offline', id='offline')])

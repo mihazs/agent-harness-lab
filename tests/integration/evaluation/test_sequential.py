@@ -30,7 +30,6 @@ from tests.integration.evaluation import test_offline_evaluation as offline
 from tests.integration.sandbox import test_sandbox_inference as inference
 from tests.unit.evaluation import test_preservation_analysis as preservation
 from tests.integration.evaluation import test_preservation_history as qualified
-from tests.support.unittest_cleanups import run_cleanups
 
 
 # Synthetic offline arms are real subprocesses, so their quotas are generous enough
@@ -543,8 +542,8 @@ class TestSequentialOnline(SequentialOnline):
         with pytest.raises(ValueError):alias.claim(self.plan,'0'*64)
 
     def test_actual_responses_uses_fresh_calls_but_never_authenticates_model_or_assumptions(self):
-        f=inference.ResponsesEvaluationTests();f.setUp()
-        try:
+        with ExitStack() as cleanups:
+            f=inference.ResponsesEvaluation(cleanups.callback)
             selected=self.f.manifest['tasks'];f.fixture.manifest['tasks']=[deepcopy(t) for t in selected]
             # Use its own complete export paths, not another fixture's absolute oracle locators.
             for task in f.fixture.manifest['tasks']:
@@ -558,5 +557,4 @@ class TestSequentialOnline(SequentialOnline):
             result=f.fixture.results();assert (f.requests,f.commands,f.grades) == (8,4,4)
             assert result['sequential_analysis']['assumptions_status'] == 'declared_unverified'
             assert result['sequential_analysis']['future_expected_quality'] == 'unknown'
-        finally:run_cleanups(f)
 

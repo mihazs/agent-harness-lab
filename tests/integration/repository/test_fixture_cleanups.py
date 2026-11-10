@@ -17,10 +17,6 @@ ACCESS_KERNEL = 'tests.integration.evaluation.test_repeated_access_companion.Rep
 KERNELS = [KERNEL, REPEATED_KERNEL, ACCESS_KERNEL]
 ROWS = [
     ('tests.integration.evaluation.test_permission_audit', 'case', [KERNEL]),
-    ('tests.integration.evaluation.test_permission_audit', 'inference_fixture',
-     ['tests.integration.sandbox.test_sandbox_inference.ControllerInferenceTests']),
-    ('tests.integration.evaluation.test_permission_audit', 'responses_fixture',
-     ['tests.integration.sandbox.test_sandbox_inference.ResponsesEvaluationTests']),
     ('tests.integration.evaluation.test_repeated_workflow', 'admission',
      ['tests.integration.evaluation.test_repeated_workflow.RepeatedWorkflowAdmission']),
     ('tests.integration.evaluation.test_repeated_workflow', 'kernel_case', [REPEATED_KERNEL]),
@@ -29,10 +25,6 @@ ROWS = [
     ('tests.integration.evaluation.test_repeated_access_companion', 'kernel_case', [ACCESS_KERNEL]),
     ('tests.integration.sandbox.test_sandbox_construction', 'controlled',
      ['tests.integration.sandbox.test_sandbox_construction.ControlledWorkflowTests']),
-    ('tests.integration.sandbox.test_sandbox_inference', 'controller',
-     ['tests.integration.sandbox.test_sandbox_inference.ControllerInferenceTests']),
-    ('tests.integration.sandbox.test_sandbox_inference', 'evaluation',
-     ['tests.integration.sandbox.test_sandbox_inference.ResponsesEvaluationTests']),
 ]
 TEMPLATE = '''import contextlib, errno, importlib
 
@@ -281,3 +273,19 @@ def test_sandbox_grader_propagates_nested_cleanup_failure(monkeypatch):
     with pytest.raises(RuntimeError, match='synthetic sandbox grader cleanup failure'):
         with ExitStack() as cleanups:
             test_sandbox_graders.SandboxedGrader(cleanups.callback)
+
+
+@pytest.mark.parametrize('helper', ['ControllerInference', 'ResponsesEvaluation'])
+def test_inference_helpers_propagate_cleanup_failure(monkeypatch, tmp_path, helper):
+    from contextlib import ExitStack
+    from types import SimpleNamespace
+    from tests.integration.sandbox import test_sandbox_inference
+
+    def fail():
+        raise RuntimeError('synthetic inference cleanup failure')
+
+    monkeypatch.setattr(test_sandbox_inference.tempfile, 'TemporaryDirectory',
+                        lambda: SimpleNamespace(name=str(tmp_path), cleanup=fail))
+    with pytest.raises(RuntimeError, match='synthetic inference cleanup failure'):
+        with ExitStack() as cleanups:
+            getattr(test_sandbox_inference, helper)(cleanups.callback)

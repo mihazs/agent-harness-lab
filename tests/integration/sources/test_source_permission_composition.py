@@ -87,7 +87,7 @@ class PermissionSourceCompositionTests(kernel.KernelFixture):
                 self.assertFalse(sink.store.path.exists())
 
     def run_actual(self):
-        fixture=inference_fixtures.ResponsesEvaluationTests(); fixture.setUp(); self.addCleanup(fixture.doCleanups)
+        fixture=inference_fixtures.ResponsesEvaluation(self.addCleanup)
         task=next(row for row in fixture.fixture.manifest['tasks'] if row['id']=='adversarial-input')
         fixture.fixture.manifest['tasks']=[task]
         fixture.fixture.manifest['grader_bundles']={task['id']:fixture.fixture.manifest['grader_bundles'][task['id']]}

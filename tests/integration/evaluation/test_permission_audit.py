@@ -1,4 +1,5 @@
 """Synthetic kernel permission-result observations, never inference or task truth."""
+from contextlib import ExitStack
 import errno
 from unittest.mock import patch,Mock
 import os
@@ -483,9 +484,8 @@ def test_monitor_rejects_wrong_controller_parent_before_read_or_launch():
 @pytest.fixture
 def inference_fixture():
     from tests.integration.sandbox import test_sandbox_inference as inference
-    fixture=inference.ControllerInferenceTests();fixture.setUp()
-    yield fixture
-    run_cleanups(fixture)
+    with ExitStack() as cleanups:
+        yield inference.ControllerInference(cleanups.callback)
 
 
 @pytest.mark.parametrize('observed', [pytest.param(observed, id=observed) for observed in ('violated','unknown','qualified')])
@@ -526,10 +526,9 @@ def test_known_private_audit_markers_cannot_be_exported_with_forged_labels(marke
 
 @pytest.fixture
 def responses_fixture():
-    from tests.integration.sandbox.test_sandbox_inference import ResponsesEvaluationTests
-    fixture=ResponsesEvaluationTests();fixture.setUp()
-    yield fixture
-    run_cleanups(fixture)
+    from tests.integration.sandbox.test_sandbox_inference import ResponsesEvaluation
+    with ExitStack() as cleanups:
+        yield ResponsesEvaluation(cleanups.callback)
 
 
 @pytest.mark.parametrize('requested, actual', [pytest.param(None, PROFILE, id='backend-only'),

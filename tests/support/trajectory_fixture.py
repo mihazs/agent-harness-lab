@@ -1,5 +1,5 @@
 """Shared synthetic paired trajectory evaluation."""
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import replace
 from unittest.mock import patch
 
@@ -9,7 +9,6 @@ from agent_harness_lab.evaluation.oracle import identity
 from agent_harness_lab.private_journal import encoded
 from tests.integration.evaluation import test_oracle_plan as oracle_fixtures
 from tests.integration.sandbox import test_sandbox_inference as inference_fixtures
-from tests.support.unittest_cleanups import run_cleanups
 
 
 class TrajectoryEvaluation:
@@ -47,9 +46,5 @@ class TrajectoryEvaluation:
 
 @contextmanager
 def trajectory_fixture():
-    f = inference_fixtures.ResponsesEvaluationTests()
-    try:
-        f.setUp()
-        yield TrajectoryEvaluation(f)
-    finally:
-        run_cleanups(f)
+    with ExitStack() as cleanups:
+        yield TrajectoryEvaluation(inference_fixtures.ResponsesEvaluation(cleanups.callback))

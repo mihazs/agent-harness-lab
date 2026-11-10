@@ -1,4 +1,5 @@
 """Live-source negative controls; dictionaries and labels never issue proof."""
+from contextlib import ExitStack
 from contextvars import copy_context
 import os
 from pathlib import Path
@@ -11,15 +12,13 @@ import agent_harness_lab
 from agent_harness_lab.evaluation import controller_receipts as owned
 from agent_harness_lab.sources.controller import ControllerCapture, SourceSink
 from agent_harness_lab.sources.schema import digest
-from tests.support.unittest_cleanups import run_cleanups
 
 
 @pytest.fixture
 def responses_evaluation():
     from tests.integration.sandbox import test_sandbox_inference as fixtures
-    f=fixtures.ResponsesEvaluationTests(); f.setUp()
-    try: yield f
-    finally: run_cleanups(f)
+    with ExitStack() as cleanups:
+        yield fixtures.ResponsesEvaluation(cleanups.callback)
 
 
 class TestControllerSource:

@@ -1,5 +1,5 @@
 """Unlimited controller analysis admission does not enlarge writable worker state."""
-from contextlib import redirect_stdout
+from contextlib import ExitStack, redirect_stdout
 from dataclasses import FrozenInstanceError
 import io
 import json
@@ -26,9 +26,8 @@ def deadline():
 
 @pytest.fixture
 def controller_inference():
-    f=wire.ControllerInferenceTests();f.setUp()
-    yield f
-    f.doCleanups()
+    with ExitStack() as cleanups:
+        yield wire.ControllerInference(cleanups.callback)
 
 
 @pytest.fixture
