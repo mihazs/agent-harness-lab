@@ -172,6 +172,7 @@ class TestConstructionAccess(ConstructionAccessHarness):
         assert all(s['scientific_parentage']=='unknown' for s in observed['stages'])
         state=json.loads((self.store/'protected-access.json').read_bytes())
         assert state['schema_version'] == 5; assert len(state['constructions']) == 2
+        assert state['reference_coverage'] is False
         assert all(s['state']=='complete' for s in state['constructions'].values())
         assert any(s['children'] for s in state['constructions'].values())
         assert observed['qualification'] == 'unverified'; assert not observed['publication_allowed']
