@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
+from tests.support.unittest_cleanups import run_cleanups
 import agent_harness_lab
 from agent_harness_lab.cli import main
 from agent_harness_lab.evaluation import responses,derivations
@@ -385,7 +386,7 @@ class TestDerivation(DerivationHarness):
         try:
             with pytest.raises(AssertionError, match='new-byte child of actual retired-input construction received a fresh managed reservation'):
                 probe.test_controlled_new_byte_child_of_retired_input_cannot_gain_a_fresh_managed_reservation()
-        finally: probe.doCleanups()
+        finally: run_cleanups(probe)
 
     @pytest.mark.parametrize('kind',['baseline','inputs.json','engine.json','settings.json','handoff.json'])
     def test_post_author_mutated_baseline_or_frozen_metadata_never_completes_or_publishes(self,kind):

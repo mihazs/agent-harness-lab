@@ -15,6 +15,7 @@ import pytest
 from agent_harness_lab.cli import main
 from agent_harness_lab.evidence import collect
 from agent_harness_lab.telemetry.schema import verified_outcome
+from tests.support.unittest_cleanups import run_callbacks
 
 VERSION = 'claude-jsonl-2.1.316'
 
@@ -56,7 +57,7 @@ class ClaudeNativeTests:
         return row
 
     def doCleanups(self):
-        while self._cleanups: self._cleanups.pop()()
+        run_callbacks(self._cleanups)
 
     def write(self): self.path.write_text(''.join(json.dumps(row)+'\n' for row in self.rows))
 
