@@ -319,3 +319,18 @@ def test_controlled_workflow_propagates_nested_cleanup_failure(monkeypatch):
     with pytest.raises(RuntimeError, match='synthetic controlled workflow cleanup failure'):
         with ExitStack() as cleanups:
             test_sandbox_construction.ControlledWorkflow(cleanups.callback)
+
+
+def test_task_bank_propagates_cleanup_failure(monkeypatch, tmp_path):
+    from contextlib import ExitStack
+    from types import SimpleNamespace
+    from tests.integration.evaluation import test_evaluation_foundation
+
+    def fail():
+        raise RuntimeError('synthetic task bank cleanup failure')
+
+    monkeypatch.setattr(test_evaluation_foundation.tempfile, 'TemporaryDirectory',
+                        lambda: SimpleNamespace(name=str(tmp_path), cleanup=fail))
+    with pytest.raises(RuntimeError, match='synthetic task bank cleanup failure'):
+        with ExitStack() as cleanups:
+            test_evaluation_foundation.TaskBank(cleanups.callback)
