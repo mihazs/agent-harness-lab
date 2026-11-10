@@ -61,6 +61,23 @@ labels also qualify noninferiority and regression decisions. They do not authent
 measurements or establish quality. Automatic promotion remains
 disabled.
 
+## Frozen timing boundary (`resource-noninferiority-v3`)
+
+Version 3 adds a frozen `timing_boundary` object with interval
+`target_subprocess_launch_through_collection` and seven Boolean fields: `setup`,
+`queueing`, `retries`, `tool_calls`, `user_wait`, `extraction`, and `grading`. Each field
+states whether that component is included in the declared elapsed measurement. Every arm of
+an elapsed endpoint must attest to the identical boundary in its `provenance`; a missing,
+incomplete, or different boundary makes that endpoint unknown. The boundary appears in the
+endpoint report and contributes to the contract digest. Version 2 remains unchanged.
+
+The interval declares timing from immediately before target subprocess launch through collection
+of its result, including termination cleanup when applicable. The boundary is caller-attested,
+not independently measured or verified. It does not guarantee retry accounting or convert a
+runner's execution time into end-to-end user latency. Its flags do not establish that a component actually occurred.
+Only include an elapsed observation when its measurement and complete scope are known to match
+the frozen declaration. Version 3 retains version 2's conditional decisions and quality gate.
+
 Not included yet: ratios and cost-per-success (reported as `not_computed`), success-conditional
 latency, currency, automatic provenance capture and report integration.
 
