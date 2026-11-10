@@ -3201,8 +3201,8 @@ its readback fails the whole capture.
 An opt-in identity profile uses `schema_version=2` on `GiteaSelection` and
 `version="v2"` on `SourceSpec`. It binds repository objects to the reported
 repository ID, issues and PRs to their reported object IDs, and comments and
-reviews to their reported IDs and captured parents. Recreated objects do not
-become revisions of the former objects. Version 1 retains its existing keys;
+reviews to their reported IDs and captured parents. Objects reported with new
+IDs do not become revisions of the former objects. Version 1 retains its existing keys;
 version 2 has a different selection scope and does not migrate or reconcile
 version 1 histories. These identifiers remain server-reported claims, not
 authenticated proof, and deleted heads remain unknown.
