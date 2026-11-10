@@ -4112,6 +4112,18 @@ model relationships and completeness remain unverified. No `reflect`, model,
 backend or network operation occurs. File import checkpoints do not establish
 bank completeness or source validity.
 
+`local_file/hindsight-model-references/v1` uses the same selected-bank
+descriptor to inspect `reflect_response.based_on` in `mental_models.json`.
+It records bounded private fingerprints of reported memory, model and directive
+references, together with their category and position. Repeated references stay
+distinct claims; absent or invalid IDs stay unknown. Missing, encoded or
+malformed reference lists remain unknown, not empty evidence. Returned lists
+and IDs are unverified source claims, not verified graph edges, proof of use,
+independent origins or task outcomes. No referenced content or private text is
+retained; fingerprints are guessable. The producer and overall completeness
+remain unverified, and a local-file checkpoint does not establish bank coverage.
+The reader does not invoke reflect, models, a backend or the network.
+
 `local_file/hindsight-bank-zip/v1` accepts the same selection descriptor shape
 as the extracted archive profile below, with `archive` naming one explicitly
 selected ZIP file. It reads the ZIP in memory without extracting files. The
