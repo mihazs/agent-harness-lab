@@ -167,7 +167,12 @@ classes and must declare both an incident class and `no_incident`.
 `audit_corpus.estimate` uses the selected design's estimator and only an
 adjudicated annotation with exactly one mapped class from a corpus case with complete capture, approved permission and
 no declared ambiguity. Missing or conflicting markers and ineligible or ambiguous
-cases stay pending for estimation and make it inconclusive. Corpus outcome categories are never implicitly mapped to audit
+cases stay pending for estimation and make it inconclusive. A local operator can
+record `CorpusStore.update(..., kind="nonresponse", reviewer=...)` for the current
+claim. The audit report distinguishes this declared nonresponse from pending
+review, without imputing a label; the same claimant can submit later. This event
+and reviewer identity are unauthenticated local declarations. Older readers that
+do not recognize the new journal event cannot reopen such a case. Corpus outcome categories are never implicitly mapped to audit
 classes. Results reuse the existing sampling estimator and remain private.
 
 These local events and checksums do not authenticate assignment timing, source
