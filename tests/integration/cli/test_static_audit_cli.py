@@ -633,3 +633,15 @@ def test_focus_hint_does_not_override_controlled_runtime(tmp_path, monkeypatch, 
     assert 'configured profile' in report['next_action']
     selected = config.execution_options(project, settings, {'agent': 'auto', 'inference_settings': None}, set())
     assert selected['agent'] == 'responses'
+
+
+def test_feedback_sensor_candidates_stay_private_and_unexecuted(tmp_path,monkeypatch,capsys):
+    project=tmp_path/'project';project.mkdir()
+    (project/'Taskfile.yml').write_text('SYNTHETIC_SENSOR_COMMAND')
+    monkeypatch.setenv('XDG_STATE_HOME',str(tmp_path/'state'))
+    monkeypatch.setattr(subprocess,'Popen',lambda *a,**kw:pytest.fail('sensor executed'))
+    assert main(['audit',str(project),'--json'])==0
+    report=json.loads(capsys.readouterr().out);view=report['feedback_sensor_candidates']
+    assert any(row['path']=='Taskfile.yml' and row['category']=='task_runner' for row in view['candidates'])
+    assert view['consistency']=='not_checked' and view['runtime_execution']=='unknown'
+    assert not view['publication_allowed'] and 'SYNTHETIC_SENSOR_COMMAND' not in json.dumps(report)

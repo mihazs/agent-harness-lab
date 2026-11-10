@@ -161,6 +161,8 @@ def main(argv=None):
             if shape['procedure_sections']:
                 _instruction_hypothesis(report, 'instruction_procedure_section_detected', 'structural',
                                         'evaluate_moving_procedure_to_skill_or_path_rule')
+        from .feedback_sensors import capture as feedback_sensors
+        report['feedback_sensor_candidates'] = feedback_sensors(project)
         from .protected_paths import capture as protected_paths
         report['protected_path_inventory'] = protected_paths(project)
         from .permission_candidates import report as permission_candidates
@@ -196,6 +198,9 @@ def main(argv=None):
             print('Static convention checks; not evidence of harness performance.')
             for row in report['coverage']:
                 print(f"{row['dimension']}: {row['status']}")
+            sensors=report['feedback_sensor_candidates']
+            print('Feedback sensor candidates: '+str(len(sensors['candidates']))+
+                  f" (coverage: {sensors['coverage']}; consistency: not checked; execution: unknown)")
             events = report['hook_events']
             print('Declared hook events: ' + (', '.join(events['declared']) or 'none observed') +
                   f" (coverage: {events['coverage']}; execution: unknown)")

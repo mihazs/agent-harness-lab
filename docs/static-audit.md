@@ -362,3 +362,14 @@ scope, evaluation and promotion checks. Closed-input profiles that prohibit
 focus reject it; the hint does not override those profiles. An improvement run
 may invoke a model or agent and supply it with authorized project data, unlike
 the offline audit. The content-free hint does not change that exposure.
+
+### Feedback sensor candidates
+
+The private CLI report includes a filename-only feedback sensor inventory for
+recognized test paths, configuration files, task runners, CI workflows and Git
+hook configurations. A candidate's `stage` is a filename convention, not proof
+that a check exists, runs early or executes successfully. Contents and commands
+are not read by this inventory; unsupported names and incomplete walks leave
+coverage unknown. Instruction-to-command consistency and stale-target detection
+are not checked in this slice. The inventory is a separate metadata observation,
+not an atomic snapshot with the other audit inputs.
