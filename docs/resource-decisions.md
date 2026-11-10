@@ -34,11 +34,11 @@ The report carries `contract_sha256`, so any change yields a new identity.
 
 ## Cache-aware contract (`resource-noninferiority-v2`)
 
-Version 2 adds `cache_policy` to the frozen contract, either `verified_uncached` or
+Version 2 adds `cache_policy` to the frozen contract, either `uncached_only` or
 `provider_cache_allowed`. Each arm supplies `provenance` with `execution` equal to
-`new_request`, `cache_state` equal to `verified_uncached` or `provider_cache_used`, and
+`new_request`, `cache_state` equal to `uncached` or `provider_cache_used`, and
 `measurement_scope_complete: true`. A local replay, unknown cache state, missing provenance,
-or incomplete scope makes the endpoint unknown. `verified_uncached` rejects provider cache
+or incomplete scope makes the endpoint unknown. `uncached_only` rejects provider cache
 hits; `provider_cache_allowed` allows either declared state when both arms of each pair match.
 Asymmetric cache states block the endpoint. The policy is part
 of the contract digest. Actual measured tokens must include all relevant billed usage; cached
@@ -50,6 +50,14 @@ execution scope, including applicable retries and charges. Replay and regrading 
 target executions. This API does not collect cache-read/write categories, verify cache balance,
 or prevent a caller from supplying false provenance. Version 1 remains available with its
 original semantics and does not check provenance.
+
+Every v2 result and endpoint labels provenance as `caller_attested_unverified`, quality as
+`caller_supplied_unverified`, and its decision or inference basis as `conditional_on_caller_inputs`.
+Favorable results say `conditional_improvement` and set
+`conditional_efficiency_improvement: true`; `efficiency_improvement` remains false. These
+labels also qualify noninferiority and regression decisions. They do not authenticate the
+measurements or establish quality. Automatic promotion remains
+disabled.
 
 Not included yet: ratios and cost-per-success (reported as `not_computed`), success-conditional
 latency, currency, automatic provenance capture and report integration.

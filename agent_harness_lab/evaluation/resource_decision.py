@@ -33,7 +33,7 @@ def validate(contract):
     expected_version = 2 if profile == PROVENANCE_PROFILE else 1
     if type(contract['schema_version']) is not int or contract['schema_version'] != expected_version or profile not in (PROFILE, PROVENANCE_PROFILE):
         raise ValueError('unsupported resource contract profile')
-    if profile == PROVENANCE_PROFILE and contract['cache_policy'] not in ('verified_uncached', 'provider_cache_allowed'):
+    if profile == PROVENANCE_PROFILE and contract['cache_policy'] not in ('uncached_only', 'provider_cache_allowed'):
         raise ValueError('unsupported resource cache policy')
     if type(contract['alpha']) is not float or not 0 < contract['alpha'] < 1:
         raise ValueError('alpha must be a float in (0, 1)')
@@ -58,7 +58,7 @@ def observe(trial, endpoint, cache_policy=None):
         provenance = trial.get('provenance')
         if not isinstance(provenance, dict) or provenance.get('execution') != 'new_request':
             return None, 'execution_not_fresh'
-        allowed = ('verified_uncached',) if cache_policy == 'verified_uncached' else ('verified_uncached', 'provider_cache_used')
+        allowed = ('uncached',) if cache_policy == 'uncached_only' else ('uncached', 'provider_cache_used')
         if provenance.get('cache_state') not in allowed:
             return None, 'cache_state_unverified_or_disallowed'
         if provenance.get('measurement_scope_complete') is not True:
@@ -114,6 +114,16 @@ def decide(contract, pairs, quality_status):
     elif 'insufficient_precision' in states: decision, reason = 'inconclusive', 'insufficient_precision'
     else: decision, reason = ('improvement' if states == {'improvement'} else 'noninferior'), 'frozen_resource_criteria_met'
     digest = hashlib.sha256(json.dumps(contract, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
-    return dict(profile=contract['profile'], contract_sha256=digest, decision=decision, reason=reason, efficiency_improvement=decision == 'improvement',
-                quality_status=quality_status, endpoints=endpoints, automatic_promotion=False,
-                multiplicity='Bonferroni_required_resource_endpoints', cost_per_success='not_computed')
+    result = dict(profile=contract['profile'], contract_sha256=digest, decision=decision, reason=reason, efficiency_improvement=decision == 'improvement',
+                  quality_status=quality_status, endpoints=endpoints, automatic_promotion=False,
+                  multiplicity='Bonferroni_required_resource_endpoints', cost_per_success='not_computed')
+    if contract['profile'] == PROVENANCE_PROFILE:
+        result.update(provenance_authority='caller_attested_unverified', quality_authority='caller_supplied_unverified',
+                      decision_basis='conditional_on_caller_inputs', conditional_efficiency_improvement=decision == 'improvement',
+                      efficiency_improvement=False)
+        for endpoint in endpoints:
+            endpoint.update(provenance_authority='caller_attested_unverified', quality_authority='caller_supplied_unverified',
+                            inference_basis='conditional_on_caller_inputs')
+        if decision in ('improvement', 'noninferior', 'regression'):
+            result['decision'] = 'conditional_' + decision
+    return result
