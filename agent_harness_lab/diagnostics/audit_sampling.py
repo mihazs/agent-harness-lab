@@ -7,7 +7,8 @@ targeted oversampling routes. Overlapping routes are combined into one draw per
 unit with inclusion probability ``1 - prod(1 - rate)``, so every eligible unit has
 a known positive probability and a unit reached by several routes is drawn once.
 
-Estimates are Horvitz-Thompson totals with the Poisson-design standard error.
+Estimates use nominal inverse-probability weights and Poisson-design standard errors.
+Finite hash and floating-point resolution can differ from the nominal probabilities.
 Their 95% intervals are exact binomial limits per stratum, combined across strata
 by MOVER, so small sampled counts keep nominal coverage. The estimand is captured
 eligible units in the frame, never every real interaction. Missing reviews are
@@ -234,6 +235,8 @@ def _probability(routes, rates):
     probability = 1 - miss
     if not _rate(probability):
         raise ValueError('combined inclusion probability is zero or invalid at available precision')
+    if probability == 1 and not any(rates[route] == 1 for route in routes):
+        raise ValueError('combined inclusion probability rounds to one at available precision')
     return probability
 
 
@@ -274,7 +277,9 @@ def draw(frame, plan, trusted_heads=None):
         name, probability = '+'.join(routes), _probability(routes, rates)
         stratum = strata.setdefault(name, dict(stratum=name, routes=routes, units=0, inclusion_probability=probability, drawn=0))
         stratum['units'] += 1
-        if _uniform(plan['seed'], frozen['frame_sha256'], key) < probability:
+        # A 64-bit integer divided as a float can round up to 1.0. Certainty
+        # strata must still include every eligible unit.
+        if probability == 1 or _uniform(plan['seed'], frozen['frame_sha256'], key) < probability:
             stratum['drawn'] += 1
             draws.append(dict(unit_sha256=key, stratum=name, alerted=unit['alerted'], inclusion_probability=probability))
     expected = sum(s['units'] * s['inclusion_probability'] for s in strata.values())
@@ -341,7 +346,7 @@ def _labels(batch, receipt):
 
 
 def _total(rows, value):
-    """Horvitz-Thompson total and its Poisson-design variance."""
+    """Nominal inverse-probability total and ideal Poisson-design variance."""
     total = sum(value(r) / r['inclusion_probability'] for r in rows)
     variance = sum((1 - r['inclusion_probability']) * value(r) ** 2 / r['inclusion_probability'] ** 2 for r in rows)
     return total, variance
@@ -522,7 +527,8 @@ def estimate(receipt, batch, trusted_heads=None):
         alert_only=dict(population_support='unsupported', reviewed=len(reviewed_alerts),
                         incidents=sum(r['incident'] for r in reviewed_alerts)),
         observed_false_negatives=sorted(r['unit_sha256'] for r in rows if r['incident'] and not r['alerted']),
-        limitations=list(receipt['limitations']), publication_allowed=False, automatic_policy_update=False)
+        limitations=[*receipt['limitations'], 'finite_precision_hash_sampling_approximate'],
+        publication_allowed=False, automatic_policy_update=False)
     if not rows:
         reasons.append('no_reviewed_draws')
     if reasons:

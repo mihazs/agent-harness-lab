@@ -2,6 +2,7 @@
 import json
 import math
 import statistics
+from unittest.mock import patch
 
 import pytest
 
@@ -467,6 +468,24 @@ def test_tampered_receipt_probability_is_refused(population):
         audit.estimate(resealed, labels(resealed, truth))
 
 
+def test_certainty_stratum_is_sampled_when_hash_float_rounds_to_one():
+    value = frame([unit('synthetic')])
+    class MaximumHash:
+        def hexdigest(self): return 'f' * 64
+    with patch.object(audit.hashlib, 'sha256', return_value=MaximumHash()):
+        assert audit._uniform(1, 'a' * 64, 'b' * 64) == 1.0
+    with patch.object(audit, '_uniform', return_value=1.0):
+        receipt = audit.draw(value, plan(value, rates=dict(random=1)))
+    assert receipt['strata'][0]['inclusion_probability'] == 1
+    assert receipt['drawn'] == 1 and len(receipt['draws']) == 1
+
+
+def test_uncertain_overlapping_routes_cannot_round_to_certainty():
+    value = frame([unit('synthetic', alerted=True)])
+    with pytest.raises(ValueError, match='rounds to one'):
+        audit.draw(value, plan(value, rates=dict(random=.5, alerted=1-2**-53)))
+
+
 def test_subprecision_random_rate_and_zero_stratum_are_refused():
     value = frame([unit('synthetic')])
     with pytest.raises(ValueError, match='inclusion probability'):
@@ -557,6 +576,7 @@ def test_receipts_and_reports_are_private_and_carry_no_raw_ids(population):
     value, truth = population
     receipt = audit.draw(value, plan(value))
     report = audit.estimate(receipt, labels(receipt, truth))
+    assert 'finite_precision_hash_sampling_approximate' in report['limitations']
     for record in (receipt, report, audit.review_queue(receipt)):
         assert 'episode-0' not in json.dumps(record)
         assert not public_export_allowed([record])
