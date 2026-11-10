@@ -127,6 +127,14 @@ def revision_metadata(bank_path, *, check_current=True, deadline=None):
     current=current and review_current(store,events[index-1][0])
     admissions = descriptor['admissions']
     if not isinstance(admissions, dict) or len(admissions) > 1000: raise ValueError('invalid admission catalog')
+    self_task_id = 'regression-'+descriptor['case_id']
+    self_entry = admissions.get(self_task_id)
+    tasks = value.get('tasks')
+    own_tasks = [task for task in tasks if isinstance(task, dict) and task.get('task_id') == self_task_id] if isinstance(tasks, list) else []
+    if (not isinstance(self_entry, dict) or self_entry.get('case_id') != descriptor['case_id']
+            or len(own_tasks) != 1 or self_entry.get('task_revision_sha256') != descriptor['task_revision_sha256']
+            or task_identity(own_tasks[0]) != descriptor['task_revision_sha256']):
+        raise ValueError('bank revision does not bind its admitted task')
     for task_id, entry in admissions.items():
         fields(entry, 'case_id task_revision_sha256 controls source_citations root_id project_group accepted_event_sha256')
         sha256(entry['case_id']); sha256(entry['task_revision_sha256'])

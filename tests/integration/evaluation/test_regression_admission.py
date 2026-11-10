@@ -271,3 +271,66 @@ def test_concurrent_duplicate_acceptance_has_one_immutable_commit(admission):
     assert len(revisions) == 1
     assert len(list((admission.store.root/'revisions').iterdir())) == 1
     assert sum(e['kind']=='accepted' for e,_ in admission.store.history(admission.store.case(admission.case_id))) == 1
+
+
+@pytest.mark.parametrize('variant', ['missing_catalog', 'missing_task', 'mismatched_task'])
+def test_fabricated_revision_without_its_admitted_task_cannot_export(tmp_path, variant):
+    from agent_harness_lab.evaluation.bank_revisions import metadata_digest, payload_tree
+    from agent_harness_lab.evaluation.bank_tools import export_manifest
+    from agent_harness_lab.private_journal import encoded
+
+    def put(path, value):
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        data = encoded(value); path.write_bytes(data); path.chmod(0o600)
+        return hashlib.sha256(data).hexdigest()
+
+    store = tmp_path/'store'; store.mkdir(mode=0o700)
+    put(store/'.store.json', dict(schema_version=1, format='regression-review-store'))
+    declarations = {name: {} for name in ('proposal.json', 'draft.json', 'spec.json')}
+    hashes = {name: hashlib.sha256(encoded(value)).hexdigest() for name, value in declarations.items()}
+    case_id = hashlib.sha256(encoded(hashes)).hexdigest(); case = store/'cases'/case_id
+    for name, value in declarations.items(): put(case/name, value)
+    inputs = put(case/'inputs.json', dict(schema_version=1, author='synthetic-author',
+        origins={name: '/synthetic/'+name for name in declarations}, hashes=hashes, privacy='public_or_synthetic_source'))
+    previous = None
+    def event(kind, state, payload):
+        nonlocal previous
+        index = len(list((case/'events').glob('*.json'))) if (case/'events').exists() else 0
+        previous = put(case/'events'/f'{index:04}.json', dict(schema_version=1, index=index,
+            previous_sha256=previous, kind=kind, state=state, payload=payload, recorded_at='2000-01-01T00:00:00Z'))
+
+    event('reported', 'reported', dict(inputs_sha256=inputs))
+    event('attempt_started', 'reported', {})
+    evidence = 'a'*64
+    event('reproduced', 'reproduced', dict(evidence_sha256=evidence))
+    event('drafted', 'drafted', dict(evidence_sha256=evidence))
+    review = dict(schema_version=1, case_id=case_id, expected_event_sha256=previous, evidence_sha256=evidence,
+        decision='reviewed', reviewer=dict(identity='synthetic-reviewer', source='operator_attestation', provenance='synthetic',
+            basis_kind='independent_artifact_review', basis='synthetic'),
+        evidence_refs=[dict(ref='synthetic:review', sha256='b'*64)], reason='synthetic')
+    event('reviewed', 'reviewed', dict(review=review)); reviewed = previous
+    staging = store/'revisions'/'staging'; staging.mkdir(parents=True, mode=0o700)
+    source = Path(agent_harness_lab.__file__).parent/'evaluation/fixtures/starter-v1'
+    bank = json.loads((source/'bank.json').read_text()); bank['tasks'] = bank['tasks'][:1]
+    bank['controller_profile'] = 'regression-bank-v1'
+    admitted_id = 'regression-'+case_id
+    admissions = {}
+    if variant != 'missing_catalog':
+        admissions[admitted_id] = dict(case_id=case_id, task_revision_sha256='e'*64)
+    if variant == 'mismatched_task':
+        bank['tasks'][0]['task_id'] = admitted_id
+    for key in ('fixture', 'grader_bundle'):
+        relative = Path(bank['tasks'][0][key]); (staging/relative).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(source/relative, staging/relative)
+    bank_hash = put(staging/'bank.json', bank)
+    descriptor = dict(schema_version=1, profile='regression-bank-v1', parent_revision_sha256=None,
+        parent_bank_sha256='c'*64, bank_manifest_sha256=bank_hash, tree_sha256=payload_tree(staging),
+        operation='accept', case_id=case_id, reviewed_event_sha256=reviewed, sealed_evidence_sha256=evidence,
+        accepted_event_index=5, request_sha256='d'*64, task_revision_sha256='e'*64,
+        exposure='development_regression', provenance_binding=None, admissions=admissions)
+    revision = metadata_digest(descriptor); put(staging/'revision.json', descriptor)
+    destination = staging.parent/revision; staging.rename(destination)
+    event('accepted', 'accepted', dict(revision_sha256=revision, bank_sha256=bank_hash, request_sha256='d'*64))
+    with pytest.raises(ValueError, match='admitted task'):
+        export_manifest(destination/'bank.json', tmp_path/'export')
+    assert not (tmp_path/'export').exists()
