@@ -6,7 +6,9 @@ from agent_harness_lab.sources import harness_inventory
 
 PROFILE = 'ahl-protected-path-candidates-v1'
 CONFIG_NAMES = frozenset({'.eslintrc', '.eslintrc.json', '.eslintrc.js', 'eslint.config.js', 'eslint.config.mjs',
-    '.prettierrc', '.prettierrc.json', 'prettier.config.js', 'ruff.toml', '.ruff.toml', 'pyproject.toml',
+    'eslint.config.cjs', '.prettierrc', '.prettierrc.json', '.prettierrc.yaml', '.prettierrc.yml',
+    'prettier.config.js', 'prettier.config.mjs', 'prettier.config.cjs', 'biome.json', 'biome.jsonc',
+    'ruff.toml', '.ruff.toml', 'pyproject.toml',
     'mypy.ini', '.mypy.ini', 'tsconfig.json', '.pre-commit-config.yaml', 'lefthook.yml'})
 
 

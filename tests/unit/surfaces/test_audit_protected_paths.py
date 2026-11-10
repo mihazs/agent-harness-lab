@@ -28,3 +28,15 @@ def test_refused_paths_and_bounds_leave_coverage_unknown(tmp_path, monkeypatch):
     assert protected_paths.capture(tmp_path) == dict(profile=protected_paths.PROFILE, status='blocked', paths=[],
                                                        coverage='unknown', publication_allowed=False)
     assert os.path.islink(tmp_path / '.env')
+
+
+def test_additional_named_format_and_lint_configs_are_metadata_only(tmp_path):
+    names = ('eslint.config.cjs', '.prettierrc.yaml', '.prettierrc.yml', 'prettier.config.mjs',
+             'prettier.config.cjs', 'biome.json', 'biome.jsonc')
+    for name in (*names, 'biome.json.backup'):
+        (tmp_path / name).write_text('SYNTHETIC_SECRET')
+    with patch.object(harness_inventory._Walk, 'read', side_effect=AssertionError('no file reads')):
+        result = protected_paths.capture(tmp_path)
+    assert {row['path'] for row in result['paths']} == set(names)
+    assert all(row['category'] == 'config_protection' and row['enforcement'] == 'unknown' for row in result['paths'])
+    assert 'SYNTHETIC_SECRET' not in str(result)
