@@ -19,7 +19,16 @@ def summary(store,receipt_refs,*,public=False):
         if key in seen: raise ValueError('duplicate controller receipt reference')
         seen.add(key)
         verified=history.verify_decision(*key)
-        entry=dict(receipt_sha256=key[1],receipt=verified['receipt'],analysis=verified['analysis'])
+        checked=history.checked(key[0])
+        if checked[-1]!='current' or checked[4] is None:
+            raise ValueError('sealed current trial evidence required')
+        from agent_harness_lab.private_journal import record
+        if record(checked[0]/'execution/results.json',8*1024*1024)[1]!=verified['receipt']['results_sha256']:
+            raise ValueError('trial evidence differs from decision receipt')
+        sampling=record(checked[0]/'sequential/binding.json',1024*1024)[0] if checked[3].sequential is not None else None
+        records=history.trials(checked[2],checked[3],checked[4],sampling=sampling)
+        entry=dict(receipt_sha256=key[1],receipt=verified['receipt'],analysis=verified['analysis'],
+                   task_pairs=task_pairs(checked[3],checked[4],records,sampling=sampling))
         comparisons.append(entry)
     result=dict(schema_version=1,report_kind='controller_history',algorithm='private-controller-history-report-v1',
         history_store=str(history.root),comparisons=comparisons,publication='private',
@@ -32,6 +41,50 @@ def summary(store,receipt_refs,*,public=False):
         if current['receipt']!=entry['receipt'] or current['analysis']!=entry['analysis']:
             raise ValueError('controller report authority changed during collection')
     return result
+
+
+def task_pairs(spec,result,records,*,sampling=None):
+    """Display scheduled identities and recorded outcomes without changing analysis."""
+    from .plan import schedule
+    if spec.sequential is not None:
+        from .sequential import schedule as sequential_schedule
+        planned=sequential_schedule(spec,sampling)
+    else:planned=schedule(spec)
+    observed={}
+    grades={row.trial_id:row for row in records}
+    for trial in result['trials']:
+        observed.setdefault(trial.get('trial_id'),[]).append(trial)
+    pairs={}
+    for trial in planned:
+        key=tuple(trial[k] for k in ('task','root','family','repetition'))
+        versions=pairs.setdefault(key,{})
+        matches=observed.get(trial['trial_id'],[])
+        side=dict(trial_id=trial['trial_id'],outcome='unknown',runtime='unknown',grader='unknown')
+        if len(matches)==1 and all(matches[0].get(k)==v for k,v in trial.items()):
+            value=matches[0]; grader=value.get('grader') or {}; execution=value.get('execution') or {}
+            image=execution.get('attestation',{}).get('runtime_image',{})
+            runtime=image.get('sha256') if image.get('verified_before') is True and image.get('verified_after') is True else None
+            if isinstance(runtime,str) and runtime:side['runtime']=runtime
+            identity=grader.get('grader_identity')
+            if isinstance(identity,dict):side['grader']=identity
+            grade=grades.get(trial['trial_id'])
+            if (grade is not None and grade.status=='graded' and grade.provenance=='executable_grader'
+                    and type(grade.outcome) is bool):
+                side['outcome']='passed' if grade.outcome else 'failed'
+        versions[trial['version']]=side
+    rows=[]
+    for key,versions in pairs.items():
+        base=versions.get('baseline');candidate=versions.get('candidate')
+        status='unknown'
+        if base and candidate and base['outcome']!='unknown' and candidate['outcome']!='unknown':
+            if (base['runtime']=='unknown' or candidate['runtime']=='unknown' or base['grader']=='unknown'
+                    or candidate['grader']=='unknown' or base['runtime']!=candidate['runtime'] or base['grader']!=candidate['grader']):
+                status='not comparable'
+            elif base['outcome']==candidate['outcome']:status='unchanged'
+            elif candidate['outcome']=='passed':status='improved'
+            else:status='regressed'
+        rows.append(dict(zip(('task','root','family','repetition'),key),baseline=base,candidate=candidate,status=status))
+    return rows
 
 
 def _cell(value):
@@ -62,6 +115,16 @@ def render(result):
                  transitions['pass_fail'],[transitions[key] for key in ('missing','invalid','unknown')])
             lines.append('| '+' | '.join(_cell(value) for value in row)+' |')
             rows.append('<tr>'+''.join('<td>'+html.escape(str(value))+'</td>' for value in row)+'</tr>')
+        pair_headings=('Task','Root','Family','Repeat','Baseline outcome / trial','Candidate outcome / trial','Observed comparison')
+        lines+=['','### Task observations','','Statuses describe recorded results, not causation or a changed analysis population.','',
+                '| '+' | '.join(pair_headings)+' |','| '+' | '.join('---' for _ in pair_headings)+' |']
+        pair_html=[]
+        for pair in entry['task_pairs']:
+            def label(side):
+                return 'unknown' if side is None else side['outcome']+' / '+side['trial_id']
+            values=(pair['task'],pair['root'],pair['family'],pair['repetition'],label(pair['baseline']),label(pair['candidate']),pair['status'])
+            lines.append('| '+' | '.join(_cell(value) for value in values)+' |')
+            pair_html.append('<tr>'+''.join('<td>'+html.escape(str(value))+'</td>' for value in values)+'</tr>')
         lines+=['','Full current qualification provenance, assumptions, coverage, per-task/root rates and observations:','']
         raw=json.dumps(entry,sort_keys=True,indent=2,allow_nan=False)
         lines.extend('    '+line for line in raw.splitlines())
@@ -70,10 +133,14 @@ def render(result):
         sections.append('<section><h2>Comparison '+html.escape(receipt['run_id'])+'</h2><p>Disposition: '
             +html.escape(analysis['status'])+' / '+html.escape(str(analysis.get('reason','unknown')))
             +'</p><table><thead><tr>'+''.join('<th scope="col">'+html.escape(value)+'</th>' for value in headings)
-            +'</tr></thead><tbody>'+''.join(rows)+'</tbody></table><details><summary>Current qualification and analysis</summary><pre>'
+            +'</tr></thead><tbody>'+''.join(rows)+'</tbody></table><h3>Task observations</h3><p>Recorded outcomes, not causation.</p><table><thead><tr>'
+            +''.join('<th scope="col">'+html.escape(value)+'</th>' for value in pair_headings)
+            +'</tr></thead><tbody>'+''.join(pair_html)+'</tbody></table><details><summary>Current qualification and analysis</summary><pre>'
             +html.escape(raw)+'</pre></details></section>')
     markdown='\n'.join(lines)+'\n'
     document=('<!doctype html><html lang="en"><meta charset="utf-8"><title>Private controller history report</title>'
+        '<meta name="viewport" content="width=device-width, initial-scale=1">'
+        '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; base-uri \'none\'; form-action \'none\'">'
         '<body><h1>Private controller history report</h1><p>Current analysis evidence; no certification or adoption authority.</p>'
         +''.join(sections)+'</body></html>')
     return markdown,document
