@@ -49,7 +49,7 @@ def monitor(deployment,task_versions,events,policy,now):
                 action='manual_review' if critical else 'observe',automatic_rollback=False)
 
 
-def triage_audit_observation(policy,receipt,frame,store_path,binding,rubric,*,plan=None,trusted_heads=None):
+def triage_audit_observation(policy,receipt,frame,store_path,binding,rubric,*,plan=None,trusted_heads=None,include_composition=False):
     """Recompute a private triage-audit observation; identifiers are declarations, not execution proof."""
     from agent_harness_lab.diagnostics import audit_corpus, audit_fixed, audit_sampling, audit_stratified, triage_policy
     triage_policy.check_policy(policy)
@@ -68,8 +68,10 @@ def triage_audit_observation(policy,receipt,frame,store_path,binding,rubric,*,pl
     else:raise ValueError('supported audit receipt and plan required')
     if model_sha is None or declared.get('policy_sha256')!=policy_sha or declared.get('model_sha256')!=model_sha:
         raise ValueError('audit policy or model declaration differs')
-    report=audit_corpus.estimate(receipt,frame,store_path,binding,rubric,trusted_heads,plan=plan)
-    return dict(schema_version=1,profile='triage-audit-monitor-observation-v1',policy_sha256=policy_sha,
+    report=audit_corpus.estimate(receipt,frame,store_path,binding,rubric,trusted_heads,plan=plan,
+                                 include_composition=include_composition)
+    return dict(schema_version=1,profile=('triage-audit-monitor-composition-v1' if include_composition
+                                          else 'triage-audit-monitor-observation-v1'),policy_sha256=policy_sha,
         model_sha256=model_sha,audit_receipt_sha256=receipt['receipt_sha256'],audit_report=report,
         identity_binding='caller_declared_identifiers_only',source_execution='unverified',
         policy_application='not_observed',alert_decisions='caller_declared_unverified',
