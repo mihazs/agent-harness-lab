@@ -37,6 +37,8 @@ def main(argv):
     experiment_mode.add_argument('--preflight',action='store_true',help='Compute exact frozen-plan precision without running workers or models')
     experiment_mode.add_argument('--power-model',type=Path,help='Existing JSON synthetic outcome model; simulate fixed-analysis disposition rates without running workers or models')
     experiment.add_argument('--cohorts',type=Path,help='Exact raw frozen preservation manifest; preflight only')
+    experiment.add_argument('--root-similarity',type=Path,help='Private root similarity evidence pinned by the frozen plan')
+    experiment.add_argument('--root-bank',type=Path,help='Current bank manifest used to recheck root similarity evidence')
     experiment.add_argument('--simulations',type=int,help='Number of seeded power simulations, 1 to 10000 (default 200); requires --power-model')
     experiment.add_argument('--simulation-seed',type=int,help='Integer seed for the power simulation, separate from the plan scheduling seed (default 0); requires --power-model')
     regression = commands.add_parser('regression', help='Validate declarations, audit draft graders or replay frozen snapshots; no bank admission',description='Validate a regression proposal JSON declaration. Supplying --draft explicitly runs frozen grader controls; adding --replay runs matched recorded/minimized snapshots. Execution requires all pinned runtime options and a new private --output.',epilog='Example (declaration only): ahl regression --proposal proposal.json. JSON stdout does not admit a case to a task bank. Exit 0 means validation or requested replay/control completion; 1 means failed execution; 3 means blocked/unsupported.')
@@ -106,6 +108,10 @@ def main(argv):
             from .plan import ExperimentSpec
             from .statistics import TrialRecord, analyze
             from agent_harness_lab.promotion.policy import decide
+            if (args.root_similarity or args.root_bank) and args.power_model is not None:
+                raise ValueError('root similarity evidence is unsupported by power simulation')
+            from agent_harness_lab.private_journal import record
+            similarity = record(args.root_similarity, 1024 * 1024)[0] if args.root_similarity else None
             if args.power_model is None and (args.simulations is not None or args.simulation_seed is not None):
                 raise ValueError('--simulations and --simulation-seed require --power-model')
             if args.power_model is not None:
@@ -124,13 +130,13 @@ def main(argv):
                 from .integrity import read_regular
                 from .cohorts import MAX_BYTES
                 spec=ExperimentSpec.parse(record(args.spec,MAX_BYTES)[0])
-                result=preflight(spec,cohort_manifest_json=read_regular(args.cohorts,MAX_BYTES) if args.cohorts else None)
+                result=preflight(spec,cohort_manifest_json=read_regular(args.cohorts,MAX_BYTES) if args.cohorts else None, root_similarity_evidence=similarity, root_similarity_bank=args.root_bank)
                 code=0 if result['status']=='feasible' else 3
             else:
                 if args.cohorts:raise ValueError('--cohorts requires --preflight')
                 spec = ExperimentSpec.parse(json.loads(args.spec.read_text()))
                 records = [TrialRecord(**r) for r in json.loads(args.records.read_text())]
-                result = analyze(spec, records)
+                result = analyze(spec, records, root_similarity_evidence=similarity, root_similarity_bank=args.root_bank)
                 result['oracle_validity'] = 'unverified'
                 result['promotion'] = asdict(decide(spec, result))
                 code = 3

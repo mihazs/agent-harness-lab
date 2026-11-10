@@ -79,9 +79,9 @@ Every detected overlap keeps its receipt and affected-task issue. A match group
 links each later member to one deterministic representative, rather than emitting
 every pair. These observations do not certify independence or authorize execution.
 
-Fixture matching is path-sensitive. Arbitrary renaming, paraphrases, partial
-copies, near duplicates and hidden semantic relatedness are not completely
-covered. Pending receipts have no operator override that can make exposed data
+Fixture matching is path-sensitive. The prompt similarity check below is heuristic;
+arbitrary renaming, paraphrases, partial copies and hidden semantic relatedness
+are not completely covered. Pending receipts have no operator override that can make exposed data
 untouched. Reviewed lineage resolution, near-duplicate adjudication and broader
 corpus integration remain work under #58; immutable regression admission remains
 under #8. Neither issue is completed by lexical matching.
@@ -99,3 +99,54 @@ checks include the same cases.
 [Offline source-lineage review](source-lineage-review.md) records operator
 annotations over exact cached revisions without upgrading these lexical receipts
 or making native-authentication or independent-root claims.
+
+## Suspected root similarity
+
+Bank inspection compares three-token prompt shingles with Jaccard similarity at a
+fixed threshold. Code-like identifiers and simple assignment-style variable names are normalized before comparison. A
+connected group is a candidate for dependence and its member tasks receive an
+`independence_unverified` issue. The report includes nominal and effective root
+counts, where each connected candidate group counts once. This is a conservative
+planning count, not a verified count of independent incidents. Paraphrases and
+other dependencies can be missed; an absent flag does not establish independence.
+
+This check reads prompts locally and does not send them to a service. If any task
+has no explicit `task.json` prompt, its report is incomplete and the effective
+count and evidence are unavailable. Counts and evidence are private bank-derived
+outputs. The lexical candidate is not an authenticated lineage finding.
+
+For a fixed comparison using the whole inspected bank, save the report's
+`content_grouping.root_similarity.evidence` as private JSON and put its reported
+`evidence_sha256` into the plan's `root_similarity_sha256` before freezing it.
+For a selected subset, project the inspected evidence first. The projection omits
+unselected task and root identifiers while retaining transitive candidate links:
+
+```python
+from agent_harness_lab.evaluation.root_similarity import project_evidence
+from agent_harness_lab.sources.schema import digest
+
+# report is the private bank-inspection result; plan_tasks is the selected
+# sequence of (task_id, root_id) pairs from the frozen plan.
+full = report['content_grouping']['root_similarity']['evidence']
+evidence = project_evidence(full, plan_tasks)
+plan['root_similarity_sha256'] = digest(evidence)
+# Save evidence as private JSON and freeze the plan before collecting outcomes.
+```
+
+The evidence must cover the plan's exact selected task/root mapping. The plan hash
+includes that pin. Supply both the evidence and current bank manifest:
+
+```sh
+ahl experiment --spec /path/to/plan.json --preflight \
+  --root-similarity /path/to/private-evidence.json --root-bank /path/to/bank.json
+```
+
+Supply the same two options when analyzing recorded trials. The current bank is
+reinspected; missing, changed, or mismatched evidence blocks the calculation.
+Candidate roots are combined for uncertainty calculations by adding their weights
+within each component. Primary, family, and required preservation endpoints use
+those grouped weights while retaining their original weighted means. The inverse
+sample-size solver is unavailable when candidates are present because resizing
+requires new frozen evidence. Sequential plans and power simulation do not accept
+this evidence. Legacy plans without a pin retain their existing behavior and do
+not make this additional check.

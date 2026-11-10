@@ -26,9 +26,11 @@ def meets(item, target):
     return item['criteria_possible'] and (target is None or item.get('half_width') is not None and item['half_width']<=target)
 
 
-def preflight(spec, *, cohort_manifest_json=None, trial_limit=None, budget_seconds=None):
+def preflight(spec, *, cohort_manifest_json=None, trial_limit=None, budget_seconds=None, root_similarity_evidence=None, root_similarity_bank=None):
     if not isinstance(spec, ExperimentSpec): raise ValueError('a frozen experiment spec is required')
     spec.validate()
+    from .root_similarity import binding, grouped_weights
+    groups = binding(spec, root_similarity_evidence, root_similarity_bank)
     if spec.sequential is not None: raise ValueError('fixed precision calculation cannot admit sequential analysis')
     if len(spec.tasks)>MAX_TASKS: raise ValueError('precision planning exceeds the 1000-task bank cap')
     if trial_limit is not None and (type(trial_limit) is not int or trial_limit<=0):
@@ -53,20 +55,22 @@ def preflight(spec, *, cohort_manifest_json=None, trial_limit=None, budget_secon
     count=1+len(families)+required
     alpha=spec.alpha/count
     endpoints={}
-    def endpoint(name,weights,margin,strict,minimum_roots,required=True):
-        item=dict(declared_roots=len(weights),required=required,margin=margin,strict=strict,
+    def endpoint(name,roots,weights,margin,strict,minimum_roots,required=True):
+        combined = grouped_weights(roots, weights, groups)
+        item=dict(declared_roots=len(weights),effective_roots=len(combined) if spec.root_similarity_sha256 else None,required=required,margin=margin,strict=strict,
             min_roots=minimum_roots,per_endpoint_alpha=alpha if required else None,
             half_width=None,minimum_observed_effect=None,best_case_lower=None,criteria_possible=None)
-        if required: item.update(measure(weights,alpha,margin,strict,minimum_roots))
+        if required: item.update(measure(combined,alpha,margin,strict,minimum_roots))
         endpoints[name]=item
     weights=dict(spec.family_weights)
-    primary=[weight/len(families[family]) for family,weight in spec.family_weights for _ in families[family]]
-    endpoint('primary',primary,spec.effect_margin,True,spec.min_roots)
+    primary_roots=[root for family,_ in spec.family_weights for root in sorted(families[family])]
+    primary=[weight/len(families[family]) for family,weight in spec.family_weights for _ in sorted(families[family])]
+    endpoint('primary',primary_roots,primary,spec.effect_margin,True,spec.min_roots)
     for family in sorted(families):
-        endpoint('family:'+family,[1/len(families[family])]*len(families[family]),-spec.family_margin,False,1)
+        endpoint('family:'+family,sorted(families[family]),[1/len(families[family])]*len(families[family]),-spec.family_margin,False,1)
     for cohort in sorted(cohorts,key=lambda c:c['cohort_id']):
         selected={m['root_id'] for m in cohort['members']}
-        endpoint('cohort:'+cohort['cohort_id'],[1/len(selected)]*len(selected),-cohort['margin'],False,
+        endpoint('cohort:'+cohort['cohort_id'],sorted(selected),[1/len(selected)]*len(selected),-cohort['margin'],False,
             spec.min_roots,cohort['required'])
     needed=[value for value in endpoints.values() if value['required']]
     target=spec.precision_half_width
@@ -75,13 +79,14 @@ def preflight(spec, *, cohort_manifest_json=None, trial_limit=None, budget_secon
     ceiling=min(spec.max_trials,trial_limit if trial_limit is not None else spec.max_trials)
     budget_met=planned<=ceiling
     from .precision_solver import solve
-    sample_size_plan=solve(spec,families,cohorts,alpha,ceiling)
+    sample_size_plan=(dict(status='unavailable', reason='root_similarity_groups_require_new_frozen_evidence')
+        if groups else solve(spec,families,cohorts,alpha,ceiling))
     possible=all(e['criteria_possible'] for e in needed) and budget_met
     return dict(schema_version=1,profile=PROFILE,plan_sha256=spec.digest,
         status='feasible' if possible and target_met is not False else 'infeasible',
         analysis_method='weighted_root_Hoeffding',analysis_mode='fixed_final',
         estimand='frozen_family_weighted_mean_of_selected_root_mean_paired_correctness_differences',
-        selected_tasks=len(spec.tasks),declared_roots=len(roots),repetitions=spec.repeats,planned_trials=planned,
+        selected_tasks=len(spec.tasks),declared_roots=len(roots),effective_roots=len(grouped_weights(sorted(roots), [1]*len(roots), groups)) if spec.root_similarity_sha256 else None,repetitions=spec.repeats,planned_trials=planned,
         max_trials=spec.max_trials,caller_trial_limit=trial_limit,budget_seconds=budget_seconds,
         trial_ceiling_met=budget_met,time_feasibility='unknown_without_a_preregistered_execution_cost_model',
         family_weights=[dict(family=family,weight=weight,roots=len(families[family]),per_root_weight=weight/len(families[family]))
@@ -91,7 +96,8 @@ def preflight(spec, *, cohort_manifest_json=None, trial_limit=None, budget_secon
             required_cohorts=required,per_endpoint_alpha=alpha),
         endpoints=endpoints,sample_size_plan=sample_size_plan,precision_half_width=target,precision_target_met=target_met,
         precision_target_scope='primary_and_all_required_family_and_cohort_endpoints',
-        execution_allowed=budget_met and (target is None or possible and target_met is True),
+        execution_allowed=budget_met and (target is None or possible and target_met is True)
+            and (spec.root_similarity_sha256 is None or possible),
         qualification_authority='not_validated_by_analytic_precision',root_independence='unverified',
         power='not_estimated',automatic_budget_change=False,automatic_promotion=False,publication_allowed=False,
         limitations=['Selected declared roots only; labels do not establish independence or current bank eligibility.',
