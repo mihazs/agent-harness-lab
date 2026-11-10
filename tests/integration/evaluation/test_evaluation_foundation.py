@@ -124,6 +124,19 @@ def test_ungraded_bounds_preserve_declared_related_root_grouping():
     assert grouped['optimistic_high'] >= ungrouped['optimistic_high']
 
 
+def test_empty_bounds_are_opt_in_and_extreme_alpha_stays_conservative():
+    spec = replace(plan(n=4, repeats=1), alpha=5e-324)
+    assert analyze(spec, []) == dict(status='incomplete', reason='missing_or_duplicate_trials')
+    empty = analyze(spec, [], include_empty_bounds=True)
+    assert empty['missing_outcome_bounds']['primary']['identified_low'] == -1
+    assert empty['missing_outcome_bounds']['primary']['identified_high'] == 1
+    data = records(spec)
+    result = analyze(spec, [replace(data[0], outcome=None), *data[1:]])
+    primary = result['missing_outcome_bounds']['primary']
+    assert result['status'] == 'incomplete'
+    assert (primary['pessimistic_low'], primary['optimistic_high'], primary['numeric_status']) == (-1, 1, 'conservative_fallback')
+
+
 def test_repeated_related_roots_are_not_independent():
     spec = replace(plan(), tasks=tuple((f't{i}', 'shared', 'family') for i in range(4)))
     result = analyze(spec, records(spec))

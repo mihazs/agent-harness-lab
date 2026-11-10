@@ -58,11 +58,18 @@ def incomplete_bounds(spec, expected, records, groups):
     adjusted = spec.alpha / (len(families) + 1)
     def interval(rows, weights):
         root_ids = [row[0] for row in rows]
-        lower = bound([row[1] for row in rows], weights, adjusted, roots=root_ids, groups=groups)
-        upper = bound([row[2] for row in rows], weights, adjusted, roots=root_ids, groups=groups)
-        return dict(estimate=None, identified_low=lower['mean'], identified_high=upper['mean'],
-                    pessimistic_low=lower['low'], optimistic_high=upper['high'],
-                    independent_roots=lower['independent_roots'])
+        from .root_similarity import grouped_weights
+        low = sum(row[1] * weight for row, weight in zip(rows, weights))
+        high = sum(row[2] * weight for row, weight in zip(rows, weights))
+        try:
+            width = radius(grouped_weights(root_ids, weights, groups), adjusted)
+            if not math.isfinite(width): raise ValueError('unrepresentable width')
+            pessimistic, optimistic, numeric = max(-1, low - width), min(1, high + width), 'computed'
+        except (OverflowError, ZeroDivisionError, ValueError):
+            pessimistic, optimistic, numeric = -1, 1, 'conservative_fallback'
+        return dict(estimate=None, identified_low=low, identified_high=high,
+                    pessimistic_low=pessimistic, optimistic_high=optimistic, numeric_status=numeric,
+                    independent_roots=len(grouped_weights(root_ids, weights, groups)))
     endpoints = {family: interval(rows, [1 / len(rows)] * len(rows)) for family, rows in families.items()}
     rows, weights = [], []
     for family, weight in spec.family_weights:
@@ -74,7 +81,8 @@ def incomplete_bounds(spec, expected, records, groups):
                 multiplicity='Bonferroni_primary_and_families', automatic_promotion=False)
 
 
-def analyze(spec, records, *, cohort_binding=None, root_similarity_evidence=None, root_similarity_bank=None):
+def analyze(spec, records, *, cohort_binding=None, root_similarity_evidence=None, root_similarity_bank=None,
+            include_empty_bounds=False):
     from .root_similarity import binding
     try:
         groups = binding(spec, root_similarity_evidence, root_similarity_bank)
@@ -89,7 +97,7 @@ def analyze(spec, records, *, cohort_binding=None, root_similarity_evidence=None
     expected = {t['trial_id']: t for t in schedule(spec)}
     if len(records) != len(expected) or len({r.trial_id for r in records}) != len(records):
         ids = {r.trial_id for r in records}
-        if (records and len(ids) == len(records) and ids <= set(expected)
+        if ((records or include_empty_bounds is True) and len(ids) == len(records) and ids <= set(expected)
                 and all((r.baseline_hash, r.candidate_hash, r.grader_hash, r.runtime_hash) ==
                         (spec.baseline_hash, spec.candidate_hash, spec.grader_hash, spec.runtime_hash) for r in records)):
             return dict(status='incomplete', reason='missing_or_duplicate_trials',
