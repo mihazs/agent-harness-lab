@@ -25,6 +25,7 @@ MAX_EVENTS = 128
 MAX_TASKS = 256
 MAX_STOPS = 200000
 MAX_SETUP_GAPS = 128
+MAX_EXECUTABLE_BYTES = 128*1024*1024
 DENIALS = (errno.EACCES, errno.EPERM, errno.EROFS)
 _CUSTODY = WeakKeyDictionary()
 _COMPLETIONS = WeakKeyDictionary()
@@ -39,6 +40,27 @@ def canonical_argv(argv):
 def _fd_identity(descriptor):
     info=os.fstat(descriptor)
     return info.st_dev,info.st_ino,info.st_mode
+
+
+def _executable_digest(pid,deadline):
+    """Hash the kernel-selected executable while the traced process is stopped at exec."""
+    try:
+        with open(f'/proc/{pid}/exe','rb',buffering=0) as stream:
+            before=os.fstat(stream.fileno())
+            if not stat.S_ISREG(before.st_mode) or before.st_size>MAX_EXECUTABLE_BYTES: return None
+            digest=hashlib.sha256();total=0
+            while True:
+                if time.monotonic()>=deadline:return None
+                chunk=stream.read(256*1024)
+                if not chunk:break
+                total+=len(chunk)
+                if total>MAX_EXECUTABLE_BYTES:return None
+                digest.update(chunk)
+            after=os.fstat(stream.fileno())
+            fields=('st_dev','st_ino','st_mode','st_size','st_mtime_ns','st_ctime_ns')
+            if total!=before.st_size or any(getattr(before,key)!=getattr(after,key) for key in fields):return None
+            return digest.hexdigest()
+    except (OSError,ValueError):return None
 
 
 class _Completion: pass
@@ -219,7 +241,7 @@ def _result(data,eof,nonce,role):
                     or event['category'] not in ('permission_result','blocked_creation')
                     or (event['errno'] not in DENIALS if event['category']=='permission_result' else event['errno']!=errno.ENOSYS)):
                 raise ValueError('invalid permission audit event')
-        if (set(value)!={'schema_version','profile','nonce','role','policy_sha256','status','reason','role_started','all_reaped','syscall_stops','tasks','events','setup_gaps'}
+        if (set(value)-{'worker_executable_sha256'}!={'schema_version','profile','nonce','role','policy_sha256','status','reason','role_started','all_reaped','syscall_stops','tasks','events','setup_gaps'}
                 or type(value['schema_version']) is not int or value['schema_version']!=1
                 or type(value['role_started']) is not bool or type(value['all_reaped']) is not bool
                 or type(value['syscall_stops']) is not int or not 0<=value['syscall_stops']<=MAX_STOPS
@@ -228,6 +250,10 @@ def _result(data,eof,nonce,role):
                 or value['reason'] not in ('complete','unsupported','trace_limit','trace_failure','deadline','signal')
                 or any(e['task']>=value['tasks'] for e in events)):
             raise ValueError('invalid permission audit completion')
+        executable=value.get('worker_executable_sha256')
+        if executable is not None and (not isinstance(executable,str) or len(executable)!=64
+                or any(c not in '0123456789abcdef' for c in executable)):
+            raise ValueError('invalid worker executable observation')
         gaps=value['setup_gaps'];seen=set()
         for index,gap in enumerate(gaps):
             if (not isinstance(gap,dict) or set(gap)!={'ordinal','task','phase','last_syscall','terminal_status'}
@@ -249,7 +275,8 @@ def _result(data,eof,nonce,role):
             syscall_stops=value.get('syscall_stops'),tasks=value.get('tasks'),
             role_started=value.get('role_started') is True,all_tracees_reaped=value.get('all_reaped') is True,
             observation_scope='declared_role_permission_errno_results_only',semantic_intent='unknown',
-            hidden_access_attempts='unverified',publication_allowed=False,automatic_promotion=False)
+            hidden_access_attempts='unverified',worker_executable_sha256=executable if complete else None,
+            publication_allowed=False,automatic_promotion=False)
     except (ValueError,TypeError,KeyError,UnicodeError,RecursionError):
         return dict(schema_version=1,profile=PROFILE,status='unknown',qualification='unknown',reason='invalid_channel',
             events=[],setup_gaps=[],setup_coverage='unverified',role_coverage='unknown',
@@ -283,6 +310,7 @@ class Trace:
         self.frame=frame;self.tasks={};self.groups={};self.entries={};self.events=[]
         self.setup_gaps=[]
         self.total=self.stops=0;self.role_started=False;self.reason='complete';self.root_exit=None
+        self.worker_executable_sha256=None
         self.libc=ctypes.CDLL(None,use_errno=True);self.libc.ptrace.restype=ctypes.c_long
         self.libc.ptrace.argtypes=[ctypes.c_ulong,ctypes.c_ulong,ctypes.c_void_p,ctypes.c_void_p]
 
@@ -355,7 +383,9 @@ class Trace:
             if task['phase']<len(self.frame['execs']):
                 if self.entries.get(pid,{}).get('exec')!=self.frame['execs'][task['phase']]:raise ValueError('unexpected setup exec')
                 task['phase']+=1
-                if task['phase']==len(self.frame['execs']):self.role_started=True
+                if task['phase']==len(self.frame['execs']):
+                    self.worker_executable_sha256=_executable_digest(pid,self.frame['deadline'])
+                    self.role_started=True
         elif sig==(signal.SIGTRAP|0x80):
             if self.stops>=MAX_STOPS:raise OverflowError('trace_limit')
             self.stops+=1
@@ -464,7 +494,8 @@ class Trace:
         return dict(schema_version=1,profile=PROFILE,nonce=self.frame['nonce'],role=self.frame['role'],
             policy_sha256=hashed(policy()),status='complete' if self.reason=='complete' and not self.tasks and self.role_started else 'unknown',
             reason=self.reason,role_started=self.role_started,all_reaped=not self.tasks,
-            syscall_stops=self.stops,tasks=self.total,events=self.events,setup_gaps=self.setup_gaps)
+            syscall_stops=self.stops,tasks=self.total,events=self.events,setup_gaps=self.setup_gaps,
+            worker_executable_sha256=self.worker_executable_sha256)
 
 
 def main():
