@@ -1,6 +1,7 @@
 """Synthetic controls for declared clarification, stop and no-change grading; no model or runtime."""
 from copy import deepcopy
 import hashlib
+from itertools import permutations
 
 import pytest
 
@@ -49,6 +50,37 @@ def test_ask_reply_act_passes_only_with_final_postconditions():
     assert (ok['interaction_requirement_satisfied'], ok['whole_task_completed'], ok['passed']) == (True, True, True)
     bad = grade(AMBIGUOUS, events=[ASK, REPLY, EDIT], final=ORIGINAL)
     assert (bad['interaction_requirement_satisfied'], bad['whole_task_completed'], bad['passed']) == (True, False, False)
+
+
+@pytest.mark.parametrize('events', [[REPLY, EDIT, ASK], [REPLY, ASK, EDIT]])
+def test_reply_before_request_cannot_authorize_action(events):
+    result = grade(AMBIGUOUS, events=events)
+    assert result['passed'] is False
+    assert 'acted_before_clarification' in result['violations']
+
+
+def test_only_ask_reply_act_order_passes_complete_episode():
+    for events in permutations((ASK, REPLY, EDIT)):
+        assert grade(AMBIGUOUS, events=events)['passed'] is (events == (ASK, REPLY, EDIT))
+
+
+def test_missing_order_in_partial_transcript_stays_unknown():
+    result = grade(AMBIGUOUS, events=[REPLY, EDIT, ASK], transcript='partial')
+    assert result['passed'] is None
+    assert 'clarification_order_unknown' in result['unknowns']
+    assert 'acted_before_clarification' not in result['violations']
+
+
+def test_final_state_alone_does_not_replace_required_reply():
+    missing = grade(AMBIGUOUS, events=[ASK], final=DONE)
+    assert missing['interaction_requirement_satisfied'] is True
+    assert missing['whole_task_completed'] is False and missing['passed'] is False
+    assert missing['completion_blocker'] == 'required_reply_not_observed'
+    partial = grade(AMBIGUOUS, events=[ASK], final=DONE, transcript='partial')
+    assert partial['whole_task_completed'] is None and partial['passed'] is None
+    assert partial['completion_blocker'] == 'required_reply_unknown'
+    wrong_order = grade(AMBIGUOUS, events=[REPLY, ASK], final=DONE)
+    assert wrong_order['whole_task_completed'] is False and wrong_order['passed'] is False
 
 
 def test_boundary_ask_satisfies_interaction_without_marking_task_complete():

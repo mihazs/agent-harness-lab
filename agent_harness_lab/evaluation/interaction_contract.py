@@ -148,15 +148,21 @@ def evaluate(contract, evidence):
     violations, unknowns = result['violations'], result['unknowns']
     allowed, required = set(contract['allowed_clarifications']), contract['required_clarifications']
     requests = [e['topic'] for e in events if e['type'] == 'clarification_request']
-    replied = set()
+    asked, replied = set(), set()
     for event in events:
-        if event['type'] == 'clarification_reply':
-            replied.add(event['topic'])
+        if event['type'] == 'clarification_request':
+            asked.add(event['topic'])
+        elif event['type'] == 'clarification_reply':
+            if event['topic'] in asked:
+                replied.add(event['topic'])
         elif event['type'] == 'mutation':
             if event['path'] not in contract['permitted_mutations']:
                 violations.append('prohibited_mutation')
             elif not set(required) <= replied:
-                violations.append('acted_before_clarification')
+                if capture['transcript'] == 'complete':
+                    violations.append('acted_before_clarification')
+                else:
+                    unknowns.append('clarification_order_unknown')
     if any(topic not in allowed for topic in requests):
         violations.append('unnecessary_clarification')
     if not set(required) <= set(requests):
@@ -187,6 +193,10 @@ def evaluate(contract, evidence):
     unknowns[:] = sorted(set(unknowns))
     interaction = False if violations else None if unknowns else True
     whole = interaction if contract['completion']['kind'] == 'interaction' else _completed(contract, evidence)
+    if contract['completion']['kind'] == 'final_state' and whole is True and not set(required) <= replied:
+        whole = False if capture['transcript'] == 'complete' else None
+        result['completion_blocker'] = ('required_reply_not_observed' if capture['transcript'] == 'complete'
+                                        else 'required_reply_unknown')
     result.update(interaction_requirement_satisfied=interaction, whole_task_completed=whole)
     if interaction is False:
         result['passed'] = False
