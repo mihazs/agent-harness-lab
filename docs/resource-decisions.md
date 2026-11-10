@@ -78,6 +78,39 @@ runner's execution time into end-to-end user latency. Its flags do not establish
 Only include an elapsed observation when its measurement and complete scope are known to match
 the frozen declaration. Version 3 retains version 2's conditional decisions and quality gate.
 
+## Frozen token scope (`resource-noninferiority-v4`)
+
+Version 4 retains version 3's timing and cache policies. Each `measured_tokens` endpoint also
+declares `token_category` (`input_tokens`, `output_tokens`, `total_tokens`, or
+`cached_input_tokens`) and `token_scope: controller_provider_responses`. This scope counts only
+the declared category reported for the target controller's provider requests; it does not
+represent all task costs, tool charges, cache-write charges, or currency. Cached input is a
+subset of input tokens and must not be added to the input count. Category, scope, cache policy,
+and timing boundary are part of the contract digest.
+
+For each token endpoint and arm, `measurement_provenance[endpoint_name]` supplies the matching
+`token_category`, `token_scope`, `request_attempts`, `known_requests`, and `unknown_requests`.
+The endpoint is unknown unless at least one request was attempted and all attempts have that
+category. The existing complete-scope and fresh-execution declarations still apply; for this
+scope, completeness means all target-controller provider attempts in the declared measurement,
+not complete billing. Missing categories or requests are never assumed zero. These declarations,
+including the cache state, are caller attestations and are not independently authenticated.
+For version 4, `uncached` attests that every included request is uncached, and
+`provider_cache_used` attests that every included request read at least one cached input token;
+cache writes alone do not satisfy that state. A mixture or
+unknown state must remain unknown; it cannot be represented by either value.
+Token observations must be nonnegative integers. For `cached_input_tokens`, a positive count
+contradicts `uncached`; under `provider_cache_used`, the count cannot be smaller than the
+number of included requests. Contradictory observations remain unknown.
+Version 4 accepts at most 64 endpoints, 1,000 requests per token observation, and 10^15 tokens
+per observation; values outside these bounds are refused or remain unknown.
+When several categories are supplied for the same arm and scope, complete request counts must
+match, cached input cannot exceed input, and total must equal input plus output when all three
+are present. A missing category is not inferred from the others.
+Results retain the conditional and private-data limitations described above. No automatic bridge
+from live or completed trial summaries to a resource decision is provided. Version 4 results are
+private and explicitly marked as disallowed for publication.
+
 Not included yet: ratios and cost-per-success (reported as `not_computed`), success-conditional
 latency, currency, automatic provenance capture and report integration.
 

@@ -240,6 +240,202 @@ def test_v3_requires_complete_explicit_boolean_timing_boundary(edit):
         decide(value, timing_rows(), 'supported')
 
 
+def token_scope_contract(category='input_tokens'):
+    endpoint = dict(TOKENS, required=True, token_category=category, token_scope='controller_provider_responses')
+    return dict(timing_contract(), schema_version=4, profile='resource-noninferiority-v4', endpoints=[endpoint])
+
+
+def token_scope_rows():
+    rows = fresh_rows()
+    for row in rows:
+        for name, value in (('baseline', 800), ('candidate', 100)):
+            row[name]['measurements']['tokens'] = value
+            row[name]['measurement_provenance'] = dict(tokens=dict(token_category='input_tokens',
+                token_scope='controller_provider_responses', request_attempts=2, known_requests=2, unknown_requests=0))
+    return rows
+
+
+def test_v4_freezes_token_category_scope_and_request_coverage():
+    rows = token_scope_rows(); contract_v4 = token_scope_contract()
+    result = decide(contract_v4, rows, 'supported')
+    endpoint = result['endpoints'][0]
+    assert result['decision'] == 'conditional_improvement' and result['efficiency_improvement'] is False
+    assert endpoint['token_category'] == 'input_tokens' and endpoint['token_scope'] == 'controller_provider_responses'
+    assert endpoint['mean_difference'] == pytest.approx(-700)
+    assert result['provenance_authority'] == 'caller_attested_unverified' and result['automatic_promotion'] is False
+    assert result['publication'] == 'private' and result['publication_allowed'] is False
+    changed = decide(token_scope_contract('output_tokens'), rows, 'supported')
+    assert changed['contract_sha256'] != result['contract_sha256'] and changed['decision'] == 'blocked'
+    assert changed['endpoints'][0]['unknown_reasons'] == {'token_scope_missing_or_mismatch': 200}
+    assert decide(contract_v4, rows, 'rejected')['decision'] == 'quality_not_verified'
+
+
+@pytest.mark.parametrize('edit', [
+    lambda details: details.pop('token_category'),
+    lambda details: details.update(token_scope='all_billing'),
+    lambda details: details.update(request_attempts=0,known_requests=0,unknown_requests=0),
+    lambda details: details.update(known_requests=1,unknown_requests=1),
+    lambda details: details.update(known_requests=1,unknown_requests=0),
+    lambda details: details.update(known_requests=True),
+])
+def test_v4_missing_scope_or_incomplete_requests_block_required_tokens(edit):
+    rows = token_scope_rows(); edit(rows[0]['candidate']['measurement_provenance']['tokens'])
+    result = decide(token_scope_contract(), rows, 'supported')
+    assert result['decision'] == 'blocked' and result['efficiency_improvement'] is False
+
+
+def test_v4_zero_measured_tokens_require_known_attempts_and_cache_policy():
+    rows = token_scope_rows()
+    for row in rows: row['candidate']['measurements']['tokens'] = 0
+    assert decide(token_scope_contract(), rows, 'supported')['decision'] == 'conditional_improvement'
+    rows[0]['candidate']['provenance']['cache_state'] = 'provider_cache_used'
+    assert decide(token_scope_contract(), rows, 'supported')['decision'] == 'blocked'
+
+
+def test_v4_provider_cache_policy_is_frozen_and_requires_matched_arm_states():
+    rows = token_scope_rows(); contract_v4 = token_scope_contract('cached_input_tokens')
+    contract_v4['cache_policy'] = 'provider_cache_allowed'
+    for row in rows:
+        for name in ('baseline', 'candidate'):
+            row[name]['measurement_provenance']['tokens']['token_category'] = 'cached_input_tokens'
+            row[name]['provenance']['cache_state'] = 'provider_cache_used'
+    result = decide(contract_v4, rows, 'supported')
+    assert result['decision'] == 'conditional_improvement'
+    assert result['endpoints'][0]['token_category'] == 'cached_input_tokens'
+    cold = dict(contract_v4,cache_policy='uncached_only')
+    assert decide(cold, rows, 'supported')['contract_sha256'] != result['contract_sha256']
+    assert decide(cold, rows, 'supported')['decision'] == 'blocked'
+    rows[0]['candidate']['provenance']['cache_state'] = 'uncached'
+    assert decide(contract_v4, rows, 'supported')['decision'] == 'blocked'
+    rows[0]['candidate']['provenance']['cache_state'] = 'mixed'
+    assert decide(contract_v4, rows, 'supported')['decision'] == 'blocked'
+
+
+@pytest.mark.parametrize('policy', ['uncached_only', 'provider_cache_allowed'])
+def test_v4_uncached_attestation_cannot_have_positive_cached_tokens(policy):
+    contract_v4 = token_scope_contract('cached_input_tokens'); contract_v4['cache_policy'] = policy
+    rows = token_scope_rows()
+    for row in rows:
+        for name in ('baseline','candidate'):
+            row[name]['measurement_provenance']['tokens']['token_category'] = 'cached_input_tokens'
+            row[name]['measurements']['tokens'] = 0
+    assert decide(contract_v4, rows, 'supported')['decision'] == 'inconclusive'
+    rows[0]['candidate']['measurements']['tokens'] = 1
+    result = decide(contract_v4, rows, 'supported')
+    assert result['decision'] == 'blocked' and result['endpoints'][0]['unknown_reasons'] == {'cache_count_inconsistent': 1}
+
+
+@pytest.mark.parametrize('value', [0, 1])
+def test_v4_cached_request_count_must_cover_all_attested_cached_requests(value):
+    contract_v4 = token_scope_contract('cached_input_tokens'); contract_v4['cache_policy'] = 'provider_cache_allowed'
+    rows = token_scope_rows()
+    for row in rows:
+        for name in ('baseline','candidate'):
+            row[name]['measurement_provenance']['tokens']['token_category'] = 'cached_input_tokens'
+            row[name]['provenance']['cache_state'] = 'provider_cache_used'
+    rows[0]['candidate']['measurements']['tokens'] = value
+    assert decide(contract_v4, rows, 'supported')['endpoints'][0]['unknown_reasons'] == {'cache_count_inconsistent': 1}
+    rows[0]['candidate']['measurements']['tokens'] = 2
+    assert decide(contract_v4, rows, 'supported')['decision'] == 'conditional_improvement'
+
+
+@pytest.mark.parametrize('value', [0.1, True, -1])
+def test_v4_token_counts_must_be_nonnegative_integers(value):
+    rows = token_scope_rows(); rows[0]['candidate']['measurements']['tokens'] = value
+    assert decide(token_scope_contract(), rows, 'supported')['decision'] == 'blocked'
+
+
+def test_v4_large_integer_is_capped_and_v3_fractional_behavior_is_preserved():
+    rows = token_scope_rows(); rows[0]['candidate']['measurements']['tokens'] = 10**12
+    assert decide(token_scope_contract(), rows, 'supported')['endpoints'][0]['capped_observations'] == 1
+    rows[0]['candidate']['measurements']['tokens'] = 0.1
+    legacy = dict(timing_contract(),endpoints=[dict(TOKENS,required=True)])
+    assert decide(legacy, rows, 'supported')['endpoints'][0]['status'] != 'unknown'
+
+
+def test_v4_oversized_numbers_fail_closed_without_overflow():
+    rows = token_scope_rows()
+    rows[0]['candidate']['measurements']['tokens'] = 10**400
+    endpoint = decide(token_scope_contract(), rows, 'supported')['endpoints'][0]
+    assert endpoint['unknown_reasons'] == {'invalid_token_count': 1}
+    rows[0]['candidate']['measurements']['tokens'] = 10**15
+    assert decide(token_scope_contract(), rows, 'supported')['endpoints'][0]['status'] != 'unknown'
+    bad = token_scope_contract(); bad['endpoints'][0]['horizon'] = 10**400
+    with pytest.raises(ValueError,match='unsupported resource endpoint'):
+        decide(bad, token_scope_rows(), 'supported')
+
+
+def test_v4_endpoint_and_request_limits_bound_comparison_without_changing_v3():
+    value = token_scope_contract(); endpoint = value['endpoints'][0]
+    value['endpoints'] = [dict(endpoint,name=f'token_{index}') for index in range(64)]
+    assert decide(value, [], 'supported')['decision'] == 'blocked'
+    value['endpoints'].append(dict(endpoint,name='token_64'))
+    with pytest.raises(ValueError,match='endpoint limit'):
+        decide(value, [], 'supported')
+    legacy = timing_contract(); legacy['endpoints'] = [dict(TIME,name=f'time_{index}') for index in range(65)]
+    assert decide(legacy, [], 'supported')['decision'] == 'blocked'
+    rows = token_scope_rows()
+    rows[0]['candidate']['measurement_provenance']['tokens'].update(request_attempts=1000,known_requests=1000)
+    assert decide(token_scope_contract(), rows, 'supported')['endpoints'][0]['status'] != 'unknown'
+    rows[0]['candidate']['measurement_provenance']['tokens'].update(request_attempts=1001,known_requests=1001)
+    assert decide(token_scope_contract(), rows, 'supported')['endpoints'][0]['unknown_reasons'] == {'request_coverage_incomplete': 1}
+
+
+def multi_token_scope():
+    names = ('input_tokens','output_tokens','total_tokens','cached_input_tokens')
+    contract_v4 = token_scope_contract(); contract_v4['cache_policy'] = 'provider_cache_allowed'
+    contract_v4['endpoints'] = [dict(TOKENS,name=name,required=True,token_category=name,
+                                      token_scope='controller_provider_responses') for name in names]
+    rows = token_scope_rows()
+    for row in rows:
+        for name,values in (('baseline',(800,100,900,20)),('candidate',(100,50,150,10))):
+            arm = row[name]; arm['provenance']['cache_state'] = 'provider_cache_used'
+            for category,value in zip(names,values):
+                arm['measurements'][category] = value
+                arm['measurement_provenance'][category] = dict(token_category=category,token_scope='controller_provider_responses',
+                                                                 request_attempts=2,known_requests=2,unknown_requests=0)
+    return contract_v4,rows
+
+
+def test_v4_cross_category_consistency_rejects_cached_greater_than_input():
+    contract_v4,rows = multi_token_scope()
+    assert all(endpoint['status'] != 'unknown' for endpoint in decide(contract_v4,rows,'supported')['endpoints'])
+    rows[0]['candidate']['measurements']['cached_input_tokens'] = 101
+    result = decide(contract_v4,rows,'supported')
+    endpoints = {endpoint['name']:endpoint for endpoint in result['endpoints']}
+    for name in ('input_tokens','cached_input_tokens'):
+        assert endpoints[name]['unknown_reasons'] == {'token_categories_inconsistent': 1}
+    assert result['decision'] == 'blocked'
+
+
+def test_v4_cross_category_total_and_request_counts_must_agree():
+    contract_v4,rows = multi_token_scope()
+    rows[0]['candidate']['measurements']['total_tokens'] = 151
+    endpoints = {endpoint['name']:endpoint for endpoint in decide(contract_v4,rows,'supported')['endpoints']}
+    for name in ('input_tokens','output_tokens','total_tokens'):
+        assert endpoints[name]['unknown_reasons'] == {'token_categories_inconsistent': 1}
+    contract_v4,rows = multi_token_scope()
+    rows[0]['candidate']['measurement_provenance']['output_tokens'].update(request_attempts=3,known_requests=3)
+    result = decide(contract_v4,rows,'supported')
+    assert result['decision'] == 'blocked'
+    assert all(endpoint['unknown_reasons'] == {'token_categories_inconsistent': 1} for endpoint in result['endpoints'])
+
+
+def test_v4_missing_category_is_not_imputed_or_used_to_invent_contradiction():
+    contract_v4,rows = multi_token_scope()
+    del rows[0]['candidate']['measurements']['input_tokens']
+    endpoints = {endpoint['name']:endpoint for endpoint in decide(contract_v4,rows,'supported')['endpoints']}
+    assert endpoints['input_tokens']['unknown_reasons'] == {'missing_measurement': 1}
+    assert endpoints['cached_input_tokens']['status'] != 'unknown'
+
+
+@pytest.mark.parametrize('change', [dict(token_category='unknown'),dict(token_scope='all_billing')])
+def test_v4_rejects_unsupported_token_contract(change):
+    contract_v4 = token_scope_contract(); contract_v4['endpoints'][0].update(change)
+    with pytest.raises(ValueError,match='unsupported frozen token'):
+        decide(contract_v4, token_scope_rows(), 'supported')
+
+
 @pytest.mark.parametrize('edit', [
     lambda c: c['endpoints'][0].update(kind='currency'),
     lambda c: c['endpoints'][0].update(scope='success_conditional'),
