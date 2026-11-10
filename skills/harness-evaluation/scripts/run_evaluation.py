@@ -487,15 +487,13 @@ def _evaluate(args):
     precision_report = None
     precision_cohorts = None
     root_similarity = None
+    root_similarity_path = None
     sequential_controller = None
     if 'experiment' in manifest:
         application_modules()
         from agent_harness_lab.evaluation.plan import ExperimentSpec, schedule
         from agent_harness_lab.evaluation.oracle import identity as oracle_identity
         plan = ExperimentSpec.parse(manifest['experiment'])
-        if plan.root_similarity_sha256 is not None:
-            from agent_harness_lab.evaluation.root_similarity import manifest_evidence
-            root_similarity = manifest_evidence(manifest)
         if {t[0] for t in plan.tasks} != {t['id'] for t in tasks}:
             raise ValueError('experiment task set differs from manifest')
         if (plan.baseline_hash, plan.candidate_hash) != (frozen_versions['baseline'], frozen_versions['candidate']):
@@ -552,10 +550,13 @@ def _evaluate(args):
                     raise ValueError('trajectory lineage differs from frozen experiment')
                 trajectories[task['id']] = binding
     if plan is not None and plan.sequential is None and budget > 0:
+        if plan.root_similarity_sha256 is not None:
+            from agent_harness_lab.evaluation.root_similarity import controller_evidence
+            root_similarity,root_similarity_path = controller_evidence(plan, manifest, manifest_path, export_root=manifest_path.parent)
         from agent_harness_lab.evaluation.precision import preflight as precision_preflight
         precision_report=precision_preflight(plan,cohort_manifest_json=precision_cohorts,
             trial_limit=trial_limit,budget_seconds=budget,root_similarity_evidence=root_similarity,
-            root_similarity_bank=manifest_path if root_similarity is not None else None)
+            root_similarity_bank=root_similarity_path)
     blocked = configured and configured['blocked_reason']
     if precision_report is not None and not precision_report['execution_allowed'] and not blocked:
         blocked='precision_target_infeasible'
@@ -886,7 +887,7 @@ def _evaluate(args):
                 'executable_grader', plan.baseline_hash, plan.candidate_hash, plan.grader_hash, plan.runtime_hash,
                 grade.get('critical_violation') is True))
         results['trajectory_analysis'] = (analyze(plan, records, root_similarity_evidence=root_similarity,
-            root_similarity_bank=manifest_path if root_similarity is not None else None) if results['inputs_unchanged'] else
+            root_similarity_bank=root_similarity_path) if results['inputs_unchanged'] else
             dict(status='blocked', reason='frozen_inputs_changed'))
         # A live verified trajectory violation can be observed before an artifact
         # grade exists. Keep it separate from the executable grader's validity.
