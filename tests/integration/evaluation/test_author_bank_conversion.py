@@ -212,11 +212,11 @@ Path('manifest.json').write_text(json.dumps(dict(skills=[],harness_paths=[],task
 
 @pytest.mark.skipif(not kernel.ENABLED,reason='explicit delegated native scope required')
 def test_native_author_conversion_and_signed_review(tmp_path):
+    from contextlib import ExitStack
     from tests.integration.sandbox import test_sandbox_construction as roles
-    fixture=roles.ControlledWorkflowTests();fixture.setUp()
-    try:
+    with ExitStack() as cleanups:
+        fixture=roles.ControlledWorkflow(cleanups.callback)
         with kernel.kernel_subtree() as cgroup:
             _,result,_,_,_,_=native_qualified_bank(fixture,cgroup)
             assert result['qualification']=='qualified_under_protocol'
             assert result['external_exposure']=='unknown'
-    finally:fixture.doCleanups()

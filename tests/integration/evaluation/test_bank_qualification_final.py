@@ -186,7 +186,7 @@ class QualifiedBankKernelTests(kernel.UnittestKernelFixture):
     def qualified_comparison(self):
         from tests.integration.evaluation.test_author_bank_conversion import native_qualified_bank
         from tests.integration.sandbox import test_sandbox_construction as roles
-        fixture=roles.ControlledWorkflowTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        fixture=roles.ControlledWorkflow(self.addCleanup)
         actual,qualified,policy,runtime,pin,history=native_qualified_bank(fixture,self.cgroup_root)
         fixture.fixture.collect.stop();fixture.fixture.state.stop()
         store=Path(qualified['review_store']);case_id=qualified['case_id']
