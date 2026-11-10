@@ -17,7 +17,7 @@ from agent_harness_lab.evaluation.sandbox import SandboxBackend
 from agent_harness_lab.evaluation.bank_tools import export_manifest
 from agent_harness_lab.evaluation.grader_correction import CorrectionStore
 from agent_harness_lab.evaluation.integrity import digest
-from tests.integration.evaluation import test_bank_corrections as applications
+from tests.support.bank_correction import bank_correction
 from tests.integration.evaluation import test_offline_evaluation as offline
 
 
@@ -27,8 +27,7 @@ class CorrectionRerunHarness:
 
     def setUp(self):
         self.cleanups = ExitStack()
-        self.application = applications.BankCorrectionTests(); self.application.setUp()
-        self.cleanups.callback(self.application.doCleanups)
+        self.application = self.cleanups.enter_context(bank_correction())
         f = self.application
         self.root,self.store,self.history,self.case_id = f.root,f.store,f.history,f.case_id
         self.runner = evaluator(); self.export = self.root/'prior-export'; self.export.mkdir()

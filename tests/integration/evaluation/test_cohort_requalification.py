@@ -18,7 +18,7 @@ from agent_harness_lab.evaluation.bank_tools import export_manifest
 from agent_harness_lab.evaluation.oracle import identity
 from agent_harness_lab.evaluation.plan import ExperimentSpec
 from agent_harness_lab.evaluation.sandbox import SandboxBackend
-from tests.integration.evaluation import test_bank_corrections as applications
+from tests.support.bank_correction import bank_correction
 from tests.integration.evaluation import test_offline_evaluation as offline
 
 
@@ -29,8 +29,7 @@ class RequalificationFixture(unittest.TestCase):
     execute() reuses offline.OfflineFixture.emulate, which calls TestCase assertions on it.
     """
     def setUp(self):
-        self.application = applications.BankCorrectionTests(); self.application.setUp()
-        self.addCleanup(self.application.doCleanups)
+        self.application = self.enterContext(bank_correction())
         f = self.application
         self.root, self.history = f.root, f.history
         self.applied = f.apply(); self.bank = f.bank(self.applied)
