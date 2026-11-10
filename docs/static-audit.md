@@ -36,6 +36,14 @@ are independently captured snapshots. Rule hashes and paths are private metadata
 The CLI includes this comparison under `permission_candidates`; it is outside
 `audit_sha256` and does not change the enforcement coverage verdict.
 
+The separate private `agent_harness_lab.audit.constraint_references.report()` API
+accepts caller-supplied instruction bytes only when their digest matches a parsed
+checkout inventory node. It emits bounded line-number and hash references for
+lexical hard-constraint cues and exact protected-path references, without line
+text. Loading, hook matching and enforcement remain unknown; lexical cues are not
+proof of a rule or its enforcement. Reference hashes and paths are private and may
+be guessable. Inputs are separate observations, not an atomic snapshot.
+
 The `hook_events` field lists known event names from declared hook handlers. Its
 coverage is `unknown` when hook surfaces are unavailable or could not be parsed;
 otherwise `declared_only` describes inventory coverage, not execution or enforcement.
