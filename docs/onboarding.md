@@ -64,6 +64,12 @@ digest, no harness paths, 2700 seconds and 20 trials. Never put tokens, private
 transcript paths or executable configuration in this file. Reads are bounded and
 reject symlinks, hardlinks and non-regular files.
 
+When improvement preflight blocks, `workflow.json` includes a `preflight_plan`
+with the requested runtime, observed executable names (or null when not checked),
+configured harness scope (or null when unconfigured), limits and next step. It
+explicitly records that no candidate or evidence was prepared and grants no
+execution authority. Executable presence does not establish authentication.
+
 ## Current integration boundary
 
 `ahl evaluate --config /path/to/ahl.json` explicitly consumes configuration in

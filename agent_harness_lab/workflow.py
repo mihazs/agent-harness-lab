@@ -946,7 +946,7 @@ def _run_improvement(args, *, parent_started=None):
         args._budget_started=started
     if configured: args._configured_started=started
     try:
-        from .one_call import contracts, preflight, check_configuration, REMEDIATION, DEFAULT_REMEDIATION
+        from .one_call import contracts, preflight, preflight_plan, check_configuration, REMEDIATION, DEFAULT_REMEDIATION
         check_configuration(args, check_bank=getattr(args, 'repair_contracts', False))
         if managed:
             from .evaluation.construction_access import selection
@@ -961,7 +961,8 @@ def _run_improvement(args, *, parent_started=None):
             if reason:
                 output = output_dir(args,deadline=(time.monotonic() if started is None else started)+args.timeout)
                 result = dict(status='blocked', reason=reason, output=str(output), changed_files=[],
-                              remediation=REMEDIATION.get(reason, DEFAULT_REMEDIATION))
+                              remediation=REMEDIATION.get(reason, DEFAULT_REMEDIATION),
+                              preflight_plan=preflight_plan(args, reason))
                 write_json(output/'workflow.json', result)
                 return result
             check_configuration(args)

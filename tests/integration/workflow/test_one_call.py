@@ -240,6 +240,14 @@ def test_blocked_preflight_gives_a_reason_specific_remediation(one):
     assert ambiguous['remediation'] == REMEDIATION['select_one_runtime_with_agent']
     assert offline['remediation'] == REMEDIATION['configured_profile_does_not_allow_cooperative_improvement']
     assert ambiguous['remediation'] != offline['remediation']
+    assert ambiguous['preflight_plan'] == dict(requested_runtime='auto', observed_runtimes=['codex', 'claude'],
+        configured_scope=None, limits=dict(seconds=2700, trials=config.DEFAULT_TRIALS),
+        next_step=ambiguous['remediation'], candidate_prepared=False, evidence_prepared=False, execution_authority=False)
+    plan = offline['preflight_plan']
+    assert plan['observed_runtimes'] is None
+    assert plan['configured_scope'] == []
+    assert plan['next_step'] == offline['remediation']
+    assert json.loads((Path(offline['output'])/'workflow.json').read_text())['preflight_plan'] == plan
 
 
 def test_every_preflight_reason_has_its_own_remediation():

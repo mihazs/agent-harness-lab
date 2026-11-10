@@ -44,6 +44,8 @@ def resolve(args, explicit):
 
 
 def preflight(args):
+    args._preflight_requested_runtime = args.agent
+    args._preflight_runtimes = None
     settings = getattr(args, 'project_settings', None)
     if settings:
         from .evaluation.task_bank import validate
@@ -74,11 +76,15 @@ def preflight(args):
                 return 'configured_bank_shared_trial_budget_exhausted'
     if args.agent == 'auto':
         found = [name for name in ('codex', 'claude') if shutil.which(getattr(args, name))]
+        args._preflight_runtimes = found
         if len(found) != 1:
             return 'select_one_runtime_with_agent' if found else 'agent_runtime_unavailable'
         args.agent = found[0]
-    if args.agent != 'responses' and not shutil.which(getattr(args, args.agent)):
-        return 'agent_runtime_unavailable'
+    if args.agent != 'responses':
+        available = bool(shutil.which(getattr(args, args.agent)))
+        args._preflight_runtimes = [args.agent] if available else []
+        if not available:
+            return 'agent_runtime_unavailable'
     if pinned_bank(args) is None and getattr(args, 'trial_limit', config.DEFAULT_TRIALS) < 8:
         return 'trial_budget_requires_two_preparation_and_six_paired_trials'
     if getattr(args,'_configured_responses',False):
@@ -102,6 +108,15 @@ REMEDIATION = {
     'configured_bank_shared_trial_budget_exhausted': 'Raise limits.trials in ahl.json to at least 1 + 2 * (bank task count).',
 }
 DEFAULT_REMEDIATION = 'Select a supported runtime/profile and budget; see ahl improve --help'
+
+
+def preflight_plan(args, reason):
+    settings = getattr(args, 'project_settings', None)
+    return dict(requested_runtime=args._preflight_requested_runtime, observed_runtimes=args._preflight_runtimes,
+        configured_scope=settings['harness_paths'] if settings else None,
+        limits=dict(seconds=args.timeout, trials=args.trial_limit),
+        next_step=REMEDIATION.get(reason, DEFAULT_REMEDIATION),
+        candidate_prepared=False, evidence_prepared=False, execution_authority=False)
 
 
 def pinned_bank(args):
