@@ -91,6 +91,7 @@ def main(argv=None):
     recheck.add_argument('--improvement-recheck-soft-budget', action='store_true', help='Include versioned parameters for rechecking a declared soft-line budget')
 
     parser.add_argument('--feedback-sensors', action='store_true', help='Add local filename-only sensor candidates')
+    parser.add_argument('--npm-test-observation', action='store_true', help='Compare root instruction mentions and package test declaration')
     parser.add_argument('--codex-project-doc-max-bytes', type=int,
                         help='Caller-declared Codex byte budget; runtime configuration is not read')
     parser.add_argument('--instruction-soft-lines', type=int, default=200,
@@ -171,6 +172,9 @@ def main(argv=None):
         if args.feedback_sensors:
             from .feedback_sensors import capture as feedback_sensors
             report['feedback_sensor_candidates'] = feedback_sensors(project)
+        if args.npm_test_observation:
+            from .npm_test_observation import capture as npm_test_observation
+            report['npm_test_observation'] = npm_test_observation(project,inventory,args.task_cwd)
         from .protected_paths import capture as protected_paths
         report['protected_path_inventory'] = protected_paths(project)
         from .permission_candidates import report as permission_candidates
@@ -217,6 +221,10 @@ def main(argv=None):
                 sensors=report['feedback_sensor_candidates']
                 print('Feedback sensor candidates: '+str(len(sensors['candidates']))+
                       f" (coverage: {sensors['coverage']}; consistency: not checked; execution: unknown)")
+            if args.npm_test_observation:
+                npm=report['npm_test_observation']
+                print(f"Root npm test: instruction mention {npm['instruction_mention']}; "
+                      f"script declaration {npm['test_script']}; execution unknown")
             events = report['hook_events']
             print('Declared hook events: ' + (', '.join(events['declared']) or 'none observed') +
                   f" (coverage: {events['coverage']}; execution: unknown)")
