@@ -27,6 +27,13 @@ matching is not yet implemented. The walk is not an atomic filesystem snapshot.
 The CLI includes this separately captured inventory under `protected_path_inventory`;
 it is not covered by `audit_sha256`, which binds the harness inventory audit.
 
+The separate private `agent_harness_lab.audit.permission_candidates.report()` API
+compares these paths against hashed exact `Edit(path)` and `Write(path)` deny
+entries in declared Claude project settings. A match is a lexical candidate only;
+runtime enforcement stays unknown. Missing matches, unsupported glob syntax,
+private local settings and other runtime layers remain unknown. The two inputs
+are independently captured snapshots. Rule hashes and paths are private metadata.
+
 The `hook_events` field lists known event names from declared hook handlers. Its
 coverage is `unknown` when hook surfaces are unavailable or could not be parsed;
 otherwise `declared_only` describes inventory coverage, not execution or enforcement.
