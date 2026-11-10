@@ -57,7 +57,11 @@ def compute(plan,contract,endpoint_name,pairs,evidence,bank_path,*,public=False)
             return dict(result,reason='resource_measurement_unknown')
         roots[root].append((values[1]-values[0])/endpoint['horizon'])
     root_ids = sorted(roots); means = [sum(roots[root])/len(roots[root]) for root in root_ids]
-    weights = [1/len(root_ids)]*len(root_ids)
+    root_families = {root:family for _,root,family in plan.tasks}
+    family_roots = defaultdict(int)
+    for root in root_ids: family_roots[root_families[root]] += 1
+    family_weights = dict(plan.family_weights)
+    weights = [family_weights[root_families[root]]/family_roots[root_families[root]] for root in root_ids]
     required = sum(item['required'] for item in contract['endpoints'])
     try:
         interval = bound(means,weights,contract['alpha']/required,roots=root_ids,groups=groups)
@@ -69,4 +73,5 @@ def compute(plan,contract,endpoint_name,pairs,evidence,bank_path,*,public=False)
     return dict(result,status='bounded',reason='conditional_grouped_bound',
                 mean=interval['mean']*endpoint['horizon'],low=interval['low']*endpoint['horizon'],
                 high=interval['high']*endpoint['horizon'],grouped_roots=interval['independent_roots'],
+                estimand='frozen_family_weighted_mean_of_selected_root_mean_paired_resource_differences',
                 multiplicity='Bonferroni_required_resource_endpoints')

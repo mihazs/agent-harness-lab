@@ -102,3 +102,27 @@ def test_alpha_underflow_and_grouped_minimum_fail_closed(inputs):
     tiny['endpoints'].append(second)
     plan = replace(plan,resource_contract_sha256=resource_decision.decide(tiny,[],None)['contract_sha256'])
     assert resource_grouped_bound.compute(plan,tiny,'tokens',pairs,evidence,path)['reason'] == 'numeric_bound_unavailable'
+
+
+def test_unequal_family_weights_and_cross_family_related_roots(tmp_path):
+    original = spec({'a':1,'b':3},weights={'a':.9,'b':.1})
+    prompts = ['Perform identical synthetic operation.', 'Perform identical synthetic operation.',
+               'Reject invalid dates from calendar input.', 'Sort numbers and remove duplicates.']
+    manifest = {'tasks':[dict(id=task,root=root,prompt=prompt) for (task,root,_),prompt in zip(original.tasks,prompts)]}
+    evidence = root_similarity.manifest_evidence(manifest); path = tmp_path/'manifest.json'; path.write_bytes(encoded(manifest))
+    contract = token_scope_contract(); contract.update(alpha=.9,min_roots=2)
+    plan = replace(original,root_similarity_sha256=digest(evidence),
+                   resource_contract_sha256=resource_decision.decide(contract,[],None)['contract_sha256'])
+    template = token_scope_rows()[0]; horizon = contract['endpoints'][0]['horizon']
+    rows = [dict(task=task,repetition=0,baseline=deepcopy(template['baseline']),candidate=deepcopy(template['candidate']))
+            for task,_,_ in original.tasks]
+    for row in rows:
+        row['baseline']['measurements']['tokens'] = 0
+        row['candidate']['measurements']['tokens'] = horizon if row['task'].startswith('a-') else 0
+    result = resource_grouped_bound.compute(plan,contract,'tokens',rows,evidence,path)
+    width = math.sqrt(2*math.log(2/contract['alpha'])*((.9+.1/3)**2+2*(.1/3)**2))
+    assert result['status'] == 'bounded' and result['mean'] == pytest.approx(.9*horizon)
+    assert result['grouped_roots'] == 3
+    assert result['low'] == pytest.approx(max(-1,.9-width)*horizon)
+    assert result['high'] == pytest.approx(min(1,.9+width)*horizon)
+    assert result['estimand'] == 'frozen_family_weighted_mean_of_selected_root_mean_paired_resource_differences'
