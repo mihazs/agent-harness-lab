@@ -1,7 +1,7 @@
 """Recheck a caller-selected static convention before an improvement run.
 
 The report is an untrusted selection and parameters, not an authority or proof of
-runtime loading. This bounded bridge only supports Codex instruction budgets.
+runtime loading. This bounded bridge supports selected Codex conventions.
 """
 import json
 import os
@@ -13,6 +13,8 @@ from agent_harness_lab.audit import chain, improvement_hint
 from agent_harness_lab.evaluation.integrity import open_directory_nofollow, relative
 
 REASONS=frozenset((chain.TRUNCATED, chain.SKIPPED, chain.DECLARED_TRUNCATED, chain.DECLARED_SKIPPED))
+ROUTING='skill_routing_collision'
+ROUTING_FOCUS='Investigate overlapping skill descriptions and evaluate whether routing distinguishes the skills.'
 
 
 def select(path, project, runtime):
@@ -41,16 +43,21 @@ def select(path, project, runtime):
     findings=report.get('findings')
     if not isinstance(findings,list): raise ValueError('invalid audit findings')
     selected={(row.get('id'),row.get('reason')) for row in findings if isinstance(row,dict)
-              and row.get('dimension')=='instructions' and isinstance(row.get('reason'),str) and row.get('reason') in REASONS
+              and isinstance(row.get('reason'),str)
+              and ((row.get('dimension')=='instructions' and row.get('reason') in REASONS)
+                   or (row.get('dimension')=='skills' and row.get('reason')==ROUTING))
               and row.get('status') in ('weak','missing') and isinstance(row.get('id'),str)}
     fresh=audit.run(project,'codex',task_cwd=cwd,codex_project_doc_max_bytes=limit)
     if fresh.status!='completed' or report.get('harness_inventory_sha256')!=fresh.harness_inventory_sha256:
         raise ValueError('audit inventory changed or is unavailable')
     finding=next((row for row in fresh.findings if (row.id,row.reason) in selected
-                  and row.status=='nonconformant' and row.dimension=='instructions'),None)
+                  and row.status=='nonconformant'
+                  and ((row.reason in REASONS and row.dimension=='instructions')
+                       or (row.reason==ROUTING and row.dimension=='commands'))),None)
     if finding is None: raise ValueError('no eligible current audit finding')
     return dict(profile='ahl-audit-hypothesis-v1',hypothesis_source='static_convention',
                 finding_id=finding.id, reason=finding.reason, convention_source=finding.source,
                 inventory_sha256=fresh.harness_inventory_sha256,
-                focus=improvement_hint.HINTS[finding.reason], selection='caller_declared_freshly_rechecked',
+                focus=ROUTING_FOCUS if finding.reason==ROUTING else improvement_hint.HINTS[finding.reason],
+                selection='caller_declared_freshly_rechecked',
                 snapshot_relation='separate_observation', authority='none',publication_allowed=False)

@@ -26,7 +26,9 @@ if p('context.json').exists():
   if mode=='no_change':
    (evaluation/'proposal.json').write_text(json.dumps({'status':'no_change','reason':'No supported defect'}))
   else:
-   if mode not in ('identical','ambient'): (candidate/'AGENTS.md').write_text('worse' if mode=='refine' and c['attempt']==0 else 'good\n')
+   if mode == 'skill_route':
+    (candidate/'.agents/skills/alpha/SKILL.md').write_text('---\nname: alpha\ndescription: Extract CSV data. Use when asked to extract CSV data.\n---\n\nInstructions.\n')
+   elif mode not in ('identical','ambient'): (candidate/'AGENTS.md').write_text('worse' if mode=='refine' and c['attempt']==0 else 'good\n')
    escaped=('settings.json','.claude/settings.json','.claude/hooks/pre.sh','CLAUDE.local.md') if mode=='escape' else ()
    nested={'nested':('app/AGENTS.md',),'unplanned':('app/AGENTS.md',),'unrelated':('other/AGENTS.md',),'unrequired':('app/AGENTS.md',),'ambient':('AGENTS.override.md',)}.get(mode,())
    planned=bool(nested) and mode!='unplanned' or mode in ('rooted','drift')
@@ -59,6 +61,7 @@ if p('context.json').exists():
 else:
  phase=p('phase').read_text()
  good='good' in tuple(p(name).read_text().strip() for name in ('AGENTS.md','app/AGENTS.md','AGENTS.override.md') if p(name).exists())
+ if p('.agents/skills/alpha/SKILL.md').exists(): good |= 'CSV data' in p('.agents/skills/alpha/SKILL.md').read_text()
  p('artifact').write_text('done' if good or phase.endswith('regression') else 'wrong')
 print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
 '''
@@ -421,4 +424,44 @@ def test_audit_recheck_rejects_changed_or_fabricated_findings(wf, monkeypatch, c
     report['findings'][0]['id']='0'*64;receipt.write_text(json.dumps(report))
     with pytest.raises(ValueError,match='no eligible'):select(receipt,wf.project,'codex')
     (wf.project/'AGENTS.md').write_text('different')
+    with pytest.raises(ValueError,match='inventory changed'):select(receipt,wf.project,'codex')
+
+
+def test_rechecked_skill_collision_reaches_synthetic_routing_evaluation(wf, monkeypatch, capsys):
+    (wf.project/'.git').mkdir();(wf.project/'mode').write_text('skill_route')
+    for name in ('alpha','beta'):
+        folder=wf.project/'.agents'/'skills'/name;folder.mkdir(parents=True)
+        (folder/'SKILL.md').write_text(f'---\nname: {name}\ndescription: Extract PDF documents. Use when asked to extract PDF documents.\n---\n\nInstructions.\n')
+    before=(wf.project/'.agents/skills/alpha/SKILL.md').read_text()
+    monkeypatch.setenv('XDG_STATE_HOME',str(wf.root/'audit-state'))
+    assert audit_main([str(wf.project),'--json','--improvement-recheck']) == 0
+    report=json.loads(capsys.readouterr().out)
+    receipt=wf.root/'audit.json';receipt.write_text(json.dumps(report))
+    args=wf.args();args.from_audit=receipt
+    result=improve(args);output=Path(result['output'])
+    assert result['status']=='inconclusive' and result['changed_files']==[]
+    assert (wf.project/'.agents/skills/alpha/SKILL.md').read_text()==before
+    assert result['audit_hypothesis']['reason']=='skill_routing_collision'
+    assert 'routing' in json.loads((output/'preparation/context.json').read_text())['focus']
+    trials=json.loads((output/'evaluation-0/results.json').read_text())['trials']
+    assert any(t['version']=='baseline' and t['split']=='development' and t['status']=='failed' for t in trials)
+    assert all(t['status']=='passed' for t in trials if t['version']=='candidate')
+    assert json.loads((output/'change-plan.json').read_text())['audit_hypothesis']['authority']=='none'
+
+
+def test_skill_collision_recheck_refuses_forged_or_stale_receipts(wf, monkeypatch, capsys):
+    from agent_harness_lab.audit.recheck import select
+
+    (wf.project/'.git').mkdir()
+    for name in ('alpha','beta'):
+        folder=wf.project/'.agents'/'skills'/name;folder.mkdir(parents=True)
+        (folder/'SKILL.md').write_text(f'---\nname: {name}\ndescription: Extract PDF documents. Use when asked to extract PDF documents.\n---\n\nInstructions.\n')
+    monkeypatch.setenv('XDG_STATE_HOME',str(wf.root/'audit-state'))
+    assert audit_main([str(wf.project),'--json','--improvement-recheck'])==0
+    report=json.loads(capsys.readouterr().out);receipt=wf.root/'audit.json'
+    for row in report['findings']:
+        if row['reason']=='skill_routing_collision': row['id']='0'*64
+    receipt.write_text(json.dumps(report))
+    with pytest.raises(ValueError,match='no eligible'):select(receipt,wf.project,'codex')
+    (wf.project/'.agents/skills/beta/SKILL.md').write_text('---\nname: beta\ndescription: Inspect CSV tables. Use for CSV tables.\n---\n\nInstructions.\n')
     with pytest.raises(ValueError,match='inventory changed'):select(receipt,wf.project,'codex')

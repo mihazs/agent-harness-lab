@@ -257,6 +257,143 @@ class TestGitLabSource(GitLabFixture):
         with patch.object(gitlab, 'MAX_MR_CLOSING_ISSUES', 1):
             with pytest.raises(TransportError): self.read(self.v5_closing_selection())
 
+    def v6_related_selection(self):
+        return replace(self.selection, schema_version=6, capture=('issues', 'merge_requests', 'related_issues'))
+
+    def test_v6_related_and_closing_are_distinct_server_claims(self):
+        selection = replace(self.selection, schema_version=6,
+            capture=('closing_issues', 'issues', 'merge_requests', 'related_issues'))
+        self.routes[self.mr_path+'/closes_issues?page=1&per_page=100'] = self.closing_rows()
+        self.routes[self.mr_path+'/related_issues?page=1&per_page=100'] = self.closing_rows()
+        client, snapshot = self.read(selection)
+        assert len(self.nodes(client, 'gitlab_mr_related_issue')) == 1
+        assert len(self.nodes(client, 'gitlab_mr_closing_issue')) == 1
+        assert snapshot.checkpoint_ready and not client.summary['task_outcomes_verified']
+        with patch.object(gitlab, 'MAX_MR_CLOSING_ISSUES', 1):
+            with pytest.raises(TransportError): self.read(selection)
+
+    def test_v6_related_selected_closing_issue_is_reported_not_verified_or_closed(self):
+        self.routes[self.mr_path+'/related_issues?page=1&per_page=100'] = self.closing_rows()
+        client, snapshot = self.read(self.v6_related_selection())
+        reference, = self.nodes(client, 'gitlab_mr_related_issue')
+        assert reference['relationship'] == 'server_reported_related'
+        assert reference['issue_sha256'] == client._native('Issue', 700)
+        assert any(r[0] == 'reported_related_reference_to_selected_issue' for r in client.summary['relations'])
+        assert any(r[0] == 'reported_related_reference_on_mr' for r in client.summary['relations'])
+        assert ('related_issues', 'captured', None) in self.states(client)
+        assert 'related_issue_visibility_unverified' in client.summary['warnings']
+        assert snapshot.checkpoint_ready and not client.summary['task_outcomes_verified']
+        assert all(r.causal_status == 'unknown' and r.independence == 'unknown' for r in snapshot.records)
+
+    def test_v6_related_unselected_issue_is_not_implicitly_fetched(self):
+        selection = replace(self.selection, schema_version=6, capture=('merge_requests', 'related_issues'), issues=())
+        self.routes[self.mr_path+'/related_issues?page=1&per_page=100'] = self.closing_rows()
+        client, snapshot = self.read(selection)
+        assert snapshot.checkpoint_ready and len(self.nodes(client, 'gitlab_mr_related_issue')) == 1
+        assert not any('/issues/' in target for target in self.targets)
+        assert not any(r[0] == 'reported_related_reference_to_selected_issue' for r in client.summary['relations'])
+
+    def test_v6_related_same_issue_and_mr_numbers_in_other_projects_remain_distinct(self):
+        selection = self.v6_related_selection()
+        self.routes[self.mr_path+'/related_issues?page=1&per_page=100'] = self.closing_rows()
+        first, _ = self.read(selection)
+        other_path = 'synthetic-group/other-project'
+        self.build(43, other_path)
+        self.routes['/api/v4/projects/43/merge_requests/7/related_issues?page=1&per_page=100'] = [dict(id=700, iid=7, project_id=43, confidential=False)]
+        second, _ = self.read(replace(selection, project=other_path))
+        assert self.nodes(first, 'gitlab_mr_related_issue')[0]['native_id_sha256'] != self.nodes(second, 'gitlab_mr_related_issue')[0]['native_id_sha256']
+
+    @pytest.mark.parametrize('foreign', [dict(id=701, iid=7, project_id=43), dict(id=701, title='SYNTHETIC_PRIVATE_TITLE'),
+                                         dict(id='PROJECT-123', title='SYNTHETIC_PRIVATE_TITLE')])
+    def test_v6_related_foreign_or_external_reference_is_omitted_and_incomplete(self, foreign):
+        self.routes[self.mr_path+'/related_issues?page=1&per_page=100'] = self.closing_rows()+[foreign]
+        client, snapshot = self.read(self.v6_related_selection())
+        assert ('related_issues', 'pagination_incomplete', 'unscoped_references_omitted') in self.states(client)
+        assert len(self.nodes(client, 'gitlab_mr_related_issue')) == 1 and not snapshot.checkpoint_ready
+        assert not any('/projects/43' in target for target in self.targets)
+        assert 'PROJECT-123' not in repr(client.summary)
+
+    def test_v6_related_duplicate_external_string_identity_fails_closed(self):
+        external = dict(id='PROJECT-123', title='SYNTHETIC_PRIVATE_TITLE')
+        self.routes[self.mr_path+'/related_issues?page=1&per_page=100'] = [dict(external), dict(external)]
+        with pytest.raises(TransportError): self.read(self.v6_related_selection())
+
+    def test_v6_related_duplicate_external_string_identity_across_pages_fails_closed(self):
+        target = self.mr_path+'/related_issues'
+        first = [dict(id=f'PROJECT-{index}', title='SYNTHETIC_PRIVATE_TITLE') for index in range(100)]
+        self.routes[target+'?page=1&per_page=100'] = self.page(first, **{'X-Total': '101', 'X-Page': '1', 'X-Next-Page': '2'})
+        self.routes[target+'?page=2&per_page=100'] = self.page([dict(first[0])], **{'X-Total': '101', 'X-Page': '2', 'X-Next-Page': ''})
+        with pytest.raises(TransportError): self.read(self.v6_related_selection())
+
+    @pytest.mark.parametrize('case', ['selected_identity_conflict', 'duplicate', 'invalid_project', 'same_project_string_id', 'confidential_without_auth',
+                                     'unknown_visibility_without_auth', 'invalid_visibility'])
+    def test_v6_related_invalid_or_unauthorized_reference_fails_closed(self, case):
+        rows = self.closing_rows()
+        if case == 'selected_identity_conflict': rows[0]['id'] = 701
+        if case == 'duplicate': rows.append(dict(rows[0]))
+        if case == 'invalid_project': rows[0]['project_id'] = True
+        if case == 'same_project_string_id': rows[0]['id'] = 'PROJECT-123'
+        if case == 'confidential_without_auth': rows[0]['confidential'] = True
+        if case == 'unknown_visibility_without_auth': del rows[0]['confidential']
+        if case == 'invalid_visibility': rows[0]['confidential'] = 'true'
+        self.routes[self.mr_path+'/related_issues?page=1&per_page=100'] = rows
+        with pytest.raises(TransportError): self.read(self.v6_related_selection())
+
+    @pytest.mark.parametrize('confidential', [True, None])
+    def test_v6_related_explicit_authorization_can_read_confidential_or_unknown_reference(self, confidential):
+        selection = self.v6_related_selection()
+        rows = self.closing_rows(); rows[0]['confidential'] = confidential
+        self.routes[self.mr_path+'/related_issues?page=1&per_page=100'] = rows
+        source = self.spec(selection, auth_mode='configured')
+        client, snapshot = self.read(selection, source, authorization='Bearer SYNTHETIC_SECRET')
+        assert snapshot.checkpoint_ready and len(self.nodes(client, 'gitlab_mr_related_issue')) == 1
+
+    def test_v6_related_references_paginate_and_late_denial_blocks(self):
+        selection = self.v6_related_selection()
+        target = self.mr_path+'/related_issues'
+        first = [dict(id=10000+index, iid=10000+index, project_id=42, confidential=False) for index in range(100)]
+        self.routes[target+'?page=1&per_page=100'] = lambda: self.page(first, **{'X-Total': '101', 'X-Page': '1', 'X-Next-Page': '2'})
+        self.routes[target+'?page=2&per_page=100'] = lambda: self.page([dict(id=10100, iid=10100, project_id=42, confidential=False)],
+            **{'X-Total': '101', 'X-Page': '2', 'X-Next-Page': ''})
+        client, snapshot = self.read(selection)
+        assert len(self.nodes(client, 'gitlab_mr_related_issue')) == 101 and snapshot.checkpoint_ready
+        self.routes[target+'?page=2&per_page=100'] = Response(b'SYNTHETIC_SECRET', 403)
+        client, snapshot = self.read(selection)
+        assert ('related_issues', 'pagination_incomplete', 'forbidden') in self.states(client)
+        assert not snapshot.checkpoint_ready
+
+    def test_v6_related_foreign_omission_and_late_denial_both_remain_visible(self):
+        target = self.mr_path+'/related_issues'
+        first = [dict(id=10000+index, iid=10000+index, project_id=42, confidential=False) for index in range(99)]
+        first.append(dict(id=10100, iid=1, project_id=43))
+        self.routes[target+'?page=1&per_page=100'] = self.page(first, **{'X-Total': '101', 'X-Page': '1', 'X-Next-Page': '2'})
+        self.routes[target+'?page=2&per_page=100'] = Response(b'SYNTHETIC_SECRET', 403)
+        client, snapshot = self.read(self.v6_related_selection())
+        assert ('related_issues', 'pagination_incomplete', 'forbidden') in self.states(client)
+        assert ('related_issues', 'not_observed', 'unscoped_references_omitted') in self.states(client)
+        assert not snapshot.checkpoint_ready
+
+    @pytest.mark.parametrize('blocked', ['project', 'merge_request', 'related_issues'])
+    def test_v6_related_reference_unavailable_is_visible(self, blocked):
+        selection = self.v6_related_selection()
+        target = {'project': '/api/v4/projects/'+ENCODED, 'merge_request': self.mr_path,
+                  'related_issues': self.mr_path+'/related_issues?page=1&per_page=100'}[blocked]
+        self.routes[target] = Response(b'SYNTHETIC_SECRET', 403)
+        client, snapshot = self.read(selection)
+        expected = ('related_issues', 'forbidden', None) if blocked == 'related_issues' else (
+            'related_issues', 'not_observed', blocked+'_unavailable')
+        assert expected in self.states(client) and not snapshot.checkpoint_ready
+
+    def test_v6_related_references_require_explicit_scope_and_are_bounded(self):
+        with pytest.raises(ValueError): replace(self.selection, schema_version=5,
+            capture=('issues', 'merge_requests', 'related_issues'))
+        with pytest.raises(ValueError): replace(self.selection, schema_version=6,
+            capture=('issues', 'related_issues'), merge_requests=())
+        rows = self.closing_rows()+[dict(id=701, iid=8, project_id=42, confidential=False)]
+        self.routes[self.mr_path+'/related_issues?page=1&per_page=100'] = rows
+        with patch.object(gitlab, 'MAX_MR_CLOSING_ISSUES', 1):
+            with pytest.raises(TransportError): self.read(self.v6_related_selection())
+
     def test_v5_combines_closing_references_with_selected_discussions_and_commits(self):
         selection = replace(self.selection, schema_version=5,
             capture=('closing_issues', 'commits', 'discussions', 'issues', 'merge_requests'))
@@ -868,7 +1005,7 @@ class TestGitLabSource(GitLabFixture):
     @pytest.mark.parametrize('change', [
         dict(capture=('issues',)), dict(capture=('merge_requests', 'issues')), dict(issues=(7, 7)),
         dict(issues=(0,)), dict(capture=('approvals', 'issues', 'notes'), merge_requests=()),
-        dict(capture=('issues', 'merge_requests', 'pipelines')), dict(schema_version=6),
+        dict(capture=('issues', 'merge_requests', 'pipelines')), dict(schema_version=7),
         # A capture that selects no IID would read only the project yet look complete.
         dict(capture=('notes',), issues=(), merge_requests=()), dict(capture=(), issues=(), merge_requests=())],
         ids=['issues-only-without-merge-requests', 'unordered-capture', 'duplicate-iid', 'zero-iid',
