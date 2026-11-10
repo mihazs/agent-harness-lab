@@ -212,6 +212,9 @@ fallback settings and the files being loaded within the budget. A relation names
 the higher and lower file, its rule and its source. The inventory cannot verify
 runtime settings, trust, external user or managed files, imports, or actual loading.
 Refused files and those unchecked layers remain `not_checked`.
+Use `ahl audit PROJECT --task-cwd src --json` to report the project-relative
+task directory's chain; omitting the option selects the project root. The task
+directory must exist within the project and cannot cross a symlink.
 
 For Codex, [the documented chain](https://developers.openai.com/codex/guides/agents-md)
 checks `AGENTS.override.md` before `AGENTS.md` in each directory and gives later,

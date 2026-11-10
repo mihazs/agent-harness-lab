@@ -1,11 +1,13 @@
 """Offline command for the read-only static harness audit."""
 import argparse
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
 
 from agent_harness_lab import audit, surfaces
+from agent_harness_lab.evaluation.integrity import open_directory_nofollow, relative
 from agent_harness_lab.monitoring.state import atomic_json
 from agent_harness_lab.sources import harness_inventory
 from agent_harness_lab.workflow import state_root
@@ -22,7 +24,7 @@ def _status(status, reasons=()):
     return 'unknown'
 
 
-def _project(inventory, report):
+def _project(inventory, report, task_cwd):
     dimensions = {row['dimension']: row for row in report.pop('dimensions')}
     findings = []
     for row in report['findings']:
@@ -32,7 +34,7 @@ def _project(inventory, report):
             continue
         findings.append(dict(row, dimension=dimension, status=_status(row['status'], (row['reason'],)), observed=row['reason']))
     report['findings'] = findings
-    context = audit.skills.Context(inventory, '.') if inventory.status == 'declared' else None
+    context = audit.skills.Context(inventory, task_cwd) if inventory.status == 'declared' else None
     skill_nodes = [node for node in inventory.nodes if node.kind == 'skill' and not context.supporting(node)
                    and dict(node.facts).get(surfaces.VENDORED_FACET) is not True] if context else []
     skill_findings = [row for row in findings if row['dimension'] == 'skills']
@@ -61,18 +63,24 @@ def main(argv=None):
         'the project is not modified. A private report is written to XDG state.'))
     parser.add_argument('project', type=Path, help='Existing project directory')
     parser.add_argument('--runtime', choices=('claude-code', 'codex'), default='codex', help='Runtime profile (default: codex)')
+    parser.add_argument('--task-cwd', default='.', help='Existing project-relative task directory (default: project root)')
     parser.add_argument('--json', action='store_true', help='Print the full private JSON report')
     args = parser.parse_args(argv)
     try:
         project = args.project.resolve(strict=True)
         if not project.is_dir():
             raise ValueError('project must be an existing directory')
+        if args.task_cwd != '.':
+            relative(args.task_cwd)
+            if '.git' in Path(args.task_cwd).parts: raise ValueError('unsafe task directory')
+            descriptor = open_directory_nofollow(project / args.task_cwd)
+            os.close(descriptor)
         destination = (state_root() / 'audits').resolve()
         if destination == project or project in destination.parents:
             raise ValueError('audit state directory must be outside the project')
-        profile = dict(schema_version=1, runtime=args.runtime, version=surfaces.PINS[args.runtime], task_cwd='.')
+        profile = dict(schema_version=1, runtime=args.runtime, version=surfaces.PINS[args.runtime], task_cwd=args.task_cwd)
         inventory = harness_inventory.capture(project, profile)
-        report = _project(inventory, audit.audit(inventory, task_cwd='.').document())
+        report = _project(inventory, audit.audit(inventory, task_cwd=args.task_cwd).document(), args.task_cwd)
         candidate = next((row for row in report['findings'] if row['remediation']), None)
         if report['status'] != 'completed':
             report['next_action'] = 'Resolve the blocked inventory before using this audit.'
