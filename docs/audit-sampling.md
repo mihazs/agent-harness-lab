@@ -135,7 +135,14 @@ plan was fixed; `sampling_plan_timing_unauthenticated` remains in the v2 report.
 On reopening, every listed v2 draw must satisfy the recorded seed, frame hash
 and grid threshold. Without the full frame, this cannot verify membership or
 prove that selected units were not omitted. Internal receipt checks do not
-authenticate its source. The default
+authenticate its source. For v2, `review_queue(receipt, frame=frame)` and
+`estimate(receipt, labels, frame=frame)` can replay the complete draw against an
+explicit caller-supplied frame. They refuse changed strata, omitted selections or
+nonmember selections and report `matched_caller_supplied_frame`. Omitting the
+frame leaves membership and draw completeness unverified; a matching frame is
+still caller supplied and its origin is unauthenticated. Late labels can be
+submitted in a later batch against the same receipt; pending labels remain
+inconclusive and reviewer labels remain unauthenticated. The default
 v1 plan, receipts and selection rule remain unchanged by this opt-in design.
 
 ## Estimates
