@@ -87,8 +87,13 @@ def _root_values(tasks, pairs, outcomes):
     return {root: sum(values) / len(values) for root, values in sorted(roots.items())}
 
 
-def analyze(spec, records, binding):
+def analyze(spec, records, binding, *, root_similarity_evidence=None, root_similarity_bank=None):
     """Analyze complete paired data; callers independently verify live qualification."""
+    from .root_similarity import binding as similarity_binding
+    try:
+        groups = similarity_binding(spec, root_similarity_evidence, root_similarity_bank)
+    except (ValueError, TypeError, KeyError, OSError, RecursionError):
+        return dict(status='blocked', reason='root_similarity_binding_missing_or_invalid', automatic_promotion=False)
     expected = {row['trial_id']: row for row in schedule(spec)}
     records = list(records)
     outcomes, coverage, critical = _observed(spec, records, expected)
@@ -151,14 +156,16 @@ def analyze(spec, records, binding):
             or coverage['invalid_records'] or coverage['invalid_grades'] or coverage['unknown_grades']):
         return dict(result, status='incomplete', reason='missing_duplicate_unknown_or_invalid_trials')
     root_values = _root_values(tasks, pairs, outcomes)
-    family_values = {family: [value for root, value in root_values.items() if root_families[root] == family]
+    family_values = {family: {root: value for root, value in root_values.items() if root_families[root] == family}
                      for family in families}
-    family_results = {family: bound(values, [1 / len(values)] * len(values), adjusted) for family, values in family_values.items()}
-    values, weights = [], []
+    family_results = {family: bound(list(values.values()), [1 / len(values)] * len(values), adjusted,
+                                    roots=list(values), groups=groups) for family, values in family_values.items()}
+    values, weights, root_ids = [], [], []
     for family, weight in sorted(spec.family_weights):
-        values.extend(family_values[family])
+        values.extend(family_values[family].values())
+        root_ids.extend(family_values[family])
         weights.extend([weight / len(family_values[family])] * len(family_values[family]))
-    primary = bound(values, weights, adjusted)
+    primary = bound(values, weights, adjusted, roots=root_ids, groups=groups)
     dispositions = []
     for cohort in manifest['cohorts']:
         if not cohort['required']:
@@ -167,16 +174,17 @@ def analyze(spec, records, binding):
         members = set(item['members'])
         selected = [pair for pair in pairs if pair[0] in members]
         selected_roots = _root_values(tasks, selected, outcomes)
-        endpoint = bound(list(selected_roots.values()), [1 / len(selected_roots)] * len(selected_roots), adjusted)
+        endpoint = bound(list(selected_roots.values()), [1 / len(selected_roots)] * len(selected_roots), adjusted,
+                         roots=list(selected_roots), groups=groups)
         endpoint.update(weighting='equal_original_roots', root_ids=sorted(selected_roots),
                         assumptions=ASSUMPTIONS.copy())
         disposition = ('rejected' if endpoint['high'] < -cohort['margin'] else
-                       'supported' if len(selected_roots) >= spec.min_roots and endpoint['low'] >= -cohort['margin'] else 'inconclusive')
+                       'supported' if endpoint['independent_roots'] >= spec.min_roots and endpoint['low'] >= -cohort['margin'] else 'inconclusive')
         item.update(endpoint=endpoint, disposition=disposition)
         dispositions.append(disposition)
     harmful = (primary['high'] < -spec.family_margin or any(v['high'] < -spec.family_margin for v in family_results.values())
                or 'rejected' in dispositions)
-    passes = (len(root_values) >= spec.min_roots and primary['low'] > spec.effect_margin
+    passes = (primary['independent_roots'] >= spec.min_roots and primary['low'] > spec.effect_margin
               and all(v['low'] >= -spec.family_margin for v in family_results.values())
               and all(d == 'supported' for d in dispositions))
     return dict(result, status='rejected' if harmful else 'supported' if passes else 'inconclusive',

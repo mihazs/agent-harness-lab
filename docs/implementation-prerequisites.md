@@ -98,6 +98,13 @@ reservation) and every earlier gate are unchanged, so a qualified scope satisfie
 the isolation element and nothing else. The `ahl experiment` CLI passes no scope
 and reports `isolation: unknown`.
 
+On supported Linux x86-64 permission-audited dispatches, the trusted monitor can
+hash the kernel-selected top-level worker executable while it is stopped at exec.
+The owned dispatch fact binds this observation to the command and pinned image.
+If the executable cannot be read within bounds, the identity remains unknown.
+The hash does not establish the identity of a served model, a native agent, a
+script, or later descendant executables, and grants no certification authority.
+
 The isolation element consumes the restricted-process qualification of observed
 dispatches only. It is not whole-boundary role isolation: the packet's
 `mandatory_certification.role_isolation` stays `unverified`, and `decide` remains a

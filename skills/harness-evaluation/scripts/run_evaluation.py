@@ -693,11 +693,14 @@ def _evaluate(args):
     if trajectories:
         results.update(trajectory_profile=trajectory_assertions.PROFILE, publication_allowed=False,
             history_authority='unverified', trajectory_policy_digests={key:b['policy_sha256'] for key,b in trajectories.items()})
+    observed_critical_trajectory = False
     def record_trajectory(record, binding, capture):
+        nonlocal observed_critical_trajectory
         receipt = trajectory_assertions.evaluate(binding, capture)
         if receipt.get('trial_id') != record['controller_trial_id']:
             receipt = trajectory_assertions.evaluate(binding, None)
         grade = trajectory_assertions.compose(binding, record.get('grader'), receipt)
+        observed_critical_trajectory |= grade['critical_violation']
         record['controller_grade'] = grade
         return grade
     application_modules()
@@ -879,6 +882,11 @@ def _evaluate(args):
                 grade.get('critical_violation') is True))
         results['trajectory_analysis'] = (analyze(plan, records) if results['inputs_unchanged'] else
             dict(status='blocked', reason='frozen_inputs_changed'))
+        # A live verified trajectory violation can be observed before an artifact
+        # grade exists. Keep it separate from the executable grader's validity.
+        if (observed_critical_trajectory and
+                results['trajectory_analysis'].get('reason') == 'unknown_or_invalid_grade'):
+            results['trajectory_analysis'] = dict(status='rejected', reason='critical_regression')
         results['trajectory_analysis'].update(oracle_validity='unverified', native_identity='unverified',
             root_independence='unverified', inference_scope='conditional_on_declared_root_lineage',
             history_authority='unverified', automatic_promotion=False, publication_allowed=False)

@@ -90,6 +90,7 @@ def simulate(spec, outcome_model, *, simulations=200, seed=0):
     if not isinstance(spec, ExperimentSpec): raise ValueError('a frozen experiment spec is required')
     spec.validate()
     if spec.sequential is not None: raise ValueError('power simulation covers only the fixed-final analysis')
+    if spec.root_similarity_sha256 is not None: raise ValueError('power simulation does not support root similarity evidence')
     if spec.cohort_manifest_sha256 is not None:
         raise ValueError('cohort-bound preservation analysis is not simulated')
     if len(spec.tasks) > MAX_TASKS: raise ValueError('power simulation exceeds the 1000-task bank cap')

@@ -299,6 +299,15 @@ def test_used_and_copied_closed_comparisons_cannot_reenter(admission):
             with value:pass
 
 
+@pytest.mark.parametrize('protected', [{}, None], ids=['serialized', 'missing'])
+def test_forged_reviewed_reservation_does_not_bind_to_comparison(admission, protected):
+    from agent_harness_lab.evaluation.certification_access import _Access
+    comp=admission.new_comparison()
+    candidate=_Access() if protected is None else protected
+    with pytest.raises(ValueError, match='live owned reservation required'):
+        comparison_custody.Comparison(comp.spec,comp.fixtures,comp.client,comp.deadline,protected_access=candidate)
+
+
 def test_comparison_copy_mutation_expiry_and_fork_cannot_recreate_custody(admission):
     comp=admission.new_comparison();plan,client=comp.spec,comp.client
     with comp:

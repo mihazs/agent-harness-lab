@@ -1,6 +1,7 @@
 """Synthetic kernel permission-result observations, never inference or task truth."""
 from contextlib import ExitStack
 import errno
+import hashlib
 from unittest.mock import patch,Mock
 import os
 import signal
@@ -66,6 +67,7 @@ def test_allowed_control_and_swallowed_readonly_denial_are_separate_from_task_ex
     case.assert_complete(allowed)
     report=allowed['attestation']['permission_audit']
     assert report['qualification'] == 'qualified', report
+    assert report['worker_executable_sha256'] == hashlib.sha256((case.backend.image.root/'usr/bin/python3').read_bytes()).hexdigest()
     assert any(e['stage']=='setup' for e in report['events']), report
     denied=case.run_code("from pathlib import Path\ntry:Path('/inputs/harness/marker').write_text('bad')\nexcept OSError:pass\n",
         inputs={'harness':harness},limits=Limits(seconds=15),artifact_allowlist=[])
@@ -73,6 +75,16 @@ def test_allowed_control_and_swallowed_readonly_denial_are_separate_from_task_ex
     report=denied['attestation']['permission_audit']
     assert report['qualification'] == 'violated', report
     assert any(e['stage']=='role' and e['errno']==errno.EROFS for e in report['events']), report
+
+
+@kernel_only
+def test_descendant_exec_does_not_replace_the_observed_role_executable(case):
+    run=case.run_code("import os\npid=os.fork()\nif pid==0:os.execv('/usr/bin/true',['/usr/bin/true'])\nos.waitpid(pid,0)\n",
+        inputs={},limits=Limits(seconds=15),artifact_allowlist=[])
+    case.assert_complete(run)
+    report=run['attestation']['permission_audit']
+    assert report['worker_executable_sha256'] == hashlib.sha256((case.backend.image.root/'usr/bin/python3').read_bytes()).hexdigest()
+    assert report['worker_executable_sha256'] != hashlib.sha256((case.backend.image.root/'usr/bin/true').read_bytes()).hexdigest()
 
 
 @kernel_only
@@ -647,6 +659,27 @@ def test_observation_refuses_unsupported_architectures_with_the_documented_error
 supported_host = pytest.mark.skipif(not audit_module.supported(), reason='permission audit requires a Linux x86_64 host')
 
 
+@supported_host
+def test_kernel_executable_observation_is_bounded_and_unavailable_is_unknown():
+    expected=hashlib.sha256(Path('/proc/self/exe').read_bytes()).hexdigest()
+    assert audit_module._executable_digest(os.getpid(),time.monotonic()+5)==expected
+    assert audit_module._executable_digest(os.getpid(),time.monotonic()-1) is None
+    assert audit_module._executable_digest(999999999,time.monotonic()+5) is None
+    with patch.object(audit_module,'MAX_EXECUTABLE_BYTES',1):
+        assert audit_module._executable_digest(os.getpid(),time.monotonic()+5) is None
+
+
+@supported_host
+def test_changed_executable_during_observation_is_unknown():
+    real=os.fstat;calls=[]
+    def changed(fd):
+        value=real(fd);calls.append(value)
+        return value if len(calls)==1 else SimpleNamespace(**{name:getattr(value,name)+(name=='st_mtime_ns') for name in
+            ('st_dev','st_ino','st_mode','st_size','st_mtime_ns','st_ctime_ns')})
+    with patch.object(audit_module.os,'fstat',side_effect=changed):
+        assert audit_module._executable_digest(os.getpid(),time.monotonic()+5) is None
+
+
 @pytest.fixture
 def channel():
     from agent_harness_lab.evaluation.permission_audit import Observation,encoded,hashed,policy
@@ -672,6 +705,18 @@ def test_result_channel_rejects_lost_forged_and_inconsistent_completions(channel
     assert item.result()['qualification'] == 'qualified'
     item.data=bytearray(encoded({**value,**changes}))
     assert item.result()['qualification'] != 'qualified'
+
+
+@supported_host
+def test_executable_observation_channel_rejects_malformed_and_drops_incomplete(channel):
+    item,value,encoded=channel.item,channel.value,channel.encoded
+    assert item.result()['worker_executable_sha256'] is None
+    item.data=bytearray(encoded({**value,'worker_executable_sha256':'a'*64}))
+    assert item.result()['worker_executable_sha256']=='a'*64
+    item.data=bytearray(encoded({**value,'worker_executable_sha256':'bad'}))
+    assert item.result()['qualification']=='unknown'
+    item.data=bytearray(encoded({**value,'worker_executable_sha256':'a'*64,'reason':'deadline'}))
+    assert item.result()['worker_executable_sha256'] is None
 
 
 @supported_host
