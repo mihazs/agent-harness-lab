@@ -99,6 +99,11 @@ def preflight(spec, *, cohort_manifest_json=None, trial_limit=None, budget_secon
         execution_allowed=budget_met and (target is None or possible and target_met is True)
             and (spec.root_similarity_sha256 is None or possible),
         qualification_authority='not_validated_by_analytic_precision',root_independence='unverified',
+        root_similarity_check=dict(
+            status='checked_heuristic' if spec.root_similarity_sha256 is not None else 'not_checked',
+            warning=('Similarity is heuristic; an absent match does not establish independence.'
+                     if spec.root_similarity_sha256 is not None else
+                     'Root similarity was not checked; declared roots may include related tasks.')),
         power='not_estimated',automatic_budget_change=False,automatic_promotion=False,publication_allowed=False,
         limitations=['Selected declared roots only; labels do not establish independence or current bank eligibility.',
             'Independent bounded root means are assumed; related tasks and all repeats remain within their original root.',

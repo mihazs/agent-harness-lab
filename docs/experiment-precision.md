@@ -34,6 +34,15 @@ It also respects the actual caller trial ceiling. The report is written as
 exhausted, the existing budget-exhausted report is returned without doing the
 precision calculation or dispatching any worker.
 
+Every preflight reports `root_similarity_check`. An unpinned legacy plan reports
+`not_checked` and warns that declared roots may include related tasks; the command
+cannot infer a bank from task IDs. A pinned plan reports `checked_heuristic` only
+after rechecking its evidence, and an absent match still does not establish
+independence. This warning does not change the frozen plan or legacy execution
+behavior. To prepare a new bound plan before trials, follow the
+[private root-similarity preparation](content-grouping.md#suspected-root-similarity)
+procedure; previously collected trial IDs cannot be reused.
+
 Without a target, legacy descriptive execution remains available even when the
 report says `infeasible`: this means its selected design cannot meet the frozen
 fixed-analysis criteria, not that collecting descriptive observations is forbidden.
