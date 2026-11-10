@@ -73,6 +73,97 @@ def v3(source):
     return backup, spec, manifest
 
 
+def v4(source):
+    backup, selection, spec, manifest = source
+    selection.update(schema_version=4, message_id='msg_selected')
+    (manifest.parent/'selection.json').write_text(json.dumps(selection))
+    spec = SourceSpec(**{**spec.to_dict(), 'version': 'v4', 'scope_sha256': digest(selection)})
+    manifest.write_text(json.dumps(dict(schema_version=1, source=spec.to_dict(), data='selection.json')))
+    return backup, spec, manifest
+
+
+def test_v4_selected_message_metadata_is_private_and_unverified(source):
+    backup, spec, manifest = v4(source)
+    with sqlite3.connect(backup) as db:
+        db.execute('CREATE TABLE session_message (id TEXT COLLATE NOCASE, session_id TEXT COLLATE NOCASE, type TEXT, seq INTEGER, data TEXT)')
+        db.executemany('INSERT INTO session_message VALUES (?, ?, ?, ?, ?)', [
+            ('msg_selected', SESSION, 'assistant', 7, SECRET), ('MSG_SELECTED', SESSION, 'user', 8, SECRET),
+            ('msg_selected', SESSION.upper(), 'user', 9, SECRET)])
+    connector = OpenCodeBackup(manifest)
+    snapshot = connector.read(spec)
+    claim = next(c for c in connector.claims if c.claim_type == 'message')
+    assert (claim.kind, claim.sequence) == ('assistant', 7)
+    assert claim.native_id_sha256 == digest(('opencode.message', INSTANCE, SESSION, 'msg_selected'))
+    assert connector.summary['message_claim'] == {'kind': 'assistant', 'sequence': 7}
+    assert {'message_metadata_unverified', 'lineage_unknown'} <= set(connector.summary['warnings'])
+    assert connector.summary['capture_completeness'] == 'unknown'
+    assert all((r.plane, r.causal_status, r.independence) == ('contextual_assertion', 'unknown', 'unknown') for r in snapshot.records)
+    for private in (SECRET, 'msg_selected', SESSION, PROJECT):
+        assert private not in repr((connector.summary, connector.claims, snapshot))
+
+
+def test_v4_unknown_type_is_not_echoed_and_missing_message_is_not_evidence(source):
+    backup, spec, manifest = v4(source)
+    with sqlite3.connect(backup) as db:
+        db.execute('CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, seq INTEGER)')
+        db.execute('INSERT INTO session_message VALUES (?, ?, ?, ?)', ('msg_selected', SESSION, SECRET, 1))
+    connector = OpenCodeBackup(manifest)
+    connector.read(spec)
+    assert connector.summary['message_claim']['kind'] == 'unknown'
+    assert SECRET not in repr((connector.summary, connector.claims))
+    with sqlite3.connect(backup) as db: db.execute('DELETE FROM session_message')
+    with pytest.raises(ValueError): connector.read(spec)
+
+
+@pytest.mark.parametrize('case', ['duplicate', 'invalid_sequence', 'foreign_session', 'view'])
+def test_v4_malformed_ambiguous_or_foreign_message_is_refused(source, case):
+    backup, spec, manifest = v4(source)
+    with sqlite3.connect(backup) as db:
+        table = 'hidden' if case == 'view' else 'session_message'
+        db.execute(f'CREATE TABLE {table} (id TEXT, session_id TEXT, type TEXT, seq INTEGER)')
+        row = ('msg_selected', 'ses_foreign' if case == 'foreign_session' else SESSION, 'user',
+               'not-a-sequence' if case == 'invalid_sequence' else 1)
+        db.execute(f'INSERT INTO {table} VALUES (?, ?, ?, ?)', row)
+        if case == 'duplicate': db.execute('INSERT INTO session_message VALUES (?, ?, ?, ?)', row)
+        if case == 'view': db.execute('CREATE VIEW session_message AS SELECT * FROM hidden')
+    with pytest.raises(ValueError): OpenCodeBackup(manifest).read(spec)
+
+
+def test_v4_cli_preview_does_not_print_selected_ids(source):
+    backup, spec, manifest = v4(source)
+    with sqlite3.connect(backup) as db:
+        db.execute('CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, seq INTEGER)')
+        db.execute('INSERT INTO session_message VALUES (?, ?, ?, ?)', ('msg_selected', SESSION, 'idle', 2))
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        code = main(['sources', 'preview', '--manifest', str(manifest), '--project-sha256', spec.project_sha256,
+            '--scope-sha256', spec.scope_sha256])
+    assert code == 0
+    summary = json.loads(output.getvalue())['opencode_backup_summary']
+    assert summary['message_claim']['kind'] == 'idle' and not summary['task_outcomes_verified']
+    assert all(value not in output.getvalue() for value in (SECRET, SESSION, PROJECT, 'msg_selected'))
+
+
+def test_v4_repeat_import_stores_private_contextual_metadata(source, tmp_path):
+    backup, spec, manifest = v4(source)
+    with sqlite3.connect(backup) as db:
+        db.execute('CREATE TABLE session_message (id TEXT, session_id TEXT, type TEXT, seq INTEGER, data TEXT)')
+        db.execute('INSERT INTO session_message VALUES (?, ?, ?, ?, ?)', ('msg_selected', SESSION, 'user', 1, SECRET))
+    cache = tmp_path/'v4-cache.json'
+    def invoke():
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            code = main(['sources', 'import', '--manifest', str(manifest), '--project-sha256', spec.project_sha256,
+                '--scope-sha256', spec.scope_sha256, '--cache', str(cache)])
+        assert code == 0
+        return json.loads(output.getvalue())
+    assert invoke()['imported'] == 3
+    assert invoke()['imported'] == 0
+    text = cache.read_text()
+    assert 'opencode_backup_message' in text
+    assert all(value not in text for value in (SECRET, SESSION, PROJECT, 'msg_selected'))
+
+
 def test_v3_counts_selected_parts_without_reading_bodies_or_claiming_relationships(source):
     backup, spec, manifest = v3(source)
     with sqlite3.connect(backup) as db:

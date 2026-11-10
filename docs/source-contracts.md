@@ -4334,3 +4334,14 @@ to 100,000 rows and shares the worker's existing query budget; missing or
 over-budget input is refused. The count is an unverified claim about the chosen
 backup, not evidence of complete capture, producer version, lineage or outcomes.
 V3 uses a separate scope and does not migrate or reconcile v1 or v2 histories.
+
+An optional backup v4 profile uses `schema_version: 4` in the selection and
+`version: "v4"` on the source, and requires one explicit `message_id` with the
+upstream `msg_` prefix and no whitespace. It selects that message by exact
+session and message IDs in `session_message`, exposing a session-scoped ID
+fingerprint, a known type or `unknown`, and the reported integer sequence. It
+reads no message body, does not count the session's other messages or parts,
+and refuses missing, ambiguous or malformed selected rows. These values are
+unverified claims from the backup: they do not establish execution, delivery,
+sequence completeness, lineage or task outcome. V4 has a separate scope and
+does not migrate v1, v2 or v3 history.
