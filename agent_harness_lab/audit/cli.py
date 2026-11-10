@@ -86,7 +86,9 @@ def main(argv=None):
     parser.add_argument('--runtime', choices=('claude-code', 'codex'), default='codex', help='Runtime profile (default: codex)')
     parser.add_argument('--task-cwd', default='.', help='Existing project-relative task directory (default: project root)')
     parser.add_argument('--json', action='store_true', help='Print the full private JSON report')
-    parser.add_argument('--improvement-recheck', action='store_true', help='Include declared parameters for a later fresh audit recheck')
+    recheck = parser.add_mutually_exclusive_group()
+    recheck.add_argument('--improvement-recheck', action='store_true', help='Include declared parameters for a later fresh audit recheck')
+    recheck.add_argument('--improvement-recheck-soft-budget', action='store_true', help='Include versioned parameters for rechecking a declared soft-line budget')
 
     parser.add_argument('--feedback-sensors', action='store_true', help='Add local filename-only sensor candidates')
     parser.add_argument('--codex-project-doc-max-bytes', type=int,
@@ -95,7 +97,7 @@ def main(argv=None):
                         help='Checkout instruction-line convention (default: 200; not a validated threshold)')
     args = parser.parse_args(argv)
     try:
-        if args.improvement_recheck and args.runtime != 'codex':
+        if (args.improvement_recheck or args.improvement_recheck_soft_budget) and args.runtime != 'codex':
             raise ValueError('improvement recheck currently supports Codex only')
         if args.codex_project_doc_max_bytes is not None and args.runtime != 'codex':
             raise ValueError('Codex byte budget requires the Codex runtime')
@@ -181,10 +183,13 @@ def main(argv=None):
             next_action='Review applicable permissions and pre-tool hooks for each protected path; '
                         'static tool-name candidates do not establish path enforcement.')
         report['improvement_hint'] = improvement_hint.from_findings(report['findings'], args.runtime)
-        if args.improvement_recheck:
+        if args.improvement_recheck or args.improvement_recheck_soft_budget:
             report['improvement_recheck'] = dict(profile='ahl-audit-recheck-parameters-v1', runtime=args.runtime,
                 task_cwd=args.task_cwd, codex_project_doc_max_bytes=args.codex_project_doc_max_bytes,
                 publication_allowed=False, authority='none')
+            if args.improvement_recheck_soft_budget:
+                report['improvement_recheck'].update(profile='ahl-audit-recheck-parameters-v2',
+                                                      instruction_soft_lines=args.instruction_soft_lines)
         from .constraint_scan import capture as constraint_scan
         report['constraint_references'] = constraint_scan(project, inventory, report['protected_path_inventory'])
         candidate = next((row for row in report['findings'] if row['remediation']), None)

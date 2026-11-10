@@ -505,3 +505,33 @@ def test_procedure_recheck_refuses_resolver_change(wf, monkeypatch, capsys):
         return original(*args,**kwargs)
     monkeypatch.setattr(instruction_totals,'codex',changed)
     with pytest.raises(ValueError,match='no eligible'):select(receipt,wf.project,'codex')
+
+
+def test_rechecked_soft_instruction_budget_reaches_paired_evaluation(wf, monkeypatch, capsys):
+    from agent_harness_lab.audit.recheck import select
+
+    (wf.project/'.git').mkdir();original='one\ntwo\nthree\n'
+    (wf.project/'AGENTS.md').write_text(original)
+    monkeypatch.setenv('XDG_STATE_HOME',str(wf.root/'audit-state'))
+    assert audit_main([str(wf.project),'--json','--improvement-recheck-soft-budget',
+                       '--instruction-soft-lines','2'])==0
+    report=json.loads(capsys.readouterr().out);receipt=wf.root/'audit.json';receipt.write_text(json.dumps(report))
+    selected=select(receipt,wf.project,'codex')
+    assert selected['reason']=='instruction_launch_lines_above_soft_budget'
+    assert selected['authority']=='none' and selected['instruction_soft_lines']==2
+    args=wf.args();args.from_audit=receipt
+    result=improve(args);output=Path(result['output'])
+    assert result['status']=='inconclusive' and result['changed_files']==[]
+    assert (wf.project/'AGENTS.md').read_text()==original
+    assert json.loads((output/'evaluation-0/results.json').read_text())['trials']
+    assert json.loads((output/'change-plan.json').read_text())['audit_hypothesis']==selected
+    report['improvement_recheck']['codex_project_doc_max_bytes']=2;receipt.write_text(json.dumps(report))
+    with pytest.raises(ValueError,match='no eligible'):select(receipt,wf.project,'codex')
+    report['improvement_recheck']['codex_project_doc_max_bytes']=None
+    report['improvement_recheck']['instruction_soft_lines']=3;receipt.write_text(json.dumps(report))
+    with pytest.raises(ValueError,match='no eligible'):select(receipt,wf.project,'codex')
+    report['improvement_recheck']['instruction_soft_lines']=True;receipt.write_text(json.dumps(report))
+    with pytest.raises(ValueError,match='invalid audit recheck'):select(receipt,wf.project,'codex')
+    report['improvement_recheck'].update(profile='ahl-audit-recheck-parameters-v1')
+    report['improvement_recheck'].pop('instruction_soft_lines');receipt.write_text(json.dumps(report))
+    with pytest.raises(ValueError,match='no eligible'):select(receipt,wf.project,'codex')
