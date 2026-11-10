@@ -62,6 +62,23 @@ def compute(plan,contract,endpoint_name,pairs,evidence,bank_path,*,public=False)
     for root in root_ids: family_roots[root_families[root]] += 1
     family_weights = dict(plan.family_weights)
     weights = [family_weights[root_families[root]]/family_roots[root_families[root]] for root in root_ids]
+    # Refuse to silently erase positive family mass or its contribution to the radius.
+    effective = {}
+    for root,weight,mean in zip(root_ids,weights,means):
+        if (not math.isfinite(weight) or weight <= 0 or weight*weight == 0
+                or (mean != 0 and mean*weight == 0)):
+            return dict(result,reason='numeric_bound_unavailable')
+        key = groups.get(root,root); previous = effective.get(key,0.0); combined = previous+weight
+        if (not math.isfinite(combined) or (previous > 0 and (combined == previous or combined == weight))):
+            return dict(result,reason='numeric_bound_unavailable')
+        effective[key] = combined
+    squared = 0.0
+    for weight in effective.values():
+        term = weight*weight; combined = squared+term
+        if (not math.isfinite(combined) or term == 0
+                or (squared > 0 and (combined == squared or combined == term))):
+            return dict(result,reason='numeric_bound_unavailable')
+        squared = combined
     required = sum(item['required'] for item in contract['endpoints'])
     try:
         interval = bound(means,weights,contract['alpha']/required,roots=root_ids,groups=groups)

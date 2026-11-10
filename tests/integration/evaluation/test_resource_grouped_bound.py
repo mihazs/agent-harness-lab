@@ -126,3 +126,20 @@ def test_unequal_family_weights_and_cross_family_related_roots(tmp_path):
     assert result['low'] == pytest.approx(max(-1,.9-width)*horizon)
     assert result['high'] == pytest.approx(min(1,.9+width)*horizon)
     assert result['estimand'] == 'frozen_family_weighted_mean_of_selected_root_mean_paired_resource_differences'
+
+
+@pytest.mark.parametrize('tiny', [5e-324, 1e-200, 1e-30])
+def test_tiny_positive_family_mass_cannot_be_erased(tmp_path,tiny):
+    original = spec({'a':2,'b':2},weights={'a':tiny,'b':1.0})
+    prompts = ['Perform identical synthetic operation.', 'Perform identical synthetic operation.',
+               'Reject invalid dates from calendar input.', 'Sort numbers and remove duplicates.']
+    manifest = {'tasks':[dict(id=task,root=root,prompt=prompt) for (task,root,_),prompt in zip(original.tasks,prompts)]}
+    evidence = root_similarity.manifest_evidence(manifest); path = tmp_path/'manifest.json'; path.write_bytes(encoded(manifest))
+    contract = token_scope_contract(); contract.update(alpha=.9,min_roots=2)
+    plan = replace(original,root_similarity_sha256=digest(evidence),
+                   resource_contract_sha256=resource_decision.decide(contract,[],None)['contract_sha256'])
+    template = token_scope_rows()[0]
+    rows = [dict(task=task,repetition=0,baseline=deepcopy(template['baseline']),candidate=deepcopy(template['candidate']))
+            for task,_,_ in original.tasks]
+    result = resource_grouped_bound.compute(plan,contract,'tokens',rows,evidence,path)
+    assert result['status'] == 'unknown' and result['reason'] == 'numeric_bound_unavailable'
