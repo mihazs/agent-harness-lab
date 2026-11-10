@@ -29,23 +29,18 @@ def _progress_reporter(stream=None, clock=None):
 
 
 def _improve_summary(result, elapsed, budget=None):
-    from .one_call import REMEDIATION
+    from .exit_guidance import guidance
     status = result['status']
     changes = result.get('changed_files')
     changed = str(len(changes)) if isinstance(changes, list) else 'unknown'
     output = result.get('output')
     artifact = json.dumps(str(output), ensure_ascii=True) if isinstance(output, (str, Path)) else 'unavailable'
-    action = REMEDIATION.get(result.get('reason')) or {
-        'applied': 'Review the recorded change and rollback information.',
-        'no_change': 'Review the receipt before choosing further work.',
-        'inconclusive': 'Review the receipt and complete its missing evidence or prerequisites.',
-        'budget_exhausted': 'Review the receipt and adjust the budget before retrying.',
-        'requires_intervention': 'Review the receipt and resolve the reported intervention before retrying.',
-    }.get(status, 'Review the receipt and resolve the reported outcome before retrying.')
+    category, coverage, action = guidance(result)
     spent, remaining = (f'{budget[0]:.1f}', f'{budget[1]:.1f}') if budget is not None else ('unknown', 'unknown')
     print(f'ahl: outcome={status} changed_files={changed} artifacts={artifact} '
           f'elapsed={elapsed:.1f}s budget_spent_seconds={spent} remaining_seconds={remaining} '
-          f'trials_spent=unknown cost=unknown next={action}', file=sys.stderr, flush=True)
+          f'trials_spent=unknown cost=unknown category={json.dumps(category)} '
+          f'coverage={json.dumps(coverage)} next={action}', file=sys.stderr, flush=True)
 
 
 def assets():
@@ -293,19 +288,34 @@ def main(argv=None):
                 raise ValueError('timeout must be positive')
             result = improve(args)
         args._progress(result['status'])
-        if args.command == 'improve': summarize(result)
+        if args.command == 'improve':
+            summarize(result)
+        else:
+            from .exit_guidance import summary
+            print('ahl: ' + summary(result), file=sys.stderr)
         print(json.dumps(result, indent=2))
         from agent_harness_lab.monitoring.state import exit_code
         return exit_code(result['status'])
     except NotImplementedError:
-        if started is not None: summarize(dict(status='blocked', output=getattr(args, '_run_output', None)))
+        if started is not None:
+            summarize(dict(status='blocked', output=getattr(args, '_run_output', None)))
+        else:
+            from .exit_guidance import summary
+            print('ahl: ' + summary({'status': 'blocked'}), file=sys.stderr)
         parser.exit(3, 'ahl: required filesystem capabilities unavailable; no unsafe fallback\n')
     except KeyboardInterrupt:
         if started is not None: summarize(dict(status='interrupted', output=getattr(args, '_run_output', None)))
         args._progress('interrupted')
+        if started is None:
+            from .exit_guidance import summary
+            print('ahl: ' + summary({'status': 'interrupted'}), file=sys.stderr)
         parser.exit(1, 'ahl: interrupted\n')
     except (ValueError, OSError, TypeError, KeyError) as exc:
-        if started is not None: summarize(dict(status='execution_error' if isinstance(exc, OSError) else 'invalid_input', output=getattr(args, '_run_output', None)))
+        if started is not None:
+            summarize(dict(status='execution_error' if isinstance(exc, OSError) else 'invalid_input', output=getattr(args, '_run_output', None)))
+        else:
+            from .exit_guidance import summary
+            print('ahl: ' + summary({'status': 'invalid_input'}), file=sys.stderr)
         parser.exit(2, f'ahl: {exc}\n')
 
 

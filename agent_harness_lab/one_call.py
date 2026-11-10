@@ -12,6 +12,7 @@ import shlex
 import time
 
 from . import config, surfaces
+from .exit_guidance import REMEDIATION as REMEDIATION
 
 
 def invocation_context(args,output,deadline,*,remaining_seconds=None,remaining_trials=None):
@@ -95,21 +96,6 @@ def preflight(args):
 
 
 # One actionable step per preflight reason; no step grants authorization or changes a setting itself.
-REMEDIATION = {
-    'responses_inherit_env_unsupported': 'Remove --inherit-env when using the Responses runtime.',
-    'select_one_runtime_with_agent': 'Several supported runtimes were found; rerun with --agent codex or --agent claude (or set runtime in ahl.json).',
-    'agent_runtime_unavailable': 'No requested runtime executable was found; install it or pass its trusted path with --codex or --claude. Authentication is not checked by AHL.',
-    'trial_budget_requires_two_preparation_and_six_paired_trials': 'Raise the trial limit to at least 8 in ahl.json limits.trials.',
-    'configured_bank_invalid_or_unavailable': 'Select an accessible valid project bank or use the starter bank; review its configuration before retrying.',
-    'configured_bank_digest_mismatch': 'The configured bank changed; review it and set bank.sha256 in ahl.json to its new digest.',
-    'configured_profile_does_not_allow_cooperative_improvement': 'ahl.json profile is not cooperative; review it and set profile to cooperative and runtime to {name: codex or claude, executable: <absolute path>} to allow model execution.',
-    'configured_bank_requires_cooperative_runtime': 'Pinned project banks run only on the codex or claude runtime; set runtime in ahl.json to {name: codex or claude, executable: <absolute path>}.',
-    'configured_runtime_differs_from_requested_runtime': 'The requested runtime or executable differs from ahl.json; drop the override or update runtime in ahl.json.',
-    'configured_bank_cannot_combine_with_managed_experiment': 'Run without --experiment-request/--evaluation-store, or use the starter bank.',
-    'configured_managed_bank_requires_controlled_workflow': 'Managed banks run only through the controlled workflow; use a non-managed bank.',
-    'configured_bank_requires_development_regression_and_heldout': 'Add development, calibration and held-out (certification or transfer) partitions to the bank.',
-    'configured_bank_shared_trial_budget_exhausted': 'Raise limits.trials in ahl.json to at least 1 + 2 * (bank task count).',
-}
 DEFAULT_REMEDIATION = 'Select a supported runtime/profile and budget; see ahl improve --help'
 
 

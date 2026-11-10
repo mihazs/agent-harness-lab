@@ -108,7 +108,8 @@ def test_final_improve_progress_counts_changes_without_paths(case, changed, expe
     assert json.dumps(result['output']) in error.getvalue()
     assert 'trials_spent=unknown' in error.getvalue()
     assert 'cost=unknown' in error.getvalue()
-    assert 'next=Review the receipt' in error.getvalue()
+    from agent_harness_lab.exit_guidance import STATUS_ACTION
+    assert f"next={STATUS_ACTION['no_change']}" in error.getvalue()
 
 
 def test_final_blocked_summary_uses_known_remediation_and_handles_missing_artifacts(case):
