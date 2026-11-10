@@ -17,14 +17,12 @@ CONFIGS={
     'Taskfile.yml':('task_runner','local'), 'Taskfile.yaml':('task_runner','local'),
     'Makefile':('task_runner','local'), 'makefile':('task_runner','local'), 'package.json':('task_runner','local'),
     '.pre-commit-config.yaml':('git_hook','pre_commit'), 'lefthook.yml':('git_hook','pre_commit'),
-    'lefthook.yaml':('git_hook','pre_commit'), '.gitlab-ci.yml':('ci','ci'),
+    'lefthook.yaml':('git_hook','pre_commit'),
 }
 
 
 def category(path):
     parts=PurePosixPath(path).parts;name=parts[-1]
-    if len(parts)>=3 and parts[:2]==('.github','workflows') and name.endswith(('.yml','.yaml')):
-        return 'ci','ci'
     if name in CONFIGS:return CONFIGS[name]
     if ((name.startswith('test_') and name.endswith('.py')) or name.endswith(('_test.py','.test.js','.test.ts',
             '.test.tsx','.spec.js','.spec.ts','.spec.tsx'))):

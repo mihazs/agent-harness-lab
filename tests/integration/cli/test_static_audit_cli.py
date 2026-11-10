@@ -641,6 +641,8 @@ def test_feedback_sensor_candidates_stay_private_and_unexecuted(tmp_path,monkeyp
     monkeypatch.setenv('XDG_STATE_HOME',str(tmp_path/'state'))
     monkeypatch.setattr(subprocess,'Popen',lambda *a,**kw:pytest.fail('sensor executed'))
     assert main(['audit',str(project),'--json'])==0
+    assert 'feedback_sensor_candidates' not in json.loads(capsys.readouterr().out)
+    assert main(['audit',str(project),'--json','--feedback-sensors'])==0
     report=json.loads(capsys.readouterr().out);view=report['feedback_sensor_candidates']
     assert any(row['path']=='Taskfile.yml' and row['category']=='task_runner' for row in view['candidates'])
     assert view['consistency']=='not_checked' and view['runtime_execution']=='unknown'

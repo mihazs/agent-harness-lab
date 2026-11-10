@@ -365,11 +365,13 @@ the offline audit. The content-free hint does not change that exposure.
 
 ### Feedback sensor candidates
 
-The private CLI report includes a filename-only feedback sensor inventory for
-recognized test paths, configuration files, task runners, CI workflows and Git
-hook configurations. A candidate's `stage` is a filename convention, not proof
-that a check exists, runs early or executes successfully. Contents and commands
-are not read by this inventory; unsupported names and incomplete walks leave
-coverage unknown. Instruction-to-command consistency and stale-target detection
-are not checked in this slice. The inventory is a separate metadata observation,
-not an atomic snapshot with the other audit inputs.
+`ahl audit PROJECT --feedback-sensors` adds a private filename-only inventory for
+recognized test paths, configuration files, task runners and Git hook configurations.
+A candidate's `stage` is a filename convention, not proof that a check exists,
+runs early or executes successfully. Contents and commands are not read by this
+inventory. `coverage` describes only the metadata walk: refused paths make it
+unknown, and unrecognized filenames mean detection completeness is unknown even
+when the walk completed. Instruction-to-command consistency and stale-target
+detection are not checked in this slice. The inventory is a separate metadata
+observation, not an atomic snapshot with other audit inputs. Without the option,
+the existing report shape is unchanged.
