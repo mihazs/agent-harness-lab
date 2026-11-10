@@ -37,7 +37,7 @@ def _recover(inventory):
     return next((c for c in sorted(candidates) if digest(c) == inventory.task_cwd_sha256), None)
 
 
-def codex(inventory, task_cwd=None, *, declared_limit=None):
+def codex(inventory, task_cwd=None, *, declared_limit=None, blank_prefix=None):
     """{path: (reason, measures)} for chain files the declared or default budget truncates or skips."""
     if declared_limit is not None and (type(declared_limit) is not int or declared_limit < 0):
         raise ValueError('invalid declared Codex project document byte limit')
@@ -74,6 +74,14 @@ def codex(inventory, task_cwd=None, *, declared_limit=None):
             # A prefix that ends inside the leading whitespace run is blank and uses no budget unless it cuts a
             # multi-byte character, which the facts do not record, so its loaded bytes and later files are unsettled.
             if remaining < leading:
+                observed = blank_prefix(selected.path, remaining) if blank_prefix is not None else None
+                if observed is True:
+                    if not blank: found[selected.path] = (truncated, _measures(0, size, limit))
+                    continue
+                if observed is False:
+                    found[selected.path] = (truncated, _measures(remaining, size - remaining, limit))
+                    remaining = 0
+                    continue
                 if not blank: found[selected.path] = (truncated, (('budget_bytes', limit),))
                 return found
             # A prefix that is exactly the whitespace run ends on a character boundary: blank, so Codex loads none of

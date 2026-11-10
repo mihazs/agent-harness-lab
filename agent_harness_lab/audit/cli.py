@@ -94,6 +94,8 @@ def main(argv=None):
     parser.add_argument('--npm-test-observation', action='store_true', help='Compare root instruction mentions and package test declaration')
     parser.add_argument('--codex-project-doc-max-bytes', type=int,
                         help='Caller-declared Codex byte budget; runtime configuration is not read')
+    parser.add_argument('--codex-budget-boundary', action='store_true',
+                        help='Recheck ambiguous Codex budget boundaries in a separate private observation')
     parser.add_argument('--instruction-soft-lines', type=int, default=200,
                         help='Checkout instruction-line convention (default: 200; not a validated threshold)')
     args = parser.parse_args(argv)
@@ -102,6 +104,8 @@ def main(argv=None):
             raise ValueError('improvement recheck currently supports Codex only')
         if args.codex_project_doc_max_bytes is not None and args.runtime != 'codex':
             raise ValueError('Codex byte budget requires the Codex runtime')
+        if args.codex_budget_boundary and args.runtime != 'codex':
+            raise ValueError('Codex budget boundary requires the Codex runtime')
         if args.instruction_soft_lines < 0: raise ValueError('instruction soft-line budget must be nonnegative')
         project = args.project.resolve(strict=True)
         if not project.is_dir():
@@ -119,6 +123,7 @@ def main(argv=None):
         report = _project(inventory, audit.audit(inventory, task_cwd=args.task_cwd,
             codex_project_doc_max_bytes=args.codex_project_doc_max_bytes).document(), args.task_cwd)
         if args.runtime == 'codex':
+            boundaries = {} if args.codex_budget_boundary else None
             report['codex_budget_declaration'] = dict(
                 bytes=(args.codex_project_doc_max_bytes if args.codex_project_doc_max_bytes is not None
                        else audit.chain.CODEX_DEFAULT_BYTES),
@@ -127,7 +132,8 @@ def main(argv=None):
             try:
                 with Folder(project.parent, time.monotonic() + 30) as folder:
                     report['declared_instruction_totals'] = instruction_totals.codex(
-                        profile, folder, project.name, inventory, declared_limit=args.codex_project_doc_max_bytes)
+                        profile, folder, project.name, inventory, declared_limit=args.codex_project_doc_max_bytes,
+                        budget_boundaries=boundaries)
             except (ValueError, OSError, TimeoutError):
                 report['declared_instruction_totals'] = dict(status='unknown', bytes=None, lines=None, files=None,
                     reasons=['resolution_unavailable'], scope='captured_checkout_project_chain',
@@ -150,6 +156,10 @@ def main(argv=None):
                     inventory_comparison='recognized_instruction_files_only', cross_observation_consistency='unknown',
                     publication_allowed=False)
         total = report['declared_instruction_totals']
+        if args.codex_budget_boundary:
+            from . import budget_boundary
+            report['codex_budget_boundary'] = budget_boundary.report(inventory,args.task_cwd,
+                args.codex_project_doc_max_bytes,total,boundaries)
         if args.runtime == 'claude-code' and total['status'] == 'declared' and total.get('empty_import'):
             _instruction_hypothesis(report, 'instruction_empty_import', 'structural',
                                     'evaluate_empty_instruction_import')
@@ -225,6 +235,10 @@ def main(argv=None):
                 npm=report['npm_test_observation']
                 print(f"Root npm test: instruction mention {npm['instruction_mention']}; "
                       f"script declaration {npm['test_script']}; execution unknown")
+            if args.codex_budget_boundary:
+                boundary=report['codex_budget_boundary']
+                print('Codex budget boundary observation: '+boundary['status']+
+                      '; additional findings: '+str(len(boundary['additional_findings']))+'; loading unknown')
             events = report['hook_events']
             print('Declared hook events: ' + (', '.join(events['declared']) or 'none observed') +
                   f" (coverage: {events['coverage']}; execution: unknown)")

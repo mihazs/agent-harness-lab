@@ -66,7 +66,7 @@ def claude(profile, folder, checkout, *, expected=None):
                 cross_observation_consistency='unknown', publication_allowed=False)
 
 
-def codex(profile, folder, checkout, inventory, *, declared_limit=None):
+def codex(profile, folder, checkout, inventory, *, declared_limit=None, budget_boundaries=None):
     """Count the selected checkout chain only when all bytes are settled and untruncated."""
     import hashlib
     from pathlib import Path
@@ -83,6 +83,7 @@ def codex(profile, folder, checkout, inventory, *, declared_limit=None):
     refused = {r.path for r in inventory.refusals if r.root == 'checkout'}
     reasons, rows = set(), []
     remaining = instructions.CODEX_DEFAULT_BYTES if declared_limit is None else declared_limit
+    observed_remaining = remaining
     if digest(profile['task_cwd']) != inventory.task_cwd_sha256:
         raise ValueError('task directory differs from the inventory')
     if any(node.trust == 'declared_untrusted' for node in nodes.values()):
@@ -107,6 +108,12 @@ def codex(profile, folder, checkout, inventory, *, declared_limit=None):
                 break
             text = raw.decode('utf-8')
             blank = instructions.codex_blank(raw)
+            if budget_boundaries is not None and observed_remaining:
+                prefix = raw[:observed_remaining]
+                prefix_blank = not prefix.decode('utf-8', errors='replace').strip(instructions.RUST_WHITESPACE)
+                if len(raw) > observed_remaining:
+                    budget_boundaries[(path,observed_remaining)] = prefix_blank
+                if not prefix_blank: observed_remaining -= len(prefix)
             if not blank:
                 if len(raw) > remaining: reasons.add('truncated_chain_not_counted')
                 else: remaining -= len(raw)
