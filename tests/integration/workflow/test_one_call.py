@@ -78,6 +78,16 @@ def test_single_call_applies_verified_contract_and_is_idempotent(one):
     assert one.invoke('--repair-contracts')[1]['status'] == 'no_change'
 
 
+def test_real_repair_reports_measured_budget_after_controller_started(one, capsys):
+    code, result = one.invoke('--repair-contracts', '--timeout', '60')
+    assert (code, result['status']) == (0, 'applied')
+    summary = capsys.readouterr().err
+    assert 'budget_spent_seconds=' in summary
+    assert 'budget_spent_seconds=unknown' not in summary
+    assert 'remaining_seconds=unknown' not in summary
+    assert 'trials_spent=unknown' in summary
+
+
 def test_skill_whose_description_mentions_hooks_is_still_repaired(one):
     valid=one.valid.replace(b'Use for synthetic checks.',b'Use to review git hooks and React hooks in synthetic checks.')
     one.skill.write_bytes(b'\xef\xbb\xbf'+valid)

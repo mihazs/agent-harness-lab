@@ -51,9 +51,11 @@ budgets stop before inference, each with its own `reason` and a matching one-ste
 by improve. Configured trials share one ceiling across preparation and both attempts.
 On completion, improve writes its structured receipt to stdout and a concise
 outcome summary to stderr. The summary includes the reported changed-file count,
-artifact directory when available, a next step, and elapsed time. It marks
-unmeasured remaining time, trial spend and cost as unknown. Artifact paths are
-private local information; keep the output within the authorized environment.
+artifact directory when available, a next step, and elapsed time. Once a
+controller budget clock starts, it also reports measured time spent and time
+remaining; otherwise those values are unknown. Trial spend and cost remain
+unknown because reservations are not execution or billing observations. Artifact
+paths are private local information; keep the output within the authorized environment.
 The bundled starter bank is not represented as a target-project certification bank.
 Only configured harness files enter preparation snapshots; candidates outside that
 scope are rejected before evaluation construction. Watch uses the same preflight

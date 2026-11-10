@@ -183,6 +183,7 @@ def contracts(args):
     if getattr(args, 'experiment_request', None) is not None:
         raise ValueError('contract repair and repeated experiment requests are separate modes')
     started = time.monotonic()
+    args._budget_started = started
     output = output_dir(args, deadline=started + args.timeout)
     baseline, candidate = output/'baseline', output/'candidate'
     original = snapshot(args.project, baseline, allowed_paths=allowed_paths(args))

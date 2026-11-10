@@ -2,6 +2,7 @@
 from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
+import re
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -122,3 +123,38 @@ def test_final_blocked_summary_uses_known_remediation_and_handles_missing_artifa
     assert 'changed_files=unknown' in error.getvalue()
     assert '--agent codex or --agent claude' in error.getvalue()
     assert 'remaining_seconds=unknown' in error.getvalue()
+
+
+@pytest.mark.parametrize('status', ['no_change', 'execution_error', 'blocked'])
+def test_measured_budget_reports_spent_and_remaining_for_controller_outcomes(case, status):
+    output, error = io.StringIO(), io.StringIO()
+    def improve(args):
+        args._budget_started = cli.time.monotonic() - 2
+        return {'status': status, 'changed_files': []}
+    with redirect_stdout(output), redirect_stderr(error), patch('agent_harness_lab.workflow.improve', side_effect=improve):
+        cli.main(['improve', str(case.project), '--timeout', '60'])
+    measured = re.search(r'budget_spent_seconds=([0-9.]+) remaining_seconds=([0-9.]+)', error.getvalue())
+    assert measured is not None
+    spent, remaining = map(float, measured.groups())
+    assert spent >= 2 and abs(remaining-max(0, 60-spent)) <= .11
+    assert 'trials_spent=unknown' in error.getvalue()
+
+
+def test_budget_timing_normalization_preserves_unknown():
+    from agent_harness_lab.entry_parity import normalized_stderr
+    result = normalized_stderr('budget_spent_seconds=2.3 remaining_seconds=57.7 trials_spent=unknown', '/run')
+    assert result == 'budget_spent_seconds=<seconds> remaining_seconds=<seconds> trials_spent=unknown'
+
+
+def test_exception_reports_measured_budget_without_claiming_trial_spend(case):
+    output, error = io.StringIO(), io.StringIO()
+    def fail(args):
+        args._budget_started = cli.time.monotonic() - 2
+        raise ValueError('synthetic failure')
+    with redirect_stdout(output), redirect_stderr(error), patch('agent_harness_lab.workflow.improve', side_effect=fail):
+        with pytest.raises(SystemExit) as stopped:
+            cli.main(['improve', str(case.project), '--timeout', '60'])
+    assert stopped.value.code == 2
+    assert output.getvalue() == ''
+    assert re.search(r'budget_spent_seconds=[0-9.]+ remaining_seconds=[0-9.]+', error.getvalue())
+    assert 'trials_spent=unknown' in error.getvalue()

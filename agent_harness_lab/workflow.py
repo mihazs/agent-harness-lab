@@ -454,6 +454,7 @@ def _improve(args):
     started = time.monotonic()
     if getattr(args,'_configured_started',None) is not None:started=min(started,args._configured_started)
     started=min(started,getattr(args,'_construction_started',started))
+    args._budget_started = started
     remaining = lambda: args.timeout - (time.monotonic() - started)
     runner = evaluator()
     output = output_dir(args,deadline=started+args.timeout)
@@ -937,9 +938,11 @@ def _run_improvement(args, *, parent_started=None):
     configured=getattr(args,'_configured_responses',False)
     started=time.monotonic() if managed or configured or pinned_bank(args) is not None else None
     if (managed or configured) and parent_started is not None: started=min(started,parent_started)
-    for name in ('_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256','_configured_started'):
+    for name in ('_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256','_configured_started','_budget_started'):
         if hasattr(args,name):delattr(args,name)
-    if started is not None: args._construction_started=started
+    if started is not None:
+        args._construction_started=started
+        args._budget_started=started
     if configured: args._configured_started=started
     try:
         from .one_call import contracts, preflight, check_configuration, REMEDIATION, DEFAULT_REMEDIATION
