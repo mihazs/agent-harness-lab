@@ -248,7 +248,7 @@ def exposure_check(store,case,state,*,reservation_id=None):
     bank,_=record(case/'bank/bank.json',1024*1024)
     tasks=[dict(id=task['task_id']) for task in bank['tasks']]
     bundles={task['task_id']:dict(path=task['grader_bundle']) for task in bank['tasks']}
-    references=set(oracle_references(case/'bank',tasks,bundles))
+    references=set(oracle_references(case/'bank',tasks,bundles,expected_only=True))
     reference_guard(state,references,custody['construction_id'])
     assets=bank_assets(case/'bank/bank.json');_managed_available(state,assets,final_author=custody['construction_id'])
     selected=set(assets);snapshot=deepcopy(state)

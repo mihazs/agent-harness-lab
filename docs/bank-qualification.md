@@ -144,9 +144,11 @@ Current positive final-bank review supports the controller-owned
 qualification; it runs with Python `-I -S` and reads `result.json` and a nonempty
 strict JSON object in `expected.json`. The result must contain that object's fields
 with matching types and values. Other grader programs remain unqualified. The
-controller records raw and canonical JSON content identities for oracle files,
-in addition to whole-bundle identities. A changed bundle, filename or JSON key
-order does not make a matching reference fresh. Earlier nonempty ledgers without
+controller records raw file identities and canonical JSON subtree and scalar
+value identities for prior oracle files, in addition to whole-bundle identities.
+It compares these with values in the final reference: a changed bundle, filename,
+JSON key order or surrounding object does not make a matching value fresh.
+Repeated ordinary values can cause conservative blocks. Earlier nonempty ledgers without
 this per-file coverage, prior opaque grader programs, and observations whose
 coverage is unavailable remain unknown and block final-bank qualification.
 Matching common oracle data may also

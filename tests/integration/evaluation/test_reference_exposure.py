@@ -19,10 +19,15 @@ def assets(root, name, reference, control):
     return ledger.exposure(root,tasks,bundles)[0],ledger.oracle_references(root,tasks,bundles)
 
 
+def expected(root,name):
+    return ledger.oracle_references(root,[dict(id=name)],{name:dict(path=name+'-oracle')},expected_only=True)
+
+
 def test_changed_controls_do_not_hide_reused_reference_in_real_ledger(tmp_path):
     prior,prior_refs=assets(tmp_path,'prior','{"a":1,"b":2}','{"prior":true}')
-    _,reused=assets(tmp_path,'reused','{ "b": 2, "a": 1 }','{"new":true}')
-    _,distinct=assets(tmp_path,'distinct','{"a":3}','{"other":true}')
+    assets(tmp_path,'reused','{ "b": 2, "a": 1 }','{"new":true}')
+    assets(tmp_path,'distinct','{"a":3}','{"other":true}')
+    reused,distinct=expected(tmp_path,'reused'),expected(tmp_path,'distinct')
     path=tmp_path/'ledger.json'; pin='a'*64
     ident=ledger.begin_construction(path,'evaluator_author',pin)
     ledger.finish_construction(path,ident,pin,prior,'b'*64,references=prior_refs)
@@ -30,6 +35,37 @@ def test_changed_controls_do_not_hide_reused_reference_in_real_ledger(tmp_path):
         with pytest.raises(ValueError,match='previously exposed'):
             ledger.reference_guard(state,reused,None)
         ledger.reference_guard(state,distinct,None)
+
+
+def test_partial_nested_reference_value_is_not_fresh(tmp_path):
+    prior,refs=assets(tmp_path,'prior','{"answer":"shared-canary","extra":1}','{"old":"control"}')
+    assets(tmp_path,'reused','{"answer":"shared-canary"}','{"new":"control"}')
+    assets(tmp_path,'distinct','{"answer":"different-canary"}','{"new":"control"}')
+    path=tmp_path/'ledger.json'; pin='a'*64
+    ident=ledger.begin_construction(path,'evaluator_author',pin)
+    ledger.finish_construction(path,ident,pin,prior,'b'*64,references=refs)
+    with ledger._locked(path) as (_,state):
+        with pytest.raises(ValueError,match='previously exposed'):
+            ledger.reference_guard(state,expected(tmp_path,'reused'),None)
+        ledger.reference_guard(state,expected(tmp_path,'distinct'),None)
+
+
+def test_reference_index_limit_leaves_development_uncovered(tmp_path):
+    assets(tmp_path,'prior','{"answer":"original"}','{"control":"old"}')
+    (tmp_path/'prior-oracle'/'expected.json').write_text(json.dumps({'answer':list(range(3100))}))
+    tasks=[dict(id='prior')]; bundles={'prior':dict(path='prior-oracle')}
+    assert ledger.covered_oracle_references(tmp_path,tasks,bundles) is None
+
+
+def test_pre_subtree_ledger_cannot_claim_coverage(tmp_path):
+    prior,refs=assets(tmp_path,'prior','{"answer":"old"}','{"control":"old"}')
+    path=tmp_path/'ledger.json'; pin='a'*64
+    ident=ledger.begin_construction(path,'evaluator_author',pin)
+    ledger.finish_construction(path,ident,pin,prior,'b'*64,references=refs)
+    state=json.loads(path.read_text()); state['schema_version']=5
+    path.write_text(json.dumps(state))
+    with ledger._locked(path) as (_,loaded):
+        assert loaded['reference_coverage'] is False and loaded['oracle_references'][ident]==refs
 
 
 def test_uncovered_legacy_history_is_never_promoted(tmp_path):
@@ -46,7 +82,8 @@ def test_reference_under_another_prior_filename_is_still_detected(tmp_path):
     (tmp_path/'prior-oracle'/'renamed.dat').write_text('{"b":2,"a":1}')
     tasks=[dict(id='prior')]; bundles={'prior':dict(path='prior-oracle')}
     references=ledger.oracle_references(tmp_path,tasks,bundles)
-    _, candidate=assets(tmp_path,'candidate','{"a":1,"b":2}','{"candidate":true}')
+    assets(tmp_path,'candidate','{"a":1,"b":2}','{"candidate":true}')
+    candidate=expected(tmp_path,'candidate')
     path=tmp_path/'ledger.json'; pin='a'*64
     ident=ledger.begin_construction(path,'evaluator_author',pin)
     ledger.finish_construction(path,ident,pin,prior,'b'*64,references=references)

@@ -151,7 +151,7 @@ class TestDerivation(DerivationHarness):
         assert workers.call_count == 8; assert ordinary['state'] == 'sealed'
         assert f.store.show(run_id)['state'] == 'sealed'
         state=json.loads((f.store.root/'protected-access.json').read_bytes())
-        assert state['schema_version'] == 5 and state['reference_coverage'] is False
+        assert state['schema_version'] == 6 and state['reference_coverage'] is False
         assert self.output.stat().st_mode&0o777 == 0o700
         case,_,inputs,_=f.store.opened(ordinary['run_id'])
         assert 'derivation_binding_sha256' in inputs

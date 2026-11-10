@@ -85,23 +85,39 @@ def snapshot_exposure(snapshot,tasks,bundles,check=lambda:None):
     return _exposure(tasks,bundles,lambda name:snapshot_tree(snapshot,name),check)
 
 
-def oracle_references(root, tasks, bundles, check=lambda: None):
+def _reference_values(raw,result):
+    result.add(hashed(['oracle-file-raw-v1',hashlib.sha256(raw).hexdigest()]))
+    try:
+        value=json.loads(raw,object_pairs_hook=unique_object,parse_constant=invalid_constant)
+        canonical=encoded(value)
+    except (ValueError,TypeError,RecursionError,UnicodeError,OverflowError):
+        return
+    result.add(hashed(['oracle-file-json-v1',hashlib.sha256(canonical).hexdigest()]))
+    pending=[value]; count=0; total=0
+    while pending:
+        current=pending.pop(); count+=1
+        if count>3000: raise ValueError('oracle reference value limit exceeded')
+        raw_value=encoded(current); total+=len(raw_value)
+        if total>16*1024*1024: raise ValueError('oracle reference byte limit exceeded')
+        result.add(hashed(['oracle-json-value-v2',hashlib.sha256(raw_value).hexdigest()]))
+        if isinstance(current,dict): pending.extend(current.values())
+        elif isinstance(current,list): pending.extend(current)
+        if len(result)>3000: raise ValueError('oracle reference identity limit exceeded')
+
+
+def oracle_references(root, tasks, bundles, check=lambda: None, *, expected_only=False):
     from .reference_grader import PROGRAM
     result=set()
     for task in tasks:
         folder=contained(root,bundles[task['id']]['path'])
-        for path,info in tree(folder).items():
+        files=tree(folder)
+        for path,info in files.items():
+            if expected_only and path!='expected.json': continue
             check(); raw=read_regular(contained(folder,path),10*1024*1024)
             if hashlib.sha256(raw).hexdigest()!=info['sha256']:
                 raise ValueError('oracle changed during reference capture')
             if raw==PROGRAM.encode(): continue
-            result.add(hashed(['oracle-file-raw-v1',info['sha256']]))
-            try:
-                value=json.loads(raw,object_pairs_hook=unique_object,parse_constant=invalid_constant)
-                canonical=encoded(value)
-            except (ValueError,TypeError,RecursionError,UnicodeError,OverflowError):
-                continue
-            result.add(hashed(['oracle-file-json-v1',hashlib.sha256(canonical).hexdigest()]))
+            _reference_values(raw,result)
     result=sorted(result); _assets(result)
     return result
 
@@ -111,9 +127,9 @@ def covered_oracle_references(root,tasks,bundles,check=lambda: None):
     try:
         for task in tasks:
             check(); validate(contained(root,bundles[task['id']]['path']))
+        return oracle_references(root,tasks,bundles,check)
     except (ValueError,OSError,TypeError,KeyError,RecursionError):
         return None
-    return oracle_references(root,tasks,bundles,check)
 
 
 def capture(manifest, baseline, candidate, check=lambda: None,*,access_ledger=None,deadline=None):
@@ -164,10 +180,10 @@ def capture(manifest, baseline, candidate, check=lambda: None,*,access_ledger=No
 
 
 def _state(path):
-    if not path.exists(): return dict(schema_version=5, profile=PROFILE, reservations={}, observed_assets={}, derivations={}, constructions={}, reference_coverage=True, oracle_references={})
+    if not path.exists(): return dict(schema_version=6, profile=PROFILE, reservations={}, observed_assets={}, derivations={}, constructions={}, reference_coverage=True, oracle_references={})
     _private(path); state, _ = record(path, MAX_BYTES)
-    fields(state, 'schema_version profile reservations observed_assets'+(' derivations' if state.get('schema_version') in (3,4,5) else '')+(' constructions' if state.get('schema_version') in (4,5) else '')+(' reference_coverage oracle_references' if state.get('schema_version')==5 else ''))
-    if type(state['schema_version']) is not int or state['schema_version'] not in (2,3,4,5) or state['profile'] != PROFILE:
+    fields(state, 'schema_version profile reservations observed_assets'+(' derivations' if state.get('schema_version') in (3,4,5,6) else '')+(' constructions' if state.get('schema_version') in (4,5,6) else '')+(' reference_coverage oracle_references' if state.get('schema_version') in (5,6) else ''))
+    if type(state['schema_version']) is not int or state['schema_version'] not in (2,3,4,5,6) or state['profile'] != PROFILE:
 
         raise ValueError('legacy access state cannot authorize managed diagnostics')
     if not isinstance(state['reservations'], dict): raise ValueError('invalid access reservation index')
@@ -183,7 +199,7 @@ def _state(path):
         assets = set(entry['binding']['assets'])
         if used & assets: raise ValueError('managed assets were reserved more than once')
         used.update(assets)
-    if state['schema_version'] in (3,4,5):
+    if state['schema_version'] in (3,4,5,6):
 
         derivations=state['derivations']
         if not isinstance(derivations,dict): raise ValueError('invalid derivation index')
@@ -212,7 +228,7 @@ def _state(path):
             while current is not None:
                 if current in seen or len(seen)>64: raise ValueError('cyclic or excessive derivation ancestry')
                 seen.add(current); current=derivations[current]['source_derivation_id']
-    if state['schema_version'] in (4,5):
+    if state['schema_version'] in (4,5,6):
         constructions=state['constructions']
         if not isinstance(constructions,dict): raise ValueError('invalid canonical construction index')
         for ident,entry in constructions.items():
@@ -239,9 +255,11 @@ def _state(path):
             elif entry['children'] or entry['output_binding_sha256'] is not None:
                 raise ValueError('incomplete construction cannot claim output')
 
-    if state['schema_version'] != 5:
+    if state['schema_version'] != 6:
         covered=not any(state.get(key) for key in ('reservations','observed_assets','derivations','constructions'))
-        state.update(schema_version=5,reference_coverage=covered,oracle_references={})
+        covered=covered and state.get('reference_coverage',True) is True
+        state.update(schema_version=6,reference_coverage=covered)
+        state.setdefault('oracle_references',{})
         state.setdefault('derivations',{}); state.setdefault('constructions',{})
     elif type(state['reference_coverage']) is not bool:
         raise ValueError('invalid oracle reference coverage')
@@ -462,7 +480,7 @@ def begin_construction(path,role,input_pin,*,parent=None,parents=None):
             if (role!='proposer' or source is None or source['role']!='evaluator_author' or source['state']!='complete'
                     or not parents or not set(parents)<=set(source['children'])):
                 raise ValueError('feedback requires completed owned author assets')
-        state.update(schema_version=5); state.setdefault('derivations',{}); state.setdefault('constructions',{})
+        state.update(schema_version=6); state.setdefault('derivations',{}); state.setdefault('constructions',{})
         ident=secrets.token_hex(32)
         if ident in state['derivations'] or ident in state['constructions']: raise ValueError('construction identity collision')
         state['constructions'][ident]=dict(profile=CONSTRUCTION_PROFILE,state='pending',role=role,parent_construction_id=parent,parent_assets=parents,
