@@ -196,7 +196,8 @@ def main(argv=None):
                 print('Protected path coverage: unknown')
             for source in report['constraint_references']['files']:
                 for row in source['constraints']:
-                    print(f"Constraint reference: {json.dumps(source['source_path'], ensure_ascii=True)}:{row['line']}; hook and enforcement: unknown")
+                    print(f"Constraint reference: {json.dumps(source['source_path'], ensure_ascii=True)}:{row['line']}; "
+                          f"hook: {row['hook_match']}; enforcement: unknown")
             if report['constraint_references']['status'] != 'completed':
                 print('Constraint reference coverage: unknown')
             for row in report['findings']:

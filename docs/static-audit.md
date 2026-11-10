@@ -40,18 +40,24 @@ The separate private `agent_harness_lab.audit.constraint_references.report()` AP
 accepts caller-supplied instruction bytes only when their digest matches a parsed
 checkout inventory node. It emits bounded line-number and hash references for
 lexical hard-constraint cues and exact protected-path references, without line
-text. Loading, hook matching and enforcement remain unknown; lexical cues are not
-proof of a rule or its enforcement. Reference hashes and paths are private and may
+text. For a direct lexical write constraint mentioning an inventoried protected
+path, a well-formed supported command handler in Claude project settings with a
+recognized `PreToolUse` Edit/Write or all-tools matcher is a `hook_candidate_present`.
+Disabled, malformed, conditional and other handler forms stay unknown. The matcher concerns tool names,
+not paths: the handler's behavior, loading, execution and enforcement stay unknown.
+Other matchers and Codex hook matching remain unknown; no match is not evidence
+of missing enforcement. Lexical cues are not proof of a rule or its enforcement.
+Reference hashes and paths are private and may
 be guessable. Inputs are separate observations, not an atomic snapshot.
 The CLI re-reads eligible checkout instruction files through bounded, no-follow
 access and checks their digests against the inventory. The resulting private
 `constraint_references` observation is outside `audit_sha256`; unavailable files
-leave it incomplete, and its coverage, hook matching and enforcement stay unknown.
+leave it incomplete, and its coverage and enforcement stay unknown.
 
 The `hook_events` field lists known event names from declared hook handlers. Its
 coverage is `unknown` when hook surfaces are unavailable or could not be parsed;
 otherwise `declared_only` describes inventory coverage, not execution or enforcement.
-Memory contents are not read. Matching prose rules to hooks is not yet checked.
+Memory contents are not read. Other prose-to-hook matching is not checked.
 Try the [offline walkthrough](audit-walkthrough.md) with a deliberately flawed
 synthetic fixture before auditing a real checkout.
 
