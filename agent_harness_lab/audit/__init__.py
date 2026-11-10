@@ -232,6 +232,7 @@ def audit(inventory, *, task_cwd=None, collision_threshold=skills.COLLISION_THRE
                     hook_surfaces += 1
                     if node.declared_state != 'present' or status != 'parsed': hook_unknown = True
                     else:
+                        if facts.get('warning.unknown_event'): hook_unknown = True
                         for index in range(facts.get('handlers', 0)):
                             event = facts.get(f'handler.{index}.event')
                             if event is None: hook_unknown = True

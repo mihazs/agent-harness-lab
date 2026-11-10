@@ -165,6 +165,13 @@ def main(argv=None):
         report['protected_path_inventory'] = protected_paths(project)
         from .permission_candidates import report as permission_candidates
         report['permission_candidates'] = permission_candidates(inventory, report['protected_path_inventory'])
+        from .hook_candidates import first_write_candidate
+        hook = first_write_candidate(inventory)
+        report['protected_path_hook_review'] = dict(
+            status='tool_hook_candidate_present' if hook else 'unknown', candidate=hook,
+            path_enforcement='unknown', publication_allowed=False,
+            next_action='Review applicable permissions and pre-tool hooks for each protected path; '
+                        'static tool-name candidates do not establish path enforcement.')
         report['improvement_hint'] = improvement_hint.from_findings(report['findings'], args.runtime)
         from .constraint_scan import capture as constraint_scan
         report['constraint_references'] = constraint_scan(project, inventory, report['protected_path_inventory'])
@@ -198,6 +205,10 @@ def main(argv=None):
                       f"permission: {candidates[row['path']]}; enforcement: unknown")
             if report['protected_path_inventory']['coverage'] == 'unknown':
                 print('Protected path coverage: unknown')
+            if report['protected_path_inventory']['paths']:
+                print('Write-tool hook candidate: ' + report['protected_path_hook_review']['status'] +
+                      '; path enforcement: unknown')
+                print(report['protected_path_hook_review']['next_action'])
             for source in report['constraint_references']['files']:
                 for row in source['constraints']:
                     print(f"Constraint reference: {json.dumps(source['source_path'], ensure_ascii=True)}:{row['line']}; "

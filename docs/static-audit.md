@@ -22,8 +22,8 @@ also be `conforms`. The library's separate report retains its documented
 The separate `agent_harness_lab.audit.protected_paths.capture()` inventory lists
 common secret, configuration and CI path candidates using checkout metadata only;
 it never opens their contents. This private, bounded inventory does not determine
-whether any path is protected. Refused paths leave coverage unknown; rule and hook
-matching is not yet implemented. The walk is not an atomic filesystem snapshot.
+whether any path is protected. Refused paths leave coverage unknown. The walk is
+not an atomic filesystem snapshot.
 The CLI includes this separately captured inventory under `protected_path_inventory`;
 it is not covered by `audit_sha256`, which binds the harness inventory audit.
 
@@ -35,6 +35,11 @@ private local settings and other runtime layers remain unknown. The two inputs
 are independently captured snapshots. Rule hashes and paths are private metadata.
 The CLI includes this comparison under `permission_candidates`; it is outside
 `audit_sha256` and does not change the enforcement coverage verdict.
+The CLI also reports `protected_path_hook_review`, a checkout write-tool hook
+candidate and a prompt to review applicable permissions and hooks for each path.
+The hook matcher concerns tool names alone; it does not establish that a handler
+inspects or protects any path. Absent, unsupported and unavailable candidates
+remain unknown. This observation is also outside `audit_sha256`.
 
 The separate private `agent_harness_lab.audit.constraint_references.report()` API
 accepts caller-supplied instruction bytes only when their digest matches a parsed

@@ -51,6 +51,30 @@ def test_audit_permission_deny_is_a_candidate_not_enforcement(tmp_path, monkeypa
     assert 'SYNTHETIC_SECRET' not in json.dumps(report) and 'SYNTHETIC_PRIVATE_COMMAND' not in json.dumps(report)
 
 
+@pytest.mark.parametrize('declared', [True, False])
+def test_protected_path_hook_review_is_tool_only_and_unknown(tmp_path, monkeypatch, capsys, declared):
+    project = tmp_path / 'project'
+    settings = project / '.claude/settings.json'
+    settings.parent.mkdir(parents=True)
+    hooks = {'PreToolUse': [{'matcher': 'Edit', 'hooks': [{'type': 'command', 'command': 'never-run'}]}]} if declared else {}
+    settings.write_text(json.dumps({'hooks': hooks}))
+    (project / '.env').write_text('SYNTHETIC_SECRET')
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    monkeypatch.setattr(subprocess, 'Popen', lambda *a, **kw: pytest.fail('hook executed'))
+    assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
+    report = json.loads(capsys.readouterr().out)
+    review = report['protected_path_hook_review']
+    assert review['status'] == ('tool_hook_candidate_present' if declared else 'unknown')
+    assert review['path_enforcement'] == 'unknown' and review['publication_allowed'] is False
+    assert (review['candidate']['matcher_scope'] == 'tool_name_only') if declared else review['candidate'] is None
+    assert 'review' in review['next_action'].lower()
+    assert 'never-run' not in json.dumps(report) and 'SYNTHETIC_SECRET' not in json.dumps(report)
+    assert main(['audit', str(project), '--runtime', 'claude-code']) == 0
+    output = capsys.readouterr().out
+    assert f"Write-tool hook candidate: {review['status']}; path enforcement: unknown" in output
+    assert review['next_action'] in output
+
+
 def test_human_protected_path_output_escapes_control_characters(tmp_path, monkeypatch, capsys):
     project = tmp_path / 'project'
     project.mkdir()
@@ -86,6 +110,19 @@ def test_unreadable_hook_event_coverage_stays_unknown(tmp_path, monkeypatch, cap
     monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
     assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
     assert json.loads(capsys.readouterr().out)['hook_events'] == dict(declared=[], coverage='unknown', observed_execution='unknown')
+
+
+@pytest.mark.parametrize('groups', [[], [{'hooks': []}]])
+def test_unknown_hook_event_without_handlers_keeps_coverage_unknown(tmp_path, monkeypatch, capsys, groups):
+    target = tmp_path / 'project' / '.claude/settings.json'
+    target.parent.mkdir(parents=True)
+    target.write_text(json.dumps({'hooks': {'SyntheticUnknownEvent': groups,
+        'SessionStart': [{'hooks': [{'type': 'command', 'command': 'never-run'}]}]}}))
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    monkeypatch.setattr(subprocess, 'Popen', lambda *a, **kw: pytest.fail('hook executed'))
+    assert main(['audit', str(target.parent.parent), '--runtime', 'claude-code', '--json']) == 0
+    events = json.loads(capsys.readouterr().out)['hook_events']
+    assert events == dict(declared=['SessionStart'], coverage='unknown', observed_execution='unknown')
 
 
 def test_excluded_hook_source_keeps_known_events_but_coverage_unknown(tmp_path, monkeypatch, capsys):
