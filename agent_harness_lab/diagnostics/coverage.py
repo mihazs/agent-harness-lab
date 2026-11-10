@@ -5,7 +5,6 @@ causal claim. A record without captured evidence is ``unknown_capture`` whatever
 disposition it carries, and a run whose capture completeness is not declared
 ``complete`` cannot report complete coverage: unseen mechanisms may exist.
 """
-from copy import deepcopy
 import hashlib
 import json
 
@@ -88,9 +87,8 @@ def report(mechanisms, *, capture='unknown'):
     """Return the private ``mechanism-coverage-v1`` JSON report for ``mechanisms``.
 
     ``mechanisms`` are records or their ``as_dict`` mappings (as ``run_queue``
-    returns). A repeat of a key is suppressed and listed only when its derived
-    entry (capture, claim level, component, disposition, coverage, limitations
-    and the rest) and history match the first; any other repeat is listed as a
+    returns). A repeat of a key is suppressed as an exact duplicate only when its
+    complete record matches the first; any other repeat is listed as a
     conflict and keeps that key open (``conflicting_records_for_key``), so the
     result never depends on which repeat comes first. One mechanism ID under
     several evidence/component versions stays separate entries, listed as
@@ -103,8 +101,7 @@ def report(mechanisms, *, capture='unknown'):
     for value in mechanisms:
         mechanism = _record(value)
         derived = _entry(mechanism)
-        # Compare what the record derives, not just its review fields: evidence or actionability changes coverage.
-        state = (deepcopy(derived), deepcopy(mechanism.history))
+        state = mechanism.as_dict()
         if mechanism.key in kept:
             entry, first = kept[mechanism.key]
             # Only an exact repeat is suppressed; any disagreement keeps the key open whatever the order.
