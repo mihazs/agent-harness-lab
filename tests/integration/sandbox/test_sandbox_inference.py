@@ -205,6 +205,7 @@ def test_controller_usage_property_is_a_snapshot_during_checkpoints(controller):
     assert client.usage == [dict(input_tokens=5,output_tokens=2,total_tokens=7,cached_input_tokens=3)]
     snapshot = client.usage; snapshot[0]['cached_input_tokens'] = 0
     assert responses.summarize_provider_usage(client.report())['usage']['cached_input_tokens']['total'] == 3
+    with pytest.raises(AttributeError): client.usage = []
 
 
 @pytest.mark.parametrize('output', [
