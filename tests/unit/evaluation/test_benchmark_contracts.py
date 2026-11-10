@@ -29,14 +29,14 @@ def test_trajectory_reports_keep_all_trials_assertions_and_long_identifiers():
 
 
 def test_trajectory_summary_retains_nested_claims_without_private_arguments():
-    child = dict(assertion_id='synthetic-child', assertion_sha256='b'*64, status='unknown',
+    child = dict(assertion_id='synthetic-group/0', assertion_sha256='b'*64, status='unknown',
                  coverage_complete=False, arguments=['SYNTHETIC_SECRET'])
     parent = dict(assertion_id='synthetic-group', assertion_sha256='a'*64, status='satisfied',
                   coverage_complete=False, children=[child])
     report = summary(dict(trajectory_profile='controller-trajectory-v1', trials=[dict(task='synthetic',
         controller_grade=dict(trajectory=dict(status='satisfied', assertions=[parent])))]))
     result = report['trials'][0]['assertions'][0]
-    assert result['children'] == [dict(assertion_id='synthetic-child', assertion_sha256='b'*64,
+    assert result['children'] == [dict(assertion_id='synthetic-group/0', assertion_sha256='b'*64,
                                         status='unknown', coverage_complete=False)]
     assert 'SYNTHETIC_SECRET' not in str(report)
     assert report['report_authority'] == 'imported_unverified' and not report['publication_allowed']
@@ -48,11 +48,28 @@ def test_trajectory_summary_retains_nested_claims_without_private_arguments():
 
 def test_trajectory_summary_rejects_overdeep_assertion_tree():
     node = dict(assertion_id='synthetic', assertion_sha256='a'*64, status='unknown')
+    root = node
     for _ in range(8):
-        node = dict(assertion_id='synthetic', assertion_sha256='a'*64, status='unknown', children=[node])
+        child = dict(assertion_id=node['assertion_id']+'/0', assertion_sha256='a'*64, status='unknown')
+        node['children'] = [child]
+        node = child
     with pytest.raises(ValueError, match='oversized trajectory assertion tree'):
         summary(dict(trajectory_profile='controller-trajectory-v1', trials=[dict(task='synthetic',
-            controller_grade=dict(trajectory=dict(assertions=[node])))]))
+            controller_grade=dict(trajectory=dict(assertions=[root])))]))
+
+
+@pytest.mark.parametrize('change', [
+    {'assertion_id': 'SYNTHETIC_SECRET'},
+    {'assertion_id': 'synthetic-group/0/extra'},
+    {'assertion_sha256': 'SYNTHETIC_SECRET'},
+    {'assertion_sha256': 'A'*64},
+])
+def test_trajectory_summary_rejects_untrusted_child_identity_or_digest(change):
+    child = dict(assertion_id='synthetic-group/0', assertion_sha256='b'*64, status='unknown') | change
+    parent = dict(assertion_id='synthetic-group', assertion_sha256='a'*64, status='unknown', children=[child])
+    with pytest.raises(ValueError, match='invalid trajectory child'):
+        summary(dict(trajectory_profile='controller-trajectory-v1', trials=[dict(task='synthetic',
+            controller_grade=dict(trajectory=dict(assertions=[parent])))]))
 
 
 def test_mismatched_and_unverified_runtime_blocks():
