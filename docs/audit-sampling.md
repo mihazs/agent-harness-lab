@@ -39,7 +39,10 @@ The letters are placeholders. AHL supplies no default rate, budget or seed.
 inclusion probability. The optional `alerted`, `severe`, `uncertain` and
 `out_of_distribution` routes oversample units with that alert status or flag. A
 route rate must lie in (0, 1]. A zero, negative, non-numeric or out-of-range rate
-is refused. The plan binds the frame by hash, so a changed frame is refused.
+is refused. A combined probability that rounds to zero at floating-point precision
+is also refused, including for an undrawn stratum. Very small nonzero probabilities
+can still have substantial rounding and weight limitations; this is not a numerical
+precision guarantee. The plan binds the frame by hash, so a changed frame is refused.
 
 `draw(frame, plan)` uses Poisson sampling. A unit reached by several routes is
 drawn at most once, with inclusion probability `1 - prod(1 - rate)` over its
