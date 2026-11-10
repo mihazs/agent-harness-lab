@@ -4,6 +4,7 @@ import json
 import pytest
 
 from agent_harness_lab import audit
+from agent_harness_lab.sources import harness_inventory
 
 
 @pytest.fixture
@@ -45,3 +46,13 @@ def test_refused_override_does_not_create_a_selection_or_order(checkout):
     result = audit.run(checkout, 'codex', task_cwd='src').instruction_precedence
     assert result['conditional_relations'] == []
     assert result['refusals'] == [dict(path='src/AGENTS.override.md', root='checkout', reason='symlink', status='not_checked')]
+
+
+def test_unsupported_runtime_version_has_no_claimed_order(checkout):
+    inventory = harness_inventory.capture(checkout, dict(schema_version=1, runtime='codex', version='unverified', task_cwd='src'))
+    result = audit.audit(inventory, task_cwd='src').instruction_precedence
+    assert inventory.status == 'unsupported'
+    assert result['status'] == 'not_checked'
+    assert result['documented_load_order'] == []
+    assert result['conditional_relations'] == []
+    assert result['effective'] == 'unknown'

@@ -36,9 +36,10 @@ def report(inventory, task_cwd):
             for index, lower in enumerate(selected):
                 for higher in selected[index + 1:]:
                     relations.append(dict(higher=higher, lower=lower, rule='closer_directory_if_both_loaded', source=source))
-    order = (['user', 'project_root_to_task_directory'] if runtime == 'codex'
-             else ['managed', 'user', 'project', 'local'])
-    return dict(runtime=runtime, source=source, files=files, refusals=refusals, documented_load_order=order,
+    order = ((['user', 'project_root_to_task_directory'] if runtime == 'codex'
+              else ['managed', 'user', 'project', 'local']) if inventory.status == 'declared' else [])
+    return dict(runtime=runtime, status='declared' if inventory.status == 'declared' else 'not_checked',
+        source=source, files=files, refusals=refusals, documented_load_order=order,
         order_source=source, conditional_relations=relations,
         assumptions=['default_project_root_and_fallback_names', 'files_loaded_within_budget'] if runtime == 'codex' else [],
         unchecked={name: 'not_checked' for name in
