@@ -10,6 +10,20 @@ from agent_harness_lab.cli import main
 from agent_harness_lab.diagnostics.retrieval import Incident
 
 
+@pytest.mark.parametrize('name', ['interaction-contract-v1-output', 'audit-sampling-receipt-v1'])
+def test_private_golden_output_rejects_forged_public_benchmark_export(tmp_path, name):
+    from pathlib import Path
+    from tests.unit.evaluation.test_benchmark_contracts import record
+    golden = Path(__file__).resolve().parents[2]/'support/golden_profiles'/f'{name}.json'
+    private = json.loads(golden.read_text())
+    source = tmp_path/'input.json'; source.write_text(json.dumps([private | record() | {'publication_allowed': True}]))
+    output = tmp_path/'public'
+    with pytest.raises(SystemExit) as exc:
+        main(['benchmark-report', '--input', str(source), '--output', str(output), '--public'])
+    assert exc.value.code == 2
+    assert not output.exists()
+
+
 @pytest.mark.parametrize('marker', ['profile', 'ambiguous_sources', 'outcome_correlation', 'grouping_revision_sha256'])
 def test_private_source_outcomes_cannot_be_exported_by_relabeling(tmp_path, marker):
     from agent_harness_lab.evaluation.benchmark import MATCH_FIELDS

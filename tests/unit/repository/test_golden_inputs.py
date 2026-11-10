@@ -9,6 +9,8 @@ import pytest
 
 from agent_harness_lab.diagnostics import audit_sampling, drift, triage_policy
 from agent_harness_lab.evaluation import interaction_contract, resource_decision
+from agent_harness_lab.evaluation.benchmark import public_export_allowed
+from tests.unit.evaluation.test_benchmark_contracts import record as public_record
 
 GOLDENS = Path(__file__).resolve().parents[2] / 'support/golden_profiles'
 
@@ -69,6 +71,11 @@ def test_sampling_plan_and_sealed_receipt_v1_keep_review_custody():
         audit_sampling.review_queue({**receipt, 'profile': 'unknown-v999'})
     with pytest.raises(ValueError, match='invalid audit plan schema'):
         audit_sampling.draw(frame, {**plan, 'profile': 'unknown-v999'})
+
+
+@pytest.mark.parametrize('name', ['interaction-contract-v1-output', 'audit-sampling-receipt-v1'])
+def test_private_golden_output_cannot_be_relabelled_as_a_public_benchmark(name):
+    assert not public_export_allowed([sample(name) | public_record() | {'publication_allowed': True}])
 
 
 @pytest.mark.parametrize(('name', 'validator', 'reason'), [
