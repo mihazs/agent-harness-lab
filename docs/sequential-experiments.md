@@ -84,6 +84,11 @@ recreate a live sampling controller. Cold execution resume is unsupported: an
 in-flight attempt is retained, not silently re-executed. Starting another run
 executes fresh calls with distinct sampling/trial custody and consumes new budget;
 sequential stopping does not authorize repeated candidate selection on final data.
+An incomplete history has no sealed execution result: its retained results file
+may be changed without changing the incomplete history event. History analysis
+therefore returns `controller_run_not_sealed` and cannot issue a decision receipt
+or treat those rows as observed bounds. The separate numeric CLI can analyze
+caller-supplied declarations, but cannot authenticate them as controller custody.
 
 Guarded optimization and full-schedule correction/requalification inputs currently
 reject this new profile rather than treating stopped prefixes as completed banks.

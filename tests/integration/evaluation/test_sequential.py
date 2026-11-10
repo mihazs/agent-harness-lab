@@ -446,6 +446,22 @@ class TestSequentialOnline(SequentialOnline):
         assert not (case/'evidence.json').exists()
         assert self.store.analyze(result['run_id'])['reason'] == 'controller_run_not_sealed'
 
+    def test_unsealed_result_mutation_cannot_create_history_analysis_or_decision(self):
+        skew=self.skewed_clock(custody)
+        def execute(*args,**kwargs):
+            if args[3]=='executor':skew[0]=ROOT_SECONDS
+            return self.execute(*args,**kwargs)
+        result=self.run_history(execute,expect='incomplete')
+        run_id=result['run_id'];path=self.store.case(run_id)/'execution/results.json'
+        unsealed=json.loads(path.read_text())
+        assert len(unsealed['trials'])==1
+        before=self.store.analyze(run_id)
+        unsealed['trials']=[];path.write_text(json.dumps(unsealed))
+        after=self.store.analyze(run_id)
+        assert before==after and after['reason']=='controller_run_not_sealed'
+        assert 'missing_outcome_bounds' not in after and not after['automatic_promotion']
+        with pytest.raises(ValueError):self.store.decision(run_id)
+
     def test_unsealed_fixture_run_reports_its_reason_instead_of_a_downstream_failure(self):
         skew=self.skewed_clock(custody)
         def execute(*args,**kwargs):
