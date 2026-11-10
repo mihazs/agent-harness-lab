@@ -167,6 +167,19 @@ def _issues(plan, run, revisions):
     return issues
 
 
+def _snapshot(plan, run):
+    """Retain immutable fields used by the detector, not caller-owned nested values."""
+    fields = {'started', 'cursor', 'schema_version', 'capture', 'truncated', 'parse_rejected',
+              'task_root', 'harness_revision', 'outcome', 'outcome_provenance',
+              *plan['required_fields'], *plan['strata'], *plan['features']}
+    result = {}
+    for name in fields:
+        if name in run:
+            value = run[name]
+            result[name] = str(value) if isinstance(value, str) else value if type(value) in (int, float, bool, type(None)) else ()
+    return result
+
+
 def _summarize(plan, runs, start, end, revisions=None):
     """One bounded pass over ``runs``; only counts and per-root state are retained."""
     counts = dict(runs=0, eligible_runs=0, duplicates_suppressed=0, conflicting_duplicates=0, untimed_runs=0,
@@ -182,7 +195,7 @@ def _summarize(plan, runs, start, end, revisions=None):
         if signature in versions:
             counts['duplicates_suppressed'] += 1
         else:
-            versions[signature] = run
+            versions[signature] = _snapshot(plan, run)
     conflicts = [versions for versions in seen.values() if len(versions) > 1]
     counts['conflicting_duplicates'] = sum(len(versions) - 1 for versions in conflicts)
     conflict_roots, unresolved_root = set(), False
