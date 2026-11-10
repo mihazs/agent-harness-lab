@@ -54,9 +54,8 @@ class TestCohortRerunRequest:
 class TestCorrectedCohortWorkflow:
     @pytest.fixture(autouse=True)
     def requalification(self):
-        self.fixture = qualification_tests.RequalificationFixture(); self.fixture.setUp()
-        yield
-        self.fixture.doCleanups()
+        with qualification_tests.requalification() as self.fixture:
+            yield
 
     def correct(self,accept_before=False):
         f = self.fixture; application = f.application; correction = application.fixture

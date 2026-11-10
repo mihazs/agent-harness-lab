@@ -236,3 +236,20 @@ def test_grader_helpers_propagate_cleanup_failure(monkeypatch, tmp_path, module,
     with pytest.raises(RuntimeError, match='synthetic grader cleanup failure'):
         with ExitStack() as cleanups:
             getattr(target, helper)(cleanups.callback)
+
+
+def test_requalification_propagates_cleanup_failure(monkeypatch):
+    from contextlib import contextmanager
+    from tests.integration.evaluation import test_cohort_requalification
+
+    @contextmanager
+    def broken():
+        try:
+            yield None
+        finally:
+            raise RuntimeError('synthetic requalification cleanup failure')
+
+    monkeypatch.setattr(test_cohort_requalification, 'bank_correction', broken)
+    with pytest.raises(RuntimeError, match='synthetic requalification cleanup failure'):
+        with test_cohort_requalification.requalification():
+            pass
