@@ -63,6 +63,32 @@ def test_preview_then_exclusive_write_preserves_sentinel_and_permissions(tmp_pat
     assert doctor(tmp_path)['status'] == 'ready'
 
 
+def test_preview_doctor_and_improve_share_limits_without_writing(tmp_path):
+    from argparse import Namespace
+    from agent_harness_lab.one_call import resolve
+    code, preview, error = invoke('init', str(tmp_path), '--non-interactive', '--json')
+    assert code == 0, error
+    template = json.loads(preview)['configuration']
+    assert doctor(tmp_path)['status'] == 'ready'
+    args = Namespace(project=tmp_path, timeout=None, agent='auto', codex='codex', claude='claude')
+    resolve(args, set())
+    assert (args.timeout, args.trial_limit) == (template['limits']['seconds'], template['limits']['trials'])
+    assert args.agent == 'auto'
+    assert not (tmp_path/'ahl.json').exists()
+
+
+def test_shared_resolver_validates_persisted_and_explicit_invocation_overrides(tmp_path):
+    settings = config.prepare(dict(profile='cooperative', runtime=dict(name='codex', executable='/synthetic/codex'),
+                                   limits=dict(seconds=90, trials=8)))
+    config.create(tmp_path, settings)
+    resolved = config.resolve(tmp_path, dict(agent='claude', codex='codex', claude='claude', timeout=12),
+                              {'--agent', '--timeout'})
+    assert resolved['source'] == 'project'
+    assert (resolved['options']['agent'], resolved['options']['timeout'], resolved['trial_limit']) == ('claude', 12, 8)
+    assert resolved['configuration_sha256'] == config.load(tmp_path/'ahl.json')[1]
+    assert doctor(tmp_path)['profile'] == 'cooperative'
+
+
 def test_interactive_cancel_and_non_tty_never_write(tmp_path):
     with patch('sys.stdin.isatty', return_value=True), patch('builtins.input', return_value='q'):
         assert invoke('init', str(tmp_path), '--write')[0] == 1

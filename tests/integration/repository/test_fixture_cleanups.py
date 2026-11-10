@@ -19,6 +19,8 @@ ROWS = [
     ('tests.integration.evaluation.test_permission_audit', 'case', [KERNEL]),
     ('tests.integration.evaluation.test_repeated_workflow', 'kernel_case', [REPEATED_KERNEL]),
     ('tests.integration.evaluation.test_repeated_access_companion', 'kernel_case', [ACCESS_KERNEL]),
+    ('tests.integration.sources.test_source_commit_join', 'github_driver',
+     ['tests.integration.sources.test_source_commit_join.GitHubDriver']),
 ]
 TEMPLATE = '''import contextlib, errno, importlib
 
@@ -352,3 +354,13 @@ def test_repeated_admission_propagates_cleanup_failure(monkeypatch, module, help
     with pytest.raises(RuntimeError, match='synthetic repeated cleanup failure'):
         with ExitStack() as cleanups:
             getattr(importlib.import_module(module), helper)(cleanups.callback)
+
+
+def test_claude_journal_cleanup_failure_is_raised(tmp_path):
+    # ClaudeSourceTests is not a TestCase; its doCleanups runs the native helper's cleanups and must not swallow errors.
+    from tests.integration.sources.test_source_claude import ClaudeSourceTests
+    journal = ClaudeSourceTests(); journal.setUp(tmp_path)
+    def fail(): raise RuntimeError('synthetic per-test cleanup failure')
+    journal.fixture._cleanups.append(fail)
+    with pytest.raises(RuntimeError, match='synthetic per-test cleanup failure'):
+        journal.doCleanups()

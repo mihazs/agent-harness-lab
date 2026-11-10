@@ -20,7 +20,8 @@ from tests.support import harness_surface_fixture as fixture
 CODEX = dict(schema_version=1, runtime='codex', version='0.166.0', task_cwd='src/task')
 SURFACES = {'AGENTS.md': 'instruction', 'CLAUDE.md': 'instruction', '.agents/skills/beta/SKILL.md': 'skill',
             '.claude/skills/alpha/SKILL.md': 'skill', '.claude/hooks/check.sh': 'hook', 'src/task/AGENTS.md': 'instruction'}
-PARSED = {'AGENTS.md': 'parsed', 'src/task/AGENTS.md': 'parsed', 'CLAUDE.md': 'unsupported'}  # Codex reads no CLAUDE.md
+PARSED = {'AGENTS.md': 'parsed', 'src/task/AGENTS.md': 'parsed', 'CLAUDE.md': 'unsupported',  # Codex reads no CLAUDE.md
+          '.agents/skills/beta/SKILL.md': 'parsed', '.claude/skills/alpha/SKILL.md': 'parsed'}
 REFUSED = {'.git': 'vcs_metadata', **fixture.HOSTILE}
 AUDIT = []
 

@@ -111,6 +111,17 @@ class TestConfiguredResponses:
         with patch.object(cgroup,'delegated',return_value=self.cgroup),patch.object(one_call.shutil,'which',side_effect=AssertionError('no native runtime lookup')):
             assert one_call.preflight(args) is None
 
+    def test_inherited_environment_is_rejected_before_responses_preparation(self):
+        self.configured(); args=self.args(inherit_env=True,output=None); one_call.resolve(args,set())
+        from agent_harness_lab.evaluation import cgroup
+        with patch.object(workflow,'state_root',return_value=self.root/'state'), \
+                patch.object(cgroup,'delegated',return_value=self.cgroup), \
+                patch.object(workflow,'_improve',side_effect=AssertionError('no model preparation')):
+            result=workflow._run_improvement(args)
+        assert (result['status'],result['reason']) == ('blocked','responses_inherit_env_unsupported')
+        assert args.agent == 'responses'
+        assert '--inherit-env' in result['remediation']
+
     @pytest.mark.parametrize('reference,paths',[pytest.param('private/responses.json',['AGENTS.md','private'],id='relative-in-directory'),
         pytest.param(None,['private/responses.json'],id='absolute-exact-path'),
         pytest.param('private/responses.json',['private/responses.json'],id='relative-exact-path')])

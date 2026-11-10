@@ -67,6 +67,31 @@ def invoke(pinned, *arguments):
     return code, json.loads(stdout.getvalue())
 
 
+@pytest.mark.parametrize('runtime', ['codex', 'claude'])
+@pytest.mark.parametrize('entry', [['improve'], ['skills', 'invoke']], ids=['cli', 'skill'])
+def test_configured_native_runtime_reaches_controller_in_one_invocation(pinned, runtime, entry):
+    pinned.value['bank'] = config.defaults()['bank']
+    pinned.value['runtime']['name'] = runtime
+    write_config(pinned)
+    (pinned.project/'mode').write_text('no_change')
+    if runtime == 'claude':
+        script = pinned.fixture.agent.read_text()
+        old = "print(json.dumps(dict(type='turn.completed',usage=dict(output_tokens=1))))"
+        new = "print(json.dumps(dict(type='result',subtype='success',is_error=False,usage=dict(output_tokens=1))))"
+        assert old in script
+        pinned.fixture.agent.write_text(script.replace(old, new))
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        code = main([*entry, str(pinned.project)])
+    result = json.loads(output.getvalue())
+    assert (code, result['status'], result['agent']) == (0, 'no_change', runtime)
+    assert (pinned.project/'AGENTS.md').read_text() == 'bad'
+    assert not (Path(result['output'])/'preparation/evaluation-0/manifest.json').exists()
+    if entry[0] == 'skills':
+        context = json.loads((Path(result['output'])/'invocation.json').read_text())
+        assert context['origin'] == 'skill'
+
+
 def test_full_seven_task_bank_uses_one_preparation_and_exact_shared_budget(pinned):
     code, result = invoke(pinned)
     assert code == 3
@@ -94,6 +119,25 @@ def test_budget_must_cover_proposal_and_all_paired_tasks_before_dispatch(pinned)
         code, result = invoke(pinned)
     assert code == 3
     assert result['reason'] == 'configured_bank_shared_trial_budget_exhausted'
+
+
+@pytest.mark.parametrize('change, expected', [
+    ('malformed', 'configured_bank_invalid_or_unavailable'),
+    ('missing', 'configured_bank_invalid_or_unavailable'),
+    ('symlink', 'configured_bank_invalid_or_unavailable'),
+    ('digest', 'configured_bank_digest_mismatch'),
+])
+def test_invalid_bank_stops_with_actionable_reason_before_dispatch(pinned, change, expected):
+    if change == 'missing': pinned.bank.unlink()
+    elif change == 'symlink':
+        target = pinned.project/'other-bank.json'; target.write_text('{}')
+        pinned.bank.unlink(); pinned.bank.symlink_to(target)
+    elif change == 'malformed': pinned.bank.write_text('{')
+    else: pinned.bank.write_text(pinned.bank.read_text()+'\n')
+    with patch('agent_harness_lab.cli.evaluator', side_effect=AssertionError('no runtime dispatch')):
+        code, result = invoke(pinned)
+    assert (code, result['status'], result['reason']) == (3, 'blocked', expected)
+    assert result['remediation']
 
 
 def test_shared_heldout_fixture_is_allowed_within_bank_but_not_prior_attempt(pinned):

@@ -1,8 +1,9 @@
 # What analysis runs
 
-Run `ahl analyze .` to inspect local evidence without a model call. `ahl analysis .`
-is an alias. Run `ahl improve .` to collect the same evidence and then prepare and
-evaluate supported candidates. Neither command requires a separate mining step.
+`ahl analyze .` inspects local evidence without a model call; `ahl analysis .`
+is its alias. `ahl improve .` collects the same evidence before candidate preparation
+and evaluation. Neither requires a separate mining step. See [workflows](workflows.md)
+for the operating steps.
 
 ## Default methods
 
@@ -80,15 +81,8 @@ Each receipt distinguishes `discovery_input_events` from method-specific
 synthesis carry the same private profile as the execution receipt even when
 extracted for supported local reporting.
 
-The policy adapts algorithm-selection principles from
-[Rice (1976)](https://doi.org/10.1016/S0065-2458(08)60520-3), event-quality guidance
-from the [Process Mining Manifesto](https://www.vdaalst.com/publications/p658.pdf),
-and the distinction between complementary methods and independent bias structures
-in [Lawlor et al.](https://pmc.ncbi.nlm.nih.gov/articles/PMC5841843/).
-[Cawley and Talbot](https://jmlr.org/papers/v11/cawley10a.html) explain why selecting
-on finite observed performance can bias evaluation. These motivate a transparent
-prerequisite policy; they do not establish that AHL's policy is unbiased or improves
-diagnostic accuracy. That requires a separate frozen, independently labeled study.
+The [method-selection rationale](analysis-method-rationale.md) describes the
+research context and limits of this policy.
 
 Private `analysis.json` contains the graph, findings, execution receipt and
 collection metadata. `report.md` presents counts, method statuses and caveats.
@@ -148,6 +142,37 @@ reports `declared_by: caller` instead of `native_adapter`, and the collection
 fingerprint includes the fields because they cannot be rederived from the
 ledger. Broader cross-file ordering remains open in
 [#190](https://github.com/mihazs/agent-harness-lab/issues/190).
+
+## Public benchmark report input
+
+`ahl benchmark-report --public` accepts a nonempty JSON list of flat matched-pair
+records. Each record requires `baseline_runtime`, `candidate_runtime`, and
+`provenance`; the only additional record fields are `status`, `execution_kind`,
+and `publication_allowed`. If supplied, `publication_allowed` must be `true`.
+Unknown fields, profiles, and metadata wrappers are rejected before any report
+directory is created.
+
+Each runtime object supplies `provider`, `runtime`, `model_revision`, `reasoning`,
+`task_bank_revision`, `sandbox_image`, `permissions`, and `controller_version`.
+The values must match within a pair. The only additional runtime field is
+`effective_settings_verified`; it must be `true` in both objects for the settings
+to be reported as verified, and must be a boolean when supplied. The eight
+runtime values are nonempty strings of at most 4096 characters.
+
+`status` may be `unknown`, `not_run`, `not_executed`, `completed`, `passed`,
+`failed`, `skipped`, `inconclusive`, `blocked`, `incomplete`, `interrupted`,
+`budget_exhausted`, `execution_error`, `invalid_input`, `grader_error`, `timeout`,
+`agent_timeout`, `rejected`, or `supported`. `execution_kind` may be `synthetic`,
+`replay`, `real_model`, or `fake_agent`. When omitted, these default to `unknown`
+and `synthetic` respectively.
+
+The provenance object contains only `source_kind`, `approved_publication`,
+`source_ref`, and `derived_from_private`. Public export requires `source_kind` to
+be `synthetic` or `public`, `approved_publication` to be `true`, a nonempty
+`source_ref` string of at most 4096 characters, and `derived_from_private` to be
+`false`. These are caller assertions;
+the command does not authenticate their origin or prove that data is public.
+Without `--public`, the existing private report input path is unchanged.
 
 ## Optional algorithms and remaining integration
 

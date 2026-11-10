@@ -436,6 +436,8 @@ SURFACES = ('instructions', 'path_rules', 'hooks', 'workflows', 'agents', 'comma
             'output_styles', 'memory', 'settings')
 _CLAUDE = 'https://code.claude.com/docs/en/'
 _CODEX = 'https://developers.openai.com/codex/'
+_CLAUDE_PLATFORM = 'https://platform.claude.com/docs/en/'
+_AGENT_SKILLS = 'https://agentskills.io/specification'
 _CODEX_SOURCE = 'https://github.com/openai/codex/tree/d786ff91/codex-rs'
 
 
@@ -519,6 +521,10 @@ CAPABILITIES = (
     _row('commands_skills', 'codex', 'skill name at most 64 characters, scan depth 6, agents/openai.yaml metadata', _CODEX_SOURCE + '/ext/skills/src/loader/mod.rs'),
     _row('commands_skills', 'codex', '[[skills.config]] path or name selector with enabled', _CODEX + 'skills'),
     _row('commands_skills', 'codex', 'skill description limit of 1024 characters', _CODEX + 'skills', 'unverified'),
+    _row('commands_skills', 'claude-code', 'skill name reserved words and description what-and-when guidance', _CLAUDE_PLATFORM + 'agents-and-tools/agent-skills/best-practices'),
+    _row('commands_skills', 'claude-code', 'Agent Skills name, description, 500-line body and file-reference conventions', _AGENT_SKILLS),
+    _row('commands_skills', 'codex', 'Agent Skills name, description, 500-line body and file-reference conventions', _AGENT_SKILLS),
+    _row('commands_skills', 'codex', 'implicit skill matching depends on the description', _CODEX + 'skills'),
     _row('plugins', 'claude-code', 'enabledPlugins, marketplaces and .claude-plugin/plugin.json layout', _CLAUDE + 'plugins-reference'),
     _row('plugins', 'claude-code', 'claude plugin validate', _CLAUDE + 'plugins-reference', gate='>=2.1.233'),
     _row('plugins', 'claude-code', 'exact plugin cache subpath', _CLAUDE + 'plugins-reference', 'unverified'),
