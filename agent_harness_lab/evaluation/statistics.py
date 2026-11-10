@@ -45,18 +45,16 @@ def analyze(spec, records, *, cohort_binding=None):
         return dict(status='incomplete', reason='missing_or_duplicate_trials')
     if set(expected) != {r.trial_id for r in records}:
         return dict(status='incomplete', reason='unexpected_trial_set')
+    if any((r.baseline_hash, r.candidate_hash, r.grader_hash, r.runtime_hash) !=
+           (spec.baseline_hash, spec.candidate_hash, spec.grader_hash, spec.runtime_hash) for r in records):
+        return dict(status='blocked', reason='provenance_mismatch')
+    if any(r.status == 'graded' and r.provenance == 'executable_grader' and r.critical_regression is True for r in records):
+        return dict(status='rejected', reason='critical_regression')
+    if any(r.status != 'graded' or r.provenance != 'executable_grader'
+           or type(r.critical_regression) is not bool or type(r.outcome) is not bool for r in records):
+        return dict(status='incomplete', reason='unknown_or_invalid_grade')
     roots = defaultdict(lambda: defaultdict(dict))
     for record in records:
-        if (record.baseline_hash, record.candidate_hash, record.grader_hash, record.runtime_hash) != (
-                spec.baseline_hash, spec.candidate_hash, spec.grader_hash, spec.runtime_hash):
-            return dict(status='blocked', reason='provenance_mismatch')
-        if (record.status != 'graded' or record.provenance != 'executable_grader'
-                or type(record.critical_regression) is not bool):
-            return dict(status='incomplete', reason='unknown_or_invalid_grade')
-        if record.critical_regression:
-            return dict(status='rejected', reason='critical_regression')
-        if type(record.outcome) is not bool:
-            return dict(status='incomplete', reason='unknown_or_invalid_grade')
         trial = expected[record.trial_id]
         roots[(trial['family'], trial['root'])][(trial['task'], trial['repetition'])][trial['version']] = record.outcome
     families = defaultdict(list)

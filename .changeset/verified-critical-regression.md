@@ -2,4 +2,4 @@
 "agent-harness-lab": patch
 ---
 
-Keep malformed or unverified critical-regression claims incomplete in fixed paired analysis.
+Keep unverified critical-regression claims incomplete and handle graded, executable-grader-labeled regressions consistently across record order in fixed paired analysis.

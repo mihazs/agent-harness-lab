@@ -4,6 +4,7 @@ from dataclasses import replace
 import json
 import math
 import os
+from itertools import permutations
 from pathlib import Path
 import random
 import tempfile
@@ -60,6 +61,21 @@ def test_unverified_critical_regression_remains_incomplete(changes):
     data = records(spec)
     result = analyze(spec, [replace(data[0], **changes), *data[1:]])
     assert (result['status'], result['reason']) == ('incomplete', 'unknown_or_invalid_grade')
+
+
+def test_critical_and_invalid_grades_are_order_independent():
+    spec = plan()
+    data = records(spec)
+    critical = replace(data[0], critical_regression=True)
+    invalid = replace(data[1], status='crashed', critical_regression=True)
+    unknown = replace(data[2], outcome=None)
+    for prefix in permutations((critical, invalid, unknown)):
+        assert analyze(spec, [*prefix, *data[3:]]) == dict(status='rejected', reason='critical_regression')
+        mismatch = replace(unknown, runtime_hash='different')
+        rows = [mismatch if row is unknown else row for row in prefix]
+        assert analyze(spec, [*rows, *data[3:]]) == dict(status='blocked', reason='provenance_mismatch')
+    for prefix in permutations((invalid, unknown)):
+        assert analyze(spec, [data[0], *prefix, *data[3:]]) == dict(status='incomplete', reason='unknown_or_invalid_grade')
 
 
 def test_repeated_related_roots_are_not_independent():
