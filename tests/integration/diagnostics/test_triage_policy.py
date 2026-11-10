@@ -95,3 +95,25 @@ def test_public_cli_uses_frozen_policy_on_heldout_only(tmp_path):
     limited = subprocess.run([*command, '--max-examples', '2'], capture_output=True, text=True)
     assert limited.returncode == 2
     assert 'example limit exceeded' in limited.stderr
+
+
+@pytest.mark.parametrize('value',[10**1000,-10**1000])
+def test_extreme_binary_scores_and_constraints_reject_without_overflow(value):
+    with pytest.raises(ValueError,match='invalid probability'):
+        bench.evaluate_triage_policy([row('synthetic',True)],[value],policy())
+    with pytest.raises(ValueError,match='invalid triage policy constraint'):
+        bench.evaluate_triage_policy([row('synthetic',True)],[.9],dict(policy(),threshold=value))
+    with pytest.raises(ValueError,match='invalid probability'):
+        bench.measure([row('synthetic',True)],[value],.5)
+
+
+def test_cli_extreme_policy_rejects_without_traceback(tmp_path):
+    source,configuration=tmp_path/'examples.jsonl',tmp_path/'policy.json'
+    source.write_text('\n'.join(json.dumps(value) for value in [
+        dict(row('train-positive',True),split='train'),dict(row('train-negative',False),split='train'),
+        row('synthetic',True)])+'\n')
+    configuration.write_text(json.dumps(dict(policy(),threshold=10**1000)))
+    process=subprocess.run([sys.executable,'-m','tools.benchmark_models',str(source),
+        '--method','baseline','--triage-policy',str(configuration)],capture_output=True,text=True)
+    assert process.returncode==2
+    assert 'invalid triage policy constraint' in process.stderr and 'Traceback' not in process.stderr

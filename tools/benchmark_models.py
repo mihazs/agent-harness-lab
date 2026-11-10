@@ -124,7 +124,7 @@ def wilson_lower(successes, count):
 def measure(rows, probabilities, threshold):
     if len(rows) != len(probabilities):
         raise ValueError('prediction count mismatch')
-    if any(not isinstance(p, (float, int)) or not math.isfinite(p) or not 0 <= p <= 1 for p in probabilities):
+    if any(not isinstance(p, (float, int)) or not 0 <= p <= 1 or not math.isfinite(p) for p in probabilities):
         raise ValueError('invalid probability')
     labeled = [(r, float(p)) for r, p in zip(rows, probabilities) if r.get('label') is not None]
     accepted = [(r, p, p >= .5) for r, p in labeled
@@ -182,7 +182,7 @@ def evaluate_triage_policy(rows, probabilities, policy):
         raise ValueError('invalid triage policy schema')
     for name in fields-{'schema_version'}:
         value = policy[name]
-        if type(value) not in (int, float) or not math.isfinite(value) or not 0 <= value <= 1:
+        if type(value) not in (int, float) or not 0 <= value <= 1 or not math.isfinite(value):
             raise ValueError('invalid triage policy constraint')
     if policy['threshold'] < .5:
         raise ValueError('triage confidence threshold must be at least 0.5')
