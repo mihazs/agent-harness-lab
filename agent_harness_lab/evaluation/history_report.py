@@ -64,8 +64,8 @@ def action_timeline(report,trial_id):
         seen.add(ordinal)
         if len(events)>=MAX_ACTION_ROWS:continue
         kind=row.get('kind');kind=kind if kind in ('model_request','tool_request','assistant_emission','message_observation') else 'other'
-        decision=row.get('decision');decision=decision if decision in ('allowed','denied') else 'unknown'
-        outcome=row.get('worker_outcome');outcome=outcome if outcome in ('pending','observed','unavailable') else 'unknown'
+        decision=row.get('decision');decision=decision if decision in ('accepted','denied','pending_validation') else 'unknown'
+        outcome=row.get('worker_outcome');outcome=outcome if outcome in ('pending','observed','unavailable','unobserved') else 'unknown'
         events.append(dict(ordinal=ordinal,request=request,kind=kind,decision=decision,worker_outcome=outcome))
     events.sort(key=lambda row:row['ordinal'])
     coverage=report['coverage']; complete=(coverage.get('records_complete') is True

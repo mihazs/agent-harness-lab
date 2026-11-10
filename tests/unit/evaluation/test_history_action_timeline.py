@@ -9,7 +9,7 @@ def report():
                 trial_id_visibility='observed',scope_id='scope-1',
                 coverage=dict(records_complete=True,omitted_records=0,omitted_updates=0),
                 actions=[dict(scope_id='scope-1',kind='tool_request',observed_ordinal=2,request_ordinal=1,
-                              decision='allowed',worker_outcome='observed',stdout={'text':'SYNTHETIC_SECRET'},
+                              decision='accepted',worker_outcome='observed',stdout={'text':'SYNTHETIC_SECRET'},
                               argv=['SYNTHETIC_SECRET']),
                          dict(scope_id='scope-1',kind='model_request',observed_ordinal=1,request_ordinal=1)])
 
@@ -18,6 +18,9 @@ def test_scoped_metadata_excludes_raw_content_and_keeps_order():
     timeline=action_timeline(report(),'synthetic-trial')
     assert timeline['coverage']=='recorded_complete'
     assert [row['ordinal'] for row in timeline['events']]==[1,2]
+    assert timeline['events'][1]['decision']=='accepted'
+    changed=report();changed['actions'][0]['decision']='allowed'
+    assert action_timeline(changed,'synthetic-trial')['events'][1]['decision']=='unknown'
     assert 'SYNTHETIC_SECRET' not in repr(timeline)
     assert action_timeline(report(),'another-trial')['coverage']=='unknown'
 
