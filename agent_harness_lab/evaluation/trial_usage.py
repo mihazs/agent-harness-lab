@@ -42,7 +42,8 @@ def _pending_row(comparison, client):
 
 def _stage(comparison, client, usage):
     row = _pending_row(comparison, client)
-    if row is not None: row['staged'] = deepcopy(usage)
+    if row is not None and client.response_protocol_validated and 'staged' not in row:
+        row['staged'] = deepcopy(usage)
 
 
 def _confirm(comparison, client):

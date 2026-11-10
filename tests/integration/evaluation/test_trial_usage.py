@@ -42,6 +42,7 @@ def test_live_receipt_uses_admitted_trial_and_stages_before_callback(tmp_path):
     callbacks = []
     def checkpoint(report):
         callbacks.append(trial_usage.current_trial_usage())
+        trial_usage._stage(comparison,client,dict(input_tokens=0,output_tokens=2,total_tokens=2))
         if client._usage: client._usage[0]['input_tokens'] = 0
     client.record = checkpoint
     with comparison:
