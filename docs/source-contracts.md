@@ -3181,7 +3181,7 @@ GiteaSelection(base_url="https://gitea.example.test", owner="synthetic-owner",
 `base_url` is the canonical HTTPS instance root: lowercase host, no default
 `:443`, no trailing slash, query, credentials or `/api/v1` suffix; a sub-path
 such as `https://gitea.example.test/forge` is allowed. `http://` and every other
-form are refused before any connection. `capture` is an ascending subset of
+form are refused before any connection. For schemas 1 and 2, `capture` is an ascending subset of
 `comments`, `issues`, `pulls` and `reviews`; `issues` and `pulls` must appear
 exactly when numbers are selected, `reviews` requires `pulls`, and one number
 cannot be both an issue and a PR (Gitea shares one index). There is no
@@ -3214,6 +3214,18 @@ IDs do not become revisions of the former objects. Version 1 retains its existin
 version 2 has a different selection scope and does not migrate or reconcile
 version 1 histories. These identifiers remain server-reported claims, not
 authenticated proof, and deleted heads remain unknown.
+
+An opt-in `schema_version=3`, `version="v3"` profile adds `review_comments`
+when `reviews` and selected PRs are also requested. It reads each returned
+review's [inline comments](https://docs.gitea.com/api/operations/repo-get-pull-review-comments/)
+and retains only private fingerprints of body, path and actor, the reported
+commit and whether it matches the captured PR head. Fingerprints can be
+guessable. Comment IDs must be unique and bind to the reported review; a head
+match is not an execution or outcome claim. The endpoint's list completeness is
+unverified, including for an empty response, so the capture blocks checkpoints.
+The server may not expose every review to the current viewer, and visibility of
+pending reviews and their comments is unverified.
+The new selection has a separate scope; v1 and v2 histories are unchanged.
 
 For v2, a review listing returning 404 remains `not_found` and blocks a
 checkpoint: the response alone does not establish whether the endpoint is
@@ -3302,8 +3314,8 @@ and each incomplete-page case; repeat import and update; cross-host, sub-path an
 cross-repository number collisions; fork and deleted head identity; missing
 review and version endpoints; 401/403/404/429 coverage; non-HTTPS refusal; and
 GET-only requests. Live Gitea compatibility is not established by these fixtures.
-Still open in #170: inline review comments (`/pulls/N/reviews/ID/comments`),
-PR commits and files, timelines, issue/PR enumeration by state or time window,
+Still open in #170: verified inline-comment completeness, PR commits and files,
+timelines, issue/PR enumeration by state or time window,
 absence tombstones, a relationship graph and native recheck, and CI/job evidence.
 
 ## Explicit GitLab REST v4 captures

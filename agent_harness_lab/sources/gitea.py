@@ -6,16 +6,16 @@ from .github import commit_hash, integer, moment, text_hash
 from .remote_config import ConfiguredAPI
 from .schema import Contract, SourceSpec, digest
 # DEFAULT_LIMITS, MAX_RESPONSE_BYTES and MAX_UNPAGED_ROWS are the shared forge bounds this profile applies.
-from .transport import (DEFAULT_LIMITS, MAX_RESPONSE_BYTES, MAX_UNPAGED_ROWS, TransportError, bounded_api,  # noqa: F401
+from .transport import (DEFAULT_LIMITS, MAX_RESPONSE_BYTES, MAX_UNPAGED_ROWS, TransportError, Unavailable, bounded_api,  # noqa: F401
     endpoint, instance_root, next_page)
 
 PROVIDER = 'gitea'
 SOURCE_VERSION = 'v1'
 API_PREFIX = '/api/v1'
 PAGE_SIZE = 50
-CAPTURE = ('comments', 'issues', 'pulls', 'reviews')
+CAPTURE = ('comments', 'issues', 'pulls', 'review_comments', 'reviews')
 REVIEW_STATES = ('APPROVED', 'COMMENT', 'PENDING', 'REQUEST_CHANGES', 'REQUEST_REVIEW')
-CONTEXTUAL = ('gitea_issue', 'gitea_comment', 'gitea_review')
+CONTEXTUAL = ('gitea_issue', 'gitea_comment', 'gitea_review', 'gitea_review_comment')
 NAME = re.compile(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}')
 
 
@@ -30,7 +30,7 @@ class GiteaSelection(Contract):
     schema_version: int = 1
 
     def __post_init__(self):
-        if type(self.schema_version) is not int or self.schema_version not in (1, 2): raise ValueError('unsupported Gitea selection version')
+        if type(self.schema_version) is not int or self.schema_version not in (1, 2, 3): raise ValueError('unsupported Gitea selection version')
         instance_root(self.base_url, API_PREFIX)
         for name in (self.owner, self.repo):
             if not isinstance(name, str) or NAME.fullmatch(name) is None: raise ValueError('invalid Gitea owner or repository name')
@@ -44,6 +44,7 @@ class GiteaSelection(Contract):
         # Issues and pulls share one per-repository index, so a number is never both.
         if (set(self.issues) & set(self.pulls) or ('issues' in self.capture) != bool(self.issues)
                 or ('pulls' in self.capture) != bool(self.pulls) or 'reviews' in self.capture and not self.pulls
+                or 'review_comments' in self.capture and (self.schema_version != 3 or 'reviews' not in self.capture)
                 or not (self.issues or self.pulls)):
             raise ValueError('Gitea capture kinds must match the explicitly selected numbers')
 
@@ -199,6 +200,33 @@ class GiteaAPI:
             body_sha256=text_hash(value.get('body')), submitted_at=moment(value.get('submitted_at')),
             actor_sha256=self._actor(value.get('user')))
 
+    def _review_comments(self, ledger, emit, number, review_id, parent, head, seen):
+        target = f'{self.repo_path}/pulls/{number}/reviews/{review_id}/comments'
+        try:
+            rows, _ = ledger.fetch(target)
+        except Unavailable as blocked:
+            ledger.note('review_comments', (blocked.state, None), parent)
+            return
+        if not isinstance(rows, list) or len(rows) > MAX_UNPAGED_ROWS:
+            raise ValueError('invalid Gitea review comment list')
+        for row in rows:
+            if not isinstance(row, dict) or integer(row.get('pull_request_review_id'), minimum=1) != review_id:
+                raise ValueError('Gitea review comment belongs to another review')
+            native = integer(row.get('id'), minimum=1)
+            if native in seen: raise ValueError('duplicate Gitea review comment')
+            seen.add(native)
+            self._parent(row.get('pull_request_url'), number)
+            sha = commit_hash(row.get('commit_id') or None)
+            path = row.get('path')
+            if path is not None and (not isinstance(path, str) or len(path) > 4096):
+                raise ValueError('invalid Gitea review comment path')
+            node = dict(parent_sha256=parent, body_sha256=text_hash(row.get('body')), path_sha256=text_hash(path),
+                commit_sha256=sha, matches_head=None if sha is None else sha == head,
+                created_at=moment(row.get('created_at')), actor_sha256=self._actor(row.get('user')))
+            child = emit('gitea_review_comment', native, node, node['created_at'])
+            ledger.relations.add(('inline_comment_on_review', child, parent))
+        ledger.note('review_comments', ('not_observed', 'comment_list_completeness_unverified'), parent)
+
     def _capture(self, source):
         selection = self.selection
         ledger = CaptureLedger(source, self.transport, self.authorization, CONTEXTUAL)
@@ -210,12 +238,17 @@ class GiteaAPI:
             if selection.schema_version == 1: return digest((kind, selection.project_sha256, native))
             if kind == 'gitea_instance': return digest((kind, selection.instance_sha256))
             object_id = node['id_sha256'] if kind in ('gitea_issue', 'gitea_pull') else native
-            parent = node['parent_sha256'] if kind in ('gitea_comment', 'gitea_review') else None
+            parent = node['parent_sha256'] if kind in ('gitea_comment', 'gitea_review', 'gitea_review_comment') else None
             return digest(('gitea-v2', kind, selection.project_sha256, repository['id_sha256'], parent, object_id))
 
         def emit(kind, native, node, original=None): return ledger.emit(key(kind, native, node), kind, node, original)
 
         def selected(kind, number): return digest(('gitea-v2-selection', kind, selection.project_sha256, number))
+
+        def missing_pull(parent):
+            ledger.note('pull', ('not_observed', 'issue_unavailable'), parent)
+            for resource in ('reviews', 'review_comments'):
+                if resource in selection.capture: ledger.note(resource, ('not_observed', 'issue_unavailable'), parent)
 
         version, version_state = ledger.version(API_PREFIX+'/version')
         emit('gitea_instance', 'instance', dict(instance_sha256=selection.instance_sha256,
@@ -228,11 +261,11 @@ class GiteaAPI:
                 parent = key('gitea_issue', number) if selection.schema_version == 1 else selected('gitea_issue', number)
                 node = ledger.read('issue', f'{self.repo_path}/issues/{number}', lambda raw, n=number: self._issue(raw, n, repository['id_sha256']), parent)
                 if node is None:
-                    if selection.schema_version == 2 and 'comments' in selection.capture:
+                    if selection.schema_version >= 2 and 'comments' in selection.capture:
                         ledger.note('comments', ('not_observed', 'issue_unavailable'), parent)
                     continue
                 parent = key('gitea_issue', number, node)
-                if selection.schema_version == 2: coverage[-1]['parent_sha256'] = parent
+                if selection.schema_version >= 2: coverage[-1]['parent_sha256'] = parent
                 if number in selection.pulls and not node['is_pull']: raise ValueError('selected Gitea PR is a plain issue')
                 issues[number] = node; emit('gitea_issue', number, node, node['created_at'])
                 if 'comments' not in selection.capture: continue
@@ -245,19 +278,20 @@ class GiteaAPI:
                     relations.add(('conversation_on', child, parent))
             for number in selection.pulls:
                 if number not in issues:
-                    if selection.schema_version == 2:
+                    if selection.schema_version >= 2:
                         parent = selected('gitea_pull', number)
-                        ledger.note('pull', ('not_observed', 'issue_unavailable'), parent)
-                        if 'reviews' in selection.capture: ledger.note('reviews', ('not_observed', 'issue_unavailable'), parent)
+                        missing_pull(parent)
                     continue
                 parent = key('gitea_pull', number) if selection.schema_version == 1 else selected('gitea_pull', number)
                 node = ledger.read('pull', f'{self.repo_path}/pulls/{number}', lambda raw, n=number: self._pull(raw, n, repository['id_sha256']), parent)
                 if node is None:
-                    if selection.schema_version == 2 and 'reviews' in selection.capture:
+                    if selection.schema_version >= 2 and 'reviews' in selection.capture:
                         ledger.note('reviews', ('not_observed', 'pull_unavailable'), parent)
+                    if selection.schema_version >= 2 and 'review_comments' in selection.capture:
+                        ledger.note('review_comments', ('not_observed', 'pull_unavailable'), parent)
                     continue
                 parent = key('gitea_pull', number, node)
-                if selection.schema_version == 2: coverage[-1]['parent_sha256'] = parent
+                if selection.schema_version >= 2: coverage[-1]['parent_sha256'] = parent
                 pulls[number] = node; emit('gitea_pull', number, node, node['created_at'])
                 relations.add(('pull_issue', parent, key('gitea_issue', number, issues[number])))
                 if 'reviews' not in selection.capture: continue
@@ -267,10 +301,15 @@ class GiteaAPI:
                 if selection.schema_version == 1 and outcome == ('not_found', None):
                     outcome = ('unsupported_endpoint', 'review_listing_not_found')
                 ledger.note('reviews', outcome, parent)
+                if 'review_comments' in selection.capture and not rows:
+                    ledger.note('review_comments', ('not_observed', 'review_listing_unverified'), parent)
+                seen_comments = set()
                 for native, review in rows:
                     unrecognized |= review['state'] == 'unknown'
                     child = emit('gitea_review', native, review, review['submitted_at'])
                     relations.add(('review_on', child, parent))
+                    if 'review_comments' in selection.capture:
+                        self._review_comments(ledger, emit, number, native, child, node['head']['sha256'], seen_comments)
             # Readbacks narrow, but cannot remove, the window for a change between non-atomic reads.
             for number, before in issues.items():
                 after = ledger.read('readback', f'{self.repo_path}/issues/{number}', lambda raw, n=number: self._issue(raw, n, repository['id_sha256']), key('gitea_issue', number, before))
@@ -279,18 +318,20 @@ class GiteaAPI:
                 after = ledger.read('readback', f'{self.repo_path}/pulls/{number}', lambda raw, n=number: self._pull(raw, n, repository['id_sha256']), key('gitea_pull', number, before))
                 if after not in (None, before): raise ValueError('Gitea PR changed during capture')
             if ledger.read('readback', self.repo_path, self._repository) not in (None, repository): raise ValueError('Gitea repository changed during capture')
-        elif selection.schema_version == 2:
+        elif selection.schema_version >= 2:
             for number in sorted(selection.issues+selection.pulls):
                 parent = selected('gitea_issue', number)
                 ledger.note('issue', ('not_observed', 'repository_unavailable'), parent)
                 if 'comments' in selection.capture: ledger.note('comments', ('not_observed', 'issue_unavailable'), parent)
             for number in selection.pulls:
                 parent = selected('gitea_pull', number)
-                ledger.note('pull', ('not_observed', 'issue_unavailable'), parent)
-                if 'reviews' in selection.capture: ledger.note('reviews', ('not_observed', 'issue_unavailable'), parent)
+                missing_pull(parent)
         ready = ledger.ready
         warnings = ['selected_resources_only', 'closure_merge_approval_not_task_outcome', 'readbacks_non_atomic',
             'inline_review_comments_not_captured', 'execution_binding_unknown']
+        if 'review_comments' in selection.capture:
+            warnings.remove('inline_review_comments_not_captured')
+            warnings.append('inline_review_comment_list_completeness_unverified')
         if version is None: warnings.append('server_version_unknown')
         if ledger.unsupported: warnings.append('review_endpoint_unsupported')
         if unrecognized: warnings.append('review_state_unrecognized')
