@@ -221,7 +221,7 @@ def test_skill_coverage_uses_skill_nodes_not_command_rows(tmp_path, monkeypatch,
     assert all(row['dimension'] in ('instructions', 'skills', 'enforcement') for row in report['findings'])
 
 
-@pytest.mark.parametrize(('extra', 'expected'), [(0, 'conforms'), (1, 'missing')])
+@pytest.mark.parametrize(('extra', 'expected'), [(0, 'weak'), (1, 'missing')])
 def test_codex_chain_dropped_bytes_are_missing_coverage(tmp_path, monkeypatch, capsys, extra, expected):
     project = tmp_path / 'project'
     (project / '.git').mkdir(parents=True)
@@ -239,6 +239,8 @@ def test_codex_chain_dropped_bytes_are_missing_coverage(tmp_path, monkeypatch, c
         assert dict(missing[0]['measures'])['dropped_bytes'] == 1
     else:
         assert not missing
+        assert {'instruction_constraints_not_detected', 'instruction_verification_command_not_detected'} <= {
+            row['reason'] for row in report['findings']}
     assert report['publication_allowed'] is False
 
 
@@ -329,7 +331,7 @@ def test_import_change_between_inventory_and_resolver_is_an_unbound_observation(
     assert total['cross_observation_consistency'] == 'unknown'
 
 
-@pytest.mark.parametrize(('limit', 'expected', 'dropped'), [(50000, 'conforms', None), (20000, 'missing', 13000)])
+@pytest.mark.parametrize(('limit', 'expected', 'dropped'), [(50000, 'weak', None), (20000, 'missing', 13000)])
 def test_declared_codex_budget_overrides_assumed_default(tmp_path, monkeypatch, capsys, limit, expected, dropped):
     project = tmp_path / 'project'
     (project / '.git').mkdir(parents=True)
@@ -343,6 +345,8 @@ def test_declared_codex_budget_overrides_assumed_default(tmp_path, monkeypatch, 
     found = [r for r in report['findings'] if r['status'] == 'missing']
     if dropped is None:
         assert not found
+        assert {'instruction_constraints_not_detected', 'instruction_verification_command_not_detected'} <= {
+            row['reason'] for row in report['findings']}
     else:
         assert len(found) == 1 and found[0]['path'] == 'AGENTS.md'
         assert dict(found[0]['measures'])['dropped_bytes'] == dropped
@@ -420,3 +424,72 @@ def test_codex_total_does_not_trust_changed_selected_file(tmp_path, monkeypatch,
     total = json.loads(capsys.readouterr().out)['declared_instruction_totals']
     assert total['status'] == 'unknown' and 'inventory_content_changed' in total['reasons']
     assert total['bytes'] is None and total['cross_observation_consistency'] == 'unknown'
+
+
+def test_codex_minimal_contract_and_procedure_hypotheses(tmp_path, monkeypatch, capsys):
+    project = tmp_path / 'project'
+    (project / '.git').mkdir(parents=True)
+    source = project / 'AGENTS.md'
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    reasons = {'instruction_constraints_not_detected', 'instruction_verification_command_not_detected',
+               'instruction_procedure_section_detected'}
+    source.write_text('Must run pytest.\n')
+    assert main(['audit', str(project), '--json']) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert not reasons.intersection(row['reason'] for row in report['findings'])
+    assert next(row for row in report['coverage'] if row['dimension'] == 'instructions')['status'] == 'conforms'
+    source.write_text('# SYNTHETIC_PRIVATE_HEADING\n' + ''.join(f'{n}. step\n' for n in range(1, 6)))
+    assert main(['audit', str(project), '--json']) == 0
+    output = capsys.readouterr().out
+    report = json.loads(output)
+    assert reasons <= {row['reason'] for row in report['findings'] if row['status'] == 'weak'}
+    assert 'SYNTHETIC_PRIVATE_HEADING' not in output
+    assert report['publication_allowed'] is False
+    assert main(['audit', str(project), '--json', '--codex-project-doc-max-bytes', '2']) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report['declared_instruction_totals']['status'] == 'unknown'
+    assert not reasons.intersection(row['reason'] for row in report['findings'])
+
+
+def test_claude_agents_import_contributes_to_contract(tmp_path, monkeypatch, capsys):
+    project = tmp_path / 'project'
+    project.mkdir()
+    (project / 'CLAUDE.md').write_text('@AGENTS.md\n')
+    (project / 'AGENTS.md').write_text('Must run pytest.\n')
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
+    report = json.loads(capsys.readouterr().out)
+    total = report['declared_instruction_totals']
+    assert (total['status'], total['files'], total['lines']) == ('declared', 2, 2)
+    assert total['shape']['constraints'] and total['shape']['verification_commands']
+    assert not {'instruction_constraints_not_detected', 'instruction_verification_command_not_detected'}.intersection(
+        row['reason'] for row in report['findings'])
+
+
+def test_claude_empty_and_missing_import_diagnostics(tmp_path, monkeypatch, capsys):
+    project = tmp_path / 'project'
+    project.mkdir()
+    (project / 'CLAUDE.md').write_text('@detail.md\n')
+    detail = project / 'detail.md'
+    detail.write_text('  \n')
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report['declared_instruction_totals']['empty_import'] is True
+    assert any(row['reason'] == 'instruction_empty_import' and row['status'] == 'weak' for row in report['findings'])
+    detail.unlink()
+    assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
+    total = json.loads(capsys.readouterr().out)['declared_instruction_totals']
+    assert total['status'] == 'unknown' and 'import_missing' in total['reasons']
+
+
+def test_empty_import_hypothesis_abstains_when_closure_unsettled(tmp_path, monkeypatch, capsys):
+    project = tmp_path / 'project'
+    project.mkdir()
+    (project / 'CLAUDE.md').write_text('@empty.md\n@missing.md\n')
+    (project / 'empty.md').write_text('  \n')
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report['declared_instruction_totals']['status'] == 'unknown'
+    assert not any(row['reason'] == 'instruction_empty_import' for row in report['findings'])
