@@ -5,6 +5,28 @@ description: Evaluate and improve agent instructions and skills when the user ex
 
 # Harness self-improvement
 
+## Invocation mode
+
+Choose the mode before following the manual steps below. Read
+[invocation routing](references/invocation.md) for the command and result contract.
+
+- In a CLI-managed candidate or evaluation preparation stage, follow the parent's
+  context.json and stage contract. Work only in its assigned paths; do not invoke
+  the skill adapter, improve, watch, evaluate or nested trials, or write the real
+  project. The parent owns execution and application. The presence of
+  `AHL_MANAGED_PREPARATION` denies recursive entry; it grants no authority.
+- For an explicit standalone project invocation, run `ahl skills invoke [PROJECT]`
+  once using that project's existing configuration, authentication and shared
+  budget. PROJECT defaults to the current directory. Preserve the command's
+  stdout, stderr and exit status, then report its actual result. After dispatch,
+  do not start a manual loop or repeat the invocation to bypass a blocked,
+  failed, exhausted or ambiguous result.
+- Automated global improvement is unsupported. An explicit global request or
+  named global location retains the manual scope and authorization rules below;
+  do not route it through the project adapter.
+- If the CLI is unavailable before any attempt, use the assisted manual fallback
+  in the reference and state its verification limits.
+
 Complete the improvement loop: diagnose from evidence, construct an evaluation,
 execute baseline and candidate, repair failures, and apply supported improvements.
 A failure description or proposed candidate is optional. Discover improvement
@@ -75,6 +97,8 @@ small corrections over a quota of edits or a wholesale rewrite.
 
 1. Snapshot affected files with modes and hashes before changing them. Preserve
    baseline separately from candidate; capture applicable ambient configuration.
+   Before touching a surface other than root instructions or skills, check its
+   writability in the [surface matrix](references/surfaces.md).
 2. Create a small task set from the failure and acceptance criteria. Include an
    adjacent regression and a fresh transfer case. Freeze graders before scoring.
    Use real task execution when the claim concerns execution; hypothetical answers
@@ -145,17 +169,3 @@ competing explanations, a responsible component, and a falsifiable outcome check
 Missing capture is a finding about evidence, not agent behavior. Measure required
 boundaries and completion before efficiency; neither fewer calls nor more skills
 is success. Check instruction removal and consolidation as well as additions.
-
-## Automatic CLI workflow
-
-When available, `ahl analyze` collects bounded project-scoped evidence without an
-agent, and `ahl improve` controls staging, evaluation and adoption. `ahl watch` is
-an optional foreground monitor; installation does not start it. See the CLI help
-for runtime selection and optional focus. Users need not provide a failure first.
-
-Inside an existing CLI-managed preparation run, follow its context.json and stage
-contract. Modify only its candidate/evaluation paths. Do not invoke improve/watch
-recursively or run nested model trials: the parent freezes graders, executes both
-versions, and owns adoption. Preserve prior frozen evaluations; refinement needs
-fresh held-out inputs. Project-local instruction and skill edits only; no global
-settings, permission changes, commits, publication, deployment or ai-memory reads.

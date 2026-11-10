@@ -8,7 +8,7 @@ import math
 import os
 import secrets
 import time
-from weakref import WeakKeyDictionary, ref
+from weakref import WeakKeyDictionary, WeakSet, ref
 
 from agent_harness_lab.private_journal import encoded
 
@@ -47,6 +47,27 @@ def _enabled(): return _ACTIVE.get() is not None or _scope() is not None
 def _artifact_fingerprints(items):
     if not _enabled(): return None
     return tuple(sorted((hashlib.sha256(name.encode()).hexdigest(),hashlib.sha256(raw).hexdigest()) for name,raw in items))
+
+
+_LOST=WeakSet()
+
+
+def _lose(handle,registry):
+    """Loss is sticky: clearing the attribute can never restore a cached receipt."""
+    handle.lost=True;_LOST.add(handle)
+    owner=registry.get(handle)
+    if owner is not None:registry[handle]=(owner[0],owner[1],None)
+
+
+def _cache_state(handle,registry,maximum):
+    """Keep one bounded issuing-process cache for live custody owners."""
+    owner=registry.get(handle)
+    if owner is None or owner[0]!=os.getpid():handle.lost=True;return
+    if handle.lost or handle in _LOST:_lose(handle,registry);return
+    raw=type(handle)._state(handle)
+    if len(raw)>maximum:
+        handle.lost=True;raw=None
+    registry[handle]=(owner[0],owner[1],raw)
 
 
 class _SessionToken:
@@ -92,12 +113,14 @@ class _Attempt:
             observed_at=datetime.now(timezone.utc).isoformat(),kernels=[],grade=None)
         self.closed = self.lost = False
         self.latest = self.executor = None
+        self.started_ns = time.monotonic_ns()
+        self.locations = {}
         _ACTIVE.set(self)
         _PENDING[self] = self._state()
 
     def _state(self):
         return encoded(dict(data=self.data,expected=sorted(self.expected),deadline=self.deadline,owner=id(self.owner),
-            closed=self.closed,lost=self.lost,executor=self.executor,
+            closed=self.closed,lost=self.lost,executor=self.executor,started_ns=self.started_ns,locations=self.locations,
             latest=None if self.latest is None else (id(self.latest[0]),self.latest[1]['ordinal']),source=self.source.to_dict()))
 
     def cancel(self):
@@ -215,7 +238,12 @@ def _kernel_spawned(ticket, process, scratch, group, audit=None):
         if ticket.capture is not None:ticket.capture.lost=True
         if ticket.scope is not None:ticket.scope.lost=True
         return
-    _DISPATCHES[ticket] = process,scratch,group,audit,deepcopy(scratch.boundary_contract),deepcopy(scratch.boundary_work_identity),deepcopy(scratch.boundary_observation),scratch.comparison_seed_sha256,deepcopy(scratch.comparison_inputs)
+    _DISPATCHES[ticket] = process,scratch,group,audit,deepcopy(scratch.boundary_contract),deepcopy(scratch.boundary_work_identity),deepcopy(scratch.boundary_observation),scratch.comparison_seed_sha256,deepcopy(scratch.comparison_inputs),_harness_location(scratch)
+
+
+def _harness_location(scratch):
+    from .integrity import location
+    return location(scratch.harness_root) if scratch.harness_root is not None else None
 
 
 def _kernel_finished(ticket, run, argv, exports):
@@ -228,7 +256,7 @@ def _kernel_finished(ticket, run, argv, exports):
         if capture is not None:capture.lost=True
         if scope is not None:scope.lost=True
         return
-    process,scratch,group,audit,boundary_contract,work_identity,boundary_observation,seed_state,input_bundles = producer
+    process,scratch,group,audit,boundary_contract,work_identity,boundary_observation,seed_state,input_bundles,harness_location = producer
     attestation = run['attestation']; image = attestation.get('runtime_image') or {}
     storage = attestation.get('storage_policy') or {}; cgroup = attestation.get('cgroup_v2') or {}
     from .permission_audit import canonical_argv, _take_completion
@@ -260,14 +288,19 @@ def _kernel_finished(ticket, run, argv, exports):
         requested_argv_sha256=_hash(list(ticket.requested)),binary_sha256=attestation['binary_sha256'],image_sha256=image['sha256'],
         input_digests=deepcopy(attestation['input_digests']),argv_sha256=_hash(argv),
         result_sha256=_hash(run),observed_at=datetime.now(timezone.utc).isoformat(),permission=permission,boundary=boundary)
-    if ticket.comparison is not None:
+    from .construction_seals import current as construction_current
+    construction=construction_current()
+    if ticket.comparison is not None or construction is not None:
         from .comparison_custody import bundle_binding
-        checked={name:bundle_binding(path,ticket.comparison.deadline) for name,path in scratch.comparison_roots.items()}
+        deadline=ticket.comparison.deadline if ticket.comparison is not None else ticket.scope.deadline
+        checked={name:bundle_binding(path,deadline) for name,path in scratch.comparison_roots.items()}
         value.update(seed_state_sha256=seed_state,captured_state_sha256=scratch.comparison_captured_sha256,
             input_bundles=input_bundles,input_bundles_unchanged=(input_bundles==checked if input_bundles is not None else None))
     fact=_Fact();_FACTS[fact]=(ref(ticket),ref(scope) if scope is not None else lambda:None,encoded(dict(value,exports=exports)),ref(ticket.comparison) if ticket.comparison is not None else lambda:None)
     if capture is not None:
         event.update(value);capture.latest=run,event
+        # Private attempt state, outside hashed event data: the same harness location at launch and after input checks.
+        if harness_location is not None and _harness_location(scratch)==harness_location:capture.locations[str(event['ordinal'])]=harness_location
         if event['role']=='executor':
             selected=tuple(pair for pair in exports if pair[0] in capture.expected)
             capture.executor=event['ordinal'],selected

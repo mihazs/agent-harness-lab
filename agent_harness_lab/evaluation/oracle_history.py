@@ -11,7 +11,7 @@ import time
 from types import SimpleNamespace
 
 from agent_harness_lab.private_journal import PrivateJournal, encoded, record, sync_directory, write_bytes
-from .integrity import contained, copy_frozen, digest, read_regular, tree
+from .integrity import contained, copy_frozen, digest, read_regular, regular_size, tree
 from .oracle import capture, identity
 from .plan import ExperimentSpec, schedule
 from .regression_controls import containment
@@ -103,7 +103,7 @@ def bank_authority(source, *, export_root=None, expected=None):
             raise ValueError('selected task differs from authoritative bank policy')
         fixture = contained(path.parent,original['fixture']); entries = tree(fixture)
         files_total += len(entries)
-        bytes_total += sum(len(read_regular(contained(fixture,p),MAX_BYTES)) for p in entries)
+        bytes_total += sum(regular_size(contained(fixture,p),MAX_BYTES) for p in entries)
         if files_total>4096 or bytes_total>MAX_BYTES: raise ValueError('bank selection bound exceeded')
         with tempfile.TemporaryDirectory() as temporary:
             prepared = Path(temporary)/'fixture'; copy_frozen(fixture,prepared,original['fixture_digest'])
@@ -532,7 +532,7 @@ class HistoryStore(PrivateJournal):
         from .derivations import status
         return status(self,ident)
 
-    def reserve_access(self, manifest, baseline, candidate, *, budget_seconds=60,parent_deadline=None):
+    def reserve_access(self, manifest, baseline, candidate, *, budget_seconds=60,parent_deadline=None,requalification=None):
         from .certification_access import capture
         if type(budget_seconds) not in (int,float) or not math.isfinite(budget_seconds) or not 0<budget_seconds<=300:
             raise ValueError('access reservation budget must be positive and at most 300 seconds')
@@ -552,6 +552,9 @@ class HistoryStore(PrivateJournal):
             raise ValueError('managed diagnostics do not qualify preservation cohorts')
         with self.locked(create=True): pass
         check()
+        if requalification is not None:
+            from .bank_requalification import reserve
+            return reserve(requalification,binding,deadline=deadline)
         return self.access_ledger().reserve_managed(binding,deadline=deadline)
 
     def run(self, manifest, baseline, candidate, *, cgroup_root, image_root, image_sha256, disk_bytes, budget_seconds=60,parent_deadline=None,on_started=None,access_reservation=None,

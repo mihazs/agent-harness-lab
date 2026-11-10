@@ -1,12 +1,11 @@
 """Private metadata history; records and checkpoints commit together."""
 from collections import Counter, defaultdict, deque
 import fcntl
-import json
 import os
 from pathlib import Path
 import stat
 from agent_harness_lab.evaluation.integrity import read_regular
-from agent_harness_lab.monitoring.state import atomic_json
+from agent_harness_lab.monitoring.state import atomic_json, atomic_json_size
 from agent_harness_lab.private_journal import record_bytes
 from .schema import EvidenceRecord, ImportReceipt, SourceSpec, digest, fingerprint
 from .execution import ExecutionMetadata, capture_snapshot
@@ -280,6 +279,12 @@ class SourceStore:
             target_project_binding='unverified', capture_completeness='unknown',
             independent_roots=None, task_outcomes_verified=False, cache_read=present, source_read=False, network_used=False, execution_authorized=False)
 
+    def revisions(self, source):
+        """Committed revisions of one source, in commit order; reading never changes the journal."""
+        self._bind(source)
+        return tuple(EvidenceRecord.parse(e['record']) for e in self._read()['records']
+            if e['record']['source_sha256'] == source.source_key)
+
     def history(self, source, native_id_sha256):
         self._bind(source); fingerprint(native_id_sha256)
         return [entry for entry in self._read()['records'] if
@@ -334,7 +339,9 @@ class SourceStore:
                 state['snapshots'][key]['active'] = False
             if cursor_after != cursor_before and cursor_after in cursors:
                 raise ValueError('checkpoint cycle; no page consumed')
-            existing = {identity(EvidenceRecord.parse(e['record'])): e['record'] for e in state['records']}
+            # _read() already parsed every record strictly, so the identity fields are the dict values.
+            existing = {(r['source_sha256'], r['native_id_sha256'], r['revision_sha256']): r
+                        for r in (e['record'] for e in state['records'])}
             spec_key = digest(source.to_dict())
             state['sources'][spec_key] = source.to_dict()
             imported = skipped = 0
@@ -351,11 +358,12 @@ class SourceStore:
                             raise ValueError('conflicting native revision')
                         skipped += 1
                     else:
-                        existing[identity(record)] = record.to_dict()
-                        state['records'].append(dict(source_spec_sha256=spec_key, record=record.to_dict()))
+                        existing[identity(record)] = stored = record.to_dict()
+                        state['records'].append(dict(source_spec_sha256=spec_key, record=stored))
                         imported += 1
-                if metadata is not None: metadata._validate_refs(source, set(existing))
-                if graph is not None: graph._validate_refs(source, set(existing))
+                # Both only test membership, which the dict's keys answer without a copy.
+                if metadata is not None: metadata._validate_refs(source, existing.keys())
+                if graph is not None: graph._validate_refs(source, existing.keys())
                 if source_snapshot is not None:
                     envelope = (dict(source_spec_sha256=spec_key, snapshot_sha256=source_snapshot,
                         metadata=metadata.to_dict() if metadata is not None else None,
@@ -375,7 +383,8 @@ class SourceStore:
                 state['supersessions'] = [list(e) for e in sorted(edges)]
                 state['cursors'][key] = cursors + ([cursor_after] if cursor_after != cursor_before else [])
                 self._validate(state)
-                if self.max_bytes is not None and len(json.dumps(state, indent=2, allow_nan=False).encode())+1 > self.max_bytes:
+                # Counted, not serialized: atomic_json streams its own encoding to disk below.
+                if self.max_bytes is not None and atomic_json_size(state, self.max_bytes) > self.max_bytes:
                     raise ValueError('metadata cache byte limit reached')
             except Exception:
                 raise ValueError('source batch rejected; committed checkpoint unchanged') from None

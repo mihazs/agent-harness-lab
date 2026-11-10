@@ -90,7 +90,8 @@ control runs and extracts only declared artifacts. An unavailable boundary block
 before agent execution; grading never falls back to host execution. Optional
 `--cgroup-root`, `--image-root` with `--image-sha256`, and `--disk-bytes` select
 the existing resource/image profiles for both control and trial graders.
-Agents still use the cooperative native CLI, inherited authentication and hooks;
+Agents still use the cooperative native CLI with the trial surface requests and
+credential rules in [source contracts](source-contracts.md#surface-faithful-trial-workspaces);
 this option does not establish full role isolation or authorize promotion.
 
 `--agent responses --inference-settings FILE` selects the controlled workflow on
@@ -124,7 +125,9 @@ ahl watch /path/to/project --agent claude --interval 300
 
 This foreground monitor performs an initial improvement pass, then checks evidence
 at the interval. It runs improvement again only when the accepted project evidence
-changes. Versioned checkpoints persist across restarts. Completed rejection/no-change runs
+or execution configuration changes. Each pass is recommendation-only: watch has no
+`--repair-contracts` option and never writes harness files itself; its agent is
+cooperative, so read-only project access is instructed, not enforced. Versioned checkpoints persist across restarts. Completed rejection/no-change runs
 are not repeated on unchanged evidence. Only explicitly classified transient
 infrastructure failures may retry, with backoff and at most three total attempts.
 Authentication, setup, interrupted and unknown failures require intervention or a
@@ -170,12 +173,12 @@ Inputs still require redaction; these tools are not general-purpose sanitizers.
 | Command | Purpose |
 | --- | --- |
 | `ahl improve [project]` | Discover issues, stage repairs and evaluate; behavioral adoption is blocked |
-| `ahl watch [project]` | Repeat improvement on changed evidence |
+| `ahl watch [project]` | Rerun recommendation-only evaluation when evidence or configuration changes; AHL never writes harness files |
 | `ahl analyze [project]` | Automatically collect and analyze evidence without an agent |
 | `ahl diagnose --events FILE --output DIR` | Diagnose an explicit event file |
 | `ahl mine FILE` | Mine event transitions and recurring root-case support |
 | `ahl evaluate --manifest FILE --baseline DIR --candidate DIR --output DIR` | Execute a prepared baseline/candidate experiment |
-| `ahl benchmark FILE --method baseline` | Compare incident-classifier predictions; optional [frozen triage policy](diagnostic-triage.md) |
+| `ahl benchmark FILE --method baseline` | Compare incident-classifier predictions; optional [frozen triage policy](diagnostic-triage.md) or `--profile diagnostic-corpus` for a [corpus development export](diagnostic-corpus.md#benchmark-input-profile) |
 | `ahl skills --agent claude` | Link installed skills into a selected runtime's skill directory |
 
 Run `ahl COMMAND --help` for the complete options. Low-level evaluation supports
@@ -223,9 +226,12 @@ The reader normalizes lifecycle activity and checks every page again before
 acceptance. Changed pages, duplicates, unsupported pins and missing authorization
 fail explicitly without retries. Readback does **not** prove an atomic server
 snapshot. `memory_source` in the JSON receipt and private analysis reports these
-coverage limitations and rows elided from other scopes. Bodies are excluded from
-normalization; names, call linkage and outcomes absent from structured source
-metadata remain unknown. These observations cannot certify a no-defect outcome
+coverage limitations and rows elided from other scopes. Only observation ID, session,
+kind and creation time are normalized. The upstream observation record has no
+structured tool name, call ID or result status, so those stay unknown; titles,
+bodies, importance and extension event names are never parsed for them (see
+[observation field contract](source-contracts.md#session-observation-field-contract)).
+These observations cannot certify a no-defect outcome
 or grant permission to apply a candidate. Use an explicitly supported native
 capture when structured diagnostic metadata is needed.
 CLI progress reports aggregate page/observation counts on stderr during retrieval

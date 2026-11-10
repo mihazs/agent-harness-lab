@@ -1,4 +1,5 @@
 """Collect bounded, project-scoped local evidence without exporting message bodies."""
+from collections import deque
 import hashlib
 import heapq
 import itertools
@@ -7,7 +8,7 @@ import os
 from pathlib import Path
 
 from tools.diagnose import analyze, normalize
-from agent_harness_lab.telemetry.schema import FIELDS, event as telemetry_event
+from agent_harness_lab.telemetry.schema import FIELDS, SOURCE_ORDER, event as telemetry_event
 
 EVENT_FIELDS = FIELDS
 FAILURES = {'failed', 'execution_error', 'invalid_trace', 'incomplete', 'grader_error', 'budget_exhausted'}
@@ -171,14 +172,15 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
     from .telemetry.codex_rollout import VERSION as CODEX_NATIVE_VERSION
     from .telemetry.claude_native import VERSION as CLAUDE_NATIVE_VERSION
     codex_pinned = source_format == 'codex' and source_version == CODEX_NATIVE_VERSION
-    pinned = codex_pinned or source_format == 'claude' and source_version == CLAUDE_NATIVE_VERSION
+    native_order = source_format == 'claude' and source_version == CLAUDE_NATIVE_VERSION
+    pinned = codex_pinned or native_order
     if source_identity is not None:
         from .sources.schema import fingerprint as validate_fingerprint
         validate_fingerprint(source_identity)
         if events is None or pinned:
             raise ValueError('logical source identity requires an explicit unpinned event input')
-    if source_root is not None and (not codex_pinned or events is not None) or session is not None and source_root is None:
-        raise ValueError('native source-root/session requires the explicit pinned Codex profile and excludes --events')
+    if source_root is not None and (not pinned or events is not None) or session is not None and source_root is None:
+        raise ValueError('native source-root/session requires an explicit pinned Codex or Claude profile and excludes --events')
     if source_version is not None and (events is None and source_root is None or not pinned and source_version != CAPABILITIES.get(source_format, {}).get('version')):
         raise ValueError('source version requires an explicit supported capture')
     caveats, sources, errors = [], [], []
@@ -250,18 +252,28 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                     from .telemetry.codex_rollout import read
                 try:
                     if source_root is None: records, coverage, native_digest = read(path, project, max_records=max_events)
+                    elif source_format == 'claude':
+                        # The root is one Claude `projects` directory; only the project's mapped directories are read.
+                        from .telemetry.claude_discovery import scan
+                        records, coverage, native_digest = scan([path], project, session=session, max_files=max_files,
+                            max_scan_files=max_scan_files, max_records=max_events)
                     else:
                         from .telemetry.codex_discovery import scan
                         records, coverage, native_digest = scan(path, project, session=session, max_files=max_files,
                             max_scan_files=max_scan_files, max_records=max_events)
                 except OSError: raise ValueError('native capture is unavailable or unsafe') from None
+                # Analysis consumes events once; draining frees each native event when analysis no longer needs it.
+                from .telemetry.native import drained
+                records = drained(deque(records))
                 source.update(native_coverage=coverage)
                 if coverage['partial_tail']: _warn(caveats, 'Native capture has an uncommitted final line; only the complete prefix was projected.')
-                if coverage['unsupported_records'] or coverage['inherited_records_skipped']:
+                # Claude root summaries carry no inherited-record count: subagent transcripts are separate files.
+                if coverage['unsupported_records'] or coverage.get('inherited_records_skipped'):
                     _warn(caveats, 'Native capture contains unsupported or inherited records; coverage is partial.')
                 if source_root is not None:
                     discovery = coverage['discovery']
-                    if discovery['reached_limits'] or discovery['unsupported_headers'] or discovery['unsafe_entries_skipped']:
+                    if (discovery['reached_limits'] or discovery['unsupported_headers'] or discovery['unsafe_entries_skipped']
+                            or discovery.get('unrecognized_files')):
                         _warn(caveats, 'Native discovery reached limits or skipped unsupported/unsafe inputs; history is incomplete.')
                     if not discovery['accepted_files']:
                         _warn(caveats, 'No matching native capture was found; completeness remains unknown.')
@@ -274,7 +286,10 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
                     root = event.get('root_case_id', case)
                     event['root_case_id'] = hashlib.sha256((fmt + ':' + root).encode()).hexdigest()
                 tool_error = event.get('execution_status') == 'error'
-                fingerprint.update(json.dumps(dict(event=event, tool_error=tool_error), sort_keys=True).encode() + b'\n')
+                # The pinned Claude adapter derives source order from capture_order, the hashed block index and the
+                # file read, so it stays out of that fingerprint. Caller-supplied ledgers declare it, so it is hashed.
+                hashed = {k: v for k, v in event.items() if k not in SOURCE_ORDER} if native_order and 'source_order_profile' in event else event
+                fingerprint.update(json.dumps(dict(event=hashed, tool_error=tool_error), sort_keys=True).encode() + b'\n')
                 source['events'] += 1
                 total_events += 1
                 notify('collection', captures=index - 1, events=total_events)
@@ -290,7 +305,9 @@ def collect(project, events=None, source_format='normalized', max_files=None, ma
             source['sha256'] = native_digest if pinned else source_digest.hexdigest()
         notify('analysis', events=total_events, captures=len(selected))
 
-    analysis = analyze(normalized_events(), max_events=max_events, sequence_length=sequence_length, select_methods=True)
+    # Analysis attributes declared source order to the caller unless the pinned adapter produced it.
+    attribution = dict(source_order_declared_by='native_adapter') if native_order else {}
+    analysis = analyze(normalized_events(), max_events=max_events, sequence_length=sequence_length, select_methods=True, **attribution)
     analysis['findings'].extend(errors)
     notify('evaluation_reports', events=analysis['events'])
     outcomes = [] if events is not None or source_root is not None else _evaluation_results(project, max_files, sources, fingerprint, caveats)

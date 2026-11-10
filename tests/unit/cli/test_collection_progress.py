@@ -1,0 +1,94 @@
+"""Progress is observable before capture reads and never exposes capture metadata."""
+from contextlib import redirect_stderr, redirect_stdout
+import io
+import json
+from types import SimpleNamespace
+from unittest.mock import patch
+
+import pytest
+
+from agent_harness_lab import cli, evidence
+
+
+@pytest.fixture
+def case(tmp_path, monkeypatch):
+    root = tmp_path
+    project = root / 'private-project'
+    project.mkdir()
+    capture = root / 'private-capture.jsonl'
+    capture.write_text(json.dumps(dict(case_id='private-session', event_id='private-event',
+                                       activity='tool_call', tool_name='private-tool'))+'\n')
+    monkeypatch.setenv('CODEX_HOME', str(root/'codex'))
+    monkeypatch.setenv('CLAUDE_CONFIG_DIR', str(root/'claude'))
+    return SimpleNamespace(root=root, project=project, capture=capture)
+
+
+def test_explicit_capture_progress_precedes_read_and_stdout_stays_json(case):
+    output, error = io.StringIO(), io.StringIO()
+    original = evidence._rows
+    def read(*args, **kwargs):
+        assert 'capture_processing' in error.getvalue()
+        yield from original(*args, **kwargs)
+    with redirect_stdout(output), redirect_stderr(error), patch.object(evidence, '_rows', read):
+        status = cli.main(['analyze', str(case.project), '--events', str(case.capture),
+                           '--output', str(case.root/'result')])
+    assert status == 0
+    assert json.loads(output.getvalue())['status'] == 'analyzed'
+    assert 'events=1' in error.getvalue()
+    assert 'eligible=0' in error.getvalue()
+    assert 'private-' not in error.getvalue()
+    assert str(case.root) not in error.getvalue()
+
+
+def test_discovery_reports_empty_and_explicit_scan_limit_without_paths(case):
+    messages = []
+    progress = lambda stage, **counts: messages.append((stage, counts))
+    evidence.collect(case.project, progress=progress)
+    assert messages[-1][0] == 'evidence_empty'
+    for number in range(3):
+        path = case.root/'codex'/'sessions'/f'private-{number}.jsonl'
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(dict(cwd=str(case.project), type='session_meta'))+'\n')
+    messages.clear()
+    result = evidence.collect(case.project, max_scan_files=1, progress=progress)
+    assert result['caveats']
+    assert messages[-1][1]['incomplete'] == 1
+    assert max(counts.get('scanned', 0) for _, counts in messages) == 2
+    assert 'private-' not in json.dumps(messages)
+
+
+def test_interrupt_reports_status_without_printing_capture_or_partial_json(case):
+    output, error = io.StringIO(), io.StringIO()
+    with redirect_stdout(output), redirect_stderr(error), patch.object(evidence, '_rows', side_effect=KeyboardInterrupt):
+        with pytest.raises(SystemExit) as stopped:
+            cli.main(['analyze', str(case.project), '--events', str(case.capture),
+                      '--output', str(case.root/'interrupted')])
+    assert stopped.value.code == 1
+    assert 'interrupted' in error.getvalue()
+    assert output.getvalue() == ''
+    assert 'private-' not in error.getvalue()
+
+
+def test_evaluation_outcomes_are_not_labeled_as_empty_evidence(case):
+    report = case.project/'artifacts'/'synthetic'/'results.json'
+    report.parent.mkdir(parents=True)
+    report.write_text(json.dumps(dict(trials=[dict(task='synthetic', status='failed')])))
+    messages = []
+    evidence.collect(case.project, progress=lambda stage, **counts: messages.append((stage, counts)))
+    assert messages[-1][0] == 'evidence_incomplete'
+    assert messages[-1][1]['evaluation_outcomes'] == 1
+
+
+def test_repeated_stage_updates_are_throttled_but_stage_changes_are_immediate():
+    error = io.StringIO()
+    with redirect_stderr(error), patch.object(cli.time, 'perf_counter', side_effect=[0, 0, .2, .3, 1.4]):
+        progress = cli._progress_reporter()
+        progress('discovery', scanned=0)
+        progress('discovery', scanned=1)
+        progress('capture_processing', selected=1)
+        progress('capture_processing', events=1000)
+    lines = error.getvalue().splitlines()
+    assert len(lines) == 3
+    assert 'scanned=0' in lines[0]
+    assert 'selected=1' in lines[1]
+    assert 'events=1000' in lines[2]

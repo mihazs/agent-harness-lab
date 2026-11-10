@@ -41,7 +41,7 @@ install pinned jscpd and Lefthook development dependencies and enable the
 `lefthook.yml` pre-commit job. Automatic npm lifecycle scripts are disabled so
 Lefthook's dependency postinstall cannot replace a foreign hook before the guard
 runs. Setup migrates this repository's old local `.githooks` setting. It refuses
-a foreign `core.hooksPath` or pre-commit handler; integrate the Lefthook job
+a foreign `core.hooksPath`, pre-commit or commit-msg handler; integrate the Lefthook jobs
 explicitly if you already manage hooks elsewhere.
 No global Git settings or installed AHL runtime dependencies are changed.
 
@@ -60,15 +60,46 @@ Reports stay local. No clone baseline or duplication allowance is maintained.
 Python-only test runs still work without Node; executable hook tests are explicitly
 skipped when Task, jscpd or Lefthook is not installed.
 
+## Conventional Commits
+
+Every commit subject, pull request title and merge commit follows
+[Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/):
+`type(scope)!: description`. Types are `feat`, `fix`, `docs`, `style`, `refactor`,
+`perf`, `test`, `build`, `ci`, `chore` and `revert`. The scope is optional and uses
+lowercase letters, digits and `. _ / -`; `!` marks a breaking change. The description
+is required, does not end with a period, and the subject is at most 100 characters.
+Git `fixup! `, `squash! ` and `amend! ` prefixes are accepted before a conventional
+subject. Default `Merge pull request …`, `Merge branch …` and `Revert "…"` subjects
+are rejected; write, for example, `chore: merge pull request #123 from owner/topic`.
+
+`task setup` installs a Lefthook `commit-msg` job beside the pre-commit job, with
+the same refusal to replace a foreign, linked, non-regular or oversized hook. If you
+manage hooks elsewhere, call `python3 scripts/check_commit_message.py "$1"` from your
+own `commit-msg` hook. Check a whole branch with `task commits:check
+RANGE=origin/main..HEAD`, or one subject with `python3 scripts/check_commit_message.py
+--subject "feat: add a flag"`. Exit status is 0 when conventional, 1 for a violation
+and 2 for a usage or Git error.
+
+For pull requests, the required `Tests` check validates the title and every commit
+between the base branch and the PR head. GitHub creates the merge commit after that
+check, so maintainers type an explicit conventional merge or squash subject.
+
 ## Native tests and reusable commands
 
-Application tests live in `tools/tests/test_*.py`; evaluator tests live beside the
-owned evaluator in `skills/harness-evaluation/scripts/test_*.py`. Add discoverable
-unittest cases to these existing native suites. Put reusable commands in
+Application tests live in the `tests/` package: `tests/unit/<area>/` and
+`tests/integration/<area>/`, where the area mirrors the code under test, with shared
+helpers in `tests/support/`. The [layout rule](.agents/skills/pytest-patterns/SKILL.md#repository-adaptation)
+says which tree a test belongs to. Evaluator tests live beside the owned evaluator in
+`skills/harness-evaluation/scripts/test_*.py`. Add discoverable cases to these existing
+native suites. Put reusable commands in
 `Taskfile.yml`; do not create standalone smoke-test scripts under artifacts or
 other helper folders.
 
 `task setup:test` installs pinned pytest/xdist into the selected virtual environment.
+Taskfile test tasks run `python -m pytest`. Filter variables such as `KERNEL_TEST_FILTER`
+take one pytest `-k` expression, and pattern variables such as `REPEATED_TEST_PATTERN`
+are file-name globs. A few files must stay runnable under `python -m unittest`; the
+[pytest-patterns adaptation](.agents/skills/pytest-patterns/SKILL.md#repository-adaptation) lists them.
 `task test` collects both suites once and schedules tests across physical CPU cores.
 Set `TEST_WORKERS` to a positive count, or `0` to debug without workers.
 The `worksteal` scheduler balances independent tests without a file-by-file runner.
@@ -103,7 +134,7 @@ These publication cases are skipped during ordinary offline tests.
 | Controlled experiments | `optimization/`, `experiments/`, `diagnostics/` under `agent_harness_lab/` |
 | Monitoring and recovery | `agent_harness_lab/monitoring/`, `promotion/` |
 | Agent skills and contracts | `skills/harness-evaluation/`, `skills/harness-self-improvement/` |
-| Tests and public inputs | `tools/tests/`, evaluator `test_*.py`, `examples/`, evaluation `fixtures/` |
+| Tests and public inputs | `tests/`, evaluator `test_*.py`, `examples/`, evaluation `fixtures/` |
 | Distribution | `install.py`, `pyproject.toml`, `scripts/`, `.github/workflows/`, `.changeset/` |
 
 The map identifies areas, not permission to modify all of them. Newcomers should
@@ -125,7 +156,7 @@ Report failures and skips separately. The containment probe may be unsupported o
 your host; a skip is not isolation certification. For the public diagnosis example:
 
 ```sh
-python3 -m unittest discover -s tools/tests -p 'test_quickstart.py'
+.venv/bin/python -m pytest tests/integration/tools/test_quickstart.py
 ```
 
 Use standard-library Python unless a concrete requirement justifies a dependency.
@@ -146,6 +177,7 @@ For security reports follow [SECURITY.md](SECURITY.md) instead of public Issues.
 
 ## Submit a focused PR
 
+Use a [Conventional Commits](#conventional-commits) title and commit subjects.
 Link the issue, describe observable before/after behavior and list actual executed
 checks, environment, failures, skips and untested platforms. Keep unrelated refactors
 out. Distinguish an observed pattern from a supported diagnosis or validated repair.
@@ -192,4 +224,4 @@ links, HTML, multiline links, escaped delimiters, nested parentheses and heading
 anchors are not validated. Use percent encoding or angle brackets for spaces;
 encode parentheses in file names. No network access or dependencies are needed.
 
-Focused tests: `python3 -m unittest discover -s tools/tests -p 'test_docs.py'`.
+Focused tests: `.venv/bin/python -m pytest tests/integration/docs/test_docs.py`.

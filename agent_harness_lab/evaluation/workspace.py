@@ -105,9 +105,11 @@ class PrivateWorkspace:
         self.working_state = working_state
         self.comparison_seed_sha256=self.comparison_captured_sha256=None
         self.comparison_roots={};self.comparison_inputs=None
+        self.harness_root=inputs.get('harness')
         from .comparison_custody import current,bundle_binding
         comparison=current()
-        if comparison is not None and comparison.active is not None and role=='executor':
+        from .construction_seals import current as construction_current
+        if (comparison is not None and comparison.active is not None and role=='executor' or construction_current() is not None):
             self.comparison_roots=dict(inputs)
             self.comparison_inputs={name:bundle_binding(path,deadline) for name,path in inputs.items()}
         if role == 'grader' and self.outputs: raise ValueError('graders cannot export storage artifacts')
@@ -118,10 +120,13 @@ class PrivateWorkspace:
         self.export_fingerprints = None
         self.boundary_contract=runtime_boundary.contract(backend,inputs,role,limits,deadline,self.policy)
         self.boundary_observation=self.boundary_work_identity=None
-        self.command = self.layout(backend.command(['/usr/bin/python3', '-I', '-c', BOOTSTRAP], workspace, inputs, role), bootstrap=True)
+        # A permission audit launches its observer through the keyring trampoline, so the traced exec chain still starts
+        # at bubblewrap; the nested bubblewrap inherits the outer run's empty session keyring.
+        outer = backend.bubblewrap_command if getattr(backend, 'permission_audit', None) else backend.command
+        self.command = self.layout(outer(['/usr/bin/python3', '-I', '-c', BOOTSTRAP], workspace, inputs, role), bootstrap=True)
         inner_argv = ['/usr/bin/python3', '-I', '-c', VERIFY, json.dumps(self.policy), json.dumps(argv)]
         if self.boundary_contract is not None:inner_argv.append(json.dumps(self.boundary_contract))
-        inner = backend.command(inner_argv, workspace, inputs, role)
+        inner = backend.bubblewrap_command(inner_argv, workspace, inputs, role)
         inner[0] = '/usr/bin/bwrap'
         for index, value in enumerate(inner):
             if value == '--ro-bind':
@@ -152,7 +157,8 @@ class PrivateWorkspace:
             self.filter_fd, self.filter_policy = (sealed_filter(permission_audit=True)
                 if getattr(self.backend,'permission_audit',None) else sealed_filter())
             self.receiver, self.sender = socket.socketpair(socket.AF_UNIX, socket.SOCK_STREAM)
-            self.command[1:1] = ['--seccomp', str(self.filter_fd)]
+            index = self.command.index('--unshare-all')  # bubblewrap's first option, after any trampoline prefix
+            self.command[index:index] = ['--seccomp', str(self.filter_fd)]
             return self
         except BaseException:
             self.__exit__()
@@ -214,7 +220,8 @@ class PrivateWorkspace:
             self.working_state.seed(self.fd,self.deadline)
             from .comparison_custody import current,snapshot_pin
             comparison=current()
-            if comparison is not None and comparison.active is not None:
+            from .construction_seals import current as construction_current
+            if comparison is not None and comparison.active is not None or construction_current() is not None:
                 from .working_state import Snapshot
                 observed=Snapshot.capture(self.fd,self.deadline)
                 if observed!=self.working_state.snapshot:raise ValueError('physical comparison seed changed')

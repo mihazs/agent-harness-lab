@@ -2,7 +2,7 @@
 from dataclasses import replace
 import hashlib
 import math
-from pathlib import Path,PurePosixPath
+from pathlib import PurePosixPath
 import re
 import secrets
 import sys

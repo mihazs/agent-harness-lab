@@ -21,10 +21,13 @@ def main(argv):
         epilog='Input is a JSON list of approved Incident objects with reviewed_annotation '
         'provenance, reviewer, sampling, source_kind and evidence_refs; raw histories are not accepted. Matches remain untrusted '
         'evidence, not correctness judgments. Exit 0: completed; 2: invalid corpus/query. '
-        'Example: ahl incident-search --input /private/incidents.json --query "tool timeout" --top-k 5.')
+        'Example: ahl incident-search --input /private/incidents.json --query "tool timeout" --top-k 5 --hypothesis tool.')
     incidents.add_argument('--input',type=Path,required=True,help='JSON list of reviewed Incident records, including IDs, summary, labels, provenance and evidence_refs')
     incidents.add_argument('--query',required=True,help='Lexical search text; quote multiword queries')
-    incidents.add_argument('--top-k',type=int,help='Optional positive returned-match limit; default: all matching incidents')
+    incidents.add_argument('--top-k',type=int,help='Optional positive returned-match limit, per group with --hypothesis; default: all matching incidents')
+    incidents.add_argument('--hypothesis',help='Optional label to contrast: groups matches into supporting, contradicting, control and '
+        'unresolved cases with root hashes and provenance, withholding private summaries; never a diagnosis')
+    incidents.add_argument('--control-label',action='append',default=[],help='Label marking a successful control case; repeatable; requires --hypothesis')
     promotion=commands.add_parser('promotion',help='Inspect or mutate one existing private deployment journal transaction',
         description='Preview rollback eligibility, roll back an owned deployment, or recover a resumable journal transaction.',
         epilog='Preview is the default and checks target bytes/modes without applying a rollback. Rollback and recover can change '
@@ -53,8 +56,12 @@ def main(argv):
             result=simulate(args.seed,args.tasks,args.scenario)
         elif args.command=='incident-search':
             from agent_harness_lab.diagnostics.retrieval import Incident,LexicalIndex
-            result=LexicalIndex([Incident(**{**r,'labels':tuple(r['labels']),'evidence_refs':tuple(r['evidence_refs'])})
-                                 for r in json.loads(args.input.read_text())]).query(args.query,args.top_k)
+            if args.control_label and args.hypothesis is None:
+                raise ValueError('--control-label requires --hypothesis')
+            index=LexicalIndex([Incident(**{**r,'labels':tuple(r['labels']),'evidence_refs':tuple(r['evidence_refs'])})
+                                for r in json.loads(args.input.read_text())])
+            result=(index.query(args.query,args.top_k) if args.hypothesis is None
+                    else index.contrast(args.query,args.hypothesis,args.control_label,args.top_k))
         elif args.command=='promotion':
             from agent_harness_lab.promotion.journal import Journal
             from agent_harness_lab.workflow import state_root,identity

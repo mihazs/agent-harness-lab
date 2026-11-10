@@ -11,7 +11,21 @@ import shutil
 import shlex
 import time
 
-from . import config
+from . import config, surfaces
+
+
+def invocation_context(args,output,deadline,*,remaining_seconds=None,remaining_trials=None):
+    """Descriptive parent context; these fields never issue execution authority."""
+    settings=getattr(args,'project_settings',None) or {}
+    application=settings.get('application',{})
+    return dict(schema_version=1,profile='ahl-skill-invocation-context-v1',scope='project',
+        origin=getattr(args,'_invocation_origin','cli'),parent_run_id=Path(output).name,
+        project=str(args.project),runtime=args.agent,configuration_sha256=getattr(args,'configuration_sha256',None),
+        policy=application.get('policy'),review_store=application.get('review_store'),authorization_id=application.get('authorization_id'),
+        bank_case_id=application.get('bank_case_id'),deadline=deadline,trial_limit=getattr(args,'trial_limit',24),
+        remaining_seconds=max(0,deadline-time.monotonic()) if remaining_seconds is None else max(0,remaining_seconds),
+        remaining_trials=getattr(args,'trial_limit',24) if remaining_trials is None else remaining_trials,
+        execution_authority=False,publication_allowed=False)
 
 
 def resolve(args, explicit):
@@ -19,17 +33,15 @@ def resolve(args, explicit):
     path = args.project / 'ahl.json'
     loaded = config.load(path) if os.path.lexists(path) else None
     settings = loaded[0] if loaded else None
-    if args.timeout is None:
-        args.timeout = settings['limits']['seconds'] if settings else 2700
-    if args.agent == 'auto' and settings and '--agent' not in explicit:
-        args.agent = settings['runtime']['name']
-    if settings and settings['runtime']['name'] in ('codex', 'claude'):
-        name = settings['runtime']['name']
-        if '--' + name not in explicit:
-            setattr(args, name, settings['runtime']['executable'])
+    requested=getattr(args,'_configuration_invocation',None)
+    if requested is None:requested={name:getattr(args,name,None) for name in config.INVOCATION_OPTIONS}
+    args._configuration_invocation=dict(requested);args._configuration_explicit=frozenset(explicit)
+    selected=config.execution_options(args.project,settings,requested,explicit)
+    for name,value in selected.items():setattr(args,name,value)
     args.trial_limit = settings['limits']['trials'] if settings else 24
     args.project_settings = settings
     args.configuration_sha256 = loaded[1] if loaded else None
+    args._configured_responses=bool(settings and settings['runtime']['name']=='responses' and args.agent=='responses')
     return settings
 
 
@@ -43,6 +55,9 @@ def preflight(args):
         if settings['profile'] != 'cooperative':
             return 'configured_profile_does_not_allow_cooperative_improvement'
         if pinned_bank(args) is not None:
+            if settings['runtime']['name'] == 'responses':
+                # Pinned project banks are evaluated through the cooperative path only.
+                return 'configured_bank_requires_cooperative_runtime'
             if args.agent == 'auto': args.agent = settings['runtime']['name']
             if args.agent != settings['runtime']['name'] or getattr(args, args.agent, None) != settings['runtime']['executable']:
                 return 'configured_runtime_differs_from_requested_runtime'
@@ -65,6 +80,8 @@ def preflight(args):
         return 'agent_runtime_unavailable'
     if pinned_bank(args) is None and getattr(args, 'trial_limit', 24) < 8:
         return 'trial_budget_requires_two_preparation_and_six_paired_trials'
+    if getattr(args,'_configured_responses',False):
+        args._response_references=config.response_references(args.project,vars(args))
     return None
 
 
@@ -88,6 +105,9 @@ def unchanged(args):
 def check_configuration(args):
     if hasattr(args, 'project_settings') and not unchanged(args):
         raise ValueError('project configuration changed during improvement')
+    references=getattr(args,'_response_references',None)
+    if references is not None and config.response_references(args.project,vars(args))!=references:
+        raise ValueError('controlled Responses references changed during improvement')
 
 
 def allowed_paths(args):
@@ -95,10 +115,16 @@ def allowed_paths(args):
     return settings['harness_paths'] if settings else None
 
 
-def check_scope(args, proposed):
+def check_scope(args, proposed, original=None):
+    """Configured harness scope, then the instruction scope from surfaces: with the frozen baseline inventory, a
+    changed instruction or rule file must be governing (see sources.instruction_validation.outside_scope)."""
     allowed = allowed_paths(args)
     if allowed is not None and not set(proposed) <= set(allowed):
         raise ValueError('candidate exceeds configured harness scope')
+    if original is not None:
+        from .sources.instruction_validation import outside_scope
+        if outside_scope(original, proposed, getattr(args, '_instruction_scope', None)):
+            raise ValueError('candidate edits an instruction or rule file outside its governing scope')
 
 
 def structural_candidate(raw, directory):
@@ -121,6 +147,19 @@ def structural_candidate(raw, directory):
     return raw[3:]
 
 
+# Work outside the surface matrix; the surface part of the deferred list comes from surfaces.deferred().
+DEFERRED_WORK=('behavioral optimization','skill lifecycle and routing')
+
+
+def deferred_surfaces(hook_contracts):
+    """The contract path resolves only skill headers; 'hooks' is resolved too only when the run has hook units and
+    every hook_contract_v1 verdict passed. A workflow_contract_v1 verdict is not a hook unit."""
+    from .hooks_contract import PROFILE
+    units=[row for row in hook_contracts if row.profile==PROFILE]
+    passed=bool(units) and all(row.status=='passed' for row in units)
+    return [*DEFERRED_WORK,*surfaces.deferred(('commands_skills','hooks') if passed else ('commands_skills',))]
+
+
 def contracts(args):
     """One-call deterministic contract path; invoked only by explicit CLI option."""
     from .workflow import (output_dir, snapshot, candidate_states, file_state,
@@ -129,7 +168,7 @@ def contracts(args):
     if getattr(args, 'experiment_request', None) is not None:
         raise ValueError('contract repair and repeated experiment requests are separate modes')
     started = time.monotonic()
-    output = output_dir(args)
+    output = output_dir(args, deadline=started + args.timeout)
     baseline, candidate = output/'baseline', output/'candidate'
     original = snapshot(args.project, baseline, allowed_paths=allowed_paths(args))
     candidate_states(baseline, original)
@@ -153,17 +192,32 @@ def contracts(args):
             contract='minimal-agent-skill-header-without-bom-v1',
             before_sha256=hashlib.sha256(raw).hexdigest(), after_sha256=hashlib.sha256(repaired).hexdigest()))
     proposed = candidate_states(candidate, original)
+    from .harness_change_plan import produce,attach
+    from .hooks_contract import contracts_for
+    changed=[name for name in original.keys()|proposed.keys() if original.get(name)!=proposed.get(name)]
+    hook_contracts=contracts_for(args.project,{name:file_record(baseline/name) if name in original else None for name in changed},
+        {name:file_record(candidate/name) if name in proposed else None for name in changed})
+    deferred=deferred_surfaces(hook_contracts)
+    common_plan=produce(args,original,proposed,analysis=dict(kind='deterministic_contract_inventory'),evidence=operations,
+        diagnosis=dict(contract='minimal-agent-skill-header-without-bom-v1'),
+        falsifiers=['outside_strict_header_contract','candidate_not_exact_bom_removal'],
+        controls=['independent_frozen_structural_candidate_check'],deferred=deferred,contracts=hook_contracts)
     plan = dict(schema_version=1, kind='deterministic_contract', operations=operations,
                 profile='one-call-improvement-v1', publication_allowed=False,
                 configuration_sha256=getattr(args, 'configuration_sha256', None),
-                behavioral_certification=False, runtime_activation='unknown',
-                deferred=['behavioral optimization', 'skill lifecycle and routing', 'instructions', 'hooks'])
+                behavioral_certification=False, runtime_activation='unknown', deferred=deferred)
+    attach(plan,common_plan)
     write_json(output/'change-plan.json', plan)
     result = dict(status='no_change', output=str(output), changed_files=[], plan=str(output/'change-plan.json'),
                   profile=plan['profile'], publication_allowed=False,
-                  behavioral_certification=False, deferred=plan['deferred'])
+                  behavioral_certification=False, deferred=plan['deferred'],plan_sha256=common_plan.sha256)
     if operations:
-        if settings and settings['recommendation_only']:
+        if common_plan.unresolved_operations:
+            result.update(status='blocked',reason='unresolved_operation_requires_hook_contract')
+        elif hook_contracts:
+            # A passed hook contract resolves the plan, but adoption still needs explicit authorization.
+            result.update(status='inconclusive',reason='hook_adoption_requires_explicit_authorization')
+        elif settings and settings['recommendation_only']:
             result.update(status='inconclusive', reason='configuration_requires_recommendation_only')
         elif time.monotonic()-started >= args.timeout:
             result.update(status='budget_exhausted')
@@ -178,12 +232,30 @@ def contracts(args):
                 name = operation['path']
                 if structural_candidate((baseline/name).read_bytes(), (baseline/name).parent.name) != (candidate/name).read_bytes():
                     raise ValueError('contract repair did not match the frozen independent check')
+            from .workflow import harness_files
+            journal=None
+            def target_states():
+                states={str(path.relative_to(args.project)):file_state(path)
+                        for path in harness_files(args.project,allowed_paths(args))}
+                pending=getattr(journal,'_pending_snapshot',None)
+                if pending is not None:
+                    name=str(pending[0].relative_to(args.project))
+                    if file_state(pending[0])!=(pending[1],pending[2]):raise ValueError('journal staging snapshot changed')
+                    states.pop(name,None)
+                return states
+            common_plan.validate_inventories(target_states(),proposed)
             journal = Journal(args.project, state_root()/'promotions'/identity(args.project))
             record = journal.prepare({o['path']: file_record(baseline/o['path']) for o in operations},
                 {o['path']: file_record(candidate/o['path']) for o in operations},
-                dict(source='deterministic_contract_v1', behavioral_certification=False))
+                dict(source='deterministic_contract_v1', behavioral_certification=False,plan_sha256=common_plan.sha256))
             def permitted():
                 check_configuration(args)
+                common_plan.validate_inventories(candidate_states(baseline,original),candidate_states(candidate,original))
+                observed=target_states()
+                if observed.keys()!=original.keys() or any(state!=original[name] and
+                        (name not in {o['path'] for o in operations} or state!=proposed[name])
+                        for name,state in observed.items()):
+                    raise ValueError('target inventory changed during planned application')
                 if time.monotonic()-started >= args.timeout:
                     raise TimeoutError('Contract repair budget exhausted before target mutation')
             permitted()
@@ -191,7 +263,28 @@ def contracts(args):
             result.update(status='applied', changed_files=sorted(o['path'] for o in operations),
                           deployment=receipt['deployment'], journal=str(journal.folder),
                           rollback=f'ahl rollback {receipt["deployment"]} --project {shlex.quote(str(args.project))}')
-    write_json(output/'workflow.json', result)
+    try:
+        write_json(output/'workflow.json', result)
+    except BaseException as exc:
+        if result['status'] != 'applied':
+            raise
+        # The Journal already returned its committed receipt. Observe it and the
+        # exact expected inventory; never replay or restore after commit.
+        observed = False
+        try:
+            observed = (journal.active == receipt['deployment'] and journal.load(receipt['deployment']) == receipt
+                        and all(file_state(args.project/name) == state for name, state in proposed.items()))
+        except (OSError, ValueError, KeyError, TypeError, KeyboardInterrupt):
+            pass
+        result.update(status='applied' if observed else 'requires_intervention', commit_observation='committed',
+                      target_readback='matched' if observed else 'changed_or_unavailable',
+                      post_commit_error_type=type(exc).__name__)
+        if not observed:
+            result['remaining_change_ownership'] = 'unverified'
+        try:
+            write_json(output/'workflow.json', result)
+        except (OSError, KeyboardInterrupt):
+            result['workflow_completion'] = 'unrecorded'
     return result
 
 

@@ -11,13 +11,18 @@ import time
 from weakref import WeakKeyDictionary
 
 from agent_harness_lab.private_journal import encoded
-from agent_harness_lab.evaluation.integrity import digest,read_regular
+from agent_harness_lab.evaluation.integrity import digest,read_regular,regular_sha256
 
 PROFILE='ahl-implementation-prerequisites-v1'
 _ACTIVE=ContextVar('ahl_workflow_prerequisites',default=None)
 _STATES=WeakKeyDictionary()
 MAX_DISPATCHES=128
 MAX_BYTES=256*1024
+RECEIPT_ENCODING='canonical-compact-json-v1'
+
+
+def encode_receipt(value):
+    return (json.dumps(value,sort_keys=True,allow_nan=False,separators=(',',':'))+'\n').encode('utf-8')
 
 
 def _hash(value):return hashlib.sha256(encoded(value)).hexdigest()
@@ -52,22 +57,23 @@ class _Scope:
             _STATES.pop(self,None);_ACTIVE.reset(token)
             raise
 
-    def _state(self):
-        return encoded(dict(data=self.data,baseline=str(self.baseline),image=self.image,deadline=self.deadline,
-            nonce=self.nonce,closed=self.closed,lost=self.lost,executor=self.executor,instruction_client=id(self.instruction_client),
+    def _state(self,data=None,client=None):
+        return encode_receipt(dict(data=self.data if data is None else data,baseline=str(self.baseline),image=self.image,deadline=self.deadline,
+            nonce=self.nonce,closed=self.closed,lost=self.lost,executor=self.executor,instruction_client=id(self.instruction_client if client is None else client),
             latest=None if self.latest is None else (id(self.latest[0]),id(self.latest[2]))))
 
     def _save(self):
-        owner=_STATES.get(self)
-        if owner is None or owner[0]!=os.getpid():self.lost=True;return
-        _STATES[self]=(owner[0],owner[1],self._state())
+        from agent_harness_lab.evaluation.controller_receipts import _cache_state
+        _cache_state(self,_STATES,MAX_BYTES)
 
     def _valid(self):
         owner=_STATES.get(self)
         valid=(type(self) is _Scope and _ACTIVE.get() is self and not self.closed and not self.lost
-            and owner is not None and owner[0]==os.getpid() and owner[2]==self._state()
+            and owner is not None and owner[0]==os.getpid() and owner[2] is not None and owner[2]==_Scope._state(self)
             and time.monotonic()<self.deadline)
-        if not valid:self.lost=True
+        if not valid:
+            from agent_harness_lab.evaluation.controller_receipts import _lose
+            _lose(self,_STATES)
         return valid
 
     def _tree(self,path):
@@ -83,7 +89,7 @@ class _Scope:
         rows=self.data.get('instruction_requests',[])
         if value['request_ordinal']!=len(rows)+1 or rows and not rows[-1]['complete']:
             raise ValueError('instruction request coverage is not contiguous')
-        if len(rows)>=MAX_DISPATCHES or len(encoded(dict(self.data,instruction_requests=rows+[dict(binding=value,complete=False)])))>MAX_BYTES:
+        if len(rows)>=MAX_DISPATCHES or len(self._state(dict(self.data,instruction_requests=rows+[dict(binding=value,complete=False)]),client))>MAX_BYTES:
             raise ValueError('instruction request metadata bound exceeded')
 
     def _request(self,client,token,complete):
@@ -115,6 +121,7 @@ class _Scope:
             event['instruction_request']=request['request_ordinal']
             event['instruction_scope']=request['scope_id']
         self.data['events'].append(event);self.latest=None;self._save()
+        if self.lost:return None
         return event
 
     def _observe(self,ticket,fact,run):
@@ -133,8 +140,9 @@ class _Scope:
         event.update(value)
         self.latest=run,event,fact
         if event['role']=='executor' and event['stage']=='role':self.executor=(event['ordinal'],exports)
-        if len(encoded(self.data))>MAX_BYTES:self.lost=True
         self._save()
+        from agent_harness_lab.evaluation.construction_seals import observe_native
+        observe_native(self,ticket,fact,run)
 
     def _grade(self,run,extracted,oracle_sha256,fixture_sha256,outcome):
         from agent_harness_lab.evaluation.controller_receipts import _read_fact,_matches_grade,_artifact_fingerprints
@@ -155,7 +163,6 @@ class _Scope:
                         artifacts_sha256=_hash(selected),selected_paths=len(selected),oracle_sha256=oracle_sha256,binding_sha256=matches[-1]['sha256']))
             self.executor=None
         self.latest=None
-        if len(encoded(self.data))>MAX_BYTES:self.lost=True
         self._save()
 
     def bind(self,manifest,baseline,candidate):
@@ -174,7 +181,6 @@ class _Scope:
             baseline_sha256=self._tree(baseline),candidate_sha256=self._tree(candidate),oracles=oracles,oracle_roots=oracle_roots)
         if binding['baseline_sha256']!=self.data['baseline_sha256']:self.lost=True;return
         binding['sha256']=_hash(binding);self.data['bindings'].append(binding)
-        if len(encoded(self.data))>MAX_BYTES:self.lost=True
         self._save()
 
     def read(self):
@@ -192,7 +198,7 @@ class _Scope:
         for binding in self.data['bindings']:
             if (self._tree(Path(binding['baseline']))!=binding['baseline_sha256']
                     or self._tree(Path(binding['candidate']))!=binding['candidate_sha256']
-                    or hashlib.sha256(read_regular(Path(binding['manifest']),1024*1024)).hexdigest()!=binding['manifest_sha256']
+                    or regular_sha256(Path(binding['manifest']),1024*1024)!=binding['manifest_sha256']
                     or any(self._tree(Path(root))!=sha for root,sha in binding['oracle_roots'].items())):
                 self.lost=True;raise ValueError('workflow prerequisite binding changed')
         if self.instruction_client is not None:
@@ -209,6 +215,8 @@ class _Scope:
     def cancel(self):self.lost=True
 
     def end(self):
+        from agent_harness_lab.evaluation.construction_seals import end_scope
+        end_scope(self)
         owner=_STATES.pop(self,None)
         if owner is not None and owner[0]==os.getpid() and _ACTIVE.get() is self:_ACTIVE.reset(owner[1])
         self.closed=True;self.latest=self.executor=None;self.instruction_client=None

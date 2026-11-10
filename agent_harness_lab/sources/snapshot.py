@@ -1,10 +1,11 @@
 """Explicit local normalized exports; metadata permission checks precede data reads."""
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
 from agent_harness_lab.config import read_json
-from agent_harness_lab.evaluation.integrity import contained, read_regular, unique_object
+from agent_harness_lab.evaluation.integrity import contained, read_regular, regular_equal, regular_sha256, unique_object
 from .schema import EvidenceRecord, SourceSpec, digest, fingerprint
 from .store import native_metadata
 from .execution import ExecutionMetadata
@@ -42,6 +43,20 @@ class Snapshot:
             seen[key] = value
 
 
+def claim_snapshot(source, prefix, claims, provenance, export_native, export_sha256, summary):
+    """Partial contextual-assertion records, one per claim plus the export file's own, and their snapshot.
+
+    The export hash is part of the checkpoint: a change to any unmodelled field is still a new capture.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    def record(kind, native, revision, provenance, original=None):
+        return EvidenceRecord(source.source_key, native, revision, revision, 'contextual_assertion', kind, now,
+            original_at=original, provenance=provenance, capture_completeness='partial')
+    records = [record(prefix+c.claim_type, c.native_id_sha256, digest(asdict(c)), provenance(c), c.original_at) for c in claims]
+    records.append(record(prefix+'export', export_native, export_sha256, 'native_field'))
+    return Snapshot(digest(dict(summary, export_sha256=export_sha256, claims=[asdict(c) for c in claims])), tuple(records))
+
+
 class LocalExport:
     def __init__(self, manifest):
         self.manifest = Path(manifest).absolute()
@@ -73,11 +88,32 @@ class LocalExport:
                 self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)[1] != expected):
             raise ValueError('source selection changed during capture')
 
-    def _normalized_export(self, source, expected=None):
+    def capture(self, source, descriptor, selection, paths, limit, consume, changed, read=read_regular, rehash=regular_sha256):
+        """Read each selected file once and pass (position, bytes, SHA-256) to consume; return the hashes.
+
+        One file's bytes are held at a time. Every hash is then re-checked by streaming and the selection re-read, so a
+        file or declaration that changed during capture raises. A source passes its own read and rehash names so its
+        module stays the file-access seam.
+        """
+        hashes = []
+        for position, path in enumerate(paths):
+            raw = read(path, limit)
+            hashes.append(hashlib.sha256(raw).hexdigest())
+            consume(position, raw, hashes[-1])
+            del raw
+        for path, expected in zip(paths, hashes):
+            if rehash(path, limit) != expected: raise ValueError(changed)
+        self.verify_selection(source, descriptor, selection)
+        return hashes
+
+    def _normalized_payload(self, source, expected=None):
         current, value = self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)
         if current != source or not current.enabled or expected is not None and value != expected:
             raise ValueError('normalized export declaration changed or is disabled')
-        payload = contained(self.manifest.parent, value['data'])
+        return value, contained(self.manifest.parent, value['data'])
+
+    def _normalized_export(self, source, expected=None):
+        value, payload = self._normalized_payload(source, expected)
         return value, read_regular(payload, None)
 
     def read(self, source):
@@ -100,7 +136,7 @@ class LocalExport:
         records = tuple(EvidenceRecord.parse(r) for r in rows)
         if metadata is not None: metadata.validate(source, records)
         if graph is not None: graph.validate(source, records)
-        if self._normalized_export(source, value)[1] != raw:
+        if not regular_equal(self._normalized_payload(source, value)[1], raw, None):
             raise ValueError('normalized export payload changed during capture')
         if self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256) != (source, value):
             raise ValueError('normalized export declaration changed after readback')

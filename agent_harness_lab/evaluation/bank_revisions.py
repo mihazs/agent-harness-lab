@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 from agent_harness_lab.private_journal import MAX_EVENTS, encoded, record, record_bytes, sync_directory, write_bytes
 from agent_harness_lab.sources.schema import digest as metadata_digest
-from .integrity import contained, copy_frozen, digest, read_regular, tree
+from .integrity import contained, copy_frozen, digest, open_nofollow, read_regular, regular_sha256, regular_size, tree
 from .regression_controls import read_draft
 from .regressions import fields, load, sha256, text
 from .task_bank import TaskSpec
@@ -30,7 +30,7 @@ def payload_tree(path):
 def sync_tree(path):
     files = tree(path, max_files=4096, max_bytes=MAX_REVISION_BYTES); folders = {Path(path)}
     for relative in files:
-        target = contained(path, relative); descriptor = os.open(target, os.O_RDONLY | os.O_NOFOLLOW)
+        target = contained(path, relative); descriptor = open_nofollow(target)
         try: os.fsync(descriptor)
         finally: os.close(descriptor)
         folders.update(p for p in target.parents if p.is_relative_to(path))
@@ -196,7 +196,7 @@ def _copy_assets(source_root, task, target, accounting):
     key = metadata_digest((task['task_id'],task['fixture_digest'],task['grader_digest']))
     for field, identity in (('fixture','fixture_digest'),('grader_bundle','grader_digest')):
         source = contained(source_root,task[field]); files = tree(source)
-        accounting[0] += len(files); accounting[1] += sum(len(read_regular(contained(source,name),MAX_REVISION_BYTES)) for name in files)
+        accounting[0] += len(files); accounting[1] += sum(regular_size(contained(source,name),MAX_REVISION_BYTES) for name in files)
         if accounting[0] > 3500 or accounting[1] > MAX_REVISION_BYTES:
             raise ValueError('bank revision resource limit exceeded')
         relative = 'assets/'+key+'/'+field
@@ -239,7 +239,7 @@ def accept(store, case_id, parent_path, request_path):
         descriptor, task, _ = read_draft(case/'draft.json'); proposal, _ = load(case/'proposal.json')
         attempt_event = next(e for e,_ in reversed(events) if e['kind'] == 'reproduced')
         attempt = contained(case,attempt_event['payload']['attempt'])
-        run = attempt/'replay'; minimized = run/'inputs/minimized'; oracle = run/'inputs/oracle'
+        run = attempt/'replay'; minimized = run/'inputs/minimized'
         fixture_hash = digest(minimized)
         if any(t['fixture_digest'] == fixture_hash for t in parent_value['tasks']):
             raise ValueError('fixture already covered; use an explicit correction/replacement workflow')
@@ -293,14 +293,14 @@ def accept(store, case_id, parent_path, request_path):
             write_bytes(staged/'admission.json',encoded(dict(request=request,positive_review=reviewed,
                 raw_fixture_sha256=task.fixture_digest,materialized_fixture_sha256=fixture_hash,
                 historical_verification='unverified',independence='unverified',publication_allowed=False)))
-            validated = _validate(staged/'bank.json',verify_contents=True)
+            _validate(staged/'bank.json',verify_contents=True)
             from .content_grouping import fixture_content
             new_content = fixture_content(contained(staged,new_task['fixture']),new_task['fixture_digest'],MAX_REVISION_BYTES)[0]
             for prior in tasks:
                 prior_content = fixture_content(contained(staged,prior['fixture']),prior['fixture_digest'],MAX_REVISION_BYTES)[0]
                 if new_content.normalized_sha256 == prior_content.normalized_sha256:
                     raise ValueError('normalized fixture duplicate requires explicit resolution')
-            bank_hash = hashlib.sha256(read_regular(staged/'bank.json',1024*1024)).hexdigest()
+            bank_hash = regular_sha256(staged/'bank.json',1024*1024)
             revision = dict(schema_version=1,profile=PROFILE,parent_revision_sha256=request['parent_revision_sha256'],
                 parent_bank_sha256=parent_hash,bank_manifest_sha256=bank_hash,tree_sha256=payload_tree(staged),
                 operation='accept',case_id=case_id,reviewed_event_sha256=events[-1][1],sealed_evidence_sha256=evidence,

@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Offline trace diagnosis. Findings are evidence, never mutation authority."""
 import argparse
+from array import array
 from collections import Counter, defaultdict
 import hashlib
+import heapq
 import itertools
 import json
+from operator import itemgetter
 from pathlib import Path
 try:
     from tools.observations import ObservationCache
@@ -14,66 +17,153 @@ except ModuleNotFoundError:  # Direct python tools/diagnose.py entrypoint.
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
+# Replayed observation fields; records store values in this order, None when absent.
+OBSERVED = ('case_id', 'event_id', 'activity', 'state_revision', 'mutation', 'tool_effect',
+            'call_id', 'tool_name', 'input_fingerprint', 'result_fingerprint')
+_position = itemgetter(1)
+
+
 def normalize(rows, source_format='normalized', project=None, source_version=None):
     from agent_harness_lab.telemetry.adapters import normalize as adapter
     yield from adapter(rows, source_format, project, source_version)
 
 
 def recurring_sequences(cases, roots, maximum=None):
-    """Index substrings first; enumerate only patterns supported by three roots."""
+    """Index substrings first; enumerate only patterns supported by three roots.
+
+    Each entry is (activity, position, ref); a (case_id, event_id) ref becomes one
+    shared evidence mapping when first emitted, and any other ref is emitted as is.
+    """
     if len(set(roots.values())) < 3:
         return []
-    states = [dict(length=0, link=-1, transitions={}, position=-1, roots=set(), ends=[])]
+    # Parallel state arrays. A single outgoing transition is an (activity, target)
+    # pair; only branching states hold a dict. ends/owners are set for case events only.
+    length, link, position = array('q', (0,)), array('q', (-1,)), array('q', (-1,))
+    moves, ends, owners = [None], [None], [None]
     tokens = []; last = 0
     for case, entries in cases.items():
-        for activity, position, ref in itertools.chain(entries, (((case, None), None, None),)):
+        for entry in itertools.chain(entries, (((case, None), None, None),)):
+            activity = entry[0]
             tokens.append(activity); index = len(tokens)-1
-            current = len(states)
-            states.append(dict(length=states[last]['length']+1, link=0, transitions={}, position=index,
-                roots={roots[case]} if ref is not None else set(), ends=[(position,ref)] if ref is not None else []))
+            current = len(length)
+            length.append(length[last]+1); link.append(0); position.append(index); moves.append(None)
+            if entry[2] is not None:
+                ends.append(entry); owners.append(roots[case])
+            else:
+                ends.append(None); owners.append(None)
             parent = last
-            while parent >= 0 and activity not in states[parent]['transitions']:
-                states[parent]['transitions'][activity] = current
-                parent = states[parent]['link']
-            if parent >= 0:
-                target = states[parent]['transitions'][activity]
-                if states[parent]['length']+1 == states[target]['length']:
-                    states[current]['link'] = target
+            while parent >= 0:
+                move = moves[parent]
+                if move is None:
+                    moves[parent] = (activity, current)
+                elif type(move) is tuple:
+                    if move[0] == activity:
+                        break
+                    moves[parent] = {move[0]: move[1], activity: current}
+                elif activity in move:
+                    break
                 else:
-                    clone = len(states)
-                    states.append(dict(length=states[parent]['length']+1, link=states[target]['link'],
-                        transitions=dict(states[target]['transitions']), position=states[target]['position'], roots=set(), ends=[]))
-                    while parent >= 0 and states[parent]['transitions'].get(activity) == target:
-                        states[parent]['transitions'][activity] = clone
-                        parent = states[parent]['link']
-                    states[target]['link'] = states[current]['link'] = clone
+                    move[activity] = current
+                parent = link[parent]
+            if parent >= 0:
+                move = moves[parent]
+                target = move[1] if type(move) is tuple else move[activity]
+                if length[parent]+1 == length[target]:
+                    link[current] = target
+                else:
+                    clone = len(length)
+                    move = moves[target]
+                    length.append(length[parent]+1); link.append(link[target]); position.append(position[target])
+                    moves.append(dict(move) if type(move) is dict else move); ends.append(None); owners.append(None)
+                    while parent >= 0:
+                        move = moves[parent]
+                        if type(move) is tuple:
+                            if move[1] != target or move[0] != activity:
+                                break
+                            moves[parent] = (activity, clone)
+                        elif move is None or move.get(activity) != target:
+                            break
+                        else:
+                            move[activity] = clone
+                        parent = link[parent]
+                    link[target] = link[current] = clone
             last = current
-    children = defaultdict(list)
-    for index in sorted(range(1,len(states)), key=lambda i: states[i]['length'], reverse=True):
-        parent = states[index]['link']
-        states[parent]['roots'].update(states[index]['roots'])
-        children[parent].append(index)
-    result = []
-    for index, state in enumerate(states[1:],1):
-        if len(state['roots']) < 3:
+    del moves
+    count = len(length)
+    # Decreasing length, ascending index among equal lengths: the stable reverse sort order.
+    start = array('q', bytes(8*(max(length)+1)))
+    for index in range(1, count):
+        start[length[index]] += 1
+    offset = 0
+    for size in range(len(start)-1, -1, -1):
+        offset, start[size] = offset+start[size], offset
+    order = array('q', bytes(8*(count-1)))
+    for index in range(1, count):
+        size = length[index]; order[start[size]] = index; start[size] += 1
+    del start
+    # Children are prepended in that order; the root set of a state is final when it is
+    # reached, so only its size is kept. State 0 is never reported, so it gets no union.
+    first, sibling, supported = array('q', (-1,))*count, array('q', (-1,))*count, array('q', (0,))*count
+    pending_roots = {}
+    for index in order:
+        found = pending_roots.pop(index, None)
+        owner = owners[index]
+        if owner is not None:
+            if found is None:
+                found = {owner}
+            else:
+                found.add(owner)
+        parent = link[index]
+        if found:
+            supported[index] = len(found)
+            if parent > 0:
+                other = pending_roots.get(parent)
+                if other is None:
+                    pending_roots[parent] = found
+                elif len(other) < len(found):
+                    found |= other; pending_roots[parent] = found
+                else:
+                    other |= found
+        sibling[index] = first[parent]; first[parent] = index
+    del order, owners, pending_roots
+    refs, result = {}, []
+    for index in range(1, count):
+        reported = supported[index]
+        if reported < 3:
             continue
-        shortest = max(2, states[state['link']]['length']+1)
-        longest = state['length'] if maximum is None else min(maximum,state['length'])
+        shortest = max(2, length[link[index]]+1)
+        longest = length[index] if maximum is None else min(maximum, length[index])
         if shortest > longest:
             continue
-        ends = []; pending = [index]
+        found = []; pending = [index]
         while pending:
-            child = pending.pop()
-            ends.extend(states[child]['ends']); pending.extend(children[child])
-        evidence = [ref for _,ref in sorted(ends,key=lambda item:item[0])]
-        for length in range(shortest,longest+1):
-            activities = tokens[state['position']-length+1:state['position']+1]
-            result.append(dict(activities=activities,reported_roots=len(state['roots']),evidence=evidence))
-    return sorted(result,key=lambda row:(-row['reported_roots'],row['activities']))
+            state = pending.pop()
+            if ends[state] is not None:
+                found.append(ends[state])
+            children = []; child = first[state]
+            while child >= 0:
+                children.append(child); child = sibling[child]
+            children.reverse(); pending.extend(children)
+        found.sort(key=_position)
+        evidence = []
+        for _, _, ref in found:
+            if type(ref) is tuple:
+                shared = refs.get(ref)
+                if shared is None:
+                    shared = refs[ref] = {'case_id': ref[0], 'event_id': ref[1]}
+                ref = shared
+            evidence.append(ref)
+        end = position[index]+1
+        for size in range(shortest, longest+1):
+            result.append(dict(activities=tokens[end-size:end], reported_roots=reported, evidence=evidence))
+    return sorted(result, key=lambda row: (-row['reported_roots'], row['activities']))
 
 
-def analyze(rows, max_events=None, *, observation_per_case=None, observation_total=None, observation_max_age=None, sequence_length=None, select_methods=False):
+def analyze(rows, max_events=None, *, observation_per_case=None, observation_total=None, observation_max_age=None, sequence_length=None, select_methods=False,
+            source_order_declared_by='caller'):
     from agent_harness_lab.diagnostics.process_mining import ProcessMiner
+    # Versioned producer subordinals that may break capture-order ties as declared capture order.
+    from agent_harness_lab.telemetry.schema import SOURCE_ORDER_PROFILES
     if any(value is not None and (type(value) is not int or value <= 0) for value in (max_events,sequence_length)):
         raise ValueError('analysis limits must be positive integers')
     counts, cases = Counter(), defaultdict(list)
@@ -81,7 +171,8 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
     observations = ObservationCache(observation_per_case, observation_total, observation_max_age)
     process = ProcessMiner()
     fields = Counter()
-    ordering, observation_cases, observation_candidates, observation_events = {}, set(), set(), []
+    ordering, observation_cases, observation_candidates, observation_events = {}, set(), set(), defaultdict(list)
+    declared_events, declared_profiles = 0, set()
     for number, event in enumerate(rows, 1):
         if max_events is not None and number > max_events:
             raise ValueError('event limit exceeded; select a bounded corpus explicitly')
@@ -97,15 +188,35 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
         if case in roots and roots[case] != root:
             raise ValueError('inconsistent lineage')
         roots[case] = root
-        if (case, ident) in seen:
+        identity = (case, ident)
+        if identity in seen:
             raise ValueError('duplicate event id')
-        seen.add((case, ident))
+        seen.add(identity)
         process.observe(event)
-        order = ordering.setdefault(case, dict(events=0, capture=True, timestamp=True, last_order=-1, last_time=None))
+        order = ordering.setdefault(case, dict(events=0, capture=True, timestamp=True, last_order=-1, last_time=None,
+                                               source=True, last_source=None, tied=False, crossed=False))
         ordinal = event.get('capture_order')
         order['capture'] &= type(ordinal) is int and ordinal >= 0 and ordinal > order['last_order']
+        order['tied'] |= type(ordinal) is int and ordinal == order['last_order']
         if type(ordinal) is int:
             order['last_order'] = ordinal
+        profile = event.get('source_order_profile')
+        supported = isinstance(profile, str) and profile in SOURCE_ORDER_PROFILES
+        if profile is not None:
+            declared_events += 1
+            if supported: declared_profiles.add(profile)
+        source = (profile, event.get('source_order_segment'), ordinal, event.get('source_suborder'))
+        if not supported or not all(type(value) is int and value >= 0 for value in source[1:]):
+            order['source'] = False
+        else:
+            last = order['last_source']
+            if last is not None and source[:2] != last[:2]:
+                # Records of another file (or profile) have no established capture order; strict timestamps
+                # remain an independent route and are reported separately.
+                order['crossed'] = True; order['source'] = order['capture'] = False
+            elif last is not None and source[2:] <= last[2:]:
+                order['source'] = False
+            order['last_source'] = source
         try:
             stamp = process.instant(event.get('timestamp'))
         except (ValueError, TypeError, AttributeError, OverflowError):
@@ -123,38 +234,42 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
         counts[activity] += 1
         for key in ('tool_name', 'outcome', 'state_revision', 'lineage_verified'):
             fields[key] += event.get(key) not in (None, 'unknown', 'unverified')
-        ref = {'case_id': case, 'event_id': ident}
-        cases[case].append((activity,number,ref))
-        if select_methods:
-            keys = ('case_id', 'event_id', 'activity', 'state_revision', 'mutation', 'tool_effect',
-                    'call_id', 'tool_name', 'input_fingerprint', 'result_fingerprint')
-            observation_events.append((number, {key: event[key] for key in keys if key in event}))
-        else:
+        # The seen key doubles as the reference; only emitted evidence becomes a mapping.
+        violation = event.get('contract_violation') is True and event.get('contract_ref')
+        ref = {'case_id': case, 'event_id': ident} if violation else identity
+        if not select_methods:
+            cases[case].append((activity,number,ref))
             finding = observations.observe(event, number)
             if finding:
                 findings.append(finding)
-        if event.get('contract_violation') is True and event.get('contract_ref'):
+        elif order['capture'] or order['timestamp'] or order['source']:
+            cases[case].append((activity,number,ref))
+            observation_events[case].append((number, *(event.get(name) for name in OBSERVED)))
+        else:  # Order flags never recover, so the case can no longer be selected.
+            cases.pop(case, None); observation_events.pop(case, None)
+        if violation:
             findings.append(dict(kind='contract_violation', status='observed_pattern',
                 evidence=[ref], contract_ref=event['contract_ref'],
                 explanation='Caller supplied contract evidence; verify against the applicable contract.'))
     n = sum(counts.values())
-    ordered = {case for case, state in ordering.items() if state['capture'] or state['timestamp']}
+    ordered = {case for case, state in ordering.items() if state['capture'] or state['timestamp'] or state['source']}
     sequence_cases = {case for case, state in ordering.items() if state['events'] > 1}
-    sequence_inputs = {case: cases[case] for case in cases if case in sequence_cases & ordered}
+    selected_sequences = sequence_cases & ordered
+    sequence_inputs = {case: cases[case] for case in cases if case in selected_sequences}
     sequence_roots = len({roots[case] for case in sequence_inputs})
     selected_observations = observation_candidates & ordered
     if select_methods:
+        # Per-case records merge back into capture position order; positions are unique.
+        replay = [observation_events[case] for case in observation_events if case in selected_observations]
+        for record in heapq.merge(*replay):
+            finding = observations.observe(dict(zip(OBSERVED, record[1:])), record[0])
+            if finding:
+                findings.append(finding)
+        del replay; observation_events.clear()
         repeated = recurring_sequences(sequence_inputs, roots, sequence_length) if sequence_roots >= 3 else []
-        for position, event in observation_events:
-            if event['case_id'] in selected_observations:
-                finding = observations.observe(event, position)
-                if finding:
-                    findings.append(finding)
     else:
         repeated = recurring_sequences(cases, roots, sequence_length)
-    return dict(schema_version=1, profile='ahl-private-diagnosis-v1',
-                events=n, cases=len(roots), reported_roots=len(set(roots.values())),
-                method_inputs=dict(profile='ahl-analysis-execution-v1', structured_events=fields['structured_events'],
+    inputs = dict(profile='ahl-analysis-execution-v1', structured_events=fields['structured_events'],
                     sequence_roots=sequence_roots, sequence_cases=len(sequence_cases),
                     sequence_events=sum(len(entries) for entries in sequence_inputs.values()),
                     selected_sequence_cases=len(sequence_inputs), observation_cases=len(observation_cases),
@@ -164,7 +279,31 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
                     unordered_sequence_cases=len(sequence_cases - ordered),
                     unordered_observation_cases=len(observation_cases - ordered),
                     capture_order_cases=sum(state['capture'] for state in ordering.values()),
-                    timestamp_order_cases=sum(state['timestamp'] for state in ordering.values())),
+                    timestamp_order_cases=sum(state['timestamp'] for state in ordering.values()))
+    limitations = ['Reported roots are not proven independent.',
+                   'Capture order does not establish concurrency or causation.',
+                   'Stops are not success; duplicate observations are not proven waste.',
+                   'No automatic staleness, skill utility, or model correctness inference.']
+    if declared_events:
+        # Present only when a producer declared a subordinal, so other inputs keep their exact receipts.
+        declared = {case for case, state in ordering.items() if state['source'] and not (state['capture'] or state['timestamp'])}
+        inputs['source_order'] = dict(profile='ahl-declared-source-order-v1', source_profiles=sorted(declared_profiles),
+            declared_events=declared_events, declared_by=source_order_declared_by,
+            basis='declared_capture_order', execution_order='unknown',
+            cross_segment_order='unknown', declared_order_cases=sum(state['source'] for state in ordering.values()),
+            declared_order_only_cases=len(declared),
+            selected_sequence_cases=len(declared & set(sequence_inputs)),
+            selected_observation_cases=len(declared & selected_observations),
+            tied_capture_order_cases=sum(state['tied'] for state in ordering.values()),
+            unresolved_tied_cases=sum(state['tied'] and case not in ordered for case, state in ordering.items()),
+            cross_segment_cases=sum(state['crossed'] for state in ordering.values()),
+            cross_segment_unordered_cases=sum(state['crossed'] and case not in ordered for case, state in ordering.items()),
+            cross_segment_timestamp_ordered_cases=sum(state['crossed'] and case in ordered for case, state in ordering.items()))
+        limitations.append('Declared source subordinals order records within one native line of one file only; '
+                           'they are not execution, causal or cross-file order.')
+    return dict(schema_version=1, profile='ahl-private-diagnosis-v1',
+                events=n, cases=len(roots), reported_roots=len(set(roots.values())),
+                method_inputs=inputs,
                 method_execution=dict(profile='ahl-analysis-execution-v1',
                     policy='structural_prerequisites_v1' if select_methods else 'legacy_raw_analysis',
                     directly_follows='completed' if n else 'not_run',
@@ -185,10 +324,7 @@ def analyze(rows, max_events=None, *, observation_per_case=None, observation_tot
                     'instruction_staleness': 'Needs applicable instruction and versioned source contradiction.',
                     'corrections_and_context_loss': 'Needs reviewed unmet requirements, not changed intent.',
                     'severe_failures': 'Needs reproducible acceptance boundary; frequency is not required.'},
-                limitations=['Reported roots are not proven independent.',
-                    'Capture order does not establish concurrency or causation.',
-                    'Stops are not success; duplicate observations are not proven waste.',
-                    'No automatic staleness, skill utility, or model correctness inference.'])
+                limitations=limitations)
 
 
 def report(result, *, source_context=None):

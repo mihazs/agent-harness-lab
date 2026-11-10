@@ -5,3 +5,17 @@ pre-commit:
   jobs:
     - name: zero-clones
       run: task duplication:check
+    - name: ruff
+      glob: "*.py"
+      # Lints only the staged Python files; --force-exclude keeps the pyproject excludes for explicit paths.
+      # Uses the first of .venv/bin/python and python3 that has ruff installed.
+      run: >-
+        for py in .venv/bin/python python3; do
+        if "$py" -m ruff --version >/dev/null 2>&1; then exec "$py" -m ruff check --force-exclude {staged_files}; fi;
+        done;
+        echo "ruff is not installed in .venv/bin/python or python3; run task setup:test PYTHON=.venv/bin/python" >&2;
+        exit 1
+commit-msg:
+  jobs:
+    - name: conventional-commits
+      run: python3 scripts/check_commit_message.py {1}

@@ -1,4 +1,4 @@
-"""One entrypoint for local analysis and evaluated harness recommendations."""
+"""One entrypoint for local analysis and recommendation-only candidate evaluation."""
 import argparse
 import importlib.metadata
 import importlib.util
@@ -55,6 +55,10 @@ def evaluator():
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if 'AHL_MANAGED_PREPARATION' in os.environ:
+        argparse.ArgumentParser(prog='ahl').exit(3,'ahl: managed preparation cannot start a CLI operation\n')
+    skill_invocation=argv[:2]==['skills','invoke']
+    if skill_invocation:argv=['improve',*argv[2:]]
     if argv and argv[0] == 'analysis':
         argv[0] = 'analyze'
     if argv and argv[0] == 'update':
@@ -107,7 +111,7 @@ def main(argv=None):
         from tools.link_skills import main as install_skills
         install_skills(argv[1:], source=assets() / 'skills')
         return 0
-    parser = argparse.ArgumentParser(prog='ahl', description='Start with ahl analyze . for read-only analysis, or ahl improve . to analyze and evaluate candidates in one call.',
+    parser = argparse.ArgumentParser(prog='ahl', description='Start with ahl analyze . for read-only analysis, or ahl improve . to stage, evaluate and recommend\nharness candidates in one call. AHL itself writes only private state; behavioral candidates stay recommendations\n(except explicit improve --repair-contracts skill-header repairs), and the cooperative agent is not sandboxed.',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='Everyday use:\n  ahl analyze .\n  ahl improve .\n\nOptional setup inspection:\n  ahl doctor . --json\n\nUse ahl COMMAND --help for required inputs, side effects and output contracts.\nAnalysis and improvement outputs are private; hashes do not authorize publication.\nWorkflow exits: 0 completed; 1 execution/interruption/budget; 2 invalid input;\n3 blocked or inconclusive. Setup and low-level tools document their own outcomes.')
     parser.add_argument('--version', action='version', version=version(),help='Print the installed AHL version and exit without running a command')
@@ -139,13 +143,24 @@ def main(argv=None):
     }
     for name,description in routed_help.items():
         sub.add_parser(name,help=description+'; use ahl '+name+' --help',description=description)
-    helps = {'analyze': 'Discover project evidence and failure candidates',
-            'improve': 'Discover, stage, evaluate, and recommend harness candidates (no automatic adoption); --repair-contracts explicitly applies bounded structural repairs',
-            'watch': 'Recheck evidence and recommend improvements only when project evidence changes (recommendation-only)'}
     for name in ('analyze', 'improve', 'watch'):
+        helps = {'analyze': 'Discover project evidence and failure candidates',
+            'improve': 'Stage and evaluate harness candidates, then recommend; never applies behavioral changes (only --repair-contracts may apply bounded skill-header repairs)',
+            'watch': 'Recheck evidence; rerun recommendation-only staging and evaluation on a first pass, changed evidence or configuration, or a classified transient retry; AHL never writes harness files'}
+        boundary = {'analyze': '',
+            'improve': 'Changes: private state only: run artifacts (staged baseline/candidate copies, evaluation results, change plan) and a run lock.\n'
+                'AHL never writes project instructions, skills or hooks; behavioral candidates stay recommendations.\n'
+                'The agent is cooperative: read-only project access is instructed, not enforced; its own permission settings apply.\n'
+                'AHL rechecks the project harness before recommending and rejects a stale result; it does not revert that change.\n'
+                'Exception: explicit --repair-contracts may apply a bounded skill-header repair with a rollback journal;\n'
+                'a project ahl.json keeps that repair recommendation-only. No commit, publish, deploy or background service.\n',
+            'watch': 'Changes: private state only: run artifacts, a run lock and the watch checkpoint.\n'
+                'AHL never writes project harness files; watch has no --repair-contracts and applies no candidate.\n'
+                'Each pass uses the same cooperative agent as improve: read-only project access is instructed, not enforced.\n'
+                'Reruns: on changed evidence or execution configuration, or a classified transient retry.\n'}
         command = sub.add_parser(name, aliases=['analysis'] if name == 'analyze' else [],
             help=helps[name], description=helps[name],formatter_class=argparse.RawDescriptionHelpFormatter,
-            epilog=('Output: private artifacts and a JSON receipt on stdout. No input bodies are public.\n'
+            epilog=(boundary[name]+'Output: private artifacts and a JSON receipt on stdout. No input bodies are public.\n'
                 'Progress: aggregate stages, counts and elapsed time on stderr.\n'
                 'Configuration constrains runtime, scope and budgets; it does not grant authority.\n'
                 +('An explicit nonstarter ahl.json bank is frozen for one cooperative comparison; its entire paired task set and preparation must fit the configured budget.\n' if name!='analyze' else '')+
@@ -157,15 +172,18 @@ def main(argv=None):
         command.add_argument('project', nargs='?', type=Path, default=Path.cwd(),help='Existing project directory whose exact harness scope is selected (default: current directory)')
         selection = command.add_mutually_exclusive_group()
         selection.add_argument('--events', type=Path, help='Existing authorized capture file instead of home discovery; its JSONL schema is selected by --format/--source-version')
-        selection.add_argument('--source-root', type=Path, help='Explicit native rollout directory; requires a pinned Codex profile')
+        selection.add_argument('--source-root', type=Path, help='Explicit native Codex rollout or Claude projects directory; requires a pinned Codex or Claude profile')
         if name == 'analyze':
             selection.add_argument('--memory-manifest', type=Path, help='Explicit scoped ai-memory session-observation manifest with pinned server/tool schema; read-only network retrieval, no atomic snapshot guarantee')
             command.add_argument('--authorization-file', type=Path, help='Existing private authorization header file for --memory-manifest; never printed or discovered automatically')
-        command.add_argument('--session', help='Exact native thread ID within --source-root')
+        command.add_argument('--session', help='Exact native Codex thread ID or Claude session UUID within --source-root')
         command.add_argument('--max-captures', type=int, help='Optional positive matching-capture limit after project filtering; default: unlimited')
         command.add_argument('--max-capture-scan', type=int, help='Optional positive discovery-file limit before project filtering; default: unlimited')
         command.add_argument('--max-events', type=int, help='Optional positive event limit; exceeding it fails explicitly; default: unlimited')
         command.add_argument('--sequence-length', type=int, help='Optional positive recurring-sequence length limit; default: unlimited')
+        if name != 'watch':
+            command.add_argument('--incident-corpus', type=Path, help='Explicit local JSON list of reviewed Incident records declaring approved=true; requires --incident-query; declarations are unverified and results remain private untrusted evidence')
+            command.add_argument('--incident-query', help='Explicit nonempty lexical query paired with --incident-corpus; no inferred query, corpus discovery or model calls')
         command.add_argument('--format', choices=('normalized', 'codex', 'claude', 'ai-memory'), default='normalized',help='Explicit capture adapter for --events/--source-root; normalized expects event JSONL (default: %(default)s)')
         command.add_argument('--source-version', help='Explicit adapter contract for --events/--source-root, including codex-rollout-0.166.0 and claude-jsonl-2.1.316')
         command.add_argument('--output', type=Path, help='New private output directory (default: user state directory)')
@@ -198,6 +216,7 @@ def main(argv=None):
             command.add_argument('--once', action='store_true', help='Check once then exit with its disposition; default is continued watching with unchanged-work suppression')
     args = parser.parse_args(argv)
     args._progress = _progress_reporter()
+    if skill_invocation:args._invocation_origin='skill'
     from agent_harness_lab.workflow import analyze_project, improve, watch
     try:
         if not args.project.is_dir():

@@ -71,7 +71,8 @@ manifest and grader controls without launching recursive controllers.
 4. Use fresh isolated fixture copies for each trial. Keep candidate instructions out
    of baseline, graders and reference answers outside writable task workspaces, and
    evaluation artifacts outside skill discovery. Verify the intended version is
-   loaded. Worktrees, if needed, belong under `~/dev/.worktrees/`.
+   loaded; [trial isolation](references/isolation.md) lists what a trial still
+   inherits. Worktrees, if needed, belong under `~/dev/.worktrees/`.
 5. Run baseline, then candidate on identical inputs; preserve negative results.
    Inspect artifacts and traces, not just exit codes. Repeat the decisive behavioral
    difference in fresh sessions. Reserve unseen tasks until candidate selection;

@@ -59,15 +59,9 @@ tool/input/result/state signatures and then checks call/effect eligibility.
 Unordered cases do not suppress supported cases; per-method excluded coverage is
 reported explicitly. Structured checks require explicit execution status or a
 referenced contract flag. Tied, absent or reversed timestamps cannot establish
-order; a valid capture ordinal does not establish elapsed time or causality.
-
-The pinned Claude profile can emit several normalized facets at one physical
-record ordinal. Its current normalized contract does not retain a separate total
-order for those facets; hashed block identities and parallel content-array
-positions cannot supply execution chronology. Such cases remain explicitly
-excluded from recurrence/stateful matching while the descriptive graph retains
-them. The source-ordering follow-up is tracked in
-[#190](https://github.com/mihazs/agent-harness-lab/issues/190).
+order; a valid capture ordinal does not establish elapsed time or causality. A
+versioned within-line subordinal can break capture-ordinal ties as declared capture
+order; see [declared source order](#declared-source-order).
 
 The all-case descriptive graph remains available when prerequisites fail. The
 receipt records actual method dispatch as `completed` or `not_run` and distinguishes
@@ -104,15 +98,96 @@ preparation and evaluation stages. Progress does not print capture paths, sessio
 identities or bodies. These artifacts remain private even if they contain only
 metadata; the tool's publication policy still applies.
 
+### Declared source order
+
+The pinned Claude profile can emit several normalized facets at one physical
+record ordinal: content blocks of one line and the response usage/stop facets it
+supports. Profile `claude-native-order-v1` records a separate subordinal for them
+in `source_order_profile`, `source_order_segment` and `source_suborder`:
+
+| Field | What it records | What it does not establish |
+| --- | --- | --- |
+| `capture_order` | Zero-based line position, offset by earlier files in a project-root journal (unchanged) | Execution time, concurrency or causation |
+| `source_suborder` | Content-array position within that line; usage and stop facets follow the line's blocks, in that order | That blocks ran in array order; facet placement is a profile declaration, not an observed write |
+| `source_order_segment` | The physical file within one projection: `0` for a single file, one per file in a project-root journal | Any order between files |
+
+When capture ordinals tie, method selection may treat the strictly increasing
+key `(capture_order, source_suborder)` within one segment and profile as
+*declared capture order*. Cases ordered only this way are reported in
+`method_selection.inputs.source_order` (`declared_order_only_cases`, and per-method
+`declared_capture_order_cases` in the receipt coverage). Remaining limitations stay
+explicit: a tie whose records lack a usable subordinal, a repeated or reversed key,
+and an unrecognized profile leave the case unordered (`unresolved_tied_cases`).
+When one case's records come from different segments, its capture order is
+unknown even if offset ordinals increase (`cross_segment_cases`); the order of
+copies or archives of one session is not established. Valid strictly increasing
+timestamps remain an independent route, so such a case can still be ordered by
+its timestamps. The receipt reports both parts: `cross_segment_unordered_cases`
+stay unordered and `cross_segment_timestamp_ordered_cases` are ordered only by
+timestamps. Hashed block identities and response IDs never supply order, and no
+timestamp is synthesized.
+
+The subordinal changes only which cases qualify as ordered inputs. It adds no
+outcome, success/failure or independence label, and recurrence and matching
+outputs keep their descriptive authority. One file holds one writer and therefore
+one reported root, so recurrence over pinned Claude captures still needs three
+roots, for example a normalized file combining exported ledgers of separate
+sessions. Claude records carry no input/result/state signatures, so state-aware
+matching stays unselected for them.
+
+For the pinned Claude adapter the new fields stay outside event IDs, journal
+record identities and revisions, the collection fingerprint and duplicate-UUID
+comparison; they derive from `capture_order`, the hashed block index and the file
+being read. Inputs without these fields keep their previous receipts byte for
+byte, and the `source_order` summary appears only when a record declares one.
+A profile is accepted only on records of its producer (`source_format: claude`,
+`source_version: claude-jsonl-2.1.316`); partial declarations and unknown profiles
+are rejected. A normalized ledger, such as an exported `events.v2.jsonl`, may
+carry the fields as caller declarations, like `capture_order`. The summary then
+reports `declared_by: caller` instead of `native_adapter`, and the collection
+fingerprint includes the fields because they cannot be rederived from the
+ledger. Broader cross-file ordering remains open in
+[#190](https://github.com/mihazs/agent-harness-lab/issues/190).
+
 ## Optional algorithms and remaining integration
 
 | Capability | Current entrypoint / prerequisite | Default analysis? |
 | --- | --- | --- |
-| Lexical incident retrieval | `ahl incident-search`, explicitly approved reviewed corpus | No |
+| Lexical incident retrieval | Explicit `--incident-corpus` and `--incident-query`, or standalone `ahl incident-search` | Only when both inputs are supplied |
 | Classifier comparison | `ahl benchmark`, supplied labels and selected local models | No |
 | Paired baseline/candidate execution | Applicable `ahl improve` workflow or explicit evaluation/experiment | No model execution in read-only analysis |
 | Bounded candidate search | Guarded search APIs with explicit contracts | Not part of read-only analysis |
 | Automatic behavioral application | Independent certification and runtime prerequisites | Not available through the ordinary cooperative workflow |
+
+### Explicit incident retrieval
+
+`ahl analyze . --incident-corpus /private/incidents.json --incident-query "tool timeout"`
+adds the existing local lexical method to the capture portfolio. The same options
+apply to `ahl improve` and its evidence stage. No query is inferred from captures,
+no corpus is discovered, and retrieval makes no model/provider calls. Ordinary
+improvement execution retains its existing agent and evaluation requirements.
+Watch does not accept these options; its existing capture-change checkpoint remains
+unchanged. The receipt's capture evidence state still describes captured history,
+while the separate retrieval method reports completed corpus work even with no captures.
+
+The corpus is a JSON list of Incident records, each containing `incident_id`,
+`root_id`, `summary`, string lists `labels` and nonempty `evidence_refs`, `reviewer`,
+`provenance: "reviewed_annotation"`, `sampling: "random"` or `"signal_enriched"`,
+`source_kind: "synthetic"`, `"public"` or `"private"`, and boolean `approved: true`.
+These validated fields are caller declarations, not authenticated review or
+independence. Supplying a file does not establish approval. Missing, partial or
+invalid input fails explicitly; a valid empty corpus or zero matches completes
+retrieval and grants no correctness authority.
+
+Private `analysis.json` contains ranked summaries and evidence references; the
+execution receipt reports the corpus revision, query digest, record/match counts
+and actual completed method. Controlled improvement preparation receives the same
+untrusted results. Summaries are evidence, never instructions. Retrieval stays
+uncalibrated; root overlap with capture evidence and independence remain unknown,
+and matches never establish a mechanism, a vote or adoption authority. Contextual
+results and their marked facets remain blocked by the supported publication guards,
+including when synthetic or public corpus records were supplied. Generic standalone
+lexical retrieval retains its existing contract.
 
 The audit identified missing default graph integration and unclear method receipts,
 tracked in [#174](https://github.com/mihazs/agent-harness-lab/issues/174) and

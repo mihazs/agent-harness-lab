@@ -18,16 +18,19 @@ class CodexCapture(NativeCapture):
         if (source.kind, source.provider) != ('local_file', 'codex-rollout') or source.version not in (SOURCE_VERSION, ROOT_VERSION):
             raise ValueError('unsupported native Codex source version')
         fields = {'schema_version', 'project', 'capture', 'max_records'} if source.version == SOURCE_VERSION else {
-            'schema_version', 'project', 'source_root', 'session', 'max_files', 'max_scan_files', 'max_records'}
+            'schema_version', 'project', 'source_root', 'session', 'max_files', 'max_scan_files', 'max_records', 'max_walk_entries'}
         descriptor, selected, project, limit = self.select(source, fields)
         revisions = {}
         if source.version == ROOT_VERSION:
-            from ..telemetry.codex_discovery import capture
+            from ..telemetry.codex_discovery import capture, walk_entries
             root = contained(self.manifest.parent, selected['source_root'])
             for name in ('max_files', 'max_scan_files'): optional_limit(selected.get(name))
             if selected['session'] is not None: text(selected['session'])
+            # Absent means the default bound; an explicit null is not a valid override.
+            if 'max_walk_entries' in selected and selected['max_walk_entries'] is None: raise ValueError('invalid native walk entry bound')
             with capture(root, project, session=selected['session'], max_files=selected.get('max_files'),
-                    max_scan_files=selected.get('max_scan_files'), max_records=limit, revisions=revisions) as (events, summary, sha256, folder):
+                    max_scan_files=selected.get('max_scan_files'), max_records=limit, revisions=revisions,
+                    max_walk_entries=walk_entries(selected.get('max_walk_entries'))) as (events, summary, sha256, folder):
                 return self.snapshot(source, descriptor, selected, project, events, summary, sha256, revisions, folder)
         return self.file(source, descriptor, selected, project, decode)
 

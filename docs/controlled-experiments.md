@@ -8,11 +8,11 @@ model. Existing cooperative evaluation remains recommendation-only.
 
 | Issue | Implemented and tested | Still required before issue closure |
 | --- | --- | --- |
-| #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral | Integrate portfolio queue with real proposal sessions and versioned evidence; evaluate composed repairs |
-| #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, approved procedure hypothesis API | Native activation instrumentation, independently graded routing/transfer pack, live utility and compiler evaluation |
+| #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral; bounded admission of proposer `mechanisms`/`falsifiers` JSON as unverified records with per-entry rejection reasons; pure planned route dispositions; private `mechanism-coverage-v1` JSON/Markdown coverage report separating observed patterns, supported diagnoses, development recommendations and validated improvements | Attach admission, dispositions and the coverage report to the `ahl improve` receipt and queue; integrate real proposal sessions and versioned evidence; evaluate composed repairs |
+| #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, paired skill-present/absent transfer report under a predeclared target/control policy (`paired_transfer`), approved procedure hypothesis API; pinned Claude 2.1.316 declared `Skill` names and exact project `SKILL.md` read requests as content-free `declared_invocation`/`file_read` signals with confidence labels (`observed_declared`, never activation) | Observed activation evidence, Codex skill signals, shadowing/effective-path detection, wiring signals into trial records and reports, independently graded routing/transfer pack, live utility and compiler evaluation |
 | #12 search | Candidate identity/scope/hash checks, deduplication, hard safety feasibility, Pareto frontier, bounded development callbacks, final reserve, durable state, single final callback, conflict-checked composition | Version-verified reflective CLI proposer, actual inference resource accounting, full resume/recovery and algorithm comparisons; optional halving is not implemented |
-| #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting | An actually supported tool proxy/interception runtime and independently graded adapter effectiveness; no runtime flags are invented |
-| #14 retrieval | Approved reviewed local lexical index, bounded context, stable corpus revision, explicit abstention without calibration | Reviewed incident corpus, calibration/OOD evaluation, optional TF-IDF/embeddings comparisons and downstream utility tests |
+| #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting; declarative `AdapterSpec` capability contract with a non-executing candidate review (`review_candidate_spec`) that rejects expanded authority | An actually supported tool proxy/interception runtime and independently graded adapter effectiveness; no runtime flags are invented |
+| #14 retrieval | Approved reviewed local lexical index, bounded context, stable corpus revision, contrastive supporting/contradicting/control groups, explicit abstention without calibration | Reviewed incident corpus, calibration/OOD evaluation, optional TF-IDF/embeddings comparisons and downstream utility tests |
 | #15 promotion | Private write-ahead snapshots, exact hashes/modes, owned-path transactions, manual preview/rollback, partial-write recovery, version-attributed fixed-window observation | Crash/power-loss hardening across every boundary, monitor-to-watch integration, authenticated outcome lineage and any explicitly configured automatic rollback policy |
 | #16 benchmarks | Within-pair runtime validation, separate model strata, missing-setting reporting, measured-cost API with supplied dated prices, private/mixed export rejection, escaped HTML/Markdown summaries, credential-free package CI | Trusted live workflow with broker-scoped credentials and resource enforcement, public task evidence and complete reports of per-task intervals/exposure |
 | #17 bandit research | Seeded Beta-Bernoulli baseline, approved read-only arms, delayed-reward attribution, idempotent updates, missing rewards, bounded simulation, five strategy comparisons, drift/sparse/delayed/harmful scenarios, identifiability refusal | Preregistered independently graded coding-task study, final uncertainty analysis, explicit pilot budget and training/privacy/license/access review |
@@ -27,6 +27,62 @@ certification. Queue/search callbacks are controller extension points: their wor
 unit charges do not establish measured token/time/cost accounting for an arbitrary
 external callback. A production integration must account for every nested action.
 
+`mechanisms.from_proposal` admits untrusted proposer output of the form
+`{"status":"candidate","mechanisms":[{...}],"falsifiers":[{"mechanism_id":...,"falsifier":...}]}`.
+It is pure and total over the proposal: any value yields a
+`proposer-mechanism-admission-v1` receipt listing admitted entries and every
+rejected location with a reason. Citations must come from the controller's
+`evidence_refs` allowlist; components and severities must use the router
+vocabulary; versions come from the controller. Fields that claim authority
+(`disposition`, `status`, `validated`, `reviewed_component`, versions, history)
+reject the entry. Identical repeats are duplicates; one identity with differing
+or malformed variants is contradictory and none of its variants is admitted.
+A record carries one falsifier, inline or attached by ID; several distinct ones
+reject it rather than selecting one. Count, list, text and identifier bounds
+are explicit and reported (`None` means unlimited); an oversized entry is
+rejected and an oversized list rejects the whole proposal, never a truncated
+prefix. Admitted entries are `proposed_unverified`: records keep disposition
+`proposed` and the unreviewed `insufficient_evidence` component, with the
+proposer's claim kept only as `proposed_component`. Admission is bookkeeping;
+it establishes no diagnosis, cause or validated repair.
+
+`router.dispositions` plans the queue without evaluating, charging or mutating
+records or the budget. Routes come only from a separate `reviewed` mapping and
+explicit expected-negative labels, never from a record's own component, so
+unreviewed proposer records defer as `route_requires_review` and unauthorized
+adapter routes defer. Order, deduplication and budget charges match
+`run_queue`; eligible records stay `proposed`. Both receipts are private
+profiles rejected by public export. Neither is attached to the `ahl improve`
+receipt yet; that integration remains open in #10.
+
+`coverage.report` summarizes records, or the `run_queue` output, as a private
+`mechanism-coverage-v1` report without evaluating, charging or mutating
+anything; `coverage.render_markdown` renders it with every recorded string
+escaped. Each entry keeps its responsible component, claim level, disposition
+and coverage state separate. The claim level is `observed_pattern` unless the
+record is actionable under a reviewed component (`supported_diagnosis`); a
+`recommended` disposition is a `development_recommendation` awaiting
+certification, and only `validated` is a `validated_improvement`. A disposition
+the record cannot support stays `open` with the
+`disposition_exceeds_supported_claim` limitation. A record without captured
+evidence is `unknown_capture`, with claim level `none`, whatever disposition it
+carries. Complete coverage requires at least one mechanism, every entry
+`resolved` (validated, rejected, already covered or outside scope) and an
+explicit `capture="complete"` declaration; the default `unknown` and `partial`
+capture report that unseen mechanisms are possible. A repeated key is
+suppressed only when its derived entry and history match the first record's;
+any other repeat, such as one without captured evidence or without a falsifier,
+is listed as a conflict and keeps the key open (`conflicting_records_for_key`)
+in either order. Unknown exposure denominators, suppressed duplicate keys and
+mechanism IDs recorded under several evidence/component versions are listed. Routes and claim levels are hypotheses,
+not causal proof.
+
+`run_queue` treats a record's component as its reviewed route and checks it
+through `route()` with the same held dispositions as `dispositions`. A
+`tool_adapter` record is deferred as `adapter_route_not_authorized` without
+invoking the callback or charging the budget unless the caller passes
+`authorized_adapters=True`.
+
 Search persists charges and stages before callbacks. Restart returns recorded
 state without repeating charged work. An interrupted stage requires explicit
 recovery; it does not rerun inference automatically. Certification is a separate
@@ -37,11 +93,51 @@ estimates are development selection, not a causal or confidence claim.
 
 Skill injection is availability evidence, not activation. Missing runtime signals
 remain unknown; natural routing, preload, negative routing and transfer are separate
-conditions. The procedure compiler returns a bounded project hypothesis and never
+conditions. `evaluation.skills.paired_transfer(records, policy=...)` compares the
+`present` and `absent` arms over task roots matched by task and root identity.
+The policy must declare its target conditions, its unrelated control conditions
+and `max_control_loss` (0 to 1); its SHA-256 is reported. Preload can only be a
+diagnostic condition. Repeats are averaged within a root, so the root is the unit.
+Only boolean outcomes from an executable grader count. Unverified, unidentified
+and single-arm records are counted as excluded or unmatched, never as failures,
+and their regression or activation flags are ignored. A critical regression or a
+mean control loss beyond the tolerance rejects the skill, even when its target
+tasks improve. An observed activation in the absent arm, such as a shadowed copy,
+makes the comparison inconclusive, as do missing matched target or control roots
+and any unmatched or excluded record in a declared condition, because attrition
+in one arm can hide negative transfer. Otherwise the report stays `uncertified` until a
+frozen paired experiment runs through the evaluation gate. The main contrast never
+filters on activation. Activation counts as observed only for `activated: true`
+with an evidence reference; `activated: false`, an injected hash or a bare label
+stays unknown. Observed activations on controls are reported as false activations.
+Success among observed activations is reported as descriptive, not causal.
+The procedure compiler returns a bounded project hypothesis and never
 installs globally. The typed adapter preserves an exact original tool envelope and
 adds presentation metadata only. It cannot call a tool, retry an action, expand
 network/filesystem authority or turn an error into success. Runtime integration
 currently reports unsupported.
+
+`AdapterSpec` (`ahl.adapter-spec.v1`) is the opt-in capability contract for one
+presentation adapter: ID, version, implementation SHA-256, target tools, the
+`tool-envelope-v1` input and `presented-envelope-v1` output contracts, the
+`identity` and `structured-error-v1` transforms, side effects, filesystem,
+network, credential and nested-tool grants, resource limits, the rollback digest
+and the declared runtime. It is data and never runs. `AdapterSpec.from_mapping`
+rejects unknown and missing fields instead of ignoring them. A spec with any side
+effect or any filesystem, network, credential or nested-tool grant is rejected,
+and so are limits above 64 KiB of input, 128 KiB of output or 10 seconds.
+`review_candidate_spec(authorized, candidate, authorization)` compares an
+untrusted candidate with the controller-owned spec without model judgment. It
+rejects a candidate that adds a tool, transform or grant, raises a limit, renames
+the adapter or changes its contracts or runtime. New implementation bytes are
+admissible only when `previous_digest` equals the authorized spec's
+`content_digest` (the implementation SHA-256, reported as
+`authorized_content_digest`), not the spec digest `authorized_digest`. With
+unchanged bytes, `previous_digest` must stay as authorized. The verdict
+`within_authorized_capabilities` means only that the candidate stays inside the
+declared authority. The review never executes adapter code, never promotes, and
+reports the runtime as unsupported. `verify_adapter_bytes` rechecks bytes against
+the declared digest. Nothing calls these APIs by default.
 
 Lexical retrieval accepts only approved reviewed summaries, retains sampling
 provenance and returns untrusted evidence, including any injection text. It never
@@ -49,6 +145,29 @@ executes retrieved instructions. Signal-enriched samples are not prevalence
 samples. No calibrated diagnosis is produced by the new API: without an implemented,
 independently assessed calibration protocol it always abstains. Existing optional
 classifier experiments remain diagnostic experiments, not promotion oracles.
+
+### Contrastive incident retrieval
+
+`LexicalIndex.contrast(text, hypothesis, control_labels=(), top_k=None)` groups
+the same lexical matches around one label hypothesis instead of returning a single
+ranked list. `supporting` matches carry the hypothesis label, `contradicting`
+matches carry other labels, `controls` carry a caller-declared successful-control
+label, and `unresolved` matches are unlabeled or labeled `unknown`/`ambiguous`.
+Those two labels are reserved and cannot be a hypothesis or control. `top_k`
+bounds each group separately, so close supporting matches cannot crowd out
+counterexamples. Each group reports its match count and distinct roots; the report
+also counts roots shared by supporting and contradicting matches, hypothesis-labeled
+incidents that did not match, and unmatched corpus records.
+
+Each result carries the incident ID, a SHA-256 of its root ID (never the raw ID),
+labels, evidence references, score, provenance, sampling and source kind. Summaries
+from `private` records are withheld (`summary: null`,
+`summary_withheld: "private_source"`). `evidence_state` is `no_lexical_support`,
+`mixed` or `supporting_only`; it describes lexical neighbours only. The report
+always states `diagnosis: "hypothesis_only"`, `causal_claim: false`,
+`prevalence: "not_estimable_from_lexical_neighbours"` and
+`promotion_authority: false`: similarity does not establish a shared cause, and
+a neighbour count is not a prevalence estimate or a calibrated probability.
 
 ## Transactions and monitoring
 
@@ -63,14 +182,20 @@ or unrelated files are restored.
 
 `ahl promotion PROJECT --deployment ID` previews without changing project files.
 `--action rollback` performs the guarded manual rollback; `--action recover`
-resumes a recognized partial transaction. These commands take the project lock.
+restores the before snapshots for a recognized unfinished transaction. These commands
+take the project lock. A process killed after writing a temporary replacement can
+leave an `*.ahl-*` file beside the target; recovery does not delete it. A crash after
+the committed journal record but before the active pointer update is refused by
+`recover` because the record is already committed; it requires inspection. Synthetic process-death checks cover
+these boundaries; they do not establish durability across power loss.
 No automatic rollback or background monitor starts on installation.
 
 Observe-only monitoring uses a frozen exposure window and task-start deployment
 mapping. Late A outcomes cannot trigger rollback of B. Duplicate, missing and
 ambiguous observations are not fabricated successes. A verified critical event
 pauses for manual review; statistical drift attribution and automatic reversion
-are not implemented. A `stable` window means its explicit exposure conditions
+are not implemented. [Frozen drift plans](drift-monitoring.md) separate capture
+alerts from task-mix and verified-performance exposure without a statistical test. A `stable` window means its explicit exposure conditions
 were reached without an observed critical event, not that rare-harm risk is zero.
 
 ## CLI and reports
@@ -111,6 +236,9 @@ semantics from arbitrary commands or import unverified traces as controller data
   the output lists the missing trajectories, held-out benefit and access/budget.
 - `ahl incident-search --input APPROVED.json --query TEXT` searches a bounded
   local corpus. Private summaries/results must remain private.
+  `--hypothesis LABEL` (with optional repeatable `--control-label LABEL`) returns
+  an `incident-contrast-v1` report instead; see
+  [contrastive retrieval](#contrastive-incident-retrieval).
 - `ahl benchmark-report --input RESULTS.json --output NEW_DIRECTORY` writes a
   private local report. `--public` requires explicitly approved synthetic/public
   provenance for every input and rejects all private-derived aggregates. It creates

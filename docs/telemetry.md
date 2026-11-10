@@ -28,7 +28,7 @@ outcome. Later certification must independently audit those graders.
 | --- | --- | --- | --- |
 | `codex-jsonl-v1` | Native call IDs; explicit structured exit errors | Unknown | Unknown |
 | `claude-jsonl-v1` | Tool blocks and `tool_use_id`; `is_error` | Unknown | Unknown |
-| `claude-jsonl-2.1.316` | Explicit native file, writer/UUID scope, parallel tool blocks, compaction and unambiguous response usage | Unknown | Unknown |
+| `claude-jsonl-2.1.316` | Explicit native file, writer/UUID scope, parallel tool blocks, compaction and unambiguous response usage | Unknown | Unknown; declared `Skill` names and exact project `SKILL.md` read requests only (`observed_declared`) |
 | Normalized v1/v2 | Supplied metadata | Provenance-dependent | Supplied signal only |
 
 These names identify the tested JSONL contracts, not verified CLI release versions.
@@ -59,6 +59,82 @@ No real-model effectiveness experiment was run for this schema. Tests establish
 metadata/control-flow behavior only. No model weights, downloads, external ledger
 service or ML dependency is required.
 
+## Worked example: a synthetic Claude tool error
+
+[`examples/claude-tool-error.jsonl`](../examples/claude-tool-error.jsonl) is four
+invented rows in the `claude-jsonl-v1` contract from the table above: a `Bash`
+call that returns `is_error: true`, an assistant line claiming the task failed,
+and a `Read` call whose result never arrives. The session, IDs, timestamps, path
+and the `SYNTHETIC-CANARY-BODY` marker were written for this page; no real session
+was recorded or edited to produce them. From the repository root, pipe this
+snippet to `python3 -`. It runs offline with the standard library:
+
+```python
+import json
+from pathlib import Path
+from agent_harness_lab.telemetry.schema import serialize
+from tools.diagnose import analyze, normalize
+
+lines = Path('examples/claude-tool-error.jsonl').read_text().splitlines()
+rows = [json.loads(line) for line in lines]
+records = list(normalize(rows, 'claude', source_version='claude-jsonl-v1'))
+for record in records:
+    print(serialize(record))
+summary = analyze(records)
+print(json.dumps(summary['field_coverage'], sort_keys=True))
+print(json.dumps(summary['findings']))
+```
+
+It prints:
+
+```text
+{"activity":"tool_call","actor":"agent","call_id":"toolu_synthetic_1","capture_order":0,"capture_status":"unverified","case_id":"synthetic-walkthrough","event_id":"synthetic-a1:1","missing_reason":"no_independent_outcome","outcome":"unknown","outcome_provenance":"unknown","schema_version":2,"source_format":"claude","source_version":"claude-jsonl-v1","timestamp":"2026-01-01T00:00:00Z","tool_name":"Bash"}
+{"activity":"tool_result","actor":"tool","call_id":"toolu_synthetic_1","capture_order":1,"capture_status":"linked","case_id":"synthetic-walkthrough","event_id":"synthetic-u1:0","execution_status":"error","missing_reason":"no_independent_outcome","outcome":"unknown","outcome_provenance":"unknown","schema_version":2,"source_format":"claude","source_version":"claude-jsonl-v1","timestamp":"2026-01-01T00:00:01Z","tool_name":"Bash"}
+{"activity":"assistant","actor":"unknown","capture_order":2,"capture_status":"unverified","case_id":"synthetic-walkthrough","event_id":"synthetic-a2","missing_reason":"no_independent_outcome","outcome":"unknown","outcome_provenance":"unknown","schema_version":2,"source_format":"claude","source_version":"claude-jsonl-v1"}
+{"activity":"tool_call","actor":"agent","call_id":"toolu_synthetic_2","capture_order":3,"capture_status":"unverified","case_id":"synthetic-walkthrough","event_id":"synthetic-a3:0","missing_reason":"no_independent_outcome","outcome":"unknown","outcome_provenance":"unknown","schema_version":2,"source_format":"claude","source_version":"claude-jsonl-v1","timestamp":"2026-01-01T00:00:03Z","tool_name":"Read"}
+{"activity":"capture_coverage","call_id":"toolu_synthetic_2","capture_status":"unmatched_call","case_id":"synthetic-walkthrough","event_id":"coverage:unmatched:0","missing_reason":"capture_ended_without_result","outcome":"unknown","outcome_provenance":"unknown","schema_version":2}
+{"lineage_verified": {"known": 0, "total": 5}, "outcome": {"known": 0, "total": 5}, "state_revision": {"known": 0, "total": 5}, "tool_name": {"known": 3, "total": 5}}
+[]
+```
+
+The first five lines are the exact records `Ledger.ingest` appends to
+`events.v2.jsonl` for these rows; `tests/integration/telemetry/test_telemetry.py` runs the snippet
+and the ledger against this page, so the output cannot drift unnoticed.
+
+- **Bodies are omitted.** The command, the error text, the assistant sentence, the
+  `Read` path and every copy of the canary are absent. In a line with tool blocks,
+  only those blocks become events, so the text block before the `Bash` call leaves only its position in
+  `event_id` (`synthetic-a1:1`), and the text-only line becomes a bare
+  `assistant` event.
+- **A tool error is not a task failure.** `is_error: true` sets
+  `execution_status: error` on the linked result, and nothing else. Every record,
+  including the assistant line that says the task failed, keeps `outcome: unknown`
+  with `outcome_provenance: unknown`. The four event records carry
+  `missing_reason: no_independent_outcome`, and the coverage record carries
+  `missing_reason: capture_ended_without_result`.
+  Only an executable grader or a reviewed annotation can supply an outcome; see
+  `verified_outcome` above. The failed command may have been an expected probe.
+- **A missing result is coverage, not an event.** The `Read` call gets a
+  `capture_coverage` record with `capture_status: unmatched_call` and
+  `missing_reason: capture_ended_without_result`. No result, error or
+  cancellation is invented for it.
+- **State and fingerprints are missing.** This adapter emits no
+  `state_revision`, `tool_effect`, `mutation`, `input_fingerprint` or
+  `result_fingerprint`, and does not derive them from the omitted bodies. Diagnosis
+  therefore counts `state_revision` as known for 0 of 5 events and can report no
+  finding; an empty `findings` list means nothing was comparable, not that the
+  session was healthy.
+
+Normalization is not general sanitization. It drops undeclared fields, but the
+declared ones are copied verbatim: the native `sessionId`, `uuid`-derived event
+IDs, `tool_use` IDs, timestamps, tool names and, for a row without tool blocks,
+the native row `type` (as `activity`) appear as written. A real capture's
+ledger stays private local data. The `claude-jsonl-v1` name identifies the
+synthetic contract tested here; compatibility with any released Claude Code CLI
+is unverified. The [pinned 2.1.316 profile](#explicit-claude-code-21316-file-profile)
+below is the version-pinned native contract, and its synthetic fixtures do not
+verify a live CLI either.
+
 ## Explicit Claude Code 2.1.316 file profile
 
 ```sh
@@ -83,20 +159,72 @@ reject. A sidechain also requires `agentId`; optional `teamName` participates in
 writer scoping. Metadata without a supported envelope contributes visible coverage
 gaps, not fabricated events. Incompatible provided versions or project labels
 reject. No directory name, timestamp, prompt text or filename establishes identity.
-The existing `claude-jsonl-v1` synthetic adapter remains supported. Root/session
-selection is currently the separate pinned Codex facility; Claude never falls back
-to a home scan when this explicit version is selected.
+The existing `claude-jsonl-v1` synthetic adapter remains supported. `ahl analyze
+--source-root` selects a bounded Claude `projects` directory with this pinned
+version (see [bounded Claude project-root selection](#bounded-claude-project-root-selection)),
+through the reader of the `2.1.316-v2` source-journal profile in
+[source contracts](source-contracts.md#explicit-bounded-claude-project-root-journal).
+Claude never falls back to a home scan when this explicit version is selected.
 
 Replay approved observations in physical file order, including branches, parallel
 tool results and pre-compaction history; do not reconstruct a preferred resume leaf.
+Each event keeps its line's `capture_order` and adds the declared
+`claude-native-order-v1` subordinal: its content-array position, with response
+usage/stop facets after the line's blocks, plus the file segment. This is
+serialization order within one line, not execution order, and it never orders
+files; see [declared source order](analysis.md#declared-source-order).
 Tool-use/result IDs, `is_error`, text/reasoning block kinds, native compaction flags
 and reported response-stop markers map to metadata. Arguments, output, thinking,
 message text, paths and credentials are omitted. Known built-in tool names remain
 labels; other names are fingerprinted. Text such as "ERROR" does not supply a
-missing structured error flag. A `Skill` call does not prove skill activation.
+missing structured error flag. A `Skill` call does not prove skill activation;
+see [declared skill signals](#declared-skill-signals).
 `isMeta` and `isCompactSummary` records cannot replay embedded tool blocks as new
 executions. Unsupported blocks/entry types and missing call IDs remain explicit.
 No textual cancellation or task-success label is inferred.
+
+### Declared skill signals
+
+The pinned profile's capability is `skill_activation: False` with
+`skill_signal: observed_declared` (`claude_native.CAPABILITY`). Two tool-call
+shapes add `skill_signal`, `skill_id` and `skill_signal_confidence` to their
+`tool_call` event; nothing else changes:
+
+| Native call | `skill_signal` | `skill_signal_confidence` |
+| --- | --- | --- |
+| `Skill` with a nonempty string `input.skill` | `declared_invocation` | `declared_name` |
+| `Read` whose `input.file_path` is exactly `PROJECT/<prefix>/<name>/SKILL.md` | `file_read` | `full_read_request`, or `partial_read_request` when `offset`, `limit` or `pages` is present |
+
+`<prefix>` is `.agents/skills`, `.claude/skills` or `skills`, the project-owned
+bundle layout of [workflow adoption](workflows.md), and `<name>` is one path
+component. The path must be absolute, already in canonical form and under the
+selected project; equivalent spellings, parent steps, nested or other-root
+`SKILL.md` files, relative paths and global skill directories yield no signal. No
+filesystem is consulted, so a match records the layout, not that a bundle existed.
+`skill_id` is `digest(('claude-skill-name-v1', name))` for the declared name or
+the bundle directory name, so a declared name and its project directory can share
+a label; it is a pseudonym in the private ledger, not anonymization. Skill
+arguments, paths, file content and results are never copied, and `skill_hash`
+stays absent because no content is read.
+
+**Assumption.** The pinned SDK reference establishes the `Skill` and `Read` tool
+names and the `tool_use` envelope, not their input fields. The `skill` and
+`file_path`/`offset`/`limit`/`pages` names follow Claude Code's public tool
+interface and are not verified against a live 2.1.316 session. A `Skill` call
+without a usable name, a non-object input or a missing path stays an ordinary
+call with no signal.
+
+**Not established.** Both signals are model requests. The result may fail, a read
+may be partial, a file may be read to edit it rather than to follow it, and the
+runtime may load skill text implicitly without any call. Effective scope,
+namespace resolution and shadowing between project and global copies are unknown,
+and Bash or other tools that read a skill file are not mapped. These values are not
+`read`/`invocation` evidence under `evaluation.skills.activation`, so they never
+set `activated`, an outcome or utility. Row- or block-level labels supplied in a
+capture are ignored. Captures without these calls keep their pre-change events,
+identities, collection fingerprints and summaries; summaries gain no keys. The
+`codex-jsonl-v1`, `claude-jsonl-v1` and pinned Codex rollout adapters are
+unchanged.
 
 `native_message_fingerprint` identifies the containing native UUID, while
 `native_parent_message_fingerprint` records its optional parent UUID in that same
@@ -141,6 +269,49 @@ profile does not create a source-journal checkpoint or resolve external historie
 and installed wheel/archive checks include them. Broader Claude discovery, optional
 sidecar-parent resolution, source-journal receipts and live runtime validation
 remain open in #44; none of the synthetic checks establish agent-performance gains.
+
+### Declared loading signals
+
+The pinned profile also records which harness files a capture names, as
+`loading_signal` metadata. `claude_native.CAPABILITY` declares
+`loading_signal: observed_pattern` and `effective_loading: False`.
+
+| Native shape | Event | Added fields |
+| --- | --- | --- |
+| `attachment` entry, `attachment.type: nested_memory`, absolute `attachment.path` | `context` | `loading_signal: observed_attachment`, `loading_evidence: observed_pattern`; `loading_path_sha256` when the path is exactly below `PROJECT`; `loading_content_sha256` when `attachment.content.content` is a string |
+| `attachment` entry, `attachment.type` `hook_success`, `hook_additional_context`, `hook_non_blocking_error` or `hook_blocking_error` | `context` | `loading_signal: observed_hook_output`, `loading_evidence: observed_pattern` |
+| `Agent` or `Task` call with a nonempty string `input.subagent_type` | `tool_call` | `loading_signal: declared_agent_invocation`, `agent_name_sha256` |
+| `mcp__<server>__<tool>` call with exactly two non-empty parts and a `<server>` not starting with `plugin_` | `tool_call` | `loading_signal: declared_mcp_invocation`, `mcp_server_sha256` |
+
+`loading_path_sha256` is `schema.digest` of the project-relative path, the same
+value as an inventory node's `path_sha256`. The path follows the exact-spelling
+rule of [declared skill signals](#declared-skill-signals). A path outside
+`PROJECT`, such as a user memory file, keeps the signal without a path digest.
+`loading_content_sha256` is the SHA-256 of the attached text encoded as UTF-8.
+`agent_name_sha256` is `digest(name)`, the `name_sha256` that the agent inventory
+records. `mcp_server_sha256` comes from `config_inventory.telemetry_server_sha256`,
+and the MCP tool name stays an opaque `tool:` digest. A plugin MCP name
+(`mcp__plugin_...`) or a name with more or fewer `__` parts gains no
+`loading_signal`, because its server id cannot be read from it unambiguously. Paths, text, hook names and
+prompts are never copied.
+
+**Assumption.** The pinned SDK reference names the `attachment` entry type but not
+its payload. These shapes are unverified and supported only by synthetic fixtures.
+A rule file is expected as a `nested_memory` attachment with its own path. Every
+other attachment type, a relative path or a `content.path` that differs from
+`path` stays `unsupported_native_entry`. Claude Code 2.1.317 captures are not
+supported, because no documented attachment shape is pinned for that version.
+
+**Not established.** An attachment shows that the runtime named a file in its
+context, not that the model followed it. An agent or MCP request is a model
+request. Hook output carries no file path, so it cannot name a hook file. No
+signal sets an outcome, skill activation or independence label. Captures without
+these shapes keep their events, identities and fingerprints. An `Agent` or `Task`
+call with `subagent_type` and an MCP call whose name matches the row above gain
+the fields above, so their fingerprints change; other MCP calls are unchanged. The pinned Codex rollout records no loading evidence:
+`codex_rollout.LOADING_SIGNAL` is `no_native_loading_signal`, and its events are
+unchanged. [Native loading attribution](source-contracts.md#native-loading-attribution)
+joins these signals to inventory nodes.
 
 ## Explicit Codex 0.166.0 rollout profile
 
@@ -216,13 +387,18 @@ ahl analyze PROJECT --source-root NATIVE_ROOT --format codex \
 The root is an explicitly authorized directory, including any selected active and
 archive subdirectories. It is mutually exclusive with `--events`; `--session`
 requires the root and matches an exact native thread `id`, not a root-session ID
-or filename. Omit it to include matching project captures within the bounds. Root
-selection requires the pinned Codex profile and never falls back to home discovery.
+or filename. Omit it to include matching project captures within the bounds. Codex
+root selection requires the pinned Codex profile and never falls back to home discovery.
 Only uncompressed `rollout-*.jsonl` files qualify. Prompt indexes such as
 `history.jsonl` and compressed captures are not treated as transcripts.
 
-Native discovery has no implicit filesystem-entry, directory-depth, file-count,
-record-count, byte or time ceiling. Caller-selected scan/accepted-file and record
+Native root discovery walks iteratively within bounds of 128 directory levels and
+250,000 visited filesystem entries (`ahl analyze --source-root` always uses these
+defaults; the source-journal descriptor's optional `max_walk_entries` can change
+the entry bound, up to 5,000,000); reaching one is reported in
+`reached_limits` (`scan_depth`/`scan_entries`) and `walk_limits`, with an
+incomplete-history caveat. It has no implicit file-count, record-count, byte or
+time ceiling. Caller-selected scan/accepted-file and record
 limits remain enforced and reported; `None` means unlimited. Optional deadlines
 are checked during read, parse, correlation and final verification. Foreign-project
 and other-session
@@ -265,3 +441,41 @@ Unlimited selection does not remove host constraints. Each JSONL record must fit
 the host JSON decoder and memory, and normalized events and correlation state are
 retained in memory. File I/O streams records instead of loading a whole capture;
 filesystem access, scope, stable-read and provenance checks still apply.
+
+### Bounded Claude project-root selection
+
+```sh
+ahl analyze PROJECT --source-root CLAUDE_PROJECTS_DIR --format claude \
+  --source-version claude-jsonl-2.1.316 --session NATIVE_SESSION_UUID \
+  --max-captures 100 --max-capture-scan 2000 --max-events 100000
+```
+
+The pinned Claude profile accepts one explicitly authorized directory with the
+layout of a Claude `projects` directory. It reuses the reader of the
+[bounded Claude project-root journal](source-contracts.md#explicit-bounded-claude-project-root-journal):
+only the directories that `PROJECT`'s sanitized path maps to are listed and read,
+the main `<session-uuid>.jsonl` and its `<session-uuid>/subagents/**/agent-*.jsonl`
+transcripts are candidates, and each candidate's first attributable envelope
+(`version`, `cwd`, `sessionId`, `isSidechain`, `agentId`) must agree with its
+location before the whole file is replayed. Other project directories are never
+opened; a colliding project's file in the mapped directory is rejected by record
+scope. There is no home, `CLAUDE_CONFIG_DIR` or account discovery, and this
+selection never falls back to default discovery. `--session` requires the root and
+an exact native session UUID; it selects that session's main and subagent
+transcripts. `--max-captures`, `--max-capture-scan` and `--max-events` map to the
+journal's `max_files`, `max_scan_files` and `max_records`; omitted limits are
+unlimited.
+
+Main and subagent writers remain separate cases; sidechain owners, parent
+sessions, independence and outcomes stay unknown, and parent pointers are not
+traversed. Copies of one writer in the selected directories merge by native UUID.
+The private source summary keeps per-file receipts, digests, counts and reached
+limits as fingerprints. A reached file, scan or subagent-tree limit, an
+unattributable, unsupported, mislocated or unrecognized-layout file, or a skipped
+unsafe entry adds an incomplete-history caveat; a missing or empty mapped directory
+adds the unknown-coverage caveat instead of an empty success. A partial last line
+is omitted with its caveat. Hard read, record and stability violations abort before
+any ledger event. Only one root is accepted here; an archive or backup copy is
+analyzed separately or declared as an additional root in the source-journal
+profile. Analysis advances no source cursor, and the closed-input and bank
+requalification domains still accept only the pinned Codex root.

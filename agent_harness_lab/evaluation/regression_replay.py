@@ -10,7 +10,7 @@ import time
 from types import SimpleNamespace
 from agent_harness_lab.monitoring.state import atomic_json
 from .bank_tools import materialize_sources
-from .integrity import artifacts_digest, contained, digest, read_regular, unique_object
+from .integrity import artifacts_digest, contained, digest, read_regular, regular_sha256, unique_object
 from .regression_controls import audit, containment, read_draft
 from .regressions import fields, invalid_constant, load, references, sha256
 
@@ -181,7 +181,7 @@ def replay(proposal_path, draft_path, spec_path, output, backend, *, budget_seco
         controls = audit(proposal_path, draft_path, output/'controls', backend,
                          budget_seconds=budget_seconds, parent_deadline=deadline)
         report['control_status'] = controls['status']
-        report['control_receipt_sha256'] = hashlib.sha256(read_regular(output/'controls/review.json', 1024*1024)).hexdigest()
+        report['control_receipt_sha256'] = regular_sha256(output/'controls/review.json', 1024*1024)
         if controls['status'] != 'grader_controls_passed':
             report['status'] = controls['status']
         else:

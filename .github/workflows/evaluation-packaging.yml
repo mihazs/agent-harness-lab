@@ -7,11 +7,11 @@ on:
 permissions:
   contents: read
 concurrency:
-  group: evaluation-packaging-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   offline-packaging:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -40,4 +40,6 @@ jobs:
           task setup:okf PYTHON=dist/wheel-env/bin/python
           task setup:test:installed PYTHON=dist/wheel-env/bin/python
       - name: Check wheel and versioned archive layouts without a model account
+        env:
+          PYTEST_ADDOPTS: --maxfail=1
         run: task test:packaging:layouts

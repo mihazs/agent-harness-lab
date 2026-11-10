@@ -13,6 +13,8 @@ import sys
 import time
 import tomllib
 
+DIGEST_CHUNK_BYTES = 1024 * 1024
+
 
 def application_modules():
     checkout = Path(__file__).resolve().parents[3]
@@ -24,20 +26,49 @@ def digest(root):
     if not root.is_dir() or root.is_symlink():
         raise ValueError(f'evaluation input must be an existing directory: {root}')
     h = hashlib.sha256()
+    buffer = bytearray(DIGEST_CHUNK_BYTES)
+    view = memoryview(buffer)
     for p in sorted(root.rglob('*')):
         if p.is_symlink():
             raise ValueError(f'symlinks are not allowed in evaluation inputs: {p}')
         if p.is_file():
-            h.update(str(p.relative_to(root)).encode() + b'\0' + p.read_bytes())
+            # Same bytes in the same order as hashing path, NUL and whole contents, one reused chunk at a time.
+            h.update(str(p.relative_to(root)).encode() + b'\0')
+            with p.open('rb') as handle:
+                while size := handle.readinto(buffer):
+                    h.update(view[:size])
     return h.hexdigest()
 
 
-def execute(argv, cwd, timeout, stdin=None):
+def write_results(path, results):
+    """Write json.dumps(results, indent=2) + newline bytes without building the document string.
+
+    A temporary sibling replaces the file only after a complete write, so a serialization error
+    leaves the previous results.json intact as it did when the string was built first.
+    """
+    temporary = path.with_name(path.name + '.tmp')
+    try:
+        with open(temporary, 'w') as handle:
+            json.dump(results, handle, indent=2)
+            handle.write('\n')
+        os.replace(temporary, path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+
+
+def managed_environment(parent_id):
+    environment=dict(os.environ)
+    environment['AHL_MANAGED_PREPARATION']=str(parent_id)
+    return environment
+
+
+def execute(argv, cwd, timeout, stdin=None,*,env=None):
     start = time.monotonic()
     try:
         process = subprocess.Popen(argv, cwd=cwd, stdin=subprocess.PIPE,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                   text=True, start_new_session=True)
+                                   text=True, start_new_session=True,**({} if env is None else dict(env=env)))
         try:
             out, err = process.communicate(stdin, timeout=timeout)
             return dict(exit_code=process.returncode, stdout=out, stderr=err,
@@ -79,43 +110,98 @@ def grading_status(grade, typed=False):
         return 'grader_error'
 
 
+def jsonl_lines(text):
+    """Yield JSON Lines records split on LF only, tolerating CRLF line endings.
+
+    str.splitlines() also breaks on U+2028, U+2029, U+0085 and other separators
+    that JSON permits unescaped inside strings, splitting one record in two.
+    """
+    start = 0
+    while start < len(text):
+        end = text.find('\n', start)
+        if end < 0:
+            end = len(text)
+        yield text[start:end].removesuffix('\r')
+        start = end + 1
+
+
 def trace_result(run, agent="codex"):
     if run['timeout'] or run['exit_code'] != 0:
         return 'execution_error', None
+    # One pass that keeps only the flags, counts and usage the classification needs. Every line is
+    # still parsed before classifying, so parse errors and non-object records win exactly as before.
+    non_object = error_event = False
+    results = turns = 0
+    first_result_ok = False
+    usage = None
     try:
-        events = [json.loads(line) for line in run['stdout'].splitlines() if line.strip()]
-        if any(not isinstance(e, dict) for e in events):
-            return 'invalid_trace', None
-        if agent == 'claude':
-            completed = [e for e in events if e.get('type') == 'result']
-            if (len(completed) != 1 or completed[0].get('subtype') != 'success'
-                    or completed[0].get('is_error') is not False
-                    or any(e.get('type') == 'error' for e in events)):
-                return 'incomplete', None
-            return 'completed', completed[0].get('usage')
-        completed = [e for e in events if e.get('type') == 'turn.completed']
-        if not completed or any(e.get('type') in ('turn.failed', 'error') for e in events):
-            return 'incomplete', None
-        return 'completed', completed[-1].get('usage')
+        for line in jsonl_lines(run['stdout']):
+            if not line.strip():
+                continue
+            event = json.loads(line)
+            if not isinstance(event, dict):
+                non_object = True
+                continue
+            kind = event.get('type')
+            if agent == 'claude':
+                if kind == 'result':
+                    results += 1
+                    if results == 1:
+                        first_result_ok = event.get('subtype') == 'success' and event.get('is_error') is False
+                        usage = event.get('usage')
+                elif kind == 'error':
+                    error_event = True
+            elif kind == 'turn.completed':
+                turns += 1
+                usage = event.get('usage')
+            elif kind in ('turn.failed', 'error'):
+                error_event = True
     except json.JSONDecodeError:
         return 'invalid_trace', None
+    if non_object:
+        return 'invalid_trace', None
+    if agent == 'claude':
+        if results != 1 or not first_result_ok or error_event:
+            return 'incomplete', None
+        return 'completed', usage
+    if not turns or error_event:
+        return 'incomplete', None
+    return 'completed', usage
 
 
-def agent_command(agent, binary, plugin=None, skills=()):
+def agent_command(agent, binary, plugin=None, skills=(), *, skill_homes=None):
     if agent == 'claude':
         argv = [binary, '--print', '--output-format', 'stream-json', '--verbose',
                 '--no-session-persistence']
         if plugin is not None:
             argv += ['--plugin-dir', str(plugin)]
         return argv
+    homes = (Path.home() / '.agents/skills', Path.home() / '.codex/skills') if skill_homes is None else skill_homes
     disabled = [dict(path=str(home / skill), enabled=False) for skill in skills
-                for home in (Path.home() / '.agents/skills', Path.home() / '.codex/skills')
-                if (home / skill).exists()]
+                for home in homes if (home / skill).exists()]
     argv = [binary, 'exec', '--ephemeral', '--skip-git-repo-check',
             '--sandbox', 'workspace-write', '--json', '-c', 'approval_policy="never"']
     if disabled:
         argv += ['-c', 'skills.config=' + json.dumps(disabled).replace(': ', ' = ')]
     return argv + ['-']
+
+
+def trial_command(agent, binary, plugin, skills, trial, workspace, defaults, environ=None):
+    """Argv and environment for one cooperative trial with the gated user-layer exclusions requested.
+
+    Claude gets project-only setting sources, a strict empty MCP config and hook-disabling flag settings;
+    Codex gets a temporary CODEX_HOME. Neither the real CODEX_HOME nor ~/.claude is named in either.
+    """
+    application_modules()
+    from agent_harness_lab.evaluation import trial_surfaces
+    environ = dict(os.environ if environ is None else environ)
+    if agent == 'claude':
+        environ.pop('CODEX_HOME', None)
+        return agent_command(agent, binary, plugin) + trial_surfaces.claude_arguments(trial), environ
+    environment = trial_surfaces.codex_environment(trial, workspace, defaults, environ)
+    staged = environment.get('CODEX_HOME') != environ.get('CODEX_HOME')
+    homes = trial_surfaces.home_skills(environ) if staged else None
+    return agent_command(agent, binary, None, skills, skill_homes=homes), environment
 
 
 def evaluate(args):
@@ -249,6 +335,12 @@ def _evaluate(args):
                 program = (manifest_path.parent / argument).resolve()
                 if program.is_file() and program.is_relative_to(fixture):
                     raise ValueError('grader programs must be outside fixture workspaces')
+        if 'cwd' in task:
+            if not controlled:
+                raise ValueError('task cwd is supported only by the controlled Responses executor')
+            application_modules()
+            from agent_harness_lab.evaluation.instruction_context import chain_paths
+            chain_paths(task['cwd'])
         if task['split'] not in ('development', 'regression', 'heldout'):
             raise ValueError('invalid split')
         if not task['grader'] or not all(isinstance(a, str) for a in task['grader']):
@@ -326,6 +418,13 @@ def _evaluate(args):
             from agent_harness_lab.evaluation import responses as response_runtime
             from agent_harness_lab.evaluation.working_state import WorkingState
             inference_settings,inference_hash = response_runtime.read_settings(inference_path)
+            cwd_tasks = [task['cwd'] for task in tasks if 'cwd' in task]
+            if cwd_tasks and inference_settings.get('instruction_protocol') is None:
+                raise ValueError('task cwd requires the controller instruction protocol in the inference settings')
+            from agent_harness_lab.evaluation.instruction_context import chain_size
+            for task_cwd in cwd_tasks:
+                for root in versions.values():
+                    chain_size(root, task_cwd)
             fixtures = [contained(manifest_path.parent,task['fixture']) for task in tasks]
             for root in versions.values():
                 bounded_tree(root)
@@ -433,6 +532,14 @@ def _evaluate(args):
                   if isinstance(raw_config.get(k), str)}
     except (OSError, ValueError):
         pass
+    authentication = None
+    if agent == 'codex' and not blocked:
+        application_modules()
+        from agent_harness_lab.evaluation import trial_surfaces
+        authentication = trial_surfaces.codex_authentication(
+            version_info['stdout'] if version_info['exit_code'] == 0 else '', os.environ)
+        if authentication == 'unavailable':
+            blocked = 'codex_credentials_unavailable'
     output.mkdir(parents=True, exist_ok=False)
     output.chmod(0o700)
     results = dict(manifest_sha256=manifest_hash,
@@ -440,7 +547,13 @@ def _evaluate(args):
                    fixtures=frozen_fixtures, trials=[],
                    runtime={'agent': agent, agent + '_version': version_info['stdout'].strip()[:200] if version_info['exit_code'] == 0 else 'unavailable',
                             'user_config_defaults': config, 'effective_settings_verified': False},
-                   isolation=('cooperative trusted fixtures; ' + ('workspace-write; ' if agent == 'codex' else 'inherited Claude permissions/sandbox; ') + 'inherited configuration/auth/hooks; no security or network isolation claim'))
+                   isolation=dict(status='not_executed', full_certification=False))
+    if authentication is not None:
+        results['runtime']['codex_authentication'] = authentication
+    if agent in ('codex', 'claude'):
+        application_modules()
+        from agent_harness_lab.evaluation import trial_surfaces
+        results['isolation'] = trial_surfaces.descriptor('claude-code' if agent == 'claude' else 'codex', config)
     results['grader_bundle_digests'] = frozen_bundles
     if permission_audit is not None:results['isolation_qualification']=backend.permission_qualification()
     if precision_report is not None:
@@ -449,7 +562,7 @@ def _evaluate(args):
         (output/'precision-preflight.json').chmod(0o600)
     if sandbox_graders:
         results['runtime']['grader_capability'] = capability
-        results['isolation'] = dict(executor='cooperative native CLI; no role isolation claim',
+        results['isolation'] = dict(results['isolation'],
             grader='fresh offline namespace with readonly artifacts and frozen oracle', full_certification=False)
     if configured:
         results['effective_configuration'] = dict(configured, applied_limits=dict(seconds=budget, trials=trial_limit),
@@ -458,7 +571,7 @@ def _evaluate(args):
         results['isolation'] = dict(status='not_executed', full_certification=False)
         results.update(status='budget_exhausted' if blocked == 'preflight_budget_exhausted' else 'blocked',
                        reason=blocked, automatic_promotion=False, elapsed_seconds=time.monotonic()-started)
-        (output/'results.json').write_text(json.dumps(results, indent=2)+'\n')
+        write_results(output / 'results.json', results)
         return 1 if results['status'] == 'budget_exhausted' else 3
     if offline:
         results['runtime'] = dict(agent='offline', model_inference=False, effective_settings_verified=False,
@@ -469,7 +582,7 @@ def _evaluate(args):
         results['automatic_promotion'] = False
         if capability['status'] != 'available':
             results.update(status='blocked', reason='offline_sandbox_unavailable', elapsed_seconds=time.monotonic()-started)
-            (output/'results.json').write_text(json.dumps(results, indent=2)+'\n')
+            write_results(output / 'results.json', results)
             return 3
     if plan is not None and plan.sequential is not None:
         from agent_harness_lab.evaluation.sequential_state import Controller
@@ -502,7 +615,7 @@ def _evaluate(args):
         if not ready:
             results['sequential_analysis']=sequential_controller.finish([])
             results['inputs_unchanged']=inputs_unchanged()
-            (output/'results.json').write_text(json.dumps(results,indent=2)+'\n')
+            write_results(output / 'results.json', results)
             return 3 if results['sequential_analysis']['status']=='inconclusive' else 1
 
     client = None
@@ -574,16 +687,10 @@ def _evaluate(args):
         workspace = trial / 'workspace'
         fixture = (manifest_path.parent / task['fixture']).resolve()
         shutil.copytree(fixture, workspace)
-        for relative in harness_paths:
-            target = workspace / relative
-            if target.exists():
-                if not target.is_file():
-                    raise ValueError('fixture harness path must be a file')
-                target.unlink()
-            source = root / relative
-            if source.is_file():
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(source, target)
+        if harness_paths:
+            application_modules()
+            from agent_harness_lab.evaluation.trial_surfaces import stage_harness
+            record['workspace_surfaces'] = stage_harness(root, workspace, harness_paths)
         loaded = []
         plugin = workspace / '.harness-trial'
         if agent == 'claude':
@@ -596,7 +703,11 @@ def _evaluate(args):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(root / skill, target)
             loaded.append(str(target / 'SKILL.md'))
-        argv = task['offline_executor'] if offline else None if controlled else agent_command(agent, binary, plugin if agent == 'claude' else None, skills)
+        environment = None
+        if offline or controlled:
+            argv = task['offline_executor'] if offline else None
+        else:
+            argv, environment = trial_command(agent, binary, plugin if agent == 'claude' else None, skills, trial, workspace, config)
         prompt = ('Load these exact evaluation skill files before the task: ' + ', '.join(loaded) + '\n' if loaded and task.get('preload_skills', True) else '')
         if manifest.get('no_nested_agents', False):
             prompt += 'Do not launch child agents or nested model trials; the parent owns the evaluation budget.\n'
@@ -621,7 +732,7 @@ def _evaluate(args):
             if binding is not None: record['controller_trial_id'] = trial_id
             try:
                 run = response_runtime.run_trial(client,backend,workspace,root,prompt,task['artifacts'],trial/'artifacts',min(timeout,remaining),
-                    trial_id=trial_id, trajectory=binding)
+                    trial_id=trial_id, trajectory=binding, **({'task_cwd': task['cwd']} if 'cwd' in task else {}))
                 trajectory_capture = run.pop('_trajectory_capture', None)
                 record['controller_actions'] = run.pop('controller_actions')
                 grade_workspace = Path(run.pop('artifact_workspace'))
@@ -642,11 +753,11 @@ def _evaluate(args):
                 record.update(status='execution_error', error=str(exc))
                 if source_capture is not None: source_capture.cancel()
                 results['trials'].append(record)
-                (output/'results.json').write_text(json.dumps(results, indent=2)+'\n')
+                write_results(output / 'results.json', results)
                 continue
             run['timeout'] = run['status'] == 'timeout'
         else:
-            run = execute(argv, workspace, min(timeout, remaining), prompt)
+            run = execute(argv, workspace, min(timeout, remaining), prompt, env=environment)
         trace = trial / ('stdout.txt' if offline or controlled else 'trace.jsonl')
         trace.write_text(run.pop('stdout'))
         (trial / 'stderr.txt').write_text(run.pop('stderr'))
@@ -695,7 +806,7 @@ def _evaluate(args):
             record['source_capture'] = source_sink.finish(source_capture,source_inputs_unchanged)
         if comparison is not None:comparison.after(record)
         results['trials'].append(record)
-        (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
+        write_results(output / 'results.json', results)
     results['elapsed_seconds'] = time.monotonic() - started
     if client is not None: results['runtime']['inference'] = client.report()
     results['inputs_unchanged'] = inputs_unchanged()
@@ -723,21 +834,75 @@ def _evaluate(args):
         results['isolation_qualification']=backend.permission_qualification()
         if sequential_controller is not None and results['isolation_qualification']['qualification']!='qualified' and results['sequential_analysis']['status']!='rejected':
             results['sequential_analysis'].update(status='blocked',reason='isolation_qualification_unverified')
-    (output / 'results.json').write_text(json.dumps(results, indent=2) + '\n')
+    write_results(output / 'results.json', results)
     if sequential_controller is not None:
         status=results['sequential_analysis']['status']
         return {'supported':0,'rejected':0,'inconclusive':3,'blocked':3}.get(status,1)
     return 0 if (permission_audit is None or results['isolation_qualification']['qualification']=='qualified') and results['inputs_unchanged'] and all(t['status'] == 'passed' for t in results['trials']) else 1
 
 
+def hook_main(argv):
+    """Hook evaluation mode: one staged hook unit and a nonce canary in a NEW private trial workspace only."""
+    application_modules()
+    from agent_harness_lab import hooks_validation
+    from agent_harness_lab.evaluation.sandbox import SandboxBackend
+    parser = argparse.ArgumentParser(prog='run_evaluation.py hooks', formatter_class=argparse.RawDescriptionHelpFormatter,
+        description='Validate one staged hook unit beside a harmless nonce canary inside a NEW private trial workspace.\n'
+        'Hooks run only there, never in the candidate, fixture or project, with no credentials in the environment.\n'
+        'By default the run is sandboxed with bubblewrap: no network, a read-only trial workspace and no host home;\n'
+        'without bubblewrap or user namespaces nothing executes (inconclusive). --sandbox none runs unisolated as you.',
+        epilog='The candidate hooks key must pass hook_contract_v1 or nothing executes (unsupported).\n'
+        'A real runtime runs only with --native-canary (one short model call); --runtime-trace reads a synthetic\n'
+        'fake runtime and is never native evidence. Codex stays inconclusive while --dangerously-bypass-hook-trust is unverified.\n'
+        'Writes hook-validation.json in --output. Exit 0: effective candidate or clean observed canary; 1: executed but\n'
+        'failed, disabled or unmatched; 2: setup error; 3: skipped, unsupported or inconclusive.')
+    parser.add_argument('--runtime', choices=('claude-code', 'codex'), required=True,
+                        help='Native runtime whose hook configuration layer is validated')
+    parser.add_argument('--candidate', type=Path, help='Existing candidate directory with one hook configuration and its scripts; omit for a canary-only run')
+    parser.add_argument('--fixture', type=Path, help='Existing fixture directory copied into the trial; its configuration is the before state')
+    parser.add_argument('--output', type=Path, required=True, help='New private directory outside every Git checkout and input; holds the trial and results')
+    parser.add_argument('--binary', help='Runtime executable name or path (default: claude or codex)')
+    parser.add_argument('--native-canary', action='store_true', help='Opt in to executing the real runtime once inside the trial workspace')
+    parser.add_argument('--runtime-trace', choices=(hooks_validation.FAKE_TRACE,), help='Read per-handler execution records from a synthetic fake runtime; not native evidence')
+    parser.add_argument('--timeout', type=float, default=120, help='Runtime deadline in seconds for the single trial run (default: %(default)s)')
+    parser.add_argument('--sandbox', choices=('bubblewrap', 'none'), default='bubblewrap',
+                        help='bubblewrap (default): no network, read-only workspace, no host home, never an unsandboxed fallback; '
+                        'none: run as you with host files and network reachable (host_isolation: none)')
+    args = parser.parse_args(argv)
+    try:
+        if args.native_canary and args.runtime_trace: raise ValueError('--native-canary and --runtime-trace are exclusive')
+        if not 0 < args.timeout <= 1800: raise ValueError('timeout must be within (0, 1800] seconds')
+        inputs = [path for path in (args.candidate, args.fixture) if path is not None]
+        if any(not path.is_dir() or path.is_symlink() for path in inputs): raise ValueError('inputs must be existing directories')
+        digests = {str(path): digest(path) for path in inputs}
+        unit = None if args.candidate is None else hooks_validation.candidate_unit(args.runtime, args.candidate, args.fixture)
+        root, document = hooks_validation.validate(
+            args.output, args.runtime, execute, unit=unit, project=args.fixture or args.candidate, fixture=args.fixture,
+            binary=args.binary, native=args.native_canary, trace=args.runtime_trace, timeout=args.timeout,
+            protected=inputs, sandbox=SandboxBackend() if args.sandbox == 'bubblewrap' else None)
+        if any(digest(Path(path)) != value for path, value in digests.items()): raise ValueError('hook trial inputs changed')
+    except (ValueError, OSError, KeyError, TypeError) as exc:
+        parser.exit(2, f'hook evaluation setup error: {exc}\n')
+    print(json.dumps(dict(candidate=document['candidate']['status'], canary=document['canary']['status'],
+                          host_isolation=document['host_isolation'], results=str(root / hooks_validation.RESULTS))))
+    return hooks_validation.exit_status(document)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='Requires a JSON task manifest and separate existing baseline/candidate harness directories.\n'
         'Creates a NEW private directory with trial workspaces, artifact grades and results.json; checks input digests afterward.\n'
-        'Codex/Claude inherit their configured authentication and permissions; offline/Responses require supported Linux isolation.\n'
+        'Claude keeps authentication but loads only project and managed settings, so put trial permissions in the fixture .claude/settings.json;\n'
+        'Codex gets a credential-free temporary CODEX_HOME and blocks without CODEX_API_KEY (results: inherited_unverified);\n'
+        'offline/Responses require supported Linux isolation.\n'
         'Read results.json for machine output; passing trials never authorize promotion. Exit 0: passing trials or supported/rejected sequential decision;\n'
         '1: failed/incomplete execution; 2: setup/input error; 3: blocked/inconclusive sequential analysis.\n'
-        'Example: ahl evaluate --manifest tasks.json --baseline baseline --candidate candidate --output /tmp/ahl-evaluation')
+        'Example: ahl evaluate --manifest tasks.json --baseline baseline --candidate candidate --output /tmp/ahl-evaluation\n'
+        'Hook mode: ahl evaluate hooks --help validates one staged hook unit and a nonce canary in a trial workspace only.')
+    if 'AHL_MANAGED_PREPARATION' in os.environ:
+        parser.exit(3,'evaluation: managed preparation cannot start nested trials\n')
+    if sys.argv[1:2] == ['hooks']:
+        return hook_main(sys.argv[2:])
     for name in ('manifest', 'baseline', 'candidate', 'output'):
         parser.add_argument('--' + name, required=True, help={
             'manifest':'Existing JSON task manifest with tasks and fixture/grader references resolved relative to its directory',

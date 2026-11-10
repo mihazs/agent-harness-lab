@@ -9,9 +9,9 @@ import subprocess
 import tempfile
 import time
 from agent_harness_lab.monitoring.state import atomic_json
-from agent_harness_lab.private_journal import MAX_EVENTS, MAX_METADATA, PrivateJournal, encoded, record, sync_directory, write_bytes
+from agent_harness_lab.private_journal import MAX_EVENTS, PrivateJournal, encoded, record, sync_directory, write_bytes
 from .bank_tools import materialize_sources
-from .integrity import artifacts_digest, contained, copy_frozen, digest, read_regular, tree
+from .integrity import artifacts_digest, contained, copy_frozen, digest, open_nofollow, read_regular, regular_sha256, tree
 from .regression_controls import containment, read_draft
 from .regression_replay import outcome_rows, read_spec, replay
 from .regressions import fields, load, references, sha256, text
@@ -22,6 +22,8 @@ def transition(state, kind, target, previous_kind=None):
     if kind=='bank_audit_started':return state=='bank_intake' and target=='bank_auditing'
     if kind=='bank_audited':return state=='bank_auditing' and target=='bank_audited'
     if kind=='bank_qualified':return state=='bank_audited' and target=='bank_qualified'
+    if kind in ('bank_requalification_delegated','bank_requalified','bank_requalification_consumed'):
+        return state==target=='bank_qualified'
     if kind == 'attempt_started': return state == target == 'reported' and previous_kind != 'attempt_started'
     if kind == 'attempt_finished': return state == target == 'reported' and previous_kind == 'attempt_started'
     if kind == 'attempt_abandoned': return state == target == 'reported' and previous_kind == 'attempt_started'
@@ -79,7 +81,7 @@ class ReviewStore(PrivateJournal):
         if events[0][0]['payload'].get('inputs_sha256') != identity:
             raise ValueError('case input manifest changed')
         for name, expected in inputs['hashes'].items():
-            if hashlib.sha256(read_regular(contained(case, name), 256*1024)).hexdigest() != expected:
+            if regular_sha256(contained(case, name), 256*1024) != expected:
                 raise ValueError('stored case declaration changed')
         return case, inputs, events
 
@@ -247,7 +249,7 @@ class ReviewStore(PrivateJournal):
             files.update(contained(workspace, name) for name in task.artifacts)
         for path in files:
             if time.monotonic() >= deadline: raise TimeoutError('case evidence sync budget exhausted')
-            descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+            descriptor = open_nofollow(path)
             try: os.fsync(descriptor)
             finally: os.close(descriptor)
             folders.update(p for p in path.parents if p.is_relative_to(attempt))
@@ -269,7 +271,7 @@ class ReviewStore(PrivateJournal):
             # Leave room for completion, draft/review, acceptance and two operator decisions.
             if len(events)+7 > MAX_EVENTS: raise ValueError('case journal lacks lifecycle completion capacity')
             try:
-                sources_match = all(hashlib.sha256(read_regular(p, 256*1024)).hexdigest() == inputs['hashes'][n]
+                sources_match = all(regular_sha256(p, 256*1024) == inputs['hashes'][n]
                                     for n, p in inputs['origins'].items())
             except (OSError, ValueError): sources_match = False
             if not sources_match:
@@ -320,6 +322,10 @@ class ReviewStore(PrivateJournal):
     def accept(self, case_id, parent_path, record_path):
         from .bank_revisions import accept
         return accept(self, case_id, parent_path, record_path)
+
+    def requalify_bank(self,case_id,domain,manifest,baseline,candidate,*,deadline):
+        from .bank_requalification import requalify
+        return requalify(self,case_id,domain,manifest,baseline,candidate,deadline=deadline)
 
     def install_review_policy(self,path):
         from .review_authority import install, require_host

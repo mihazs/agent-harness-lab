@@ -52,7 +52,7 @@ each must suppress the duplicate finding. Reusing the output directory must fail
 with exit 2. These are detector/CLI controls, not a model baseline/candidate experiment.
 
 ```sh
-python3 -m unittest discover -s tools/tests -p 'test_quickstart.py'
+python3 -m unittest discover -s tests -t . -p 'test_quickstart.py'
 ```
 
 The unchanged trace is the diagnostic baseline. Each mutated trace is a negative

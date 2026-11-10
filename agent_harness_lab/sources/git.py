@@ -9,11 +9,15 @@ import stat
 from agent_harness_lab.evaluation.integrity import relative
 from .git_view import Folder, GitView
 from .instructions import capture as capture_instructions, validate as validate_instruction_profile
+from . import harness_inventory
 from .schema import EvidenceRecord, digest, fingerprint
 from .snapshot import LocalExport, Snapshot
 from .git_evidence import capture as capture_evidence
+from . import harness_binding
 
 OID = re.compile(rb'(?:[0-9a-f]{40}|[0-9a-f]{64})')
+_ISSUER = harness_binding._register_issuer()
+MAX_LISTING_ENTRIES = 10000
 
 
 def reference(name):
@@ -72,7 +76,7 @@ class GitExport(LocalExport):
             raise ValueError('unsupported Git source version')
         descriptor, selection = self.selection(source)
         fields = {'schema_version', 'checkout', 'git_dir', 'common_dir', 'harness_paths'}
-        if (not isinstance(selection, dict) or set(selection)-{'max_commits','instruction_profile'} != fields
+        if (not isinstance(selection, dict) or set(selection)-{'max_commits','instruction_profile','inventory_profile'} != fields
                 or type(selection['schema_version']) is not int or selection['schema_version'] != 1):
             raise ValueError('invalid Git selection descriptor')
         if digest(selection) != source.scope_sha256: raise ValueError('Git selection scope mismatch')
@@ -88,8 +92,11 @@ class GitExport(LocalExport):
         if count is not None and (type(count) is not int or count <= 0): raise ValueError('invalid Git history bound')
         profile = selection.get('instruction_profile')
         if 'instruction_profile' in selection: validate_instruction_profile(profile)
+        inventory_profile = selection.get('inventory_profile')
+        if 'inventory_profile' in selection: harness_inventory.validate(inventory_profile)
         deadline = None
         self.warnings, self.trees, self.algorithm = set(), {}, 'sha1'
+        self.harness_capture = None
         with Folder(self.manifest.parent, deadline, limit_total_bytes=False, limit_tree=False) as folder, GitView(deadline, limit_output=False) as view:
             self.folder, self.view = folder, view
             checkout, git_dir, common = (selection[k] for k in ('checkout', 'git_dir', 'common_dir'))
@@ -138,7 +145,7 @@ class GitExport(LocalExport):
                     flags = ('diff-tree', '--root', '--no-commit-id', '-r', '--no-renames', '--no-ext-diff', '--no-textconv')
                     numbers = view.run(*flags, '--numstat', '-z', *pair)
                     changes = tuple(self.change(row) for row in numbers.split(b'\0') if row)
-                    patch = hashlib.sha256(view.run(*flags, '--patch', '--binary', '--full-index', '--no-color', *pair)).hexdigest()
+                    patch = view.run_digest(*flags, '--patch', '--binary', '--full-index', '--no-color', *pair)
                 node = dict(commit_sha256=digest(oid.decode()), parents_sha256=[digest(p.decode()) for p in parents],
                             message_sha256=hashlib.sha256(message).hexdigest(), changes=changes, diff_sha256=patch,
                             comparison='first_parent', original_at=original)
@@ -148,7 +155,7 @@ class GitExport(LocalExport):
             for name, target, kind in valid_refs:
                 value = (digest(target.decode()), kind)
                 rows.append(record('git_ref', name, digest(value), digest(value)))
-            files = []
+            files, facts = [], []
             for path in sorted(paths):
                 committed, mode = self.harness_file(head, checkout, path)
                 name = str(Path(checkout)/path)
@@ -157,7 +164,9 @@ class GitExport(LocalExport):
                 files.append(HarnessFile(digest(path), hashlib.sha256(data).hexdigest() if data is not None else None,
                     stat.S_IMODE(info.st_mode) if info else None,
                     hashlib.sha256(committed).hexdigest() if committed is not None else None, mode))
+                facts.append((path, *(getattr(files[-1], key) for key in ('content_sha256', 'mode', 'committed_sha256', 'committed_mode'))))
             harness = HarnessSnapshot(digest(head.decode()), tuple(files))
+            roots = self.roots(checkout, paths)
             for file in files:
                 value = asdict(file)
                 rows.append(record('harness_file', file.path_sha256, digest(value), digest(value)))
@@ -166,10 +175,17 @@ class GitExport(LocalExport):
                 self.harness_file(head, checkout, str(Path(profile['task_cwd'])/'AGENTS.md'))
                 instructions = capture_instructions(profile, folder, checkout, paths, git_harness_sha256=harness.sha256)
                 rows.append(record('instruction_inventory', 'project', instructions.sha256, instructions.sha256))
+            # The inventory extends this snapshot by identity: node path_sha256 values are HarnessFile identities.
+            self.inventory = None if inventory_profile is None else harness_inventory.capture(
+                self.manifest.parent/checkout, inventory_profile, harness_sha256=harness.sha256)
+            if self.inventory is not None:
+                rows.append(record('harness_inventory', 'project', self.inventory.sha256, self.inventory.sha256))
             folder.verify()
             if Folder.stamp(view.binary.stat()) != view.binary_stamp: raise ValueError('trusted Git binary changed')
             self.verify_selection(source, descriptor, selection)
             self.harness = harness
+            # Only this exact reader issues in-process capture handles; journals and subclasses cannot.
+            self.harness_capture = harness_binding._issue(_ISSUER, source, harness, roots, facts) if type(self) is GitExport else None
             self.instructions = instructions
             self.summary = dict(head_sha256=harness.head_sha256, branch_sha256=digest(branch) if branch else None,
                 commits=graph, refs=[dict(name_sha256=digest(n), target_sha256=digest(t.decode()), object_type=k) for n, t, k in valid_refs],
@@ -180,9 +196,45 @@ class GitExport(LocalExport):
                 network_used=False, capture_completeness='partial', source_identity='caller_declared')
             if instructions is not None:
                 self.summary.update(instruction_inventory=asdict(instructions), instruction_inventory_sha256=instructions.sha256)
+            if self.inventory is not None: self.summary['harness_inventory'] = self.inventory.summary()
             if source.version == 'v2':
                 return capture_evidence(source, rows, self.summary, record, count, folder.bytes)
             return Snapshot(digest(self.summary), tuple(rows))
+
+    def roots(self, checkout, paths):
+        """Location fingerprints plus hashed bounded file listings for the checkout and selected ancestors."""
+        from agent_harness_lab.evaluation.integrity import location
+        result = {}
+        for root in sorted({'.'} | {str(a) for p in paths for a in Path(p).parents if str(a) != '.'}):
+            name = checkout if root == '.' else str(Path(checkout)/root)
+            # No-follow descriptor reads; directory timestamps are not snapshot inputs.
+            try: descriptor = self.folder.directory(name)
+            except OSError: continue
+            try:
+                info = os.fstat(descriptor)
+                listing = set()
+                try: complete = self.listing(descriptor, '', listing)
+                except OSError: complete = False
+            finally: os.close(descriptor)
+            value = location(self.manifest.parent/name, info)
+            if value is not None: result[value] = (root, frozenset(listing) if complete else None)
+        return result
+
+    @staticmethod
+    def listing(descriptor, prefix, result, depth=0):
+        """Every non-directory entry's hashed relative path; overflow leaves coverage unknown."""
+        if depth > 64: return False
+        with os.scandir(descriptor) as entries:
+            for entry in entries:
+                if len(result) >= MAX_LISTING_ENTRIES: return False
+                name = prefix+entry.name
+                if entry.is_dir(follow_symlinks=False):
+                    nested = os.open(entry.name, os.O_RDONLY|os.O_DIRECTORY|os.O_NOFOLLOW, dir_fd=descriptor)
+                    try:
+                        if not GitExport.listing(nested, name+'/', result, depth+1): return False
+                    finally: os.close(nested)
+                else: result.add(harness_binding.path_sha256(name))
+        return True
 
     def harness_file(self, head, checkout, path):
         for ancestor in Path(path).parents:
@@ -278,15 +330,16 @@ class GitExport(LocalExport):
             if not (re.fullmatch(r'[0-9a-f]{2}/[0-9a-f]{38}(?:[0-9a-f]{24})?', suffix)
                     or re.fullmatch(r'pack/pack-[0-9a-f]{40}(?:[0-9a-f]{24})?\.(?:pack|idx|rev)', suffix)):
                 continue
-            raw = self.folder.read(name, None)
             output = self.view.root/'objects'/suffix; output.parent.mkdir(parents=True, exist_ok=True)
-            output.write_bytes(raw)
+            # Chunked copy: memory stays bounded by the chunk size, not by the largest pack.
+            if self.folder.copy(name, output) is None: raise ValueError('Git input changed during reading')
 
     def object(self, kind, oid):
         self.oid(oid)
         raw = self.view.run('cat-file', kind, oid.decode())
-        actual = hashlib.new(self.algorithm, kind.encode()+b' '+str(len(raw)).encode()+b'\0'+raw).hexdigest().encode()
-        if actual != oid: raise ValueError('Git object checksum mismatch')
+        actual = hashlib.new(self.algorithm, kind.encode()+b' '+str(len(raw)).encode()+b'\0')
+        actual.update(raw)
+        if actual.hexdigest().encode() != oid: raise ValueError('Git object checksum mismatch')
         return raw
 
     def valid_refs(self, refs):
@@ -308,24 +361,31 @@ class GitExport(LocalExport):
             valid.append((name, oid, fields[1].decode()))
         return tuple(valid)
 
-    def committed(self, head, path):
+    def commit_tree(self, head):
         header = self.object('commit', head).split(b'\n\n', 1)[0]
         roots = [line[5:] for line in header.splitlines() if line.startswith(b'tree ')]
         if len(roots) != 1: raise ValueError('invalid commit tree identity')
-        tree = roots[0]
+        return roots[0]
+
+    def entries(self, tree):
+        """Checked {name: (mode, oid)} of one tree object, parsed once per capture."""
+        if tree not in self.trees:
+            raw, entries, offset = self.object('tree', tree), {}, 0
+            width = 20 if self.algorithm == 'sha1' else 32
+            while offset < len(raw):
+                end = raw.index(b'\0', offset)
+                mode, name = raw[offset:end].split(b' ', 1)
+                if name in entries or b'/' in name or name in (b'.', b'..') or end+1+width > len(raw):
+                    raise ValueError('invalid Git tree entry')
+                entries[name] = (int(mode, 8), raw[end+1:end+1+width].hex().encode()); offset = end+1+width
+            self.trees[tree] = entries
+        return self.trees[tree]
+
+    def committed(self, head, path):
+        tree = self.commit_tree(head)
         parts = Path(path).parts
         for position, part in enumerate(parts):
-            if tree not in self.trees:
-                raw, entries, offset = self.object('tree', tree), {}, 0
-                width = 20 if self.algorithm == 'sha1' else 32
-                while offset < len(raw):
-                    end = raw.index(b'\0', offset)
-                    mode, name = raw[offset:end].split(b' ', 1)
-                    if name in entries or b'/' in name or name in (b'.', b'..') or end+1+width > len(raw):
-                        raise ValueError('invalid Git tree entry')
-                    entries[name] = (int(mode, 8), raw[end+1:end+1+width].hex().encode()); offset = end+1+width
-                self.trees[tree] = entries
-            mode, oid = self.trees[tree].get(os.fsencode(part), (None, None))
+            mode, oid = self.entries(tree).get(os.fsencode(part), (None, None))
             if mode is None: return None, None
             if mode == 0o160000: raise NotImplementedError('submodule contents are outside Git harness scope')
             if position == len(parts)-1:

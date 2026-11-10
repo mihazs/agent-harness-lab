@@ -1,17 +1,23 @@
 """Shared native snapshot admission, revision history and declared execution receipts."""
+from collections import deque
 from datetime import datetime, timezone
 from ..evaluation.integrity import contained
 from ..telemetry.native import correlated, optional_limit
+from ..telemetry.schema import SOURCE_ORDER
 from .execution import CoverageManifest, ExecutionIdentity, ExecutionMetadata, IDENTITY_FIELDS, IdentityField, MissingField, RecordRef, ScanBound
 from .schema import EvidenceRecord, digest
 from .snapshot import LocalExport, Snapshot
 from .graph import EvidenceGraph, JoinReceipt
 
 
+# Capture position and declared source order describe where a record was read, not its revision.
+POSITIONAL = frozenset(('event_id', 'capture_order', *SOURCE_ORDER))
+
+
 class NativeCapture(LocalExport):
     def select(self, source, fields):
         descriptor, selected = self.selection(source)
-        optional = {'max_records', 'max_files', 'max_scan_files'}
+        optional = {'max_records', 'max_files', 'max_scan_files', 'max_walk_entries'}
         if (not isinstance(selected, dict) or not fields-optional <= set(selected) <= fields
                 or type(selected['schema_version']) is not int or selected['schema_version'] != 1):
             raise ValueError('invalid native capture selection')
@@ -29,6 +35,8 @@ class NativeCapture(LocalExport):
         revisions = {}
         with Folder(path.parent, None, limit_total_bytes=False, limit_tree=False) as folder:
             rows, summary, sha256 = decoder(folder, path.name, project, selected.get('max_records'), revisions=revisions)
+            # Draining releases decoder rows before snapshot() builds records, nodes and joins.
+            rows = deque(rows)
             events = tuple(correlated(rows, folder.check))
             snapshot = self.snapshot(source, descriptor, selected, project, events, summary, sha256, revisions, folder)
             folder.verify()
@@ -52,7 +60,7 @@ class NativeCapture(LocalExport):
             folder.check()
             key = (event['case_id'], event['event_id'])
             native = key in revisions
-            revision = revisions[key] if native else digest({k: v for k, v in event.items() if k not in ('event_id', 'capture_order')})
+            revision = revisions[key] if native else digest({k: v for k, v in event.items() if k not in POSITIONAL})
             if native: ident = digest((self.format+'-event-v1', *key))
             elif self.format == 'codex' or event['capture_status'] == 'unmatched_call':
                 ident = digest((self.format+'-derived-coverage-v1', event['case_id'],
@@ -77,7 +85,7 @@ class NativeCapture(LocalExport):
         missing = tuple(MissingField(name, 'no_effective_binding') for name in IDENTITY_FIELDS
             if not identities or any(not any(f.name == name for f in identity.fields) for identity in identities))
         coverage = CoverageManifest(source.source_key, source.scope_sha256, source.scope_sha256, source.version, self.parser_versions[source.version],
-            (ScanBound('records', limit, scan['input_records']), ScanBound('files', selected.get('max_files') if 'source_root' in selected else 1, files)),
+            (ScanBound('records', limit, scan['input_records']), ScanBound('files', selected.get('max_files') if {'source_root', 'source_roots'} & set(selected) else 1, files)),
             missing, gaps=('not_captured', 'no_effective_binding'), reported_completeness='partial',
             limit_reached=scan['input_records'] == limit or bool(scan.get('reached_limits')),
             truncated=summary['partial_tail'] or bool(scan.get('reached_limits')))

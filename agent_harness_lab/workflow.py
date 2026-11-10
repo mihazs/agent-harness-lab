@@ -13,6 +13,8 @@ import tempfile
 import time
 import uuid
 
+from agent_harness_lab import surfaces
+from agent_harness_lab.sources import agents_validation, skill_validation
 from agent_harness_lab.evidence import collect
 from tools.diagnose import report
 from agent_harness_lab.monitoring.state import atomic_json, exit_code
@@ -35,7 +37,7 @@ def write_json(path, value):
     atomic_json(path, value)
 
 
-def output_dir(args):
+def output_dir(args, *, deadline=None):
     parent = state_root() / 'runs' / identity(args.project)
     if args.output is None:
         parent.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -46,6 +48,13 @@ def output_dir(args):
     output.chmod(0o700)
     args._run_output = output
     write_json(output / 'workflow.json', {'status': 'collecting'})
+    if getattr(args, '_invocation_origin', None) == 'skill':
+        # Descriptive entry context, recorded once the run exists so early
+        # exits keep their origin; it never issues execution authority.
+        from .one_call import invocation_context
+        if deadline is None:
+            deadline = time.monotonic() + args.timeout
+        write_json(output / 'invocation.json', invocation_context(args, output, deadline))
     return output
 
 
@@ -72,8 +81,14 @@ def project_lock(project):
 def evidence(args, output, source_context=None, *, progress=None):
     from .analysis_receipt import summarize, report as execution_report
     from .cli import _progress_reporter
+    from .diagnostics.retrieval import contextual_search
     from agent_harness_lab.telemetry.ledger import Ledger
     from agent_harness_lab.telemetry.schema import serialize
+    closed = getattr(args, '_closed_input_domain', None)
+    if closed is not None:
+        from .evaluation.closed_inputs import before_collection
+        before_collection(closed, args, source_context=source_context)
+    incident_retrieval = contextual_search(getattr(args, 'incident_corpus', None), getattr(args, 'incident_query', None))
     if progress is None:
         progress = getattr(args, '_progress', None) or _progress_reporter()
     with tempfile.TemporaryFile(mode='w+', encoding='utf-8') as events, contextlib.ExitStack() as captures:
@@ -98,9 +113,14 @@ def evidence(args, output, source_context=None, *, progress=None):
         events.seek(0)
         Ledger(output / 'events.v2.jsonl').ingest(json.loads(line) for line in events)
     if source_context is not None: data['source_context'] = source_context
+    if incident_retrieval is not None:
+        data['incident_retrieval'] = incident_retrieval
     if memory_summary is not None:
         data['memory_source'] = memory_summary
     data['execution'] = summarize(data)
+    if closed is not None:
+        from .evaluation.closed_inputs import collected
+        collected(closed, data)
     write_json(output / 'analysis.json', data)
     report_text = report(data['analysis'], source_context=source_context) + execution_report(data['execution'])
     if memory_summary is not None:
@@ -138,7 +158,7 @@ def file_state(path):
 
 def skill_roots(project):
     """Discover immediate project-owned skill bundles without following links."""
-    for prefix in ('.agents/skills', '.claude/skills', 'skills'):
+    for prefix in surfaces.skill_prefixes():
         folder = project / prefix
         if not folder.is_dir() or any(p.is_symlink() for p in (folder, *folder.parents)
                                        if p.is_relative_to(project)):
@@ -149,18 +169,24 @@ def skill_roots(project):
             yield skill
 
 
-def snapshot(project, target, *, allowed_paths=None):
+def harness_files(project, allowed_paths=None):
     if allowed_paths is None:
-        files = [project / name for name in ('AGENTS.md', 'CLAUDE.md') if (project / name).exists()]
+        files = [project / name for name in surfaces.ROOT_INSTRUCTIONS if (project / name).exists()]
         for skill in skill_roots(project):
-            files += [p for p in skill.rglob('*') if p.is_file() and '__pycache__' not in p.parts]
+            # A bundle's installed dependencies (node_modules, .venv) are vendored, never candidate files.
+            files += [p for p in skill.rglob('*') if p.is_file() and '__pycache__' not in p.parts
+                      and not surfaces.vendored(p.relative_to(skill).parts)]
     else:
         # Select before opening content, including otherwise unreadable files.
         files = [project / name for name in allowed_paths if os.path.lexists(project / name)]
+    return sorted(set(files))
+
+
+def snapshot(project, target, *, allowed_paths=None):
     states = {}
     total = 0
     target.mkdir()
-    for path in sorted(set(files)):
+    for path in harness_files(project,allowed_paths):
         relative = str(path.relative_to(project))
         if any(p.is_symlink() for p in (path, *path.parents) if p.is_relative_to(project)):
             raise ValueError('Snapshot path crosses a symlink')
@@ -184,17 +210,36 @@ def candidate_states(folder, original):
         if not path.is_file():
             continue
         relative = str(path.relative_to(folder))
-        parts = path.relative_to(folder).parts
-        permitted = relative in ('AGENTS.md', 'CLAUDE.md') or (
-            len(parts) >= 4 and parts[:2] in (('.agents', 'skills'), ('.claude', 'skills')))
-        permitted |= root_skills and len(parts) >= 3 and parts[0] == 'skills'
-        if not permitted or any(part in ('.git', '__pycache__') for part in parts):
+        # A staged copy holds no foreign repository; the journal, the only writer, re-checks containment.
+        if surfaces.classify(relative, None, None, root_skills=root_skills, in_checkout=True).writability != 'adoptable':
             raise ValueError(f'Candidate path outside project harness scope: {relative}')
         total += path.stat().st_size
         if len(states) >= MAX_FILES or total > MAX_BYTES:
             raise ValueError('Candidate exceeds its file/byte limit')
         states[relative] = file_state(path)
+        # A changed file is checked with its mode and bytes: a gated row adopts no executable, and an agent
+        # definition that registers hooks needs the hook contract. An unchanged file is never written.
+        if states[relative] != original.get(relative) and surfaces.adoption(
+                relative, states[relative][1], path.read_bytes(), root_skills=root_skills,
+                in_checkout=True).writability != 'adoptable':
+            raise ValueError(f'Candidate path needs a hook contract: {relative}')
     return states
+
+
+def bind_instruction(args, instruction, proposal, states, manifest_path, record, result, *, cwd_honored):
+    """Bind a validated instruction scope to the frozen evaluation's task cwds (#339) before any trial runs.
+    The bound scope replaces the proposer-declared one that check_scope enforces on (proposed, original) states;
+    a refused plan blocks the run. cwd_honored says whether the trial runner honors a task cwd."""
+    from .one_call import check_scope
+    from .sources import instruction_validation
+    bound = instruction_validation.bind(instruction, proposal.get('instruction_plan'), json.loads(manifest_path.read_text()),
+                                        cwd_honored=cwd_honored)
+    args._instruction_scope = bound['scope']
+    write_json(record, bound)
+    if bound['status'] != 'valid':
+        result.update(status='blocked', reason='instruction_validation_blocked', instruction_reasons=bound['reasons'])
+    else: check_scope(args, *states)
+    return bound
 
 
 def bounded_fixture(folder, runner):
@@ -353,12 +398,17 @@ def validate_manifest(path, baseline, candidate, paths, runner, remaining, used_
     return manifest
 
 
-def adopt(project, baseline, candidate, original, proposed):
+def adopt(project, baseline, candidate, original, proposed, scoped=False):
     """Journal a directly authorized owned patch; behavioral controller is gated."""
     from agent_harness_lab.promotion.journal import Journal, file_record
     with project_lock(project):
         if candidate_states(candidate, original) != proposed:
             raise ValueError('Evaluated candidate changed before adoption')
+        verdict = agents_validation.review_tree(baseline, candidate, original, proposed).verdict
+        if verdict != 'adoptable':
+            raise ValueError(f'Candidate agent or command definition is {verdict}; nothing was applied')
+        if skill_validation.review_tree(baseline, candidate, original, proposed, scoped).verdict != 'adoptable':
+            raise ValueError('Candidate skill bundle is blocked; nothing was applied')
         names = sorted(original.keys() | proposed.keys())
         before, after = {}, {}
         for name in names:
@@ -378,8 +428,23 @@ def adopt(project, baseline, candidate, original, proposed):
         return sorted(before)
 
 
+def recommend_plugin_change(project, profile, plugin_checkouts, plugin_id, changes, **options):
+    """Route a change to a selected external plugin checkout to a private patch bundle; adopt never sees it."""
+    from .plugin_recommendations import bundle
+    state = state_root() / 'plugin-recommendations' / identity(Path(project).resolve())
+    return bundle(project, profile, plugin_checkouts, plugin_id, changes, state=state, **options)
+
+
+def _bounded_sha256(path, limit=8*1024*1024):
+    """Explanatory binding only: unreadable, irregular or oversized evidence stays unknown."""
+    from .evaluation.integrity import regular_sha256
+    try: return regular_sha256(path, limit)
+    except (ValueError, OSError): return 'unknown'
+
+
 def _improve(args):
     from agent_harness_lab.cli import assets, evaluator, _progress_reporter
+    from .one_call import invocation_context
     if args.timeout <= 0:
         raise ValueError('timeout must be positive')
     controlled = args.agent == 'responses'
@@ -387,10 +452,11 @@ def _improve(args):
     if controlled != (inference_path is not None):
         raise ValueError('controlled improvement requires --agent responses and explicit --inference-settings together')
     started = time.monotonic()
+    if getattr(args,'_configured_started',None) is not None:started=min(started,args._configured_started)
     started=min(started,getattr(args,'_construction_started',started))
     remaining = lambda: args.timeout - (time.monotonic() - started)
     runner = evaluator()
-    output = output_dir(args)
+    output = output_dir(args,deadline=started+args.timeout)
     access_path=None
     if getattr(args,'evaluation_store',None) is not None:
         from .evaluation.construction_access import selection
@@ -436,6 +502,7 @@ def _improve(args):
     prepare.mkdir()
     baseline, candidate = prepare / 'baseline', prepare / 'candidate'
     from .one_call import allowed_paths, check_configuration, check_scope, pinned_bank
+    from .sources import instruction_validation
     bank = pinned_bank(args)
     bank_manifest = None
     if bank is not None:
@@ -464,11 +531,17 @@ def _improve(args):
         if access_path is None: construction.proposer_seed(candidate,prepare/'proposer-work-0',deadline)
         credential = responses.read_credential(settings,[args.project,output,grader_options['image_root'],assets()/'skills',*([access_path] if access_path is not None else [])])
         def record(receipt):
-            if settings.get('instruction_protocol') is not None:check_configuration(args)
+            if settings.get('instruction_protocol') is not None or getattr(args,'_configured_responses',False):check_configuration(args)
             if responses.read_settings(inference_path)[1] != settings_hash:
                 raise ValueError('inference settings changed during the controlled run')
+            if references is not None:
+                receipt['configured_response_references_sha256']=pin(references)
+                receipt['project_configuration_sha256']=getattr(args,'configuration_sha256',None)
             write_json(output/'inference.json',receipt)
-        client = responses.Client(settings,credential,deadline,record=record,configuration_sha256=getattr(args,'configuration_sha256',None))
+        from .evaluation.instruction_context import pin
+        references=getattr(args,'_response_references',None)
+        client = responses.Client(settings,credential,deadline,record=record,configuration_sha256=getattr(args,'configuration_sha256',None),
+            configuration_references_sha256=pin(references) if references is not None else None)
         if access_path is not None:
             from .evaluation.construction_access import WorkflowAccess
             access=WorkflowAccess(args,output,baseline,client,grading,deadline)
@@ -488,8 +561,12 @@ def _improve(args):
                   analysis=data['execution'])
     protected = {}
     refinement_feedback = []
+    single_run = None
+    final_attempt = None
     trials_left = getattr(args, "trial_limit", 24)
     for attempt in range(1 if bank is not None else 2):
+        final_attempt = attempt
+        instruction = None
         check_configuration(args)
         if remaining() <= 0:
             result['status'] = 'budget_exhausted'
@@ -510,7 +587,10 @@ def _improve(args):
             if attempt:
                 context = prepare / f'proposer-context-{attempt}'
                 shutil.copytree(role_views['proposer'],context,symlinks=True)
-                write_json(context/'feedback.json',dict(trials=refinement_feedback))
+                if getattr(args,'_closed_input_domain',None) is not None:
+                    from .evaluation.closed_inputs import write_feedback
+                    write_feedback(args._closed_input_domain,context/'feedback.json',refinement_feedback)
+                else:write_json(context/'feedback.json',dict(trials=refinement_feedback))
                 analysis_snapshot(context,deadline)
                 if access is None: construction.proposer_seed(candidate,prepare/f'proposer-work-{attempt}',deadline)
             if access is None:
@@ -523,7 +603,8 @@ def _improve(args):
             protected[output/f'proposer-{attempt}'] = runner.digest(output/f'proposer-{attempt}')
         else:
             write_json(prepare / 'context.json', dict(project=str(args.project), baseline=str(baseline),
-                candidate=str(candidate), evaluation=str(proposal_folder), phase='candidate', attempt=attempt, focus=getattr(args, 'focus', None)))
+                candidate=str(candidate), evaluation=str(proposal_folder), phase='candidate', attempt=attempt, focus=getattr(args, 'focus', None),
+                invocation=invocation_context(args,output,started+args.timeout,remaining_seconds=remaining(),remaining_trials=trials_left)))
             prompt = f'''Load {plugin / 'skills/harness-self-improvement/SKILL.md'} and the sibling evaluation skill.
 You are the preparation stage of ahl improve, not an interactive request for a failure description.
 Discover improvement candidates yourself from {output / 'analysis.json'}, baseline instructions,
@@ -536,7 +617,8 @@ previous attempts, global skills, model settings, permissions, hooks or credenti
 publishing, external messages, deployment, or production mutations. Do not launch child agents.
 Identify distinct mechanisms, successful controls and counterexamples before selecting repairs.
 If none is supported, write {proposal_path} as {{"status":"no_change","reason":"evidence-based explanation"}}.
-Otherwise modify only project instructions AGENTS.md/CLAUDE.md or project-owned skill files in candidate.
+Otherwise modify only these project-owned surfaces in candidate: {surfaces.adoptable_surfaces()}.
+{instruction_validation.PROPOSER_GUIDANCE}
 Do not build evaluation tests, launch model trials, or inspect previous held-out inputs.
 The parent freezes the patch; {'the configured task bank supplies the evaluation' if bank is not None else 'a separate fresh session constructs evaluation without seeing it'}.
 Shared ceiling is {getattr(args, 'trial_limit', 24)} preparation/task roles and {args.timeout} seconds;
@@ -550,7 +632,7 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             if remaining() <= 0:
                 result['status'] = 'budget_exhausted'
                 break
-            run = runner.execute(command, prepare, remaining(), prompt)
+            run = runner.execute(command, prepare, remaining(), prompt,env=runner.managed_environment(output.name))
             (output / f'preparation-{attempt}.jsonl').write_text(run.pop('stdout'))
             (output / f'preparation-{attempt}.stderr').write_text(run.pop('stderr'))
             check = dict(run, stdout=(output / f'preparation-{attempt}.jsonl').read_text())
@@ -573,10 +655,26 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         if proposal.get('status') != 'candidate':
             raise ValueError('Proposal must declare candidate or no_change')
         proposed = candidate_states(candidate, original)
-        check_scope(args, proposed)
+        # Effective-context validation of instruction and rule edits; it also sets the scope check_scope enforces.
+        instruction = instruction_validation.hook(args, baseline, candidate, original, proposed, proposal, agent,
+                                                  deadline=started+args.timeout)
+        check_scope(args, proposed, original)
         check_configuration(args)
         if proposed == original:
             result.update(status='no_change',reason='candidate_identical_to_baseline')
+            break
+        if instruction is not None:
+            write_json(output/f'instruction-validation-{attempt}.json', instruction)
+            result['instruction_validation'] = str(output/f'instruction-validation-{attempt}.json')
+            if instruction['status'] != 'valid':
+                result.update(status='blocked', reason='instruction_validation_'+instruction['status'],
+                              instruction_reasons=instruction['reasons'])
+                break
+        stopped = (agents_validation.review_tree(baseline, candidate, original, proposed).outcome()
+                   or skill_validation.review_tree(baseline, candidate, original, proposed,
+                                                    allowed_paths(args) is not None).outcome())
+        if stopped is not None:
+            result.update(stopped)
             break
         paths = [] if controlled else original.keys() | proposed.keys()
         frozen = output / f'candidate-{attempt}'
@@ -599,6 +697,11 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             if validated is None:
                 result.update(status='requires_intervention',reason='permission_qualification_not_met')
                 break
+            if instruction is not None:
+                # The fixed comparison runs every task at the root, so it honors no task cwd.
+                instruction = bind_instruction(args, instruction, proposal, (proposed, original), manifest_path,
+                                               output/f'instruction-validation-{attempt}.json', result, cwd_honored=False)
+                if instruction['status'] != 'valid': break
             args._prerequisite_scope.bind(manifest_path,baseline,frozen)
             if permission_audit is not None and grading.permission_qualification()['qualification']!='qualified':
                 result.update(status='requires_intervention',reason='permission_qualification_not_met')
@@ -606,6 +709,18 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
             compared=repeated.execute(manifest_path,baseline,frozen,args,client,grading)
             if any(file_state(args.project/name)!=value for name,value in original.items()):
                 raise ValueError('project harness changed during fixed comparison')
+            if instruction is not None:
+                # The fixed-bank comparison hands no trial records to the removal gate; see removal_disposition.
+                result['instruction_removal'] = instruction_validation.removal_disposition(instruction, None)
+                if compared.get('recommendation') == 'review_candidate':
+                    if instruction_validation.current(instruction, proposal.get('instruction_plan'), baseline, frozen,
+                                                      project=args.project, deadline=started+args.timeout):
+                        raise ValueError('Instruction context changed during evaluation; recommendation is stale')
+                    removal = result['instruction_removal']
+                    if removal.get('required'):
+                        compared = {key: value for key, value in compared.items() if key != 'recommendation'}
+                        compared.update(status='inconclusive', reason='instruction_removal_'+removal['disposition'],
+                                        instruction_removal_reason=removal['reason'])
             result.update(compared)
             break
         progress('evaluation', attempt=attempt + 1)
@@ -628,7 +743,8 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
         else:
             evaluation.mkdir()
             write_json(evaluation / 'context.json', dict(project=str(args.project), baseline=str(baseline),
-                evaluation=str(evaluation), harness_paths=sorted(paths), phase='evaluation', attempt=attempt))
+                evaluation=str(evaluation), harness_paths=sorted(paths), phase='evaluation', attempt=attempt,
+                invocation=invocation_context(args,output,started+args.timeout,remaining_seconds=remaining(),remaining_trials=trials_left)))
             evaluation_prompt = f"""Load {plugin / 'skills/harness-evaluation/SKILL.md'}.
 You are an independent evaluation-construction session for an automatic harness improvement.
 Discover acceptance criteria from {output / 'analysis.json'}, the baseline {baseline}, and
@@ -660,7 +776,7 @@ Graders must print schema_version=1, valid=true, outcome=boolean, grader_id and 
 with exit0 for true and exit1 for false. Broken/partial controls must produce a valid false grade.
 All bundles and controls stay outside task fixtures; no grader command is executed on the host.
 """
-            construction = runner.execute(command, evaluation, remaining(), evaluation_prompt)
+            construction = runner.execute(command, evaluation, remaining(), evaluation_prompt,env=runner.managed_environment(output.name))
             (output / f'evaluation-construction-{attempt}.jsonl').write_text(construction.pop('stdout'))
             (output / f'evaluation-construction-{attempt}.stderr').write_text(construction.pop('stderr'))
             check = dict(construction, stdout=(output / f'evaluation-construction-{attempt}.jsonl').read_text())
@@ -672,6 +788,11 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         validation_options = dict(grader_backend=grading)
         if bank is not None: validation_options['bank_sha256'] = args.project_settings['bank']['sha256']
         (validate_manifest if access is None else access.validate_manifest)(manifest_path, baseline, frozen, paths, runner, remaining, used_heldout, **validation_options)
+        if instruction is not None:
+            # Only the controlled Responses executor runs a trial in its task cwd (run_evaluation passes task_cwd).
+            instruction = bind_instruction(args, instruction, proposal, (proposed, original), manifest_path,
+                                           output/f'instruction-validation-{attempt}.json', result, cwd_honored=controlled)
+            if instruction['status'] != 'valid': break
 
         prerequisite_scope=getattr(args,'_prerequisite_scope',None)
         if prerequisite_scope is not None:prerequisite_scope.bind(manifest_path,baseline,frozen)
@@ -685,7 +806,7 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             from .one_call import unchanged
             if not unchanged(args):
                 raise ValueError("project configuration changed during improvement")
-            check_scope(args, proposed)
+            check_scope(args, proposed, original)
         options = argparse.Namespace(manifest=str(manifest_path), baseline=str(baseline),
             candidate=str(frozen), output=str(output / f'evaluation-{attempt}'),
             agent=agent, codex=args.codex, claude=args.claude, parent_deadline=started + args.timeout)
@@ -713,18 +834,29 @@ All bundles and controls stay outside task fixtures; no grader command is execut
                 result.update(status='requires_intervention',reason='permission_qualification_not_met')
                 break
         trials = evaluated['trials']
+        if instruction is not None:
+            result['instruction_removal'] = instruction_validation.removal_disposition(instruction, trials)
         if (controlled or bank is not None) and evaluated.get('status') in ('blocked','budget_exhausted'):
             result.update(status=evaluated['status'],reason=evaluated.get('reason'))
             break
         from agent_harness_lab.promotion.policy import legacy_coverage
-        if not legacy_coverage(json.loads(manifest_path.read_text()), trials):
+        manifest_raw = manifest_path.read_bytes()
+        if not legacy_coverage(json.loads(manifest_raw), trials):
             result['status'] = 'incomplete'
             result['reason'] = 'missing_or_duplicate_trials'
             break
+        # Latest exactly covered evaluation; explained after the loop, never an extra gate input.
+        single_run = dict(manifest=json.loads(manifest_raw), trials=trials, inputs_unchanged=evaluated['inputs_unchanged'],
+            bindings=dict(attempt=attempt, evaluation=str(options.output), manifest_sha256=hashlib.sha256(manifest_raw).hexdigest(),
+                results_sha256=_bounded_sha256(Path(options.output) / 'results.json'),
+                baseline_sha256=baseline_hash, candidate_sha256=frozen_hash))
         write_json(output / f'feedback-{attempt}.json', dict(inputs_unchanged=evaluated['inputs_unchanged'],
             trials=[t for t in trials if t['split'] != 'heldout']))
         refinement_feedback = [{key:trial.get(key) for key in ('task','version','split','status')}
             for trial in trials if trial.get('split') in ('development','regression')]
+        if getattr(args,'_closed_input_domain',None) is not None:
+            from .evaluation.closed_inputs import record_feedback
+            record_feedback(args._closed_input_domain,refinement_feedback,evaluated)
         if access is not None: access.feedback(refinement_feedback)
         candidate_pass = all(t['status'] == 'passed' for t in trials if t['version'] == 'candidate')
         controls_pass = all(t['status'] == 'passed' for t in trials
@@ -734,15 +866,32 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if evaluated['inputs_unchanged'] and candidate_pass and controls_pass and improvement:
             if any(file_state(args.project / name) != value for name, value in original.items()):
                 raise ValueError('Project harness changed during evaluation; recommendation is stale')
-            write_json(output / 'change-plan.json', dict(schema_version=1, kind='behavioral_candidate',
+            if instruction is not None and instruction_validation.current(instruction, proposal.get('instruction_plan'),
+                    baseline, frozen, project=args.project, deadline=started+args.timeout):
+                raise ValueError('Instruction context changed during evaluation; recommendation is stale')
+            removal = result.get('instruction_removal') if instruction is not None else None
+            if removal is not None and removal.get('required') and removal['disposition'] != 'recommended':
+                # Removed active guidance is recommended only under faithful passing behavioral controls.
+                result.update(status='blocked' if removal['disposition'] == 'rejected' else 'inconclusive',
+                              reason='instruction_removal_'+removal['disposition'], instruction_removal_reason=removal['reason'])
+                break
+            from .harness_change_plan import produce,attach
+            common_plan=produce(args,original,proposed,analysis=data,evidence=evaluated,
+                diagnosis=proposal.get('mechanisms',[]),falsifiers=proposal.get('falsifiers',[]),
+                controls=dict(evaluation_sha256=runner.digest(Path(options.output)),candidate_pass=candidate_pass,controls_pass=controls_pass),
+                deferred=['behavioral_application_pending_independent_certification','skill_lifecycle',
+                          *surfaces.deferred(surfaces.adopted())])
+            common_plan.validate_inventories(candidate_states(baseline,original),candidate_states(frozen,original))
+            write_json(output / 'change-plan.json', attach(dict(schema_version=1, kind='behavioral_candidate',
                 profile='one-call-improvement-v1', publication_allowed=False,
                 baseline_sha256=baseline_hash, candidate_sha256=frozen_hash,
                 operations=[dict(path=name, before=original.get(name), after=proposed.get(name),
                                  profile='one-call-improvement-v1', publication_allowed=False)
                             for name in sorted(original.keys() | proposed.keys())
                             if original.get(name) != proposed.get(name)],
-                evaluation=str(options.output), application_eligible=False))
+                evaluation=str(options.output), application_eligible=False),common_plan))
             result['plan'] = str(output / 'change-plan.json')
+            result['plan_sha256'] = common_plan.sha256
             result['status'] = 'inconclusive'
             result['recommendation'] = 'candidate_requires_independent_certification'
             break
@@ -762,6 +911,17 @@ All bundles and controls stay outside task fixtures; no grader command is execut
         if controlled and permission_audit is not None and result['implementation_prerequisites']['restricted_process_protocol']['status']!='qualified':
             result.pop('recommendation',None)
             result.update(status='blocked',reason='restricted_process_protocol_unqualified')
+    if single_run is not None:
+        from .promotion.policy import SINGLE_RUN_PROFILE,single_run_decision
+        bindings=dict(single_run['bindings'],final_attempt=final_attempt,
+            describes_final_attempt=single_run['bindings']['attempt']==final_attempt)
+        try:
+            result['decision']=single_run_decision(single_run['manifest'],single_run['trials'],
+                inputs_unchanged=single_run['inputs_unchanged'],prerequisites=result['implementation_prerequisites'],
+                prerequisite_scope=getattr(args,'_prerequisite_scope',None),bindings=bindings)
+        except Exception as exc:  # An explanation failure never changes the run result.
+            result['decision']=dict(profile=SINGLE_RUN_PROFILE,status='unavailable',reason=type(exc).__name__,
+                publication_allowed=False,automatic_promotion=False,adoption_authority=False)
     result['automatic_promotion']=False
     if access is not None:
         result['construction_access']=access.report()
@@ -774,11 +934,13 @@ def _run_improvement(args, *, parent_started=None):
     """Persist truthful completion even when a run is interrupted or raises."""
     issuer=os.getpid(); managed=getattr(args,'evaluation_store',None) is not None
     from .one_call import pinned_bank
-    started=time.monotonic() if managed or pinned_bank(args) is not None else None
-    if managed and parent_started is not None: started=min(started,parent_started)
-    for name in ('_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256'):
+    configured=getattr(args,'_configured_responses',False)
+    started=time.monotonic() if managed or configured or pinned_bank(args) is not None else None
+    if (managed or configured) and parent_started is not None: started=min(started,parent_started)
+    for name in ('_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256','_configured_started'):
         if hasattr(args,name):delattr(args,name)
     if started is not None: args._construction_started=started
+    if configured: args._configured_started=started
     try:
         from .one_call import contracts, preflight, check_configuration
         check_configuration(args)
@@ -791,8 +953,9 @@ def _run_improvement(args, *, parent_started=None):
             return contracts(args)
         if hasattr(args, 'project_settings'):
             reason = preflight(args)
+            if configured and time.monotonic()>=started+args.timeout:raise TimeoutError('configured preflight exhausted improvement budget')
             if reason:
-                output = output_dir(args)
+                output = output_dir(args,deadline=(time.monotonic() if started is None else started)+args.timeout)
                 result = dict(status='blocked', reason=reason, output=str(output), changed_files=[],
                               remediation='Select a supported runtime/profile and budget; see ahl improve --help')
                 write_json(output/'workflow.json', result)
@@ -852,6 +1015,14 @@ def improve(args):
 
 
 def watch_configuration(args):
+    if hasattr(args,'_configuration_invocation'):
+        from .one_call import check_configuration,resolve
+        check_configuration(args)
+        resolved=argparse.Namespace(**vars(args));resolve(resolved,args._configuration_explicit)
+        if getattr(resolved,'_configured_responses',False):
+            from . import config
+            args._response_references=config.response_references(args.project,vars(resolved))
+        args=resolved
     settings = {k: getattr(args, k, None) for k in ('agent', 'codex', 'claude', 'timeout', 'format',
                 'focus', 'max_attempts', 'retry_delay', 'watch_budget', 'sandbox_graders',
                 'image_sha256', 'disk_bytes', 'permission_audit', 'configuration_sha256', 'trial_limit')}
@@ -870,6 +1041,10 @@ def watch_configuration(args):
     if inference_path is not None:
         from .evaluation.responses import read_settings
         settings['inference_settings'] = [str(Path(inference_path).resolve()),read_settings(inference_path)[1]]
+        if getattr(args,'_configured_responses',False):
+            from .evaluation.instruction_context import pin
+            from . import config
+            settings['controlled_references_sha256']=pin(config.stable_references(config.response_references(args.project,vars(args))))
     for key in (() if args.agent == 'responses' else ('codex', 'claude')):
         binary = shutil.which(getattr(args, key))
         if binary:
@@ -880,7 +1055,8 @@ def watch_configuration(args):
 
 def watch(args):
     issuer=os.getpid(); managed=getattr(args,'evaluation_store',None) is not None
-    first_started=time.monotonic() if managed else None
+    timed=managed or getattr(args,'_configured_responses',False)
+    first_started=time.monotonic() if timed else None
     attempts = getattr(args, 'max_attempts', 3)
     delay = getattr(args, 'retry_delay', 60)
     budget = getattr(args, 'watch_budget', None)
@@ -896,9 +1072,9 @@ def watch(args):
         while True:
             # The same lock covers scheduling, execution and final checkpoint write.
             with project_lock(args.project):
-                iteration_started=(first_started if first_started is not None else time.monotonic()) if managed else None
+                iteration_started=(first_started if first_started is not None else time.monotonic()) if timed else None
                 first_started=None
-                if managed: configuration=watch_configuration(args)
+                if timed: configuration=watch_configuration(args)
                 state = checkpoint_state.load(checkpoint)
                 fingerprint = collect(args.project, events=args.events, source_format=args.format)['fingerprint']
                 now = time.time()
@@ -914,9 +1090,9 @@ def watch(args):
                     state.update(disposition='in_progress', last_attempt=now,
                                  attempt_count=state['attempt_count'] + 1, run_id=uuid.uuid4().hex)
                     write_json(checkpoint, state)
-                    started = iteration_started if managed else time.monotonic()
+                    started = iteration_started if timed else time.monotonic()
                     try:
-                        result = _run_improvement(options,parent_started=started) if managed else _run_improvement(options)
+                        result = _run_improvement(options,parent_started=started) if timed else _run_improvement(options)
                     except (ValueError, OSError, TypeError, KeyError) as exc:
                         if managed and os.getpid()!=issuer: raise
                         result = dict(status='invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error',

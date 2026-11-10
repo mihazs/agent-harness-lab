@@ -3,7 +3,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from .github_config import GitHubConfigured
 from .git import GitExport
-from .claude import ClaudeCapture, SOURCE_VERSION as CLAUDE_VERSION
+from .claude import ClaudeCapture, SOURCE_VERSION as CLAUDE_VERSION, ROOT_VERSION as CLAUDE_ROOT_VERSION
 from .codex import CodexCapture, SOURCE_VERSION as CODEX_VERSION, ROOT_VERSION as CODEX_ROOT_VERSION
 from .graph import EvidenceGraph, STATUSES
 from .schema import digest
@@ -11,7 +11,8 @@ from .schema import digest
 RESOLVER_VERSION = 'github-native-recheck-v1'
 NATIVE_KINDS = ('github_repository', 'github_issue', 'github_pull', 'github_issue_comment',
     'github_review_comment', 'github_review', 'github_review_thread', 'github_commit',
-    'github_commit_detail', 'github_commit_comment', 'github_check_run', 'github_commit_status', 'github_timeline_event')
+    'github_commit_detail', 'github_commit_comment', 'github_check_run', 'github_commit_status', 'github_timeline_event',
+    'github_workflow_run', 'github_workflow_job')
 GIT_KINDS = ('git_commit', 'git_ref', 'harness_file', 'harness_snapshot', 'instruction_inventory')
 
 
@@ -42,7 +43,7 @@ def recheck_codex(source, connector, proposed):
 
 
 def recheck_claude(source, connector, proposed):
-    return _native_recheck(source, connector, proposed, ClaudeCapture, 'claude-jsonl', (CLAUDE_VERSION,), 'claude')
+    return _native_recheck(source, connector, proposed, ClaudeCapture, 'claude-jsonl', (CLAUDE_VERSION, CLAUDE_ROOT_VERSION), 'claude')
 
 
 def _native_recheck(source, connector, proposed, reader, provider, versions, runtime):

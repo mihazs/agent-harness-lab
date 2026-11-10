@@ -4,7 +4,7 @@ import hashlib
 from pathlib import Path
 
 from agent_harness_lab.private_journal import encoded, record
-from .integrity import digest, read_regular
+from .integrity import digest
 
 PROFILE = 'controller-trajectory-v1'
 MAX_BYTES = 65536

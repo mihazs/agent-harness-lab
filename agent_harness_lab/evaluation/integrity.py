@@ -1,4 +1,5 @@
 """Bounded tree integrity for immutable role inputs and artifact extraction."""
+from contextlib import contextmanager
 import hashlib
 import os
 from pathlib import Path, PurePosixPath
@@ -12,14 +13,124 @@ def unique_object(pairs):
     return value
 
 
+# Evaluated once: platform support is fixed, and callers may wrap os.open afterwards.
+_DIR_FD_OPEN = os.open in os.supports_dir_fd
+
+
+def _beneath_api():
+    names = ('O_DIRECTORY', 'O_NOFOLLOW', 'O_NONBLOCK', 'O_CLOEXEC')
+    if not _DIR_FD_OPEN or not all(hasattr(os, name) for name in names):
+        raise NotImplementedError('safe file reads require POSIX filesystem APIs')
+    # Ancestors: O_PATH (Linux) needs only search permission, as ordinary path resolution does.
+    # Leaves: a readable file, or a readable directory, since O_PATH descriptors cannot be fsynced.
+    nofollow = os.O_NOFOLLOW | os.O_CLOEXEC
+    return (getattr(os, 'O_PATH', os.O_RDONLY) | os.O_DIRECTORY | nofollow,
+            dict(file=os.O_RDONLY | os.O_NONBLOCK | nofollow, directory=os.O_RDONLY | os.O_DIRECTORY | nofollow))
+
+
+def _open_step(name, flags, parent):
+    try: return os.open(name, flags, dir_fd=parent)
+    except OSError as error:
+        try: link = stat.S_ISLNK(os.stat(name, dir_fd=parent, follow_symlinks=False).st_mode)
+        except (OSError, NotImplementedError): link = False
+        if link: raise ValueError('input crosses a symlink') from error
+        raise
+
+
+@contextmanager
+def _parent_beneath(path):
+    """Walk from / one component at a time, following no symlink anywhere; yield (parent, name).
+
+    Each directory is opened by name relative to its already opened parent, so a parent
+    swapped for a symlink after any earlier check is refused rather than followed."""
+    directory_flags, _ = _beneath_api()
+    parts = Path(path).absolute().parts
+    current = os.open(parts[0], directory_flags)
+    try:
+        for name in parts[1:-1]:
+            previous, current = current, _open_step(name, directory_flags, current)
+            os.close(previous)
+        yield current, parts[-1]
+    finally:
+        os.close(current)
+
+
+def _open_beneath(path, leaf):
+    with _parent_beneath(path) as (parent, name):
+        return _open_step(name, _beneath_api()[1][leaf], parent)
+
+
+def open_nofollow(path, refusal='input must be a bounded single-link regular file'):
+    """Read-only descriptor for an existing regular file (fstat, read, fsync) reached by the no-follow walk.
+
+    The leaf is lstat-ed relative to its walked parent before the open, so a device node, socket,
+    FIFO or directory is refused with ValueError(refusal) and never opened. The leaf can still be
+    replaced between that check and the open, so callers keep their own fstat of the descriptor."""
+    _, leaf_flags = _beneath_api()
+    with _parent_beneath(path) as (parent, name):
+        mode = os.stat(name, dir_fd=parent, follow_symlinks=False).st_mode
+        if stat.S_ISLNK(mode): raise ValueError('input crosses a symlink')
+        if not stat.S_ISREG(mode): raise ValueError(refusal)
+        return _open_step(name, leaf_flags['file'], parent)
+
+
+def open_directory_nofollow(path):
+    """Read-only descriptor for an existing directory, fsyncable unlike O_PATH, by the same walk."""
+    return _open_beneath(path, 'directory')
+
+
+def create_directory_nofollow(path, mode=0o700):
+    """Readable descriptor for a directory reached by the walk, making missing components on the way.
+
+    Like Path.mkdir(mode, parents=True, exist_ok=True): missing ancestors get the default mode and
+    the final directory gets mode, each made by name relative to its already opened parent."""
+    directory_flags, leaf_flags = _beneath_api()
+    parts = Path(path).absolute().parts
+    if len(parts) == 1: return os.open(parts[0], leaf_flags['directory'])
+    start = os.open(parts[0], directory_flags)
+    try: return create_directory_at(start, parts[1:], mode)
+    finally: os.close(start)
+
+
+def create_directory_at(directory, names, mode=0o700):
+    """create_directory_nofollow's steps from the caller's open directory, which stays open.
+
+    Each name is opened (or made, then opened) relative to the one before it, following no link,
+    so the result stays inside directory whatever happens to the path that once named it.
+    No names opens directory itself readable."""
+    directory_flags, leaf_flags = _beneath_api()
+    names = tuple(names)
+    if any(name in ('', '.', '..') or '/' in name for name in names): raise ValueError('unsafe relative path')
+    if not names: return os.open('.', leaf_flags['directory'], dir_fd=directory)
+    current = directory
+    try:
+        for index, name in enumerate(names, 1):
+            flags = leaf_flags['directory'] if index == len(names) else directory_flags
+            try: step = _open_step(name, flags, current)
+            except FileNotFoundError:
+                try: os.mkdir(name, mode if index == len(names) else 0o777, dir_fd=current)
+                except FileExistsError: pass
+                step = _open_step(name, flags, current)
+            if current != directory: os.close(current)
+            current = step
+        result, current = current, directory
+        return result
+    finally:
+        if current != directory: os.close(current)
+
+
+def open_beneath(path, flags, mode=0o600):
+    """Open the final name with the caller's flags and mode (create, exclusive, lock) beneath the walk.
+
+    O_NOFOLLOW|O_CLOEXEC are always added. A swapped ancestor is refused as a crossed symlink;
+    the final open's own OSError (EEXIST, ELOOP for a linked leaf) reaches the caller unchanged."""
+    with _parent_beneath(path) as (parent, name):
+        return os.open(name, flags | os.O_NOFOLLOW | os.O_CLOEXEC, mode, dir_fd=parent)
+
+
 def _regular_chunks(path, max_bytes):
     """Stream one safely opened file, retaining optional byte admission checks."""
-    path = Path(path)
-    if not all(hasattr(os, name) for name in ('O_NOFOLLOW', 'O_NONBLOCK')):
-        raise NotImplementedError('safe file reads require POSIX filesystem APIs')
-    if any(p.is_symlink() for p in (path, *path.absolute().parents)):
-        raise ValueError('input crosses a symlink')
-    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    descriptor = open_nofollow(path)
     try:
         info = os.fstat(descriptor)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or max_bytes is not None and info.st_size > max_bytes:
@@ -42,6 +153,26 @@ def read_regular(path, max_bytes):
     return b''.join(_regular_chunks(path,max_bytes))
 
 
+def regular_sha256(path, max_bytes):
+    """Hex SHA-256 of what read_regular would return, holding one chunk at a time."""
+    identity = hashlib.sha256()
+    for raw in _regular_chunks(path, max_bytes): identity.update(raw)
+    return identity.hexdigest()
+
+
+def regular_size(path, max_bytes):
+    """Byte length of what read_regular would return, holding one chunk at a time."""
+    return sum(len(raw) for raw in _regular_chunks(path, max_bytes))
+
+
+def regular_equal(path, expected, max_bytes):
+    """Whether read_regular(path, max_bytes) == expected; the whole file is still read and checked."""
+    view, offset, same = memoryview(expected), 0, True
+    for raw in _regular_chunks(path, max_bytes):
+        same = same and view[offset:offset+len(raw)] == raw; offset += len(raw)
+    return same and offset == len(view)
+
+
 def relative(value):
     if not isinstance(value, str) or not value or '\\' in value or '\0' in value:
         raise ValueError('invalid relative path')
@@ -52,6 +183,7 @@ def relative(value):
 
 
 def contained(root, value):
+    """Lexically contained, link-free path; read it only through open_nofollow, which re-refuses links."""
     root = Path(root).absolute()
     path = root / relative(value)
     if any(p.is_symlink() for p in (path, *path.parents)):
@@ -96,6 +228,19 @@ def digest(root, **limits):
     return tree_digest(tree(root,**limits))
 
 
+def location(path, info=None):
+    """Process-local directory location: normalized absolute path plus device/inode, never content."""
+    path = Path(os.path.abspath(path))
+    try:
+        if any(p.is_symlink() for p in (path, *path.parents)): return None
+        info = os.lstat(path) if info is None else info
+    except OSError: return None
+    if not stat.S_ISDIR(info.st_mode): return None
+    import json
+    return hashlib.sha256(json.dumps(['ahl.directory-location-v1', os.fsencode(path).hex(),
+        info.st_dev, info.st_ino]).encode()).hexdigest()
+
+
 def copy_frozen(source, destination, expected, **limits):
     import shutil
     source, destination = Path(source).absolute(), Path(destination).absolute()
@@ -113,22 +258,21 @@ def artifacts(root, allowlist, max_bytes=1024 * 1024):
         raise ValueError('invalid artifact allowlist')
     result, total = {}, 0
     for name in allowlist:
-        path = contained(root, name)
-        info = path.lstat()
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-            raise ValueError('artifact must be a regular single-link file')
-        total += info.st_size
-        if total > max_bytes:
-            raise ValueError('artifact byte bound exceeded')
-        # No following links at the final open; isolated worker has already stopped.
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
-        with os.fdopen(fd, 'rb') as stream:
-            if os.fstat(stream.fileno()).st_ino != info.st_ino:
-                raise ValueError('artifact changed during extraction')
-            data = stream.read(max_bytes + 1)
+        descriptor = open_nofollow(contained(root, name), 'artifact must be a regular single-link file')
+        try:
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise ValueError('artifact must be a regular single-link file')
+            total += info.st_size
+            if total > max_bytes:
+                raise ValueError('artifact byte bound exceeded')
+            with os.fdopen(descriptor, 'rb', closefd=False) as stream:
+                data = stream.read(max_bytes + 1)
             if len(data) != info.st_size:
                 raise ValueError('artifact changed during extraction')
             result[name] = data
+        finally:
+            os.close(descriptor)
     return result
 
 

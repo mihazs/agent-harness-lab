@@ -66,11 +66,69 @@ input/output conventions and nested command help.
 You can call `ahl improve .` directly: it collects and analyzes evidence itself.
 Running `analyze` first is optional.
 
+What `improve` and `watch` themselves write, and what AHL never writes (their agent is
+cooperative, not sandboxed):
+
+- `ahl improve .` writes private state only: staged baseline and candidate copies,
+  evaluation results, a change plan and a run lock. AHL itself never writes project
+  instructions, skills or hooks. A candidate that passes evaluation is reported for
+  independent certification; it is not applied.
+- The agent that `improve` starts is cooperative. It is told to treat the project
+  as read-only, but nothing enforces that; your agent's own permission settings
+  decide whether it can write there. AHL rechecks the project harness before it
+  recommends and rejects a stale result, but it does not revert such a change.
+- `ahl improve . --repair-contracts` is the one exception: it may apply a bounded
+  skill-header repair, without model calls and with a rollback journal. A project
+  `ahl.json` keeps even that repair recommendation-only.
+- `ahl watch .` reruns the same recommendation-only staging and evaluation when
+  evidence or execution configuration changes, or after a classified transient
+  failure. It writes run artifacts and a private checkpoint, has no
+  `--repair-contracts` option and never writes harness files itself; its agent is
+  cooperative in the same way.
+- Neither command commits, publishes, deploys or starts a background service.
+
 Already working inside an agent session? Invoke the installed
 `harness-self-improvement` skill and ask it to improve this project's harness.
 The skill describes an assisted evaluation-and-edit loop; it is distinct from the
 CLI's current recommendation-only controller. Supported autonomous application
 and matching CLI/skill receipts are tracked in [#77](https://github.com/mihazs/agent-harness-lab/issues/77).
+
+## Harness surfaces
+
+AHL inventories eleven harness surfaces of Claude Code 2.1.317 and Codex 0.166.0
+read-only: it never executes a hook, workflow or script while analyzing, and it
+recommends changes to another repository instead of editing it in place. `agent_harness_lab/surfaces.py` owns each verdict.
+For a synthetic path inside the checkout, the writability and the route a change gets:
+
+| Surface | Claude Code | Codex |
+| --- | --- | --- |
+| `instructions` | `adoptable` / adopt | `adoptable` / adopt |
+| `path_rules` | `adoptable` / adopt | `recommendation_only` / recommendation |
+| `hooks` | `contract_required` / contract | `contract_required` / contract |
+| `workflows` | `contract_required` / contract | no file surface |
+| `agents` | `adoptable` / contract | `adoptable` / contract |
+| `commands_skills` | `adoptable` / adopt | `adoptable` / adopt |
+| `plugins` | `recommendation_only` / recommendation | `recommendation_only` / recommendation |
+| `mcp` | `recommendation_only` / recommendation | `recommendation_only` / recommendation |
+| `output_styles` | `recommendation_only` / recommendation | `recommendation_only` / recommendation |
+| `memory` | `private_excluded` / excluded | `private_excluded` / excluded |
+| `settings` | `recommendation_only` / recommendation | `recommendation_only` / recommendation |
+
+A candidate may change an *adopt* surface in its staged copy; application still
+follows the policy above. A *contract* change stays unresolved until a passed hook
+contract names it; agent definitions take this route because their frontmatter can
+register hooks. A *recommendation* is reported, never written. The inventory never
+reads, hashes or changes an *excluded* (`private_excluded`) file. It lists one as
+`not_read` only when its kind is recognized, such as `CLAUDE.local.md`; memory and
+cache paths are skipped and never listed, so a missing memory node does not show
+that no memory file exists. An *unsupported* path is never adopted or written, yet
+the inventory may still read and hash it.
+Change plans list the surfaces they leave for later as deferred.
+`ahl sources inventory CHECKOUT --runtime RUNTIME --version VERSION` prints this
+matrix for the declared runtime, and none for a version other than the pin.
+See the [surface reference](skills/harness-self-improvement/references/surfaces.md)
+for paths, version pins and unverified items, and [trial isolation](skills/harness-evaluation/references/isolation.md)
+for what an evaluation trial still inherits.
 
 ## Try it without credentials
 
@@ -148,17 +206,26 @@ Questions and reproducible bugs belong in [Issues](https://github.com/mihazs/age
 See [support](SUPPORT.md), [private security reporting](SECURITY.md)
 and the [code of conduct](CODE_OF_CONDUCT.md). No response-time commitment is made.
 
+Commit subjects, pull request titles and merge commits follow
+[Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/); `task setup`
+installs a `commit-msg` check and CI checks pull requests. See the
+[commit convention](CONTRIBUTING.md#conventional-commits).
+
 Versions use Changesets; do not change version numbers manually. For a releasable
 change, run `task setup` and `task changeset`; see [release conventions](CONTRIBUTING.md#versions-and-changelogs).
 
 Use `task setup:test` in a virtual environment, then `task test` to collect both
 native suites once and distribute tests across CPU cores. Reusable commands belong
 in `Taskfile.yml`; existing unittest cases are collected directly by pytest.
+`task setup:test` also installs the pinned [ruff](https://docs.astral.sh/ruff/) linter.
+`task lint` checks the tree (pyflakes and syntax errors, configured in `pyproject.toml`),
+and the lefthook pre-commit hook runs it on staged Python files.
 
 ```sh
 python3 -m venv .venv
 task setup:test PYTHON=.venv/bin/python
 task test PYTHON=.venv/bin/python
+task lint PYTHON=.venv/bin/python
 ```
 
 Set `TEST_WORKERS=4` to select a worker count, or `TEST_WORKERS=0` for debugging.

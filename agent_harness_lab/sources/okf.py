@@ -1,5 +1,5 @@
 """Read explicitly authorized extracted ai-memory OKF v0.2 project bundles."""
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 import hashlib
 import os
@@ -79,6 +79,11 @@ class Page:
         return 'unknown' if not isinstance(actor, str) or not actor else 'human_attributed' if actor.startswith('human:') else 'generated'
 
 
+def bundle_sha256(pages):
+    """Snapshot fingerprint of selected concept paths and bytes; equal to an import checkpoint."""
+    return digest([(p.path, p.sha256) for p in pages])
+
+
 class OKFExport(LocalExport):
     def pages(self, source):
         if (source.kind, source.provider, source.version) != ('local_file', 'ai-memory-okf', '0.2'):
@@ -133,4 +138,58 @@ class OKFExport(LocalExport):
             records.append(EvidenceRecord(source.source_key, digest(page.path), page.sha256, page.sha256,
                 'contextual_assertion', 'memory_page', now.isoformat(), original_at=original))
         self.summary = summary
-        return Snapshot(digest([(p.path, p.sha256) for p in pages]), tuple(records))
+        return Snapshot(bundle_sha256(pages), tuple(records))
+
+
+ABSENCE_BASIS = 'absent_from_project_okf_export'
+
+
+class ReconcilingOKFExport(OKFExport):
+    """Opt-in OKF reader that compares the bundle with the journal's committed page revisions.
+
+    A page path whose latest committed revision is present but which the bundle no longer
+    holds gets one tombstone; absence is never deletion evidence. A page whose current bytes
+    were committed before but are not the latest revision (it reappeared after a tombstone or
+    reverted to older content) gets a new revision bound to the latest one, so the journal's
+    latest revision of every path matches the bundle.
+    """
+    reconciles_absence = True
+
+    def read(self, source, *, prior=None):
+        snapshot = super().read(source)
+        summary = dict(self.summary, absence_reconciliation='not_attempted' if prior is None else 'journal_compared',
+            absent_from_export=0, reappeared=0, reverted=0, deletion_confirmed=False, rename_detection=False,
+            warnings=['absence_is_not_deletion_evidence'])
+        if prior is None:
+            self.summary = summary
+            return snapshot
+        history = {}
+        for record in prior:
+            if record.source_sha256 == source.source_key and record.record_type == 'memory_page':
+                history.setdefault(record.native_id_sha256, []).append(record)
+        records = []
+        for record in snapshot.records:
+            lineage = history.get(record.native_id_sha256, ())
+            latest = lineage[-1] if lineage else None
+            if latest is None or latest.state == 'present' and latest.content_sha256 == record.content_sha256:
+                records.append(record); continue
+            reappeared = latest.state == 'tombstone'
+            summary['reappeared'] += reappeared
+            # Committed bytes would be skipped as a known revision and leave a stale latest one.
+            if any(r.revision_sha256 == record.revision_sha256 for r in lineage):
+                summary['reverted'] += not reappeared
+                record = replace(record, revision_sha256=digest(dict(content_sha256=record.content_sha256,
+                    reobserved_after_sha256=latest.revision_sha256)))
+            records.append(record)
+        observed = {record.native_id_sha256 for record in snapshot.records}
+        collected = datetime.now(timezone.utc).isoformat()
+        for key in sorted(set(history)-observed):
+            latest = history[key][-1]
+            if latest.state == 'tombstone': continue
+            revision = digest(dict(kind='memory_page', native_id_sha256=key, state='deleted_or_unobservable',
+                basis=ABSENCE_BASIS, deletion_confirmed=False, supersedes_revision_sha256=latest.revision_sha256))
+            records.append(EvidenceRecord(source.source_key, key, revision, revision, 'contextual_assertion', 'memory_page',
+                collected, original_at=latest.original_at, state='tombstone'))
+            summary['absent_from_export'] += 1
+        self.summary = summary
+        return Snapshot(snapshot.sha256, tuple(records))

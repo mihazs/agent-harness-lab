@@ -153,12 +153,12 @@ Later updates must re-read heads rather than assume these remain current.
 
 The execution host disconnected after local validation. PR #26 contains README,
 docs index/install/getting-started/workflows, synthetic input/report and
-tools/tests/test_quickstart.py. PR #32 contains CONTRIBUTING and issue/PR templates.
+tests/integration/tools/test_quickstart.py. PR #32 contains CONTRIBUTING and issue/PR templates.
 No direct Codex invocation capability was found; this is a prepared handoff.
 
 Next executor: read AGENTS.md and open PRs, fetch exact remote heads, inspect diffs and
 CI runs, preserve concurrent work, then run both README unittest suites and
-`python3 -m unittest discover -s tools/tests -p 'test_quickstart.py'`.
+`python3 -m unittest discover -s tests -t . -p 'test_quickstart.py'`.
 Reproduce the documented diagnosis into a fresh temporary path and compare the full
 report. Check relative links, fences, shell syntax, privacy and rendered Markdown.
 Review the later strategy/draft documentation separately; do not assume it was shell-tested.

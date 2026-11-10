@@ -19,4 +19,5 @@ remaining limitations, or a file/decision needing particular attention. Delete t
 section when none apply. -->
 
 - [ ] I inspected the diff; it contains no private traces, analyzed-project identities, history-derived findings, credentials or trial workspaces.
+- [ ] The PR title and every commit subject follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/).
 - [ ] I added a Changeset for releasable changes, or explained why none is needed. Versions are not edited manually.

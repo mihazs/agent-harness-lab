@@ -7,6 +7,7 @@ from pathlib import Path, PurePosixPath
 import re
 import stat
 import time
+from .integrity import open_directory_nofollow
 
 MAX_ENTRIES = 50000
 MAX_BYTES = 512 * 1024 * 1024
@@ -109,7 +110,7 @@ def scan(root, *, deadline=None):
         after = os.fstat(descriptor)
         if (before.st_mtime_ns, before.st_ctime_ns) != (after.st_mtime_ns, after.st_ctime_ns):
             raise ValueError('runtime image directory changed during inspection')
-    descriptor = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    descriptor = open_directory_nofollow(root)
     try:
         info = os.fstat(descriptor)
         if info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700:

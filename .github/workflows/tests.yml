@@ -5,16 +5,38 @@ on:
   pull_request:
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: arduino/setup-task@v3
         with:
           version: '3.54.0'
       - uses: actions/setup-python@v7
         with:
           python-version: '3.14'
+      - name: Check pull request title follows Conventional Commits
+        if: github.event_name == 'pull_request'
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: python3 scripts/check_commit_message.py --subject "$PR_TITLE"
+      - name: Check pull request commits follow Conventional Commits
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/check_commit_message.py --range "origin/$BASE_REF..$HEAD_SHA"
       - run: task setup:test
-      - run: task test
+      - name: Lint with ruff
+        run: task lint
+      - name: Run the suite and stop at the first failure
+        env:
+          PYTEST_ADDOPTS: --maxfail=1
+        run: task test

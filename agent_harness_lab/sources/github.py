@@ -1,18 +1,28 @@
 """Explicit read-only GitHub captures; comments and approvals are not task grades."""
+import copy
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 import re
 import time
-from urllib.parse import parse_qsl
 from .execution import CoverageManifest, ExecutionMetadata, RecordRef, ScanBound
 from .graph import EvidenceGraph, JoinReceipt
 from .schema import Contract, EvidenceRecord, SourceSpec, digest, timestamp
 from .snapshot import Snapshot
-from .transport import JsonAPI, TransportError, _json_exchange, endpoint
+from .transport import NOT_MODIFIED, JsonAPI, TransportError, budget_spent, endpoint, metered_exchange, next_page
 
 API_VERSION = '2026-03-10'
 SOURCE_VERSION = API_VERSION+'-v1'
+WINDOW_SPAN = timedelta(days=366)
+WINDOWED = ('github_issue_comment', 'github_review_comment')
+# RFC 9110 entity-tag syntax; anything else is not a validator and is never echoed back.
+ETAG = re.compile(r'(?:W/)?"[\x21\x23-\x7e]{0,510}"')
+ACTION_STATUSES = ('queued', 'in_progress', 'completed', 'waiting', 'requested', 'pending')
+RUN_CONCLUSIONS = (None, 'action_required', 'cancelled', 'failure', 'neutral', 'success', 'skipped', 'stale', 'timed_out', 'startup_failure')
+JOB_CONCLUSIONS = (None, 'action_required', 'cancelled', 'failure', 'neutral', 'success', 'skipped', 'timed_out')
+ACTION_EVENT = re.compile('[a-z][a-z_]{0,63}')
+MAX_JOB_STEPS = 1000
+ENVELOPES = ('check_runs', 'workflow_runs', 'jobs')
 
 THREAD_FIELDS = '''fragment ThreadFields on PullRequestReviewThread {
   id repository { id } pullRequest { id number headRefOid }
@@ -70,6 +80,15 @@ def opaque_id(value):
     return value
 
 
+def instant(value):
+    if not isinstance(value, str) or re.fullmatch(r'[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z', value) is None:
+        raise ValueError('GitHub window bounds must be canonical RFC 3339 UTC seconds')
+    parsed = datetime.fromisoformat(value)
+    # Interpreters differ on hour 24; only the exact re-serialization names one instant.
+    if parsed.strftime('%Y-%m-%dT%H:%M:%SZ') != value: raise ValueError('GitHub window bound is not canonical')
+    return parsed
+
+
 def bigint(value):
     if isinstance(value, str) and re.fullmatch(r'[1-9][0-9]{0,18}', value): value = int(value)
     return integer(value, minimum=1)
@@ -83,11 +102,19 @@ class GitHubSelection(Contract):
     schema_version: int = 1
     details: tuple = ()
     commits: tuple = ()
+    since: str | None = None
+    until: str | None = None
 
     def __post_init__(self):
-        if type(self.schema_version) is not int or self.schema_version not in (1, 2, 3, 4, 5): raise ValueError('unsupported GitHub selection version')
+        if type(self.schema_version) is not int or self.schema_version not in (1, 2, 3, 4, 5, 6, 7): raise ValueError('unsupported GitHub selection version')
         integer(self.repo_id, minimum=1)
-        allowed = (('checks', 'graph', 'threads', 'timeline') if self.schema_version == 5 else
+        if self.schema_version < 6:
+            if (self.since, self.until) != (None, None): raise ValueError('GitHub windows require selection version 6')
+        elif self.schema_version == 7 and (self.since, self.until) == (None, None): pass
+        elif not timedelta(0) < instant(self.until)-instant(self.since) <= WINDOW_SPAN:
+            raise ValueError('GitHub window must be ordered and bounded')
+        allowed = (('actions', 'checks', 'graph', 'threads', 'timeline') if self.schema_version >= 7 else
+            ('checks', 'graph', 'threads', 'timeline') if self.schema_version >= 5 else
             ('checks', 'threads', 'timeline') if self.schema_version >= 3 else ('checks', 'timeline'))
         if (type(self.details) is not tuple or len(self.details) > len(allowed) or any(d not in allowed for d in self.details)
                 or tuple(sorted(set(self.details))) != self.details or self.schema_version == 1 and self.details):
@@ -106,8 +133,9 @@ class GitHubSelection(Contract):
     def parse(cls, value):
         if not isinstance(value, dict): raise ValueError('invalid GitHub selection')
         fields = set(cls.__dataclass_fields__)
-        if value.get('schema_version') not in (2, 3, 4, 5): fields.remove('details')
-        if value.get('schema_version') not in (4, 5): fields.remove('commits')
+        if value.get('schema_version') not in (2, 3, 4, 5, 6, 7): fields.remove('details')
+        if value.get('schema_version') not in (4, 5, 6, 7): fields.remove('commits')
+        if value.get('schema_version') not in (6, 7): fields -= {'since', 'until'}
         if set(value) != fields: raise ValueError('invalid GitHub selection fields')
         if not all(isinstance(value[k], (list, tuple)) for k in ('issues', 'pulls')): raise ValueError('invalid GitHub number collections')
         if 'details' in value and not isinstance(value['details'], (list, tuple)): raise ValueError('invalid GitHub details collection')
@@ -119,7 +147,19 @@ class GitHubSelection(Contract):
         value = super().to_dict()
         if self.schema_version == 1: value.pop('details')
         if self.schema_version < 4: value.pop('commits')
+        if self.schema_version < 6: value.pop('since'); value.pop('until')
         return value
+
+    @property
+    def window(self):
+        # Version 7 makes the comment window optional; both bounds are then null.
+        return None if self.schema_version < 6 or self.since is None else (instant(self.since), instant(self.until))
+
+    def contains(self, created_at):
+        """Window membership uses immutable creation time; unknown membership blocks capture."""
+        if self.window is None: return True
+        if created_at is None: raise ValueError('GitHub comment window membership is unknown')
+        return self.window[0] <= datetime.fromisoformat(created_at) < self.window[1]
 
     @property
     def source_version(self): return API_VERSION+'-v'+str(self.schema_version)
@@ -132,7 +172,8 @@ class GitHubSelection(Contract):
 
 
 class GitHubAPI:
-    def __init__(self, base_url, selection, *, authorization=None, **limits):
+    def __init__(self, base_url, selection, *, authorization=None, conditional=False, **limits):
+        if type(conditional) is not bool: raise TransportError('explicit GitHub conditional request mode required')
         self.transport = JsonAPI(base_url, **limits)
         parsed, path = endpoint(base_url)
         if (self.transport.origin != ('api.github.com', 443) or parsed.query
@@ -141,6 +182,8 @@ class GitHubAPI:
         if not isinstance(selection, GitHubSelection): raise TransportError('explicit GitHub selection required')
         self.selection = GitHubSelection.parse(selection.to_dict())
         self.authorization = authorization
+        # Validators from the last fully successful capture of this instance; memory only, never persisted.
+        self.conditional, self._validators, self.transfer = conditional, {}, None
 
     def _url(self, value, suffix):
         parsed, path = endpoint(value)
@@ -153,24 +196,40 @@ class GitHubAPI:
         return self._request(target+('?' + query if query else ''), state)
 
     def _request(self, target, state, *, body=None):
-        if (self.transport.max_pages is not None and state['requests'] >= self.transport.max_pages
-                or self.transport.max_bytes is not None and state['used'] >= self.transport.max_bytes
-                or state['deadline'] is not None and time.monotonic() >= state['deadline']):
-            raise TransportError('GitHub capture budget exhausted')
-        headers = {'Accept': 'application/vnd.github+json', 'Accept-Encoding': 'identity', 'User-Agent': 'agent-harness-lab-reader'}
-        if body is None: headers['X-GitHub-Api-Version'] = API_VERSION
-        else: headers.update(Accept='application/json', **{'Content-Type': 'application/json'})
-        if self.authorization is not None: headers['Authorization'] = self.authorization
-        state['requests'] += 1
-        value, metadata, size = _json_exchange(self.transport.origin, target, headers, body=body,
-            timeout=self.transport.timeout, deadline=state['deadline'],
-            max_bytes=self.transport.max_bytes-state['used'] if self.transport.max_bytes is not None else None)
-        state['used'] += size
-        metadata = {k.lower(): v for k, v in metadata.items()}
+        if budget_spent(self.transport, state): raise TransportError('GitHub capture budget exhausted')
+        headers = ({'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': API_VERSION} if body is None
+            else {'Accept': 'application/json', 'Content-Type': 'application/json'})
+        key = cached = None
+        if body is None and self.conditional:
+            key = digest(('github-conditional-v1', target, text_hash(self.authorization)))
+            validators = state['validators']
+            cached = validators[key] if key in validators else self._validators.get(key)
+            if cached is not None:
+                headers['If-None-Match'] = cached[0]; state['conditional'] += 1
+        used = state['used']
+        value, metadata = metered_exchange(self.transport, target, headers, state, authorization=self.authorization,
+            body=body, not_modified=cached is not None)
+        if value is NOT_MODIFIED: return self._replay(key, cached, metadata, state)
         if (body is None and metadata.get('x-github-api-version-selected') != API_VERSION
                 or metadata.get('content-type', '').split(';')[0].strip() not in ('application/json', 'application/vnd.github+json')):
             raise TransportError('GitHub API version/content capability is unavailable')
+        if key is not None:
+            etag = metadata.get('etag')
+            # A fresh answer without a usable validator also retires the older one for this target.
+            state['validators'][key] = ((etag, copy.deepcopy(value), dict(metadata), state['used']-used)
+                if isinstance(etag, str) and ETAG.fullmatch(etag) else None)
         return value, metadata
+
+    def _replay(self, key, cached, metadata, state):
+        """A 304 replays the validated 200 it names, charged its original bytes, so it cannot change a snapshot."""
+        etag, value, headers, size = cached
+        if metadata.get('etag', etag) != etag: raise TransportError('GitHub 304 names another validator')
+        if self.transport.max_bytes is not None and state['used']+size > self.transport.max_bytes:
+            raise TransportError('GitHub capture budget exhausted')
+        # RFC 9111 4.3.4: the 304's own headers (such as a new rel=next Link) update the stored ones.
+        headers = {**headers, **{k: v for k, v in metadata.items() if k != 'content-length'}}
+        state['used'] += size; state['not_modified'] += 1; state['validators'][key] = (etag, value, headers, size)
+        return copy.deepcopy(value), dict(headers)
 
     def _graphql(self, query, variables, state):
         if query not in (THREADS_QUERY, THREAD_COMMENTS_QUERY) or self.authorization is None:
@@ -277,32 +336,17 @@ class GitHubAPI:
         if set(links) != set(known): raise ValueError('GitHub thread membership is incomplete')
         return threads, links
 
-    def _next(self, link, suffix, current):
-        if link is None: return None
-        if not isinstance(link, str): raise ValueError('invalid GitHub pagination header')
-        following = None
-        for part in link.split(','):
-            match = re.fullmatch(r'\s*<([^<>]+)>;\s*rel="(next|prev|first|last)"\s*', part)
-            if match is None: raise ValueError('unsupported GitHub pagination')
-            if match[2] != 'next': continue
-            if following is not None: raise ValueError('duplicate GitHub next page')
-            parsed, path = endpoint(match[1])
-            if (parsed.hostname, parsed.port or 443) != self.transport.origin or path.casefold() != (self.transport.path+suffix).casefold():
-                raise ValueError('GitHub pagination escaped its collection')
-            pairs = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
-            values = dict(pairs)
-            if (len(pairs) != 2 or set(values) != {'page', 'per_page'} or values['per_page'] != '100'
-                    or re.fullmatch(r'[1-9][0-9]*', values['page']) is None or int(values['page']) != current+1):
-                raise ValueError('GitHub pagination skipped or repeated a page')
-            following = int(values['page'])
-        return following
+    def _next(self, link, suffix, current, query=None):
+        return next_page(self.transport, link, suffix, current, dict(query or {}, per_page='100'))
 
-    def _list(self, suffix, state, key='id', *, envelope=None):
+    def _list(self, suffix, state, key='id', *, envelope=None, query=None):
+        """A fixed-filter listing; ``query`` holds reader-built filters that every page must keep."""
         page, result, seen, total = 1, [], set(), None
+        fixed = ''.join(f'{name}={value}&' for name, value in (query or {}).items())
         while page is not None:
-            value, headers = self._get(suffix+f'?per_page=100&page={page}', state)
+            value, headers = self._get(suffix+f'?{fixed}per_page=100&page={page}', state)
             if envelope is not None:
-                if envelope != 'check_runs' or not isinstance(value, dict): raise ValueError('unsupported GitHub listing envelope')
+                if envelope not in ENVELOPES or not isinstance(value, dict): raise ValueError('unsupported GitHub listing envelope')
                 count = integer(value['total_count'])
                 if total is not None and total != count: raise ValueError('GitHub listing total changed')
                 total, value = count, value[envelope]
@@ -314,7 +358,7 @@ class GitHubAPI:
                     if key not in item or digest(item[key]) in seen: raise ValueError('duplicate or missing GitHub listing identity')
                     seen.add(digest(item[key]))
             result.extend(value)
-            page = self._next(headers.get('link'), suffix, page)
+            page = self._next(headers.get('link'), suffix, page, query)
         if total is not None and len(result) != total: raise ValueError('GitHub listing total is incomplete')
         return result
 
@@ -441,14 +485,19 @@ class GitHubAPI:
             submitted_at=moment(value['submitted_at']), actor_sha256=self._actor(value['user']),
             matches_head=None if value['commit_id'] is None or head is None else commit_hash(value['commit_id']) == head)
 
-    def read(self, source):
+    reconciles_absence = True
+
+    def read(self, source, *, prior=None):
         try:
             if not isinstance(source, SourceSpec) or (source.provider, source.version) != ('github', self.selection.source_version): raise ValueError('unsupported GitHub source')
             self.transport._authorize(source, project_sha256=self.selection.project_sha256,
                 scope_sha256=self.selection.sha256, authorization=self.authorization)
             if 'threads' in self.selection.details and (self.authorization is None or any(n > 2**31-1 for n in self.selection.pulls)):
                 raise ValueError('GitHub threads require explicit authentication and GraphQL PR numbers')
-            return self._capture(source)
+            if prior is not None and (not isinstance(prior, (list, tuple)) or any(
+                    not isinstance(r, EvidenceRecord) or r.source_sha256 != source.source_key for r in prior)):
+                raise ValueError('prior GitHub checkpoint records exceed the selected source')
+            return self._capture(source, tuple(prior or ()))
         except Exception:
             raise TransportError('GitHub capture blocked or incomplete; no automatic retry or checkpoint commit') from None
 
@@ -473,6 +522,57 @@ class GitHubAPI:
                 created_at=moment(status['created_at']), updated_at=moment(status['updated_at']), actor_sha256=self._actor(status['creator']))
             key = emit('github_commit_status', integer(status['id'], minimum=1), value, value['created_at'])
             relations.add(('status_on', key, parent))
+
+    def _actions(self, sha, parent, state, emit, nodes, relations):
+        """Workflow runs for one exact head and every attempt's jobs; reruns are correlated, never new trials."""
+        head = commit_hash(sha)
+        if head is None: raise ValueError('Actions capture requires a full head identity')
+        for run in self._list('/actions/runs', state, envelope='workflow_runs', query=dict(head_sha=sha)):
+            native = integer(run['id'], minimum=1); self._url(run['url'], '/actions/runs/'+str(native))
+            attempts = integer(run['run_attempt'], minimum=1)
+            if (run['head_sha'] != sha or run['status'] not in ACTION_STATUSES or run['conclusion'] not in RUN_CONCLUSIONS
+                    or not isinstance(run['event'], str) or ACTION_EVENT.fullmatch(run['event']) is None):
+                raise ValueError('GitHub workflow run head/status mismatch')
+            value = dict(head_sha256=head, workflow_sha256=digest(integer(run['workflow_id'], minimum=1)),
+                name_sha256=text_hash(run['name']), path_sha256=text_hash(run['path'], required=True), event=run['event'],
+                status=run['status'], conclusion=run['conclusion'], run_attempt=attempts, state_scope='latest_attempt',
+                suite_sha256=digest(integer(run['check_suite_id'], minimum=1)), created_at=moment(run['created_at']),
+                run_started_at=moment(run['run_started_at']), updated_at=moment(run['updated_at']))
+            run_key = emit('github_workflow_run', native, value, value['created_at'])
+            relations.add(('workflow_run_on', run_key, parent))
+            for attempt in range(1, attempts+1):
+                for job in self._list(f'/actions/runs/{native}/attempts/{attempt}/jobs', state, envelope='jobs'):
+                    self._job(job, sha, head, native, run_key, attempt, emit, nodes, relations)
+
+    def _job(self, job, sha, head, run, run_key, attempt, emit, nodes, relations):
+        native = integer(job['id'], minimum=1); self._url(job['url'], '/actions/jobs/'+str(native))
+        if (integer(job['run_id'], minimum=1) != run or integer(job['run_attempt'], minimum=1) != attempt
+                or job['head_sha'] != sha or job['status'] not in ACTION_STATUSES or job['conclusion'] not in JOB_CONCLUSIONS):
+            raise ValueError('GitHub workflow job run/attempt/head/status mismatch')
+        check = None
+        if job['check_run_url'] is not None:
+            if not isinstance(job['check_run_url'], str): raise ValueError('invalid GitHub job check reference')
+            identity = bigint(job['check_run_url'].rsplit('/', 1)[-1])
+            self._url(job['check_run_url'], '/check-runs/'+str(identity))
+            check = digest(('github_check_run', self.selection.repo_id, identity))
+        steps, numbers = job['steps'], set()
+        if not isinstance(steps, list) or len(steps) > MAX_JOB_STEPS: raise ValueError('GitHub job steps are malformed or unbounded')
+        captured = []
+        for step in steps:
+            if (not isinstance(step, dict) or integer(step['number'], minimum=1) in numbers
+                    or step['status'] not in ACTION_STATUSES or step['conclusion'] not in JOB_CONCLUSIONS):
+                raise ValueError('GitHub job step identity or status is invalid')
+            numbers.add(step['number'])
+            captured.append(dict(number=step['number'], name_sha256=text_hash(step['name'], required=True),
+                status=step['status'], conclusion=step['conclusion'],
+                started_at=moment(step['started_at']), completed_at=moment(step['completed_at'])))
+        value = dict(head_sha256=head, run_sha256=run_key, run_attempt=attempt, name_sha256=text_hash(job['name'], required=True),
+            status=job['status'], conclusion=job['conclusion'], created_at=moment(job['created_at']),
+            started_at=moment(job['started_at']), completed_at=moment(job['completed_at']), check_run_sha256=check, steps=captured)
+        key = emit('github_workflow_job', native, value, value['started_at'])
+        relations.add(('job_of', key, run_key))
+        if check in nodes and nodes[check]['kind'] == 'github_check_run' and nodes[check]['head_sha256'] == head:
+            relations.add(('job_check_run', key, check))
 
     def _timeline(self, number, parent, issues, pulls, state, emit, nodes, relations):
         unmapped = []
@@ -508,8 +608,9 @@ class GitHubAPI:
             namespace = 'issue_event'
             related = None
             if kind == 'commented':
-                comment = self._comment(event, number)
-                related = emit('github_issue_comment', native, comment, comment['created_at']); namespace = 'comment'
+                comment = self._comment(event, number); namespace = 'comment'
+                if self.selection.contains(comment['created_at']):
+                    related = emit('github_issue_comment', native, comment, comment['created_at'])
             elif kind == 'reviewed':
                 review = self._review(event, number, pulls.get(number, {}).get('head_sha256'), timeline=True)
                 namespace = 'review'
@@ -527,14 +628,52 @@ class GitHubAPI:
             if related is not None: relations.add(('timeline_comment' if kind == 'commented' else 'timeline_review', key, related))
         return unmapped
 
-    def _capture(self, source):
-        state = dict(requests=0, used=0,
+    def _lineage(self, prior):
+        """Commit-ordered windowed comment revisions per native ID; empty without a window."""
+        lineage = {}
+        if self.selection.window is not None:
+            for record in prior:
+                if record.record_type in WINDOWED: lineage.setdefault(record.native_id_sha256, []).append(record)
+        return lineage
+
+    @staticmethod
+    def _reobserved(value, history):
+        """A listing after a tombstone is a new present revision bound to the tombstone it supersedes."""
+        if not history: return value
+        latest = history[-1]
+        if latest.state == 'tombstone': return dict(value, reobserved_after_sha256=latest.revision_sha256)
+        for record in history:
+            candidate = dict(value, reobserved_after_sha256=record.revision_sha256)
+            if record.state == 'tombstone' and digest(candidate) == latest.revision_sha256: return candidate
+        return value
+
+    def _absences(self, source, lineage, observed, records, collected):
+        """Absence from a complete in-window listing is not deletion evidence."""
+        absences = {}
+        for key, history in lineage.items():
+            present = [r for r in history if r.state == 'present']
+            if not present or key in observed or key in records: continue
+            last = present[-1]
+            if last.original_at is None or not self.selection.contains(last.original_at): continue
+            value = dict(kind=last.record_type, native_id_sha256=key, state='deleted_or_unobservable',
+                basis='absent_from_complete_native_listing', deletion_confirmed=False,
+                supersedes_revision_sha256=last.revision_sha256,
+                window=dict(since=self.selection.since, until=self.selection.until, membership='created_at'))
+            revision = digest(value)
+            absences[key] = value, EvidenceRecord(source.source_key, key, revision, revision, 'contextual_assertion',
+                last.record_type, collected, original_at=last.original_at, provenance='unknown',
+                capture_completeness='partial', state='tombstone')
+        return absences
+
+    def _capture(self, source, prior=()):
+        state = dict(requests=0, used=0, validators={}, conditional=0, not_modified=0,
             deadline=time.monotonic()+self.transport.seconds if self.transport.seconds is not None else None)
-        records, nodes, relations = {}, {}, set()
-        collected = datetime.now(timezone.utc).isoformat()
+        records, nodes, relations, observed = {}, {}, set(), set()
+        collected, lineage = datetime.now(timezone.utc).isoformat(), self._lineage(prior)
         def emit(kind, native, node, original=None):
             key = digest((kind, self.selection.repo_id, native))
             value = dict(kind=kind, native_id_sha256=key, **node)
+            if kind in WINDOWED: value = self._reobserved(value, lineage.get(key))
             revision = digest(value)
             record = EvidenceRecord(source.source_key, key, revision, revision,
                 'contextual_assertion' if kind in ('github_issue', 'github_issue_comment', 'github_review_comment', 'github_review', 'github_review_thread', 'github_commit_comment', 'github_cross_reference') else 'development_artifact',
@@ -554,6 +693,8 @@ class GitHubAPI:
             if len(comments) != node['comments']: raise ValueError('GitHub conversation listing is incomplete')
             for comment in comments:
                 child = self._comment(comment, number)
+                observed.add(digest(('github_issue_comment', self.selection.repo_id, comment['id'])))
+                if not self.selection.contains(child['created_at']): continue
                 key = emit('github_issue_comment', comment['id'], child, child['created_at'])
                 relations.add(('conversation_on', key, parent))
         thread_reads = {}
@@ -590,6 +731,8 @@ class GitHubAPI:
                     relations.add(('thread_on', key, parent))
             for comment in comments:
                 value = self._comment(comment, number, inline=True, head=node['head_sha256'])
+                observed.add(digest(('github_review_comment', self.selection.repo_id, comment['id'])))
+                if not self.selection.contains(value['created_at']): continue
                 if comment['id'] in thread_links: value.update(thread_links[comment['id']])
                 key = emit('github_review_comment', comment['id'], value, value['created_at'])
                 relations.add(('inline_on', key, parent))
@@ -597,6 +740,7 @@ class GitHubAPI:
                 if comment['pull_request_review_id'] in review_keys:
                     relations.add(('inline_review', key, review_keys[comment['pull_request_review_id']]))
             if 'checks' in self.selection.details: self._checks(raw['head']['sha'], parent, state, emit, relations)
+            if 'actions' in self.selection.details: self._actions(raw['head']['sha'], parent, state, emit, nodes, relations)
         commit_reads = {}
         for sha in self.selection.commits:
             captured = self._commit_detail(sha, state); commit_reads[sha] = captured
@@ -631,6 +775,9 @@ class GitHubAPI:
         for sha, before in commit_reads.items():
             if self._commit_detail(sha, state) != before: raise ValueError('GitHub commit details or comments changed during capture')
         if self._repository(self._get('', state)[0]) != repository: raise ValueError('GitHub repository changed during capture')
+        present = dict(records)
+        absences = self._absences(source, lineage, observed, records, collected)
+        records.update({key: record for key, (_, record) in absences.items()})
         summary = dict(schema_version=1, api_version=API_VERSION, source_identity='repository_id_checked',
             repository=repository, nodes=[nodes[k] for k in sorted(nodes)], relations=sorted(relations),
             capture_completeness='partial', warnings=['selected_resources_only', 'thread_resolution_unknown', 'execution_binding_unknown'])
@@ -642,17 +789,33 @@ class GitHubAPI:
                 summary['warnings'].remove('thread_resolution_unknown')
                 summary['warnings'].append('thread_readbacks_non_atomic')
             if self.selection.commits: summary['warnings'].append('commit_file_inventory_limited')
+            if 'actions' in self.selection.details:
+                runs = [n for n in nodes.values() if n['kind'] == 'github_workflow_run']
+                attempts = sum(n['run_attempt'] for n in runs)
+                summary['actions'] = dict(workflow_runs=len(runs), attempts=attempts, rerun_attempts=attempts-len(runs),
+                    workflow_jobs=sum(n['kind'] == 'github_workflow_job' for n in nodes.values()),
+                    replicate_identity='correlated_within_run', independent_trials=None, task_outcomes_verified=False,
+                    logs_captured=False, artifacts_captured=False, annotations_captured=False)
+                summary['warnings'].extend(('run_state_latest_attempt_only', 'workflow_reruns_not_independent',
+                    'workflow_logs_not_captured', 'workflow_artifacts_not_captured', 'check_annotations_not_captured'))
+        if self.selection.window is not None:
+            summary.update(window=dict(since=self.selection.since, until=self.selection.until, membership='created_at',
+                kinds=list(WINDOWED)), absences=[absences[k][0] for k in sorted(absences)])
+            summary['warnings'].append('absence_is_not_deletion_evidence')
         coverage = CoverageManifest(source.source_key, source.scope_sha256, source.scope_sha256, self.selection.source_version,
             'github-rest-graphql-v1' if 'threads' in self.selection.details else 'github-rest-v'+str(self.selection.schema_version),
             (ScanBound('records', None, len(records)), ScanBound('pages', self.transport.max_pages, state['requests']),
             ScanBound('bytes', self.transport.max_bytes, state['used'])), gaps=('not_captured',), reported_completeness='partial')
         graph = None
         if 'graph' in self.selection.details:
-            refs = {k: RecordRef(r.source_sha256, r.native_id_sha256, r.revision_sha256) for k, r in records.items()}
+            refs = {k: RecordRef(r.source_sha256, r.native_id_sha256, r.revision_sha256) for k, r in present.items()}
             joins = tuple(JoinReceipt(refs[left], refs[right], relation, 'github.native', 'github-claims-v1',
                 (refs[left], refs[right]), basis='native_fields') for relation, left, right in sorted(relations))
             graph = EvidenceGraph(source.source_key, source.project_sha256, source.scope_sha256, source.version, tuple(refs.values()), joins)
             graph.validate(source, records.values())
         snapshot = Snapshot(digest(summary), tuple(records[k] for k in sorted(records)), ExecutionMetadata((), coverage), graph)
         self.summary = summary
+        # Transfer counts stay outside the snapshot: a 304 must never change what a checkpoint commits.
+        self.transfer = dict(conditional_requests=state['conditional'], not_modified=state['not_modified'])
+        if self.conditional: self._validators = {k: v for k, v in state['validators'].items() if v is not None}
         return snapshot

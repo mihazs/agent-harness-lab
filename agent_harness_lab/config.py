@@ -4,9 +4,37 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import sys
 import uuid
-from .evaluation.integrity import contained, relative, read_regular, unique_object
+import stat
+from .evaluation.integrity import contained, open_directory_nofollow, relative, read_regular, unique_object
+from . import surfaces
+
+RESPONSE_PATHS=('inference_settings','cgroup_root','image_root')
+RESPONSE_OPTIONS=(*RESPONSE_PATHS,'image_sha256','disk_bytes','permission_audit')
+INVOCATION_OPTIONS=('agent','codex','claude','timeout',*RESPONSE_OPTIONS,'sandbox_graders')
+PLUGIN_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}@[A-Za-z0-9][A-Za-z0-9._-]{0,127}')
+MAX_PLUGIN_CHECKOUTS = 32
+
+
+def plugin_checkouts(value):
+    """Optional caller selection {"name@marketplace": absolute Git checkout}; validating it reads nothing."""
+    if value is None: return {}
+    if not isinstance(value, dict) or len(value) > MAX_PLUGIN_CHECKOUTS: raise ValueError('invalid plugin checkout selection')
+    for key, path in value.items():
+        if (not isinstance(key, str) or PLUGIN_ID.fullmatch(key) is None or not isinstance(path, str) or len(path) > 4096
+                or any(ord(c) < 32 for c in path) or not Path(path).is_absolute() or '..' in Path(path).parts):
+            raise ValueError('plugin checkouts map name@marketplace to an absolute path')
+    if len({os.path.normpath(path) for path in value.values()}) != len(value): raise ValueError('plugin checkouts must be distinct')
+    return dict(value)
+
+
+def reference_path(project,value):
+    if not isinstance(value,str) or not value or len(value)>4096 or any(ord(c)<32 for c in value) or '..' in Path(value).parts:
+        raise ValueError('invalid controlled Responses reference')
+    if not Path(value).is_absolute():relative(value)
+    return Path(value) if Path(value).is_absolute() else Path(project)/value
 
 
 def starter():
@@ -21,19 +49,33 @@ def defaults():
 
 def validate(value):
     fields = {'schema_version', 'profile', 'runtime', 'bank', 'harness_paths', 'limits', 'recommendation_only'}
-    if not isinstance(value, dict) or set(value) != fields or type(value['schema_version']) is not int or value['schema_version'] != 1:
+    if not isinstance(value, dict) or set(value) - {'plugin_checkouts'} != fields or type(value['schema_version']) is not int or value['schema_version'] != 1:
         raise ValueError('unsupported project configuration schema')
+    if 'plugin_checkouts' in value: plugin_checkouts(value['plugin_checkouts'])
     if value['profile'] not in ('offline', 'cooperative', 'isolated') or value['recommendation_only'] is not True:
         raise ValueError('invalid profile or recommendation policy')
     runtime = value['runtime']
-    if not isinstance(runtime, dict) or set(runtime) != {'name', 'executable'} or runtime['name'] not in ('none', 'codex', 'claude'):
+    if not isinstance(runtime,dict):
         raise ValueError('invalid configured runtime')
-    executable = runtime['executable']
-    if runtime['name'] == 'none':
-        if executable is not None or value['profile'] != 'offline':
-            raise ValueError('execution profiles require an explicit runtime')
-    elif not isinstance(executable, str) or not executable or len(executable) > 4096 or not Path(executable).is_absolute() or any(ord(c) < 32 for c in executable):
-        raise ValueError('runtime requires an explicit absolute executable path')
+    if runtime.get('name')=='responses':
+        required={'name',*RESPONSE_OPTIONS}-{'permission_audit'}
+        if set(runtime) not in (required,required|{'permission_audit'}):raise ValueError('invalid configured Responses fields')
+        for name in RESPONSE_PATHS:reference_path(Path('/'),runtime[name])
+        if (not isinstance(runtime['image_sha256'],str) or len(runtime['image_sha256'])!=64
+                or any(c not in '0123456789abcdef' for c in runtime['image_sha256'])
+                or runtime.get('permission_audit') not in (None,'permission-results-v1')):
+            raise ValueError('invalid controlled Responses profile')
+        from .evaluation.workspace import policy
+        if type(runtime['disk_bytes']) is not int or runtime['disk_bytes']>2**63-1:raise ValueError('invalid configured disk bound')
+        policy(runtime['disk_bytes'])
+    else:
+        if set(runtime)!={'name','executable'} or runtime['name'] not in ('none','codex','claude'):
+            raise ValueError('invalid configured runtime')
+        executable=runtime['executable']
+        if runtime['name']=='none':
+            if executable is not None or value['profile']!='offline':raise ValueError('execution profiles require an explicit runtime')
+        elif not isinstance(executable,str) or not executable or len(executable)>4096 or not Path(executable).is_absolute() or any(ord(c)<32 for c in executable):
+            raise ValueError('runtime requires an explicit absolute executable path')
     bank = value['bank']
     if not isinstance(bank, dict) or set(bank) != {'path', 'sha256'}:
         raise ValueError('invalid configured bank')
@@ -47,6 +89,10 @@ def validate(value):
         relative(path)
         if len(path) > 4096 or any(ord(c) < 32 for c in path) or '.git' in Path(path).parts:
             raise ValueError('unsafe configured path')
+    # Any classified kind may be selected (staging re-classifies it); private files (local instructions, local
+    # settings, memory, caches) never are.
+    if any(surfaces.classify(path).writability == 'private_excluded' for path in paths):
+        raise ValueError('unsafe configured path')
     limits = value['limits']
     if not isinstance(limits, dict) or set(limits) != {'seconds', 'trials'}:
         raise ValueError('invalid configured resource caps')
@@ -75,8 +121,82 @@ def prepare(settings):
     if not isinstance(settings, dict) or set(settings) - set(result):
         raise ValueError('unknown initialization settings')
     for key, value in settings.items():
-        result[key] = {**result[key], **value} if key in ('runtime', 'bank', 'limits') and isinstance(value, dict) else value
+        result[key] = ({**result[key], **value} if key in ('runtime','bank','limits') and isinstance(value,dict)
+            and not (key=='runtime' and value.get('name')=='responses') else value)
     return validate(result)
+
+
+def execution_options(project,settings,requested,explicit):
+    """Pure selection: configuration supplies defaults, never execution authority."""
+    result=dict(requested);runtime=settings['runtime'] if settings else None
+    if result.get('timeout') is None:result['timeout']=settings['limits']['seconds'] if settings else 2700
+    if result.get('agent','auto')=='auto' and runtime and '--agent' not in explicit:result['agent']=runtime['name']
+    if runtime and runtime['name'] in ('codex','claude') and '--'+runtime['name'] not in explicit:
+        result[runtime['name']]=runtime['executable']
+    if result.get('agent')=='responses' and runtime and runtime['name']=='responses':
+        for name in RESPONSE_OPTIONS:
+            if '--'+name.replace('_','-') not in explicit and result.get(name) is None:
+                value=runtime.get(name)
+                result[name]=reference_path(project,value) if name in RESPONSE_PATHS else value
+    if result.get('agent')!='responses' and result.get('inference_settings') is not None:
+        raise ValueError('inference settings require the Responses runtime')
+    if result.get('agent')=='responses' and settings:
+        overlapping_harness(project,[result[name] for name in RESPONSE_PATHS if result.get(name) is not None],settings['harness_paths'])
+    return result
+
+
+def reference_metadata(path,*,private=False,directory=False):
+    path=Path(path).absolute()
+    if '..' in path.parts or any(part.is_symlink() for part in (path,*path.parents)):raise ValueError('controlled reference crosses a symlink or traversal')
+    try:info=path.lstat()
+    except OSError:raise ValueError('controlled Responses reference is unavailable') from None
+    if ((not stat.S_ISDIR(info.st_mode) if directory else not stat.S_ISREG(info.st_mode) or info.st_nlink!=1)
+            or private and (info.st_uid!=os.geteuid() or stat.S_IMODE(info.st_mode)&0o077)):
+        raise ValueError('unsafe controlled Responses reference metadata')
+    attributes=[info.st_dev,info.st_ino,info.st_mode,info.st_uid,info.st_gid]
+    if not directory:attributes += [info.st_size,info.st_mtime_ns,info.st_ctime_ns]
+    return dict(path=str(path),attributes=attributes)
+
+
+def stable_references(records):
+    """Watch fingerprint view: a refreshed credential keeps its file identity."""
+    credential=records['credential']
+    return dict(records,credential=dict(credential,attributes=credential['attributes'][:5]))
+
+
+def overlapping_harness(project,references,harness_paths):
+    """Reject references that would be copied into model-visible harness snapshots."""
+    root=Path(project).absolute()
+    for value in references:
+        path=Path(value).absolute()
+        for name in harness_paths:
+            harness=root/name
+            if path==harness or path.is_relative_to(harness) or harness.is_relative_to(path):
+                raise ValueError('controlled Responses references must stay outside harness paths')
+
+
+def response_references(project,options):
+    """Local bounded reads only. Credential bytes, probes and model calls are excluded."""
+    from .evaluation import responses,cgroup
+    from .evaluation.permission_audit import supported as audit_supported
+    from .evaluation.workspace import policy
+    if sys.platform!='linux' or options.get('permission_audit') is not None and not audit_supported():
+        raise ValueError('controlled Responses platform is unsupported')
+    if any(options.get(name) is None for name in RESPONSE_OPTIONS if name!='permission_audit'):
+        raise ValueError('controlled Responses references are incomplete')
+    policy(options['disk_bytes'])
+    records={name:reference_metadata(options[name],directory=name!='inference_settings',private=name=='image_root') for name in RESPONSE_PATHS}
+    if stat.S_IMODE(Path(options['image_root']).stat().st_mode)!=0o700:raise ValueError('runtime image requires private mode 0700')
+    cgroup.delegated(options['cgroup_root'])
+    settings,pin=responses.read_settings(options['inference_settings'])
+    from .cli import assets
+    forbidden=[project,options['image_root'],assets()/'skills']
+    forbidden.extend(options[name] for name in ('output','evaluation_store') if options.get(name) is not None)
+    key=responses.credential_path(settings,forbidden)
+    records['credential']=reference_metadata(key,private=True)
+    if not 0<key.stat().st_size<=8192:raise ValueError('controlled credential reference has invalid size')
+    records.update(settings_sha256=pin,image_sha256=options['image_sha256'],disk_bytes=options['disk_bytes'],permission_audit=options.get('permission_audit'))
+    return records
 
 
 def bank_path(project, config):
@@ -122,7 +242,9 @@ def evaluation_settings(path, manifest_path, manifest, versions, agent, binary):
             if Path(task['grader'][0]).resolve() != Path(sys.executable).resolve():
                 raise ValueError('configured evaluation requires the current Python grader interpreter')
     reason = None
-    if value['profile'] == 'isolated':
+    if value['runtime']['name']=='responses' and value['profile']!='offline':
+        reason='configured_responses_requires_controlled_improvement'
+    elif value['profile'] == 'isolated':
         reason = 'configured_isolated_runtime_unsupported'
     elif value['profile'] == 'offline':
         if agent != 'offline':
@@ -163,7 +285,7 @@ def create(project, config):
     project = Path(project).absolute()
     if any(p.is_symlink() for p in (project, *project.parents)):
         raise ValueError('project path crosses a symlink')
-    directory = os.open(project, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    directory = open_directory_nofollow(project)
     temporary = '.ahl-init-'+uuid.uuid4().hex
     try:
         descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=directory)

@@ -3,7 +3,6 @@ from copy import deepcopy
 from dataclasses import asdict,replace
 import hashlib
 import math
-import os
 from pathlib import Path
 import shutil
 import stat
@@ -13,7 +12,7 @@ from agent_harness_lab.private_journal import PrivateJournal,encoded,record,sync
 from agent_harness_lab.evaluation import cohort_history,decision_receipts
 from agent_harness_lab.evaluation.bank_revisions import sync_tree
 from agent_harness_lab.evaluation.bank_tools import frozen_grader
-from agent_harness_lab.evaluation.integrity import contained,read_regular,relative,tree
+from agent_harness_lab.evaluation.integrity import contained,read_regular,regular_sha256,relative,tree
 from agent_harness_lab.evaluation.oracle import identity
 from agent_harness_lab.evaluation.oracle_history import HistoryStore,bank_authority
 from agent_harness_lab.evaluation.plan import ExperimentSpec
@@ -298,7 +297,7 @@ class HistorySearchContext:
             raise ValueError('prepared search manifest changed')
         for name,expected in self.selected['folders'].items():
             if scan(contained(attempt/'export',name))[0]!=expected: raise ValueError('prepared search input changed')
-        if hashlib.sha256(read_regular(contained(attempt/'export',self.selected['cohort_path']),1024*1024)).hexdigest()!=self.selected['cohort_sha256']:
+        if regular_sha256(contained(attempt/'export',self.selected['cohort_path']),1024*1024)!=self.selected['cohort_sha256']:
             raise ValueError('prepared search cohort changed')
 
     def verify(self,binding):

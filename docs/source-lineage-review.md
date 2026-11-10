@@ -101,7 +101,10 @@ cycle and ordinary derivation edges do not automatically create one.
 case head. Changes to decisions or the selected cache produce a new query revision.
 Earlier decisions and experiment manifests are not retroactively rewritten.
 The existing task-bank lexical receipts remain heuristic/pending; this command
-neither clears content exposure nor upgrades bank eligibility. Broader native
+neither clears content exposure nor upgrades bank eligibility. The offline
+Git/GitHub [commit join](source-contracts.md#offline-gitgithub-commit-join) and
+[PR commit-role join](source-contracts.md#offline-pr-commit-role-join) are
+separate: their candidate receipts do not enter these components or reviews. Broader native
 cross-source resolution, corpus integration, diagnostic-utility evaluation and
 immutable regression admission remain work under #58/#8.
 

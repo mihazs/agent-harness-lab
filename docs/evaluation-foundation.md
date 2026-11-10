@@ -38,7 +38,10 @@ oracle correction/invalidation and protected certification remain separate work.
   unknown. There is no optional stopping or task retry selection.
 - The promotion policy separates descriptive results, incomplete/blocked evidence,
   and a recommendation after verified prerequisites. It never sets automatic
-  promotion true. A recommendation API call is not an isolation attestation.
+  promotion true. A recommendation API call is not an isolation attestation:
+  its isolation element comes only from a live qualified
+  [implementation-prerequisite scope](implementation-prerequisites.md#isolation-element-of-promotionpolicydecide),
+  and the legacy `isolation_verified` keyword is a recorded declaration.
 - `TaskSpec` and bank validation freeze fixture/grader bundles, provenance,
   partitions, safety and artifact boundaries. Root leakage is always rejected;
   optional family/project/time separation and copied-fixture checks are enforced.
@@ -61,6 +64,27 @@ oracle correction/invalidation and protected certification remain separate work.
   not a security boundary on their own.
 - Artifact extraction rejects traversal, symlinks, hardlinks and special files,
   and enforces declared file/byte bounds after the worker stops.
+- Contained reads open each directory by name from its already opened parent,
+  starting at `/`, without following links, so a parent swapped for a symlink
+  after the containment check is refused. Bank revision, case evidence and
+  lineage snapshot fsyncs, and private journal directory fsyncs, open their
+  targets through the same walk. Platforms whose `os.open` lacks `dir_fd`
+  support refuse these reads and fsyncs.
+- The final file is checked with `lstat` relative to its opened parent before
+  it is opened. A device node, Unix socket, FIFO or directory is refused with
+  the reader's label (`artifact must be a regular single-link file` for
+  artifact extraction, `input must be a bounded single-link regular file` for
+  other reads and fsyncs), so a leaf that is already special is never opened.
+  A leaf swapped for a special file between that check and the open is still
+  opened (non-blocking) and is then caught by the reader's `fstat` check; the
+  fsync paths have no such recheck.
+- A private journal opens its store once through that walk, creates its lock
+  in the open store and publishes the store marker and events from that
+  descriptor. Before each publication it walks the store path again and
+  refuses unless the path still names the locked directory: a link raises
+  `input crosses a symlink`, and a replaced directory raises `case store
+  changed while locked`. A swap after that check cannot move the file out of
+  the locked store.
 
 ## Offline sandbox and threat model
 
@@ -78,12 +102,33 @@ workspace and role-allowed read-only inputs; clears inherited environment; and
 requests separate network/process/user namespaces, capability removal, process
 session cleanup and CPU/address-space/process/file/output/time limits. Input
 integrity is rechecked. No host home/config/socket is mounted.
+Namespaces do not isolate kernel keyrings, and the sandbox keeps the validator's
+uid, so every role and grader launch, like a hook trial, goes through the same
+host-side trampoline. It joins a new empty session keyring, then installs a
+seccomp filter that fails `add_key`, `request_key` and `keyctl` with `ENOSYS`.
+A run therefore cannot search, describe or read the validator's keys, even by
+serial number. `/proc/keys` stays mounted, because masking it would stop nested
+sandboxes from mounting `/proc`, so a run can still see the type and description
+of keys the validator's uid may view. A kernel without key support proceeds; any
+other failure stops before bubblewrap starts, and `ahl sandbox-check` reports
+`keyring_isolation_unavailable`.
 Writable workspaces must be disjoint from every declared read-only input; nested
 mounts of the same host tree are rejected before execution. Captured stdout and
 stderr share one byte allowance. Timeout, interruption and selector-registration
 failures trigger process-group cleanup, including children remaining in the group
 after their parent exits. Host process-control tests establish that behavior separately from the
 namespace containment tests, which still require a supported host.
+
+The process bound counts only the sandbox's processes, never the invoking user's
+others. With `--cgroup-root` it is the worker cgroup's `pids.max`. Without one,
+on Linux 5.14 or later, bubblewrap holds the sandbox's first process in its new
+user namespace (`--info-fd`, `--block-fd`) while the controller sets
+`RLIMIT_NPROC` on it; that kernel counts the limit per user namespace, so the
+real UID keeps its host limit. Otherwise, or when that cap cannot be set and read
+back, the run continues without a process bound. Each attestation's
+`process_bound` names the enforced `scope` (`cgroup` or `user_namespace`) and
+limit, or `enforced: false` with a reason, and `ahl sandbox-check` then lists
+`no sandbox process bound` among its limitations.
 
 An explicit `--cgroup-root` on `ahl sandbox-check` or `ahl evaluate --agent offline`
 opts into aggregate Linux cgroup v2 controls. The caller must supply an existing
@@ -123,8 +168,9 @@ are synthetic. Checks cover role/file/environment/network boundaries, readonly
 inputs, artifact links, forged grades, process-session escape, OOM, output limits,
 timeouts, interruption cleanup and both arms of all seven offline starter tasks.
 
-The default probe can fail on a busy shared account because its `RLIMIT_NPROC`
-is per real user, not per trial. A successful bare namespace command does not
+A probe whose bubblewrap clone fails with `EAGAIN` reports
+`process_limit_exhausted`: the host or the user's own process limit is full,
+which is not a missing namespace. A successful bare namespace command does not
 establish that requested resource policy. The delegated canary command exercises
 the cgroup policy without raising the default limit or adding a runtime fallback.
 
@@ -398,6 +444,47 @@ grading, paired-analysis and private-report controls without model/network calls
 The same target runs in wheel and archive verification. See
 [controlled experiment reporting](controlled-experiments.md#controller-trajectory-reports)
 for saved-result handling and migration limits.
+
+## Interaction contracts for clarification, stopping and no-change tasks
+
+`agent_harness_lab.evaluation.interaction_contract` grades what the evaluated task
+agent did at a declared decision boundary, separately from the optimizer's
+`no_change` routing. It is opt-in: a task with no contract keeps its artifact-only
+semantics, and the module changes no existing grader. This increment is the
+contract and a pure grader over synthetic evidence; it is not yet wired into
+`run_evaluation.py`, and no runtime is claimed to produce the evidence.
+
+A contract (`profile: "interaction-contract-v1"`, `schema_version: 1`) declares the
+`task_id`, an explicit `endpoint` (`whole_task` or `interaction_boundary`, which
+freezes what the binary pass means), `required_clarifications` (a subset of
+`allowed_clarifications`), `permitted_mutations`, `protected_paths`, an optional
+`stop_reason` and a `completion` of `{"kind":"final_state","paths":{path:sha256}}`
+or `{"kind":"interaction"}`. `contract_sha256` is the identity to store with the
+task; any change invalidates earlier comparisons.
+
+`evaluate(contract, evidence)` takes runner-observed evidence: `capture` states
+whether the `transcript` and side-effect `receipts` are `complete`, `partial` or
+`missing`, and how the run `termination` ended; `events` are `clarification_request`,
+`clarification_reply`, `mutation`, `stop` and `claim` records; `state` holds initial
+and final digests. It returns three-valued `interaction_requirement_satisfied`,
+`whole_task_completed` and `state_preserved`, plus `passed` under the endpoint.
+Asking at a declared boundary can satisfy the interaction without marking the
+task complete, and ask, reply, act passes only after the final-state postconditions
+hold. Violations are named separately (`missed_necessary_clarification`,
+`unnecessary_clarification`, `acted_before_clarification`, `prohibited_mutation`,
+`protected_state_changed`, `stop_not_deliberate_or_not_authorized`,
+`abnormal_termination`).
+
+Absence is concluded only from a `complete` channel. A missing transcript, partial
+receipts, a missing final state, or a termination of `unknown` or
+`unsupported_continuation` leaves the result unknown, and a crash, timeout,
+cancellation or provider error fails the interaction whatever the contract declares
+and is never a deliberate stop. A natural-language `claim` is retained but never
+satisfies a postcondition. Clarification topics and stop reasons are identifiers
+that a trusted runner assigns to observed events; the grader does not judge free
+text, and semantic adjudication remains a separate step. Receipts never authorize
+publication or promotion. Replay fixtures, scripted user replies and evaluator
+integration remain later work under the same issue.
 
 ## Offline validation and limits
 

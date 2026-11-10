@@ -6,17 +6,22 @@
 | Install or troubleshoot | [Installation](installation.md) |
 | Check readiness or initialize config | [Offline doctor and safe init](onboarding.md) |
 | Analyze a project, improve or monitor | [Workflows and CLI reference](workflows.md) |
+| Check harness conventions without traces or a model | [Static harness audit](static-audit.md) |
 | Understand capture formats and provenance | [Telemetry](telemetry.md) |
 | Build explicit source adapters | [Source evidence contracts](source-contracts.md) |
 | Understand evaluation and safety gates | [Evaluation foundation](evaluation-foundation.md) |
 | Accept a reviewed private regression | [Immutable development-bank admission](regression-admission.md) |
 | Run conditional finite-bank sequential diagnostics | [Sequential experiments](sequential-experiments.md) |
-| Inspect selected-plan precision before execution | [Frozen-plan precision](experiment-precision.md) |
+| Inspect selected-plan precision or simulated power before execution | [Frozen-plan precision](experiment-precision.md) |
 | Record comparisons and invalidate defective graders | [Controller oracle history](oracle-history.md) |
+| Decide cost and latency regressions only under verified quality | [Resource decisions](resource-decisions.md) |
 | Bind private analysis to current controller evidence | [Decision receipts](decision-receipts.md) |
 | Render current private qualification and preservation evidence | [Controller history reports](history-reports.md) |
+| Audit non-alerted episodes with probability sampling | [Probability-sampled triage audits](audit-sampling.md) |
+| Review a baseline/candidate experiment pair by pair | [Side-by-side review model](side-by-side-reports.md) |
 | Search with current preservation evidence and fresh confirmation | [Guarded development search](guarded-search.md) |
 | Audit and review a proposed grader correction | [Frozen correction controls](grader-corrections.md) |
+| Separate capture, task-mix and verified-performance drift | [Frozen drift plans and receipts](drift-monitoring.md) |
 | Check implemented/pending capabilities | [Controlled experiments](controlled-experiments.md) |
 | Inspect original smoke results | [Initial validation](validation.md) |
 | Develop, test and submit a PR | [Contributor guide](../CONTRIBUTING.md) |

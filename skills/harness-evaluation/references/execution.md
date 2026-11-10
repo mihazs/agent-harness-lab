@@ -52,10 +52,17 @@ acceptance assertion from a grader bug. The runner does not sandbox grader comma
 
 Codex uses `workspace-write` and approval `never`. Claude Code uses `--print`,
 `--output-format stream-json`, `--verbose`, and `--no-session-persistence`, with
-prompts on stdin. It inherits permissions and sandbox settings; it does not enable
-`acceptEdits` or bypass permission checks. Both retain inherited configuration,
-authentication and hooks. Configure permissions needed for your trusted fixtures
-before running; do not loosen them to make a candidate pass. This is not network isolation or a hostile-agent security
+prompts on stdin. It does not enable `acceptEdits` or bypass permission checks.
+Each trial requests project-only settings, no user MCP servers and no hooks for
+Claude Code, and a temporary `CODEX_HOME` for Codex. `results.json` records these
+as `inherited_unverified` until a native run confirms them. Claude Code keeps
+authentication stored outside settings files and managed layers, but user and
+local settings, with their permission rules, sandbox settings, `env` and
+`apiKeyHelper`, are not loaded. Put the permissions your trusted fixtures need in
+the fixture's `.claude/settings.json` or in managed settings. The Codex home holds
+no saved login, so a Codex run needs `CODEX_API_KEY`; without it the Codex CLI
+run blocks as `codex_credentials_unavailable` before any trial. Do not loosen
+permissions to make a candidate pass. This is not network isolation or a hostile-agent security
 boundary. Do not provide tasks requiring live external mutations. A candidate must
 not change graders. Keep fixtures free of reference solutions; the parent manages
 held-out feedback. The runner records split labels but does not enforce secrecy.
@@ -110,6 +117,107 @@ The CLI contract was checked against [programmatic execution](https://code.claud
 release supporting these flags. A missing binary or authentication is an execution
 limitation, not a passing model trial.
 
+## Hook canary validation
+
+`ahl evaluate hooks --runtime claude-code --candidate CANDIDATE --fixture FIXTURE
+--output NEW` validates one staged hook unit (`hook_validation_v1`,
+`agent_harness_lab/hooks_validation.py`). Analysis never runs this mode, and hooks
+never run in the candidate, the fixture or a project checkout. The candidate's
+`hooks` key is applied over the fixture's configuration and must pass
+`hook_contract_v1` again; otherwise nothing executes and the result is
+`unsupported`. The output must be new and outside every Git checkout and input.
+The unit's bytes and every checkout script the contract bound are checked against
+that binding before the trial exists; checkout scripts are staged from the project
+with the bound bytes, never from the fixture. The fixture is then copied to
+`OUTPUT/workspace` and a harmless canary is appended to the same `hooks` key: a
+`SessionStart` probe, one unfiltered group per candidate event, and one group per
+candidate matcher group with the same event and matcher. A canary-only run drops
+the fixture's own hooks, so only contract-checked handlers execute. Each canary run
+appends a nonce record under `workspace/.ahl-canary/`, so a record shows
+registration, a matched event and execution for that group.
+
+The runtime runs once with the workspace as its working directory. `HOME` and
+`TMPDIR` point inside the trial, and the environment keeps only `PATH` and locale
+variables, so no credentials are in the environment.
+
+By default (`--sandbox bubblewrap`) the run goes through the same bubblewrap
+backend as offline evaluation, after the backend's hook trial probe passes. Inside
+it there is no network, the environment holds only those variables, and only the
+system directories, the runtime executable and the trial root are mounted, the
+trial read-only at its own path. Only the trial `home`, `tmp`, `codex-home` and
+`workspace/.ahl-canary` folders are writable, so a hook cannot write the
+workspace, and nothing else of the host is visible, the user's home and
+credential stores included. Before bubblewrap starts, the run joins a new empty
+session keyring and a seccomp filter fails every key syscall, so it cannot search,
+describe or read the validator's keys, even by serial number. `/proc/keys` still
+lists the type and description of keys the validator's uid may view.
+Results then report `host_isolation: bubblewrap` and a `sandbox` block with the
+writable folders. The probe runs that same command on `/usr/bin/true` without a
+per-user process limit. When bubblewrap or unprivileged user namespaces are
+unavailable, or the probe fails, the run is `inconclusive` (`sandbox_unavailable`)
+and nothing executes. The `sandbox` reason names the cause, such as
+`namespace_probe_failed`, `process_limit_exhausted` (the user already holds its
+whole process limit) or `keyring_isolation_unavailable`. Nothing ever falls back
+to the host. A handler that exits 126 or 127 inside the sandbox is `inconclusive`
+(`sandbox_dependency_unmounted`), never `failed`, because the command or
+interpreter may live outside the mounted system directories. Without network a native runtime cannot reach its model, so a
+`--native-canary` run inside the sandbox can stop before any hook fires.
+`--sandbox none` runs on the host without isolation (`host_isolation: none`):
+hooks run as the invoking user, and the host filesystem and network remain
+reachable. The library entry point (`hooks_validation.validate`) runs on the
+host unless it is given a `SandboxBackend`. Any other sandbox object reports
+`host_isolation: unverified`, with its network, home and workspace boundary
+`unverified` too.
+
+On Linux the validator is a child subreaper for the
+run and kills and reaps every process the run leaves behind before the post-run
+snapshot (`lingering_processes`); without that containment, or where `/proc`
+cannot show the run's processes (`lingering_processes: null`), the run is
+`inconclusive` (`process_containment_unavailable`). Claude Code keeps the project-only setting
+source and the strict empty MCP request, but not `disableAllHooks`. Codex gets the
+temporary `CODEX_HOME` and `--dangerously-bypass-hook-trust` only inside it. That
+flag is an unverified capability row, so Codex runs report `inconclusive` and run
+nothing until it is verified. A Codex unit is `unsupported` anyway, because Codex
+has no verified script anchor. A real runtime runs only with `--native-canary`,
+which costs one short model call, and without authentication it may stop before
+any hook fires. `--runtime-trace ahl-fake-hook-trace-v1` reads per-handler
+execution records from a synthetic fake runtime. That evidence is never native.
+Native runs report handler execution as `unknown`.
+
+`hook-validation.json` reports native and fake-runtime canary evidence separately,
+each as `observed`, `skipped` or `inconclusive`. Handler failure classes are
+`malformed_event`, `malformed_result`, `missing_executable` (a static interpreter
+check or exit 126/127), `nonzero_status`, `timeout`, `cancellation`, `reentrancy`,
+`duplicate_events` (the same payload delivered twice) and `out_of_scope_write`,
+which comes from a diff of the whole trial. Writes outside the trial stay
+`unobserved`. A handler is `effective` only when its group's canary fired and
+its traced execution exited 0 with no failure class; an unknown exit status is
+`inconclusive`. A handler is `unmatched` only when its event's unfiltered canary
+fired; when the event never happened it is `inconclusive` (`event_not_observed`).
+Handlers disabled by `disableAllHooks`, unmatched handlers and unsupported units
+are never effective. A runtime deadline or an unavailable snapshot is
+`inconclusive`. `suppressOutput` (`hides_errors`), exit 2, `deny`, `block` or
+`continue: false` (`blocks_required_work`), and permission decisions or
+configuration writes anywhere in the trial, the trial `HOME` and `CODEX_HOME`
+included (`changes_permissions`), make the candidate
+ineligible for any improvement claim. No result authorizes promotion. Managed and
+system hook layers remain an unresolved confound. Exit 0 means an effective
+candidate, or a clean observed canary-only run. Exit 1 means it ran but failed or
+was disabled or unmatched. Exit 2 is a setup error, and exit 3 is skipped,
+unsupported or inconclusive.
+
+`hook-review.json` (`hook_review_v1`, `agent_harness_lab/hooks_review.py`) is written beside it
+whenever a staged hook unit was given, even when the unit was unsupported and nothing
+ran. It is the reviewer's packet: the semantic hook-entry delta (added and removed
+entries and whether the surviving entries kept their order), the script delta with
+hashes, the unit patch, the proposer's expected effect (`not_stated` unless given), the
+static capability receipt, the canary disposition and the wall time of the whole canary
+run. That time is not a per-hook overhead, and an unknown time stays `null`. Task effect
+and the instruction-only comparison are `not_evaluated` and `not_compared`, because they
+need graded matched tasks. Files applied by a later deployment are reported
+`applied_unverified` until effective registration is checked. The packet authorizes
+nothing.
+
 ## Offline executor and separate grader integration
 
 `ahl evaluate --agent offline --manifest MANIFEST --baseline BASELINE --candidate
@@ -135,6 +243,9 @@ For aggregate memory/process caps and CPU bandwidth controls, explicitly add
 and pristine grader use separate cgroup v2 children under that subtree. Missing
 delegation blocks execution; no controllers or privileged permissions are changed.
 Use `ahl sandbox-check --cgroup-root ...` to probe the exact requested boundary.
+Without a cgroup the process cap applies inside the sandbox's own user namespace
+(Linux 5.14+); each attestation's `process_bound` records the enforced scope or
+`enforced: false`, and a full host process table reports `process_limit_exhausted`.
 See the [resource contract](../../../docs/evaluation-foundation.md#offline-sandbox-and-threat-model)
 for prerequisites, kernel-test limits and remaining certification safeguards.
 
@@ -179,7 +290,8 @@ files and a complete `grader_bundles` entry with relative `path` and frozen
 controller selects the namespace command; arbitrary interpreter paths and missing
 program/reference files are rejected before agent execution. Grading never falls
 back to the host. This mode permits harness/skill injection into the cooperative
-agent workspace; that agent retains inherited configuration and authentication.
+agent workspace; that agent keeps the trial surface requests and credential rules
+described above.
 
 `ahl improve --sandbox-graders` and `ahl watch --sandbox-graders` also isolate
 evaluator-authored controls. Their authors declare bundle paths; the controller

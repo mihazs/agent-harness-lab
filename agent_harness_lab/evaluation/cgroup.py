@@ -4,6 +4,7 @@ from pathlib import Path
 import re
 import secrets
 import time
+from .integrity import open_directory_nofollow
 
 
 def delegated(root):
@@ -61,7 +62,7 @@ class Cgroup:
     def __enter__(self):
         try:
             root = delegated(self.root)
-            self.parent = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            self.parent = open_directory_nofollow(root)
             self.name = 'ahl-' + secrets.token_hex(12)
             os.mkdir(self.name, mode=0o700, dir_fd=self.parent)
             try:

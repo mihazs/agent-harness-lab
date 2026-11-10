@@ -6,15 +6,22 @@ TEXT = {'case_id', 'event_id', 'activity', 'root_case_id', 'task_id', 'call_id',
         'actor', 'timestamp', 'tool_name', 'input_fingerprint', 'result_fingerprint',
         'state_revision', 'tool_effect', 'contract_ref', 'harness_fingerprint',
         'runtime_fingerprint', 'config_fingerprint', 'objective_id', 'phase', 'family',
-        'skill_id', 'skill_hash', 'skill_signal', 'execution_status', 'capture_status',
+        'skill_id', 'skill_hash', 'skill_signal', 'skill_signal_confidence', 'execution_status', 'capture_status',
         'source_format', 'source_version', 'grader_id', 'grader_version', 'grader_status',
         'outcome', 'outcome_provenance', 'missing_reason', 'reviewer_id', 'outcome_ref', 'lineage_source', 'requested_model_fingerprint',
         'native_turn_fingerprint', 'native_root_turn_fingerprint', 'native_response_fingerprint',
         'native_parent_thread_fingerprint', 'native_fork_parent_fingerprint', 'native_parent_message_fingerprint', 'native_message_fingerprint',
-        'reported_model_fingerprint', 'native_stop_reason_fingerprint'}
+        'reported_model_fingerprint', 'native_stop_reason_fingerprint',
+        'loading_signal', 'loading_evidence', 'loading_path_sha256', 'loading_content_sha256', 'agent_name_sha256', 'mcp_server_sha256'}
 BOOL = {'lineage_verified', 'contract_violation', 'mutation', 'capture_complete'}
 NUMERIC = {'elapsed_seconds', 'input_tokens', 'output_tokens'}
-FIELDS = TEXT | BOOL | NUMERIC | {'schema_version', 'capture_order'}
+# A declared within-record subordinal: (segment, capture_order, suborder) under a pinned profile.
+# It never enters event identity, revisions or fingerprints; see docs/analysis.md.
+SOURCE_ORDER = ('source_order_profile', 'source_order_segment', 'source_suborder')
+# Each profile belongs to one pinned producer; other source formats cannot carry it.
+SOURCE_ORDER_PRODUCERS = {'claude-native-order-v1': ('claude', 'claude-jsonl-2.1.316')}
+SOURCE_ORDER_PROFILES = frozenset(SOURCE_ORDER_PRODUCERS)
+FIELDS = TEXT | BOOL | NUMERIC | {'schema_version', 'capture_order', *SOURCE_ORDER}
 PROVENANCE = {'native_field', 'executable_grader', 'reviewed_annotation', 'model_hypothesis', 'unknown'}
 
 
@@ -37,6 +44,12 @@ def event(value):
             raise ValueError('invalid measurement: ' + key)
         if key == 'capture_order' and (type(val) is not int or val < 0):
             raise ValueError('invalid capture order')
+    declared = [key in result for key in SOURCE_ORDER]
+    if any(declared) and not (all(declared) and 'capture_order' in result
+            and isinstance(result['source_order_profile'], str) and result['source_order_profile'] in SOURCE_ORDER_PROFILES
+            and SOURCE_ORDER_PRODUCERS[result['source_order_profile']] == (result.get('source_format'), result.get('source_version'))
+            and all(type(result[key]) is int and result[key] >= 0 for key in SOURCE_ORDER[1:])):
+        raise ValueError('invalid declared source order')
     result['schema_version'] = 2
     result.setdefault('outcome', 'unknown')
     result.setdefault('outcome_provenance', 'unknown')
