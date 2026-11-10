@@ -5,8 +5,6 @@ import io
 import json
 import os
 from pathlib import Path
-import tempfile
-import unittest
 from unittest.mock import patch
 
 import pytest
@@ -17,41 +15,7 @@ from agent_harness_lab.cli import main
 from agent_harness_lab import config
 from agent_harness_lab.promotion.journal import Journal
 from agent_harness_lab.one_call import structural_candidate
-from tests.support.unittest_cleanups import run_cleanups
-
-
-class OneCallTests(unittest.TestCase):
-    """A synthetic project with one skill whose contract repair is a byte-order-mark removal.
-
-    test_one_call_boundary and test_one_call_custody instantiate this class and call setUp, invoke and
-    doCleanups, so it keeps that TestCase interface and holds no tests.
-    """
-
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
-        self.project = self.root/'project'; self.project.mkdir()
-        self.skill = self.project/'.agents/skills/example/SKILL.md'
-        self.skill.parent.mkdir(parents=True)
-        self.valid = b'---\nname: example\ndescription: Use for synthetic checks.\n---\nKeep the body intact.\n'
-        self.skill.write_bytes(b'\xef\xbb\xbf'+self.valid)
-        self.skill.chmod(0o640)
-        state=patch('agent_harness_lab.workflow.state_root', return_value=self.root/'state')
-        state.start(); self.addCleanup(state.stop)
-
-    def invoke(self, *args):
-        output=io.StringIO()
-        with contextlib.redirect_stdout(output):
-            code=main(['improve',str(self.project),*args])
-        return code,json.loads(output.getvalue())
-
-
-@pytest.fixture
-def one():
-    fixture = OneCallTests(); fixture.setUp()
-    yield fixture
-    run_cleanups(fixture)
+from tests.support.one_call import one as one
 
 
 def test_single_call_applies_verified_contract_and_is_idempotent(one):
@@ -432,18 +396,17 @@ def test_watch_honors_the_same_offline_preflight(one):
 
 
 @pytest.fixture
-def configured_workflow(one):
+def configured_workflow(one, request):
     """Builds cooperative WorkflowTests projects inside the one-call state patch; cleans them up first."""
     from tests.integration.workflow.test_workflow import WorkflowTests
-    made = []
+    cleanups = contextlib.ExitStack(); request.addfinalizer(cleanups.close)
     def build(trials=20):
-        fixture=WorkflowTests(); fixture.setUp(); made.append(fixture)
+        fixture=WorkflowTests(cleanups.callback)
         (fixture.project/'CLAUDE.md').write_text('SYNTHETIC_OUT_OF_SCOPE')
         config.create(fixture.project,config.prepare(dict(profile='cooperative',
             runtime=dict(name='codex',executable=str(fixture.agent)),harness_paths=['AGENTS.md'],limits=dict(trials=trials))))
         return fixture
     yield build
-    run_cleanups(*reversed(made))
 
 
 def test_configured_scope_is_frozen_before_preparation(configured_workflow):

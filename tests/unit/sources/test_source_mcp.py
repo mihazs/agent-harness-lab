@@ -1,6 +1,5 @@
 from contextlib import ExitStack
 import json
-import unittest
 from unittest.mock import Mock, patch
 
 import pytest
@@ -11,7 +10,7 @@ from agent_harness_lab.sources.transport import TransportError
 
 
 class MCPReaderFixture:
-    def setUp(self):
+    def setup(self, add_cleanup):
         self.url = 'https://memory.example.invalid/mcp'
         self.schema = {'type': 'object', 'properties': {name: {} for name in
             ('workspace', 'project', 'query', 'limit', 'answer', 'global', 'path', 'max_chars')}}
@@ -27,7 +26,7 @@ class MCPReaderFixture:
         self.headers = {'Content-Type': 'application/json'}
         self.error = False
         wire = patch('agent_harness_lab.sources.mcp._json_exchange', side_effect=self.exchange)
-        self.wire = wire.start(); self.addCleanup(wire.stop)
+        self.wire = wire.start(); add_cleanup(wire.stop)
 
     def exchange(self, origin, target, headers, **kwargs):
         request = json.loads(kwargs['body']); self.requests.append(request)
@@ -40,17 +39,12 @@ class MCPReaderFixture:
         return self.client.query(self.source, 'synthetic query', authorization='Bearer SYNTHETIC_SECRET')
 
 
-class MCPReaderTests(MCPReaderFixture, unittest.TestCase):
-    """The importable builder: test_source_memory_capture still drives it by hand as a TestCase."""
-
-
 class TestMCPReader(MCPReaderFixture):
     @pytest.fixture(autouse=True)
     def _reader(self):
-        cleanups = ExitStack(); self.addCleanup = cleanups.callback
-        self.setUp()
-        yield
-        cleanups.close()
+        with ExitStack() as cleanups:
+            self.setup(cleanups.callback)
+            yield
 
     def test_scope_auth_whitelist_and_global_results_filter(self):
         self.tools.append({'name': 'memory_write_page', 'inputSchema': {}, 'annotations': {'readOnlyHint': True}})
@@ -182,3 +176,17 @@ class TestMCPReader(MCPReaderFixture):
         self.wire.side_effect = lambda *a, **k: (dict(jsonrpc='2.0', id=json.loads(k['body'])['id'],
             result=self.initialized if json.loads(k['body'])['method']=='initialize' else {'tools': [], 'nextCursor': 'same'}), self.headers, 100)
         with pytest.raises(TransportError): self.query()
+
+
+def test_reader_propagates_cleanup_failure(monkeypatch):
+    class Wire:
+        def start(self):
+            return None
+
+        def stop(self):
+            raise RuntimeError('synthetic wire cleanup failure')
+
+    monkeypatch.setattr('tests.unit.sources.test_source_mcp.patch', lambda *args, **kwargs: Wire())
+    with pytest.raises(RuntimeError, match='synthetic wire cleanup failure'):
+        with ExitStack() as cleanups:
+            MCPReaderFixture().setup(cleanups.callback)

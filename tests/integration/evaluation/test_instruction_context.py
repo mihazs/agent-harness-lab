@@ -3,36 +3,20 @@ import contextlib
 import io
 import json
 import sys
-import unittest
 from unittest.mock import patch
 
 import pytest
 
 from agent_harness_lab.evaluation import instruction_context, responses
-from tests.integration.evaluation import test_effective_agents as agents
 from tests.integration.sandbox import test_sandbox_inference as inference_fixtures
 
 
-class _InstructionChain(agents.InstructionFixture, unittest.TestCase):
-    """Hosts InstructionFixture with a root and app guidance chain; it defines no tests of its own."""
-
-    def setUp(self):
-        super().setUp()
-        (self.harness / 'AGENTS.md').write_text('SYNTHETIC_ROOT_GUIDANCE')
-        (self.harness / 'app').mkdir()
-        (self.harness / 'app/AGENTS.md').write_text('SYNTHETIC_APP_GUIDANCE')
-
-    def run_cwd(self, client, task_cwd):
-        return responses.run_role(client, self.backend, self.work, {'harness': self.harness}, 'executor',
-                                  'Synthetic controller executor.', 'Synthetic task.', self.deadline,
-                                  trial_id='synthetic-trial', task_cwd=task_cwd)
-
-
 @pytest.fixture
-def chain():
-    case = _InstructionChain(); case.setUp()
-    yield case
-    case.doCleanups()
+def chain(ctx):
+    (ctx.harness / 'AGENTS.md').write_text('SYNTHETIC_ROOT_GUIDANCE')
+    (ctx.harness / 'app').mkdir()
+    (ctx.harness / 'app/AGENTS.md').write_text('SYNTHETIC_APP_GUIDANCE')
+    return ctx
 
 
 def test_task_cwd_under_app_loads_root_then_app_instructions(chain):
@@ -116,11 +100,8 @@ class ManifestCwd:
 
 @pytest.fixture
 def manifest():
-    f = inference_fixtures.ResponsesEvaluationTests(); f.setUp()
-    try:
-        yield ManifestCwd(f)
-    finally:
-        f.doCleanups()
+    with contextlib.ExitStack() as cleanups:
+        yield ManifestCwd(inference_fixtures.ResponsesEvaluation(cleanups.callback))
 
 
 @pytest.mark.parametrize('agent', [pytest.param('codex', id='codex'), pytest.param('offline', id='offline')])

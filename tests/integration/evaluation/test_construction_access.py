@@ -79,7 +79,7 @@ class ConstructionAccessHarness:
     """A controlled synthetic workflow with an explicit evaluation store, built by setUp and released by doCleanups."""
     def setUp(self):
         self.cleanups=ExitStack()
-        self.f=fixtures.ControlledWorkflowTests(); self.f.setUp(); self.cleanups.callback(self.f.doCleanups)
+        self.f=fixtures.ControlledWorkflow(self.cleanups.callback)
         self.store=self.f.root/'evaluation-store'
         self.f.args.evaluation_store=self.store
 
@@ -341,7 +341,7 @@ class TestConstructionAccess(ConstructionAccessHarness):
         assert result['status'] == 'interrupted'
         state=json.loads((self.store/'protected-access.json').read_bytes())
         assert next(iter(state['constructions'].values()))['state'] == 'unresolved'
-        other=history_fixtures.OracleHistoryTests(); other.setUp(); self.cleanups.callback(other.doCleanups)
+        other=history_fixtures.OracleHistoryTests(self.cleanups.callback)
         actual=HistoryStore(self.store)
         with pytest.raises(ValueError, match='pending or unresolved'):
             actual.reserve_access(other.args.manifest,other.args.baseline,other.args.candidate)
@@ -461,7 +461,7 @@ class TestConstructionAccess(ConstructionAccessHarness):
 
     @pytest.mark.skipif(not hasattr(os,'fork'),reason='requires native process/lock custody control')
     def test_reservation_competitor_cannot_cross_the_locked_stage_admission(self):
-        other=history_fixtures.OracleHistoryTests(); other.setUp(); self.cleanups.callback(other.doCleanups)
+        other=history_fixtures.OracleHistoryTests(self.cleanups.callback)
         save=ledger._save; observed=[]
         def paused(path,state):
             if not observed and any(e['state']=='pending' for e in state.get('constructions',{}).values()):

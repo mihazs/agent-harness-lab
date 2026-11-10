@@ -8,10 +8,11 @@ import json
 import os
 import signal
 from pathlib import Path
-import tempfile
+from types import SimpleNamespace
 import time
-import unittest
 from unittest.mock import Mock,patch
+
+import pytest
 
 from agent_harness_lab import cli,workflow
 from agent_harness_lab.evaluation import controller_receipts as owned,permission_audit,responses
@@ -21,6 +22,7 @@ from agent_harness_lab.sources.controller import SourceSink
 from agent_harness_lab.sources.schema import digest
 from tests.integration.evaluation import test_evaluation_foundation as math_fixture
 from tests.integration.sandbox import test_sandbox_kernel as kernel
+from tests.integration.sandbox.test_sandbox_kernel import cgroup_root  # noqa: F401  (module-scoped pytest fixture of kernel.KernelCase)
 from tests.integration.sandbox import test_sandbox_construction as roles
 from tests.integration.workflow import test_workflow as workflow_fixture
 
@@ -62,11 +64,11 @@ class PublicCase:
                     read_reason=reasons.get(str(error),'other'))
                 raise
         with patch.object(prerequisites._Scope,'read',observed_read):packet=read(scope)
-        self.assertEqual(packet['status'],'observed',json.dumps(evidence,sort_keys=True))
+        assert packet['status'] == 'observed', json.dumps(evidence,sort_keys=True)
         return packet
 
     def run_public(self,*,mode='real',source=False,consumer=None,audited=True):
-        fixture=workflow_fixture.WorkflowTests();fixture.setUp();self.addCleanup(fixture.doCleanups)
+        fixture=workflow_fixture.WorkflowTests(self.addCleanup)
         case=self.root/('case-'+str(len(list(self.root.glob('case-*')))));case.mkdir()
         runtime=case/'runtime'
         if mode=='fake':runtime.mkdir();pin=dict(sha256='a'*64)
@@ -75,7 +77,7 @@ class PublicCase:
             max_requests=60,max_tool_calls=40,max_output_tokens=100,max_request_bytes=32768,max_response_bytes=16384)
         counter=[0];scopes=[];completions=[]
         def transport(credential,body,max_bytes,deadline):
-            self.assertIsNone(credential)
+            assert credential is None
             counter[0]+=1;ident=str(counter[0]);payload=json.loads(body)
             if any(row.get('type')=='function_call_output' for row in payload['input']):
                 return roles.wire.reply([roles.wire.message('final-'+ident)])
@@ -112,12 +114,12 @@ class PublicCase:
             stack.enter_context(patch.object(owned,'_kernel_finished',side_effect=finish))
             stack.enter_context(patch.object(Observation,'_completion',completed))
             if mode=='fake':
-                helper=roles.ControlledWorkflowTests();helper.root=case;helper.roles=[]
+                helper=SimpleNamespace(root=case,roles=[])
                 backend=Mock(permission_audit=PROFILE);backend.permission_reports=[]
                 backend.capability.return_value=dict(status='available')
                 backend.permission_qualification.side_effect=lambda:dict(profile=PROFILE,qualification='qualified')
                 def execute(*args,**options):
-                    run=helper.execute(*args,**options)
+                    run=roles.ControlledWorkflow.execute(helper,*args,**options)
                     audit=dict(status='complete',qualification='qualified',profile=PROFILE)
                     run['attestation']['permission_audit']=audit;backend.permission_reports.append(audit)
                     return run
@@ -130,87 +132,94 @@ class PublicCase:
                 stack.enter_context(patch.object(workflow,'improve',side_effect=with_source))
             with redirect_stdout(text):
                 if mode=='exception':
-                    with self.assertRaisesRegex(RuntimeError,'synthetic lost completion'):cli.main(argv)
+                    with pytest.raises(RuntimeError, match='synthetic lost completion'):cli.main(argv)
                 else:cli.main(argv)
         result=json.loads((output/'workflow.json').read_text())
-        self.assertEqual((fixture.project/'AGENTS.md').read_text(),'bad')
-        self.assertFalse(result['automatic_promotion'])
-        self.assertIsNone(prerequisites.current())
-        if mode!='exception':self.assertEqual(counter[0],16)
+        assert (fixture.project/'AGENTS.md').read_text() == 'bad'
+        assert not result['automatic_promotion']
+        assert prerequisites.current() is None
+        if mode!='exception':assert counter[0] == 16
         return result,scopes,completions,output
 
 
-class PolicyAuthorityTests(PublicCase,unittest.TestCase):
-    def setUp(self):
+class TestPolicyAuthority(PublicCase):
+    @pytest.fixture(autouse=True)
+    def _case(self,tmp_path):
         expected=os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
-        if expected:self.assertTrue(Path(cli.__file__).resolve().is_relative_to(Path(expected).resolve()))
-        temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup);self.root=Path(temp.name)
+        if expected:assert Path(cli.__file__).resolve().is_relative_to(Path(expected).resolve())
+        self.root=tmp_path
         self.cgroup_root=self.root/'unused-delegation'
+        with ExitStack() as cleanups:
+            self.addCleanup=cleanups.callback
+            yield
 
     def test_failure_diagnostics_preserve_pre_read_state_without_content(self):
         scope=prerequisites._begin(self.root,'a'*64,time.monotonic()+30)
         self.addCleanup(scope.end)
         scope._admit('executor','role')
-        with self.assertRaises(self.failureException) as failure:
+        with pytest.raises(AssertionError) as failure:
             self.assert_observed(scope,policy.implementation_prerequisites)
-        message=str(failure.exception)
-        self.assertIn('"admitted": 1',message)
-        self.assertIn('"completed": 0',message)
-        self.assertIn('"role": "executor"',message)
-        self.assertIn('"not_lost": true',message)
-        self.assertNotIn(str(self.root),message)
-        self.assertNotIn(scope.nonce,message)
+        message=str(failure.value)
+        assert '"admitted": 1' in message
+        assert '"completed": 0' in message
+        assert '"role": "executor"' in message
+        assert '"not_lost": true' in message
+        assert str(self.root) not in message
+        assert scope.nonce not in message
         scope.cancel()
-        with self.assertRaises(self.failureException) as failure:
+        with pytest.raises(AssertionError) as failure:
             self.assert_observed(scope,policy.implementation_prerequisites)
-        message=str(failure.exception)
-        self.assertIn('"first_failed_scope_predicate": "not_lost"',message)
-        self.assertIn('"read_exception": "ValueError"',message)
-        self.assertIn('"read_reason": "scope_unavailable"',message)
+        message=str(failure.value)
+        assert '"first_failed_scope_predicate": "not_lost"' in message
+        assert '"read_exception": "ValueError"' in message
+        assert '"read_reason": "scope_unavailable"' in message
 
     def test_legacy_recommendation_inputs_are_declarations_without_implementation_authority(self):
         spec=math_fixture.plan(n=1000,repeats=1);analysis=math_fixture.analyze(spec,math_fixture.records(spec))
         decision=policy.decide(spec,dict(analysis,oracle_validity='current'),isolation_verified=True,
             effective_runtime_verified=True,graders_audited=True,lineage_reviewed=True,certification_reserved=True)
-        self.assertEqual(decision.status,'blocked');self.assertFalse(decision.automatic)
-        self.assertEqual(decision.declared_prerequisites,{'isolation_verified':dict(status='declared_unverified',value=True)})
+        assert decision.status == 'blocked';assert not decision.automatic
+        assert decision.declared_prerequisites == {'isolation_verified':dict(status='declared_unverified',value=True)}
         packet=policy.implementation_prerequisites(declarations={'isolation_verified':True})
-        self.assertEqual(packet['declared_prerequisites']['isolation_verified']['status'],'declared_unverified')
-        self.assertTrue(all(row['status']=='unknown' for row in packet['checks'].values()))
+        assert packet['declared_prerequisites']['isolation_verified']['status'] == 'declared_unverified'
+        assert all(row['status']=='unknown' for row in packet['checks'].values())
 
     def test_fully_labeled_fake_backend_cannot_issue_implementation_facts(self):
         result,_,_,_=self.run_public(mode='fake')
-        self.assertEqual(result['status'],'blocked')
-        self.assertEqual(result['reason'],'restricted_process_protocol_unqualified')
-        self.assertNotIn('recommendation',result)
-        self.assertEqual(result['isolation_qualification']['qualification'],'qualified')
-        self.assertEqual(result['implementation_prerequisites']['status'],'unknown')
-        self.assertTrue(all(row['status']=='unknown' for row in result['implementation_prerequisites']['checks'].values()))
+        assert result['status'] == 'blocked'
+        assert result['reason'] == 'restricted_process_protocol_unqualified'
+        assert 'recommendation' not in result
+        assert result['isolation_qualification']['qualification'] == 'qualified'
+        assert result['implementation_prerequisites']['status'] == 'unknown'
+        assert all(row['status']=='unknown' for row in result['implementation_prerequisites']['checks'].values())
+
+    @pytest.mark.parametrize('image',(pytest.param(None,id='none'),pytest.param({},id='empty-mapping'),pytest.param('invalid',id='not-a-digest')))
+    def test_invalid_image_digest_cannot_begin_a_scope(self,image):
+        baseline=self.root/'baseline';baseline.mkdir()
+        with pytest.raises(ValueError):
+            prerequisites._begin(baseline,image,time.monotonic()+5)
+        assert prerequisites.current() is None
 
     def test_constructor_failures_and_mutated_fields_cannot_leak_scope_context(self):
         baseline=self.root/'baseline';baseline.mkdir()
-        for image in (None,{},'invalid'):
-            with self.subTest(image=image),self.assertRaises(ValueError):
-                prerequisites._begin(baseline,image,time.monotonic()+5)
-            self.assertIsNone(prerequisites.current())
         with patch.object(prerequisites._Scope,'_save',side_effect=RuntimeError('synthetic seal failure')):
-            with self.assertRaises(RuntimeError):prerequisites._begin(baseline,'a'*64,time.monotonic()+5)
-        self.assertIsNone(prerequisites.current())
+            with pytest.raises(RuntimeError):prerequisites._begin(baseline,'a'*64,time.monotonic()+5)
+        assert prerequisites.current() is None
         scope=prerequisites._begin(baseline,'a'*64,time.monotonic()+5)
         scope.deadline=object()
-        self.assertEqual(policy.implementation_prerequisites(scope)['status'],'unknown')
+        assert policy.implementation_prerequisites(scope)['status'] == 'unknown'
         scope.end()
-        self.assertIsNone(prerequisites.current())
+        assert prerequisites.current() is None
 
     def test_lost_scope_cannot_be_restored_by_clearing_lost_or_overriding_state(self):
-        scope=self.synthetic_scope();self.assertEqual(policy.isolation_qualification(scope),'qualified')
+        scope=self.synthetic_scope();assert policy.isolation_qualification(scope) == 'qualified'
         raw=prerequisites._STATES[scope][2]
         scope.data['events'][0]['boundary']=dict(status='qualified',forged=True)
-        self.assertEqual(policy.isolation_qualification(scope),'unknown');self.assertTrue(scope.lost)
+        assert policy.isolation_qualification(scope) == 'unknown';assert scope.lost
         scope.lost=False;scope._save()
-        self.assertEqual(policy.isolation_qualification(scope),'unknown')
+        assert policy.isolation_qualification(scope) == 'unknown'
         scope.lost=False;scope._state=lambda *args,**kwargs:raw
-        self.assertEqual(policy.isolation_qualification(scope),'unknown')
+        assert policy.isolation_qualification(scope) == 'unknown'
 
     def synthetic_scope(self,*,boundary='qualified',permission='qualified'):
         """In-process synthetic producer facts; no kernel, provider or credential is used."""
@@ -226,18 +235,22 @@ class PolicyAuthorityTests(PublicCase,unittest.TestCase):
         spec=math_fixture.plan(n=1000,repeats=1)
         return spec,dict(math_fixture.analyze(spec,math_fixture.records(spec)),oracle_validity='current')
 
+    @pytest.mark.parametrize('forged',(pytest.param(True,id='bool'),pytest.param(1,id='int'),pytest.param('qualified',id='str'),
+                                       pytest.param(object(),id='object')))
+    def test_forged_isolation_value_has_no_effect_and_is_recorded_as_declared(self,forged):
+        spec,analysis=self.certification_inputs()
+        others=dict(effective_runtime_verified=True,graders_audited=True,lineage_reviewed=True,certification_reserved=True)
+        baseline=policy.decide(spec,analysis,**others)
+        decision=policy.decide(spec,analysis,isolation_verified=forged,**others)
+        assert (decision.status,decision.reason,decision.isolation,decision.automatic) == (baseline.status,baseline.reason,'unknown',False)
+        assert decision.status == 'blocked'
+        assert decision.declared_prerequisites['isolation_verified']['status'] == 'declared_unverified'
+
     def test_forged_isolation_boolean_has_no_effect_and_is_recorded_as_declared(self):
         spec,analysis=self.certification_inputs()
         others=dict(effective_runtime_verified=True,graders_audited=True,lineage_reviewed=True,certification_reserved=True)
         baseline=policy.decide(spec,analysis,**others)
-        for forged in (True,1,'qualified',object()):
-            with self.subTest(forged=type(forged).__name__):
-                decision=policy.decide(spec,analysis,isolation_verified=forged,**others)
-                self.assertEqual((decision.status,decision.reason,decision.isolation,decision.automatic),
-                    (baseline.status,baseline.reason,'unknown',False))
-                self.assertEqual(decision.status,'blocked')
-                self.assertEqual(decision.declared_prerequisites['isolation_verified']['status'],'declared_unverified')
-        self.assertEqual(baseline.declared_prerequisites,{})
+        assert baseline.declared_prerequisites == {}
         json.dumps(asdict(policy.decide(spec,analysis,isolation_verified=object(),**others)),allow_nan=False)
 
     def test_lost_oversized_copied_or_unqualified_scope_gives_unknown_isolation(self):
@@ -246,61 +259,71 @@ class PolicyAuthorityTests(PublicCase,unittest.TestCase):
             lineage_reviewed=True,certification_reserved=True)
         def assert_unknown(scope):
             decision=policy.decide(spec,analysis,prerequisite_scope=scope,**others)
-            self.assertEqual((decision.status,decision.isolation),('blocked','unknown'))
+            assert (decision.status,decision.isolation) == ('blocked','unknown')
         oversized=self.synthetic_scope()
         oversized.data['synthetic_padding']='x'*prerequisites.MAX_BYTES;oversized._save()
-        self.assertTrue(oversized.lost);self.assertIsNone(prerequisites._STATES[oversized][2])
+        assert oversized.lost;assert prerequisites._STATES[oversized][2] is None
         assert_unknown(oversized);oversized.end()
         lost=self.synthetic_scope();lost.cancel();assert_unknown(lost);lost.end()
         live=self.synthetic_scope()
         assert_unknown(copy(live));assert_unknown(policy.implementation_prerequisites(live))
         assert_unknown(None);live.end();assert_unknown(live)
-        for options in (dict(boundary='unknown'),dict(permission='unknown'),dict(permission=None),dict(permission='violated')):
-            with self.subTest(**{key:str(value) for key,value in options.items()}):
-                scope=self.synthetic_scope(**options);assert_unknown(scope);scope.end()
+
+    @pytest.mark.parametrize('options',(pytest.param(dict(boundary='unknown'),id='boundary-unknown'),
+        pytest.param(dict(permission='unknown'),id='permission-unknown'),pytest.param(dict(permission=None),id='permission-missing'),
+        pytest.param(dict(permission='violated'),id='permission-violated')))
+    def test_unqualified_boundary_or_permission_gives_unknown_isolation(self,options):
+        spec,analysis=self.certification_inputs()
+        scope=self.synthetic_scope(**options)
+        decision=policy.decide(spec,analysis,prerequisite_scope=scope,isolation_verified=True,effective_runtime_verified=True,
+            graders_audited=True,lineage_reviewed=True,certification_reserved=True)
+        assert (decision.status,decision.isolation) == ('blocked','unknown')
+        scope.end()
+
+    @pytest.mark.parametrize('missing',('effective_runtime_verified','graders_audited','lineage_reviewed','certification_reserved'))
+    def test_a_qualified_scope_with_one_missing_element_stays_blocked(self,missing):
+        spec,analysis=self.certification_inputs();scope=self.synthetic_scope()
+        others=('effective_runtime_verified','graders_audited','lineage_reviewed','certification_reserved')
+        decision=policy.decide(spec,analysis,prerequisite_scope=scope,**{name:name!=missing for name in others})
+        assert (decision.status,decision.isolation) == ('blocked','qualified')
 
     def test_qualified_scope_satisfies_only_the_isolation_element(self):
         spec,analysis=self.certification_inputs();scope=self.synthetic_scope()
         packet=policy.implementation_prerequisites(scope)
-        self.assertEqual(policy.isolation_qualification(scope),'qualified')
+        assert policy.isolation_qualification(scope) == 'qualified'
         alone=policy.decide(spec,analysis,prerequisite_scope=scope)
-        self.assertEqual((alone.status,alone.reason,alone.isolation),('blocked','certification_prerequisites_unverified','qualified'))
+        assert (alone.status,alone.reason,alone.isolation) == ('blocked','certification_prerequisites_unverified','qualified')
         others=('effective_runtime_verified','graders_audited','lineage_reviewed','certification_reserved')
-        for missing in others:
-            with self.subTest(missing=missing):
-                decision=policy.decide(spec,analysis,prerequisite_scope=scope,**{name:name!=missing for name in others})
-                self.assertEqual((decision.status,decision.isolation),('blocked','qualified'))
         for blocked in (dict(analysis,oracle_validity='unverified'),dict(analysis,status='incomplete')):
-            self.assertEqual(policy.decide(spec,blocked,prerequisite_scope=scope,**{name:True for name in others}).status,
-                'blocked' if blocked['status']!='incomplete' else 'incomplete')
+            assert policy.decide(spec,blocked,prerequisite_scope=scope,**{name:True for name in others}).status == ('blocked' if blocked['status']!='incomplete' else 'incomplete')
         smoke=replace(spec,profile='descriptive_smoke')
-        self.assertEqual(policy.decide(smoke,analysis,prerequisite_scope=scope,**{name:True for name in others}).status,'inconclusive')
+        assert policy.decide(smoke,analysis,prerequisite_scope=scope,**{name:True for name in others}).status == 'inconclusive'
         decision=policy.decide(spec,analysis,prerequisite_scope=scope,**{name:True for name in others})
-        self.assertEqual((decision.status,decision.automatic),('recommended',False))
-        self.assertTrue(all(row['status']=='unverified' for row in packet['mandatory_certification'].values()))
-        self.assertFalse(packet['adoption_authority']);self.assertFalse(packet['automatic_promotion'])
+        assert (decision.status,decision.automatic) == ('recommended',False)
+        assert all(row['status']=='unverified' for row in packet['mandatory_certification'].values())
+        assert not packet['adoption_authority'];assert not packet['automatic_promotion']
 
     def test_known_private_profile_and_packet_cannot_be_relabelled_for_benchmark_export(self):
         from agent_harness_lab.evaluation.benchmark import public_export_allowed
         from tests.unit.evaluation import test_benchmark_contracts as fixtures
         packet=dict(policy.implementation_prerequisites(),publication_allowed=True)
-        self.assertFalse(public_export_allowed([{**fixtures.record(),'implementation_prerequisites':packet}]))
-        self.assertFalse(public_export_allowed([{**fixtures.record(),'receipt':packet}]))
+        assert not public_export_allowed([{**fixtures.record(),'implementation_prerequisites':packet}])
+        assert not public_export_allowed([{**fixtures.record(),'receipt':packet}])
 
 
-@unittest.skipUnless(kernel.ENABLED,'explicit delegated kernel profile required')
-class PublicControllerPrerequisiteTests(PublicCase,kernel.KernelFixture):
+@pytest.mark.skipif(not kernel.ENABLED,reason='explicit delegated kernel profile required')
+class TestPublicControllerPrerequisite(PublicCase,kernel.KernelCase):
     def test_runtime_boundary_qualifies_actual_four_role_protocol_without_certification(self):
         result,_,completions,output=self.run_public(source=True)
         packet=result['implementation_prerequisites'];boundary=packet['restricted_process_protocol']
-        self.assertEqual(boundary['status'],'qualified',boundary)
-        self.assertEqual(boundary['observations'],packet['coverage']['admitted'])
-        self.assertEqual(set(boundary['roles']),{'proposer','evaluator_author','executor','grader'})
-        self.assertEqual(len(completions),len(set(completions)))
-        self.assertTrue(all(row['status']=='unverified' for row in packet['mandatory_certification'].values()))
-        self.assertEqual(packet['native_identity'],'unverified');self.assertFalse(packet['adoption_authority'])
+        assert boundary['status'] == 'qualified', boundary
+        assert boundary['observations'] == packet['coverage']['admitted']
+        assert set(boundary['roles']) == {'proposer','evaluator_author','executor','grader'}
+        assert len(completions) == len(set(completions))
+        assert all(row['status']=='unverified' for row in packet['mandatory_certification'].values())
+        assert packet['native_identity'] == 'unverified';assert not packet['adoption_authority']
         trials=json.loads((output/'evaluation-0/results.json').read_text())['trials']
-        self.assertTrue(all(row['source_capture']['status']=='observed' for row in trials))
+        assert all(row['source_capture']['status']=='observed' for row in trials)
 
     def test_runtime_boundary_missing_actual_startup_fact_blocks_passing_worker_claim(self):
         finish=owned._kernel_finished;removed=[]
@@ -312,15 +335,15 @@ class PublicControllerPrerequisiteTests(PublicCase,kernel.KernelFixture):
                 removed.append((run['status'],run['exit_code']))
             return finish(ticket,run,*args)
         with patch.object(owned,'_kernel_finished',side_effect=missing):result,_,_,_=self.run_public()
-        self.assertEqual(removed,[('completed',0)])
-        self.assertEqual(result['implementation_prerequisites']['restricted_process_protocol']['status'],'unknown')
-        self.assertEqual(result['status'],'blocked');self.assertNotIn('recommendation',result)
+        assert removed == [('completed',0)]
+        assert result['implementation_prerequisites']['restricted_process_protocol']['status'] == 'unknown'
+        assert result['status'] == 'blocked';assert 'recommendation' not in result
 
     def test_real_public_all_role_workflow_shares_one_native_completion_with_source_and_rejects_replay(self):
         def consumer(scope,read):
             packet=self.assert_observed(scope,read)
-            self.assertEqual(read(copy(scope))['status'],'unknown')
-            self.assertEqual(read(packet)['status'],'unknown')
+            assert read(copy(scope))['status'] == 'unknown'
+            assert read(packet)['status'] == 'unknown'
             if hasattr(os,'fork'):
                 child=os.fork()
                 if child==0:
@@ -335,27 +358,27 @@ class PublicControllerPrerequisiteTests(PublicCase,kernel.KernelFixture):
                     time.sleep(.01)
                 if not found:
                     os.kill(child,signal.SIGKILL);os.waitpid(child,0)
-                    self.fail('forked workflow authority check exceeded its bound')
-                self.assertEqual(os.waitstatus_to_exitcode(status),0,'fork inherited workflow prerequisite authority')
+                    pytest.fail('forked workflow authority check exceeded its bound')
+                assert os.waitstatus_to_exitcode(status) == 0, 'fork inherited workflow prerequisite authority'
                 self.assert_observed(scope,read)
             return packet
         result,scopes,completions,output=self.run_public(source=True,consumer=consumer)
-        packet=result['implementation_prerequisites'];self.assertEqual(result['status'],'inconclusive')
-        self.assertEqual(packet['status'],'observed',packet)
-        self.assertEqual(set(packet['coverage']['roles']),{'proposer','evaluator_author','executor','grader'})
-        self.assertTrue(all(row['status']=='verified' for row in packet['checks'].values()),packet)
-        self.assertEqual(packet['permission_result_capture'],'qualified')
-        self.assertGreater(packet['coverage']['capability_probes'],0)
-        self.assertTrue(all(value=='violated' for value in packet['capability_probe_permission_results']))
-        self.assertEqual(len(completions),packet['coverage']['admitted']);self.assertEqual(len(set(completions)),len(completions))
-        self.assertFalse(packet['adoption_authority'])
-        self.assertTrue(all(row['status']=='unverified' for row in packet['mandatory_certification'].values()))
+        packet=result['implementation_prerequisites'];assert result['status'] == 'inconclusive'
+        assert packet['status'] == 'observed', packet
+        assert set(packet['coverage']['roles']) == {'proposer','evaluator_author','executor','grader'}
+        assert all(row['status']=='verified' for row in packet['checks'].values()), packet
+        assert packet['permission_result_capture'] == 'qualified'
+        assert packet['coverage']['capability_probes'] > 0
+        assert all(value=='violated' for value in packet['capability_probe_permission_results'])
+        assert len(completions) == packet['coverage']['admitted'];assert len(set(completions)) == len(completions)
+        assert not packet['adoption_authority']
+        assert all(row['status']=='unverified' for row in packet['mandatory_certification'].values())
         trials=json.loads((output/'evaluation-0/results.json').read_text())['trials']
-        self.assertTrue(all(row['source_capture']['status']=='observed' for row in trials))
-        old=scopes[-1];self.assertEqual(policy.implementation_prerequisites(old)['status'],'unknown')
+        assert all(row['source_capture']['status']=='observed' for row in trials)
+        old=scopes[-1];assert policy.implementation_prerequisites(old)['status'] == 'unknown'
         baseline=self.root/'foreign-baseline';baseline.mkdir()
         foreign=prerequisites._begin(baseline,'a'*64,time.monotonic()+5)
-        try:self.assertEqual(policy.implementation_prerequisites(old)['status'],'unknown')
+        try:assert policy.implementation_prerequisites(old)['status'] == 'unknown'
         finally:foreign.end()
 
     def test_actual_qualified_public_scope_satisfies_only_decide_isolation_element(self):
@@ -367,22 +390,21 @@ class PublicControllerPrerequisiteTests(PublicCase,kernel.KernelFixture):
                 decisions.append(policy.decide(spec,analysis,prerequisite_scope=scope,isolation_verified=False))
             return packet
         result,_,_,_=self.run_public(consumer=consumer)
-        self.assertEqual(result['implementation_prerequisites']['restricted_process_protocol']['status'],'qualified')
-        self.assertEqual([(row.status,row.reason,row.isolation,row.automatic) for row in decisions],
-            [('blocked','certification_prerequisites_unverified','qualified',False)])
+        assert result['implementation_prerequisites']['restricted_process_protocol']['status'] == 'qualified'
+        assert [(row.status,row.reason,row.isolation,row.automatic) for row in decisions] == [('blocked','certification_prerequisites_unverified','qualified',False)]
 
     def test_missing_completion_cannot_disappear_from_admitted_coverage(self):
         result,_,_,_=self.run_public(mode='pending')
-        packet=result['implementation_prerequisites'];self.assertEqual(packet['status'],'unknown')
-        self.assertGreater(packet['coverage']['admitted'],packet['coverage']['completed'])
-        self.assertTrue(all(value['status']=='unknown' for value in packet['checks'].values()))
+        packet=result['implementation_prerequisites'];assert packet['status'] == 'unknown'
+        assert packet['coverage']['admitted'] > packet['coverage']['completed']
+        assert all(value['status']=='unknown' for value in packet['checks'].values())
 
     def test_exception_cleanup_releases_owned_ticket_observation_and_fact_registries(self):
         gc.collect();before=(len(owned._DISPATCHES),len(owned._TICKETS),len(owned._FACTS),len(permission_audit._CUSTODY),len(prerequisites._STATES))
         result,_,_,_=self.run_public(mode='exception')
-        self.assertEqual(result['implementation_prerequisites']['status'],'unknown')
+        assert result['implementation_prerequisites']['status'] == 'unknown'
         gc.collect()
-        self.assertEqual((len(owned._DISPATCHES),len(owned._TICKETS),len(owned._FACTS),len(permission_audit._CUSTODY),len(prerequisites._STATES)),before)
+        assert (len(owned._DISPATCHES),len(owned._TICKETS),len(owned._FACTS),len(permission_audit._CUSTODY),len(prerequisites._STATES)) == before
 
     def test_mutated_live_scope_cannot_be_resealed_by_report_metadata(self):
         def changed(scope,read):
@@ -390,32 +412,28 @@ class PublicControllerPrerequisiteTests(PublicCase,kernel.KernelFixture):
             scope.nonce='0'*64
             return read(scope)
         result,_,_,_=self.run_public(consumer=changed)
-        self.assertEqual(result['implementation_prerequisites']['status'],'unknown')
+        assert result['implementation_prerequisites']['status'] == 'unknown'
 
-    def test_changed_candidate_and_manifest_invalidate_live_input_binding(self):
-        for field in ('candidate','manifest'):
-            def changed(scope,read):
-                self.assert_observed(scope,read)
-                path=Path(scope.data['bindings'][-1][field])
-                path=path/'AGENTS.md' if field=='candidate' else path
-                path.write_bytes(path.read_bytes()+b'\nSYNTHETIC_STALE_BINDING')
-                return read(scope)
-            with self.subTest(field=field):
-                result,_,_,_=self.run_public(consumer=changed)
-                self.assertEqual(result['implementation_prerequisites']['status'],'unknown')
+    @pytest.mark.parametrize('field',('candidate','manifest'))
+    def test_changed_candidate_and_manifest_invalidate_live_input_binding(self,field):
+        def changed(scope,read):
+            self.assert_observed(scope,read)
+            path=Path(scope.data['bindings'][-1][field])
+            path=path/'AGENTS.md' if field=='candidate' else path
+            path.write_bytes(path.read_bytes()+b'\nSYNTHETIC_STALE_BINDING')
+            return read(scope)
+        result,_,_,_=self.run_public(consumer=changed)
+        assert result['implementation_prerequisites']['status'] == 'unknown'
 
     def test_expired_scope_cannot_qualify_completed_work(self):
         def expired(scope,read):
             self.assert_observed(scope,read)
             with patch.object(prerequisites.time,'monotonic',return_value=scope.deadline+1):return read(scope)
         result,_,_,_=self.run_public(consumer=expired)
-        self.assertEqual(result['implementation_prerequisites']['status'],'unknown')
+        assert result['implementation_prerequisites']['status'] == 'unknown'
 
     def test_unrequested_permission_profile_remains_unrequested_with_owned_direct_execution(self):
         result,_,_,_=self.run_public(audited=False)
-        packet=result['implementation_prerequisites'];self.assertEqual(packet['status'],'observed',packet)
-        self.assertEqual(packet['permission_result_capture'],'unrequested')
-        self.assertTrue(all(row['status']=='verified' for row in packet['checks'].values()))
-
-
-if __name__=='__main__':unittest.main()
+        packet=result['implementation_prerequisites'];assert packet['status'] == 'observed', packet
+        assert packet['permission_result_capture'] == 'unrequested'
+        assert all(row['status']=='verified' for row in packet['checks'].values())

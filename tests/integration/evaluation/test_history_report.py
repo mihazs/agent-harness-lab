@@ -3,25 +3,25 @@ from copy import deepcopy
 import io
 import json
 from pathlib import Path
-from contextlib import redirect_stderr,redirect_stdout
+from contextlib import ExitStack,redirect_stderr,redirect_stdout
 from unittest.mock import patch
 
 import pytest
 
 from agent_harness_lab.cli import main
 from agent_harness_lab.evaluation import benchmark,history_report
-from tests.integration.evaluation import test_preservation_receipts as receipts
+from tests.support.preservation_receipts import PreservationReceipt
 
 
 class TestHistoryReport:
     @pytest.fixture(autouse=True)
     def _helpers(self):
-        self.helpers=[]
-        yield
-        for helper in reversed(self.helpers): helper.doCleanups()
+        with ExitStack() as cleanups:
+            self.cleanups = cleanups
+            yield
 
     def fixture(self):
-        helper=receipts.PreservationReceiptTests(); self.helpers.append(helper)
+        helper=PreservationReceipt(self.cleanups)
         fixture=helper.fixture(True); execution,value=helper.receipt(fixture)
         refs=[dict(run_id=execution['run_id'],receipt_sha256=value['receipt_sha256'])]
         return fixture,value,refs

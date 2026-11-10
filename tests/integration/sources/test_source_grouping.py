@@ -1,18 +1,19 @@
 """Independent synthetic content controls; similarity never proves causal lineage."""
+from contextlib import ExitStack
+
 import pytest
 
 from agent_harness_lab.evaluation.integrity import digest
 from agent_harness_lab.evaluation.task_bank import validate
 from tests.integration.evaluation import test_evaluation_foundation as foundation
-from tests.support.unittest_cleanups import run_cleanups
 
 
 class TestBankContentGrouping:
     @pytest.fixture(autouse=True)
     def _bank(self):
-        self.fixture = foundation.TaskBankTests(); self.fixture.setUp()
-        yield
-        run_cleanups(self.fixture)
+        with ExitStack() as cleanups:
+            self.fixture = foundation.TaskBank(cleanups.callback)
+            yield
 
     def test_whitespace_copy_with_distinct_root_and_fixture_hashes_blocks_certification(self):
         f = self.fixture

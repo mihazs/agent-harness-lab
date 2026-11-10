@@ -1,5 +1,5 @@
 """Public bank inspection remains complete and cannot issue execution authority."""
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from copy import deepcopy
 import io
 import json
@@ -16,9 +16,8 @@ from tests.integration.evaluation import test_evaluation_foundation as fixtures
 @pytest.fixture
 def bank():
     """The shared synthetic task bank, written by the foundation fixture."""
-    fixture = fixtures.TaskBankTests(); fixture.setUp()
-    yield fixture
-    fixture.doCleanups()
+    with ExitStack() as cleanups:
+        yield fixtures.TaskBank(cleanups.callback)
 
 
 def invoke(bank, *options):

@@ -1,34 +1,20 @@
 """Scope serialization preserves all facts under the existing byte ceiling."""
 import json
-import os
-from pathlib import Path
-import unittest
 
 import pytest
 
 from agent_harness_lab.private_journal import encoded
 from agent_harness_lab.promotion import prerequisites as owned
 from agent_harness_lab.promotion.policy import implementation_prerequisites
-from tests.integration.evaluation.test_effective_agents import InstructionFixture
-from tests.support.unittest_cleanups import run_cleanups
-
-
-class _ScopeCase(InstructionFixture, unittest.TestCase):
-    """Hosts InstructionFixture with an open prerequisite scope; it defines no tests of its own."""
-
-    def setUp(self):
-        super().setUp(); self.scope = owned._begin(self.harness, 'a'*64, self.deadline); self.addCleanup(self.scope.end)
-        expected = os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
-        if expected:
-            import agent_harness_lab
-            self.assertTrue(Path(agent_harness_lab.__file__).resolve().is_relative_to(Path(expected).resolve()))
 
 
 @pytest.fixture
-def case():
-    value = _ScopeCase(); value.setUp()
-    yield value
-    run_cleanups(value)
+def case(ctx):
+    ctx.scope = owned._begin(ctx.harness, 'a'*64, ctx.deadline)
+    try:
+        yield ctx
+    finally:
+        ctx.scope.end()
 
 
 def test_compact_roundtrip_preserves_every_authoritative_state_field(case):

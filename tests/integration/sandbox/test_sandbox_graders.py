@@ -1,4 +1,5 @@
 """Synthetic cooperative agents with explicitly offline, frozen artifact grading."""
+from contextlib import ExitStack
 from copy import deepcopy
 import json
 from pathlib import Path
@@ -6,29 +7,23 @@ import os
 import shutil
 import subprocess
 from types import SimpleNamespace
-import unittest
 from unittest.mock import Mock, patch
 
 import pytest
 
 from tests.integration.evaluation import test_offline_evaluation as fixtures
 from tests.integration.workflow import test_workflow as workflow_fixtures
-from tests.support.unittest_cleanups import run_cleanups
 from agent_harness_lab.workflow import improve, validate_manifest, watch_configuration
 from agent_harness_lab.evaluation.integrity import digest
 
 
-class SandboxedGraderTests(unittest.TestCase):
-    """An offline evaluation whose authored grader bundles would write a host canary if run outside the sandbox.
+class SandboxedGrader:
+    """Offline evaluation with authored bundles that would write a host canary."""
 
-    test_sandbox_construction and test_sandbox_deadline instantiate this class and call setUp, grade, backend,
-    control_grade and doCleanups, so it keeps that TestCase interface and holds no tests.
-    """
-
-    def setUp(self):
-        self.fixture = fixtures.OfflineFixture(); self.fixture.setUp(); self.addCleanup(run_cleanups, self.fixture)
+    def __init__(self, add_cleanup):
+        self.fixture = fixtures.OfflineFixture(add_cleanup)
         self.root, self.runner, self.args = self.fixture.root, self.fixture.runner, self.fixture.args
-        environment = patch.dict(os.environ, {'CODEX_HOME':str(self.root/'no-user-config')}); environment.start(); self.addCleanup(environment.stop)
+        environment = patch.dict(os.environ, {'CODEX_HOME':str(self.root/'no-user-config')}); environment.start(); add_cleanup(environment.stop)
         self.manifest = self.fixture.manifest; self.args.agent = 'codex'; self.args.sandbox_graders = True
         self.canary = self.root/'synthetic-host-canary'
         self.agent = self.root/'agent'
@@ -85,9 +80,8 @@ class SandboxedGraderTests(unittest.TestCase):
 
 @pytest.fixture
 def grader():
-    value = SandboxedGraderTests(); value.setUp()
-    yield value
-    run_cleanups(value)
+    with ExitStack() as cleanups:
+        yield SandboxedGrader(cleanups.callback)
 
 
 def test_cooperative_trials_use_fresh_offline_grading_without_running_authored_code_on_host(grader):
@@ -256,21 +250,19 @@ print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
 
 @pytest.fixture
 def wf():
-    fixture = workflow_fixtures.WorkflowTests(); fixture.setUp()
-    try:
+    with ExitStack() as cleanups:
+        fixture = workflow_fixtures.WorkflowTests(cleanups.callback)
         fixture.agent.write_text(WORKFLOW_AGENT)
         args = fixture.args(); args.sandbox_graders = True
         with patch.dict(os.environ, {'CODEX_HOME':str(fixture.root/'no-user-config')}):
             yield SimpleNamespace(fixture=fixture, root=fixture.root, project=fixture.project, args=args)
-    finally:
-        run_cleanups(fixture)
 
 
 def test_improve_routes_controls_and_trials_through_same_selected_grader_boundary(wf):
     wf.args.cgroup_root = wf.root/'delegation'; wf.args.image_root = wf.root/'image'
     wf.args.image_sha256 = 'a'*64; wf.args.disk_bytes = 65536
     backend = Mock(); backend.capability.return_value = dict(status='available')
-    backend.run.side_effect = SandboxedGraderTests.control_grade.__get__(wf)
+    backend.run.side_effect = SandboxedGrader.control_grade.__get__(wf)
     with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend', return_value=backend) as factory:
         result = improve(wf.args)
     assert result['status'] == 'inconclusive'; assert 'role_isolation' in result['blocked_prerequisites']
