@@ -61,6 +61,10 @@ outcome came from provenance other than `executable_grader` or
 disagree (`mixed_outcome_roots`). A verified run never hides an unlabelled or
 unverified retry. A root whose stratum values are empty or inconsistent is counted
 as an unknown stratum, never as a precise one.
+Blank strings and the case-insensitive placeholders `unknown`, `unverified`,
+`unavailable` and `unspecified` are treated as unknown for root, harness and
+stratum identity. They are refused as run IDs. Other nonempty labels remain
+caller-declared, not verified.
 Each stratum and feature keeps at most 64 categories; the rest are counted as
 `other`. The performance cells use the same bounded stratum keys as the task mix.
 

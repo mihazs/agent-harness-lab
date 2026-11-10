@@ -224,9 +224,10 @@ class TestChannels:
             assert mix['state'] == performance['state'] == 'insufficient_evidence'
         assert receipts[0]['channels'] == receipts[1]['channels']
 
-    def test_unattributed_conflicting_identity_excludes_all_ambiguous_roots(self, plan, reference):
+    @pytest.mark.parametrize('unknown_root', [None, 'unknown', '   '])
+    def test_unattributed_conflicting_identity_excludes_all_ambiguous_roots(self, plan, reference, unknown_root):
         runs = synthetic_runs(100, 200, seed=2, prefix='c')
-        conflict = {**runs[0], 'task_root': None}
+        conflict = {**runs[0], 'task_root': unknown_root}
         capture, _, performance = channels(drift.assess(plan, reference, [runs[0], conflict] + runs[1:], 0))
         assert capture['state'] == 'alert'
         assert capture['ineligible']['conflicting_root_identity'] == 199
@@ -332,6 +333,30 @@ class TestChannels:
         assert mix['unknown_stratum_roots'] == 40
         assert all('alias-latest' not in key for key in mix['current'])
         assert sum(cell['current']['verified_roots'] for cell in performance['strata'].values()) == 160
+
+    @pytest.mark.parametrize('placeholder', ['unknown', 'Unverified', ' unavailable ', 'UNSPECIFIED', '   '])
+    def test_placeholder_model_version_never_becomes_a_precise_stratum(self, plan, reference, placeholder):
+        runs = synthetic_runs(100, 200, seed=2, prefix='c')
+        for run in runs[:5]: run['effective_model_version'] = placeholder
+        capture, mix, performance = channels(drift.assess(plan, reference, runs, 0))
+        assert capture['eligible_runs'] == 200 and mix['unknown_stratum_roots'] == 5
+        assert sum(cell['current']['verified_roots'] for cell in performance['strata'].values()) == 195
+        assert mix['state'] == performance['state'] == 'insufficient_evidence'
+
+    @pytest.mark.parametrize(('field', 'reason'), [('task_root', 'unknown_task_root'),
+                                                    ('harness_revision', 'unknown_harness_identity')])
+    def test_placeholder_identity_is_ineligible(self, plan, reference, field, reason):
+        runs = synthetic_runs(100, 200, seed=2, prefix='c')
+        for run in runs[:5]: run[field] = 'unknown'
+        capture, _, performance = channels(drift.assess(plan, reference, runs, 0))
+        assert capture['ineligible'][reason] == 5
+        assert sum(cell['current']['verified_roots'] for cell in performance['strata'].values()) == 195
+
+    def test_placeholder_run_id_cannot_collapse_distinct_observations(self, plan, reference):
+        runs = synthetic_runs(100, 200, seed=2, prefix='c')
+        runs[0]['run_id'] = 'unknown'
+        with pytest.raises(ValueError, match='every run requires a run_id'):
+            drift.assess(plan, reference, runs, 0)
 
     @pytest.mark.parametrize('field, reason', [
         ('task_root', 'unknown_task_root'), ('harness_revision', 'unknown_harness_identity'),

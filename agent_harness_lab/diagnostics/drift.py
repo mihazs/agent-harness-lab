@@ -39,6 +39,7 @@ UNKNOWN = 'unknown'
 OTHER = 'other'
 MAX_CATEGORIES = 64
 MAX_INPUT_RUNS = 100000
+UNKNOWN_IDENTITIES = frozenset(('unknown', 'unverified', 'unavailable', 'unspecified'))
 RESERVED = frozenset(('run_id', 'task_root', 'cursor', 'started', 'schema_version', 'capture', 'truncated',
                       'parse_rejected', 'harness_revision', 'outcome', 'outcome_provenance',
                       'requested_model', *STRATUM_FIELDS))
@@ -137,9 +138,13 @@ def _category(value):
     return UNKNOWN
 
 
+def _known_identity(value):
+    return isinstance(value, str) and bool(value.strip()) and value.strip().casefold() not in UNKNOWN_IDENTITIES
+
+
 def _stratum(plan, run):
     values = [run.get(name) for name in plan['strata']]
-    if not all(isinstance(value, str) and value and len(value) <= 128 for value in values):
+    if not all(_known_identity(value) and len(value) <= 128 for value in values):
         return None
     return json.dumps(values)
 
@@ -157,10 +162,10 @@ def _issues(plan, run, revisions):
         issues.append('parse_rejected')
     if any(run.get(name) is None for name in plan['required_fields']):
         issues.append('missing_required_fields')
-    if not isinstance(run.get('task_root'), str) or not run['task_root']:
+    if not _known_identity(run.get('task_root')):
         issues.append('unknown_task_root')
     revision = run.get('harness_revision')
-    if not isinstance(revision, str) or not revision:
+    if not _known_identity(revision):
         issues.append('unknown_harness_identity')
     elif revisions is not None and root_sha256(revision) not in revisions:
         issues.append('revision_outside_reference')
@@ -187,7 +192,7 @@ def _summarize(plan, runs, start, end, revisions=None):
     issues, seen, cursors, roots = {}, {}, set(), {}
     for index, run in enumerate(runs):
         if index >= MAX_INPUT_RUNS: raise ValueError('drift input run bound exceeded')
-        if not isinstance(run, dict) or not isinstance(run.get('run_id'), str) or not run['run_id']:
+        if not isinstance(run, dict) or not _known_identity(run.get('run_id')):
             raise ValueError('every run requires a run_id')
         signature = hashlib.sha256(json.dumps(run, sort_keys=True, default=repr).encode()).hexdigest()
         key = root_sha256(run['run_id'])
@@ -202,7 +207,7 @@ def _summarize(plan, runs, start, end, revisions=None):
     for versions in conflicts:
         for run in versions.values():
             root = run.get('task_root')
-            if isinstance(root, str) and root: conflict_roots.add(root_sha256(root))
+            if _known_identity(root): conflict_roots.add(root_sha256(root))
             else: unresolved_root = True
     for versions in seen.values():
         if len(versions) != 1: continue
@@ -222,7 +227,7 @@ def _summarize(plan, runs, start, end, revisions=None):
         else:
             cursors.add(cursor)
         found = _issues(plan, run, revisions)
-        if unresolved_root or isinstance(run.get('task_root'), str) and root_sha256(run['task_root']) in conflict_roots:
+        if unresolved_root or _known_identity(run.get('task_root')) and root_sha256(run['task_root']) in conflict_roots:
             found.append('conflicting_root_identity')
         for issue in found:
             issues[issue] = issues.get(issue, 0) + 1

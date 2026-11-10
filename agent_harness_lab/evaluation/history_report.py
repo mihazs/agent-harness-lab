@@ -43,6 +43,39 @@ def summary(store,receipt_refs,*,public=False):
     return result
 
 
+MAX_ACTION_ROWS=128
+
+
+def action_timeline(report,trial_id):
+    """Project bounded recorded metadata; these rows are not authenticated action custody."""
+    unknown=dict(coverage='unknown',events=[],truncated=False)
+    if (not isinstance(report,dict) or type(report.get('schema_version')) is not int or report.get('schema_version')!=1 or report.get('privacy')!='private'
+            or report.get('trial_id')!=trial_id or report.get('trial_id_visibility')!='observed'
+            or report.get('role')!='executor' or not isinstance(report.get('actions'),list)
+            or not isinstance(report.get('coverage'),dict)):
+        return unknown
+    actions=report['actions']; scope=report.get('scope_id');seen=set();events=[]
+    if not isinstance(scope,str) or not scope:return unknown
+    for row in actions:
+        if not isinstance(row,dict) or row.get('scope_id')!=scope:return unknown
+        ordinal=row.get('observed_ordinal'); request=row.get('request_ordinal')
+        if type(ordinal) is not int or ordinal<1 or ordinal in seen or type(request) is not int or request<0:
+            return unknown
+        seen.add(ordinal)
+        if len(events)>=MAX_ACTION_ROWS:continue
+        kind=row.get('kind');kind=kind if kind in ('model_request','tool_request','assistant_emission','message_observation') else 'other'
+        decision=row.get('decision');decision=decision if decision in ('accepted','denied','pending_validation') else 'unknown'
+        outcome=row.get('worker_outcome');outcome=outcome if outcome in ('pending','observed','unavailable','unobserved') else 'unknown'
+        events.append(dict(ordinal=ordinal,request=request,kind=kind,decision=decision,worker_outcome=outcome))
+    events.sort(key=lambda row:row['ordinal'])
+    coverage=report['coverage']; complete=(coverage.get('records_complete') is True
+        and type(coverage.get('omitted_records')) is int and coverage['omitted_records']==0
+        and type(coverage.get('omitted_updates')) is int and coverage['omitted_updates']==0)
+    truncated=len(actions)>MAX_ACTION_ROWS
+    return dict(coverage='recorded_complete' if complete and not truncated else 'partial_or_unknown',
+                events=events,truncated=truncated)
+
+
 def task_pairs(spec,result,records,*,sampling=None):
     """Display scheduled identities and recorded outcomes without changing analysis."""
     from .plan import schedule
@@ -59,9 +92,11 @@ def task_pairs(spec,result,records,*,sampling=None):
         key=tuple(trial[k] for k in ('task','root','family','repetition'))
         versions=pairs.setdefault(key,{})
         matches=observed.get(trial['trial_id'],[])
-        side=dict(trial_id=trial['trial_id'],outcome='unknown',runtime='unknown',grader='unknown')
+        side=dict(trial_id=trial['trial_id'],outcome='unknown',runtime='unknown',grader='unknown',
+                  timeline=action_timeline(None,trial['trial_id']))
         if len(matches)==1 and all(matches[0].get(k)==v for k,v in trial.items()):
             value=matches[0]; grader=value.get('grader') or {}; execution=value.get('execution') or {}
+            side['timeline']=action_timeline(execution.get('controller_actions'),trial['trial_id'])
             image=execution.get('attestation',{}).get('runtime_image',{})
             runtime=image.get('sha256') if image.get('verified_before') is True and image.get('verified_after') is True else None
             if isinstance(runtime,str) and runtime:side['runtime']=runtime
@@ -125,6 +160,19 @@ def render(result):
             values=(pair['task'],pair['root'],pair['family'],pair['repetition'],label(pair['baseline']),label(pair['candidate']),pair['status'])
             lines.append('| '+' | '.join(_cell(value) for value in values)+' |')
             pair_html.append('<tr>'+''.join('<td>'+html.escape(str(value))+'</td>' for value in values)+'</tr>')
+        timeline_html=[]
+        lines+=['','### Recorded action metadata','','Rows are per trial, unaligned across arms, and do not authenticate action custody.','']
+        for pair in entry['task_pairs']:
+            for arm in ('baseline','candidate'):
+                side=pair[arm]
+                if side is None:continue
+                timeline=side['timeline'];label=arm+' / '+side['trial_id']+' / coverage: '+timeline['coverage']
+                lines+=['#### '+_cell(label),'']
+                timeline_html.append('<details><summary>'+html.escape(label)+'</summary><ol>')
+                for event in timeline['events']:
+                    text='ordinal {ordinal}; request {request}; {kind}; decision {decision}; worker {worker_outcome}'.format(**event)
+                    lines.append('- '+_cell(text));timeline_html.append('<li>'+html.escape(text)+'</li>')
+                timeline_html.append('</ol></details>');lines.append('')
         lines+=['','Full current qualification provenance, assumptions, coverage, per-task/root rates and observations:','']
         raw=json.dumps(entry,sort_keys=True,indent=2,allow_nan=False)
         lines.extend('    '+line for line in raw.splitlines())
@@ -135,7 +183,8 @@ def render(result):
             +'</p><table><thead><tr>'+''.join('<th scope="col">'+html.escape(value)+'</th>' for value in headings)
             +'</tr></thead><tbody>'+''.join(rows)+'</tbody></table><h3>Task observations</h3><p>Recorded outcomes, not causation.</p><table><thead><tr>'
             +''.join('<th scope="col">'+html.escape(value)+'</th>' for value in pair_headings)
-            +'</tr></thead><tbody>'+''.join(pair_html)+'</tbody></table><details><summary>Current qualification and analysis</summary><pre>'
+            +'</tr></thead><tbody>'+''.join(pair_html)+'</tbody></table><h3>Recorded action metadata</h3><p>Per trial; unaligned across arms and not authenticated action custody.</p>'
+            +''.join(timeline_html)+'<details><summary>Current qualification and analysis</summary><pre>'
             +html.escape(raw)+'</pre></details></section>')
     markdown='\n'.join(lines)+'\n'
     document=('<!doctype html><html lang="en"><meta charset="utf-8"><title>Private controller history report</title>'
