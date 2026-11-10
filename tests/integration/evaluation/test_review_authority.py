@@ -19,6 +19,7 @@ from agent_harness_lab.evaluation.benchmark import public_export_allowed
 from agent_harness_lab.evaluation import review_authority
 from agent_harness_lab.private_journal import encoded
 from tests.integration.evaluation import test_regression_review as fixtures
+from tests.unit.evaluation.test_benchmark_contracts import record as public_record
 
 
 needs_openssh = pytest.mark.skipif(not Path('/usr/bin/ssh-keygen').is_file(), reason='optional OpenSSH verifier unavailable')
@@ -278,8 +279,7 @@ CLAIMS = [pytest.param(dict(profile=review_authority.PROFILE), id='profile'),
                                      for wrapper in (None,'receipt','analysis','context','binding')])
 @pytest.mark.parametrize('claim', CLAIMS)
 def test_key_approval_metadata_cannot_be_relabelled_public(claim, wrapper):
-    public=dict(provenance=dict(source_kind='synthetic',approved_publication=True,
-        source_ref='synthetic fixture',derived_from_private=False))
+    public=public_record()
     assert public_export_allowed([public])
     item=dict(public)
     item.update(claim if wrapper is None else {wrapper:claim})

@@ -20,6 +20,7 @@ from agent_harness_lab.evaluation import responses
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
 from agent_harness_lab.promotion.journal import Journal
 from tests.integration.workflow import test_workflow as fixtures
+from tests.unit.evaluation.test_benchmark_contracts import record as public_record
 
 
 def invoke(argv):
@@ -184,8 +185,7 @@ class TestSkillInvocation:
 
     @pytest.mark.parametrize('shape',['invocation','stage','context'])
     def test_actual_invocation_stays_private_inside_preparation_context(self,shape):
-        public=dict(publication_allowed=True,provenance=dict(source_kind='synthetic',approved_publication=True,
-            source_ref='synthetic:stage-context',derived_from_private=False))
+        public=dict(public_record(),publication_allowed=True)
         assert public_export_allowed([public])
         invocation=invocation_context(SimpleNamespace(project=Path('/synthetic/project'),agent='codex'),
             Path('/synthetic/output/run'),10,remaining_seconds=1,remaining_trials=2)
