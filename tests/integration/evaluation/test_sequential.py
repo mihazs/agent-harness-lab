@@ -250,7 +250,7 @@ class SequentialOnline:
     """Fresh synthetic sequential history builder; test_sequential_kernel builds it through setUp() and doCleanups()."""
     def setUp(self):
         self._cleanups=ExitStack()
-        self.f=offline.OfflineFixture();self.f.setUp();self._cleanups.callback(run_cleanups,self.f)
+        self.f=offline.OfflineFixture(self._cleanups.callback)
         all_tasks=self.f.manifest['tasks'];seen=set();tasks=[]
         for task in all_tasks:
             if task['root'] not in seen:tasks.append(task);seen.add(task['root'])

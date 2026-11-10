@@ -16,12 +16,6 @@ REPEATED_KERNEL = 'tests.integration.evaluation.test_repeated_workflow.RepeatedW
 ACCESS_KERNEL = 'tests.integration.evaluation.test_repeated_access_companion.RepeatedAccessKernel'
 KERNELS = [KERNEL, REPEATED_KERNEL, ACCESS_KERNEL]
 ROWS = [
-    ('tests.integration.evaluation.test_offline_evaluation', 'offline',
-     ['tests.integration.evaluation.test_offline_evaluation.OfflineFixture']),
-    ('tests.integration.evaluation.test_oracle_history', 'history',
-     ['tests.integration.evaluation.test_oracle_history.OracleHistoryTests']),
-    ('tests.integration.evaluation.test_oracle_plan', 'oracle',
-     ['tests.integration.evaluation.test_oracle_plan.OraclePlanTests']),
     ('tests.integration.evaluation.test_permission_audit', 'case', [KERNEL]),
     ('tests.integration.evaluation.test_permission_audit', 'inference_fixture',
      ['tests.integration.sandbox.test_sandbox_inference.ControllerInferenceTests']),
@@ -151,15 +145,13 @@ def test_one_call_fixture_reports_cleanup_failure(tmp_path, module):
 
 def test_preservation_receipt_helper_propagates_nested_cleanup_failure(monkeypatch):
     from contextlib import ExitStack
-    import unittest
     from tests.support import preservation_receipts
 
     def fail():
         raise RuntimeError('synthetic nested cleanup failure')
 
-    class BrokenHistory(unittest.TestCase):
-        def setUp(self):
-            self.addCleanup(fail)
+    def BrokenHistory(add_cleanup):
+        add_cleanup(fail)
 
     monkeypatch.setattr(preservation_receipts.legacy, 'OracleHistoryTests', BrokenHistory)
     with pytest.raises(RuntimeError, match='synthetic nested cleanup failure'):
@@ -253,3 +245,24 @@ def test_requalification_propagates_cleanup_failure(monkeypatch):
     with pytest.raises(RuntimeError, match='synthetic requalification cleanup failure'):
         with test_cohort_requalification.requalification():
             pass
+
+
+@pytest.mark.parametrize('module,helper', [
+    ('tests.integration.evaluation.test_offline_evaluation', 'OfflineFixture'),
+    ('tests.integration.evaluation.test_oracle_history', 'OracleHistoryTests'),
+    ('tests.integration.evaluation.test_oracle_plan', 'OraclePlanTests'),
+])
+def test_offline_helpers_propagate_cleanup_failure(monkeypatch, tmp_path, module, helper):
+    from contextlib import ExitStack
+    import importlib
+    from types import SimpleNamespace
+    from tests.integration.evaluation import test_offline_evaluation
+
+    def fail():
+        raise RuntimeError('synthetic offline cleanup failure')
+
+    monkeypatch.setattr(test_offline_evaluation.tempfile, 'TemporaryDirectory',
+                        lambda: SimpleNamespace(name=str(tmp_path), cleanup=fail))
+    with pytest.raises(RuntimeError, match='synthetic offline cleanup failure'):
+        with ExitStack() as cleanups:
+            getattr(importlib.import_module(module), helper)(cleanups.callback)

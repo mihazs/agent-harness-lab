@@ -59,7 +59,7 @@ class CorrectionRerunHarness:
         return dict(cgroup_root=self.root/'delegation',image_root=self.root/'image',image_sha256='e'*64,disk_bytes=64*1024*1024,budget_seconds=60)
 
     def execute(self,*args,**kwargs):
-        result = offline.OfflineFixture().emulate(*args)
+        result = offline.OfflineFixture.emulate(self,*args)
         result['attestation'] = dict(backend='bubblewrap-offline-v1',role=args[3],network='none',aggregate_disk_bound_verified=True,
             cgroup_v2={'empty_after_cleanup':True},runtime_image=dict(sha256='e'*64,verified_before=True,verified_after=True))
         return result

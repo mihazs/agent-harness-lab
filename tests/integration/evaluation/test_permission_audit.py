@@ -276,7 +276,7 @@ print(r,flush=True)
 @kernel_only
 def test_actual_runner_keeps_task_success_separate_and_blocks_qualification(case):
     from tests.integration.evaluation.test_offline_evaluation import OfflineFixture, SOLVER
-    fixture=OfflineFixture();fixture.setUp();case.addCleanup(run_cleanups,fixture)
+    fixture=OfflineFixture(case.addCleanup)
     task=fixture.manifest['tasks'][1];fixture.manifest['tasks']=[task]
     fixture.manifest['grader_bundles']={task['id']:fixture.manifest['grader_bundles'][task['id']]}
     fixture.write_manifest()

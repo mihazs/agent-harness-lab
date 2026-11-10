@@ -59,7 +59,7 @@ class DerivationHarness:
     """A sealed synthetic oracle history with controlled derivation helpers, built by setUp and released by doCleanups."""
     def setUp(self):
         self.cleanups=ExitStack()
-        self.f=fixtures.OracleHistoryTests(); self.f.setUp(); self.cleanups.callback(self.f.doCleanups)
+        self.f=fixtures.OracleHistoryTests(self.cleanups.callback)
         self.output=self.f.root/'variants'; self.key=self.f.root/'synthetic-key'
         self.key.write_text('SYNTHETIC_DERIVATION_KEY'); self.key.chmod(0o600)
         self.settings=self.f.root/'settings.json'

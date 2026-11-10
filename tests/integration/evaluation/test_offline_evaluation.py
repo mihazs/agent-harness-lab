@@ -5,7 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 import subprocess
 import tempfile
-import unittest
+from contextlib import ExitStack
 from unittest.mock import patch
 
 from agent_harness_lab.cli import evaluator
@@ -13,7 +13,6 @@ from agent_harness_lab.evaluation.bank_tools import export_manifest
 from agent_harness_lab.evaluation.sandbox import SandboxBackend
 # The standard-library bank-qualification runner imports SOLVER and OfflineFixture from here without pytest.
 from tests.support.optional_pytest import pytest
-from tests.support.unittest_cleanups import run_cleanups
 
 BANK = Path(__file__).resolve().parents[3]/'agent_harness_lab/evaluation/fixtures/starter-v1/bank.json'
 SOLVER = '''import json,pathlib
@@ -31,9 +30,9 @@ else: result={'token_count':len(inputs['text'].split())}
 '''
 
 
-class OfflineFixture(unittest.TestCase):
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+class OfflineFixture:
+    def __init__(self, add_cleanup):
+        self.temp = tempfile.TemporaryDirectory(); add_cleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.runner = evaluator()
         self.manifest = export_manifest(BANK, self.root/'export')
@@ -68,9 +67,8 @@ class OfflineFixture(unittest.TestCase):
 
 @pytest.fixture
 def offline():
-    fixture = OfflineFixture(); fixture.setUp()
-    yield fixture
-    run_cleanups(fixture)
+    with ExitStack() as cleanups:
+        yield OfflineFixture(cleanups.callback)
 
 
 def test_storage_policy_passes_declared_artifacts_to_executors_only(offline):

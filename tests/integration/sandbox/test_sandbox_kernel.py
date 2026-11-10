@@ -247,7 +247,7 @@ sys.exit(0 if outcome else 1)
 class OfflineKernel(KernelCase):
     """KernelCase plus the offline evaluation fixture; self.root is that fixture's directory."""
     def prepare(self):
-        self.f = OfflineFixture(); self.f.setUp(); self.addCleanup(run_cleanups, self.f)
+        self.f = OfflineFixture(self.addCleanup)
         self.root = self.f.root
 
 

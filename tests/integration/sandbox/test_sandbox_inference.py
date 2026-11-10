@@ -234,7 +234,7 @@ class ResponsesEvaluationTests(unittest.TestCase):
 
     def setUp(self):
         from tests.integration.evaluation import test_offline_evaluation as fixtures
-        self.fixture = fixtures.OfflineFixture(); self.fixture.setUp(); self.addCleanup(run_cleanups, self.fixture)
+        self.fixture = fixtures.OfflineFixture(self.addCleanup)
         self.root,self.runner,self.args = self.fixture.root,self.fixture.runner,self.fixture.args
         self.args.agent = 'responses'; self.args.cgroup_root = self.root/'delegation'
         self.args.image_root = self.root/'image'; self.args.image_sha256 = 'a'*64; self.args.disk_bytes = 65536

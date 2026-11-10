@@ -214,7 +214,7 @@ class TestControllerActionIntegration:
         baseline = Path(__file__).resolve().parents[3]/'artifacts/controller-actions/baseline/run_evaluation.py'
         if not baseline.exists(): pytest.skip('requires explicitly frozen ignored baseline')
         from tests.integration.evaluation import test_offline_evaluation as offline
-        fixture = offline.OfflineFixture(); fixture.setUp(); self.cleanups.callback(fixture.doCleanups)
+        fixture = offline.OfflineFixture(self.cleanups.callback)
         spec = importlib.util.spec_from_file_location('action_baseline_runner',baseline)
         module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
         fixture.args.agent='offline'

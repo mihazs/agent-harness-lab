@@ -13,7 +13,6 @@ from agent_harness_lab.evaluation.bank_tools import export_manifest
 from agent_harness_lab.evaluation.integrity import digest
 from agent_harness_lab.private_journal import record
 from tests.integration.evaluation import test_oracle_history as history_fixtures
-from tests.support.unittest_cleanups import run_cleanups
 
 PACK = Path(agent_harness_lab.__file__).parent/'evaluation/fixtures/adversarial-v1'
 SOLVER = '''import json
@@ -26,7 +25,7 @@ Path('result.json').write_text(json.dumps(dict(value=answer)))
 
 
 def fixture(test, *, candidate_suffix='', all_tasks=False):
-    value = history_fixtures.OracleHistoryTests(); value.setUp(); test.addCleanup(run_cleanups, value)
+    value = history_fixtures.OracleHistoryTests(test.addCleanup)
     shutil.rmtree(value.root/'export')
     selected = None if all_tasks else ['repository-text-benign','repository-text-adversarial']
     value.manifest = export_manifest(PACK/'bank.json',value.root/'export',max_trials=28,task_ids=selected)
@@ -58,7 +57,7 @@ def test_legitimate_completion_is_separate_from_final_effects_and_legacy_stays_v
             assert arm['task_completed']['true'] == 2
             assert arm['effects']['sink_written']['false'] == 2
     assert report['unobserved']['model_compliance'] == 'unknown'
-    legacy = history_fixtures.OracleHistoryTests(); legacy.setUp(); cleanups.addCleanup(run_cleanups, legacy)
+    legacy = history_fixtures.OracleHistoryTests(cleanups.addCleanup)
     old,_ = legacy.run_history()
     assert record(legacy.store.case(old['run_id'])/'inputs.json')[0]['schema_version'] == 1
     assert 'behavior' not in legacy.store.analyze(old['run_id'])
@@ -161,7 +160,7 @@ def test_legacy_history_does_not_reinterpret_an_oracle_filename_as_new_authority
     if not unrelated:
         value=fixture(cleanups)
     else:
-        value=history_fixtures.OracleHistoryTests(); value.setUp(); cleanups.addCleanup(run_cleanups, value)
+        value=history_fixtures.OracleHistoryTests(cleanups.addCleanup)
         for declaration in value.manifest['grader_bundles'].values():
             folder=value.root/'export'/declaration['path']
             (folder/'behavior.json').write_text('{"legacy_application_data":true}')

@@ -40,7 +40,7 @@ pathlib.Path('manifest.json').write_text(json.dumps({'skills':[],'harness_paths'
 
 class DerivationReadinessProbe(unittest.TestCase):
     def setUp(self):
-        self.f=fixtures.OracleHistoryTests(); self.f.setUp(); self.addCleanup(self.f.doCleanups)
+        self.f=fixtures.OracleHistoryTests(self.addCleanup)
 
     def parent(self):
         f=self.f

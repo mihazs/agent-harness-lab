@@ -2,7 +2,6 @@
 from agent_harness_lab.private_journal import encoded
 from tests.integration.evaluation import test_oracle_history as legacy
 from tests.integration.evaluation import test_preservation_history as cohorts
-from tests.support.unittest_cleanups import run_cleanups
 
 
 class PreservationReceipt:
@@ -15,9 +14,7 @@ class PreservationReceipt:
     def fixture(self,cohort=False):
         if cohort:
             return cohorts.PreservationHistory(self.cleanups).f
-        fixture=legacy.OracleHistoryTests()
-        self.cleanups.callback(run_cleanups,fixture); fixture.setUp()
-        return fixture
+        return legacy.OracleHistoryTests(self.cleanups.callback)
 
     def receipt(self,fixture):
         summary,calls=fixture.run_history(); assert summary['state']=='sealed',summary

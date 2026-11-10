@@ -26,7 +26,7 @@ class SandboxedGraderTests(unittest.TestCase):
     """
 
     def setUp(self):
-        self.fixture = fixtures.OfflineFixture(); self.fixture.setUp(); self.addCleanup(run_cleanups, self.fixture)
+        self.fixture = fixtures.OfflineFixture(self.addCleanup)
         self.root, self.runner, self.args = self.fixture.root, self.fixture.runner, self.fixture.args
         environment = patch.dict(os.environ, {'CODEX_HOME':str(self.root/'no-user-config')}); environment.start(); self.addCleanup(environment.stop)
         self.manifest = self.fixture.manifest; self.args.agent = 'codex'; self.args.sandbox_graders = True
