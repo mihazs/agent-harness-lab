@@ -244,7 +244,10 @@ native identity, historical controller authority or automatic adoption.
 `ahl benchmark-report --input RESULTS.json --output NEW_DIRECTORY` also recognizes
 these saved evaluation results. It writes bounded private JSON, Markdown and HTML
 with artifact outcomes, trajectory statuses, combined outcomes and critical/unknown
-flags. Imported claims are explicitly `imported_unverified`; the command does not
+flags. The private JSON summary retains bounded child assertion identities, statuses
+and coverage claims for grouped assertions, checking child IDs against their parent
+and position and requiring canonical digests. Root identifiers remain imported text;
+the report is private and is not a general secret scrubber. Imported claims are explicitly `imported_unverified`; the command does not
 recreate live receipts or rerun statistical decisions from those claims. It omits
 raw argv and controller traces. `--public` refuses this mode even if imported
 metadata claims synthetic provenance or publication approval. Existing matched
