@@ -147,8 +147,9 @@ with matching types and values. Other grader programs remain unqualified. The
 controller records raw and canonical JSON content identities for oracle files,
 in addition to whole-bundle identities. A changed bundle, filename or JSON key
 order does not make a matching reference fresh. Earlier nonempty ledgers without
-this per-file coverage, and observations whose coverage is unavailable, remain
-unknown and block final-bank qualification. Matching common oracle data may also
+this per-file coverage, prior opaque grader programs, and observations whose
+coverage is unavailable remain unknown and block final-bank qualification.
+Matching common oracle data may also
 block a bank conservatively. This comparison cannot detect embedded substrings,
 semantic transformations or external exposure; it does not establish global
 non-exposure or complete role isolation.

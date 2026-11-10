@@ -319,7 +319,7 @@ class WorkflowAccess:
                 check=lambda:check_deadline(deadline)
                 expected_capture=ledger.snapshot_exposure(original,source['tasks'],source['grader_bundles'],check)
                 captured=ledger.exposure(path.parent,source['tasks'],source['grader_bundles'],check)
-                references=ledger.oracle_references(path.parent,source['tasks'],source['grader_bundles'],check)
+                references=ledger.covered_oracle_references(path.parent,source['tasks'],source['grader_bundles'],check)
                 if captured!=expected_capture or _tree_pin(path.parent,deadline)!=owned['produced_pin']:
                     raise ValueError('actual canonical output changed during asset capture')
                 children,_=captured

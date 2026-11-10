@@ -106,6 +106,16 @@ def oracle_references(root, tasks, bundles, check=lambda: None):
     return result
 
 
+def covered_oracle_references(root,tasks,bundles,check=lambda: None):
+    from .reference_grader import validate
+    try:
+        for task in tasks:
+            check(); validate(contained(root,bundles[task['id']]['path']))
+    except (ValueError,OSError,TypeError,KeyError,RecursionError):
+        return None
+    return oracle_references(root,tasks,bundles,check)
+
+
 def capture(manifest, baseline, candidate, check=lambda: None,*,access_ledger=None,deadline=None):
 
     """Read actual frozen content, never a supplied qualification receipt."""
