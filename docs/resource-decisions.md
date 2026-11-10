@@ -163,3 +163,14 @@ remains unknown, and all final totals remain unknown. This sidecar is not part o
 durable custody receipt and cannot be recovered after restart. Provider data remain unverified;
 the sidecar does not establish cost, billing completeness, a quality decision, or promotion.
 It is not a security boundary against other code in the same process.
+
+`agent_harness_lab.evaluation.resource_collection.UsageCollector` can be attached to an
+owned live fixed comparison before its first trial. It snapshots the v4 resource contract,
+plan digest, and schedule digest, then collects the private completed-trial summaries in
+schedule order. Its private report requires every planned trial and a result accepted by
+`Comparison.finish`; incomplete or mismatched collection is refused. The resource contract
+is bound by the live collector before the first trial, not embedded in the experiment plan.
+The collector is opt-in, process-local, non-durable, and is not a same-process security
+boundary. It does not inject summaries into worker or provider inputs, authorize promotion,
+establish quality or billing completeness, or produce a resource decision. Provider usage
+remains unverified and all final totals remain unknown.
