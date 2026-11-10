@@ -231,7 +231,10 @@ def _probability(routes, rates):
     miss = 1.0
     for route in routes:
         miss *= 1 - rates[route]
-    return 1 - miss
+    probability = 1 - miss
+    if not _rate(probability):
+        raise ValueError('combined inclusion probability is zero or invalid at available precision')
+    return probability
 
 
 def _uniform(seed, frame_sha, key):
@@ -309,6 +312,8 @@ def _receipt(receipt, trusted_heads=None):
     if receipt['limitations'] not in (_limitations(commitment, anchored), _limitations(commitment)):
         raise ValueError('audit receipt limitations do not match its seed commitment')
     strata = {s['stratum']: s['inclusion_probability'] for s in receipt['strata']}
+    if any(not _rate(probability) for probability in strata.values()):
+        raise ValueError('invalid inclusion probability in audit receipt')
     for item in receipt['draws']:
         probability = item['inclusion_probability']
         if not _rate(probability) or strata.get(item['stratum']) != probability:
