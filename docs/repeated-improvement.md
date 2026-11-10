@@ -65,8 +65,9 @@ and changed or missing evidence cannot support a decision. Only the evidence
 digest is added to the plan; prompts, candidate groupings, and digests remain
 private. A match indicates possible dependence; the absence of a match does not prove independence.
 Setting `root_similarity` to `false` explicitly selects legacy behavior and does
-not perform this additional check; independence remains unverified. Previously
-stored plans keep their original semantics. The check is not supported by sequential
+not perform this additional check; independence remains unverified. Existing request
+files that omit the field use the new default when started again. Previously stored
+plans keep their original semantics. The check is not supported by sequential
 plans or the power simulator.
 
 The proposer receives its existing minimal metadata and baseline views. It cannot
