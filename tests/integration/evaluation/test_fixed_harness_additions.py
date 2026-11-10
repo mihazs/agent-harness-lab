@@ -30,3 +30,19 @@ def test_fixed_comparison_rejects_new_in_scope_harness_file(admission,added):
     assert error.value.code == 2
     assert (host.project/added).read_text() == 'synthetic concurrent content\n'
     assert (host.project/'AGENTS.md').read_text() == 'bad'
+
+
+@pytest.mark.parametrize('target',['project','settings'])
+def test_fixed_comparison_rejects_configuration_change(admission,target):
+    host = admission; helper = SimpleNamespace(root=host.root,roles=[])
+    backend = Mock(permission_audit=None); backend.capability.return_value = dict(status='available')
+    backend.run.side_effect = roles.ControlledWorkflow.execute.__get__(helper)
+    def compare(request,*args):
+        (host.project/'ahl.json' if target == 'project' else host.settings).write_text('{}')
+        return dict(status='inconclusive',reason='certification_prerequisites_unverified',recommendation='review_candidate',
+                    controller_run_id='synthetic-run',publication_allowed=False,automatic_promotion=False)
+    with patch.object(roles,'EXECUTOR',EXECUTOR), patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=backend), \
+            patch.object(Request,'execute',compare), pytest.raises(SystemExit) as error:
+        host.invoke(host.root/'image','a'*64,host.root/'output')
+    assert error.value.code == 2
+    assert (host.project/'ahl.json' if target == 'project' else host.settings).read_text() == '{}'

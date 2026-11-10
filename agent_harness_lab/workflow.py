@@ -732,6 +732,9 @@ The parent will reject incomplete/changed inputs, regressions, unsupported ties,
                 result.update(status='requires_intervention',reason='permission_qualification_not_met')
                 break
             compared=repeated.execute(manifest_path,baseline,frozen,args,client,grading)
+            check_configuration(args)
+            if responses.read_settings(inference_path)[1] != settings_hash:
+                raise ValueError('inference settings changed during the controlled run')
             current_harness = {str(path.relative_to(args.project)):file_state(path)
                                for path in harness_files(args.project,allowed_paths(args))}
             if current_harness != original:
