@@ -16,7 +16,7 @@ harness performs better or worse, and no aggregate score is emitted.
 from dataclasses import asdict, dataclass
 import importlib
 from agent_harness_lab import surfaces
-from agent_harness_lab.audit import chain, skills
+from agent_harness_lab.audit import chain, precedence, skills
 from agent_harness_lab.sources import agents_inventory, harness_inventory
 from agent_harness_lab.sources.schema import digest, fingerprint, label
 from agent_harness_lab.sources.skill_headers import TOKENIZER
@@ -257,6 +257,7 @@ def audit(inventory, *, task_cwd=None, collision_threshold=skills.COLLISION_THRE
     findings.sort(key=lambda row: (row.status != 'nonconformant', rank[row.cost_class], DIMENSIONS.index(row.dimension), row.path, row.kind, row.reason))
     return Report(runtime, inventory.version, inventory.sha256, inventory.status, blocked,
         tuple(dimensions), tuple(findings), vendored, unattributed,
+        instruction_precedence=precedence.report(inventory, task_cwd),
         skill_collision_threshold_permille=round(collision_threshold * 1000))
 
 
@@ -271,6 +272,7 @@ class Report:
     findings: tuple
     vendored_surfaces: int
     unattributed_refusals: int
+    instruction_precedence: dict | None = None
     skill_collision_rule: str = skills.COLLISION_RULE
     skill_collision_threshold_permille: int = round(skills.COLLISION_THRESHOLD * 1000)
     skill_tokenizer: str = TOKENIZER

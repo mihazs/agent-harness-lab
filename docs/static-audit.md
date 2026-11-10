@@ -203,6 +203,26 @@ empty unless a check counts something, such as the
 `behavioral_evaluation_required`. Nonconformant findings come first, cheapest
 `cost_class` first, followed by unknown findings.
 
+## Instruction precedence
+
+The private report includes `instruction_precedence`, a deterministic list of
+declared instruction files and documented load order. Codex's same-directory
+selection and closer-directory relations are conditional on default root and
+fallback settings and the files being loaded within the budget. A relation names
+the higher and lower file, its rule and its source. The inventory cannot verify
+runtime settings, trust, external user or managed files, imports, or actual loading.
+Refused files and those unchecked layers remain `not_checked`.
+The `--task-cwd` option selects the project-relative task directory's chain;
+the default is the project root. The task directory must exist within the project
+and cannot cross a symlink.
+
+For Codex, [the documented chain](https://developers.openai.com/codex/guides/agents-md)
+checks `AGENTS.override.md` before `AGENTS.md` in each directory and gives later,
+closer files precedence when both load. For Claude Code, [the documented load
+order](https://code.claude.com/docs/en/memory) is managed, user, project, local;
+that order does not guarantee a winner for conflicting instructions. Neither
+report compares instruction content or proves that an agent obeyed a file.
+
 ## What an audit finding does and does not establish
 
 Every dimension and finding carries
