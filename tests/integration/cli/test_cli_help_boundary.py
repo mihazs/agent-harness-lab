@@ -36,7 +36,7 @@ BOUNDARIES = {
 COMMON = ('--help', '--events', '--source-root', '--session', '--max-captures', '--max-capture-scan', '--max-events',
           '--sequence-length')
 RUNTIME = ('--format', '--source-version', '--output')
-EXECUTION = ('--focus', '--agent', '--inference-settings', '--codex', '--claude', '--timeout', '--sandbox-graders',
+EXECUTION = ('--focus', '--agent', '--inference-settings', '--codex', '--claude', '--timeout', '--inherit-env', '--sandbox-graders',
              '--cgroup-root', '--image-root', '--image-sha256', '--permission-audit', '--evaluation-store', '--disk-bytes')
 OPTIONS = {
     'improve': (*COMMON, '--incident-corpus', '--incident-query', *RUNTIME, '--experiment-request', *EXECUTION,
@@ -45,7 +45,7 @@ OPTIONS = {
 }
 SUBCOMMANDS = ('rollback', 'update', 'mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'bank-interchange',
                'bank-review', 'experiment', 'experiment-history', 'grader-correction', 'regression', 'regression-review',
-               'sandbox-check', 'research-simulate', 'incident-search', 'promotion', 'benchmark-report', 'doctor', 'init',
+               'sandbox-check', 'research-simulate', 'incident-search', 'promotion', 'benchmark-report', 'doctor', 'audit', 'init',
                'sources', 'analyze', 'analysis', 'improve', 'watch')
 # Wording that would imply behavioral auto-adoption or continuous self-modification.
 FORBIDDEN = ('adopt supported harness repairs', 'continuously improve', 'automatic improvement', 'automatically apply',
@@ -76,7 +76,7 @@ def flat(text):
 
 
 COMMANDS = ('top', 'improve', 'watch')
-DOCS = ('README.md', 'docs/cli-help.md', 'docs/workflows.md')
+DOCS = ('README.md', 'docs/cli-help.md', 'docs/workflows.md', 'docs/command-reference.md')
 
 
 @pytest.fixture(scope='module')

@@ -112,7 +112,7 @@ class BankQualificationBoundaryTests(unittest.TestCase):
 
 
 @unittest.skipUnless(kernel.ENABLED,'explicit delegated kernel profile required')
-class QualifiedBankKernelTests(kernel.KernelFixture):
+class QualifiedBankKernelTests(kernel.UnittestKernelFixture):
     def qualified_comparison(self):
         bank,declaration=proposal(self.root)
         store=self.root/'review';runtime=self.root/'runtime';pin=kernel.pinned_runtime(runtime)['sha256']

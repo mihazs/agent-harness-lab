@@ -5,9 +5,7 @@ import os
 import random
 from pathlib import Path
 import socket
-import tempfile
 import tracemalloc
-import unittest
 from unittest.mock import patch
 
 import pytest
@@ -41,13 +39,6 @@ class StoreFixture:
     def make_store(self, **limits):
         return SourceStore(self.root/'cache/history.json', project_sha256=self.source.project_sha256,
                            scope_sha256=self.source.scope_sha256, **limits)
-
-
-class SourceStoreTests(StoreFixture, unittest.TestCase):
-    """The importable store builder: test_chunked_reads and test_source_lineage drive it by hand as a TestCase."""
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
-        self.build(self.temp.name)
 
 
 class TestSourceStore(StoreFixture):

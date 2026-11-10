@@ -1,10 +1,9 @@
 """workflow_contract_v1 stages Claude workflow scripts under the executable contract; synthetic only, nothing runs."""
 import json
 import os
-from pathlib import Path
 import subprocess
-import tempfile
-import unittest
+
+import pytest
 
 from agent_harness_lab import surfaces
 from agent_harness_lab.harness_change_plan import HarnessChangePlan, REFERENCE_NAMES
@@ -30,10 +29,19 @@ def codes(contract):
     return {row[1] for row in contract.findings}
 
 
-class WorkflowContractTests(unittest.TestCase):
-    def setUp(self):
-        temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
-        self.root = Path(temp.name); self.project = self.root / 'project'
+NO_NEWLINE = b"export const meta = { name: 'review', description: 'Synthetic review' }\nawait agent('a')"
+PATCH_CASES = {'no trailing newline': ({NAME: snapshot_record(NO_NEWLINE, 0o644)},
+                                       {NAME: snapshot_record(NO_NEWLINE.replace(b"'a'", b"'b'"), 0o644)}),
+               'mode only': ({NAME: snapshot_record(NO_NEWLINE, 0o644)}, {NAME: snapshot_record(NO_NEWLINE, 0o755)})}
+MALFORMED_RUNS = ('ungraded', 'one side', 'sides swapped', 'uncapped', 'different fixtures', 'not a request',
+                  'candidate in the project', 'both in the project', 'inside the project', 'missing cwd', 'relative cwd',
+                  'one workspace', 'missing cap capability')
+
+
+class TestWorkflowContract:
+    @pytest.fixture(autouse=True)
+    def _project(self, tmp_path):
+        self.root = tmp_path; self.project = self.root / 'project'
         (self.project / '.claude/workflows').mkdir(parents=True)
         self.script = self.project / NAME; self.script.write_bytes(BEFORE); self.script.chmod(0o644)
         self.journal = Journal(self.project, self.root / 'private/journal')
@@ -52,49 +60,49 @@ class WorkflowContractTests(unittest.TestCase):
     def test_meta_not_first_is_blocked_before_any_run(self):
         with no_execution():
             before, after, contract = self.unit(META_LATE)
-            self.assertEqual((contract.profile, contract.status), (WORKFLOW_PROFILE, 'blocked'))
-            self.assertIn(('blocked', 'meta_not_first_literal', NAME), contract.findings)
-            with self.assertRaisesRegex(ValueError, 'did not pass'):
+            assert (contract.profile, contract.status) == (WORKFLOW_PROFILE, 'blocked')
+            assert ('blocked', 'meta_not_first_literal', NAME) in contract.findings
+            with pytest.raises(ValueError, match='did not pass'):
                 self.journal.prepare(before, after, hook_contract=contract)
             # No run request can be made for a blocked unit, so nothing reaches a trial workspace.
-            with self.assertRaisesRegex(ValueError, 'only a passed workflow contract'):
+            with pytest.raises(ValueError, match='only a passed workflow contract'):
                 trial_request(contract, 'candidate', self.project, self.trial('late', META_LATE), {})
             result = outcome(contract, before, after)
-        self.assertEqual((result['status'], result['reason']), ('blocked', 'static_contract_blocked'))
-        self.assertEqual(self.script.read_bytes(), BEFORE)
+        assert (result['status'], result['reason']) == ('blocked', 'static_contract_blocked')
+        assert self.script.read_bytes() == BEFORE
 
-    def test_forbidden_tokens_inconclusive_lint_and_unsafe_modes_are_hard_gates(self):
-        cases = dict(FORBIDDEN, workflow_lint_inconclusive=CLEAN + b'const text = `unterminated ${x}\n')
-        for code, content in cases.items():
-            with self.subTest(code=code):
-                _, _, contract = self.unit(content)
-                self.assertEqual(contract.status, 'blocked')
-                self.assertIn(code, codes(contract))
-        self.assertIn('script_group_or_world_writable', codes(self.unit(mode=0o664)[2]))
+    @pytest.mark.parametrize('code, content', [pytest.param(code, content, id=code) for code, content in
+        dict(FORBIDDEN, workflow_lint_inconclusive=CLEAN + b'const text = `unterminated ${x}\n').items()])
+    def test_forbidden_tokens_and_an_inconclusive_lint_are_hard_gates(self, code, content):
+        _, _, contract = self.unit(content)
+        assert contract.status == 'blocked'
+        assert code in codes(contract)
+
+    def test_unsafe_modes_removals_and_nested_scripts_are_hard_gates(self):
+        assert 'script_group_or_world_writable' in codes(self.unit(mode=0o664)[2])
         before, _, _ = self.unit()
         after = {NAME: None}
-        self.assertIn('workflow_removal_outside_contract', codes(evaluate(self.project, before, after)))
+        assert 'workflow_removal_outside_contract' in codes(evaluate(self.project, before, after))
         (self.project / '.claude/workflows/nested').mkdir()
-        with self.assertRaisesRegex(ValueError, 'not a Claude workflow'):
+        with pytest.raises(ValueError, match='not a Claude workflow'):
             stage_workflows(self.project, {'.claude/workflows/nested/deep.js': (CLEAN, 0o644)})
         nested = self.project / 'pkg'; (nested / '.git').mkdir(parents=True)
-        self.assertIn('script_outside_checkout', codes(self.unit(name='pkg/.claude/workflows/review.js')[2]))
+        assert 'script_outside_checkout' in codes(self.unit(name='pkg/.claude/workflows/review.js')[2])
 
     def test_passed_unit_is_admitted_as_one_deployment_and_rolls_back(self):
         with no_execution():
             before, after, contract = self.unit()
-            self.assertEqual((contract.status, contract.findings, contract.behavioral), ('passed', (), 'inconclusive'))
+            assert (contract.status, contract.findings, contract.behavioral) == ('passed', (), 'inconclusive')
             document = contract.document()
-            self.assertEqual((document['executed'], document['lint'], document['codex']),
-                             (False, 'static_lint_not_runtime_validation', 'no_workflow_loader_in_pinned_source'))
+            assert (document['executed'], document['lint'], document['codex']) == (False, 'static_lint_not_runtime_validation', 'no_workflow_loader_in_pinned_source')
             record = self.journal.prepare(before, after, {'source': 'synthetic'}, hook_contract=contract)
-            self.assertEqual(record['metadata']['hook_contract']['profile'], WORKFLOW_PROFILE)
+            assert record['metadata']['hook_contract']['profile'] == WORKFLOW_PROFILE
             self.journal.execute(record['deployment'])
-            self.assertEqual(self.script.read_bytes(), CLEAN)
+            assert self.script.read_bytes() == CLEAN
             self.journal.rollback(record['deployment'])
-        self.assertEqual(self.script.read_bytes(), BEFORE)
+        assert self.script.read_bytes() == BEFORE
         # Without a passed contract the journal still refuses a workflow write, as before this contract existed.
-        with self.assertRaisesRegex(ValueError, 'owned harness surface'):
+        with pytest.raises(ValueError, match='owned harness surface'):
             self.journal.prepare(before, after, {'source': 'synthetic'})
         # Admission binds the bytes: a forged after snapshot is refused before anything is written.
         record = self.journal.prepare(before, after, hook_contract=contract)
@@ -102,9 +110,9 @@ class WorkflowContractTests(unittest.TestCase):
         stored = json.loads(path.read_text())
         stored['after'][NAME] = snapshot_record(FORBIDDEN['forbidden_math_random'], 0o644)
         path.write_text(json.dumps(stored))
-        with self.assertRaisesRegex(ValueError, 'does not bind|did not pass|not authenticated'):
+        with pytest.raises(ValueError, match='does not bind|did not pass|not authenticated'):
             self.journal.execute(record['deployment'])
-        self.assertEqual(self.script.read_bytes(), BEFORE)
+        assert self.script.read_bytes() == BEFORE
 
     def test_analysis_never_executes_a_workflow(self):
         sentinel = self.root / 'executed'
@@ -112,48 +120,43 @@ class WorkflowContractTests(unittest.TestCase):
         live = CLEAN + f"require('fs').writeFileSync({json.dumps(str(sentinel))}, 'ran')\n".encode()
         with no_execution():
             before, after, contract = self.unit(live)
-            self.assertEqual(contract.status, 'passed')
+            assert contract.status == 'passed'
             (plan,) = contracts_for(self.project, before, after)
-            self.assertEqual(plan, contract)
+            assert plan == contract
             request = trial_request(contract, 'candidate', self.project, self.trial('live', live), {'target': 'x'})
             result = outcome(contract, before, after)
-        self.assertFalse(sentinel.exists())
-        self.assertIs(request['executed'], False)
-        self.assertEqual(request['invocation'], 'caller_runner_unverified')
-        self.assertFalse(result['executed_by_analysis'])
+        assert not sentinel.exists()
+        assert request['executed'] is False
+        assert request['invocation'] == 'caller_runner_unverified'
+        assert not result['executed_by_analysis']
 
     def test_trial_request_runs_only_inside_a_bounded_trial_workspace(self):
         before, after, contract = self.unit()
         trial = self.trial('candidate', CLEAN)
         request = trial_request(contract, 'candidate', self.project, trial, {'files': ['a.py']})
-        self.assertEqual(request['environment'], {CAP_VARIABLE: str(MAX_AGENTS)})
-        self.assertEqual(request['cwd'], str((trial / 'workspace').resolve()))
-        self.assertEqual(request['cap_capability']['version_gate'], '>=2.1.269')
-        self.assertEqual(trial_request(contract, 'candidate', self.project, trial, {}, max_agents=1)['environment'],
-                         {CAP_VARIABLE: '1'})
+        assert request['environment'] == {CAP_VARIABLE: str(MAX_AGENTS)}
+        assert request['cwd'] == str((trial / 'workspace').resolve())
+        assert request['cap_capability']['version_gate'] == '>=2.1.269'
+        assert trial_request(contract, 'candidate', self.project, trial, {}, max_agents=1)['environment'] == {CAP_VARIABLE: '1'}
         for cap in (0, MAX_AGENTS + 1, True):
-            with self.assertRaisesRegex(ValueError, 'agent cap'):
+            with pytest.raises(ValueError, match='agent cap'):
                 trial_request(contract, 'candidate', self.project, trial, {}, max_agents=cap)
-        with self.assertRaisesRegex(ValueError, 'args fixture'):
+        with pytest.raises(ValueError, match='args fixture'):
             trial_request(contract, 'candidate', self.project, trial, {'blob': 'x' * ARGS_BOUND})
         # The project itself, or a trial nested in it, would load the project's own .claude/workflows/.
         (self.project / 'workspace').mkdir()
         inside = self.project / 'artifacts/trial'; (inside / 'workspace' / NAME).parent.mkdir(parents=True)
         (inside / 'workspace' / NAME).write_bytes(CLEAN)
         for place in (self.project, inside):
-            with self.assertRaisesRegex(ValueError, 'outside the project'):
+            with pytest.raises(ValueError, match='outside the project'):
                 trial_request(contract, 'candidate', self.project, place, {})
-        with self.assertRaisesRegex(ValueError, 'unit bytes'):
+        with pytest.raises(ValueError, match='unit bytes'):
             trial_request(contract, 'baseline', self.project, trial, {})
-        with self.assertRaisesRegex(ValueError, 'trial workspace'):
+        with pytest.raises(ValueError, match='trial workspace'):
             trial_request(contract, 'candidate', self.project, self.root / 'missing', {})
 
-    def test_without_a_native_run_the_result_is_never_improved(self):
+    def runs(self):
         before, after, contract = self.unit()
-        result = outcome(contract, before, after)
-        self.assertEqual((result['status'], result['reason']), ('recommendation_only', 'no_native_trial_run'))
-        self.assertIn('-await agent(\'scan\')\n', result['patch'])
-        self.assertTrue(result['patch'].startswith(f'diff --git a/{NAME} b/{NAME}\n'))
         baseline = trial_request(contract, 'baseline', self.project, self.trial('baseline', BEFORE), {'n': 1})
         candidate = trial_request(contract, 'candidate', self.project, self.trial('candidate', CLEAN), {'n': 1})
         forged = dict(candidate, environment={CAP_VARIABLE: '64'}, max_concurrent_agents=64)
@@ -178,66 +181,74 @@ class WorkflowContractTests(unittest.TestCase):
             'relative cwd': {'baseline': (baseline, 'failed'), 'candidate': (dict(candidate, cwd='workspace'), 'passed')},
             'one workspace': {'baseline': (dict(baseline, cwd=candidate['cwd']), 'failed'), 'candidate': (candidate, 'passed')},
             'missing cap capability': {'baseline': (baseline, 'failed'), 'candidate': (no_cap, 'passed')}})
-        for label, runs in malformed.items():
-            with self.subTest(runs=label):
-                self.assertEqual(outcome(contract, before, after, runs, project=self.project)['status'], 'inconclusive')
-        with self.assertRaisesRegex(ValueError, 'project'):
+        return before, after, contract, baseline, candidate, malformed
+
+    def test_without_a_native_run_the_result_is_never_improved(self):
+        before, after, contract, baseline, candidate, _ = self.runs()
+        result = outcome(contract, before, after)
+        assert (result['status'], result['reason']) == ('recommendation_only', 'no_native_trial_run')
+        assert "-await agent('scan')\n" in result['patch']
+        assert result['patch'].startswith(f'diff --git a/{NAME} b/{NAME}\n')
+        with pytest.raises(ValueError, match='project'):
             outcome(contract, before, after, {'baseline': (baseline, 'failed'), 'candidate': (candidate, 'passed')})
         _, _, other = self.unit(CLEAN + b'// another candidate\n')
         stale = {'baseline': (baseline, 'failed'), 'candidate': (candidate, 'passed')}
-        self.assertEqual(outcome(other, *stage_workflows(self.project, {NAME: (CLEAN + b'// another candidate\n', 0o644)}),
-                                 stale, project=self.project)['status'], 'inconclusive')
-        self.assertEqual(outcome(contract, before, after, stale, project=self.project)['status'], 'improved')
-        self.assertEqual(outcome(contract, before, after, {'baseline': (baseline, 'passed'), 'candidate': (candidate, 'passed')},
-                                 project=self.project)['status'], 'not_improved')
+        assert outcome(other, *stage_workflows(self.project, {NAME: (CLEAN + b'// another candidate\n', 0o644)}),
+                                 stale, project=self.project)['status'] == 'inconclusive'
+        assert outcome(contract, before, after, stale, project=self.project)['status'] == 'improved'
+        assert outcome(contract, before, after, {'baseline': (baseline, 'passed'), 'candidate': (candidate, 'passed')},
+                                 project=self.project)['status'] == 'not_improved'
+
+    @pytest.mark.parametrize('label', MALFORMED_RUNS)
+    def test_malformed_trial_runs_are_inconclusive(self, label):
+        before, after, contract, _, _, malformed = self.runs()
+        assert set(malformed) == set(MALFORMED_RUNS)
+        assert outcome(contract, before, after, malformed[label], project=self.project)['status'] == 'inconclusive'
 
     def test_trial_cwd_loads_the_unit_from_its_owner_folder(self):
         nested = 'sub/.claude/workflows/review.js'
         (self.project / nested).parent.mkdir(parents=True); (self.project / nested).write_bytes(BEFORE)
         before, after, contract = self.unit(name=nested)
-        self.assertEqual(contract.status, 'passed')
+        assert contract.status == 'passed'
         trial = self.trial('nested', CLEAN, nested)
         request = trial_request(contract, 'candidate', self.project, trial, {})
         # Claude Code loads .claude/workflows/ only on the cwd-to-root path, so the run starts in the owner folder.
-        self.assertEqual(request['cwd'], str((trial / 'workspace' / 'sub').resolve()))
+        assert request['cwd'] == str((trial / 'workspace' / 'sub').resolve())
         baseline = trial_request(contract, 'baseline', self.project, self.trial('nested-base', BEFORE, nested), {})
         root = dict(request, cwd=str((trial / 'workspace').resolve()))
         runs = {'baseline': (baseline, 'failed'), 'candidate': (root, 'passed')}
-        self.assertEqual(outcome(contract, before, after, runs, project=self.project)['status'], 'inconclusive')
+        assert outcome(contract, before, after, runs, project=self.project)['status'] == 'inconclusive'
         runs['candidate'] = (request, 'passed')
-        self.assertEqual(outcome(contract, before, after, runs, project=self.project)['status'], 'improved')
+        assert outcome(contract, before, after, runs, project=self.project)['status'] == 'improved'
         # Members in sibling folders can never load from one cwd, so no run request is made for them.
         pair = {'a/.claude/workflows/x.js': (CLEAN, 0o644), 'b/.claude/workflows/y.js': (CLEAN, 0o644)}
         siblings = evaluate(self.project, *stage_workflows(self.project, pair))
-        self.assertEqual(siblings.status, 'passed')
+        assert siblings.status == 'passed'
         workspace = self.root / 'trials' / 'siblings' / 'workspace'
         for name, (content, _) in pair.items():
             (workspace / name).parent.mkdir(parents=True); (workspace / name).write_bytes(content)
-        with self.assertRaisesRegex(ValueError, 'one cwd'):
+        with pytest.raises(ValueError, match='one cwd'):
             trial_request(siblings, 'candidate', self.project, workspace.parent, {})
 
-    def test_patch_applies_without_a_trailing_newline_and_carries_mode_changes(self):
-        last = b"export const meta = { name: 'review', description: 'Synthetic review' }\nawait agent('a')"
+    @pytest.mark.parametrize('label', tuple(PATCH_CASES))
+    def test_patch_applies_cleanly(self, label):
         repo = self.root / 'apply'; (repo / NAME).parent.mkdir(parents=True)
-        (repo / NAME).write_bytes(last); (repo / NAME).chmod(0o644)
+        (repo / NAME).write_bytes(NO_NEWLINE); (repo / NAME).chmod(0o644)
         env = dict(os.environ, GIT_CONFIG_NOSYSTEM='1', GIT_CONFIG_GLOBAL=os.devnull)
         git = lambda *args: subprocess.run(['git', '-c', 'core.hooksPath=/dev/null', *args], cwd=repo, env=env,
                                            capture_output=True, text=True)
-        self.assertEqual(git('init', '-q').returncode, 0)
-        cases = {'no trailing newline': ({NAME: snapshot_record(last, 0o644)},
-                                         {NAME: snapshot_record(last.replace(b"'a'", b"'b'"), 0o644)}),
-                 'mode only': ({NAME: snapshot_record(last, 0o644)}, {NAME: snapshot_record(last, 0o755)})}
-        for label, (before, after) in cases.items():
-            with self.subTest(case=label):
-                patch = unit_patch(before, after)
-                self.assertTrue(patch)
-                (self.root / 'unit.diff').write_text(patch)
-                checked = git('apply', '--check', str(self.root / 'unit.diff'))
-                self.assertEqual(checked.returncode, 0, checked.stderr)
-        self.assertIn('\n\\ No newline at end of file\n', unit_patch(*cases['no trailing newline']))
-        self.assertIn('old mode 100644\nnew mode 100755\n', unit_patch(*cases['mode only']))
-        self.assertIsNone(unit_patch({NAME: snapshot_record(b'\xff', 0o644)}, {NAME: snapshot_record(b'x', 0o644)}))
-        self.assertEqual(set(OUTCOMES), {'blocked', 'recommendation_only', 'inconclusive', 'not_improved', 'improved'})
+        assert git('init', '-q').returncode == 0
+        patch = unit_patch(*PATCH_CASES[label])
+        assert patch
+        (self.root / 'unit.diff').write_text(patch)
+        checked = git('apply', '--check', str(self.root / 'unit.diff'))
+        assert checked.returncode == 0, checked.stderr
+
+    def test_patch_carries_missing_newlines_and_mode_changes(self):
+        assert '\n\\ No newline at end of file\n' in unit_patch(*PATCH_CASES['no trailing newline'])
+        assert 'old mode 100644\nnew mode 100755\n' in unit_patch(*PATCH_CASES['mode only'])
+        assert unit_patch({NAME: snapshot_record(b'\xff', 0o644)}, {NAME: snapshot_record(b'x', 0o644)}) is None
+        assert set(OUTCOMES) == {'blocked', 'recommendation_only', 'inconclusive', 'not_improved', 'improved'}
 
     def test_plan_resolves_workflow_operations_only_through_a_passed_contract(self):
         _, after, passed = self.unit()
@@ -246,14 +257,14 @@ class WorkflowContractTests(unittest.TestCase):
         options = dict(references={name: None for name in REFERENCE_NAMES}, diagnosis=[], falsifiers=[], dependencies=[],
                        controls=[])
         bare = HarnessChangePlan.create({}, states, deferred=deferred_surfaces(()), **options)
-        self.assertEqual(bare.unresolved_operations, (NAME,))
+        assert bare.unresolved_operations == (NAME,)
         held = HarnessChangePlan.create({}, states, deferred=deferred_surfaces((blocked,)), contracts=(blocked,), **options)
-        self.assertEqual(held.unresolved_operations, (NAME,))
+        assert held.unresolved_operations == (NAME,)
         resolved = HarnessChangePlan.create({}, states, deferred=deferred_surfaces((passed,)), contracts=(passed,), **options)
-        self.assertEqual(resolved.unresolved_operations, ())
-        self.assertEqual(HarnessChangePlan.parse(resolved.document()), resolved)
+        assert resolved.unresolved_operations == ()
+        assert HarnessChangePlan.parse(resolved.document()) == resolved
         # A workflow unit is not a hook unit, so it never lifts the deferred 'hooks' surface.
-        self.assertIn('hooks', resolved.deferred_surfaces)
+        assert 'hooks' in resolved.deferred_surfaces
 
     def test_mixed_hook_and_workflow_changes_are_separate_units(self):
         settings = self.project / '.claude/settings.json'; settings.write_bytes(b'{}\n')
@@ -262,12 +273,11 @@ class WorkflowContractTests(unittest.TestCase):
         before, after = stage_workflows(self.project, {NAME: (CLEAN, 0o644)})
         before, after = dict(before, **hook_before), dict(after, **hook_after)
         units = contracts_for(self.project, before, after)
-        self.assertEqual([(unit.profile, unit.members) for unit in units],
-                         [(PROFILE, ('.claude/hooks/check.sh', '.claude/settings.json')), (WORKFLOW_PROFILE, (NAME,))])
-        self.assertEqual([unit.status for unit in units], ['passed', 'passed'])
+        assert [(unit.profile, unit.members) for unit in units] == [(PROFILE, ('.claude/hooks/check.sh', '.claude/settings.json')), (WORKFLOW_PROFILE, (NAME,))]
+        assert [unit.status for unit in units] == ['passed', 'passed']
         # One transaction that mixes both is no single unit and stays blocked.
-        self.assertEqual(evaluate(self.project, before, after).status, 'blocked')
-        self.assertEqual(evaluate(self.project, before, after).profile, PROFILE)
+        assert evaluate(self.project, before, after).status == 'blocked'
+        assert evaluate(self.project, before, after).profile == PROFILE
 
     def test_hook_transaction_never_admits_a_workflow_member_past_the_lint(self):
         # A workflow script inside a hook segment has the hook facet, and a hook command can name it.
@@ -277,29 +287,25 @@ class WorkflowContractTests(unittest.TestCase):
         before, after = stage(self.project, '.claude/settings.json', hooks(script=name), {name: (bad, 0o755)})
         with no_execution():
             whole = evaluate(self.project, before, after)
-            self.assertEqual((whole.profile, whole.status), (PROFILE, 'blocked'))
-            self.assertIn(('blocked', 'workflow_member_outside_hook_contract', name), whole.findings)
-            with self.assertRaisesRegex(ValueError, 'did not pass'):
+            assert (whole.profile, whole.status) == (PROFILE, 'blocked')
+            assert ('blocked', 'workflow_member_outside_hook_contract', name) in whole.findings
+            with pytest.raises(ValueError, match='did not pass'):
                 self.journal.prepare(before, after, hook_contract=whole)
-        self.assertFalse((self.project / name).exists())
-        self.assertEqual([unit.status for unit in contracts_for(self.project, before, after)], ['blocked', 'blocked'])
+        assert not (self.project / name).exists()
+        assert [unit.status for unit in contracts_for(self.project, before, after)] == ['blocked', 'blocked']
 
     def test_codex_has_no_workflow_equivalent(self):
-        self.assertEqual(surfaces.classify(NAME, 'codex').writability, 'unsupported')
+        assert surfaces.classify(NAME, 'codex').writability == 'unsupported'
         row = next(row for row in surfaces.CAPABILITIES if (row.surface, row.runtime) == ('workflows', 'codex'))
-        self.assertEqual(row.item, 'no workflow script loader in the pinned source')
+        assert row.item == 'no workflow script loader in the pinned source'
         _, _, contract = self.unit()
-        self.assertEqual(contract.runtime, 'claude-code')
-        self.assertEqual(contract.document()['codex'], 'no_workflow_loader_in_pinned_source')
+        assert contract.runtime == 'claude-code'
+        assert contract.document()['codex'] == 'no_workflow_loader_in_pinned_source'
 
     def test_hook_contract_documents_keep_their_identity(self):
         settings = self.project / '.claude/settings.json'; settings.write_bytes(b'{}\n')
         before, after = stage(self.project, '.claude/settings.json', hooks(), {'.claude/hooks/check.sh': (b'#!/bin/sh\n', 0o755)})
         document = evaluate(self.project, before, after).document()
-        self.assertEqual(document['profile'], PROFILE)
-        self.assertNotIn('lint', document)
-        self.assertNotIn('codex', document)
-
-
-if __name__ == '__main__':
-    unittest.main()
+        assert document['profile'] == PROFILE
+        assert 'lint' not in document
+        assert 'codex' not in document

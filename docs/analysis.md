@@ -1,8 +1,9 @@
 # What analysis runs
 
-Run `ahl analyze .` to inspect local evidence without a model call. `ahl analysis .`
-is an alias. Run `ahl improve .` to collect the same evidence and then prepare and
-evaluate supported candidates. Neither command requires a separate mining step.
+`ahl analyze .` inspects local evidence without a model call; `ahl analysis .`
+is its alias. `ahl improve .` collects the same evidence before candidate preparation
+and evaluation. Neither requires a separate mining step. See [workflows](workflows.md)
+for the operating steps.
 
 ## Default methods
 
@@ -80,15 +81,8 @@ Each receipt distinguishes `discovery_input_events` from method-specific
 synthesis carry the same private profile as the execution receipt even when
 extracted for supported local reporting.
 
-The policy adapts algorithm-selection principles from
-[Rice (1976)](https://doi.org/10.1016/S0065-2458(08)60520-3), event-quality guidance
-from the [Process Mining Manifesto](https://www.vdaalst.com/publications/p658.pdf),
-and the distinction between complementary methods and independent bias structures
-in [Lawlor et al.](https://pmc.ncbi.nlm.nih.gov/articles/PMC5841843/).
-[Cawley and Talbot](https://jmlr.org/papers/v11/cawley10a.html) explain why selecting
-on finite observed performance can bias evaluation. These motivate a transparent
-prerequisite policy; they do not establish that AHL's policy is unbiased or improves
-diagnostic accuracy. That requires a separate frozen, independently labeled study.
+The [method-selection rationale](analysis-method-rationale.md) describes the
+research context and limits of this policy.
 
 Private `analysis.json` contains the graph, findings, execution receipt and
 collection metadata. `report.md` presents counts, method statuses and caveats.
@@ -149,6 +143,37 @@ fingerprint includes the fields because they cannot be rederived from the
 ledger. Broader cross-file ordering remains open in
 [#190](https://github.com/mihazs/agent-harness-lab/issues/190).
 
+## Public benchmark report input
+
+`ahl benchmark-report --public` accepts a nonempty JSON list of flat matched-pair
+records. Each record requires `baseline_runtime`, `candidate_runtime`, and
+`provenance`; the only additional record fields are `status`, `execution_kind`,
+and `publication_allowed`. If supplied, `publication_allowed` must be `true`.
+Unknown fields, profiles, and metadata wrappers are rejected before any report
+directory is created.
+
+Each runtime object supplies `provider`, `runtime`, `model_revision`, `reasoning`,
+`task_bank_revision`, `sandbox_image`, `permissions`, and `controller_version`.
+The values must match within a pair. The only additional runtime field is
+`effective_settings_verified`; it must be `true` in both objects for the settings
+to be reported as verified, and must be a boolean when supplied. The eight
+runtime values are nonempty strings of at most 4096 characters.
+
+`status` may be `unknown`, `not_run`, `not_executed`, `completed`, `passed`,
+`failed`, `skipped`, `inconclusive`, `blocked`, `incomplete`, `interrupted`,
+`budget_exhausted`, `execution_error`, `invalid_input`, `grader_error`, `timeout`,
+`agent_timeout`, `rejected`, or `supported`. `execution_kind` may be `synthetic`,
+`replay`, `real_model`, or `fake_agent`. When omitted, these default to `unknown`
+and `synthetic` respectively.
+
+The provenance object contains only `source_kind`, `approved_publication`,
+`source_ref`, and `derived_from_private`. Public export requires `source_kind` to
+be `synthetic` or `public`, `approved_publication` to be `true`, a nonempty
+`source_ref` string of at most 4096 characters, and `derived_from_private` to be
+`false`. These are caller assertions;
+the command does not authenticate their origin or prove that data is public.
+Without `--public`, the existing private report input path is unchanged.
+
 ## Optional algorithms and remaining integration
 
 | Capability | Current entrypoint / prerequisite | Default analysis? |
@@ -199,3 +224,84 @@ mechanism routing [#10](https://github.com/mihazs/agent-harness-lab/issues/10),
 search integration [#12](https://github.com/mihazs/agent-harness-lab/issues/12) and
 verified behavioral application [#77](https://github.com/mihazs/agent-harness-lab/issues/77).
 The descriptive analysis changes do not close those broader issues.
+
+## Exit reasons and next actions
+
+The CLI writes one short summary to stderr and preserves the JSON receipt on stdout. Empty evidence exits 0: analysis ran, but no capture was found. The first suggested step, `ahl audit .`, is offline and uses no model; `ahl improve` can incur model costs. Unknown or unrecognized reasons remain inconclusive; inspect the private receipt before retrying.
+
+| Reason | Remediation |
+| --- | --- |
+| `agent_runtime_unavailable` | No requested runtime executable was found; install it or pass its trusted path with --codex or --claude. Authentication is not checked by AHL. |
+| `analysis_incomplete` | Review caveats in analysis.json; restore missing coverage or remove explicit limits before interpreting absence of findings. |
+| `analysis_observed` | Review the captured evidence and assess a candidate with ahl improve when ready. |
+| `candidate_identical_to_baseline` | Review the unchanged candidate and its supporting evidence. |
+| `capability_preflight_unavailable` | Restore the required preflight capability before retrying. |
+| `certification_prerequisites_unverified` | Verify the certification prerequisites before drawing a conclusion. |
+| `codex_credentials_unavailable` | Authenticate the selected runtime before requesting model execution. |
+| `configuration_changed_before_execution` | Review the changed configuration before retrying. |
+| `configuration_requires_recommendation_only` | Review the recommendation under the configured application policy. |
+| `configured_bank_cannot_combine_with_managed_experiment` | Run without --experiment-request/--evaluation-store, or use the starter bank. |
+| `configured_bank_digest_mismatch` | The configured bank changed; review it and set bank.sha256 in ahl.json to its new digest. |
+| `configured_bank_invalid_or_unavailable` | Select an accessible valid project bank or use the starter bank; review its configuration before retrying. |
+| `configured_bank_requires_cooperative_runtime` | Pinned project banks run only on the codex or claude runtime; set runtime in ahl.json to {name: codex or claude, executable: <absolute path>}. |
+| `configured_bank_requires_development_regression_and_heldout` | Add development, calibration and held-out (certification or transfer) partitions to the bank. |
+| `configured_bank_shared_trial_budget_exhausted` | Raise limits.trials in ahl.json to at least 1 + 2 * (bank task count). |
+| `configured_executable_differs_from_requested_executable` | Align the executable with the project configuration. |
+| `configured_executable_unavailable` | Provide the configured executable at its trusted path. |
+| `configured_isolated_runtime_unsupported` | Select a supported runtime profile. |
+| `configured_managed_bank_requires_controlled_workflow` | Managed banks run only through the controlled workflow; use a non-managed bank. |
+| `configured_profile_does_not_allow_cooperative_improvement` | ahl.json profile is not cooperative; review it and set profile to cooperative and runtime to {name: codex or claude, executable: <absolute path>} to allow model execution. |
+| `configured_responses_requires_controlled_improvement` | Select the controlled Responses improvement workflow. |
+| `configured_runtime_differs_from_requested_runtime` | The requested runtime or executable differs from ahl.json; drop the override or update runtime in ahl.json. |
+| `configured_shared_trial_budget_infeasible` | Increase the shared trial limit for the requested comparison. |
+| `evaluation_no_improvement` | Review the evaluation results before proposing another candidate. |
+| `executor_containment_or_state_failure` | Inspect the executor containment and state failure before retrying. |
+| `fixed_comparison_inference_budget_infeasible` | Increase the declared inference budget for the comparison. |
+| `fresh_comparison_incomplete` | Review the incomplete comparison and its missing trial coverage. |
+| `frozen_inputs_changed` | Review the changed frozen inputs before starting a fresh evaluation. |
+| `grader_sandbox_unavailable` | Provide the required grader sandbox capabilities. |
+| `hook_adoption_requires_explicit_authorization` | Review the hook change and its authorization requirements. |
+| `inference_aborted_after_failure` | Review the recorded inference failure before retrying. |
+| `inference_protocol_error_no_retry` | Inspect the recorded inference protocol error before any retry. |
+| `inference_request_bytes_exhausted` | Review the configured inference request byte limit. |
+| `inference_request_count_exhausted` | Review the configured inference request limit. |
+| `inference_response_bytes_exhausted` | Review the configured inference response byte limit. |
+| `inference_sandbox_unavailable` | Provide the required inference sandbox capabilities. |
+| `inference_tool_count_exhausted` | Review the configured inference tool-call limit. |
+| `inference_transport_failed_no_retry` | Inspect the recorded inference transport failure before any retry. |
+| `instruction_removal_inconclusive` | Restore the missing behavioral controls before evaluating the removal. |
+| `instruction_removal_rejected` | Review the failed behavioral controls before revising the removal. |
+| `instruction_validation_blocked` | Review the instruction validation findings before retrying. |
+| `isolation_qualification_unverified` | Verify the required isolation qualification before retrying. |
+| `missing_or_duplicate_trials` | Review the trial records and restore complete, unique trial coverage. |
+| `no_data` | Run ahl audit . for a zero-model-cost static convention check; ahl improve may incur model costs. |
+| `offline_configuration_forbids_model_execution` | Use an offline operation or explicitly configure a supported runtime. |
+| `offline_sandbox_unavailable` | Provide the required offline sandbox capabilities. |
+| `permission_qualification_not_met` | Review the permission qualification and restore the required isolation. |
+| `precision_target_infeasible` | Review the requested precision target and available budget. |
+| `preflight_budget_exhausted` | Review the preflight budget before retrying. |
+| `prior_inference_request_unresolved_no_retry` | Resolve the earlier inference request before issuing another. |
+| `proposer_no_change` | Review the evidence and proposal before deciding whether another candidate is needed. |
+| `restricted_process_protocol_unqualified` | Restore the required restricted-process qualification. |
+| `responses_inherit_env_unsupported` | Remove --inherit-env when using the Responses runtime. |
+| `select_one_runtime_with_agent` | Several supported runtimes were found; rerun with --agent codex or --agent claude (or set runtime in ahl.json). |
+| `shared_trial_budget_exhausted` | Review and increase the shared trial budget if appropriate. |
+| `target_filesystem_read_only` | Use a separately authorized writable execution context or keep analysis read-only. |
+| `status:applied` | Review the recorded deployment and its rollback information. |
+| `status:blocked` | Review the reported prerequisite before retrying. |
+| `status:budget_exhausted` | Review the recorded budget before retrying. |
+| `status:conflict` | Review the recorded conflict before retrying. |
+| `status:evaluation_failed` | Review the failed evaluation records before retrying. |
+| `status:execution_error` | Review the recorded execution error before retrying. |
+| `status:incomplete` | Review the incomplete run and missing evidence. |
+| `status:inconclusive` | Review the incomplete evidence in the private receipt. |
+| `status:interrupted` | Review the interrupted run before starting another. |
+| `status:invalid_input` | Review and correct the reported input error before retrying. |
+| `status:invalid_proposal` | Review the invalid proposal and its recorded validation. |
+| `status:legacy_attempted` | Review the recorded legacy operation before retrying. |
+| `status:no_change` | Review the evidence and proposal before deciding whether another candidate is needed. |
+| `status:rejected` | Review the recorded evaluation and rejection evidence. |
+| `status:requires_intervention` | Review the recorded intervention requirement before retrying. |
+| `status:setup_error` | Review and correct the recorded setup error. |
+| `trial_budget_requires_two_preparation_and_six_paired_trials` | Raise the trial limit to at least 8 in ahl.json limits.trials. |
+| `unresolved_operation_requires_hook_contract` | Supply the required hook contract before considering the operation. |

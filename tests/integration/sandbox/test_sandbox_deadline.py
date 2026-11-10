@@ -1,4 +1,5 @@
 """Controller deadlines include evaluator preparation and cannot reset in a child."""
+from contextlib import ExitStack
 import math
 import os
 import shutil
@@ -8,19 +9,16 @@ from unittest.mock import patch
 
 import pytest
 
-from tests.support.unittest_cleanups import run_cleanups
 from tests.integration.sandbox import test_sandbox_graders as fixtures
 
 
 @pytest.fixture
 def deadline():
-    """test_sandbox_graders' SandboxedGraderTests with a five-second manifest budget."""
-    fixture = fixtures.SandboxedGraderTests(); fixture.setUp()
-    try:
+    """Synthetic grader fixture with a five-second manifest budget."""
+    with ExitStack() as cleanups:
+        fixture = fixtures.SandboxedGrader(cleanups.callback)
         fixture.manifest['budget_seconds'] = 5; fixture.fixture.write_manifest()
         yield SimpleNamespace(fixture=fixture, root=fixture.root, runner=fixture.runner, args=fixture.args)
-    finally:
-        run_cleanups(fixture)
 
 
 def test_preparing_inputs_consumes_budget_before_any_capability_or_cli_probe(deadline):
@@ -44,7 +42,8 @@ def test_inherited_deadline_only_narrows_remaining_capability_and_cli_time(deadl
     def capability(*,seconds):
         assert seconds == 2; clock[0] += 1
         return dict(status='available')
-    def execute(argv,cwd,seconds):
+    def execute(argv,cwd,seconds,*,env):
+        assert isinstance(env,dict)
         assert argv == [str(deadline.fixture.agent),'--version']; assert seconds == 1
         clock[0] += 1
         return dict(exit_code=0,stdout='synthetic-agent')
@@ -84,7 +83,8 @@ def test_parent_cannot_enlarge_manifest_budget(deadline):
     def capability(*,seconds):
         assert seconds == 3
         return dict(status='available')
-    def execute(argv,cwd,seconds):
+    def execute(argv,cwd,seconds,*,env):
+        assert isinstance(env,dict)
         assert seconds == 5; clock[0] += seconds
         return dict(exit_code=0,stdout='synthetic-agent')
     backend.capability.side_effect = capability
@@ -97,9 +97,8 @@ def test_parent_cannot_enlarge_manifest_budget(deadline):
 
 @pytest.fixture
 def workflow():
-    fixture = fixtures.workflow_fixtures.WorkflowTests(); fixture.setUp()
-    yield fixture
-    run_cleanups(fixture)
+    with ExitStack() as cleanups:
+        yield fixtures.workflow_fixtures.WorkflowTests(cleanups.callback)
 
 
 def test_improve_forwards_its_original_deadline_to_evaluation(workflow):

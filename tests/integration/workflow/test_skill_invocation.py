@@ -20,7 +20,7 @@ from agent_harness_lab.evaluation import responses
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
 from agent_harness_lab.promotion.journal import Journal
 from tests.integration.workflow import test_workflow as fixtures
-from tests.support.unittest_cleanups import run_cleanups
+from tests.unit.evaluation.test_benchmark_contracts import record as public_record
 
 
 def invoke(argv):
@@ -36,7 +36,7 @@ def make_fixture():
     """Builds synthetic workflow projects and releases each with its cleanups, in reverse order, after the test."""
     with ExitStack() as stack:
         def make():
-            fixture=fixtures.WorkflowTests();fixture.setUp();stack.callback(run_cleanups,fixture)
+            fixture=fixtures.WorkflowTests(stack.callback)
             return fixture
         yield make
 
@@ -126,7 +126,7 @@ class TestSkillInvocation:
 
     def test_child_environment_is_passed_to_popen_without_mutating_parent(self):
         runner=cli.evaluator();before=dict(os.environ)
-        environment=runner.managed_environment('synthetic-parent')
+        environment=runner.managed_environment('synthetic-parent', 'codex')
         result=runner.execute([sys.executable,'-c','import os; print(os.environ["AHL_MANAGED_PREPARATION"])'],Path.cwd(),10,env=environment)
         assert (result['exit_code'],result['stdout'].strip()) == (0,'synthetic-parent')
         assert dict(os.environ) == before
@@ -139,12 +139,12 @@ class TestSkillInvocation:
     def test_only_preparation_children_receive_denial_and_remaining_context(self,make_fixture):
         fixture=make_fixture();runner=cli.evaluator();execute=runner.execute;calls=[]
         def observed(argv,cwd,timeout,stdin=None,**kwargs):
-            calls.append((Path(cwd),kwargs.get('env')))
+            calls.append((Path(cwd),kwargs.get('env'),argv))
             return execute(argv,cwd,timeout,stdin,**kwargs)
         with patch.object(cli,'evaluator',return_value=runner),patch.object(runner,'execute',side_effect=observed):
             code,stdout,_=invoke(['skills','invoke',str(fixture.project),'--agent','codex','--codex',str(fixture.agent),'--timeout','30'])
         assert (code,json.loads(stdout)['status']) == (3,'inconclusive')
-        marked=[(cwd,environment) for cwd,environment in calls if environment is not None and 'AHL_MANAGED_PREPARATION' in environment]
+        marked=[(cwd,environment) for cwd,environment,_ in calls if environment is not None and 'AHL_MANAGED_PREPARATION' in environment]
         assert len(marked) == 2
         for cwd,environment in marked:
             context=json.loads((cwd/'context.json').read_text())['invocation']
@@ -153,8 +153,57 @@ class TestSkillInvocation:
             assert context['remaining_trials'] <= 24
             assert not context['execution_authority']
         # Trial children get only their own temporary CODEX_HOME, never the preparation marker.
-        trials=[environment for _,environment in calls if environment is not None and 'AHL_MANAGED_PREPARATION' not in environment]
+        trials=[environment for _,environment,argv in calls if environment is not None and argv[0] == str(fixture.agent)
+                and '--version' not in argv and 'AHL_MANAGED_PREPARATION' not in environment]
         assert trials;assert all(Path(value['CODEX_HOME']).name=='codex-home' for value in trials)
+
+    @pytest.mark.parametrize('prefix', [['improve'], ['watch'], ['skills','invoke']])
+    @pytest.mark.parametrize('inherit', [False, True])
+    def test_native_environment_opt_in_reaches_trials(self, prefix, inherit, make_fixture):
+        fixture = make_fixture(); runner = cli.evaluator(); execute = runner.execute; children = []; preparations = []; graders = []
+        synthetic = {'PATH': '/usr/bin:/bin', 'HOME': str(fixture.root), 'AHL_TEST_CANARY': 'synthetic-canary',
+                     'CODEX_API_KEY': 'synthetic-key', 'CODEX_HOME': str(fixture.root / 'synthetic-codex-home')}
+        def observed(argv, cwd, timeout, stdin=None, **kwargs):
+            environment = kwargs.get('env')
+            if any(Path(arg).name == 'grade.py' for arg in argv):
+                graders.append(environment)
+            if environment is not None and 'AHL_MANAGED_PREPARATION' in environment:
+                preparations.append(environment)
+            elif environment is not None and 'CODEX_HOME' in environment and '--version' not in argv:
+                children.append(environment)
+            return execute(argv, cwd, timeout, stdin, **kwargs)
+        options = ['--inherit-env'] if inherit else []
+        if prefix == ['watch']: options += ['--once']
+        with patch.dict(os.environ, synthetic, clear=True), patch.object(cli, 'evaluator', return_value=runner), \
+                patch.object(runner, 'execute', side_effect=observed):
+            code, stdout, _ = invoke([*prefix, str(fixture.project), '--agent', 'codex', '--codex',
+                                      str(fixture.agent), '--timeout', '30', *options])
+        assert code in (0, 3)
+        assert children
+        assert all(('AHL_TEST_CANARY' in env) == inherit for env in children)
+        assert len(preparations) == 2
+        assert len(graders) >= 15  # Nine self-tests and six baseline/candidate graders.
+        assert all(env is not None and 'AHL_TEST_CANARY' not in env and 'CODEX_API_KEY' not in env for env in graders)
+        assert all(('AHL_TEST_CANARY' in env) == inherit and env['CODEX_API_KEY'] == 'synthetic-key'
+                   and env['CODEX_HOME'] == synthetic['CODEX_HOME'] for env in preparations)
+        result = json.loads(stdout)
+        for name in ('preparation-0.environment.json', 'evaluation-construction-0.environment.json'):
+            env_receipt = json.loads((Path(result['output']) / name).read_text())
+            assert env_receipt['inherited'] is inherit
+            assert 'AHL_MANAGED_PREPARATION' in env_receipt['names']
+            assert 'synthetic-key' not in json.dumps(env_receipt)
+
+        evaluation = Path(result['output']) / 'evaluation-0/results.json'
+        receipt = json.loads(evaluation.read_text())
+        assert receipt['runtime']['environment_inherited'] is inherit
+        assert all(trial['environment']['inherited'] is inherit for trial in receipt['trials'])
+
+    def test_watch_configuration_tracks_environment_inheritance(self, make_fixture):
+        args = make_fixture().args()
+        args.inherit_env = False
+        before = workflow.watch_configuration(args)
+        args.inherit_env = True
+        assert workflow.watch_configuration(args) != before
 
     def test_forged_context_cannot_supply_configuration_or_public_receipt(self,make_fixture):
         fixture=make_fixture()
@@ -185,8 +234,7 @@ class TestSkillInvocation:
 
     @pytest.mark.parametrize('shape',['invocation','stage','context'])
     def test_actual_invocation_stays_private_inside_preparation_context(self,shape):
-        public=dict(publication_allowed=True,provenance=dict(source_kind='synthetic',approved_publication=True,
-            source_ref='synthetic:stage-context',derived_from_private=False))
+        public=dict(public_record(),publication_allowed=True)
         assert public_export_allowed([public])
         invocation=invocation_context(SimpleNamespace(project=Path('/synthetic/project'),agent='codex'),
             Path('/synthetic/output/run'),10,remaining_seconds=1,remaining_trials=2)
@@ -261,6 +309,16 @@ class TestEntryReceiptParity:
         missing=json.loads(json.dumps(second));del missing['plan_sha256']
         assert entry_parity.document_differences('workflow.json',first,missing,'/a/run-1','/b/run-2') == ['plan_sha256']
         assert entry_parity.document_differences('feedback-0.json',dict(origin='cli'),dict(origin='skill'),'/a','/b') == ['origin']
+
+    def test_environment_parity_still_detects_authentication_changes(self):
+        original = dict(trials=[dict(environment=dict(names=['CODEX_API_KEY'], sha256='exact-a',
+                                                        comparison_sha256='normalized-a', inherited=False))])
+        changed = json.loads(json.dumps(original))
+        changed['trials'][0]['environment']['sha256'] = 'exact-b'
+        assert entry_parity.document_differences('evaluation-0/results.json', original, changed, '/a', '/b') == []
+        changed['trials'][0]['environment']['comparison_sha256'] = 'normalized-b'
+        assert entry_parity.document_differences('evaluation-0/results.json', original, changed, '/a', '/b') == [
+            'trials.0.environment.comparison_sha256']
 
     @pytest.mark.parametrize('path,value',[
         pytest.param(('status',),'applied',id='status'),

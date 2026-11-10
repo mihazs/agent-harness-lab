@@ -1,4 +1,5 @@
 """Correction CLI routing over synthetic controller observations; no live inference."""
+from contextlib import ExitStack
 import json
 from unittest.mock import patch
 
@@ -11,9 +12,9 @@ from tests.integration.evaluation import test_grader_correction as correction_te
 class TestCorrectionCli:
     @pytest.fixture(autouse=True)
     def _correction(self):
-        self.fixture = correction_tests.GraderCorrectionTests(); self.fixture.setUp()
-        yield
-        self.fixture.doCleanups()
+        with ExitStack() as cleanups:
+            self.fixture = correction_tests.GraderCorrection(cleanups.callback)
+            yield
 
     def invoke(self,*arguments):
         with patch('builtins.print') as output:

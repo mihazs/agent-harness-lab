@@ -10,17 +10,13 @@ import pytest
 
 from agent_harness_lab.evaluation import task_bank
 from tests.integration.evaluation import test_regression_admission as fixtures
-from tests.support.unittest_cleanups import run_cleanups
+from contextlib import ExitStack
 
 
 @pytest.fixture
 def admission():
-    case = fixtures.RegressionAdmissionTests()
-    try:
-        case.setUp()
-        yield case
-    finally:
-        run_cleanups(case)
+    with ExitStack() as cleanups:
+        yield fixtures.RegressionAdmission(cleanups.callback)
 
 
 def test_changing_profile_between_validation_reads_cannot_bypass_acceptance(admission):

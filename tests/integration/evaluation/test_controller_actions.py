@@ -16,11 +16,12 @@ from tests.integration.sandbox import test_sandbox_inference as fixtures
 class ControllerActionTests:
     """Synthetic controller harness; the emission and trajectory tests build it and call setUp and doCleanups."""
     def setUp(self):
-        self.fixture = fixtures.ControllerInferenceTests(); self.fixture.setUp()
+        self._fixture_cleanups = ExitStack()
+        self.fixture = fixtures.ControllerInference(self._fixture_cleanups.callback)
         self.root,self.deadline = self.fixture.root,self.fixture.deadline
 
     def doCleanups(self):
-        self.fixture.doCleanups()
+        self._fixture_cleanups.close()
 
     def client(self,items,**limits):
         transport = Mock(side_effect=[fixtures.reply(output) for output in items])
@@ -184,7 +185,7 @@ class TestControllerActionIntegration:
         with ExitStack() as self.cleanups: yield
 
     def test_actual_runner_propagates_private_per_trial_observations(self):
-        fixture = fixtures.ResponsesEvaluationTests(); fixture.setUp(); self.cleanups.callback(fixture.doCleanups)
+        fixture = fixtures.ResponsesEvaluation(self.cleanups.callback)
         with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=fixture.backend), \
                 patch.object(responses,'request',side_effect=fixture.transport):
             fixture.runner.evaluate(fixture.args)
@@ -200,7 +201,7 @@ class TestControllerActionIntegration:
         assert 'SYNTHETIC_CONTROLLER_KEY' not in json.dumps(result)
 
     def test_runner_denial_keeps_observation_when_no_worker_commands_exist(self):
-        fixture = fixtures.ResponsesEvaluationTests(); fixture.setUp(); self.cleanups.callback(fixture.doCleanups)
+        fixture = fixtures.ResponsesEvaluation(self.cleanups.callback)
         with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=fixture.backend), \
                 patch.object(responses,'request',return_value=fixtures.reply([fixtures.call(name='unapproved')])):
             fixture.runner.evaluate(fixture.args)
@@ -214,7 +215,7 @@ class TestControllerActionIntegration:
         baseline = Path(__file__).resolve().parents[3]/'artifacts/controller-actions/baseline/run_evaluation.py'
         if not baseline.exists(): pytest.skip('requires explicitly frozen ignored baseline')
         from tests.integration.evaluation import test_offline_evaluation as offline
-        fixture = offline.OfflineFixture(); fixture.setUp(); self.cleanups.callback(fixture.doCleanups)
+        fixture = offline.OfflineFixture(self.cleanups.callback)
         spec = importlib.util.spec_from_file_location('action_baseline_runner',baseline)
         module = importlib.util.module_from_spec(spec); spec.loader.exec_module(module)
         fixture.args.agent='offline'

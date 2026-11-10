@@ -13,15 +13,9 @@ import pytest
 from agent_harness_lab import config, one_call, workflow
 from agent_harness_lab.promotion import journal as transactions
 from agent_harness_lab.promotion.journal import Journal
-from tests.integration.workflow import test_one_call as fixtures
-from tests.support.unittest_cleanups import run_cleanups
+from tests.support.one_call import one as one
 
 
-@pytest.fixture
-def one():
-    fixture = fixtures.OneCallTests(); fixture.setUp()
-    yield fixture
-    run_cleanups(fixture)
 
 
 def test_forked_inherited_context_cannot_release_the_live_parent_lock(one):

@@ -10,15 +10,7 @@ import pytest
 from agent_harness_lab import entry_parity
 from agent_harness_lab.cli import main
 from agent_harness_lab.promotion.journal import Journal
-from tests.integration.workflow.test_one_call import OneCallTests
-from tests.support.unittest_cleanups import run_cleanups
-
-
-@pytest.fixture
-def one():
-    fixture = OneCallTests(); fixture.setUp()
-    yield fixture
-    run_cleanups(fixture)
+from tests.support.one_call import one as one
 
 
 def route(one, prefix, *options):
