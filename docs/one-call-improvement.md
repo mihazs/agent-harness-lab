@@ -604,11 +604,13 @@ frontmatter fence on line 1 that parses (`missing_frontmatter`,
 and name itself after its directory in lowercase letters, digits and hyphens
 (`invalid_name`). A name is required outside `.claude/skills`
 (`missing_name`), since Codex rejects a skill without one. Inline Markdown links
-outside code must resolve to a file, or a directory holding one, in the bundle
+and used full or collapsed reference links with single-line definitions outside
+code must resolve to a file, or a directory holding one, in the bundle
 (`dangling_reference`) and stay inside it (`reference_escapes_bundle`); targets
 are percent-decoded and normalized, and `<...>` targets may hold spaces. Fenced
 code is skipped in one linear pass (a closing fence needs the opener's length and
-no info string; an unclosed fence runs to the end). A newly added file that
+no info string; an unclosed fence runs to the end). Shortcut reference links,
+multiline definitions and the full Markdown grammar are not checked. A newly added file that
 `SKILL.md` never mentions by a whole bundle-relative path or unique file name is
 an `orphan_asset`. A filename embedded within a longer filename does not count;
 when multiple bundle files share a basename, the added file requires its path.
