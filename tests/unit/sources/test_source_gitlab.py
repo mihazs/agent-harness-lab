@@ -128,6 +128,92 @@ class GitLabFixture:
 
 
 class TestGitLabSource(GitLabFixture):
+    def v4_commit_selection(self):
+        return replace(self.selection, schema_version=4, capture=('commits', 'merge_requests'), issues=())
+
+    def commit_rows(self):
+        return [dict(id='c'*40, committed_date=self.stamp, title='SYNTHETIC_PRIVATE_TITLE',
+                     message='SYNTHETIC_PRIVATE_BODY', parent_ids=['a'*40])]
+
+    def test_v4_mr_commits_are_scoped_source_claims_not_ancestry_or_outcomes(self):
+        selection = self.v4_commit_selection()
+        self.routes[self.mr_path+'/commits?page=1&per_page=100'] = self.commit_rows()
+        client, snapshot = self.read(selection)
+        commit, = self.nodes(client, 'gitlab_mr_commit')
+        assert commit['commit_sha256'] == digest('c'*40)
+        assert (commit['membership'], commit['ancestry']) == ('server_reported', 'unknown')
+        assert ('commits', 'captured', None) in self.states(client)
+        assert any(r[0] == 'reported_commit_in_mr' for r in client.summary['relations'])
+        assert all('parent' not in relation[0] for relation in client.summary['relations'])
+        assert snapshot.checkpoint_ready and not client.summary['task_outcomes_verified']
+        assert all(r.causal_status == 'unknown' and r.independence == 'unknown' for r in snapshot.records)
+        assert 'c'*40 not in repr(client.summary)
+        before = commit['native_id_sha256']
+        self.mr['sha'], self.mr['squash_commit_sha'] = 'd'*40, 'e'*40
+        changed, _ = self.read(selection)
+        assert self.nodes(changed, 'gitlab_mr_commit')[0]['native_id_sha256'] == before
+
+    def test_v4_same_commit_and_iid_in_different_projects_remain_distinct(self):
+        selection = self.v4_commit_selection()
+        self.routes[self.mr_path+'/commits?page=1&per_page=100'] = self.commit_rows()
+        first, _ = self.read(selection)
+        other_path = 'synthetic-group/other-project'
+        self.build(43, other_path)
+        self.routes['/api/v4/projects/43/merge_requests/7/commits?page=1&per_page=100'] = self.commit_rows()
+        second, _ = self.read(replace(selection, project=other_path))
+        assert self.nodes(first, 'gitlab_mr_commit')[0]['native_id_sha256'] != self.nodes(second, 'gitlab_mr_commit')[0]['native_id_sha256']
+
+    def test_v4_commit_pagination_and_late_denial(self):
+        selection = self.v4_commit_selection()
+        target = self.mr_path+'/commits'
+        first = [dict(id=f'{index:040x}') for index in range(100)]
+        self.routes[target+'?page=1&per_page=100'] = lambda: self.page(first, **{'X-Total': '101', 'X-Page': '1', 'X-Next-Page': '2'})
+        self.routes[target+'?page=2&per_page=100'] = lambda: self.page([dict(id=f'{100:040x}')],
+            **{'X-Total': '101', 'X-Page': '2', 'X-Next-Page': ''})
+        client, snapshot = self.read(selection)
+        assert len(self.nodes(client, 'gitlab_mr_commit')) == 101 and snapshot.checkpoint_ready
+        self.routes[target+'?page=2&per_page=100'] = Response(b'SYNTHETIC_SECRET', 403)
+        client, snapshot = self.read(selection)
+        assert ('commits', 'pagination_incomplete', 'forbidden') in self.states(client)
+        assert not snapshot.checkpoint_ready
+
+    @pytest.mark.parametrize('blocked', ['project', 'merge_request', 'commits'])
+    def test_v4_unavailable_commit_parent_stays_visible(self, blocked):
+        selection = self.v4_commit_selection()
+        target = {'project': '/api/v4/projects/'+ENCODED, 'merge_request': self.mr_path,
+                  'commits': self.mr_path+'/commits?page=1&per_page=100'}[blocked]
+        self.routes[target] = Response(b'SYNTHETIC_SECRET', 403)
+        client, snapshot = self.read(selection)
+        expected = ('commits', 'forbidden', None) if blocked == 'commits' else ('commits', 'not_observed', blocked+'_unavailable')
+        assert expected in self.states(client) and not snapshot.checkpoint_ready
+        if blocked != 'commits': assert not any('/commits?' in target for target in self.targets)
+
+    @pytest.mark.parametrize('bad_id', [None, True, '', 'A'*40, 'a'*39])
+    def test_v4_invalid_commit_identity_fails_closed(self, bad_id):
+        self.routes[self.mr_path+'/commits?page=1&per_page=100'] = [dict(id=bad_id)]
+        with pytest.raises(TransportError): self.read(self.v4_commit_selection())
+
+    def test_v4_commits_are_bounded_and_explicitly_selected(self):
+        with pytest.raises(ValueError): replace(self.selection, schema_version=3, capture=('commits', 'merge_requests'), issues=())
+        with pytest.raises(ValueError): replace(self.selection, schema_version=4, capture=('commits', 'issues'), merge_requests=())
+        self.routes[self.mr_path+'/commits?page=1&per_page=100'] = [dict(id='a'*40), dict(id='b'*40)]
+        with patch.object(gitlab, 'MAX_MR_COMMITS', 1):
+            with pytest.raises(TransportError): self.read(self.v4_commit_selection())
+
+    def test_v4_duplicate_commit_fails_closed(self):
+        self.routes[self.mr_path+'/commits?page=1&per_page=100'] = [dict(id='a'*40), dict(id='a'*40)]
+        with pytest.raises(TransportError): self.read(self.v4_commit_selection())
+
+    def test_v4_combines_issue_and_mr_discussions_with_commits(self):
+        selection = replace(self.selection, schema_version=4,
+            capture=('commits', 'discussions', 'issues', 'merge_requests'))
+        self.routes[self.issue_path+'/discussions?page=1&per_page=100'] = self.issue_discussion_rows()
+        self.routes[self.mr_path+'/discussions?page=1&per_page=100'] = self.discussion_rows()
+        self.routes[self.mr_path+'/commits?page=1&per_page=100'] = self.commit_rows()
+        client, snapshot = self.read(selection)
+        assert len(self.nodes(client, 'gitlab_discussion')) == 3
+        assert len(self.nodes(client, 'gitlab_mr_commit')) == 1
+        assert snapshot.checkpoint_ready and not client.summary['task_outcomes_verified']
     def v3_discussion_selection(self):
         return replace(self.selection, schema_version=3,
             capture=('approvals', 'discussions', 'issues', 'merge_requests', 'notes'))
@@ -642,7 +728,7 @@ class TestGitLabSource(GitLabFixture):
     @pytest.mark.parametrize('change', [
         dict(capture=('issues',)), dict(capture=('merge_requests', 'issues')), dict(issues=(7, 7)),
         dict(issues=(0,)), dict(capture=('approvals', 'issues', 'notes'), merge_requests=()),
-        dict(capture=('issues', 'merge_requests', 'pipelines')), dict(schema_version=4),
+        dict(capture=('issues', 'merge_requests', 'pipelines')), dict(schema_version=5),
         # A capture that selects no IID would read only the project yet look complete.
         dict(capture=('notes',), issues=(), merge_requests=()), dict(capture=(), issues=(), merge_requests=())],
         ids=['issues-only-without-merge-requests', 'unordered-capture', 'duplicate-iid', 'zero-iid',
@@ -735,6 +821,21 @@ class TestGitLabConfiguration(GitLabFixture):
                 '--project-sha256', self.source.project_sha256, '--scope-sha256', self.source.scope_sha256, *extra])
         for secret in (*SECRETS, self.base, str(self.dir)): assert secret not in output.getvalue()+error.getvalue()
         return code, json.loads(output.getvalue()) if output.getvalue() else None
+
+    def test_v4_configured_commit_preview_and_import(self):
+        self.selection = replace(self.selection, schema_version=4, capture=('commits', 'merge_requests'), issues=())
+        self.source = self.spec(self.selection, auth_mode='configured')
+        self.write()
+        self.routes[self.mr_path+'/commits?page=1&per_page=100'] = [dict(id='c'*40, message='SYNTHETIC_PRIVATE_BODY')]
+        env = ('--authorization-env', 'SYNTHETIC_GITLAB_AUTHORIZATION')
+        with patch.dict(os.environ, SYNTHETIC_GITLAB_AUTHORIZATION='Bearer SYNTHETIC_SECRET'):
+            code, result = self.invoke('preview', *env)
+            assert code == 0 and result['checkpoint_ready']
+            assert any(c['resource'] == 'commits' and c['state'] == 'captured' for c in result['gitlab_summary']['coverage'])
+            assert self.invoke('import', *env)[0] == 0
+            assert self.invoke('import', *env)[1]['imported'] == 0
+            text = self.journal.read_text()
+            assert 'c'*40 not in text and 'SYNTHETIC_PRIVATE_BODY' not in text
 
     def test_v3_configured_issue_discussions_preview_and_import(self):
         self.selection = replace(self.selection, schema_version=3, capture=('discussions', 'issues'), merge_requests=())

@@ -11,7 +11,8 @@ PROVIDER = 'gitlab'
 SOURCE_VERSION = 'v4'
 API_PREFIX = '/api/v4'
 PAGE_SIZE = 100
-CAPTURE = ('approvals', 'discussions', 'issues', 'merge_requests', 'notes')
+MAX_MR_COMMITS = 10000
+CAPTURE = ('approvals', 'commits', 'discussions', 'issues', 'merge_requests', 'notes')
 ISSUE_STATES = ('opened', 'closed')
 MERGE_STATES = ('opened', 'closed', 'locked', 'merged')
 VISIBILITY = ('private', 'internal', 'public')
@@ -43,7 +44,7 @@ class GitLabSelection(Contract):
     schema_version: int = 1
 
     def __post_init__(self):
-        if type(self.schema_version) is not int or self.schema_version not in (1, 2, 3): raise ValueError('unsupported GitLab selection version')
+        if type(self.schema_version) is not int or self.schema_version not in (1, 2, 3, 4): raise ValueError('unsupported GitLab selection version')
         instance_root(self.base_url, API_PREFIX)
         if type(self.project) is int: integer(self.project, minimum=1)
         else: project_path(self.project)
@@ -57,6 +58,7 @@ class GitLabSelection(Contract):
         # Issues and merge requests have separate IID sequences, so one IID may name both.
         if (('issues' in self.capture) != bool(self.issues) or ('merge_requests' in self.capture) != bool(self.merge_requests)
                 or 'approvals' in self.capture and not self.merge_requests
+                or 'commits' in self.capture and (self.schema_version != 4 or not self.merge_requests)
                 or 'discussions' in self.capture and (self.schema_version == 1 or self.schema_version == 2 and not self.merge_requests)
                 or not (self.issues or self.merge_requests)):
             raise ValueError('GitLab capture kinds must match the explicitly selected IIDs')
@@ -280,6 +282,25 @@ class GitLabAPI:
                 child = ledger.emit(key(kind, note_id), kind, note, note['created_at'])
                 ledger.relations.add(('note_in_discussion', child, thread))
 
+    def _commits(self, ledger, key, iid, parent, budget):
+        """Capture reported MR membership of full commit SHAs without inferring ancestry."""
+        target = f'{self.project_root}/merge_requests/{iid}/commits'
+        def identity(row):
+            value = commit_hash(row.get('id'))
+            if value is None: raise ValueError('GitLab commit identity missing')
+            return value
+        def project(row):
+            budget[0] += 1
+            if budget[0] > MAX_MR_COMMITS: raise ValueError('excessive GitLab merge request commits')
+            return dict(parent_sha256=parent, commit_sha256=identity(row), committed_at=moment(row.get('committed_date')),
+                membership='server_reported', ancestry='unknown')
+        rows, outcome = self._list(target, ledger, dict(id=str(self.project_id), merge_request_iid=str(iid)), project,
+            query=dict(per_page=PAGE_SIZE), identity=identity)
+        ledger.note('commits', outcome, parent)
+        for native, node in rows:
+            child = ledger.emit(key('gitlab_mr_commit', (iid, native)), 'gitlab_mr_commit', node, node['committed_at'])
+            ledger.relations.add(('reported_commit_in_mr', child, parent))
+
     def _capture(self, source):
         selection = self.selection
         ledger = CaptureLedger(source, self.transport, self.authorization, CONTEXTUAL)
@@ -287,7 +308,7 @@ class GitLabAPI:
         ledger.emit(digest(('gitlab_instance', selection.instance_sha256)), 'gitlab_instance',
             dict(instance_sha256=selection.instance_sha256, server_version=version or 'unknown', server_version_state=version_state))
         project = ledger.read('project', f'{API_PREFIX}/projects/{selection.selector}', self._project)
-        reads, system_notes, discussion_budget, discussion_notes = [], 0, [0, 0], set()
+        reads, system_notes, discussion_budget, discussion_notes, commit_budget = [], 0, [0, 0], set(), [0]
         if project is not None:
             scope = project['project_sha256']
 
@@ -300,8 +321,10 @@ class GitLabAPI:
                     parent, target = key(kind, iid), f'{self.project_root}/{collection}/{iid}'
                     node = ledger.read(kind[len('gitlab_'):], target, lambda raw, n=iid, p=parse: p(raw, n), parent)
                     if node is None:
-                        if 'discussions' in selection.capture and (kind == 'gitlab_merge_request' or selection.schema_version == 3):
+                        if 'discussions' in selection.capture and (kind == 'gitlab_merge_request' or selection.schema_version in (3, 4)):
                             ledger.note('discussions', ('not_observed', kind[len('gitlab_'):]+'_unavailable'), parent)
+                        if kind == 'gitlab_merge_request' and 'commits' in selection.capture:
+                            ledger.note('commits', ('not_observed', 'merge_request_unavailable'), parent)
                         continue
                     reads.append((kind, target, parse, iid, node)); ledger.emit(parent, kind, node, node['created_at'])
                     if 'notes' in selection.capture:
@@ -318,29 +341,37 @@ class GitLabAPI:
                             ledger.relations.add(('system_event_on' if note['system'] else 'conversation_on', child, parent))
                     if kind == 'gitlab_merge_request' and 'approvals' in selection.capture:
                         self._approval(ledger, key, iid, node, parent)
-                    if 'discussions' in selection.capture and (kind == 'gitlab_merge_request' or selection.schema_version == 3):
+                    if 'discussions' in selection.capture and (kind == 'gitlab_merge_request' or selection.schema_version in (3, 4)):
                         self._discussions(ledger, key, iid, node, parent, discussion_budget, discussion_notes,
                             noteable=noteable, collection=collection)
+                    if kind == 'gitlab_merge_request' and 'commits' in selection.capture:
+                        self._commits(ledger, key, iid, parent, commit_budget)
             # Readbacks narrow, but cannot remove, the window for a change between non-atomic reads.
             for kind, target, parse, iid, before in reads:
                 after = ledger.read('readback', target, lambda raw, n=iid, p=parse: p(raw, n), key(kind, iid))
                 if after not in (None, before): raise ValueError('GitLab issue or merge request changed during capture')
             if ledger.read('readback', self.project_root, self._project) not in (None, project):
                 raise ValueError('GitLab project changed during capture')
-        elif 'discussions' in selection.capture:
-            selected = (('merge_request', selection.merge_requests),)
-            if selection.schema_version == 3: selected += (('issue', selection.issues),)
-            for kind, iids in selected:
-                for iid in iids:
-                    parent = digest(('gitlab.selection', selection.project_sha256, kind, iid))
-                    ledger.note('discussions', ('not_observed', 'project_unavailable'), parent)
+        else:
+            if 'discussions' in selection.capture:
+                selected = (('merge_request', selection.merge_requests),)
+                if selection.schema_version in (3, 4): selected += (('issue', selection.issues),)
+                for kind, iids in selected:
+                    for iid in iids:
+                        parent = digest(('gitlab.selection', selection.project_sha256, kind, iid))
+                        ledger.note('discussions', ('not_observed', 'project_unavailable'), parent)
+            if 'commits' in selection.capture:
+                for iid in selection.merge_requests:
+                    parent = digest(('gitlab.selection', selection.project_sha256, 'merge_request', iid))
+                    ledger.note('commits', ('not_observed', 'project_unavailable'), parent)
         ready = ledger.ready
-        if selection.schema_version in (2, 3):
+        if selection.schema_version in (2, 3, 4):
             system_notes = sum(node['kind'] == 'gitlab_system_note' for node in ledger.nodes.values())
         warnings = ['selected_resources_only', 'merge_closure_approval_not_task_outcome', 'readbacks_non_atomic',
             'system_note_coverage_unverified', 'merge_and_squash_shas_not_ancestry',
             'execution_binding_unknown']
         if 'discussions' not in selection.capture: warnings.insert(3, 'discussions_not_captured')
+        if 'commits' in selection.capture: warnings.append('commit_membership_server_reported')
         if version is None: warnings.append('server_version_unknown')
         if ledger.unsupported: warnings.append('approvals_endpoint_unsupported')
         if not ready: warnings.append('capture_blocked_or_incomplete')
