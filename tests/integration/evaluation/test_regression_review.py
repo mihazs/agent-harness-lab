@@ -23,8 +23,7 @@ class ReviewFixture(unittest.TestCase):
     """
 
     def setUp(self):
-        self.fixture = fixtures.RegressionReplayTests(); self.fixture.setUp()
-        self.addCleanup(run_cleanups, self.fixture)
+        self.fixture = fixtures.RegressionReplay(self.addCleanup)
         self.root, self.backend = self.fixture.root, self.fixture.backend
         self.store = ReviewStore(self.root/'private-store')
         self.initial = self.store.propose(self.fixture.source, self.fixture.draft, self.fixture.spec, 'synthetic-author')

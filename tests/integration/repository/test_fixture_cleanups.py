@@ -31,8 +31,6 @@ ROWS = [
      ['tests.integration.sandbox.test_sandbox_inference.ResponsesEvaluationTests']),
     ('tests.integration.optimization.test_optimization_history', 'owner',
      ['tests.integration.evaluation.test_regression_admission.RegressionAdmissionTests']),
-    ('tests.integration.evaluation.test_regression_replay', 'replay_case',
-     ['tests.integration.evaluation.test_regression_replay.RegressionReplayTests']),
     ('tests.integration.evaluation.test_regression_review', 'review',
      ['tests.integration.evaluation.test_regression_review.ReviewFixture']),
     ('tests.integration.evaluation.test_review_authority', 'authority',
@@ -185,3 +183,18 @@ def test_preservation_history_propagates_nested_cleanup_failure(monkeypatch):
     with pytest.raises(RuntimeError, match='synthetic nested cleanup failure'):
         with ExitStack() as cleanups:
             test_preservation_history.PreservationHistory(cleanups)
+
+
+def test_replay_fixture_propagates_cleanup_failure(monkeypatch, tmp_path):
+    from contextlib import ExitStack
+    from types import SimpleNamespace
+    from tests.integration.evaluation import test_regression_replay
+
+    def fail():
+        raise RuntimeError('synthetic replay cleanup failure')
+
+    monkeypatch.setattr(test_regression_replay.tempfile, 'TemporaryDirectory',
+                        lambda: SimpleNamespace(name=str(tmp_path), cleanup=fail))
+    with pytest.raises(RuntimeError, match='synthetic replay cleanup failure'):
+        with ExitStack() as cleanups:
+            test_regression_replay.RegressionReplay(cleanups.callback)
