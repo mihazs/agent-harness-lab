@@ -39,7 +39,7 @@ _SPAN = re.compile(r'`[^`\n]*`')
 _LINK = re.compile(r'\]\((?:<([^>\n]*)>|([^)\s>]*))')
 _EXTERNAL = re.compile(r'^(?:[A-Za-z][A-Za-z0-9+.-]*:|#|/|\?)')
 _REF_DEFINITION = re.compile(r'(?m)^ {0,3}\[([^]\n]+)\]:[ \t]*(?:<([^>\n]+)>|([^\s<>]+))')
-_REF_USE = re.compile(r'(?<!\\)\[([^]\n]+)\]\[([^]\n]*)\]')
+_REF_USE = re.compile(r'\[([^]\n]+)\]\[([^]\n]*)\]')
 _COMMENT = re.compile(r'<!--(?:.*?-->|.*\Z)',re.S)
 
 
@@ -97,7 +97,11 @@ def _references(text):
     for label,angled,bare in _REF_DEFINITION.findall(reference_text):
         definitions.setdefault(normalize_label(label),angled or bare)
     targets = [angled or bare for angled,bare in _LINK.findall(text)]
-    for shown,label in _REF_USE.findall(reference_text):
+    for match in _REF_USE.finditer(reference_text):
+        start = match.start(); before = start
+        while before and reference_text[before-1] == '\\': before -= 1
+        if (start-before) % 2: continue
+        shown,label = match.groups()
         target = definitions.get(normalize_label(label or shown))
         if target is not None: targets.append(target)
     found = []

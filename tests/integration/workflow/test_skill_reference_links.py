@@ -42,3 +42,18 @@ def test_unreferenced_or_escaped_reference_does_not_create_a_link(project):
     stage.write(f'{ALPHA}/SKILL.md',ENTRY.format(name='alpha')+
         r'An escaped \[label][guide] is literal.'+'\n[guide]: references/missing.md\n')
     assert stage.review().verdict == 'adoptable'
+
+
+@pytest.mark.parametrize(('slashes','active'),[(1,False),(2,True),(3,False),(4,True)])
+def test_reference_escape_parity_controls_adoption(project,slashes,active):
+    stage = Stage(project)
+    stage.write(f'{ALPHA}/SKILL.md',ENTRY.format(name='alpha')+
+                ('\\'*slashes)+'[reference][guide]\n[guide]: references/missing.md\n')
+    verdict = stage.review()
+    if active:
+        assert 'dangling_reference' in verdict.findings[0].reasons
+        with pytest.raises(ValueError,match='skill bundle is blocked'): stage.adopt()
+    else:
+        assert verdict.verdict == 'adoptable'
+        assert stage.adopt() == [f'{ALPHA}/SKILL.md']
+        assert ('\\'*slashes)+'[reference][guide]' in (project/ALPHA/'SKILL.md').read_text()
