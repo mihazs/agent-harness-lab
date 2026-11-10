@@ -130,6 +130,63 @@ class GiteaFixture:
 
 
 class TestGiteaSource(GiteaFixture):
+    def v3_inline(self):
+        return replace(self.selection, schema_version=3,
+            capture=('comments', 'issues', 'pulls', 'review_comments', 'reviews'))
+
+    def inline_rows(self):
+        return [dict(id=950, pull_request_review_id=803, body='SYNTHETIC_PRIVATE_BODY',
+            path='SYNTHETIC_PRIVATE_PATH', commit_id='a'*40, created_at=self.stamp, user=self.actor)]
+
+    def read_inline(self):
+        selection = self.v3_inline()
+        return self.read(selection, replace(self.spec(selection), version='v3'))
+
+    def test_v3_inline_review_is_distinct_and_stale(self):
+        self.routes[self.repo_path+'/pulls/8/reviews/803/comments'] = self.inline_rows()
+        client, snapshot = self.read_inline()
+        node, = self.nodes(client, 'gitea_review_comment')
+        assert node['matches_head'] is False
+        assert len(self.nodes(client, 'gitea_review')) == 1 and len(self.nodes(client, 'gitea_comment')) == 2
+        assert any(r[0] == 'inline_comment_on_review' for r in client.summary['relations'])
+        assert ('review_comments', 'not_observed', 'comment_list_completeness_unverified') in self.states(client)
+        assert not snapshot.checkpoint_ready and not client.summary['task_outcomes_verified']
+        assert all(r.causal_status == 'unknown' and r.independence == 'unknown' for r in snapshot.records)
+
+    @pytest.mark.parametrize('case', ['wrong_review', 'duplicate', 'invalid_commit', 'invalid_path', 'wrong_parent'])
+    def test_v3_invalid_inline_comment_fails_closed(self, case):
+        rows = self.inline_rows()
+        if case == 'wrong_review': rows[0]['pull_request_review_id'] = 804
+        if case == 'duplicate': rows.append(dict(rows[0]))
+        if case == 'invalid_commit': rows[0]['commit_id'] = 'not-a-sha'
+        if case == 'invalid_path': rows[0]['path'] = 'x'*4097
+        if case == 'wrong_parent': rows[0]['pull_request_url'] = 'https://gitea.example.test/other/repo/pulls/8'
+        self.routes[self.repo_path+'/pulls/8/reviews/803/comments'] = rows
+        with pytest.raises(TransportError): self.read_inline()
+
+    def test_v3_empty_inline_list_does_not_prove_absence(self):
+        self.routes[self.repo_path+'/pulls/8/reviews/803/comments'] = lambda: Response([], headers=self.headers)
+        client, snapshot = self.read_inline()
+        assert not self.nodes(client, 'gitea_review_comment') and not snapshot.checkpoint_ready
+        assert ('review_comments', 'not_observed', 'comment_list_completeness_unverified') in self.states(client)
+
+    @pytest.mark.parametrize('blocked', ['repository', 'issue', 'pull', 'reviews', 'review_comments'])
+    def test_v3_inline_unavailable_is_visible(self, blocked):
+        target = {'repository': self.repo_path, 'issue': self.repo_path+'/issues/8',
+            'pull': self.repo_path+'/pulls/8', 'reviews': self.repo_path+'/pulls/8/reviews?page=1&limit=50',
+            'review_comments': self.repo_path+'/pulls/8/reviews/803/comments'}[blocked]
+        self.routes[target] = Response(b'SYNTHETIC_SECRET', 403)
+        client, snapshot = self.read_inline()
+        assert any(c['resource'] == 'review_comments' and c['state'] != 'captured' for c in client.summary['coverage'])
+        assert not snapshot.checkpoint_ready
+
+    def test_v3_inline_scope_and_size_are_bounded(self):
+        with pytest.raises(ValueError): replace(self.v3_inline(), schema_version=2)
+        with pytest.raises(ValueError): replace(self.v3_inline(), capture=('issues', 'pulls', 'review_comments'))
+        self.routes[self.repo_path+'/pulls/8/reviews/803/comments'] = self.inline_rows()*2
+        with patch.object(gitea, 'MAX_UNPAGED_ROWS', 1):
+            with pytest.raises(TransportError): self.read_inline()
+
     def test_v2_missing_review_listing_stays_unavailable_without_checkpoint(self, tmp_path):
         selection = replace(self.selection, schema_version=2)
         source = replace(self.spec(selection), version='v2')
@@ -602,6 +659,22 @@ class TestGiteaConfiguration(GiteaFixture):
                 '--project-sha256', self.source.project_sha256, '--scope-sha256', self.source.scope_sha256, *extra])
         for secret in (*SECRETS, self.base, str(self.root)): assert secret not in output.getvalue()+error.getvalue()
         return code, json.loads(output.getvalue()) if output.getvalue() else None
+
+    def test_v3_inline_cli_preview_and_import_remain_blocked(self):
+        self.selection = replace(self.selection, schema_version=3,
+            capture=('comments', 'issues', 'pulls', 'review_comments', 'reviews'))
+        self.source = replace(self.spec(self.selection, auth_mode='configured'), version='v3')
+        self.routes[self.repo_path+'/pulls/8/reviews/803/comments'] = [dict(id=950, pull_request_review_id=803,
+            body='SYNTHETIC_PRIVATE_BODY', path='SYNTHETIC_PRIVATE_PATH', commit_id='b'*40)]
+        self.write()
+        env = ('--authorization-env', 'SYNTHETIC_GITEA_AUTHORIZATION')
+        with patch.dict(os.environ, SYNTHETIC_GITEA_AUTHORIZATION='token SYNTHETIC_SECRET'):
+            code, result = self.invoke('preview', *env)
+            assert result['gitea_summary']['source_version'] == 'v3'
+            assert not result['checkpoint_ready']
+            code, result = self.invoke('import', *env)
+            assert (code, result['status'], result['checkpoint_committed']) == (3, 'blocked', False)
+            assert not self.journal.exists()
 
     def test_v2_configured_cli_import_and_repeat(self):
         self.selection = replace(self.selection, schema_version=2)
