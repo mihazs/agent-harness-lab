@@ -50,6 +50,10 @@ starts is cooperative: read-only project access is instructed, not enforced.
 `ahl improve --help` and `ahl watch --help` list what each command changes, what
 AHL never writes and that cooperative limit.
 
+After an interruption, `ahl improve PROJECT --resume RUN_ID` finalizes a completed
+no-change proposal from a default private run directory without repeating a model
+action; any other stage reports `resume_requires_intervention` and is not replayed.
+
 Capture stdout and inspect the process exit status. Workflow exits distinguish
 completed work (0), execution/interruption/budget failures (1), invalid input (2)
 and blocked/inconclusive work (3). Low-level tools and setup commands describe their

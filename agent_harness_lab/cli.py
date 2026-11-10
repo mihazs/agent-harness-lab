@@ -272,6 +272,7 @@ def main(argv=None):
             command.add_argument('--evaluation-store',type=Path,help='Explicit private HistoryStore for automatic controlled construction/feedback exposure; never certification')
             command.add_argument('--disk-bytes', type=int, help='Positive maximum offline role scratch capacity in bytes; requires --cgroup-root and the configured pinned image')
         if name == 'improve':
+            command.add_argument('--resume', metavar='RUN_ID', help='Finalize a completed no-change proposal without repeating model actions')
             command.add_argument('--repair-contracts', action='store_true', help='Evaluate and apply supported deterministic skill format repairs only; no model calls')
             command.add_argument('--remember-runtime', action='store_true', help='With an explicit --agent codex|claude: remember it in the user-level configuration (ahl config show/clear); never writes a project file')
         if name == 'watch':
@@ -319,6 +320,16 @@ def main(argv=None):
             resolve(args, explicit)
             return watch(args)
         else:
+            if args.resume is not None:
+                explicit = {arg.split('=',1)[0] for arg in argv if arg.startswith('--')}
+                if explicit != {'--resume'}:
+                    raise ValueError('--resume cannot be combined with execution options')
+                from .recovery import resume
+                result = resume(args)
+                args._progress(result['status'])
+                print(json.dumps(result, indent=2))
+                from .monitoring.state import exit_code
+                return exit_code(result['status'])
             from .one_call import resolve
             if args.command == 'improve':
                 from .history import prepare
