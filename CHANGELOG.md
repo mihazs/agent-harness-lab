@@ -1,5 +1,195 @@
 # Changelog
 
+## 0.153.0
+
+### Minor Changes
+
+- 327aac2: Anchor the audit sampling seed commitment time in a hash-chain log proof verified offline (#417). A `seed_commitment` may carry an `anchor` whose first entry covers exactly the commitment hash and whose chain ends in a caller-supplied trusted head observed strictly before the window end. Only a verified anchor drops `commitment_time_unauthenticated`; unanchored or unverifiable receipts keep it, and anchors over another hash, broken chains, untrusted heads and late times are refused.
+- 2443900: Expose offline planned-campaign creation and inspection through the CLI.
+- 618ec99: Add an offline immutable specification for future local campaign orchestration.
+- 05d0d75: Check supplied resource contracts against experiment plan declarations without claiming authority.
+- 55355d7: Collect private live completed-trial usage against one frozen comparison schedule.
+- d64c829: Optionally seal completed-trial provider-reported category coverage in a versioned private history.
+- 27e3cf4: Expose a private live usage summary after comparison trial custody accepts completion.
+- 5a58d07: Preserve reported and observed outcome claims separately across reviewed source links, and surface contradictions without promoting unverified reports to outcomes.
+- 420fab6: Explain analysis and improvement exit paths, and suggest the offline audit first when no captured data exists.
+- b0c3969: Add an opt-in resource contract that requires fresh-execution and cache-scope attestations.
+- 5f2a7f7: Add an opt-in frozen provider token category and scope to resource comparisons.
+- f23cb25: Add an opt-in frozen timing boundary to conditional resource comparisons.
+- 1dc1f07: Add opt-in private Gitea inline review comment metadata capture.
+- 262b725: Add opt-in Gitea pull request commit membership capture.
+- b592820: Add opt-in private Gitea pull request changed-file metadata capture.
+- 21139f4: Add an opt-in Gitea identity profile that distinguishes recreated repositories and objects.
+- 5e0c928: Add opt-in bounded GitLab issue discussion metadata capture.
+- cf30974: Add opt-in bounded GitLab merge request closing-issue reference capture.
+- 183efc0: Add opt-in bounded GitLab merge request commit membership capture.
+- 50d4e99: Add opt-in private GitLab merge request diff file metadata capture.
+- 10c264b: Add opt-in bounded GitLab merge request discussion metadata capture.
+- cfcb916: Add opt-in GitLab merge request related issue reference capture.
+- bf1645a: Add opt-in private capture of GitLab merge request reviewer state claims.
+- 3c9228e: Add a private conditional resource bound using frozen related-root grouping.
+- e070b00: Add opt-in offline Hindsight knowledge-page metadata capture.
+- 1bef870: Add an opt-in offline Hindsight synthesized model metadata profile.
+- 0a9aa12: Add opt-in offline Hindsight model reference claims.
+- b5dd5a9: Add bounded offline ingestion of explicitly selected Hindsight transfer ZIPs.
+- bfeacf0: Expose a private live view of provider usage bound to the admitted comparison trial.
+- 46f3a92: Report ai-memory session-observation analysis as incomplete source insufficiency in the analysis receipt, caveats and next action instead of a clean observation, and pin unsupported server version rejection (#172).
+- 7585aac: Add an opt-in offline MemPalace drawer result metadata profile.
+- a2ed0f5: Add an opt-in offline MemPalace drawer-list page metadata profile.
+- bbecf28: Add an opt-in offline MemPalace search-result metadata profile.
+- 02ad5e9: Add an opt-in profile for one selected OpenCode backup message metadata claim.
+- db44247: Add an opt-in bounded OpenCode backup message-row count profile.
+- 017fb2e: Add an opt-in bounded OpenCode backup part-row count profile.
+- deab6d2: Add an opt-in bounded profile for OpenCode export message metadata claims.
+- 886aa9b: Expose optional OpenCode parent and archive claims in a separate metadata profile.
+- cb43e55: Add a scoped metadata-only reader for one pinned OpenCode session export shape.
+- ad704a0: Add bounded metadata inspection of an explicitly selected OpenCode SQLite backup.
+- 4a77177: Allow experiment plans to pin a resource contract digest before trial collection.
+- 5269c1e: Give each blocked `ahl improve` preflight outcome (ambiguous runtime, missing runtime, exhausted trial budget, stale or unsuitable bank, non-cooperative profile, runtime mismatch) its own actionable `remediation` instead of one generic sentence (#142). Reasons and exit codes are unchanged; no authorization or setting is altered.
+- e3f47cc: Prepare a private unsealed resource evidence candidate from a live pinned comparison.
+- 2bb3de9: Optionally bind a private pretrial resource quality policy to a new experiment plan.
+- e02e7da: Bind private caller cache-state attestations to the request scope of sealed resource history.
+- 6b21981: Allow project owners to freeze AHL changes with a root marker while retaining read-only analysis and audit.
+- bcbf71c: Retain provider-reported cached input token counts in Responses controller usage.
+- aad5d55: Optionally seal a private plan-bound resource observation in a versioned controller history.
+- 22631b2: Add private skill activation signal receipts that preserve missing capture as unknown and keep trial availability comparisons intent-to-treat.
+- 9fccfb7: Expose the offline static harness convention audit through `ahl audit`, with a private report and explicit unchecked coverage.
+  
+  Keep private audit reports out of public benchmark exports even when publication metadata is relabeled.
+- 9f49c82: Summarize private live trial provider usage without claiming final totals.
+- 013c2b0: Add an opt-in, coverage-aware summary of provider-reported controller usage.
+
+### Patch Changes
+
+- 5269c1e: Preserve explicit abbreviated CLI options when resolving project configuration.
+- 5269c1e: Report invalid configured task banks as actionable preflight blocks.
+- abc84a8: Recognize additional common lint and format configuration names in the private metadata-only audit.
+- e2f850e: Keep instruction validation and removal dispositions scoped to the final improvement attempt.
+- a2ec9d9: Add an opt-in private recheck for ambiguous Codex instruction budget boundaries.
+- 10408fd: Preserve certain audit draws at floating-point boundaries and report finite-resolution limits.
+- a1dd8a2: Recognize narrow declared Codex patch-hook candidates without claiming loading or enforcement.
+- 4f10e2d: Limit the procedure fence cue to explicitly shell-labelled blocks.
+- b90bcec: Add private bounded lexical references to instruction constraints without claiming enforcement.
+- e9cce8a: Show private, digest-checked lexical constraint references in the audit CLI without claiming hook enforcement.
+- d9531d1: Keep ambiguous or ineligible corpus observations out of audit point estimates.
+- 6f397b8: Link sampled audit units to private local corpus review lifecycle observations.
+- bc0d242: Record local audit review nonresponse without imputing labels.
+- 239d2c6: Add an opt-in fixed-size audit design with an explicit hard review budget.
+- 87ed6b8: Optionally replay grid audit draws against a caller-supplied frame.
+- 688d010: Add an opt-in grid-based audit sampling design with explicit effective probabilities.
+- 9c2871d: Identify narrow lexical pre-tool hook candidates without claiming path enforcement or execution.
+- 16a8300: List declared hook event names in the private static audit while leaving execution unknown.
+- 2e61592: Recheck selected instruction-budget conventions before an explicit improvement run.
+- 43af92d: Expose private unweighted sampled missed-class review composition on request.
+- a5f1a33: Add an opt-in private root npm test declaration observation to static audit.
+- 57376d0: Expose private exact lexical permission-deny candidates without claiming effective enforcement.
+- 0f94f0c: Show private lexical permission candidates in the audit CLI while leaving enforcement unknown.
+- 6d3bd89: Recheck a declared instruction procedure-shape hypothesis before an explicit improvement run.
+- 20e6b29: Include private protected-path metadata candidates in the audit CLI output without claiming enforcement.
+- 3921940: Inventory common protected-path candidates privately without reading file contents.
+- 2c733d1: Expose realized sampling budget overruns without censoring audit draws.
+- 7d9c70c: Recheck selected skill-description collisions before an explicit improvement run.
+- bef062b: Recheck an explicitly declared soft instruction-line budget before an improvement run.
+- 8e39cbf: Add an opt-in stratified hard-budget audit design.
+- e2e0412: Recognize a bounded configuration constraint cue in private hook candidate reports.
+- 8e22f26: Keep instruction totals unknown when whitespace budget cuts leave a chain truncated.
+- e43df78: Refuse audit strata with zero inclusion probability after rounding.
+- ecae663: Detect backticked variable renames with a versioned similarity algorithm while rechecking existing v1 evidence under v1.
+- 566c4c1: Reject task graders that pass the unchanged frozen fixture during bank-control audits.
+- 8f41a38: Reject out-of-range binary triage values without overflowing validation.
+- 8a6d5a9: Add an opt-in binary triage report measuring coverage across all declared roots.
+- 2251445: Bound drift input runs and reject over-limit streams without a partial receipt.
+- b663813: Include campaign commands in recursive CLI help checks and describe their planned-only actions.
+- 9dc92cb: Respect request-reply order when evaluating declared clarification episodes.
+- 22fe0d3: Keep cleanup guard exceptions stable when unrelated lines move.
+- a2d01ba: Strengthen CLI help regression checks for recommendation and structural repair boundaries.
+- 5403d99: Exclude conflicting run identities and affected roots from drift summaries.
+- 5269c1e: Use the documented trial limit for unconfigured one-call workflows.
+- 67480fb: Keep construction refinement and feedback-tampering regression checks independent of host scheduling delays while retaining separate real-time deadline coverage.
+- c316cca: Require live controller role issuance for trajectory grading and protect its action observations.
+- c92e504: Keep returned controller usage snapshots independent of live accounting.
+- 58d834a: Block exact summary-to-evidence aliases across diagnostic corpus partitions.
+- 352f161: Check repeated-workflow prompt similarity by default and report incomplete bank inspection without hiding observed candidates.
+- 7a2ba64: Organize documentation by reader purpose and separate workflow and lineage reference material.
+- 0c38432: Offer a private descriptive task-mix distance with explicit insufficiency conditions.
+- 008ba44: Keep explicit unknown identity placeholders out of precise drift strata and outcome counts.
+- cad7db9: Keep hook event coverage unknown when embedded skill or agent hooks are uninspected.
+- 5269c1e: Include configuration resolution and preflight in the improvement timeout, including repairs and the first watch attempt.
+- 6aa2950: Escape imported labels in benchmark Markdown reports.
+- 44d8f80: Explain how to review changed evaluation manifests and mismatched trial partitions.
+- 3c00300: Report exact sequence coverage using only the compared positions.
+- f05294e: List filename-only feedback sensor candidates in private static audits.
+- f0a9ea2: Document and test fixed-interval coverage under independent and shared synthetic root draws.
+- 2eaaf70: Reject fixed-comparison recommendations when the in-scope harness gains files during execution.
+- 29f8741: Connect fixed-size audit samples to local corpus review assignments.
+- f3ba50a: Report conservative fixed-analysis bounds for missing or ungraded paired outcomes while keeping decisions incomplete.
+- 952dfd2: Surface cleanup failures in manually driven test fixtures and guard against bare unittest cleanup calls.
+- 3b651db: Reject changed evaluation manifests and mismatched trial partitions before refinement feedback.
+- ea51f6f: Reject Gitea issue and pull request captures with inconsistent repository IDs.
+- f7b9a59: Preserve selected Gitea v2 coverage when parent issue or pull request reads fail.
+- 6fc8d93: Keep missing Gitea v2 review listings unavailable rather than inferring endpoint support.
+- 58f199a: Recheck selected bank-backed root similarity evidence for controller history and evaluator analysis.
+- 5269c1e: Summarize improvement outcomes and explicitly unknown budget measurements.
+- 3f6b13e: Keep missing request assertions unknown when controller response output may be incomplete.
+- 4412f38: Report conditional instruction ordering in the private static audit.
+- f48f2b1: Show whether fixed-plan precision checked root similarity, including an explicit warning for legacy unpinned plans.
+- babb188: Exclude lineage links whose supporting cache revisions are stale or ambiguous.
+- 7e22ab1: Retain bounded, private live response facts for future interaction evaluation.
+- 5269c1e: Report measured improvement time budget while leaving unobserved spending unknown.
+- 73ea582: Keep mechanism coverage open when records with the same key disagree on evidence or other record details.
+- 5269c1e: Verify configured Codex and Claude first-run controller routes.
+- 27e213c: Require native-shaped evidence before reporting cached pull-commit roles.
+- 65db681: Limit cooperative native trial environments and record their names and digest; allow explicit full inheritance.
+- 5269c1e: Verify ambiguous runtime selection stays noninteractive and blocked.
+- 72e6b86: Preserve a verified critical trajectory observation when execution ends before artifact grading.
+- da5d82f: Record a bounded kernel-observed worker executable digest when supported, without granting certification authority.
+- 9fccfb7: Add a reproducible offline audit walkthrough using a deliberately flawed synthetic fixture.
+- eb95f6b: Bound OpenCode backup worker output while it is read.
+- 566c4c1: Track frozen oracle reference reuse across bundle changes and fail closed on incomplete coverage.
+- 88c2420: Record unvalidated plugin manifest hook-key presence in private version 2 inventory metadata.
+- 9235e92: Prepare an explicit private plan and bank similarity evidence without modifying existing inputs.
+- eb4bc47: Report conservative incomplete outcome bounds for frozen preservation cohorts without granting promotion authority.
+- a846afc: Show bounded action metadata in private controller history reports.
+- b2ea08d: Use the selected output directory for analysis and ledger staging when the output path remains stable.
+- 5bfcdea: Group private report task observations by recorded status.
+- fce8baa: Show paired task observations in private controller history reports.
+- 5269c1e: Document supported one-call profiles and platforms.
+- 9fb3aee: Prepare the project lock token before creating its lock file so token failures leave no stale lock.
+- c7a2424: Exercise journal recovery after abrupt process death at promotion write boundaries and document observed recovery limits.
+- 4755560: Test that synthetic proposer authorization, policy, human-approval, foreign-reference and evidence-instruction claims cannot grant promotion or change review-plan authority.
+- c77b6f9: Show private protected-path review guidance alongside narrow declared write-tool hook candidates.
+- 96fb56f: Reject unknown fields and wrapped reports in public benchmark exports, retaining the documented flat runtime-pair format and caller-declared provenance checks.
+- 77767ad: Convert surface, telemetry, trajectory, workflow, hook and source tests to pytest fixtures and parametrized cases. Share synthetic fixture helpers across consumers, preserve cleanup errors, and retain unittest compatibility for standard-library-only runners.
+- 65bea7d: Explain read-only filesystem errors without changing application or sandbox permissions.
+- e91f9ac: Reject regression-bank revisions that do not bind their own admitted task to the bank and admission catalog.
+- 4a23e48: Allow repeated workflows to freeze and recheck private prompt-similarity evidence in stored analyses.
+- da5d82f: Bind reviewed-bank reservation evidence to live controlled comparisons without granting promotion authority.
+- 6c5f688: Flag local prompt-similarity candidates and apply frozen candidate groups to fixed-plan uncertainty bounds.
+- 026a494: Report a conditional anytime envelope across possible completions of a partial sequential prefix.
+- 9809285: Offer non-authorizing finite-bank completion ranges for partial sequential prefixes.
+- 241fefa: Expose unverified sequential completion ranges for supplied records and preserve the full range for an empty prefix.
+- 5269c1e: Share validated configuration resolution across onboarding and one-call routes.
+- be33000: Treat task prompts with no lexical shingles as incomplete similarity evidence.
+- ded92c2: Reject orphan skill assets hidden by unrelated filename substrings.
+- 28841db: Inventory bounded private skill frontmatter hook key fingerprints with unvalidated declarations left unknown.
+- 7623127: Record whether each evaluator trial requests an explicit skill preload prompt without inferring activation.
+- 98fe8e0: Check used single-line reference-style links in staged skill bundles.
+- 1ebb580: Keep the controller's public usage view independent of live accounting.
+- c42888c: Reject stale improvement recommendations when the in-scope harness gains files during evaluation.
+- 8f02ea0: Reject proposal results when the in-scope harness or project configuration changes during preparation.
+- a8dfb77: Connect stratified audit samples to local corpus review assignments.
+- 31412ec: Reject stale no-change results when the in-scope harness or governing instruction context changes during evaluation.
+- 913de81: Keep trajectory receipt coverage incomplete when predicate fields are unavailable.
+- a7370bd: Offer version 2 private trajectory receipts with bounded predicate kind and selected stage labels.
+- c488975: Preserve bounded child assertion claims in private trajectory summaries.
+- 159cbba: Add a private observe-only triage audit monitoring join.
+- a8a42a8: Reject invalid triage values safely and report unrepresentable floating-point costs as unknown.
+- c88e025: Offer versioned triage decision coverage that includes unlabeled roots.
+- f9e3dd3: Keep declared hook event coverage unknown when an unsupported event has no handlers.
+- 816cb18: Keep hook event coverage unknown when enabled plugin content has not been inspected.
+- 5297c90: Keep unverified critical-regression claims incomplete and handle graded, executable-grader-labeled regressions consistently across record order in fixed paired analysis.
+- 3d2ae6c: Preserve version 1 harness inventory output while binding newer audit evidence in version 2.
+
 ## 0.152.0
 
 ### Minor Changes
