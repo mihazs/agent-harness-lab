@@ -134,11 +134,12 @@ class GiteaAPI:
         return dict(repository_sha256=self.selection.project_sha256, id_sha256=self._native(value.get('id')),
             private=value['private'], fork=value['fork'], default_branch_sha256=text_hash(value.get('default_branch')))
 
-    def _issue(self, value, number):
+    def _issue(self, value, number, repository_id):
         if not isinstance(value, dict) or integer(value.get('number'), minimum=1) != number or value.get('state') not in ('open', 'closed'):
             raise ValueError('Gitea issue mismatch')
         owner = value.get('repository')
-        if not isinstance(owner, dict) or self.selection.repository_sha256(owner.get('full_name')) != self.selection.project_sha256:
+        if (not isinstance(owner, dict) or self.selection.repository_sha256(owner.get('full_name')) != self.selection.project_sha256
+                or self._native(owner.get('id')) != repository_id):
             raise ValueError('Gitea issue belongs to another repository')
         labels, milestone, pull = value.get('labels') or [], value.get('milestone'), value.get('pull_request')
         if not isinstance(labels, list) or pull is not None and not isinstance(pull, dict) or milestone is not None and not isinstance(milestone, dict):
@@ -162,12 +163,15 @@ class GiteaAPI:
         return dict(sha256=sha, ref_sha256=text_hash(value.get('ref'), required=True), repository_sha256=repository,
             repository_id_sha256=self._native(owner.get('id')) if owner else None)
 
-    def _pull(self, value, number):
+    def _pull(self, value, number, repository_id):
         if (not isinstance(value, dict) or integer(value.get('number'), minimum=1) != number
                 or value.get('state') not in ('open', 'closed') or type(value.get('merged')) is not bool):
             raise ValueError('Gitea PR scope/state mismatch')
         base, head = self._branch(value.get('base')), self._branch(value.get('head'))
-        if base['repository_sha256'] != self.selection.project_sha256: raise ValueError('Gitea PR base belongs to another repository')
+        if (base['repository_sha256'] != self.selection.project_sha256 or base['repository_id_sha256'] != repository_id
+                or head['repository_sha256'] is not None and
+                (head['repository_sha256'] == self.selection.project_sha256) != (head['repository_id_sha256'] == repository_id)):
+            raise ValueError('Gitea PR repository identity mismatch')
         merge, draft = commit_hash(value.get('merge_commit_sha') or None), value.get('draft')
         side = ('unknown' if head['repository_sha256'] is None else
             'same_repository' if head['repository_sha256'] == base['repository_sha256'] else 'other_repository')
@@ -213,7 +217,7 @@ class GiteaAPI:
             emit('gitea_repository', 'repository', repository)
             for number in sorted(selection.issues+selection.pulls):
                 parent = key('gitea_issue', number)
-                node = ledger.read('issue', f'{self.repo_path}/issues/{number}', lambda raw, n=number: self._issue(raw, n), parent)
+                node = ledger.read('issue', f'{self.repo_path}/issues/{number}', lambda raw, n=number: self._issue(raw, n, repository['id_sha256']), parent)
                 if node is None: continue
                 if number in selection.pulls and not node['is_pull']: raise ValueError('selected Gitea PR is a plain issue')
                 issues[number] = node; emit('gitea_issue', number, node, node['created_at'])
@@ -228,7 +232,7 @@ class GiteaAPI:
             for number in selection.pulls:
                 if number not in issues: continue
                 parent = key('gitea_pull', number)
-                node = ledger.read('pull', f'{self.repo_path}/pulls/{number}', lambda raw, n=number: self._pull(raw, n), parent)
+                node = ledger.read('pull', f'{self.repo_path}/pulls/{number}', lambda raw, n=number: self._pull(raw, n, repository['id_sha256']), parent)
                 if node is None: continue
                 pulls[number] = node; emit('gitea_pull', number, node, node['created_at'])
                 relations.add(('pull_issue', parent, key('gitea_issue', number)))
@@ -244,10 +248,10 @@ class GiteaAPI:
                     relations.add(('review_on', child, parent))
             # Readbacks narrow, but cannot remove, the window for a change between non-atomic reads.
             for number, before in issues.items():
-                after = ledger.read('readback', f'{self.repo_path}/issues/{number}', lambda raw, n=number: self._issue(raw, n), key('gitea_issue', number))
+                after = ledger.read('readback', f'{self.repo_path}/issues/{number}', lambda raw, n=number: self._issue(raw, n, repository['id_sha256']), key('gitea_issue', number))
                 if after not in (None, before): raise ValueError('Gitea issue changed during capture')
             for number, before in pulls.items():
-                after = ledger.read('readback', f'{self.repo_path}/pulls/{number}', lambda raw, n=number: self._pull(raw, n), key('gitea_pull', number))
+                after = ledger.read('readback', f'{self.repo_path}/pulls/{number}', lambda raw, n=number: self._pull(raw, n, repository['id_sha256']), key('gitea_pull', number))
                 if after not in (None, before): raise ValueError('Gitea PR changed during capture')
             if ledger.read('readback', self.repo_path, self._repository) not in (None, repository): raise ValueError('Gitea repository changed during capture')
         ready = ledger.ready
