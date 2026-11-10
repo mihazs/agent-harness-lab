@@ -44,8 +44,8 @@ def doctor(project, profile=None, *, probe_runtime=False, proposed=None, source_
             raise ValueError()
         if not supported:
             raise NotImplementedError()
-        value = proposed if proposed is not None else (config.read_json(project/'ahl.json') if os.path.lexists(project/'ahl.json') else config.defaults())
-        effective = config.validate(value)
+        resolved = config.resolve(project, proposed=proposed)
+        effective = resolved['settings'] if resolved['settings'] is not None else config.defaults()
         add('configuration', 'pass', True, 'validated_schema', 'version_1', 'Use ahl init to preview a valid configuration.')
     except (ValueError, OSError, TypeError, KeyError, NotImplementedError) as exc:
         invalid_config = supported and not isinstance(exc, PermissionError) and safe and (proposed is not None or os.path.lexists(project/'ahl.json'))
@@ -74,7 +74,7 @@ def doctor(project, profile=None, *, probe_runtime=False, proposed=None, source_
             profile != 'offline' and not controlled, 'filesystem_metadata', 'not_applicable_responses' if controlled else 'present' if present else 'not_configured_or_missing',
             'Configure an explicit trusted runtime executable; no PATH search or login is performed.')
         if controlled:
-            selected=config.execution_options(project,effective,dict(agent='auto',timeout=None),set())
+            selected=config.resolve(project,dict(agent='auto',timeout=None),proposed=effective)['options']
             try:
                 config.response_references(project,selected)
                 ready=True
@@ -189,7 +189,7 @@ def main(argv):
                 elif 'executable' not in runtime:
                     runtime['executable'] = ask('Trusted absolute executable path', '')
                 settings['runtime'] = runtime
-        proposed = config.prepare(settings)
+        proposed = config.resolve(args.project, proposed=config.prepare(settings))['settings']
         checked = doctor(args.project, 'offline', proposed=proposed)
         if checked['status'] != 'ready':
             raise ValueError('configuration or bank preflight failed; use doctor for safe diagnostics')

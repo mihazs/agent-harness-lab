@@ -48,6 +48,7 @@ RECEIPT = 'workflow.json'
 
 # Progress lines on stderr report elapsed wall time.
 STDERR_ELAPSED = re.compile(r'elapsed=\d+(?:\.\d+)?s')
+STDERR_BUDGET = re.compile(r'(budget_spent_seconds|remaining_seconds)=\d+(?:\.\d+)?')
 
 
 def _normalized(value, run):
@@ -130,4 +131,5 @@ def run_differences(first_run, second_run):
 
 
 def normalized_stderr(text, run):
-    return STDERR_ELAPSED.sub('elapsed=<seconds>s', text.replace(str(run), RUN_PLACEHOLDER))
+    text = STDERR_ELAPSED.sub('elapsed=<seconds>s', text.replace(str(run), RUN_PLACEHOLDER))
+    return STDERR_BUDGET.sub(r'\1=<seconds>', text)

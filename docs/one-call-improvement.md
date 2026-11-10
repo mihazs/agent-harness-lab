@@ -64,14 +64,40 @@ private credential only during actual execution; doctor checks metadata only.
 When `ahl.json` exists, its profile, executable, scope and limits constrain the run.
 Explicit CLI runtime/binary/time options take precedence; configuration never
 supplies execution authorization. Offline/unsupported profiles, unintegrated
-project banks, stale bank digests, ambiguous runtimes and insufficient trial
-budgets stop before inference. A configuration file is optional and is not created
+project banks, invalid or unavailable banks, stale bank digests, ambiguous runtimes and insufficient trial
+budgets stop before inference, each with its own `reason` and a matching one-step
+`remediation` in `workflow.json` (the generic text is only a fallback). A configuration file is optional and is not created
 by improve. Configured trials share one ceiling across preparation and both attempts.
+On completion, improve writes its structured receipt to stdout and a concise
+outcome summary to stderr. The summary includes the reported changed-file count,
+artifact directory when available, a next step, and elapsed time. Once a
+controller budget clock starts, it also reports measured time spent and time
+remaining; otherwise those values are unknown. Trial spend and cost remain
+unknown because reservations are not execution or billing observations. Artifact
+paths are private local information; keep the output within the authorized environment.
 The bundled starter bank is not represented as a target-project certification bank.
 Only configured harness files enter preparation snapshots; candidates outside that
 scope are rejected before evaluation construction. Watch uses the same preflight
 and binds its checkpoint to the resolved configuration. A watch restart is required after configuration changes; it never silently widens
 an active run's scope.
+
+## Profile and platform support
+
+The table describes ordinary behavioral `ahl improve` with an `ahl.json` file;
+preflight can still block a row for an invalid bank, missing capability or budget.
+
+| Profile and runtime | Platform | Current behavior |
+| --- | --- | --- |
+| `offline`, `none` | Supported POSIX filesystem APIs | Doctor and configuration preview work; behavioral improvement blocks before inference. |
+| `cooperative`, `codex` or `claude` | Supported POSIX filesystem APIs | A trusted absolute executable is required in configuration. The runtime is cooperative, and authentication remains unverified. |
+| `cooperative`, `responses` | Linux and supported POSIX filesystem APIs | Requires explicitly configured controlled-worker references and passing capability checks. A configured nonstarter project bank is not supported on this path. |
+| `isolated` | Supported POSIX filesystem APIs | Doctor reports the isolation certification prerequisites as blocked; configured behavioral improvement stops at preflight. |
+| Any | Other platforms or missing required filesystem APIs | Safe configuration I/O is unavailable; use a supported host. |
+
+Supported configuration I/O requires descriptor-relative, no-follow POSIX
+filesystem operations. See `ahl doctor . --json` for local readiness checks;
+its output does not verify authentication or certify isolation. The explicit
+`--repair-contracts` mode below has a separate deterministic, model-free contract.
 
 ## Harness surface classification
 
