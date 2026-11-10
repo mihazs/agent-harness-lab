@@ -146,6 +146,17 @@ class MechanismCoverageTests(unittest.TestCase):
                     self.assertIn('conflicting_records_for_key', result['entries'][0]['limitations'])
                     self.assertIn('conflicting_records_for_key', result['limitations'])
 
+    def test_same_key_with_different_evidence_or_falsifier_is_not_an_exact_duplicate(self):
+        for changed in (dict(evidence=['different-case']), dict(falsifier='different falsifier')):
+            first = record('a').transition('rejected', 'tie')
+            second = record('a', **changed).transition('rejected', 'tie')
+            for order in ([first, second], [second, first]):
+                with self.subTest(changed=changed, first=order[0].as_dict()):
+                    result = report(order, capture='complete')
+                    self.assertFalse(result['coverage_complete'])
+                    self.assertEqual(result['entries'][0]['coverage'], 'open')
+                    self.assertTrue(result['duplicates'][0]['conflict'])
+
     def test_report_is_pure_deterministic_private_and_accepts_queue_output(self):
         records = [record('a', exposure=None), record('b', 'skill')]
         before = deepcopy([r.as_dict() for r in records])
