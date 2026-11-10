@@ -9,9 +9,12 @@ THRESHOLD = 0.7
 
 def shingles(prompt):
     """Build three-token shingles, abstracting code-like identifier names."""
-    tokens = re.findall(r'\w+|[^\w\s]', unicodedata.normalize('NFC', prompt).casefold())
+    text = unicodedata.normalize('NFC', prompt).casefold()
+    variables = set(re.findall(r'\bset\s+([a-z]\w*)\s+from\b', text))
+    variables.update(re.findall(r'\b([a-z]\w*)\s*=(?!=)', text))
+    tokens = re.findall(r'\w+|[^\w\s]', text)
     tokens = [
-        '<identifier>' if '_' in token or len(token) == 1 and token.isalpha() and token not in ('a', 'i') else token
+        '<identifier>' if token in variables or '_' in token or len(token) == 1 and token.isalpha() and token not in ('a', 'i') else token
         for token in tokens
     ]
     return frozenset(zip(tokens, tokens[1:], tokens[2:]))
@@ -74,6 +77,17 @@ def evidence(bank_sha256, revision_sha256, task_roots, prompts):
                 groups=[list(group) for group in suspected_components(prompts)])
 
 
+def project_evidence(full, task_roots):
+    """Project inspected bank candidates to selected tasks without exposing other IDs."""
+    rows = sorted([list(row) for row in task_roots])
+    indexed = dict(full['task_roots'])
+    if len({task for task, _ in rows}) != len(rows) or any(indexed.get(task) != root for task, root in rows):
+        raise ValueError('selected tasks do not match bank task roots')
+    selected = {root for _, root in rows}
+    groups = [sorted(selected.intersection(group)) for group in full['groups']]
+    return dict(full, task_roots=rows, groups=sorted(group for group in groups if len(group) > 1))
+
+
 def binding(spec, supplied, bank_path=None):
     """Validate the plan-pinned snapshot; it is evidence of candidates, not independence."""
     from agent_harness_lab.sources.schema import digest
@@ -106,6 +120,9 @@ def binding(spec, supplied, bank_path=None):
     from .task_bank import inspect
     checked = inspect(bank_path)
     actual = checked['content_grouping']['root_similarity']['evidence']
+    if actual is None:
+        raise ValueError('current bank lacks complete root similarity evidence')
+    actual = project_evidence(actual, [(task, root) for task, root, _ in spec.tasks])
     if actual != supplied:
         raise ValueError('current bank differs from frozen root similarity evidence')
     return {root: group[0] for group in groups for root in group}

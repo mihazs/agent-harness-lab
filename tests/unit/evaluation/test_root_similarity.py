@@ -96,6 +96,12 @@ def test_live_bank_snapshot_detects_candidates_and_rejects_stale_fixture():
         plan = replace(original, tasks=tuple((row['task_id'], row['root_id'], 'a') for row in bank.tasks),
                        root_similarity_sha256=digest(snapshot))
         assert preflight(plan, root_similarity_evidence=snapshot, root_similarity_bank=bank.path)['effective_roots'] == 1
+        from agent_harness_lab.evaluation.root_similarity import project_evidence
+        selected = [(bank.tasks[0]['task_id'], bank.tasks[0]['root_id'])]
+        projected = project_evidence(snapshot, selected)
+        subset = replace(plan, tasks=((selected[0][0], selected[0][1], 'a'),), root_similarity_sha256=digest(projected))
+        assert preflight(subset, root_similarity_evidence=projected, root_similarity_bank=bank.path)['declared_roots'] == 1
+        assert bank.tasks[1]['task_id'] not in str(projected)
         (bank.root / 'fixture0' / 'task.json').write_text(json.dumps({'prompt': 'Changed synthetic task prompt.'}))
         bank.tasks[0]['fixture_digest'] = fixture_digest(bank.root / 'fixture0')
         bank.write()
@@ -111,3 +117,39 @@ def test_power_simulation_rejects_pinned_similarity_instead_of_using_nominal_roo
 
     with pytest.raises(ValueError, match='does not support root similarity'):
         simulate(replace(spec({'a': 2}), root_similarity_sha256='a'*64), {})
+
+
+def test_plain_variable_renames_and_unrelated_control():
+    prompts = [('a', 'Set customer from records then return customer.'),
+               ('b', 'Set account from records then return account.'),
+               ('c', 'Delete account records and reject expired credentials.')]
+    assert suspected_components(prompts) == (('a', 'b'),)
+    code = [('a', 'customer = records; return customer + customer'),
+            ('b', 'account = records; return account + account')]
+    assert suspected_components(code) == (('a', 'b'),)
+
+
+def test_projected_snapshot_hides_other_task_ids_and_retains_transitive_group(monkeypatch):
+    from dataclasses import replace
+    import pytest
+    from agent_harness_lab.evaluation.root_similarity import evidence, project_evidence
+    from agent_harness_lab.evaluation.precision import preflight
+    from agent_harness_lab.sources.schema import digest
+    from tests.unit.evaluation.test_precision_solver import spec
+
+    plan = spec({'a': 4})
+    rows = [(task, root) for task, root, _ in plan.tasks]
+    full = evidence('1'*64, '2'*64, rows, [(root, f'prompt {i}') for i, (_, root) in enumerate(rows)])
+    full['groups'] = [[rows[0][1], rows[1][1], rows[2][1]]]
+    selected = [rows[0], rows[2], rows[3]]
+    projected = project_evidence(full, selected)
+    assert projected['groups'] == [[rows[0][1], rows[2][1]]]
+    assert rows[1][0] not in str(projected) and rows[1][1] not in str(projected)
+    monkeypatch.setattr('agent_harness_lab.evaluation.task_bank.inspect', lambda path: {'content_grouping': {'root_similarity': {'evidence': full}}})
+    selected_plan = replace(plan, tasks=tuple((task, root, 'a') for task, root in selected),
+                            root_similarity_sha256=digest(projected))
+    report = preflight(selected_plan, root_similarity_evidence=projected, root_similarity_bank='synthetic')
+    assert report['declared_roots'] == 3 and report['effective_roots'] == 2
+    changed = replace(selected_plan, tasks=((selected[0][0], 'wrong-root', 'a'), *selected_plan.tasks[1:]))
+    with pytest.raises(ValueError, match='does not match'):
+        preflight(changed, root_similarity_evidence=projected, root_similarity_bank='synthetic')

@@ -103,7 +103,7 @@ or making native-authentication or independent-root claims.
 ## Suspected root similarity
 
 Bank inspection compares three-token prompt shingles with Jaccard similarity at a
-fixed threshold. Code-like identifiers are normalized before comparison. A
+fixed threshold. Code-like identifiers and simple assignment-style variable names are normalized before comparison. A
 connected group is a candidate for dependence and its member tasks receive an
 `independence_unverified` issue. The report includes nominal and effective root
 counts, where each connected candidate group counts once. This is a conservative
@@ -118,7 +118,22 @@ outputs. The lexical candidate is not an authenticated lineage finding.
 For a fixed comparison using the whole inspected bank, save the report's
 `content_grouping.root_similarity.evidence` as private JSON and put its reported
 `evidence_sha256` into the plan's `root_similarity_sha256` before freezing it.
-The evidence must cover the plan's exact task/root mapping. The plan hash then
+For a selected subset, project the inspected evidence first. The projection omits
+unselected task and root identifiers while retaining transitive candidate links:
+
+```python
+from agent_harness_lab.evaluation.root_similarity import project_evidence
+from agent_harness_lab.sources.schema import digest
+
+# report is the private bank-inspection result; plan_tasks is the selected
+# sequence of (task_id, root_id) pairs from the frozen plan.
+full = report['content_grouping']['root_similarity']['evidence']
+evidence = project_evidence(full, plan_tasks)
+plan['root_similarity_sha256'] = digest(evidence)
+# Save evidence as private JSON and freeze the plan before collecting outcomes.
+```
+
+The evidence must cover the plan's exact selected task/root mapping. The plan hash
 includes that pin. Supply both the evidence and current bank manifest:
 
 ```sh
