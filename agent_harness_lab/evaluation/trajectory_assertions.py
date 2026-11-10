@@ -246,12 +246,15 @@ def _leaf(rule, data):
     rows, complete = _stage(data, rule['stage']); kind = rule['kind']; matched = []
     if kind == 'sequence':
         steps = rule['steps']
-        evidence_complete = complete and all(_matches(row, step) is not None for row in rows for step in steps)
         if rule['mode'] == 'subsequence':
+            evidence_complete = complete and all(_matches(row, step) is not None for row in rows for step in steps)
             known, matched = _subsequence(rows, steps)
             possible, _ = _subsequence(rows, steps, possible=True)
             state = True if known else False if complete and not possible else None
-        elif len(rows) > len(steps): state = False
+            return state, matched, evidence_complete
+        evidence_complete = complete and (len(rows) != len(steps)
+            or all(_matches(row, step) is not None for row, step in zip(rows, steps)))
+        if len(rows) > len(steps): state = False
         elif not complete: state = None
         elif len(rows) != len(steps): state = False
         else:
