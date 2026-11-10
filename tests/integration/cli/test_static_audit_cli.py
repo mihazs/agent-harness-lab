@@ -493,3 +493,44 @@ def test_empty_import_hypothesis_abstains_when_closure_unsettled(tmp_path, monke
     report = json.loads(capsys.readouterr().out)
     assert report['declared_instruction_totals']['status'] == 'unknown'
     assert not any(row['reason'] == 'instruction_empty_import' for row in report['findings'])
+
+
+def test_instruction_improvement_hint_contains_only_fixed_content(tmp_path, monkeypatch, capsys):
+    project = tmp_path / 'project'
+    (project / '.git').mkdir(parents=True)
+    (project / 'AGENTS.md').write_text('SYNTHETIC_PRIVATE_SENTENCE\n')
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--json']) == 0
+    report = json.loads(capsys.readouterr().out)
+    hint = report['improvement_hint']
+    assert hint == dict(reason='instruction_constraints_not_detected',
+                        focus='Investigate whether project instruction constraints need clarification.',
+                        runtime='codex', status='hypothesis', authority='none', publication_allowed=False)
+    assert 'SYNTHETIC_PRIVATE_SENTENCE' not in json.dumps(hint)
+    assert str(project) not in json.dumps(hint)
+    assert 'Select an improvement runtime compatible with the audited codex' in report['next_action']
+    assert '--agent' not in report['next_action'] and '--focus' not in report['next_action']
+
+
+def test_focus_hint_does_not_override_controlled_runtime(tmp_path, monkeypatch, capsys):
+    from agent_harness_lab import config
+
+    project = tmp_path / 'project'
+    project.mkdir()
+    (project / 'AGENTS.md').write_text('synthetic content\n')
+    (project / '.git').mkdir()
+    runtime = dict(name='responses', inference_settings=str(tmp_path / 'settings.json'),
+                   cgroup_root=str(tmp_path / 'cgroup'), image_root=str(tmp_path / 'image'),
+                   image_sha256='a' * 64, disk_bytes=67108864)
+    settings = config.prepare(dict(profile='cooperative', runtime=runtime))
+    config.create(project, settings)
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--runtime', 'codex', '--json']) == 0
+    report = json.loads(capsys.readouterr().out)
+    hint = report['improvement_hint']
+    assert hint['runtime'] == 'codex' and hint['focus'] == (
+        'Investigate whether project instruction constraints need clarification.')
+    assert '--agent' not in report['next_action'] and '--focus' not in report['next_action']
+    assert 'configured profile' in report['next_action']
+    selected = config.execution_options(project, settings, {'agent': 'auto', 'inference_settings': None}, set())
+    assert selected['agent'] == 'responses'

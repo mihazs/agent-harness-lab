@@ -10,7 +10,7 @@ from pathlib import Path
 
 from agent_harness_lab import audit, surfaces
 from agent_harness_lab.evaluation.integrity import open_directory_nofollow, relative
-from agent_harness_lab.audit import instruction_totals
+from agent_harness_lab.audit import improvement_hint, instruction_totals
 from agent_harness_lab.sources.git_view import Folder
 from agent_harness_lab.sources.claude_instructions import scope_of
 from agent_harness_lab.monitoring.state import atomic_json
@@ -165,6 +165,7 @@ def main(argv=None):
         report['protected_path_inventory'] = protected_paths(project)
         from .permission_candidates import report as permission_candidates
         report['permission_candidates'] = permission_candidates(inventory, report['protected_path_inventory'])
+        report['improvement_hint'] = improvement_hint.from_findings(report['findings'], args.runtime)
         from .constraint_scan import capture as constraint_scan
         report['constraint_references'] = constraint_scan(project, inventory, report['protected_path_inventory'])
         candidate = next((row for row in report['findings'] if row['remediation']), None)
@@ -173,6 +174,9 @@ def main(argv=None):
         elif candidate:
             report['next_action'] = ('Evaluate a proposed change for finding ' + candidate['id'] + ' with ahl improve; '
                 'the convention check does not establish a performance improvement.')
+            if report['improvement_hint'] is not None:
+                report['next_action'] += (' Select an improvement runtime compatible with the audited ' +
+                    args.runtime + ' and the configured profile before using improvement_hint.focus.')
         else:
             report['next_action'] = 'Capture behavioral evidence with ahl analyze and evaluate a proposed change with ahl improve.'
         destination.mkdir(parents=True, exist_ok=True, mode=0o700)

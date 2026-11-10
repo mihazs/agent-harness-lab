@@ -45,8 +45,14 @@ path, a well-formed supported command handler in Claude project settings with a
 recognized `PreToolUse` Edit/Write or all-tools matcher is a `hook_candidate_present`.
 Disabled, malformed, conditional and other handler forms stay unknown. The matcher concerns tool names,
 not paths: the handler's behavior, loading, execution and enforcement stay unknown.
-Other matchers and Codex hook matching remain unknown; no match is not evidence
-of missing enforcement. Lexical cues are not proof of a rule or its enforcement.
+For Codex, only a project `.codex/hooks.json` command handler with an exact
+`apply_patch` or `^apply_patch$` matcher is considered a candidate. The pinned
+[Codex source](https://github.com/openai/codex/blob/d786ff91fad8e7ddab8653ee07bc6313a6fcb03d/codex-rs/core/src/tools/handlers/apply_patch.rs)
+declares an `apply_patch` pre-tool event; trust, loading and handler behavior are
+not established by this inventory. Unsupported or malformed top-level fields,
+other matchers, hook forms and configuration
+layers remain unknown; no match is not evidence of missing enforcement. Lexical
+cues are not proof of a rule or its enforcement.
 Reference hashes and paths are private and may
 be guessable. Inputs are separate observations, not an atomic snapshot.
 The CLI re-reads eligible checkout instruction files through bounded, no-follow
@@ -322,3 +328,15 @@ omitted, it models the documented 32 KiB default. A declared limit replaces the
 default for chain findings, which identify dropped bytes and the crossing file
 when those are settled. The default 200-line soft budget is a configurable
 convention extrapolated to the selected closure, not a validated threshold.
+
+For supported instruction findings, `improvement_hint` provides a fixed,
+content-free `focus` string and the audited runtime. Before using it with
+`ahl improve --focus`, select an improvement runtime compatible with the audited
+runtime and the configured profile. The audit does not select or override an
+improvement runtime. The hint carries no paths, counts, source text or finding identity and does
+not establish a defect or authorize an edit. The report is not automatically
+read by improve: focus is an optional user-selected hint, subject to the normal
+scope, evaluation and promotion checks. Closed-input profiles that prohibit
+focus reject it; the hint does not override those profiles. An improvement run
+may invoke a model or agent and supply it with authorized project data, unlike
+the offline audit. The content-free hint does not change that exposure.
