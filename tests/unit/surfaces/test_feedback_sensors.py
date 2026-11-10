@@ -38,5 +38,8 @@ def test_refused_sensor_link_keeps_coverage_unknown(tmp_path):
 def test_hosted_ci_paths_are_not_sensor_candidates(tmp_path):
     workflow=tmp_path/'.github'/'workflows';workflow.mkdir(parents=True)
     (workflow/'ci.yml').write_text('SYNTHETIC_CONTENT')
+    (workflow/'test_job.py').write_text('SYNTHETIC_CONTENT')
+    (workflow/'package.json').write_text('SYNTHETIC_CONTENT')
+    (workflow/'tests').mkdir()
     (tmp_path/'.gitlab-ci.yml').write_text('SYNTHETIC_CONTENT')
     assert feedback_sensors.capture(tmp_path)['candidates']==[]

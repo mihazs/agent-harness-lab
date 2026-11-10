@@ -34,6 +34,10 @@ class _MetadataWalk(harness_inventory._Walk):
     def __init__(self):
         super().__init__({});self.candidates=[]
 
+    def child(self, descriptor, name, path, info, depth, root):
+        if path == '.github/workflows': return
+        return super().child(descriptor, name, path, info, depth, root)
+
     def file(self, descriptor, name, path, info, root):
         found=category(path)
         if found is None:return
