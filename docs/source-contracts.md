@@ -3227,6 +3227,17 @@ The server may not expose every review to the current viewer, and visibility of
 pending reviews and their comments is unverified.
 The new selection has a separate scope; v1 and v2 histories are unchanged.
 
+An opt-in `schema_version=4`, `version="v4"` profile adds `commits` for
+selected PRs, using the [PR commits endpoint](https://docs.gitea.com/api/1.26/operations/repo-get-pull-request-commits/).
+It records commit fingerprints and server-reported PR membership, not ancestry,
+execution or outcomes. Requests ask the server to omit affected files and
+verification details; they do not include commit messages or file paths in
+claims. Collection is bounded at 10,000 returned commits and by the transport
+budgets. Missing completion evidence, contradictory pagination and unavailable
+pages do not establish absence or permit a checkpoint. Reads are non-atomic,
+and server-reported membership remains unverified. V4 has a separate scope;
+earlier histories are unchanged.
+
 For v2, a review listing returning 404 remains `not_found` and blocks a
 checkpoint: the response alone does not establish whether the endpoint is
 unsupported or the listing is otherwise unavailable. V1 retains its existing
@@ -3314,7 +3325,7 @@ and each incomplete-page case; repeat import and update; cross-host, sub-path an
 cross-repository number collisions; fork and deleted head identity; missing
 review and version endpoints; 401/403/404/429 coverage; non-HTTPS refusal; and
 GET-only requests. Live Gitea compatibility is not established by these fixtures.
-Still open in #170: verified inline-comment completeness, PR commits and files,
+Still open in #170: verified inline-comment completeness, PR files,
 timelines, issue/PR enumeration by state or time window,
 absence tombstones, a relationship graph and native recheck, and CI/job evidence.
 

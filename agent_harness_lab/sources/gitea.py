@@ -1,7 +1,7 @@
 """Explicit read-only Gitea REST captures; closure, merges and approvals are never task grades."""
 from dataclasses import dataclass
 import re
-from .forge import CaptureLedger
+from .forge import CaptureLedger, count_header
 from .github import commit_hash, integer, moment, text_hash
 from .remote_config import ConfiguredAPI
 from .schema import Contract, SourceSpec, digest
@@ -13,7 +13,8 @@ PROVIDER = 'gitea'
 SOURCE_VERSION = 'v1'
 API_PREFIX = '/api/v1'
 PAGE_SIZE = 50
-CAPTURE = ('comments', 'issues', 'pulls', 'review_comments', 'reviews')
+MAX_PULL_COMMITS = 10000
+CAPTURE = ('comments', 'commits', 'issues', 'pulls', 'review_comments', 'reviews')
 REVIEW_STATES = ('APPROVED', 'COMMENT', 'PENDING', 'REQUEST_CHANGES', 'REQUEST_REVIEW')
 CONTEXTUAL = ('gitea_issue', 'gitea_comment', 'gitea_review', 'gitea_review_comment')
 NAME = re.compile(r'[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}')
@@ -30,7 +31,7 @@ class GiteaSelection(Contract):
     schema_version: int = 1
 
     def __post_init__(self):
-        if type(self.schema_version) is not int or self.schema_version not in (1, 2, 3): raise ValueError('unsupported Gitea selection version')
+        if type(self.schema_version) is not int or self.schema_version not in (1, 2, 3, 4): raise ValueError('unsupported Gitea selection version')
         instance_root(self.base_url, API_PREFIX)
         for name in (self.owner, self.repo):
             if not isinstance(name, str) or NAME.fullmatch(name) is None: raise ValueError('invalid Gitea owner or repository name')
@@ -44,7 +45,8 @@ class GiteaSelection(Contract):
         # Issues and pulls share one per-repository index, so a number is never both.
         if (set(self.issues) & set(self.pulls) or ('issues' in self.capture) != bool(self.issues)
                 or ('pulls' in self.capture) != bool(self.pulls) or 'reviews' in self.capture and not self.pulls
-                or 'review_comments' in self.capture and (self.schema_version != 3 or 'reviews' not in self.capture)
+                or 'review_comments' in self.capture and (self.schema_version not in (3, 4) or 'reviews' not in self.capture)
+                or 'commits' in self.capture and (self.schema_version != 4 or not self.pulls)
                 or not (self.issues or self.pulls)):
             raise ValueError('Gitea capture kinds must match the explicitly selected numbers')
 
@@ -200,6 +202,47 @@ class GiteaAPI:
             body_sha256=text_hash(value.get('body')), submitted_at=moment(value.get('submitted_at')),
             actor_sha256=self._actor(value.get('user')))
 
+    def _commits(self, ledger, emit, number, parent, head, budget):
+        """Capture server-reported PR membership without messages, file lists or ancestry claims."""
+        target = f'{self.repo_path}/pulls/{number}/commits'
+        query = dict(limit=PAGE_SIZE, verification='false', files='false')
+        final_evidence = [False]
+        def following(headers, page):
+            linked = next_page(self.transport, headers.get('link'), target, page,
+                dict(limit=str(PAGE_SIZE), verification='false', files='false'))
+            reported = headers.get('x-hasmore')
+            if reported is not None and reported.lower() not in ('true', 'false'):
+                raise ValueError('invalid Gitea commit pagination')
+            if headers.get('x-page') not in (None, str(page)):
+                raise ValueError('Gitea commit page mismatch')
+            pages = count_header(headers.get('x-pagecount'))
+            if pages is not None and (pages < page or reported is not None and
+                    (reported.lower() == 'true') != (page < pages)):
+                raise ValueError('conflicting Gitea commit page count')
+            if reported is not None and reported.lower() == 'false' and linked is not None:
+                raise ValueError('conflicting Gitea commit pagination')
+            if headers.get('x-total') is not None or reported is not None and reported.lower() == 'false':
+                final_evidence[0] = True
+            after = page+1 if reported is not None and reported.lower() == 'true' else linked
+            return after, reported is not None and reported.lower() == 'false'
+        def identity(row):
+            sha = commit_hash(row.get('sha'))
+            if sha is None: raise ValueError('missing Gitea commit SHA')
+            return sha
+        def project(row):
+            budget[0] += 1
+            if budget[0] > MAX_PULL_COMMITS: raise ValueError('excessive Gitea pull commits')
+            sha = identity(row)
+            return dict(parent_sha256=parent, commit_sha256=sha, matches_head=sha == head)
+        rows, outcome = ledger.listing(target, query, PAGE_SIZE, total_header='x-total', following=following,
+            project=project, identity=identity)
+        if outcome[0] == 'captured' and not final_evidence[0]:
+            outcome = ('pagination_incomplete', 'commit_total_unverified')
+        ledger.note('commits', outcome, parent)
+        for native, node in rows:
+            child = emit('gitea_pull_commit', (number, native), node)
+            ledger.relations.add(('reported_commit_in_pull', child, parent))
+
     def _review_comments(self, ledger, emit, number, review_id, parent, head, seen):
         target = f'{self.repo_path}/pulls/{number}/reviews/{review_id}/comments'
         try:
@@ -247,14 +290,14 @@ class GiteaAPI:
 
         def missing_pull(parent):
             ledger.note('pull', ('not_observed', 'issue_unavailable'), parent)
-            for resource in ('reviews', 'review_comments'):
+            for resource in ('reviews', 'review_comments', 'commits'):
                 if resource in selection.capture: ledger.note(resource, ('not_observed', 'issue_unavailable'), parent)
 
         version, version_state = ledger.version(API_PREFIX+'/version')
         emit('gitea_instance', 'instance', dict(instance_sha256=selection.instance_sha256,
             server_version=version or 'unknown', server_version_state=version_state))
         repository = ledger.read('repository', self.repo_path, self._repository)
-        issues, pulls, unrecognized = {}, {}, False
+        issues, pulls, unrecognized, commit_budget = {}, {}, False, [0]
         if repository is not None:
             emit('gitea_repository', 'repository', repository)
             for number in sorted(selection.issues+selection.pulls):
@@ -289,11 +332,13 @@ class GiteaAPI:
                         ledger.note('reviews', ('not_observed', 'pull_unavailable'), parent)
                     if selection.schema_version >= 2 and 'review_comments' in selection.capture:
                         ledger.note('review_comments', ('not_observed', 'pull_unavailable'), parent)
+                    if 'commits' in selection.capture: ledger.note('commits', ('not_observed', 'pull_unavailable'), parent)
                     continue
                 parent = key('gitea_pull', number, node)
                 if selection.schema_version >= 2: coverage[-1]['parent_sha256'] = parent
                 pulls[number] = node; emit('gitea_pull', number, node, node['created_at'])
                 relations.add(('pull_issue', parent, key('gitea_issue', number, issues[number])))
+                if 'commits' in selection.capture: self._commits(ledger, emit, number, parent, node['head']['sha256'], commit_budget)
                 if 'reviews' not in selection.capture: continue
                 rows, outcome = self._list(f'{self.repo_path}/pulls/{number}/reviews', ledger,
                     lambda row, n=number, p=parent, head=node['head']['sha256']: self._review(row, n, p, head))
@@ -332,6 +377,7 @@ class GiteaAPI:
         if 'review_comments' in selection.capture:
             warnings.remove('inline_review_comments_not_captured')
             warnings.append('inline_review_comment_list_completeness_unverified')
+        if 'commits' in selection.capture: warnings.append('commit_membership_server_reported')
         if version is None: warnings.append('server_version_unknown')
         if ledger.unsupported: warnings.append('review_endpoint_unsupported')
         if unrecognized: warnings.append('review_state_unrecognized')
