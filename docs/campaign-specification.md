@@ -19,3 +19,12 @@ changing a declared input changes that identity. These hashes and declarations
 are private and unverified. The specification sets publication and automatic
 promotion to false. It does not establish a budget ledger, execution ownership,
 recovery, quality, approval, certification, or application.
+
+`CampaignStore.create(spec, project_root)` creates a private planned record
+under an owner-only store outside the project, with an opaque campaign ID.
+`CampaignStore.inspect(id)` validates the saved specification against the
+creation event and returns a private summary. Both operations are offline;
+their status fields explicitly say that budget enforcement, execution, review,
+evaluation and deployment have not occurred. Store locking excludes a second
+controller for that store. Neither operation verifies caller-supplied project
+identity hashes. A failed or incomplete creation is not an executable campaign.
