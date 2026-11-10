@@ -29,8 +29,6 @@ ROWS = [
      ['tests.integration.sandbox.test_sandbox_inference.ControllerInferenceTests']),
     ('tests.integration.evaluation.test_permission_audit', 'responses_fixture',
      ['tests.integration.sandbox.test_sandbox_inference.ResponsesEvaluationTests']),
-    ('tests.integration.optimization.test_optimization_history', 'owner',
-     ['tests.integration.evaluation.test_regression_admission.RegressionAdmissionTests']),
     ('tests.integration.evaluation.test_repeated_workflow', 'admission',
      ['tests.integration.evaluation.test_repeated_workflow.RepeatedWorkflowAdmission']),
     ('tests.integration.evaluation.test_repeated_workflow', 'kernel_case', [REPEATED_KERNEL]),
@@ -114,13 +112,24 @@ def test_kernel_scope_reports_a_busy_class_cleanup(tmp_path, row):
     assert 'RuntimeError: synthetic per-test cleanup failure' in run.stdout, run.stdout[-4000:]
 
 
-def test_nested_admission_cleanup_failure_fails_the_bank_authority_fixture(tmp_path):
-    # The real OracleBankAuthorityTests.setUp runs, so its own release of the nested admission is exercised.
-    admission = 'tests.integration.evaluation.test_regression_admission.RegressionAdmissionTests'
-    (tmp_path/'test_cleanup_nested.py').write_text(
-        source('tests.integration.evaluation.test_oracle_bank_authority', 'fixture', [], wrapped=[admission]))
-    run = pytest_run(tmp_path, ['test_cleanup_nested.py'])
-    assert 'ERROR ' in run.stdout and 'synthetic per-test cleanup failure' in run.stdout, run.stdout[-4000:]
+def test_nested_admission_cleanup_failure_fails_the_bank_authority_fixture(monkeypatch):
+    from tests.integration.evaluation import test_oracle_bank_authority
+    from tests.support.unittest_cleanups import run_cleanups
+
+    def fail():
+        raise RuntimeError('synthetic admission cleanup failure')
+
+    def broken(add_cleanup):
+        add_cleanup(fail)
+        raise ValueError('synthetic setup failure')
+
+    monkeypatch.setattr(test_oracle_bank_authority.admissions, 'RegressionAdmission', broken)
+    case = test_oracle_bank_authority.OracleBankAuthorityTests()
+    with pytest.raises(ValueError, match='synthetic setup failure'):
+        case.setUp()
+    with pytest.raises(RuntimeError, match='synthetic admission cleanup failure'):
+        run_cleanups(case)
+
 
 
 @pytest.mark.parametrize('module', [

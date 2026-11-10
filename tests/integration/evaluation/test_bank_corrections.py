@@ -1,5 +1,6 @@
 """Synthetic immutable application, with no paid inference or historical proof."""
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
 import hashlib
 import json
 from pathlib import Path
@@ -28,9 +29,8 @@ def correction():
 
 @pytest.fixture
 def admission():
-    case = admissions.RegressionAdmissionTests(); case.setUp()
-    yield case
-    case.doCleanups()
+    with ExitStack() as cleanups:
+        yield admissions.RegressionAdmission(cleanups.callback)
 
 
 def test_legacy_parent_application_preserves_metadata_and_invalidates_old_first(correction):

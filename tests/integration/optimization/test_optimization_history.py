@@ -209,9 +209,8 @@ def test_baseline_changed_during_last_numeric_verify_cannot_return_fresh(history
 
 @pytest.fixture
 def owner():
-    owner=admissions.RegressionAdmissionTests(); owner.setUp()
-    yield owner
-    run_cleanups(owner)
+    with ExitStack() as cleanups:
+        yield admissions.RegressionAdmission(cleanups.callback)
 
 
 @pytest.fixture

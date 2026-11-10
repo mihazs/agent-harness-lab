@@ -27,7 +27,7 @@ if inputs.get('operation')=='sum':
 def behavior_history():
     """A cohort-pinned history whose bank holds the public adversarial repository-text-benign task."""
     authority=history.core.authority
-    original=authority.admissions.RegressionAdmissionTests.accept
+    original=authority.admissions.RegressionAdmission.accept
     pack=Path(agent_harness_lab.__file__).parent/'evaluation/fixtures/adversarial-v1'
     def add_task(admission,**changes):
         bank=record(admission.parent)[0]
@@ -38,7 +38,7 @@ def behavior_history():
         bank['tasks']=[task]; admission.parent.write_text(json.dumps(bank))
         return original(admission,**changes)
     with ExitStack() as cleanups:
-        with patch.object(authority.admissions.RegressionAdmissionTests,'accept',new=add_task), \
+        with patch.object(authority.admissions.RegressionAdmission,'accept',new=add_task), \
                 patch.object(authority.offline,'SOLVER',PREFIX+authority.offline.SOLVER):
             value=history.PreservationHistory(cleanups)
         yield value

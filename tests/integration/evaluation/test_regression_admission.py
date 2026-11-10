@@ -3,7 +3,7 @@ import hashlib
 import json
 from pathlib import Path
 import shutil
-import unittest
+from contextlib import ExitStack
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
 
@@ -12,14 +12,13 @@ import pytest
 import agent_harness_lab
 from agent_harness_lab.evaluation.task_bank import validate
 from tests.integration.evaluation import test_regression_review as fixtures
-from tests.support.unittest_cleanups import run_cleanups
 
 
-class RegressionAdmissionTests(unittest.TestCase):
+class RegressionAdmission:
     """Hosts the reviewed-case admission fixture that other modules build on; it defines no tests of its own."""
 
-    def setUp(self):
-        self.fixture = fixtures.ReviewFixture(self.addCleanup)
+    def __init__(self, add_cleanup):
+        self.fixture = fixtures.ReviewFixture(add_cleanup)
         f = self.fixture
         f.drafted(); f.store.review(f.case_id,f.review_file())
         self.store, self.case_id = f.store, f.case_id
@@ -64,7 +63,7 @@ class RegressionAdmissionTests(unittest.TestCase):
         spec.write_text(json.dumps(replay))
         proposed = self.store.propose(source,draft,spec,'second-author'); case_id = proposed['case_id']
         with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=self.fixture.backend):
-            self.assertEqual(self.store.reproduce(case_id,self.fixture.backend)['state'],'reproduced')
+            assert self.store.reproduce(case_id,self.fixture.backend)['state'] == 'reproduced'
         current = self.store.draft(case_id)
         review = json.loads(self.fixture.review_file().read_text())
         review.update(case_id=case_id,expected_event_sha256=current['event_sha256'],evidence_sha256=current['evidence_sha256'])
@@ -74,12 +73,8 @@ class RegressionAdmissionTests(unittest.TestCase):
 
 @pytest.fixture
 def admission():
-    case = RegressionAdmissionTests()
-    try:
-        case.setUp()
-        yield case
-    finally:
-        run_cleanups(case)
+    with ExitStack() as cleanups:
+        yield RegressionAdmission(cleanups.callback)
 
 
 def test_reviewed_case_enters_a_new_private_immutable_development_bank(admission):

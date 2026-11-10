@@ -194,7 +194,7 @@ def test_exposed_policy_cannot_be_relabelled_as_a_protected_task_or_experiment(c
 
 def test_bound_schema3_keeps_live_revocation_and_private_historical_plan_separate(cleanups):
     from tests.integration.evaluation import test_regression_admission as admissions
-    admission=admissions.RegressionAdmissionTests(); admission.setUp(); cleanups.addCleanup(run_cleanups, admission)
+    admission=admissions.RegressionAdmission(cleanups.addCleanup)
     parent=json.loads(admission.parent.read_text())
     task=next(t for t in json.loads((PACK/'bank.json').read_text())['tasks'] if t['task_id']=='repository-text-benign')
     for key in ('fixture','grader_bundle'):

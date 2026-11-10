@@ -27,7 +27,7 @@ from tests.support.unittest_cleanups import run_cleanups
 
 
 class OracleBankAuthorityTests(unittest.TestCase):
-    """A one-task controlled bank admitted through RegressionAdmissionTests, with simulated attested workers.
+    """A one-task controlled bank admitted through RegressionAdmission, with simulated attested workers.
 
     test_derivation and test_preservation_cohorts instantiate this class and call setUp and doCleanups, so it
     keeps that TestCase interface and holds no tests.
@@ -37,8 +37,7 @@ class OracleBankAuthorityTests(unittest.TestCase):
     execute = histories.OracleHistoryTests.execute
 
     def setUp(self):
-        self.admission = admissions.RegressionAdmissionTests(); self.admission.setUp()
-        self.addCleanup(run_cleanups, self.admission)
+        self.admission = admissions.RegressionAdmission(self.addCleanup)
         self.root = self.admission.fixture.root
         parent = json.loads(self.admission.parent.read_text())
         task = next(t for t in json.loads(offline.BANK.read_text())['tasks'] if t['task_id']=='localization')

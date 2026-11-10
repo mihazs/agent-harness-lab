@@ -268,7 +268,7 @@ def test_oracle_quarantine_invalidates_qualification(cohort):
 
 
 def test_bound_v3_unknown_behavior_cannot_qualify_typed_pass():
-    original = authority.admissions.RegressionAdmissionTests.accept
+    original = authority.admissions.RegressionAdmission.accept
     def add_policy(admission, **changes):
         bank = record(admission.parent)[0]
         task = bank['tasks'][0]
@@ -284,7 +284,7 @@ def test_bound_v3_unknown_behavior_cannot_qualify_typed_pass():
         admission.parent.write_text(json.dumps(bank))
         return original(admission, **changes)
     with ExitStack() as cleanups:
-        with patch.object(authority.admissions.RegressionAdmissionTests, 'accept', add_policy):
+        with patch.object(authority.admissions.RegressionAdmission, 'accept', add_policy):
             cohort = PreservationCohort(cleanups.callback)
         inputs = record(cohort.fixture.store.case(cohort.prior_run['run_id']) / 'inputs.json')[0]
         assert inputs['schema_version'] == 3
