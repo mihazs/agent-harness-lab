@@ -267,7 +267,7 @@ def test_oracle_quarantine_invalidates_qualification(cohort):
         cohorts.revalidate(binding, cohort.planned, cohort.baseline_hash)
 
 
-def test_bound_v3_unknown_behavior_cannot_qualify_typed_pass(cohort):
+def test_bound_v3_unknown_behavior_cannot_qualify_typed_pass():
     original = authority.admissions.RegressionAdmissionTests.accept
     def add_policy(admission, **changes):
         bank = record(admission.parent)[0]
@@ -283,12 +283,13 @@ def test_bound_v3_unknown_behavior_cannot_qualify_typed_pass(cohort):
         task['grader_digest'] = digest(folder)
         admission.parent.write_text(json.dumps(bank))
         return original(admission, **changes)
-    with patch.object(authority.admissions.RegressionAdmissionTests, 'accept', add_policy):
-        cohort.setUp()
-    inputs = record(cohort.fixture.store.case(cohort.prior_run['run_id']) / 'inputs.json')[0]
-    assert inputs['schema_version'] == 3
-    with pytest.raises(ValueError, match='behavior observations'):
-        cohort.capture()
+    with ExitStack() as cleanups:
+        with patch.object(authority.admissions.RegressionAdmissionTests, 'accept', add_policy):
+            cohort = PreservationCohort(cleanups.callback)
+        inputs = record(cohort.fixture.store.case(cohort.prior_run['run_id']) / 'inputs.json')[0]
+        assert inputs['schema_version'] == 3
+        with pytest.raises(ValueError, match='behavior observations'):
+            cohort.capture()
 
 
 def test_ambiguous_actual_grader_stdout_cannot_be_counted(cohort):
