@@ -56,7 +56,7 @@ class TaskSpec:
         return obj
 
 
-def _validate(path, *, verify_contents=True, analysis_only=False):
+def _validate(path, *, verify_contents=True, analysis_only=False, similarity_algorithm=None):
     if type(verify_contents) is not bool or type(analysis_only) is not bool:
         raise ValueError('content verification mode must be explicit')
     path = Path(path)
@@ -95,7 +95,8 @@ def _validate(path, *, verify_contents=True, analysis_only=False):
     content_grouping = None
     if verify_contents:
         from .content_grouping import inspect_bank
-        content_grouping, overlaps = inspect_bank(path.parent, tasks, bank_sha256)
+        content_grouping, overlaps = (inspect_bank(path.parent, tasks, bank_sha256) if similarity_algorithm is None
+            else inspect_bank(path.parent, tasks, bank_sha256, similarity_algorithm=similarity_algorithm))
         issues.extend(overlaps)
     result = dict(schema_version=1, bank_sha256=bank_sha256, contents_verified=verify_contents,
                 content_grouping=content_grouping, _controller_profile=value.get('controller_profile'),
@@ -114,9 +115,9 @@ def _validate(path, *, verify_contents=True, analysis_only=False):
     return result
 
 
-def inspect(path):
+def inspect(path, *, similarity_algorithm=None):
     """Inspect complete declared contents without admission or execution authority."""
-    result = _validate(path, analysis_only=True)
+    result = _validate(path, analysis_only=True, similarity_algorithm=similarity_algorithm)
     profile = result.pop('_controller_profile', None)
     if profile is not None:
         from .bank_revisions import PROFILE as REVISION
