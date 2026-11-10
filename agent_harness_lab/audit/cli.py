@@ -160,6 +160,8 @@ def main(argv=None):
                                         'evaluate_moving_procedure_to_skill_or_path_rule')
         from .protected_paths import capture as protected_paths
         report['protected_path_inventory'] = protected_paths(project)
+        from .permission_candidates import report as permission_candidates
+        report['permission_candidates'] = permission_candidates(inventory, report['protected_path_inventory'])
         candidate = next((row for row in report['findings'] if row['remediation']), None)
         if report['status'] != 'completed':
             report['next_action'] = 'Resolve the blocked inventory before using this audit.'
@@ -181,8 +183,10 @@ def main(argv=None):
             events = report['hook_events']
             print('Declared hook events: ' + (', '.join(events['declared']) or 'none observed') +
                   f" (coverage: {events['coverage']}; execution: unknown)")
+            candidates = {row['path']: row['status'] for row in report['permission_candidates']['paths']}
             for row in report['protected_path_inventory']['paths']:
-                print(f"Protected path candidate: {json.dumps(row['path'], ensure_ascii=True)} ({row['category']}); enforcement: unknown")
+                print(f"Protected path candidate: {json.dumps(row['path'], ensure_ascii=True)} ({row['category']}); "
+                      f"permission: {candidates[row['path']]}; enforcement: unknown")
             if report['protected_path_inventory']['coverage'] == 'unknown':
                 print('Protected path coverage: unknown')
             for row in report['findings']:

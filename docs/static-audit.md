@@ -33,6 +33,8 @@ entries in declared Claude project settings. A match is a lexical candidate only
 runtime enforcement stays unknown. Missing matches, unsupported glob syntax,
 private local settings and other runtime layers remain unknown. The two inputs
 are independently captured snapshots. Rule hashes and paths are private metadata.
+The CLI includes this comparison under `permission_candidates`; it is outside
+`audit_sha256` and does not change the enforcement coverage verdict.
 
 The `hook_events` field lists known event names from declared hook handlers. Its
 coverage is `unknown` when hook surfaces are unavailable or could not be parsed;
