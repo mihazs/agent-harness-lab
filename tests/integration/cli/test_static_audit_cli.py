@@ -235,3 +235,77 @@ def test_unsettled_dropped_count_does_not_claim_missing_coverage(tmp_path, monke
     report = json.loads(capsys.readouterr().out)
     assert next(row for row in report['coverage'] if row['dimension'] == 'instructions')['status'] == 'weak'
     assert not any(row['status'] == 'missing' for row in report['findings'])
+
+
+def test_claude_declared_totals_include_import_without_exposing_content(tmp_path, monkeypatch, capsys):
+    project = tmp_path / 'project'
+    project.mkdir()
+    (project / 'CLAUDE.md').write_text('@details.md\n')
+    (project / 'details.md').write_text('SYNTHETIC_SECRET_CONTENT\n')
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
+    output = capsys.readouterr().out
+    report = json.loads(output)
+    total = report['declared_instruction_totals']
+    assert (total['status'], total['files'], total['lines']) == ('declared', 2, 2)
+    assert total['observed_loading'] == 'unknown' and not total['publication_allowed']
+    assert 'SYNTHETIC_SECRET_CONTENT' not in output
+
+
+@pytest.mark.parametrize(('budget', 'weak'), [(2, False), (1, True)])
+def test_claude_line_budget_is_configurable_convention(tmp_path, monkeypatch, capsys, budget, weak):
+    project = tmp_path / 'project'
+    project.mkdir()
+    (project / 'CLAUDE.md').write_text('@details.md\n')
+    (project / 'details.md').write_text('synthetic\n')
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--runtime', 'claude-code', '--json',
+                 '--instruction-soft-lines', str(budget)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report['declared_instruction_totals']['soft_line_budget'] == budget
+    finding = [r for r in report['findings'] if r['reason'] == 'instruction_launch_lines_above_soft_budget']
+    assert bool(finding) is weak
+    if weak:
+        assert finding[0]['status'] == 'weak' and finding[0]['evidence_kind'] == 'count'
+        assert dict(finding[0]['measures']) == {'lines': 2, 'soft_line_budget': budget}
+        assert finding[0]['notice'] == 'convention_check_not_performance_evidence'
+
+
+def test_claude_shape_hypotheses_and_incomplete_closure(tmp_path, monkeypatch, capsys):
+    project = tmp_path / 'project'
+    project.mkdir()
+    source = project / 'CLAUDE.md'
+    source.write_text('# Procedure\n' + ''.join(f'{i}. step\n' for i in range(1, 6)))
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
+    report = json.loads(capsys.readouterr().out)
+    expected = {'instruction_constraints_not_detected', 'instruction_verification_command_not_detected',
+                'instruction_procedure_section_detected'}
+    assert expected <= {r['reason'] for r in report['findings'] if r['status'] == 'weak'}
+    source.write_text('@missing.md\n')
+    assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report['declared_instruction_totals']['status'] == 'unknown'
+    assert not expected.intersection(r['reason'] for r in report['findings'])
+
+
+def test_import_change_between_inventory_and_resolver_is_an_unbound_observation(tmp_path, monkeypatch, capsys):
+    from agent_harness_lab import audit
+
+    project = tmp_path / 'project'
+    project.mkdir()
+    (project / 'CLAUDE.md').write_text('@details.md\n')
+    imported = project / 'details.md'
+    imported.write_text('old\n')
+    original = audit.audit
+    def change_after_inventory(*args, **kwargs):
+        imported.write_text('new\n' * 10)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(audit, 'audit', change_after_inventory)
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
+    total = json.loads(capsys.readouterr().out)['declared_instruction_totals']
+    assert total['lines'] == 11
+    assert total['snapshot_relation'] == 'separate_resolver_observation'
+    assert total['inventory_comparison'] == 'recognized_instruction_files_only'
+    assert total['cross_observation_consistency'] == 'unknown'

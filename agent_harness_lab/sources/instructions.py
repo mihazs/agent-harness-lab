@@ -145,7 +145,7 @@ def read_node(folder, checkout, path, applicability, reason):
     return value, data
 
 
-def capture(profile, folder, checkout, selected=(), *, git_harness_sha256=None, codex_home=None):
+def capture(profile, folder, checkout, selected=(), *, git_harness_sha256=None, codex_home=None, _audit_facts=None):
     """codex_home is an optional caller-declared folder-relative CODEX_HOME; it is never discovered or defaulted."""
     validate(profile)
     relative(checkout)
@@ -168,7 +168,7 @@ def capture(profile, folder, checkout, selected=(), *, git_harness_sha256=None, 
     scopes = ['.']+[str(Path(*cwd.parts[:i])) for i in range(1, len(cwd.parts)+1)]
     if pair == CLAUDE:
         from .claude_instructions import capture as capture_claude
-        nodes, edges, status = capture_claude(profile, scopes, selected, folder, checkout)
+        nodes, edges, status = capture_claude(profile, scopes, selected, folder, checkout, audit_facts=_audit_facts)
         return InstructionInventory(**identity, nodes=nodes, edges=edges, resolution_status=status)
     inspected = set()
     def node(path, applicability, reason):
