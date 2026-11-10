@@ -112,6 +112,19 @@ def test_unreadable_hook_event_coverage_stays_unknown(tmp_path, monkeypatch, cap
     assert json.loads(capsys.readouterr().out)['hook_events'] == dict(declared=[], coverage='unknown', observed_execution='unknown')
 
 
+@pytest.mark.parametrize('groups', [[], [{'hooks': []}]])
+def test_unknown_hook_event_without_handlers_keeps_coverage_unknown(tmp_path, monkeypatch, capsys, groups):
+    target = tmp_path / 'project' / '.claude/settings.json'
+    target.parent.mkdir(parents=True)
+    target.write_text(json.dumps({'hooks': {'SyntheticUnknownEvent': groups,
+        'SessionStart': [{'hooks': [{'type': 'command', 'command': 'never-run'}]}]}}))
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    monkeypatch.setattr(subprocess, 'Popen', lambda *a, **kw: pytest.fail('hook executed'))
+    assert main(['audit', str(target.parent.parent), '--runtime', 'claude-code', '--json']) == 0
+    events = json.loads(capsys.readouterr().out)['hook_events']
+    assert events == dict(declared=['SessionStart'], coverage='unknown', observed_execution='unknown')
+
+
 def test_excluded_hook_source_keeps_known_events_but_coverage_unknown(tmp_path, monkeypatch, capsys):
     project = tmp_path / 'project'
     target = project / '.claude/settings.json'
