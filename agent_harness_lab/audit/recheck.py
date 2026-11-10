@@ -82,7 +82,9 @@ def select(path, project, runtime):
                 convention_source=PROCEDURE_SOURCE,inventory_sha256=fresh.harness_inventory_sha256,
                 focus=improvement_hint.HINTS[reason],selection='caller_declared_freshly_rechecked',
                 snapshot_relation='separate_observation',authority='none',publication_allowed=False)
-            if reason==SOFT_BUDGET: result['instruction_soft_lines']=soft
+            if reason==SOFT_BUDGET:
+                result.update(instruction_soft_lines=soft,threshold_origin='caller_declared',
+                              convention_source_role='general_reference_not_threshold')
             return result
     if finding is None: raise ValueError('no eligible current audit finding')
     return dict(profile='ahl-audit-hypothesis-v1',hypothesis_source='static_convention',

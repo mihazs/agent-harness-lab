@@ -519,6 +519,8 @@ def test_rechecked_soft_instruction_budget_reaches_paired_evaluation(wf, monkeyp
     selected=select(receipt,wf.project,'codex')
     assert selected['reason']=='instruction_launch_lines_above_soft_budget'
     assert selected['authority']=='none' and selected['instruction_soft_lines']==2
+    assert selected['threshold_origin']=='caller_declared'
+    assert selected['convention_source_role']=='general_reference_not_threshold'
     args=wf.args();args.from_audit=receipt
     result=improve(args);output=Path(result['output'])
     assert result['status']=='inconclusive' and result['changed_files']==[]

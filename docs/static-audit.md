@@ -392,7 +392,9 @@ To include the caller's soft line budget in a recheck, use
 `ahl audit PROJECT --improvement-recheck-soft-budget --instruction-soft-lines N`.
 This emits `ahl-audit-recheck-parameters-v2`; a matching, untruncated instruction
 chain above that budget is eligible as a simplification focus. The threshold is a
-caller-declared convention, not a validated performance limit. Existing
+caller-declared convention, not a validated performance limit. The
+soft-budget hypothesis metadata labels its threshold `caller_declared`; the
+convention URL is a general reference, not the source of that threshold. Existing
 `--improvement-recheck` output remains v1 and does not support a soft-budget
 recheck; older consumers do not accept the v2 parameters.
 
