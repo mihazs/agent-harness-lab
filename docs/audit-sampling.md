@@ -316,3 +316,33 @@ sampling without replacement, with a union bound across the two endpoints; recal
 bounds follow from those simultaneous intervals. A fully reviewed census has zero
 sampling uncertainty. These are conditional design bounds, not guarantees about
 uncaptured interactions, reviewer accuracy, or independently verified lineage.
+
+
+## Opt-in stratified hard-budget design
+
+`agent_harness_lab.diagnostics.audit_stratified` divides captured eligible units
+into disjoint strata using alert status and the complete combination of declared
+flags. `layout(frame)` returns the stratum sizes. The caller supplies a fixed
+positive quota for every stratum, bounded by its size; quotas must sum to no more
+than the hard review budget. Different quotas allow targeted oversampling, while
+overlapping flags describe one stratum and never duplicate a unit. The budget must
+cover at least one unit per nonempty stratum. The plan uses profile
+`audit-stratified-plan-v1`, schema version 1, the frame hash, seed, quotas,
+review budget, optional policy/model hashes and a decision timestamp.
+
+`draw` selects without replacement by unique 256-bit hash ranks within each
+stratum, refusing collisions rather than redrawing. Each receipt records the exact
+rational inclusion probability `quota / stratum_size`. `review_queue` and
+`estimate` replay the full draw against caller-supplied frame and plan. A missing
+or nonresponse label makes the estimate inconclusive. These outputs remain
+private and do not authorize policy updates.
+
+Conditional on exchangeable uniform ranks within each stratum and correct
+complete labels, the report uses stratum-size weighted sample rates for the fixed
+captured eligible population. Conservative without-replacement Hoeffding bounds
+are combined with a union bound over strata and the prevalence and missed-rate
+endpoints; recall bounds follow from those simultaneous intervals. No
+independence between strata is needed for that union bound. Hash exchangeability,
+frame origin, quota timing, reviewer identities and labels remain unverified.
+The design does not support arbitrary overlapping-route probabilities or claim
+coverage of uncaptured interactions. Existing audit designs are unchanged.
