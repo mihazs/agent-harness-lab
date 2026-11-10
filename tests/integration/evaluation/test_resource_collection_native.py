@@ -10,7 +10,7 @@ from tests.unit.evaluation.test_resource_decision import token_scope_contract
 
 
 @kernel_only
-def test_collector_observes_real_custody_without_sending_usage_to_workers(kernel_case):
+def test_collector_observes_real_custody_without_sending_usage_in_provider_requests(kernel_case):
     enter,after,exit_ = (comparison_custody.Comparison.__enter__,comparison_custody.Comparison.after,
                          comparison_custody.Comparison.__exit__)
     active = {}; reports = []
