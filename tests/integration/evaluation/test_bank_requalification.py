@@ -176,7 +176,7 @@ class TestBankRequalificationKernel(kernel.PytestKernelFixture):
         scope.bind(path,baseline,candidate)
         handle=store.requalify_bank(case,domain,path,baseline,candidate,deadline=deadline)
         reserved=history.reserve_access(path,baseline,candidate,parent_deadline=deadline,requalification=handle)
-        original=Comparison.__init__; checks=[]
+        original=Comparison.__init__; original_exit=Comparison.__exit__; checks=[]; exits=[]
         def checked(instance,spec,fixtures,client,deadline,*args,**kwargs):
             if kwargs.get('protected_access') is not None:
                 forged=dict(kwargs,protected_access=copy(kwargs['protected_access']))
@@ -186,11 +186,15 @@ class TestBankRequalificationKernel(kernel.PytestKernelFixture):
                 with pytest.raises(TimeoutError):original(Comparison.__new__(Comparison),spec,fixtures,client,time.monotonic()-1,*args,**kwargs)
                 checks.append('rejected')
             return original(instance,spec,fixtures,client,deadline,*args,**kwargs)
-        with patch.object(Comparison,'__init__',checked):
+        def closed(instance,*errors):
+            exits.append((history.history(history.case(instance.journal_binding['run_id']))[-1][0]['state'],instance._valid()))
+            return original_exit(instance,*errors)
+        with patch.object(Comparison,'__init__',checked),patch.object(Comparison,'__exit__',closed):
             result=history.run(path,baseline,candidate,cgroup_root=self.cgroup_root,image_root=runtime,image_sha256=image,
                 disk_bytes=64*1024*1024,budget_seconds=60,parent_deadline=deadline,access_reservation=reserved['reservation_id'],
                 inference_client=client,inference_settings=settings_path,sandbox_backend=backend,workflow_request=request)
         assert checks == ['rejected']
+        assert exits == [('sealed',True)]
         assert result['state'] == 'sealed'
         assert result['protected_access']['state'] == 'retired'
         assert result['automatic_promotion'] is False
@@ -207,6 +211,8 @@ class TestBankRequalificationKernel(kernel.PytestKernelFixture):
         changed=deepcopy(proof); changed['reviewed_bank_reservation']['run_id']='0'*64
         with pytest.raises(ValueError,match='reservation differs'):validate(changed,spec,execution,receipt)
         with pytest.raises(ValueError,match='reservation differs'):validate(proof,spec,execution,None)
+        changed=deepcopy(proof);del changed['reviewed_bank_reservation']
+        with pytest.raises(ValueError,match='reservation missing'):validate(changed,spec,execution,receipt,require_reviewed=True)
         with pytest.raises(ValueError,match='comparison binding changed'):
             validate(proof,replace(spec,experiment_id='different-run'),execution,receipt)
         changed=deepcopy(execution);changed['trials'][0]['status']='forged'

@@ -306,13 +306,15 @@ class Comparison:
         check_deadline(self.deadline)
 
 
-def validate(value,spec,result,protected_access=None):
+def validate(value,spec,result,protected_access=None,*,require_reviewed=False):
     if (not isinstance(value,dict) or value.get('profile')!=PROFILE or value.get('plan_sha256')!=spec.digest
             or value.get('result_sha256')!=hashed(result)
             or len(value.get('rows',[]))!=len(schedule(spec))
             or [row.get('trial_sha256') for row in value['rows']]!=[hashed(row) for row in result['trials']]):
         raise ValueError('sealed fresh comparison binding changed')
 
+    if require_reviewed and 'reviewed_bank_reservation' not in value:
+        raise ValueError('sealed reviewed bank reservation missing')
     if 'reviewed_bank_reservation' in value:
         if (not isinstance(protected_access,dict) or 'bank_qualification' not in protected_access.get('binding',{})
                 or value['reviewed_bank_reservation']!=_reservation_view(protected_access)):
