@@ -82,6 +82,9 @@ def main(argv=None):
         require_safe_cli_destinations(argv)
     except FrozenProjectError as exc:
         argparse.ArgumentParser(prog='ahl').exit(2, f'ahl: {exc}\n')
+    if argv[:2] == ['skills', 'activation-receipt']:
+        from .evaluation.skills import activation_receipt_main
+        return activation_receipt_main(argv[2:])
     skill_invocation=argv[:2]==['skills','invoke']
     if skill_invocation:argv=['improve',*argv[2:]]
     if argv and argv[0] == 'analysis':
