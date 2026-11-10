@@ -137,11 +137,16 @@ def test_private_cli_report_does_not_rehydrate_authority_or_echo_argv(fx):
 
 
 def test_report_escapes_imported_labels():
-    value=dict(trajectory_profile=core.PROFILE,trials=[dict(task='<script>',version='candidate',
+    label = '<script>![synthetic](https://example.invalid/track)'
+    value=dict(trajectory_profile=core.PROFILE,trials=[dict(task=label,version='candidate',
         controller_grade=dict(trajectory=dict(status='unknown',assertions=[])))])
-    markdown,document=benchmark.render(benchmark.summary(value))
+    summary = benchmark.summary(value)
+    markdown,document=benchmark.render(summary)
     assert 'unverified' in markdown; assert '<script>' not in document
     assert '&lt;script&gt;' in document
+    assert '<script>' not in markdown and '&lt;script&gt;' in markdown
+    assert '![synthetic](https://example.invalid/track)' not in markdown
+    assert summary['trials'][0]['task'] == label
 
 
 @pytest.mark.parametrize('invalid',(

@@ -183,6 +183,13 @@ def trajectory_summary(results):
             'Assertion counts are not independent samples. Hidden reads, transient writes and delivery remain unobserved.'])
 
 
+def _markdown_cell(value):
+    text = html.escape(' '.join(str(value).splitlines())).replace('|', '/')
+    for character in ('\\', '`', '[', ']', '(', ')', '!', '*', '_'):
+        text = text.replace(character, '\\' + character)
+    return text
+
+
 def render(result):
     if result.get('report_kind')=='controller_history':
         from .history_report import render as render_history
@@ -199,7 +206,7 @@ def render(result):
     lines=['# '+title,'','| '+' | '.join(headers)+' |','| '+' | '.join('---' for _ in headers)+' |']
     rows=[]
     for row in values:
-        lines.append('| '+' | '.join(str(v).replace('|','/').replace('\n',' ') for v in row)+' |')
+        lines.append('| '+' | '.join(_markdown_cell(v) for v in row)+' |')
         rows.append('<tr>'+''.join('<td>'+html.escape(str(v))+'</td>' for v in row)+'</tr>')
     lines+=['',notice]
     document='<!doctype html><html lang="en"><meta charset="utf-8"><title>'+html.escape(title)+'</title><body><h1>'+html.escape(title)+'</h1><table><tr>'+''.join('<th>'+h+'</th>' for h in headers)+'</tr>'+''.join(rows)+'</table><p>'+html.escape(notice)+'</p></body></html>'
