@@ -3,6 +3,7 @@ from contextlib import ExitStack,redirect_stdout
 from copy import copy
 from dataclasses import asdict,replace
 import gc
+import hashlib
 import io
 import json
 import os
@@ -313,6 +314,19 @@ class TestPolicyAuthority(PublicCase):
 
 @pytest.mark.skipif(not kernel.ENABLED,reason='explicit delegated kernel profile required')
 class TestPublicControllerPrerequisite(PublicCase,kernel.KernelCase):
+    def test_owned_dispatch_binds_observed_worker_executable_without_model_identity(self):
+        observed=[]
+        def consumer(scope,read):
+            packet=self.assert_observed(scope,read)
+            observed.extend(row for row in scope.read()['events'] if row['stage']=='role')
+            return packet
+        result,_,_,_=self.run_public(consumer=consumer)
+        expected=hashlib.sha256(Path('/usr/bin/python3').read_bytes()).hexdigest()
+        assert observed and all(row['permission']['worker_executable_sha256']==expected for row in observed)
+        assert all(row['dispatch_sha256'] and row['requested_argv_sha256'] and row['image_sha256'] for row in observed)
+        assert result['implementation_prerequisites']['native_identity']=='unverified'
+        assert not result['implementation_prerequisites']['adoption_authority']
+
     def test_runtime_boundary_qualifies_actual_four_role_protocol_without_certification(self):
         result,_,completions,output=self.run_public(source=True)
         packet=result['implementation_prerequisites'];boundary=packet['restricted_process_protocol']
