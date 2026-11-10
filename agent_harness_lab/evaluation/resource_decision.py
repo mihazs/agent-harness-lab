@@ -124,6 +124,24 @@ def validate(contract):
     return contract
 
 
+def verify_plan_resource_contract(plan, contract, *, public=False):
+    """Compare a caller-supplied plan declaration and contract without authenticating either."""
+    if public is not False: raise ValueError('resource contract binding is private')
+    from .plan import ExperimentSpec
+    if isinstance(plan,dict): plan = ExperimentSpec.parse(plan)
+    if type(plan) is not ExperimentSpec: raise ValueError('experiment plan required')
+    plan.validate(); validate(contract)
+    if contract['profile'] != TOKEN_PROFILE: raise ValueError('v4 token contract required')
+    digest = hashlib.sha256(json.dumps(contract,sort_keys=True,separators=(',', ':')).encode()).hexdigest()
+    declared = plan.resource_contract_sha256
+    status = 'unbound' if declared is None else 'matched' if declared == digest else 'mismatch'
+    return dict(profile='ahl-plan-resource-binding-v1',status=status,plan_sha256=plan.digest,
+                resource_contract_sha256=digest,plan_source='caller_supplied_unverified',
+                contract_source='caller_supplied_unverified',history_authentication='not_checked',
+                contract_bytes_persisted='not_checked',resource_decision='not_computed',
+                publication='private',publication_allowed=False,certification_authority=False,automatic_promotion=False)
+
+
 def observe(trial, endpoint, cache_policy=None, timing_boundary=None, token_scoped=False):
     """Return (capped value, None) or (None, reason); a timeout below the horizon is censored."""
     if cache_policy is not None:

@@ -185,3 +185,10 @@ existing serialization, digest, and trial identities. Adding a pin creates a new
 trial identities; it cannot retrofit an existing run. The pin identifies a declaration only:
 history does not preserve the contract bytes, and the plan does not itself collect resource
 data, apply a resource gate, authenticate measurements, or authorize promotion.
+
+`agent_harness_lab.evaluation.resource_decision.verify_plan_resource_contract(plan, contract)`
+compares a supplied plan declaration and v4 contract, returning `matched`, `mismatch`, or
+`unbound`. This private check can be used on a plan obtained from history, but it treats the
+supplied plan and contract as unverified: it does not authenticate history, establish that
+contract bytes were persisted, recover collection data, or compute a resource decision.
+The live collector uses the same check when a plan includes a resource contract pin.
