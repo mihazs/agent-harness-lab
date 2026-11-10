@@ -148,3 +148,74 @@ def test_similarity_snapshot_and_pinned_results_are_not_public_export_records():
     snapshot = manifest_evidence({'tasks': [dict(id='one', root='root', prompt='synthetic prompt')]})
     assert not public_export_allowed([dict(public, root_similarity_evidence=snapshot)])
     assert not public_export_allowed([dict(public, root_similarity_sha256=digest(snapshot))])
+
+
+def test_synthetic_workers_receive_only_their_task_not_similarity_evidence():
+    """Inspect the real runner's worker requests and seeded states using synthetic transport."""
+    from copy import deepcopy
+    import shutil
+    from agent_harness_lab.evaluation import responses
+    from agent_harness_lab.evaluation.oracle import identity
+    from agent_harness_lab.evaluation.plan import ExperimentSpec
+    from tests.integration.sandbox.test_sandbox_inference import ResponsesEvaluation
+
+    with ExitStack() as cleanup:
+        run = ResponsesEvaluation(cleanup.callback)
+        source = run.fixture.manifest
+        original = next(task for task in source['tasks'] if task['split'] == 'development')
+        oracle = deepcopy(source['grader_bundles'][original['id']])
+        source_fixture = run.root/'export'/original['fixture']
+        prompts = ['Inspect the calendar and return the earliest valid date.',
+                   'Order invoice totals by decreasing numeric amount.',
+                   'Reject malformed network addresses before opening a socket.',
+                   'Normalize postal codes and preserve leading zeroes.',
+                   'Parse the chess position and report the active player.',
+                   'Find duplicate article titles after trimming whitespace.',
+                   'Count unique tree leaves in the forest inventory.']
+        tasks = []
+        for index, prompt in enumerate(prompts):
+            path = f'synthetic-privacy-fixture-{index}'
+            shutil.copytree(source_fixture, run.root/'export'/path)
+            tasks.append(dict(original, id=f'synthetic-{index}', root=f'private-root-{index}',
+                              family='synthetic', fixture=path, prompt=prompt, split='development'))
+        source['tasks'] = tasks
+        source['grader_bundles'] = {task['id']: deepcopy(oracle) for task in tasks}
+        source['max_trials'] = 14
+        value = manifest_evidence(source)
+        pin = digest(value)
+        plan = ExperimentSpec('synthetic-private-similarity',
+            tuple((task['id'], task['root'], task['family']) for task in tasks),
+            1, 13, 14, 2, 0, .1, .99, (('synthetic', 1.),),
+            run.runner.digest(run.root/'baseline'), run.runner.digest(run.root/'candidate'),
+            identity(run.root/'export', tasks, source['grader_bundles']), run.args.image_sha256,
+            root_similarity_sha256=pin)
+        source['experiment'] = plan.to_dict()
+        run.fixture.write_manifest()
+        payloads = []
+        original_execute = run.execute
+
+        def transport(key, body, *args):
+            payloads.append(json.loads(body))
+            return run.transport(key, body, *args)
+
+        def execute(argv, workspace, inputs, role, limits, **options):
+            if role == 'executor':
+                state = options['working_state']
+                raw = b''.join(content for _, _, content in state.snapshot.files)
+                assert pin.encode() not in raw
+                assert b'workflow-prompt-similarity-v1' not in raw
+                assert all(task['root'].encode() not in raw for task in tasks)
+            return original_execute(argv, workspace, inputs, role, limits, **options)
+
+        run.backend.run.side_effect = execute
+        with patch('agent_harness_lab.evaluation.sandbox.SandboxBackend', return_value=run.backend), \
+                patch.object(responses, 'request', side_effect=transport), \
+                patch.object(run.runner, 'execute', side_effect=AssertionError('no native CLI')):
+            assert run.runner.evaluate(run.args) == 1
+        assert len(payloads) == 28 and run.commands == 14
+        for payload in payloads:
+            raw = json.dumps(payload)
+            assert pin not in raw and 'workflow-prompt-similarity-v1' not in raw
+            assert all(task['root'] not in raw for task in tasks)
+            # A worker receives at most its own task prompt, never the comparison bank.
+            assert sum(prompt in raw for prompt in prompts) == 1
