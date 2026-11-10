@@ -328,3 +328,15 @@ omitted, it models the documented 32 KiB default. A declared limit replaces the
 default for chain findings, which identify dropped bytes and the crossing file
 when those are settled. The default 200-line soft budget is a configurable
 convention extrapolated to the selected closure, not a validated threshold.
+
+For supported instruction findings, `improvement_hint` provides a fixed,
+content-free `focus` string and the audited runtime. Before using it with
+`ahl improve --focus`, select an improvement runtime compatible with the audited
+runtime and the configured profile. The audit does not select or override an
+improvement runtime. The hint carries no paths, counts, source text or finding identity and does
+not establish a defect or authorize an edit. The report is not automatically
+read by improve: focus is an optional user-selected hint, subject to the normal
+scope, evaluation and promotion checks. Closed-input profiles that prohibit
+focus reject it; the hint does not override those profiles. An improvement run
+may invoke a model or agent and supply it with authorized project data, unlike
+the offline audit. The content-free hint does not change that exposure.

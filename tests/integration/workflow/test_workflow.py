@@ -322,3 +322,43 @@ def test_help_reflects_recommendation_only_boundary(cmd):
     if 'improve' in cmd or 'watch' in cmd:
         assert 'recommend' in out
         assert 'no automatic adoption' in out or 'recommendation-only' in out or 'recommend' in out
+
+
+def test_audit_focus_hint_reaches_cooperative_proposer_without_source_text(wf, monkeypatch, capsys):
+    from agent_harness_lab.audit.cli import main as audit_main
+
+    (wf.project / '.git').mkdir()
+    (wf.project / 'AGENTS.md').write_text('SYNTHETIC_PRIVATE_SENTENCE\n')
+    (wf.project / 'mode').write_text('no_change')
+    monkeypatch.setenv('XDG_STATE_HOME', str(wf.root / 'audit-state'))
+    assert audit_main([str(wf.project), '--json']) == 0
+    report = json.loads(capsys.readouterr().out)
+    hint = report['improvement_hint']
+    assert hint['status'] == 'hypothesis' and hint['authority'] == 'none'
+    args = wf.args()
+    args.focus = hint['focus']
+    result = improve(args)
+    context = json.loads((Path(result['output']) / 'preparation/context.json').read_text())
+    assert context['focus'] == hint['focus']
+    assert 'SYNTHETIC_PRIVATE_SENTENCE' not in context['focus']
+    assert str(wf.project) not in context['focus']
+    assert result['status'] == 'no_change'
+
+
+def test_audit_focus_hint_keeps_instruction_validation_in_force(wf, monkeypatch, capsys):
+    from agent_harness_lab.audit.cli import main as audit_main
+
+    (wf.project / '.git').mkdir()
+    (wf.project / 'AGENTS.md').write_text('SYNTHETIC_PRIVATE_SENTENCE\n')
+    (wf.project / 'mode').write_text('rooted')
+    monkeypatch.setenv('XDG_STATE_HOME', str(wf.root / 'audit-state'))
+    assert audit_main([str(wf.project), '--json']) == 0
+    hint = json.loads(capsys.readouterr().out)['improvement_hint']
+    args = wf.args()
+    args.focus = hint['focus']
+    result = improve(args)
+    context = json.loads((Path(result['output']) / 'preparation/context.json').read_text())
+    assert context['focus'] == hint['focus']
+    assert Path(result['instruction_validation']).is_file()
+    assert (wf.project / 'AGENTS.md').read_text() == 'SYNTHETIC_PRIVATE_SENTENCE\n'
+    assert result['status'] == 'inconclusive'
