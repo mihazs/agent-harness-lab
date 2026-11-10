@@ -1,13 +1,18 @@
 """Offline command for the read-only static harness audit."""
 import argparse
+from dataclasses import asdict
 import json
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from agent_harness_lab import audit, surfaces
 from agent_harness_lab.evaluation.integrity import open_directory_nofollow, relative
+from agent_harness_lab.audit import instruction_totals
+from agent_harness_lab.sources.git_view import Folder
+from agent_harness_lab.sources.claude_instructions import scope_of
 from agent_harness_lab.monitoring.state import atomic_json
 from agent_harness_lab.sources import harness_inventory
 from agent_harness_lab.workflow import state_root
@@ -71,8 +76,11 @@ def main(argv=None):
     parser.add_argument('--runtime', choices=('claude-code', 'codex'), default='codex', help='Runtime profile (default: codex)')
     parser.add_argument('--task-cwd', default='.', help='Existing project-relative task directory (default: project root)')
     parser.add_argument('--json', action='store_true', help='Print the full private JSON report')
+    parser.add_argument('--instruction-soft-lines', type=int, default=200,
+                        help='Claude checkout launch-line convention (default: 200; not a validated threshold)')
     args = parser.parse_args(argv)
     try:
+        if args.instruction_soft_lines < 0: raise ValueError('instruction soft-line budget must be nonnegative')
         project = args.project.resolve(strict=True)
         if not project.is_dir():
             raise ValueError('project must be an existing directory')
@@ -87,6 +95,30 @@ def main(argv=None):
         profile = dict(schema_version=1, runtime=args.runtime, version=surfaces.PINS[args.runtime], task_cwd=args.task_cwd)
         inventory = harness_inventory.capture(project, profile)
         report = _project(inventory, audit.audit(inventory, task_cwd=args.task_cwd).document(), args.task_cwd)
+        if args.runtime == 'claude-code':
+            try:
+                with Folder(project.parent, time.monotonic() + 30) as folder:
+                    expected = {n.path_sha256: n.content_sha256 for n in inventory.nodes
+                                if n.origin == 'checkout' and n.kind == 'instruction'
+                                and n.content_sha256 is not None and scope_of(n.path) is not None}
+                    report['declared_instruction_totals'] = instruction_totals.claude(
+                        profile, folder, project.name, expected=expected)
+            except (ValueError, OSError, TimeoutError):
+                report['declared_instruction_totals'] = dict(status='unknown', bytes=None, lines=None, files=None,
+                    reasons=['resolution_unavailable'], scope='captured_checkout_launch_files',
+                    settings='assumed_default', observed_loading='unknown', publication_allowed=False)
+            total = report['declared_instruction_totals']
+            total['soft_line_budget'] = args.instruction_soft_lines
+            if total['status'] == 'declared' and total['lines'] > args.instruction_soft_lines:
+                reason = 'instruction_launch_lines_above_soft_budget'
+                finding = audit.Finding(audit.digest(['instructions', '.', 'instruction', reason]), 'instructions',
+                    'nonconformant', reason, '.', audit.digest('.'), 'instruction', 'count',
+                    'behavioral_evaluation_required', 'evaluate_instruction_budget_reduction',
+                    'https://code.claude.com/docs/en/features-overview',
+                    measures=(('lines', total['lines']), ('soft_line_budget', args.instruction_soft_lines)))
+                report['findings'].append(dict(asdict(finding), status='weak', observed=reason))
+                for row in report['coverage']:
+                    if row['dimension'] == 'instructions' and row['status'] != 'missing': row['status'] = 'weak'
         candidate = next((row for row in report['findings'] if row['remediation']), None)
         if report['status'] != 'completed':
             report['next_action'] = 'Resolve the blocked inventory before using this audit.'

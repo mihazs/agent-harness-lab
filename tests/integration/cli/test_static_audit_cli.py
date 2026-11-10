@@ -167,3 +167,37 @@ def test_unsettled_dropped_count_does_not_claim_missing_coverage(tmp_path, monke
     report = json.loads(capsys.readouterr().out)
     assert next(row for row in report['coverage'] if row['dimension'] == 'instructions')['status'] == 'weak'
     assert not any(row['status'] == 'missing' for row in report['findings'])
+
+
+def test_claude_declared_totals_include_import_without_exposing_content(tmp_path, monkeypatch, capsys):
+    project = tmp_path / 'project'
+    project.mkdir()
+    (project / 'CLAUDE.md').write_text('@details.md\n')
+    (project / 'details.md').write_text('SYNTHETIC_SECRET_CONTENT\n')
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
+    output = capsys.readouterr().out
+    report = json.loads(output)
+    total = report['declared_instruction_totals']
+    assert (total['status'], total['files'], total['lines']) == ('declared', 2, 2)
+    assert total['observed_loading'] == 'unknown' and not total['publication_allowed']
+    assert 'SYNTHETIC_SECRET_CONTENT' not in output
+
+
+@pytest.mark.parametrize(('budget', 'weak'), [(2, False), (1, True)])
+def test_claude_line_budget_is_configurable_convention(tmp_path, monkeypatch, capsys, budget, weak):
+    project = tmp_path / 'project'
+    project.mkdir()
+    (project / 'CLAUDE.md').write_text('@details.md\n')
+    (project / 'details.md').write_text('synthetic\n')
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--runtime', 'claude-code', '--json',
+                 '--instruction-soft-lines', str(budget)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report['declared_instruction_totals']['soft_line_budget'] == budget
+    finding = [r for r in report['findings'] if r['reason'] == 'instruction_launch_lines_above_soft_budget']
+    assert bool(finding) is weak
+    if weak:
+        assert finding[0]['status'] == 'weak' and finding[0]['evidence_kind'] == 'count'
+        assert dict(finding[0]['measures']) == {'lines': 2, 'soft_line_budget': budget}
+        assert finding[0]['notice'] == 'convention_check_not_performance_evidence'

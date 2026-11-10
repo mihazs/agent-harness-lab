@@ -235,3 +235,21 @@ convention is not followed, not that the harness performs worse. The report has
 `aggregate_score: null`, `performance_evidence: false` and
 `publication_allowed: false`: it holds checkout paths and stays private. A
 behavioral claim still needs an evaluation such as `ahl improve`.
+
+## Claude declared instruction totals
+
+The CLI's private JSON report includes `declared_instruction_totals` for Claude
+Code. It counts distinct resolver-admitted checkout launch files and their
+resolved imports, including imports with other filenames. The values describe a
+bounded checkout snapshot under the assumed default instruction-file setting;
+they exclude user and managed instructions and are not evidence of what a
+runtime loaded. Missing or uncertain imports, cycles, excluded private launch
+files, changed matching inventory content, or an unavailable resolver leave the
+totals `unknown`. Contents are not emitted and publication is not allowed.
+
+The CLI's `--instruction-soft-lines` sets a checkout launch-line convention
+(default 200). If a settled declared total exceeds it, the report emits a `weak`
+count hypothesis to evaluate, not an instruction to edit. The default extends
+Claude's [per-file rule of thumb](https://code.claude.com/docs/en/features-overview)
+to the captured launch closure; it is not a validated aggregate threshold.
+Unknown totals never produce this hypothesis.
