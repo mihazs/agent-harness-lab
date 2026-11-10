@@ -130,6 +130,50 @@ class GiteaFixture:
 
 
 class TestGiteaSource(GiteaFixture):
+    def test_v2_native_identities_distinguish_recreated_objects_and_repositories(self):
+        selection = replace(self.selection, schema_version=2)
+        source = replace(self.spec(selection), version='v2')
+        _, first = self.read(selection, source)
+        _, repeated = self.read(selection, source)
+        assert {(r.native_id_sha256, r.revision_sha256) for r in first.records} == {
+            (r.native_id_sha256, r.revision_sha256) for r in repeated.records}
+        self.issue['id'] = 7070
+        _, replaced_issue = self.read(selection, source)
+        old = {r.native_id_sha256 for r in first.records if r.record_type == 'gitea_issue'}
+        new = {r.native_id_sha256 for r in replaced_issue.records if r.record_type == 'gitea_issue'}
+        assert len(old & new) == 1
+        self.routes[self.repo_path]['id'] = 43
+        for issue in (self.issue, self.pull_issue):
+            issue['repository'] = {**issue['repository'], 'id': 43}
+        for side in ('base', 'head'):
+            self.pull[side]['repo'] = {**self.pull[side]['repo'], 'id': 43}
+            self.pull[side]['repo_id'] = 43
+        _, replaced_repo = self.read(selection, source)
+        assert not ({r.native_id_sha256 for r in replaced_issue.records if r.record_type != 'gitea_instance'} &
+                    {r.native_id_sha256 for r in replaced_repo.records if r.record_type != 'gitea_instance'})
+
+    def test_v2_relations_and_coverage_reference_captured_native_records(self):
+        selection = replace(self.selection, schema_version=2)
+        source = replace(self.spec(selection), version='v2')
+        client, snapshot = self.read(selection, source)
+        ids = {r.native_id_sha256 for r in snapshot.records}
+        assert all(left in ids and right in ids for _, left, right in client.summary['relations'])
+        assert all(item['parent_sha256'] is None or item['parent_sha256'] in ids for item in client.summary['coverage'])
+        assert client.summary['source_version'] == 'v2'
+
+    def test_v2_import_replaced_issue_creates_new_issue_and_comment_identities(self, tmp_path):
+        selection = replace(self.selection, schema_version=2)
+        source = replace(self.spec(selection), version='v2')
+        client = GiteaAPI(selection.base_url, selection)
+        registry = Registry()
+        registry.register(Capability('api', PROVIDER, 'v2', PLANES), client)
+        scope = self.scope(source)
+        store = SourceStore(tmp_path/'v2.json', **scope)
+        registry.ingest(source, store, **scope)
+        assert registry.ingest(source, store, **scope).imported == 0
+        self.issue['id'] = 7070
+        assert registry.ingest(source, store, **scope).imported == 2
+
     @pytest.mark.parametrize('part', ('issue', 'pull_issue', 'base', 'head'))
     def test_same_name_different_repository_id_fails_closed(self, part):
         if part in ('issue', 'pull_issue'):
@@ -507,6 +551,19 @@ class TestGiteaConfiguration(GiteaFixture):
                 '--project-sha256', self.source.project_sha256, '--scope-sha256', self.source.scope_sha256, *extra])
         for secret in (*SECRETS, self.base, str(self.root)): assert secret not in output.getvalue()+error.getvalue()
         return code, json.loads(output.getvalue()) if output.getvalue() else None
+
+    def test_v2_configured_cli_import_and_repeat(self):
+        self.selection = replace(self.selection, schema_version=2)
+        self.source = replace(self.spec(self.selection, auth_mode='configured'), version='v2')
+        self.write()
+        env = ('--authorization-env', 'SYNTHETIC_GITEA_AUTHORIZATION')
+        with patch.dict(os.environ, SYNTHETIC_GITEA_AUTHORIZATION='token SYNTHETIC_SECRET'):
+            assert self.invoke('probe', *env)[0] == 0
+            assert self.invoke('preview', *env)[1]['gitea_summary']['source_version'] == 'v2'
+            assert self.invoke('import', *env)[0] == 0
+            code, repeated = self.invoke('import', *env)
+            assert code == 0
+            assert repeated['imported'] == 0
 
     def test_cli_probe_preview_and_import_read_only_the_named_variable(self):
         env = ('--authorization-env', 'SYNTHETIC_GITEA_AUTHORIZATION')
