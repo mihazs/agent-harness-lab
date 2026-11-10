@@ -94,7 +94,8 @@ def _author_boundary(case,inputs,deadline,state):
 def heldout_judgment(inputs,controls):
     return dict(controls_sha256=inputs['heldout_sha256'],curator=controls['curator'],
         evidence_refs=controls['evidence_refs'],independent_curation='reviewed',
-        author_nonexposure_before_intake='reviewed',author_custody=inputs.get('author_custody'))
+        author_nonexposure_before_intake='reviewed',negative_control_semantics='reviewed',
+        author_custody=inputs.get('author_custody'))
 
 
 def hashed(value):return hashlib.sha256(encoded(value)).hexdigest()

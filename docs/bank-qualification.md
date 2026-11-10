@@ -114,7 +114,11 @@ requires an explicit negative outcome. Its private receipt binds the exact
 control tree, original bank and sandbox execution. An interrupted audit remains
 incomplete. The separate trusted reviewer signs a request binding those receipts,
 the curator and evidence references, and judgments that curation was independent
-and that the task author had not seen the controls before intake. The reviewer
+and that the task author had not seen the controls before intake. It also binds
+the reviewer's `negative_control_semantics: reviewed` judgment that the supplied
+negative snapshots represent superficial changes that do not fix the intended
+behavior. This is a signed reviewer judgment, not an observation by the grader.
+Earlier signed requests without this judgment cannot qualify. The reviewer
 must differ from both author and curator. These are conditional, authenticated
 human judgments: identity strings, checksums and a private directory do not prove
 who saw the inputs. The native execution receipts do not establish prior author

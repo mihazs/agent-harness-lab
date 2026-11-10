@@ -133,7 +133,7 @@ def native_qualified_bank(fixture,cgroup):
 import json
 bundle=Path('oracle');bundle.mkdir()
 (bundle/'grade.py.txt').write_text({PROGRAM!r})
-(bundle/'expected.json').write_text(json.dumps(dict(complete=True,scenario=1)))
+(bundle/'expected.json').write_text(json.dumps(dict(answer='synthetic-final-answer')))
 tasks=[];tests=[];controls=[]
 for name in ('heldout-a','heldout-b','heldout-c'):
  fixture=Path(name);fixture.mkdir()
@@ -141,11 +141,11 @@ for name in ('heldout-a','heldout-b','heldout-c'):
  tasks.append(dict(id=name,split='heldout',fixture=name,prompt='Produce '+name,artifacts=['result.json']))
  for state in ('broken','partial','complete'):
   test=Path(name+'-'+state);test.mkdir()
-  (test/'result.json').write_text(json.dumps(dict(complete=state=='complete',scenario=1)))
+  (test/'result.json').write_text(json.dumps(dict(answer='synthetic-final-answer' if state=='complete' else 'synthetic-control-negative')))
   tests.append(dict(task=name,state=state,fixture=str(test)))
 for state in ('broken','partial','complete','alternative_valid','superficial'):
  folder=bundle/state;folder.mkdir()
- (folder/'result.json').write_text(json.dumps(dict(complete=state in ('complete','alternative_valid'),scenario=1)))
+ (folder/'result.json').write_text(json.dumps(dict(answer='synthetic-final-answer' if state in ('complete','alternative_valid') else 'synthetic-control-negative')))
  controls.append(dict(state=state,fixture=state))
 (bundle/'controls.json').write_text(json.dumps(controls))
 Path('manifest.json').write_text(json.dumps(dict(skills=[],harness_paths=[],tasks=tasks,grader_self_tests=tests,
@@ -162,7 +162,7 @@ Path('manifest.json').write_text(json.dumps(dict(skills=[],harness_paths=[],task
     controls={}
     for index,name in enumerate(('heldout-a','heldout-b','heldout-c')):
         hidden=private/name;hidden.mkdir()
-        (hidden/'result.json').write_text(json.dumps(dict(complete=True,scenario=987+index)))
+        (hidden/'result.json').write_text(json.dumps(dict(answer='synthetic-private-negative-'+str(index))))
         controls[name]=[dict(path=name,sha256=digest(hidden))]
     manifest=private/'controls.json'
     manifest.write_text(json.dumps(dict(schema_version=1,curator='synthetic-curator',
@@ -194,6 +194,12 @@ Path('manifest.json').write_text(json.dumps(dict(skills=[],harness_paths=[],task
     policy.chmod(0o600);assert invoke(store.root,'trust-reviewers','--policy',policy)[0]==0
     code,prepared=invoke(store.root,'prepare-review','--case',case,'--reviewer','synthetic-reviewer')
     assert code==0;request=Path(prepared['request_path'])
+    old=json.loads(request.read_bytes());old['review']['heldout'].pop('negative_control_semantics')
+    from agent_harness_lab.private_journal import encoded
+    old_request=operator/'old-request.json';old_request.write_bytes(encoded(old))
+    subprocess.run(['/usr/bin/ssh-keygen','-Y','sign','-f',str(key),'-n','ahl.final-bank-review.v1',str(old_request)],check=True,timeout=10)
+    review_authority.verify(store,old,Path(str(old_request)+'.sig').read_text(),purpose=review_authority.BANK_PURPOSE,deadline=time.monotonic()+10)
+    assert invoke(store.root,'qualify','--case',case,'--request',old_request,'--signature',str(old_request)+'.sig')[0]==2
     subprocess.run(['/usr/bin/ssh-keygen','-Y','sign','-f',str(key),'-n','ahl.final-bank-review.v1',str(request)],check=True,timeout=10)
     code,result=invoke(store.root,'qualify','--case',case,'--request',request,'--signature',str(request)+'.sig','--budget-seconds',60)
     assert code==0 and result['qualification']=='qualified_under_protocol'

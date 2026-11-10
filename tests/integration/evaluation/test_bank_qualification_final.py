@@ -201,7 +201,7 @@ class QualifiedBankKernelTests(kernel.KernelFixture):
         runner=evaluator()
         for version in ('baseline','candidate'):
             harness=self.root/version;harness.mkdir()
-            (harness/'solve.py').write_text('import json\nfrom pathlib import Path\nPath("result.json").write_text(json.dumps(dict(complete=True,scenario=1)))\n')
+            (harness/'solve.py').write_text('import json\nfrom pathlib import Path\nPath("result.json").write_text(json.dumps(dict(answer="synthetic-final-answer")))\n')
         for task in manifest['tasks']:task['offline_executor']=['/usr/bin/python3','-I','/inputs/harness/solve.py']
         tasks=manifest['tasks'];family=tasks[0]['family']
         spec=ExperimentSpec('synthetic-qualified-bank',tuple((t['id'],t['root'],t['family']) for t in tasks),
