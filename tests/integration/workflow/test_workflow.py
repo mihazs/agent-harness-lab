@@ -465,3 +465,43 @@ def test_skill_collision_recheck_refuses_forged_or_stale_receipts(wf, monkeypatc
     with pytest.raises(ValueError,match='no eligible'):select(receipt,wf.project,'codex')
     (wf.project/'.agents/skills/beta/SKILL.md').write_text('---\nname: beta\ndescription: Inspect CSV tables. Use for CSV tables.\n---\n\nInstructions.\n')
     with pytest.raises(ValueError,match='inventory changed'):select(receipt,wf.project,'codex')
+
+
+def test_rechecked_procedure_hypothesis_reaches_paired_evaluation(wf, monkeypatch, capsys):
+    from agent_harness_lab.audit.recheck import select
+
+    (wf.project/'.git').mkdir();original='# Procedure\n'+''.join(f'{n}. step\n' for n in range(1,6))
+    (wf.project/'AGENTS.md').write_text(original)
+    monkeypatch.setenv('XDG_STATE_HOME',str(wf.root/'audit-state'))
+    assert audit_main([str(wf.project),'--json','--improvement-recheck'])==0
+    report=json.loads(capsys.readouterr().out);receipt=wf.root/'audit.json';receipt.write_text(json.dumps(report))
+    selected=select(receipt,wf.project,'codex')
+    assert selected['reason']=='instruction_procedure_section_detected'
+    assert selected['authority']=='none' and 'skill' in selected['focus']
+    args=wf.args();args.from_audit=receipt
+    result=improve(args);output=Path(result['output'])
+    assert result['status']=='inconclusive' and result['changed_files']==[]
+    assert (wf.project/'AGENTS.md').read_text()==original
+    assert json.loads((output/'evaluation-0/results.json').read_text())['trials']
+    assert json.loads((output/'change-plan.json').read_text())['audit_hypothesis']==selected
+    report['improvement_recheck']['codex_project_doc_max_bytes']=2;receipt.write_text(json.dumps(report))
+    with pytest.raises(ValueError,match='no eligible'):select(receipt,wf.project,'codex')
+    (wf.project/'AGENTS.md').write_text('Different instruction.\n')
+    with pytest.raises(ValueError,match='inventory changed'):select(receipt,wf.project,'codex')
+
+
+def test_procedure_recheck_refuses_resolver_change(wf, monkeypatch, capsys):
+    from agent_harness_lab.audit import instruction_totals
+    from agent_harness_lab.audit.recheck import select
+
+    (wf.project/'.git').mkdir()
+    source=wf.project/'AGENTS.md';source.write_text('# Procedure\n'+''.join(f'{n}. step\n' for n in range(1,6)))
+    monkeypatch.setenv('XDG_STATE_HOME',str(wf.root/'audit-state'))
+    assert audit_main([str(wf.project),'--json','--improvement-recheck'])==0
+    receipt=wf.root/'audit.json';receipt.write_text(capsys.readouterr().out)
+    original=instruction_totals.codex
+    def changed(*args,**kwargs):
+        source.write_text('SYNTHETIC_CHANGED_CONTENT\n')
+        return original(*args,**kwargs)
+    monkeypatch.setattr(instruction_totals,'codex',changed)
+    with pytest.raises(ValueError,match='no eligible'):select(receipt,wf.project,'codex')
