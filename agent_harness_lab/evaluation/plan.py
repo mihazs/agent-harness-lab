@@ -28,6 +28,7 @@ class ExperimentSpec:
     precision_half_width: float | None = None
     sequential: dict | None = None
     root_similarity_sha256: str | None = None
+    resource_contract_sha256: str | None = None
 
     def validate(self):
         if not self.tasks or self.profile not in ('descriptive_smoke', 'certification'):
@@ -75,6 +76,10 @@ class ExperimentSpec:
         if cohort is not None and (not isinstance(cohort,str) or len(cohort)!=64
                 or any(c not in '0123456789abcdef' for c in cohort)):
             raise ValueError('cohort manifest requires an exact lowercase SHA-256')
+        resource = self.resource_contract_sha256
+        if resource is not None and (not isinstance(resource,str) or len(resource)!=64
+                or any(c not in '0123456789abcdef' for c in resource)):
+            raise ValueError('resource contract requires an exact lowercase SHA-256')
 
     def to_dict(self):
         value = asdict(self)
@@ -82,6 +87,7 @@ class ExperimentSpec:
         if self.precision_half_width is None: value.pop('precision_half_width')
         if self.sequential is None: value.pop('sequential')
         if self.root_similarity_sha256 is None: value.pop('root_similarity_sha256')
+        if self.resource_contract_sha256 is None: value.pop('resource_contract_sha256')
         return value
 
     @property

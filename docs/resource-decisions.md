@@ -177,3 +177,11 @@ remains unverified and all final totals remain unknown.
 Ordinary observer exceptions invalidate collection without undoing the already accepted trial.
 Interruptions such as `KeyboardInterrupt` propagate after the trial may have been committed;
 they do not establish a complete collection or permit replaying that trial as a fresh request.
+
+An experiment plan may optionally declare `resource_contract_sha256` using the v4 contract's
+canonical digest. A collector refuses a different contract before dispatch and reports that
+the plan contains the digest, not the contract bytes. Plans without the field keep their
+existing serialization, digest, and trial identities. Adding a pin creates a new plan and new
+trial identities; it cannot retrofit an existing run. The pin identifies a declaration only:
+history does not preserve the contract bytes, and the plan does not itself collect resource
+data, apply a resource gate, authenticate measurements, or authorize promotion.

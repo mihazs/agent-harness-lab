@@ -23,6 +23,10 @@ class UsageCollector:
         self._comparison = ref(comparison)
         self._contract = frozen
         self._contract_sha256 = hashlib.sha256(json.dumps(frozen,sort_keys=True,separators=(',', ':')).encode()).hexdigest()
+        plan_pin = comparison.spec.resource_contract_sha256
+        if plan_pin is not None and plan_pin != self._contract_sha256:
+            raise ValueError('resource contract differs from experiment plan')
+        self._plan_pinned = plan_pin is not None
         self._plan = comparison.spec.digest
         self._schedule = hashed(comparison.expected)
         self._samples = []
@@ -68,11 +72,13 @@ class UsageCollector:
                 or len(self._samples) != len(comparison.expected)):
             raise ValueError('complete live comparison collection required')
         comparison.finish(result)
-        return dict(profile='ahl-live-plan-provider-usage-v1', plan_sha256=self._plan, schedule_sha256=self._schedule,
-                    resource_contract_sha256=self._contract_sha256, contract_binding='live_before_first_trial',
+        result = dict(profile='ahl-live-plan-provider-usage-v1', plan_sha256=self._plan, schedule_sha256=self._schedule,
+                    resource_contract_sha256=self._contract_sha256, contract_binding='experiment_plan_digest' if self._plan_pinned else 'live_before_first_trial',
                     experiment_plan_contains_contract=False, samples=deepcopy(self._samples), durable=False,
                     source='provider_reported_unverified', quality='unverified', billing_completeness='unknown',
                     publication='private', publication_allowed=False, certification_authority=False, automatic_promotion=False)
+        if self._plan_pinned: result['experiment_plan_contains_contract_digest'] = True
+        return result
 
 
 def _record_completed(comparison):
