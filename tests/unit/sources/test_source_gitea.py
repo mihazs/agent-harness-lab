@@ -130,6 +130,22 @@ class GiteaFixture:
 
 
 class TestGiteaSource(GiteaFixture):
+    def test_v2_missing_review_listing_stays_unavailable_without_checkpoint(self, tmp_path):
+        selection = replace(self.selection, schema_version=2)
+        source = replace(self.spec(selection), version='v2')
+        self.routes[self.repo_path+'/pulls/8/reviews?page=1&limit=50'] = Response(b'SYNTHETIC_SECRET', 404)
+        client, snapshot = self.read(selection, source)
+        assert ('reviews', 'not_found', None) in self.states(client)
+        assert not snapshot.checkpoint_ready
+        assert not self.nodes(client, 'gitea_review')
+        assert 'review_endpoint_unsupported' not in client.summary['warnings']
+        registry = Registry()
+        registry.register(Capability('api', PROVIDER, 'v2', PLANES), client)
+        scope = self.scope(source)
+        store = SourceStore(tmp_path/'journal.json', **scope)
+        with pytest.raises(ValueError): registry.ingest(source, store, **scope)
+        assert not store.path.exists()
+
     def test_v2_unavailable_repository_reports_selected_dependencies_without_requests(self):
         selection = replace(self.selection, schema_version=2)
         source = replace(self.spec(selection), version='v2')

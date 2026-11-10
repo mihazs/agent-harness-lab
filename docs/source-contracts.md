@@ -3207,6 +3207,11 @@ version 2 has a different selection scope and does not migrate or reconcile
 version 1 histories. These identifiers remain server-reported claims, not
 authenticated proof, and deleted heads remain unknown.
 
+For v2, a review listing returning 404 remains `not_found` and blocks a
+checkpoint: the response alone does not establish whether the endpoint is
+unsupported or the listing is otherwise unavailable. V1 retains its existing
+`unsupported_endpoint` classification for this response.
+
 For v2, if a selected issue or PR cannot be read, including when its repository
 is unavailable, its coverage parent is the
 fingerprint of `("gitea-v2-selection", kind, project_sha256, number)`, where
@@ -3257,7 +3262,7 @@ timeout shortened to it) arrives during a request; it also stops every later
 request. Any of these, and any incomplete listing, makes the
 snapshot `checkpoint_ready: false`; the coverage manifest adds `not_observed` and
 marks `limit_reached`/`truncated`, and the registry refuses to commit it. The one
-exception is a 404 from the review listing of an already read PR, which older
+v1 exception is a 404 from the review listing of an already read PR, which older
 servers return: it is `unsupported_endpoint` with gap `unsupported_version` and
 warning `review_endpoint_unsupported`, and the rest of the capture may still be
 checkpointed. Other statuses, malformed JSON and non-JSON content fail closed
