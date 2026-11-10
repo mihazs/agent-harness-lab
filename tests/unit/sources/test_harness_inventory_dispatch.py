@@ -75,7 +75,7 @@ class TestMultiSurfaceDispatch:
         facts = dict(self.node(CLAUDE, '.claude/settings.json').facts)
         assert (facts['format'], facts['handlers']) == ('claude_settings', 1)  # hook facts keep plain keys
         assert ({key: facts[key] for key in facts if key.startswith(('plugin.', 'config.'))} == {
-            'config.parse_status': 'parsed', 'config.settings_file': 1,
+            'config.parse_status': 'parsed', 'config.permission_deny_state': 'parsed', 'config.settings_file': 1,
             'plugin.parse_status': 'parsed', 'plugin.plugin_file': 'claude_settings', 'plugin.plugins_declared': 2,
             'plugin.marketplaces_declared': 1, 'plugin.plugins_content_not_selected': 1,
             'plugin.plugins_not_enabled': 1, 'plugin.plugins_enablement_inherited': 0})
