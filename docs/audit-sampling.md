@@ -40,7 +40,10 @@ inclusion probability. The optional `alerted`, `severe`, `uncertain` and
 `out_of_distribution` routes oversample units with that alert status or flag. A
 route rate must lie in (0, 1]. A zero, negative, non-numeric or out-of-range rate
 is refused. A combined probability that rounds to zero at floating-point precision
-is also refused, including for an undrawn stratum. Very small nonzero probabilities
+is also refused, including for an undrawn stratum. Previously created receipts
+with a zero-probability stratum are rejected when reopened, even if that stratum
+contains no draws; regenerate the design with representable positive probabilities.
+Very small nonzero probabilities
 can still have substantial rounding and weight limitations; this is not a numerical
 precision guarantee. The plan binds the frame by hash, so a changed frame is refused.
 
