@@ -34,7 +34,8 @@ def test_external_scores_or_provenance_cannot_supply_current_typed_grades():
     for changed in (replace(rows[0], outcome=.9),
                     replace(rows[0], provenance='external_promptfoo_result')):
         result = analyze(spec, [changed, *rows[1:]])
-        assert result == dict(status='incomplete', reason='unknown_or_invalid_grade')
+        assert (result['status'], result['reason']) == ('incomplete', 'unknown_or_invalid_grade')
+        assert result['missing_outcome_bounds']['unknown_arms'] == 1
 
 
 def test_actual_bank_cli_rejects_foreign_sample_without_execution_or_export(tmp_path):
