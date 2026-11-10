@@ -219,6 +219,18 @@ def test_ambiguous_runtime_blocks_before_inference(one):
     assert result['reason'] == 'select_one_runtime_with_agent'
 
 
+def test_noninteractive_ambiguous_runtime_does_not_prompt_or_dispatch(one):
+    before = one.skill.read_bytes()
+    with patch('agent_harness_lab.one_call.shutil.which', return_value='/synthetic/runtime'), \
+            patch('builtins.input', side_effect=AssertionError('no prompt')), \
+            patch('sys.stdin.read', side_effect=AssertionError('no input')), \
+            patch('agent_harness_lab.cli.evaluator', side_effect=AssertionError('no runtime dispatch')):
+        code, result = one.invoke('--agent', 'auto')
+    assert (code, result['status'], result['reason']) == (3, 'blocked', 'select_one_runtime_with_agent')
+    assert '--agent' in result['remediation']
+    assert one.skill.read_bytes() == before
+
+
 def test_blocked_preflight_gives_a_reason_specific_remediation(one):
     from agent_harness_lab.one_call import REMEDIATION
     with patch('agent_harness_lab.one_call.shutil.which', return_value='/synthetic/runtime'):
