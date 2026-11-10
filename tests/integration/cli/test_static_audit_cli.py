@@ -309,3 +309,96 @@ def test_import_change_between_inventory_and_resolver_is_an_unbound_observation(
     assert total['snapshot_relation'] == 'separate_resolver_observation'
     assert total['inventory_comparison'] == 'recognized_instruction_files_only'
     assert total['cross_observation_consistency'] == 'unknown'
+
+
+@pytest.mark.parametrize(('limit', 'expected', 'dropped'), [(50000, 'conforms', None), (20000, 'missing', 13000)])
+def test_declared_codex_budget_overrides_assumed_default(tmp_path, monkeypatch, capsys, limit, expected, dropped):
+    project = tmp_path / 'project'
+    (project / '.git').mkdir(parents=True)
+    (project / 'AGENTS.md').write_bytes(b'x' * 33000)
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--json', '--codex-project-doc-max-bytes', str(limit)]) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report['codex_budget_declaration'] == dict(bytes=limit, origin='caller_declared',
+                                                       runtime_configuration='unknown', publication_allowed=False)
+    assert next(r for r in report['coverage'] if r['dimension'] == 'instructions')['status'] == expected
+    found = [r for r in report['findings'] if r['status'] == 'missing']
+    if dropped is None:
+        assert not found
+    else:
+        assert len(found) == 1 and found[0]['path'] == 'AGENTS.md'
+        assert dict(found[0]['measures'])['dropped_bytes'] == dropped
+        assert found[0]['reason'] == 'instruction_chain_truncated_at_declared_project_doc_bytes'
+
+
+def test_codex_budget_rejected_for_claude(tmp_path, monkeypatch):
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    with pytest.raises(SystemExit) as error:
+        main(['audit', str(tmp_path), '--runtime', 'claude-code', '--codex-project-doc-max-bytes', '1'])
+    assert error.value.code == 2
+
+
+def test_codex_declared_total_counts_selected_checkout_chain(tmp_path, monkeypatch, capsys):
+    project = tmp_path / 'project'
+    (project / '.git').mkdir(parents=True)
+    (project / 'src').mkdir()
+    (project / 'AGENTS.md').write_text('Must test.\n')
+    (project / 'src/AGENTS.override.md').write_text('pytest\n')
+    (project / 'src/AGENTS.md').write_text('SYNTHETIC_SHADOWED\n')
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--task-cwd', 'src', '--json', '--instruction-soft-lines', '1']) == 0
+    output = capsys.readouterr().out
+    report = json.loads(output)
+    total = report['declared_instruction_totals']
+    assert (total['status'], total['bytes'], total['lines'], total['files']) == ('declared', 18, 2, 2)
+    assert total['scope'] == 'captured_checkout_project_chain'
+    assert total['cross_observation_consistency'] == 'unknown' and total['observed_loading'] == 'unknown'
+    assert total['publication_allowed'] is False and 'SYNTHETIC_SHADOWED' not in output
+    assert any(r['reason'] == 'instruction_launch_lines_above_soft_budget' for r in report['findings'])
+
+
+def test_codex_total_is_unknown_for_truncation_or_unsettled_root(tmp_path, monkeypatch, capsys):
+    project = tmp_path / 'project'
+    project.mkdir()
+    (project / 'AGENTS.md').write_text('x\n' * 10)
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--json']) == 0
+    total = json.loads(capsys.readouterr().out)['declared_instruction_totals']
+    assert total['status'] == 'unknown' and total['bytes'] is None
+    assert 'project_root_unsettled' in total['reasons']
+    (project / '.git').mkdir()
+    assert main(['audit', str(project), '--json', '--codex-project-doc-max-bytes', '5']) == 0
+    total = json.loads(capsys.readouterr().out)['declared_instruction_totals']
+    assert total['status'] == 'unknown' and total['lines'] is None
+    assert 'truncated_chain_not_counted' in total['reasons']
+
+
+def test_codex_total_does_not_assume_checkout_root_above_nested_project(tmp_path, monkeypatch, capsys):
+    project = tmp_path / 'project'
+    (project / '.git').mkdir(parents=True)
+    (project / 'src/.git').mkdir(parents=True)
+    (project / 'AGENTS.md').write_text('root\n')
+    (project / 'src/AGENTS.md').write_text('nested\n')
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    with pytest.raises(SystemExit) as error:
+        main(['audit', str(project), '--task-cwd', 'src', '--json'])
+    assert error.value.code == 2
+
+
+def test_codex_total_does_not_trust_changed_selected_file(tmp_path, monkeypatch, capsys):
+    from agent_harness_lab import audit
+
+    project = tmp_path / 'project'
+    (project / '.git').mkdir(parents=True)
+    selected = project / 'AGENTS.md'
+    selected.write_text('original\n')
+    original_audit = audit.audit
+    def change_after_inventory(*args, **kwargs):
+        selected.write_text('changed\n')
+        return original_audit(*args, **kwargs)
+    monkeypatch.setattr(audit, 'audit', change_after_inventory)
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--json']) == 0
+    total = json.loads(capsys.readouterr().out)['declared_instruction_totals']
+    assert total['status'] == 'unknown' and 'inventory_content_changed' in total['reasons']
+    assert total['bytes'] is None and total['cross_observation_consistency'] == 'unknown'

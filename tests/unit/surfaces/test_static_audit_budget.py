@@ -212,3 +212,16 @@ def test_a_finding_rejects_malformed_measures(measures):
 def test_the_codex_parser_records_the_leading_rust_whitespace_run(raw, leading):
     status, facts = instructions.parse_surface('AGENTS.md', raw, dict(runtime='codex', task_cwd='.'))
     assert (status, facts['codex_leading_blank_bytes'], facts['bytes']) == ('parsed', leading, len(raw))
+
+
+def test_configured_zero_budget_skips_nonblank_file(checkout):
+    root = checkout({'AGENTS.md': text(64)})
+    report = audit.run(root, 'codex', codex_project_doc_max_bytes=0)
+    found = next(row for row in report.findings if row.reason == 'instruction_chain_skipped_at_declared_project_doc_bytes')
+    assert dict(found.measures) == {'budget_bytes': 0, 'dropped_bytes': 64, 'loaded_bytes': 0}
+
+
+@pytest.mark.parametrize('limit', [-1, True, 1.5])
+def test_invalid_declared_limit_is_rejected(checkout, limit):
+    with pytest.raises(ValueError):
+        audit.run(checkout({'AGENTS.md': text(64)}), 'codex', codex_project_doc_max_bytes=limit)
