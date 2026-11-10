@@ -1,0 +1,71 @@
+"""One explicit, pinned OpenCode session export; metadata claims only, never database access."""
+from dataclasses import dataclass
+from agent_harness_lab.evaluation.integrity import contained, read_regular, regular_sha256, relative
+from .hardened import HostileReport, limits, load_json
+from .schema import digest, fingerprint, label
+from .snapshot import LocalExport, claim_snapshot
+
+PROVIDER = 'opencode-export'
+SOURCE_VERSION = 'v1'
+# Upstream session export handler and synthetic transfer contract at this source commit.
+PIN = '98e4b5343e33aafded479b9ff71c12fd760d9d87'
+LIMITS = dict(max_export_bytes=32*1024*1024, max_messages=100000, max_json_depth=32,
+              max_json_containers=1000000, max_json_values=4000000)
+
+
+@dataclass(frozen=True)
+class SessionClaim:
+    claim_type: str
+    native_id_sha256: str
+    project_sha256: str
+    message_count: int
+    original_at: None = None
+
+
+class OpenCodeExport(LocalExport):
+    """Reads a single selected JSON export, never a database or an OpenCode process."""
+
+    def read(self, source):
+        if (source.kind, source.provider, source.version) != ('local_file', PROVIDER, SOURCE_VERSION):
+            raise ValueError('unsupported OpenCode source')
+        descriptor, selection = self.selection(source)
+        fields = {'schema_version', 'upstream_commit', 'instance', 'export', 'session_sha256'}
+        if (not isinstance(selection, dict) or set(selection)-{'limits'} != fields
+                or type(selection['schema_version']) is not int or selection['schema_version'] != 1
+                or selection['upstream_commit'] != PIN or digest(selection) != source.scope_sha256):
+            raise ValueError('unsupported OpenCode export selection')
+        label(selection['instance']); relative(selection['export']); fingerprint(selection['session_sha256'])
+        bounds = limits(selection.get('limits'), LIMITS)
+        decoded = []
+        def consume(position, raw, export_sha256): decoded.append(load_json(raw, bounds, 'OpenCode export'))
+        export_hash, = self.capture(source, descriptor, selection, [contained(self.manifest.parent, selection['export'])],
+            bounds['max_export_bytes'], consume, 'OpenCode export changed during capture', read_regular, regular_sha256)
+        value = decoded.pop()
+        if not isinstance(value, dict) or not isinstance(value.get('info'), dict) or not isinstance(value.get('messages'), list):
+            raise ValueError('invalid OpenCode session export')
+        info, messages = value['info'], value['messages']
+        if len(messages) > bounds['max_messages']: raise HostileReport('OpenCode message bound exceeded')
+        ids = set()
+        for message in messages:
+            if (not isinstance(message, dict) or not isinstance(message.get('id'), str)
+                    or not message['id'] or len(message['id']) > 256 or message['id'] in ids):
+                raise ValueError('OpenCode message identity missing or duplicated')
+            ids.add(message['id'])
+        session, project = info.get('id'), info.get('projectID')
+        if (not isinstance(session, str) or not session or len(session) > 256 or
+                not isinstance(project, str) or not project or project == 'global' or len(project) > 256):
+            raise ValueError('OpenCode session or project identity missing')
+        instance = selection['instance']
+        native = digest(('opencode.session', instance, session))
+        project_hash = digest(('opencode.project', instance, project))
+        if native != selection['session_sha256'] or project_hash != source.project_sha256:
+            raise ValueError('OpenCode export is outside the selected identity')
+        # The producer version and completeness cannot be verified from this export.
+        self.claims = [SessionClaim('session', native, project_hash, len(messages))]
+        self.summary = dict(schema_version=1, provider=PROVIDER, source_version=SOURCE_VERSION,
+            selection_profile='pinned_export_shape', producer_version='unverified', capture_completeness='unknown',
+            source_identity='source_declared_unverified', message_count=len(messages), task_outcomes_verified=False,
+            warnings=['export_version_unverified', 'message_schema_unvalidated', 'messages_not_interpreted',
+                      'lineage_unknown', 'completeness_unknown'])
+        return claim_snapshot(source, 'opencode_', self.claims, lambda c: 'native_field',
+            digest(('opencode.export', instance, selection['export'])), export_hash, self.summary)
