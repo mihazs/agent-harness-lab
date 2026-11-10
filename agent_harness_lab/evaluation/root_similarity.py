@@ -1,18 +1,24 @@
 """Local lexical candidates; absence of a match never establishes independence."""
 import re
 import unicodedata
-from collections import defaultdict
+from collections import Counter, defaultdict
 
-ALGORITHM = 'root-prompt-shingle-jaccard-v1'
+LEGACY_ALGORITHM = 'root-prompt-shingle-jaccard-v1'
+ALGORITHM = 'root-prompt-shingle-jaccard-v2'
+ALGORITHMS = (LEGACY_ALGORITHM, ALGORITHM)
 THRESHOLD = 0.7
 
 
-def shingles(prompt):
+def shingles(prompt, *, algorithm=ALGORITHM):
     """Build three-token shingles, abstracting code-like identifier names."""
+    if algorithm not in ALGORITHMS: raise ValueError('unsupported root similarity algorithm')
     text = unicodedata.normalize('NFC', prompt).casefold()
     variables = set(re.findall(r'\bset\s+([a-z]\w*)\s+from\b', text))
     variables.update(re.findall(r'\b([a-z]\w*)\s*=(?!=)', text))
     tokens = re.findall(r'\w+|[^\w\s]', text)
+    if algorithm == ALGORITHM:
+        occurrences = Counter(tokens)
+        variables.update(name for name in re.findall(r'`([a-z]\w*)`', text) if occurrences[name] > 1)
     tokens = [
         '<identifier>' if token in variables or '_' in token or len(token) == 1 and token.isalpha() and token not in ('a', 'i') else token
         for token in tokens
@@ -20,16 +26,17 @@ def shingles(prompt):
     return frozenset(zip(tokens, tokens[1:], tokens[2:]))
 
 
-def suspected_components(prompts):
+def suspected_components(prompts, *, algorithm=ALGORITHM):
     """Group root IDs linked by at least one lexical candidate, including transitive links.
 
     ``prompts`` is an iterable of (root ID, prompt). Comparisons are local; no
     original prompt or shingle is returned. Identical root IDs remain one unit.
     """
+    if algorithm not in ALGORITHMS: raise ValueError('unsupported root similarity algorithm')
     roots = sorted({root for root, _ in prompts})
     fingerprints = defaultdict(set)
     for root, prompt in prompts:
-        fingerprint = shingles(prompt)
+        fingerprint = shingles(prompt, algorithm=algorithm)
         if fingerprint:
             fingerprints[fingerprint].add(root)
     parent = {root: root for root in roots}
@@ -67,16 +74,17 @@ def suspected_components(prompts):
     return tuple(tuple(group) for group in groups.values() if len(group) > 1)
 
 
-def evidence(bank_sha256, revision_sha256, task_roots, prompts):
+def evidence(bank_sha256, revision_sha256, task_roots, prompts, *, algorithm=ALGORITHM):
     """Create an input-bound, descriptive snapshot for the supplied task roots."""
     rows = sorted([list(row) for row in task_roots])
     if len(prompts) != len(rows):
         raise ValueError('all selected task prompts are required for similarity evidence')
-    if any(not shingles(prompt) for _, prompt in prompts):
+    if algorithm not in ALGORITHMS: raise ValueError('unsupported root similarity algorithm')
+    if any(not shingles(prompt, algorithm=algorithm) for _, prompt in prompts):
         raise ValueError('each prompt needs at least one lexical shingle for similarity evidence')
-    return dict(schema_version=1, algorithm=ALGORITHM, bank_sha256=bank_sha256,
+    return dict(schema_version=1, algorithm=algorithm, bank_sha256=bank_sha256,
                 grouping_revision_sha256=revision_sha256, task_roots=rows,
-                groups=[list(group) for group in suspected_components(prompts)])
+                groups=[list(group) for group in suspected_components(prompts, algorithm=algorithm)])
 
 
 def project_evidence(full, task_roots):
@@ -90,7 +98,7 @@ def project_evidence(full, task_roots):
     return dict(full, task_roots=rows, groups=sorted(group for group in groups if len(group) > 1))
 
 
-def manifest_evidence(source):
+def manifest_evidence(source, *, algorithm=ALGORITHM):
     """Derive private candidates from the exact task prompts in a workflow manifest."""
     import hashlib
     from agent_harness_lab.sources.schema import digest
@@ -108,8 +116,9 @@ def manifest_evidence(source):
     identities = sorted([task, root, hashlib.sha256(prompt.encode('utf-8')).hexdigest()]
                         for task, root, prompt in items)
     bank = digest(dict(profile='workflow-prompt-similarity-v1', tasks=identities))
-    value = evidence(bank, digest(dict(algorithm=ALGORITHM, bank_sha256=bank)),
-                     [(task, root) for task, root, _ in items], [(root, prompt) for _, root, prompt in items])
+    value = evidence(bank, digest(dict(algorithm=algorithm, bank_sha256=bank)),
+                     [(task, root) for task, root, _ in items], [(root, prompt) for _, root, prompt in items],
+                     algorithm=algorithm)
     return dict(value, source_kind='workflow-prompt-similarity-v1')
 
 
@@ -132,7 +141,7 @@ def binding(spec, supplied, bank_path=None):
         if manifest_kind != 'workflow-prompt-similarity-v1': raise ValueError('unsupported similarity evidence source')
     if set(supplied) != allowed:
         raise ValueError('invalid root similarity evidence fields')
-    if supplied['schema_version'] != 1 or supplied['algorithm'] != ALGORITHM:
+    if supplied['schema_version'] != 1 or supplied['algorithm'] not in ALGORITHMS:
         raise ValueError('unsupported root similarity evidence')
     for key in ('bank_sha256', 'grouping_revision_sha256'):
         value = supplied[key]
@@ -149,10 +158,11 @@ def binding(spec, supplied, bank_path=None):
         raise ValueError('root similarity groups must be disjoint and ordered')
     if manifest_kind is not None:
         from agent_harness_lab.private_journal import record
-        actual = manifest_evidence(record(bank_path, 1024 * 1024)[0])
+        actual = manifest_evidence(record(bank_path, 1024 * 1024)[0], algorithm=supplied['algorithm'])
     else:
         from .task_bank import inspect
-        checked = inspect(bank_path)
+        checked = (inspect(bank_path) if supplied['algorithm'] == ALGORITHM
+                   else inspect(bank_path, similarity_algorithm=supplied['algorithm']))
         actual = checked['content_grouping']['root_similarity']['evidence']
         if actual is None:
             raise ValueError('current bank lacks complete root similarity evidence')
@@ -167,10 +177,11 @@ def controller_evidence(spec, source, manifest_path, *, export_root=None):
     from agent_harness_lab.sources.schema import digest
     if spec.root_similarity_sha256 is None:
         return None, None
-    candidate = manifest_evidence(source)
-    if digest(candidate) == spec.root_similarity_sha256:
-        binding(spec, candidate, manifest_path)
-        return candidate, manifest_path
+    for algorithm in ALGORITHMS:
+        candidate = manifest_evidence(source, algorithm=algorithm)
+        if digest(candidate) == spec.root_similarity_sha256:
+            binding(spec, candidate, manifest_path)
+            return candidate, manifest_path
     authority = source.get('bank_authority')
     if not isinstance(authority, dict) or not isinstance(authority.get('bank_path'), str):
         raise ValueError('bank-derived root similarity requires current bank authority')
@@ -178,12 +189,16 @@ def controller_evidence(spec, source, manifest_path, *, export_root=None):
     from .task_bank import inspect
     bank_authority(source, export_root=export_root)
     path = authority['bank_path']
-    full = inspect(path)['content_grouping']['root_similarity']['evidence']
-    if full is None:
-        raise ValueError('current bank lacks complete root similarity evidence')
-    candidate = project_evidence(full, [(task, root) for task, root, _ in spec.tasks])
-    binding(spec, candidate, path)
-    return candidate, path
+    for algorithm in ALGORITHMS:
+        report = inspect(path) if algorithm == ALGORITHM else inspect(path, similarity_algorithm=algorithm)
+        full = report['content_grouping']['root_similarity']['evidence']
+        if full is None:
+            raise ValueError('current bank lacks complete root similarity evidence')
+        candidate = project_evidence(full, [(task, root) for task, root, _ in spec.tasks])
+        if digest(candidate) == spec.root_similarity_sha256:
+            binding(spec, candidate, path)
+            return candidate, path
+    raise ValueError('current bank differs from frozen root similarity evidence')
 
 
 def grouped_weights(roots, weights, groups):

@@ -103,8 +103,13 @@ or making native-authentication or independent-root claims.
 ## Suspected root similarity
 
 Bank inspection compares three-token prompt shingles with Jaccard similarity at a
-fixed threshold. Code-like identifiers and simple assignment-style variable names are normalized before comparison. A
-connected group is a candidate for dependence and its member tasks receive an
+fixed threshold. The current `root-prompt-shingle-jaccard-v2` also normalizes
+repeated backticked identifier names in addition to code-like and simple
+assignment-style names. Existing v1 evidence is rechecked with its original v1 algorithm; it does
+not gain v2 candidates. To use v2 for an older plan, prepare a new plan and new
+trials. This code change also changes the analysis engine identity: explicitly
+regenerate controller decision receipts and do not cold-resume sequential runs
+pinned to an older engine. A connected group is a candidate for dependence and its member tasks receive an
 `independence_unverified` issue. The report includes nominal and effective root
 counts, where each connected candidate group counts once. This is a conservative
 planning count, not a verified count of independent incidents. Paraphrases and
