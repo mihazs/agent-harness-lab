@@ -493,3 +493,19 @@ def test_empty_import_hypothesis_abstains_when_closure_unsettled(tmp_path, monke
     report = json.loads(capsys.readouterr().out)
     assert report['declared_instruction_totals']['status'] == 'unknown'
     assert not any(row['reason'] == 'instruction_empty_import' for row in report['findings'])
+
+
+def test_instruction_improvement_hint_contains_only_fixed_content(tmp_path, monkeypatch, capsys):
+    project = tmp_path / 'project'
+    (project / '.git').mkdir(parents=True)
+    (project / 'AGENTS.md').write_text('SYNTHETIC_PRIVATE_SENTENCE\n')
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--json']) == 0
+    report = json.loads(capsys.readouterr().out)
+    hint = report['improvement_hint']
+    assert hint == dict(reason='instruction_constraints_not_detected',
+                        focus='Investigate whether project instruction constraints need clarification.',
+                        status='hypothesis', authority='none', publication_allowed=False)
+    assert 'SYNTHETIC_PRIVATE_SENTENCE' not in json.dumps(hint)
+    assert str(project) not in json.dumps(hint)
+    assert '--focus' in report['next_action']
