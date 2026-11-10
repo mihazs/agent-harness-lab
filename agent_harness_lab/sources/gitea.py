@@ -215,6 +215,8 @@ class GiteaAPI:
 
         def emit(kind, native, node, original=None): return ledger.emit(key(kind, native, node), kind, node, original)
 
+        def selected(kind, number): return digest(('gitea-v2-selection', kind, selection.project_sha256, number))
+
         version, version_state = ledger.version(API_PREFIX+'/version')
         emit('gitea_instance', 'instance', dict(instance_sha256=selection.instance_sha256,
             server_version=version or 'unknown', server_version_state=version_state))
@@ -223,9 +225,12 @@ class GiteaAPI:
         if repository is not None:
             emit('gitea_repository', 'repository', repository)
             for number in sorted(selection.issues+selection.pulls):
-                parent = key('gitea_issue', number) if selection.schema_version == 1 else None
+                parent = key('gitea_issue', number) if selection.schema_version == 1 else selected('gitea_issue', number)
                 node = ledger.read('issue', f'{self.repo_path}/issues/{number}', lambda raw, n=number: self._issue(raw, n, repository['id_sha256']), parent)
-                if node is None: continue
+                if node is None:
+                    if selection.schema_version == 2 and 'comments' in selection.capture:
+                        ledger.note('comments', ('not_observed', 'issue_unavailable'), parent)
+                    continue
                 parent = key('gitea_issue', number, node)
                 if selection.schema_version == 2: coverage[-1]['parent_sha256'] = parent
                 if number in selection.pulls and not node['is_pull']: raise ValueError('selected Gitea PR is a plain issue')
@@ -239,10 +244,18 @@ class GiteaAPI:
                     child = emit('gitea_comment', native, comment, comment['created_at'])
                     relations.add(('conversation_on', child, parent))
             for number in selection.pulls:
-                if number not in issues: continue
-                parent = key('gitea_pull', number) if selection.schema_version == 1 else None
+                if number not in issues:
+                    if selection.schema_version == 2:
+                        parent = selected('gitea_pull', number)
+                        ledger.note('pull', ('not_observed', 'issue_unavailable'), parent)
+                        if 'reviews' in selection.capture: ledger.note('reviews', ('not_observed', 'issue_unavailable'), parent)
+                    continue
+                parent = key('gitea_pull', number) if selection.schema_version == 1 else selected('gitea_pull', number)
                 node = ledger.read('pull', f'{self.repo_path}/pulls/{number}', lambda raw, n=number: self._pull(raw, n, repository['id_sha256']), parent)
-                if node is None: continue
+                if node is None:
+                    if selection.schema_version == 2 and 'reviews' in selection.capture:
+                        ledger.note('reviews', ('not_observed', 'pull_unavailable'), parent)
+                    continue
                 parent = key('gitea_pull', number, node)
                 if selection.schema_version == 2: coverage[-1]['parent_sha256'] = parent
                 pulls[number] = node; emit('gitea_pull', number, node, node['created_at'])
