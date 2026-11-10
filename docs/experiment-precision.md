@@ -143,10 +143,17 @@ Preservation analysis also reports bounds for each required frozen cohort, using
 equal selected-root weights and the required-cohort Bonferroni allocation. It
 does so only with valid frozen membership and unambiguous records; qualification
 and independence remain unverified. Optional cohorts remain descriptive. Sequential
-analysis does not yet provide inferential missing-outcome bounds. Its numeric API
-can opt in to a descriptive finite-bank completion range for a matching partial
-prefix; unobserved arms remain unknown and no confidence-sequence or promotion
-claim follows. `ahl experiment --records ... --sequential-binding ...` exposes
+analysis can opt in to a descriptive finite-bank completion range and an outer
+confidence-sequence envelope over possible completions of a matching partial
+prefix. The latter uses the existing sequential assumptions and endpoint error
+allocation; those assumptions and caller-supplied records remain unverified.
+Each sequential endpoint is monotone in its root-block observations, so the
+envelope takes its lower limit from the minimum possible observed blocks and its
+upper limit from the maximum. An empty extreme running intersection falls back
+to the full range. Time-uniform coverage remains conditional on the frozen
+sampling and no-interference assumptions, including at partial-root stopping.
+Unobserved arms remain unknown, and neither result grants promotion authority.
+`ahl experiment --records ... --sequential-binding ...` exposes
 the range for a caller-declared sampling binding; it does not verify sampling or
 controller custody. Its output is private and cannot authorize promotion. This is
 not a replayable controller inspection; engine-bound replay still requires the
