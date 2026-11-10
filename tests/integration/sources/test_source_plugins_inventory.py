@@ -101,6 +101,20 @@ class TestPluginInventory:
         assert new.document()['profile'] == 'ahl-harness-inventory-v2' and old.sha256 != new.sha256
         assert 'SYNTHETIC_SECRET' not in str(new.document())
 
+    def test_selected_plugin_v1_matches_prechange_full_inventory(self):
+        files = {'.claude-plugin/plugin.json': json.dumps({'name': 'synthetic', 'hooks': {'PreToolUse': 'SYNTHETIC_SECRET'}}),
+                 'hooks/hooks.json': json.dumps({'hooks': {'PreToolUse': [{'matcher': 'Edit', 'hooks': [
+                     {'type': 'command', 'command': 'never-run'}]}]}}),
+                 'skills/sample/SKILL.md': '---\nname: sample\ndescription: synthetic\nhooks:\n  PreToolUse:\n'
+                     '    - hooks:\n        - type: command\n          command: never-run\n---\n'}
+        plugin = plugin_checkout(self.base / 'legacy', files)
+        inventory = self.capture(plugin_checkouts={'deploy@synthetic-market': str(plugin)}).checkouts[0].inventory
+        # Full serialized inventory digest captured from the pre-change implementation.
+        assert inventory.sha256 == 'b50af9b4fb3a9ec42827153cc0eb52a5baf07f4274e3acc201c26c6cd9bec49b'
+        nodes = {node.path: dict(node.facts) for node in inventory.nodes}
+        assert nodes['hooks/hooks.json']['handler.0.audit_candidate_supported'] is True
+        assert nodes['skills/sample/SKILL.md']['embedded_hooks'] == 'unknown'
+
     def test_selected_checkout_components_are_inventoried_as_a_separate_snapshot(self):
         value = self.capture(plugin_checkouts={'deploy@synthetic-market': str(self.plugin)})
         checkout, = value.checkouts

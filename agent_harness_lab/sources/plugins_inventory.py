@@ -109,7 +109,7 @@ class _CheckoutWalk(harness_inventory._Walk):
         raw = self.read(descriptor, name, info)
         status, facts = harness_inventory.parse(self.parsers.get(kind, (None, None))[1], path, raw, self.profile)
         facts, layout = dict(facts), _layout(path, kind, raw)
-        if self.schema_version == 1: facts = {key: value for key, value in facts.items() if not harness_inventory._v2_fact(key)}
+        if self.schema_version == 1: facts.pop('manifest_hooks_key_unvalidated', None)
         if set(facts) & set(layout): raise ValueError('plugin layout facts collide with parser facts')
         self.facts += len(facts) + len(layout)
         if self.facts > harness_inventory.MAX_FACTS: raise harness_inventory._Blocked('fact_bound_exceeded')
