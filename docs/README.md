@@ -1,35 +1,41 @@
 # Documentation
 
-| Your goal | Start here |
-| --- | --- |
-| Try without credentials | [First diagnosis and full output](getting-started.md) |
-| Install or troubleshoot | [Installation](installation.md) |
-| Check readiness or initialize config | [Offline doctor and safe init](onboarding.md) |
-| Analyze a project, improve or monitor | [Workflows and CLI reference](workflows.md) |
-| Check harness conventions without traces or a model | [Static harness audit](static-audit.md) |
-| Understand capture formats and provenance | [Telemetry](telemetry.md) |
-| Build explicit source adapters | [Source evidence contracts](source-contracts.md) |
-| Understand evaluation and safety gates | [Evaluation foundation](evaluation-foundation.md) |
-| Accept a reviewed private regression | [Immutable development-bank admission](regression-admission.md) |
-| Run conditional finite-bank sequential diagnostics | [Sequential experiments](sequential-experiments.md) |
-| Inspect selected-plan precision or simulated power before execution | [Frozen-plan precision](experiment-precision.md) |
-| Record comparisons and invalidate defective graders | [Controller oracle history](oracle-history.md) |
-| Bind private analysis to current controller evidence | [Decision receipts](decision-receipts.md) |
-| Render current private qualification and preservation evidence | [Controller history reports](history-reports.md) |
-| Audit non-alerted episodes with probability sampling | [Probability-sampled triage audits](audit-sampling.md) |
-| Review a baseline/candidate experiment pair by pair | [Side-by-side review model](side-by-side-reports.md) |
-| Search with current preservation evidence and fresh confirmation | [Guarded development search](guarded-search.md) |
-| Audit and review a proposed grader correction | [Frozen correction controls](grader-corrections.md) |
-| Separate capture, task-mix and verified-performance drift | [Frozen drift plans and receipts](drift-monitoring.md) |
-| Check implemented/pending capabilities | [Controlled experiments](controlled-experiments.md) |
-| Inspect original smoke results | [Initial validation](validation.md) |
-| Develop, test and submit a PR | [Contributor guide](../CONTRIBUTING.md) |
-| Organize repository work and the GitHub Project | [Project operations](project-management.md) |
-| Understand methodology | [Scientific sources](../skills/harness-evaluation/references/evidence-to-design.md), [diagnosis criteria](../skills/harness-evaluation/references/trace-diagnosis.md), [execution contract](../skills/harness-evaluation/references/execution.md) |
+Choose a starting point by what you need. Each page is listed under its primary
+reader purpose.
 
-The initial validation page is a dated historical record, not a current suite count
-or evidence of real-world effectiveness. Scientific work remains tracked in
-[issue #3](https://github.com/mihazs/agent-harness-lab/issues/3); community onboarding
-is tracked separately in [issue #25](https://github.com/mihazs/agent-harness-lab/issues/25).
+## Learn
 
-Maintainers: [growth plan and measurement](community-growth.md) · [publication drafts](launch-drafts.md).
+- [First diagnosis](getting-started.md): reproduce a safe, synthetic diagnosis and interpret its output.
+- [Offline audit walkthrough](audit-walkthrough.md): inspect a synthetic harness without a model.
+
+## Complete a task
+
+- [Install](installation.md) and [check readiness or initialize a project](onboarding.md).
+- [Analyze, improve, or monitor a project](workflows.md); [analyze an explicit memory session](analyze-memory-session.md); [inspect CLI help](cli-help.md).
+- [Repair a supported skill header](repair-skill-header.md) or [inspect a private source journal](inspect-source-context.md).
+- [Review source relationships](source-lineage-review.md), [declare a regression](regression-proposals.md), [review a case](regression-review.md), or [admit it to a development bank](regression-admission.md).
+- [Review a conditional final bank](conditional-bank-review.md) or [run fixed repeated-bank improvement](repeated-improvement.md).
+- [Preflight experiment precision](experiment-precision.md), [search with preservation evidence](guarded-search.md), or [review grader corrections](grader-corrections.md).
+- [Record comparisons and quarantine graders](oracle-history.md) or [generate private history reports](history-reports.md).
+- [Manage repository work](project-management.md) or [contribute](../CONTRIBUTING.md).
+
+## Look up behavior and contracts
+
+- [Command overview](command-reference.md), [static audit contract](static-audit.md), [analysis methods](analysis.md), and [evaluation contracts and prerequisites](evaluation-foundation.md).
+- [Source contracts](source-contracts.md), [source lineage review](source-lineage-reference.md), [regression review records](regression-review-reference.md), [telemetry](telemetry.md), and [explicit memory page captures](memory-page-capture.md).
+- [Bank qualification](bank-qualification.md), [synthetic adversarial bank](adversarial-bank.md), [content grouping](content-grouping.md), and [evaluation interchange](evaluation-interchange.md).
+- [Controlled experiments](controlled-experiments.md), [controller-loaded instructions](controlled-agents.md), [controller source observations](controller-sources.md), and [implementation prerequisite observations](implementation-prerequisites.md).
+- [Decision receipts](decision-receipts.md), [diagnostic corpus](diagnostic-corpus.md), [triage policies](diagnostic-triage.md), and [audit sampling](audit-sampling.md).
+- [Drift monitoring](drift-monitoring.md), [permission audit](permission-audit.md), [runtime boundary](runtime-boundary.md), and [resource decisions](resource-decisions.md).
+- [One-call improvement](one-call-improvement.md), [owned development variants](owned-development-variants.md), [protected diagnostic access](protected-diagnostic-access.md), and [canonical construction exposure](canonical-construction-access.md).
+- [Preservation cohorts](preservation-cohorts.md), [sequential experiments](sequential-experiments.md), and [side-by-side review model](side-by-side-reports.md).
+
+## Understand the context
+
+- [Newcomer experience decisions](onboarding-rationale.md) and [analysis method-selection rationale](analysis-method-rationale.md).
+- [Scientific sources and limits](../skills/harness-evaluation/references/evidence-to-design.md), [diagnosis criteria](../skills/harness-evaluation/references/trace-diagnosis.md), and [execution contract](../skills/harness-evaluation/references/execution.md).
+
+## Historical and maintainer material
+
+- [Initial validation](validation.md) is a dated record, not a current suite count or evidence of real-world effectiveness.
+- [Community growth plan](community-growth.md) and [publication drafts](launch-drafts.md) are maintainer proposals.

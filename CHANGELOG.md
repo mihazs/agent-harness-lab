@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.151.0
+
+### Minor Changes
+
+- 6b3b537: Add an opt-in frozen resource contract and paired capped cost and latency decision that never accepts a saving while quality is unverified, keeps timeouts and unknown measurements visible, and stays recommendation-only.
+
+## 0.150.0
+
+### Minor Changes
+
+- 0cdd7fc: Add skill metadata, disclosure and routing-collision checks to the static audit
+
+## 0.149.4
+
+### Patch Changes
+
+- 216d00a: Move the memory capture and provenance, native compatibility, OKF, permission composition, plugin and workflow inventory, recheck, store, temporal, test results, transport and starter bank tests to pytest style. Each former `subTest` case is now its own parametrized test, `setUp` and temporary directories become fixtures, and no assertion site is dropped. `SourceStoreTests` keeps its `setUp()` and `addCleanup` interface for the lineage and chunked read fixtures, `Response` in the transport module is unchanged, the recheck tests run through `tests/support/github_case.py`, and the permission composition cases release their hand-driven `unittest.TestCase` hosts with `run_cleanups` and `run_class_cleanups`.
+
+## 0.149.3
+
+### Patch Changes
+
+- 4fd4d7f: Move the Claude and Codex native source, Claude instruction, rule and Claude-Mem, Cognee, command, commit-join and config inventory tests to pytest fixtures, plain asserts and parametrized cases, keeping every assertion. `NativeSourceTests` keeps the interface the other source tests build on, and the Claude root and commit-join fixtures release their hand-driven TestCase helpers with `run_cleanups`, so a failed nested cleanup is no longer dropped. The fixture cleanup probe covers both new fixtures.
+
+## 0.149.2
+
+### Patch Changes
+
+- 1ac7060: Move the source context, contract, controller, dispatch, Git, Gitea, GitHub (core, commits, details, threads, live), execution and frontmatter tests to pytest style. Each former `subTest` case is now its own parametrized test, `setUp` and temporary directories become fixtures, and the helpers that other test modules import keep their interfaces: `GitHubFixture` stays a plain mixin for the unittest-style GitHub modules, with `GitHubCase` as its pytest host, `SourceDispatchTests` keeps its `setUp()` and `doCleanups()` for the normalized export tests, and `metadata_for` and `Response` are unchanged. The Taskfile selectors follow the renamed `TestControllerSource` and `TestGitHubLive` classes.
+
+## 0.149.1
+
+### Patch Changes
+
+- bb70abf: Move the GitHub window, GitLab, graph, content grouping, harness binding, Hindsight, hooks inventory, instruction, lineage, MCP and Mem0 source tests to pytest style. Each former `subTest` case is now its own parametrized test, `setUp` and temporary directories become fixtures, and no assertion site is dropped. `GitHubFixture` users in the window and graph modules run through the new `tests/support/github_case.py` host, `MCPReaderTests` keeps its `setUp()` and `doCleanups()` interface for the memory capture tests, `graph_for`, `SyntheticHarnessRepository` and `git_available` are unchanged, and the lineage and grouping fixtures that drive a `unittest.TestCase` by hand release it with `run_cleanups`.
+
 ## 0.149.0
 
 ### Minor Changes

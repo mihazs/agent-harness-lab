@@ -119,11 +119,11 @@ class StaticAuditTests(unittest.TestCase):
         self.assertTrue(all(row.status == 'unknown' and row.cost_class is None for row in report.findings))
 
     def test_unparsed_and_unchecked_surfaces_are_unknown(self):
-        files = dict(WELL_FORMED, **{'.claude/settings.json': '{not json', '.claude/skills/demo/SKILL.md': '---\nname: demo\n---\n'})
+        files = dict(WELL_FORMED, **{'.claude/settings.json': '{not json', '.claude/skills/demo/SKILL.md': '---\nname: demo\ndescription: {flow: map}\n---\n'})
         report = audit.run(self.build(files), 'claude-code')
         reasons = {row.dimension: row.reasons for row in report.dimensions}
         self.assertEqual((reasons['hooks'], reasons['plugins'], reasons['commands']),
-                         (('parse_failed',), ('parse_failed',), ('not_parsed',)))
+                         (('parse_failed',), ('parse_failed',), ('skill_frontmatter_unsupported',)))
         self.assertEqual(reasons['config'], ('parse_failed',))
         for dimension in ('hooks', 'plugins', 'commands', 'config'): self.assertEqual(self.statuses(report)[dimension], 'unknown')
 

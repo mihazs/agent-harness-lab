@@ -1,7 +1,5 @@
 """The command, skill and prompt inventory reads frontmatter through the shared texts() mode (#307); synthetic only."""
-from pathlib import Path
-import tempfile
-import unittest
+import pytest
 
 from agent_harness_lab.sources import agents_inventory as agents
 from agent_harness_lab.sources import claude_rules as rules
@@ -20,72 +18,93 @@ CASES = ((b'---\nname: a\n', 'unterminated'), (b'---\nname: a\n...\n', 'untermin
 
 
 def reason(function, raw):
-    with unittest.TestCase().assertRaises(frontmatter.FrontmatterError) as caught: function(raw)
-    return caught.exception.reason
+    with pytest.raises(frontmatter.FrontmatterError) as caught: function(raw)
+    return caught.value.reason
 
 
-class TextsModeTests(unittest.TestCase):
+class TestTextsMode:
     def test_texts_projects_values_to_text_and_keeps_read_unchanged(self):
-        self.assertIsNone(frontmatter.texts(b''))
-        self.assertIsNone(frontmatter.texts(b'body only\n'))
+        assert frontmatter.texts(b'') is None
+        assert frontmatter.texts(b'body only\n') is None
         raw = b'---\nname: "q" # c\nempty:\ntags: [a, b]\npaths:\n  - src/**\nmeta:\n  k: v\n---\nbody'
-        self.assertEqual(frontmatter.texts(raw), dict(name='q', empty='', tags=None, paths=None, meta=None))
-        self.assertEqual(frontmatter.texts('﻿---\nname: a\n---\nbody'.encode()), dict(name='a'))
-        self.assertEqual(frontmatter.texts(b'---\nname: a\n---\n--- \n'), dict(name='a'))  # a body line is no fence
+        assert frontmatter.texts(raw) == dict(name='q', empty='', tags=None, paths=None, meta=None)
+        assert frontmatter.texts('﻿---\nname: a\n---\nbody'.encode()) == dict(name='a')
+        assert frontmatter.texts(b'---\nname: a\n---\n--- \n') == dict(name='a')  # a body line is no fence
         # read() keeps its own contract: a BOM is not a fence, and a list or mapping stays a structured value.
-        self.assertEqual(reason(frontmatter.read, b'\xef\xbb\xbf---\nname: a\n---\n'), 'no_leading_fence')
-        self.assertEqual(frontmatter.read(b'---\ntags: [a, b]\n---\n'), dict(tags=['a', 'b']))
+        assert reason(frontmatter.read, b'\xef\xbb\xbf---\nname: a\n---\n') == 'no_leading_fence'
+        assert frontmatter.read(b'---\ntags: [a, b]\n---\n') == dict(tags=['a', 'b'])
 
-    def test_a_space_padded_fence_is_never_judged(self):
-        for raw in (b'--- \nname: a\n---\n', b'---\nname: a\n---\t\n', b'\xef\xbb\xbf---  \nname: a\n---\n'):
-            with self.subTest(raw=raw):
-                self.assertEqual(reason(frontmatter.texts, raw), 'unsupported_yaml')
+    @pytest.mark.parametrize('raw', [
+        pytest.param(b'--- \nname: a\n---\n', id='trailing-space'),
+        pytest.param(b'---\nname: a\n---\t\n', id='closing-tab'),
+        pytest.param(b'\xef\xbb\xbf---  \nname: a\n---\n', id='bom-and-spaces'),
+    ])
+    def test_a_space_padded_fence_is_never_judged(self, raw):
+        assert reason(frontmatter.texts, raw) == 'unsupported_yaml'
 
-    def test_no_mode_reads_a_whitespace_ended_fence_as_no_fence(self):
-        # #312: a fence line ending in spaces or tabs is never judged in any mode, and never read as unfenced.
-        for raw in (b'--- \nname: a\n---\n', b'---\nname: a\n---\t\nbody', b'---\t \r\nname: a\r\n---\r\n'):
-            with self.subTest(raw=raw):
-                self.assertEqual(reason(frontmatter.read, raw), 'unsupported_yaml')
-                self.assertEqual(reason(frontmatter.texts, raw), 'unsupported_yaml')
-        self.assertEqual(frontmatter.read(b'---\r\nname: a\r\n---\r\n'), dict(name='a'))  # only '\r' is dropped
-        self.assertEqual(frontmatter.texts(b'---\nd: |\n  --- \n---\n'), dict(d='---'))  # an indented '---' is no fence
-        for text in ('--- \npaths:\n  - a\n---\n', '---\npaths:\n  - a\n--- \n---\n'):
-            with self.subTest(text=text), self.assertRaises(frontmatter.Unsupported) as caught:
-                frontmatter.string_lists(text, ('paths',))
-            self.assertEqual(caught.exception.reason, 'unsupported_yaml')
+    # #312: a fence line ending in spaces or tabs is never judged in any mode, and never read as unfenced.
+    @pytest.mark.parametrize('raw', [
+        pytest.param(b'--- \nname: a\n---\n', id='trailing-space'),
+        pytest.param(b'---\nname: a\n---\t\nbody', id='closing-tab'),
+        pytest.param(b'---\t \r\nname: a\r\n---\r\n', id='tab-space-crlf'),
+    ])
+    def test_no_mode_reads_a_whitespace_ended_fence_as_no_fence(self, raw):
+        assert reason(frontmatter.read, raw) == 'unsupported_yaml'
+        assert reason(frontmatter.texts, raw) == 'unsupported_yaml'
+
+    def test_only_a_carriage_return_is_dropped_from_a_fence_and_an_indented_fence_is_no_fence(self):
+        assert frontmatter.read(b'---\r\nname: a\r\n---\r\n') == dict(name='a')  # only '\r' is dropped
+        assert frontmatter.texts(b'---\nd: |\n  --- \n---\n') == dict(d='---')  # an indented '---' is no fence
+
+    @pytest.mark.parametrize('text', [
+        pytest.param('--- \npaths:\n  - a\n---\n', id='opening-fence'),
+        pytest.param('---\npaths:\n  - a\n--- \n---\n', id='closing-fence'),
+    ])
+    def test_string_lists_reject_a_whitespace_ended_fence(self, text):
+        with pytest.raises(frontmatter.Unsupported) as caught:
+            frontmatter.string_lists(text, ('paths',))
+        assert caught.value.reason == 'unsupported_yaml'
+
+    def test_a_whitespace_ended_fence_makes_a_rule_unknown(self):
         rule = b'--- \npaths:\n  - src/**\n---\nbody'
-        self.assertEqual(rules.declaration(rule), ('frontmatter_unsupported', None))
-        self.assertEqual(rules.classify('.', *rules.declaration(rule), ('.',), ['docs/a.md'], None), 'unknown')
-        for raw in (b'--- \nname: rev\ndescription: d\n---\nbody', b'---\nname: rev\ndescription: d\n--- \n---\nbody'):
-            with self.subTest(raw=raw):
-                facts = agents.parse('.claude/agents/rev.md', raw, CLAUDE)[1]
-                self.assertEqual((facts['disposition'], facts['reason']), ('unknown', 'frontmatter_unsupported_yaml'))
+        assert rules.declaration(rule) == ('frontmatter_unsupported', None)
+        assert rules.classify('.', *rules.declaration(rule), ('.',), ['docs/a.md'], None) == 'unknown'
 
-    def test_texts_has_the_shared_bounds_and_error_reasons(self):
-        for raw, expected in CASES:
-            with self.subTest(reason=expected, raw=raw[:24]):
-                self.assertEqual(reason(frontmatter.texts, raw), expected)
-                self.assertEqual(reason(frontmatter.read, raw), expected)  # one reader, so verdicts cannot drift
+    @pytest.mark.parametrize('raw', [
+        pytest.param(b'--- \nname: rev\ndescription: d\n---\nbody', id='opening-fence'),
+        pytest.param(b'---\nname: rev\ndescription: d\n--- \n---\nbody', id='closing-fence'),
+    ])
+    def test_a_whitespace_ended_fence_makes_an_agent_unknown(self, raw):
+        facts = agents.parse('.claude/agents/rev.md', raw, CLAUDE)[1]
+        assert (facts['disposition'], facts['reason']) == ('unknown', 'frontmatter_unsupported_yaml')
+
+    @pytest.mark.parametrize('raw, expected', [pytest.param(raw, expected, id=f'{expected}-{index}')
+                                               for index, (raw, expected) in enumerate(CASES)])
+    def test_texts_has_the_shared_bounds_and_error_reasons(self, raw, expected):
+        assert reason(frontmatter.texts, raw) == expected
+        assert reason(frontmatter.read, raw) == expected  # one reader, so verdicts cannot drift
 
 
-class CommandsInventoryReaderTests(unittest.TestCase):
-    def setUp(self):
-        temp = tempfile.TemporaryDirectory(prefix='ahl-frontmatter-'); self.addCleanup(temp.cleanup)
-        self.base = Path(temp.name).resolve()
+SAMPLES = (b'', b'# body\n', b'---\nname: "q" # c\n---\n', b'---\ndescription:\n  - one\n---\n',
+           b'\xef\xbb\xbf---\nname: a\n---\n', b'--- \nname: a\n---\n') + tuple(raw for raw, _ in CASES)
 
-    def test_the_commands_inventory_reads_only_through_texts(self):
-        samples = (b'', b'# body\n', b'---\nname: "q" # c\n---\n', b'---\ndescription:\n  - one\n---\n',
-                   b'\xef\xbb\xbf---\nname: a\n---\n', b'--- \nname: a\n---\n') + tuple(raw for raw, _ in CASES)
-        for raw in samples:
-            with self.subTest(raw=raw[:24]):
-                try: expected = ('ok', frontmatter.texts(raw))
-                except frontmatter.FrontmatterError as error: expected = ('error', error.reason)
-                try: actual = ('ok', commands.frontmatter(raw))
-                except frontmatter.FrontmatterError as error: actual = ('error', error.reason)
-                self.assertEqual(actual, expected)
+
+class TestCommandsInventoryReader:
+    @pytest.fixture(autouse=True)
+    def _base(self, tmp_path):
+        self.base = tmp_path.resolve()
+
+    @pytest.mark.parametrize('raw', [pytest.param(raw, id=f'sample-{index}') for index, raw in enumerate(SAMPLES)])
+    def test_the_commands_inventory_reads_only_through_texts(self, raw):
+        try: expected = ('ok', frontmatter.texts(raw))
+        except frontmatter.FrontmatterError as error: expected = ('error', error.reason)
+        try: actual = ('ok', commands.frontmatter(raw))
+        except frontmatter.FrontmatterError as error: actual = ('error', error.reason)
+        assert actual == expected
+
+    def test_a_listed_description_is_parsed_without_a_description_length(self):
         listed = b'---\ndescription:\n  - one\n  - two\n---\nbody'
-        self.assertEqual(commands.parse('.claude/commands/x.md', listed, CLAUDE),
-                         ('parsed', dict(frontmatter=True, name_key=False, paths_key=False, description_chars=None)))
+        assert commands.parse('.claude/commands/x.md', listed, CLAUDE) == ('parsed', dict(frontmatter=True, name_key=False, paths_key=False, description_chars=None))
 
     def test_a_skill_with_a_non_text_name_is_parse_failed_and_unsupported_yaml_is_unknown(self):
         checkout = fixture.build(self.base / 'checkout', {
@@ -94,16 +113,13 @@ class CommandsInventoryReaderTests(unittest.TestCase):
             '.claude/skills/plain/SKILL.md': '---\nname: plain\nallowed-tools:\n  - Read\ndescription: d\n---\nbody\n'},
             hostile=False)
         found = {e.path: (e.id, e.flags) for e in commands.capture(checkout, CLAUDE).entries if e.kind == 'skill'}
-        self.assertEqual(found['.claude/skills/listed/SKILL.md'], ('/listed', ('parse_failed',)))
-        self.assertEqual(found['.claude/skills/anchored/SKILL.md'], (None, ('frontmatter_unsupported',)))
-        self.assertEqual(found['.claude/skills/plain/SKILL.md'], ('/plain', ()))
+        assert found['.claude/skills/listed/SKILL.md'] == ('/listed', ('parse_failed',))
+        assert found['.claude/skills/anchored/SKILL.md'] == (None, ('frontmatter_unsupported',))
+        assert found['.claude/skills/plain/SKILL.md'] == ('/plain', ())
 
     def test_a_codex_skill_with_a_list_description_is_parse_failed_not_a_crash(self):
         checkout = fixture.build(self.base / 'codex', {
             '.agents/skills/tool/SKILL.md': '---\nname: tool\ndescription:\n  - a\n---\nbody\n'}, hostile=False)
         rows = {e.path: e.flags for e in commands.capture(checkout, CODEX).entries if e.kind == 'skill'}
-        self.assertIn('parse_failed', rows['.agents/skills/tool/SKILL.md'])
+        assert 'parse_failed' in rows['.agents/skills/tool/SKILL.md']
 
-
-if __name__ == '__main__':
-    unittest.main()

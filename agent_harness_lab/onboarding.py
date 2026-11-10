@@ -1,5 +1,6 @@
 """Read-only readiness and explicit, configuration-only initialization."""
 import argparse
+from .read_only import FrozenProjectError
 from dataclasses import asdict, dataclass
 import json
 import os
@@ -154,6 +155,9 @@ def main(argv):
                         coverage, execution = source['declared_coverage'], source['execution_metadata']
                         print(f"source {source['source_sha256']}: declared coverage: {coverage['reported_completeness'] if coverage else 'unknown'}; execution identities: {execution['identities'] if execution else 'unknown'}")
             return {'ready': 0, 'invalid': 2, 'blocked': 3}[result['status']]
+        if args.write:
+            from .read_only import require_writable
+            require_writable(args.project)
         if not args.project.is_dir() or os.path.lexists(args.project/'ahl.json'):
             raise ValueError('select an existing project without ahl.json; existing configuration is never overwritten')
         if not config.supported():
@@ -202,6 +206,8 @@ def main(argv):
     except (KeyboardInterrupt, EOFError):
         print('Operation cancelled.')
         return 1
+    except FrozenProjectError as exc:
+        parser.exit(2, f'onboarding: {exc}\n')
     except (PermissionError, NotImplementedError):
         print('onboarding blocked: required filesystem access/capabilities unavailable; no elevation attempted', file=sys.stderr)
         return 3
