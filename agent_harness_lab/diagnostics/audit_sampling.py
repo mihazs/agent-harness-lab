@@ -341,6 +341,10 @@ def _receipt(receipt, trusted_heads=None):
     if receipt['limitations'] not in (_limitations(commitment, anchored), _limitations(commitment)):
         raise ValueError('audit receipt limitations do not match its seed commitment')
     rates=receipt['rates']; strata=receipt['strata']; draws=receipt['draws']
+    if receipt['profile']==RECEIPT_PROFILE_V2:
+        _sha(receipt['frame_sha256'])
+        if type(receipt['seed']) is not int or receipt['seed']<0:
+            raise ValueError('invalid audit receipt seed')
     if (not isinstance(rates,dict) or 'random' not in rates or not set(rates)<={'random',*TARGETED_ROUTES}
             or not all(_rate(value) for value in rates.values()) or not isinstance(strata,list)
             or not strata or len(strata)>MAX_UNITS or not isinstance(draws,list) or len(draws)>MAX_UNITS):
@@ -372,6 +376,10 @@ def _receipt(receipt, trusted_heads=None):
         if (item['unit_sha256'] in seen or type(item['alerted']) is not bool
                 or 'alerted' in rates and (('alerted' in indexed[name]['routes'])!=item['alerted'])):
             raise ValueError('invalid or duplicate audit receipt draw')
+        if receipt['profile']==RECEIPT_PROFILE_V2:
+            threshold=int(item['inclusion_probability']*GRID_SIZE)
+            if not _grid_draw(receipt['seed'],receipt['frame_sha256'],item['unit_sha256'],threshold):
+                raise ValueError('audit receipt draw differs from grid predicate')
         seen.add(item['unit_sha256']); counts[name]+=1
     expected=sum(s['expected_draws'] for s in strata)
     if (type(receipt['review_budget']) is not int or receipt['review_budget']<1

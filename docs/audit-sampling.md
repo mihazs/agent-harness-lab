@@ -132,7 +132,10 @@ not the unrounded requested rates. Hash uniformity and independence across units
 are assumptions, not authenticated facts; seed choice and reviewer-label limits
 still apply. A seed commitment alone does not establish when the full sampling
 plan was fixed; `sampling_plan_timing_unauthenticated` remains in the v2 report.
-Internal receipt checks do not authenticate its source. The default
+On reopening, every listed v2 draw must satisfy the recorded seed, frame hash
+and grid threshold. Without the full frame, this cannot verify membership or
+prove that selected units were not omitted. Internal receipt checks do not
+authenticate its source. The default
 v1 plan, receipts and selection rule remain unchanged by this opt-in design.
 
 ## Estimates

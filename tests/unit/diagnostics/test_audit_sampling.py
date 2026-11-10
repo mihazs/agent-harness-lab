@@ -650,3 +650,17 @@ def test_v2_rejects_positive_below_grid_and_retains_v1_profile():
     legacy = audit.draw(value, plan(value, rates=dict(random=1)))
     assert legacy['profile'] == audit.RECEIPT_PROFILE and legacy['schema_version'] == 1
     assert audit.review_queue(legacy)['receipt_sha256'] == legacy['receipt_sha256']
+
+
+def test_v2_rejects_resealed_draw_failing_grid_predicate():
+    value = frame([unit(f'synthetic-{n}') for n in range(60)])
+    policy = plan(value, rates=dict(random=.5), schema_version=2, profile=audit.PLAN_PROFILE_V2)
+    receipt = audit.draw(value, policy)
+    drawn = {item['unit_sha256'] for item in receipt['draws']}
+    eligible = audit.freeze(value)['eligible']
+    omitted = next(key for key in eligible if key not in drawn)
+    assert drawn and not audit._grid_draw(policy['seed'],receipt['frame_sha256'],omitted,audit.GRID_SIZE//2)
+    body = json.loads(json.dumps({key:item for key,item in receipt.items() if key!='receipt_sha256'}))
+    body['draws'][0]['unit_sha256'] = omitted
+    with pytest.raises(ValueError, match='grid predicate'):
+        audit.review_queue(audit._seal(body))
