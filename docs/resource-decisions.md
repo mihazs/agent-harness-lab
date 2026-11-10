@@ -97,3 +97,4 @@ remain visible otherwise. Missing or failed responses are unknown, including whe
 were attempted. Cached input is already included in input tokens and must not be added again.
 Cache-write tokens and billing completeness remain unknown. This descriptive summary does not
 authenticate provider data or produce a resource decision, and does not change controller reports.
+The summary is private, labels publication as disallowed, and refuses `public=True`.

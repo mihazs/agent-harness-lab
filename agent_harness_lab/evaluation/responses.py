@@ -211,8 +211,9 @@ def run_arguments(item):
     return argv
 
 
-def summarize_provider_usage(report):
+def summarize_provider_usage(report, *, public=False):
     """Summarize recorded request usage without treating missing attempts as free."""
+    if public is not False: raise ValueError('provider usage summary is private')
     if not isinstance(report,dict) or report.get('runtime') != 'controller-responses-executor-v1':
         raise ValueError('unsupported controller usage report')
     attempts,rows = report.get('request_attempts'),report.get('provider_reported_usage')
@@ -240,7 +241,7 @@ def summarize_provider_usage(report):
     return dict(profile='controller-provider-usage-summary-v1', source='provider_reported_unverified',
                 request_attempts=attempts, reported_responses=len(rows), unreported_attempts=attempts-len(rows),
                 usage=result, cached_input_included_in_input=True, cache_write_tokens=None, billing_completeness='unknown',
-                automatic_promotion=False)
+                publication='private', publication_allowed=False, automatic_promotion=False)
 
 
 class Client:

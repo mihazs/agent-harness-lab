@@ -132,6 +132,7 @@ def test_provider_usage_summary_preserves_covered_and_missing_cache_categories(c
     assert summary['usage']['cached_input_tokens'] == dict(known_subtotal=3, known_requests=1, unknown_requests=1, total=None)
     assert summary['cached_input_included_in_input'] is True and summary['cache_write_tokens'] is None
     assert summary['automatic_promotion'] is False
+    assert summary['publication'] == 'private' and summary['publication_allowed'] is False
 
 
 def test_provider_usage_summary_does_not_count_failed_requests_as_free(controller):
@@ -165,6 +166,12 @@ def test_provider_usage_summary_with_no_attempts_does_not_claim_zero_usage(contr
     client,_ = controller.client([message()])
     summary = responses.summarize_provider_usage(client.report())
     assert all(value['total'] is None for value in summary['usage'].values())
+
+
+def test_provider_usage_summary_refuses_public_export(controller):
+    client,_ = controller.client([message()]); client.respond([],controller.deadline)
+    with pytest.raises(ValueError, match='private'):
+        responses.summarize_provider_usage(client.report(), public=True)
 
 
 @pytest.mark.parametrize('output', [
