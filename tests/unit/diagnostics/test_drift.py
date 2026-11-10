@@ -209,6 +209,57 @@ class TestChannels:
         capture = receipt['channels']['capture']
         assert capture['state'] == 'no_alert' and capture['duplicates_suppressed'] == 10 and capture['runs'] == 200
 
+    def test_conflicting_duplicate_never_selects_first_outcome_or_related_retry(self, plan, reference):
+        runs = synthetic_runs(100, 200, seed=2, prefix='c')
+        good = dict(runs[0], outcome=True)
+        conflict = dict(good, outcome=False)
+        retry = dict(good, run_id='synthetic-retry', cursor=200)
+        receipts = [drift.assess(plan, reference, pair + runs[1:] + [retry], 0)
+                    for pair in ([good, conflict], [conflict, good])]
+        for receipt in receipts:
+            capture, mix, performance = channels(receipt)
+            assert capture['state'] == 'alert' and 'conflicting_duplicate_runs' in capture['reasons']
+            assert capture['ineligible']['conflicting_root_identity'] == 1
+            assert sum(cell['current']['verified_roots'] for cell in performance['strata'].values()) == 199
+            assert mix['state'] == performance['state'] == 'insufficient_evidence'
+        assert receipts[0]['channels'] == receipts[1]['channels']
+
+    def test_unattributed_conflicting_identity_excludes_all_ambiguous_roots(self, plan, reference):
+        runs = synthetic_runs(100, 200, seed=2, prefix='c')
+        conflict = {**runs[0], 'task_root': None}
+        capture, _, performance = channels(drift.assess(plan, reference, [runs[0], conflict] + runs[1:], 0))
+        assert capture['state'] == 'alert'
+        assert capture['ineligible']['conflicting_root_identity'] == 199
+        assert sum(cell['current']['verified_roots'] for cell in performance['strata'].values()) == 0
+
+    def test_reused_generator_record_and_nested_values_match_independent_snapshots(self, plan, reference):
+        rows = synthetic_runs(100, 200, seed=2, prefix='c')
+        rows[0]['repo_size'] = {'synthetic': [1]}
+        conflict = deepcopy(rows[0]); conflict['repo_size']['synthetic'].append(2)
+        rows.insert(1, conflict)
+        expected = drift.assess(plan, reference, deepcopy(rows), 0)
+        def reused():
+            shared, nested = {}, {'synthetic': []}
+            for row in rows:
+                shared.clear(); shared.update(row)
+                if isinstance(row['repo_size'], dict):
+                    nested['synthetic'][:] = row['repo_size']['synthetic']
+                    shared['repo_size'] = nested
+                yield shared
+        actual = drift.assess(plan, reference, reused(), 0)
+        assert actual['channels'] == expected['channels']
+        assert actual['channels']['capture']['state'] == 'alert'
+        assert 'conflicting_duplicate_runs' in actual['channels']['capture']['reasons']
+
+    def test_structured_required_field_keeps_presence_but_never_becomes_a_category(self):
+        plan = make_plan(required_fields=['task_family', 'effective_model_version', 'metadata'])
+        run = synthetic_runs(100, 1, prefix='c')[0]
+        run.update(metadata={'synthetic': ['value']}, repo_size={'synthetic': 'value'})
+        projected = drift._snapshot(plan, run)
+        assert not drift._issues(plan, projected, None)
+        assert drift._category(projected['repo_size']) == drift.UNKNOWN
+        assert projected['metadata'] == () and 'value' not in str(projected)
+
     def test_retries_of_one_root_count_once_and_mixed_outcomes_stay_unknown(self, plan, reference):
         runs = synthetic_runs(100, 200, seed=2, prefix='c')
         for index in range(10):

@@ -167,6 +167,19 @@ def _issues(plan, run, revisions):
     return issues
 
 
+def _snapshot(plan, run):
+    """Retain immutable fields used by the detector, not caller-owned nested values."""
+    fields = {'started', 'cursor', 'schema_version', 'capture', 'truncated', 'parse_rejected',
+              'task_root', 'harness_revision', 'outcome', 'outcome_provenance',
+              *plan['required_fields'], *plan['strata'], *plan['features']}
+    result = {}
+    for name in fields:
+        if name in run:
+            value = run[name]
+            result[name] = str(value) if isinstance(value, str) else value if type(value) in (int, float, bool, type(None)) else ()
+    return result
+
+
 def _summarize(plan, runs, start, end, revisions=None):
     """One bounded pass over ``runs``; only counts and per-root state are retained."""
     counts = dict(runs=0, eligible_runs=0, duplicates_suppressed=0, conflicting_duplicates=0, untimed_runs=0,
@@ -178,10 +191,22 @@ def _summarize(plan, runs, start, end, revisions=None):
             raise ValueError('every run requires a run_id')
         signature = hashlib.sha256(json.dumps(run, sort_keys=True, default=repr).encode()).hexdigest()
         key = root_sha256(run['run_id'])
-        if key in seen:
-            counts['conflicting_duplicates' if seen[key] != signature else 'duplicates_suppressed'] += 1
-            continue
-        seen[key] = signature
+        versions = seen.setdefault(key, {})
+        if signature in versions:
+            counts['duplicates_suppressed'] += 1
+        else:
+            versions[signature] = _snapshot(plan, run)
+    conflicts = [versions for versions in seen.values() if len(versions) > 1]
+    counts['conflicting_duplicates'] = sum(len(versions) - 1 for versions in conflicts)
+    conflict_roots, unresolved_root = set(), False
+    for versions in conflicts:
+        for run in versions.values():
+            root = run.get('task_root')
+            if isinstance(root, str) and root: conflict_roots.add(root_sha256(root))
+            else: unresolved_root = True
+    for versions in seen.values():
+        if len(versions) != 1: continue
+        run = next(iter(versions.values()))
         if not _finite(run.get('started')):
             counts['untimed_runs'] += 1
             continue
@@ -197,6 +222,8 @@ def _summarize(plan, runs, start, end, revisions=None):
         else:
             cursors.add(cursor)
         found = _issues(plan, run, revisions)
+        if unresolved_root or isinstance(run.get('task_root'), str) and root_sha256(run['task_root']) in conflict_roots:
+            found.append('conflicting_root_identity')
         for issue in found:
             issues[issue] = issues.get(issue, 0) + 1
         if found:
