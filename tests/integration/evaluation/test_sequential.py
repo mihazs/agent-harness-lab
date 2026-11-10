@@ -1,6 +1,6 @@
 """Published conditional WoR math and fresh synthetic execution; no real models."""
 from copy import copy, deepcopy
-from dataclasses import replace
+from dataclasses import asdict, replace
 from fractions import Fraction
 from decimal import Decimal,localcontext,getcontext
 from contextlib import ExitStack
@@ -52,6 +52,37 @@ def records(plan,binding,outcome):
 
 
 class TestSequentialMath:
+    def test_cli_partial_bounds_are_unverified_and_non_authorizing(self,tmp_path,capsys):
+        from agent_harness_lab.cli import main
+        plan=spec(2);binding=core.create_binding(plan,[])
+        data=records(plan,binding,lambda row: row['version']=='candidate')[:1]
+        for name,value in (('spec',plan.to_dict()),('binding',binding),('records',[asdict(row) for row in data])):
+            (tmp_path/f'{name}.json').write_text(json.dumps(value))
+        code=main(['experiment','--spec',str(tmp_path/'spec.json'),'--records',str(tmp_path/'records.json'),
+                   '--sequential-binding',str(tmp_path/'binding.json')])
+        result=json.loads(capsys.readouterr().out)
+        assert code==3 and result['status']=='incomplete'
+        assert result['sampling_authority']=='unverified_numeric_declaration'
+        assert result['missing_outcome_bounds']['input_authority']=='caller_declared_unverified'
+        assert result['promotion']['automatic'] is False and result['publication_allowed'] is False
+        assert not benchmark.public_export_allowed([result])
+        binding['plan_sha256']='0'*64
+        (tmp_path/'binding.json').write_text(json.dumps(binding))
+        with pytest.raises(SystemExit) as error:
+            main(['experiment','--spec',str(tmp_path/'spec.json'),'--records',str(tmp_path/'records.json'),
+                  '--sequential-binding',str(tmp_path/'binding.json')])
+        assert error.value.code == 2
+
+    def test_empty_prefix_bounds_are_opt_in(self):
+        plan=spec(2);binding=core.create_binding(plan,[])
+        legacy=core.analyze(plan,[],binding)
+        assert 'missing_outcome_bounds' not in legacy
+        result=core.analyze(plan,[],binding,include_missing_bounds=True)
+        bounds=result['missing_outcome_bounds']['primary']
+        assert result['status']=='incomplete'
+        assert (bounds['exact_low'],bounds['exact_high'])==([-1,1],[1,1])
+        assert core.analyze(plan,[],binding)==legacy
+
     def test_partial_prefix_identifies_finite_bank_without_filling_outcomes(self):
         plan=spec(2);binding=core.create_binding(plan,[])
         data=records(plan,binding,lambda row: row['version']=='candidate')

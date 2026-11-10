@@ -146,8 +146,11 @@ and independence remain unverified. Optional cohorts remain descriptive. Sequent
 analysis does not yet provide inferential missing-outcome bounds. Its numeric API
 can opt in to a descriptive finite-bank completion range for a matching partial
 prefix; unobserved arms remain unknown and no confidence-sequence or promotion
-claim follows. This range is unavailable through the CLI and is not a replayable
-controller inspection.
+claim follows. `ahl experiment --records ... --sequential-binding ...` exposes
+the range for a caller-declared sampling binding; it does not verify sampling or
+controller custody. Its output is private and cannot authorize promotion. This is
+not a replayable controller inspection; engine-bound replay still requires the
+original compatible engine.
 
 The power simulator's roots are independent by construction, so its result says nothing about
 real task dependence. No worker, model or grader runs, nothing is observed,

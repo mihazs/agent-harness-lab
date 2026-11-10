@@ -37,7 +37,8 @@ def main(argv):
     experiment_mode.add_argument('--preflight',action='store_true',help='Compute exact frozen-plan precision without running workers or models')
     experiment_mode.add_argument('--prepare-root-similarity',action='store_true',help='Print a new private plan and evidence for explicit pre-trial review; does not write files')
     experiment_mode.add_argument('--power-model',type=Path,help='Existing JSON synthetic outcome model; simulate fixed-analysis disposition rates without running workers or models')
-    experiment.add_argument('--cohorts',type=Path,help='Exact raw frozen preservation manifest; preflight only')
+    experiment.add_argument('--cohorts',type=Path,help='Exact raw frozen preservation manifest; preflight or sequential recorded analysis')
+    experiment.add_argument('--sequential-binding',type=Path,help='Caller-declared sequential sampling binding for unverified numeric analysis of --records')
     experiment.add_argument('--root-similarity',type=Path,help='Private root similarity evidence pinned by the frozen plan')
     experiment.add_argument('--root-bank',type=Path,help='Current bank manifest used to recheck root similarity evidence')
     experiment.add_argument('--simulations',type=int,help='Number of seeded power simulations, 1 to 10000 (default 200); requires --power-model')
@@ -109,6 +110,8 @@ def main(argv):
             from .plan import ExperimentSpec
             from .statistics import TrialRecord, analyze
             from agent_harness_lab.promotion.policy import decide
+            if args.sequential_binding is not None and (args.records is None or args.root_similarity or args.root_bank):
+                raise ValueError('sequential binding requires records and cannot combine root similarity options')
             if (args.root_similarity or args.root_bank) and args.power_model is not None:
                 raise ValueError('root similarity evidence is unsupported by power simulation')
             from agent_harness_lab.private_journal import record
@@ -142,10 +145,18 @@ def main(argv):
                 result=preflight(spec,cohort_manifest_json=read_regular(args.cohorts,MAX_BYTES) if args.cohorts else None, root_similarity_evidence=similarity, root_similarity_bank=args.root_bank)
                 code=0 if result['status']=='feasible' else 3
             else:
-                if args.cohorts:raise ValueError('--cohorts requires --preflight')
+                if args.cohorts and args.sequential_binding is None:raise ValueError('--cohorts requires --preflight or --sequential-binding')
                 spec = ExperimentSpec.parse(json.loads(args.spec.read_text()))
                 records = [TrialRecord(**r) for r in json.loads(args.records.read_text())]
-                result = analyze(spec, records, root_similarity_evidence=similarity, root_similarity_bank=args.root_bank)
+                if args.sequential_binding is not None:
+                    if spec.sequential is None:raise ValueError('sequential binding requires a sequential plan')
+                    from .integrity import read_regular
+                    from .sequential import analyze as analyze_sequential
+                    binding=record(args.sequential_binding,1024*1024)[0]
+                    cohort_json=read_regular(args.cohorts,1024*1024) if args.cohorts else None
+                    result=analyze_sequential(spec,records,binding,cohort_json=cohort_json,include_missing_bounds=True)
+                else:
+                    result = analyze(spec, records, root_similarity_evidence=similarity, root_similarity_bank=args.root_bank)
                 result['oracle_validity'] = 'unverified'
                 result['promotion'] = asdict(decide(spec, result))
                 code = 3
