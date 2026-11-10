@@ -422,6 +422,8 @@ compared arguments stay unknown. A backend result establishes a return observati
 not semantic success. Group truth tables preserve every child: `all_of` fails on
 any violation and otherwise needs all satisfied; `any_of` passes on any satisfaction
 and otherwise needs all violated. Other combinations are unknown.
+Receipt `coverage_complete` also requires the fields compared by the predicate to
+be available; a decisive observed witness can still decide when coverage is incomplete.
 
 Policies reject duplicate/unknown fields, invalid types/numbers, empty groups,
 more than 64 KiB, depth over eight, more than 128 predicate nodes or sequences

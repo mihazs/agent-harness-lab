@@ -246,6 +246,7 @@ def _leaf(rule, data):
     rows, complete = _stage(data, rule['stage']); kind = rule['kind']; matched = []
     if kind == 'sequence':
         steps = rule['steps']
+        evidence_complete = complete and all(_matches(row, step) is not None for row in rows for step in steps)
         if rule['mode'] == 'subsequence':
             known, matched = _subsequence(rows, steps)
             possible, _ = _subsequence(rows, steps, possible=True)
@@ -257,8 +258,9 @@ def _leaf(rule, data):
             values = [_matches(r, p) for r, p in zip(rows, steps)]
             state = False if False in values else None if None in values else True
             matched = [r['controller_id'] for r, v in zip(rows, values) if v is True]
-        return state, matched, complete
+        return state, matched, evidence_complete
     values = [_matches(row, rule) for row in rows]
+    evidence_complete = complete and all(value is not None for value in values)
     matched = [r['controller_id'] for r, v in zip(rows, values) if v is True]
     if kind == 'count':
         low = sum(v is True for v in values)
@@ -272,12 +274,13 @@ def _leaf(rule, data):
     else:
         domain = [_equal(row.get('tool_name'), rule['tool']) for row in rows]
         args = [_argv(row, rule['arguments']) for row in rows]
+        evidence_complete = complete and all(d is not None and (d is False or a is not None) for d, a in zip(domain, args))
         if any(d is True and a is False for d, a in zip(domain, args)): state = False
         elif complete and any(d is True for d in domain) and all(d is False or a is True for d, a in zip(domain, args)): state = True
         elif complete and all(d is False for d in domain): state = False
         else: state = None
     if kind == 'forbidden' and state is not None: state = not state
-    return state, matched, complete
+    return state, matched, evidence_complete
 
 
 def _evaluate_rule(rule, data, name):
