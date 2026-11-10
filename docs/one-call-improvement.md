@@ -609,7 +609,10 @@ outside code must resolve to a file, or a directory holding one, in the bundle
 are percent-decoded and normalized, and `<...>` targets may hold spaces. Fenced
 code is skipped in one linear pass (a closing fence needs the opener's length and
 no info string; an unclosed fence runs to the end). A newly added file that
-`SKILL.md` never mentions by path or file name is an `orphan_asset`.
+`SKILL.md` never mentions by a whole bundle-relative path or unique file name is
+an `orphan_asset`. A filename embedded within a longer filename does not count;
+when multiple bundle files share a basename, the added file requires its path.
+This is a static mention check, not proof that an agent loads or uses the asset.
 
 The check reads staged bytes and never runs them; executable files and
 hook-bearing frontmatter still go through the hook contract. `ahl improve`

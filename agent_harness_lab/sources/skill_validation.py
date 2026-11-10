@@ -14,13 +14,14 @@ folder (.claude/skills, .agents/skills, skills or a nested <dir>/.claude/skills)
   inline Markdown links outside code are read, percent-decoded and normalized; a directory target needs a file
   below it; URLs, anchors and absolute paths are not bundle references.
 - leave no newly added asset unmentioned in SKILL.md (orphan_asset): the path or the file name must appear in
-  the text, so no file ships that the entry point never tells an agent about.
+  the text as a whole name; ambiguous basenames require a bundle-relative path.
 
 Findings carry fixed labels and bundle paths only, never file text. With configured harness_paths the
 snapshot holds only the listed files, so the membership checks (missing_entry_point, dangling_reference,
 orphan_asset and the create/remove action) are skipped. Same-name collisions across roots and
 references from other bundles to a removed one are not checked. Candidate code is read as bytes and never run.
 """
+from collections import Counter
 from dataclasses import asdict, dataclass
 import hashlib
 import posixpath
@@ -95,6 +96,11 @@ def _references(text):
     return found
 
 
+def _mentioned(text, name):
+    """Require a whole path/name mention, rather than a substring of another name."""
+    return re.search(r'(?<![\w./-])(?:\./)?'+re.escape(name)+r'(?![\w/-]|\.(?=[\w-]))',text) is not None
+
+
 def _reasons(bundle, files, added, complete=True):
     """Blocking reasons for the candidate membership files (name below the bundle -> bytes).
 
@@ -118,8 +124,12 @@ def _reasons(bundle, files, added, complete=True):
         if target == '..' or target.startswith('../'): reasons.append('reference_escapes_bundle')
         elif complete and target not in known:
             reasons.append('dangling_reference')
-    if complete and any(name != 'SKILL.md' and name not in text and PurePosixPath(name).name not in text for name in added):
-        reasons.append('orphan_asset')
+    if complete:
+        basenames = Counter(PurePosixPath(name).name for name in files)
+        if any(name != 'SKILL.md' and not _mentioned(text,name) and
+               (basenames[PurePosixPath(name).name] != 1 or not _mentioned(text,PurePosixPath(name).name))
+               for name in added):
+            reasons.append('orphan_asset')
     return sorted(set(reasons))
 
 
