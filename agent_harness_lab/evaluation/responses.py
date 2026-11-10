@@ -128,12 +128,17 @@ class ActionLedger:
         self.credential = credential
         self.ledger_id = secrets.token_hex(16)
         self._rows = {}; self.bytes = self.sequence = self.scope_sequence = self.order = 0
-        self.scopes = {}; self.trajectory = None; self.scope = self.begin('unscoped',None)
+        self.scopes = {}; self._trajectory = None; self.scope = self.begin('unscoped',None)
 
     @property
     def rows(self):
         """Return a detached view of retained controller actions."""
         return deepcopy(self._rows)
+
+    @property
+    def trajectory(self):
+        """Return the controller's capture without allowing the association to be replaced."""
+        return self._trajectory
 
     def begin(self,role,trial_id,*,trajectory=None):
         if getattr(self,'trajectory',None) is not None:
@@ -148,10 +153,10 @@ class ActionLedger:
             omitted_records=0,omitted_updates=0,scope_retained=len(self.scopes)<self.MAX_SCOPES)
         if self.current['scope_retained']: self.scopes[scope] = self.current
         self.scope = scope
-        self.trajectory = None
+        self._trajectory = None
         if trajectory is not None:
             from .trajectory_assertions import _begin_capture
-            self.trajectory = _begin_capture(self,trajectory,trial_id,role)
+            self._trajectory = _begin_capture(self,trajectory,trial_id,role)
         return scope
 
     def text(self,value,limit):

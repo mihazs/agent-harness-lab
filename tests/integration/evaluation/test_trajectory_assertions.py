@@ -157,6 +157,20 @@ class TestTrajectoryAssertions:
         assert blocked and core.evaluate(binding, capture)['status'] == 'satisfied'
         assert 'SYNTHETIC_FORGED_EMISSION' not in json.dumps(client.action_report())
 
+    def test_checkpoint_cannot_replace_capture_to_forge_a_request(self):
+        binding = self.bind([required('request')])
+        client, _ = self.f.client([[fixtures.message()]])
+        blocked = []
+        def checkpoint(_report):
+            with pytest.raises(AttributeError):
+                client.actions.trajectory = None
+            with pytest.raises(ValueError, match='controller-owned trajectory updates required'):
+                client.actions.add('tool_request', 1, tool_name=client.actions.text('run', 128), decision='accepted')
+            blocked.append(True)
+        client.record = checkpoint
+        _, capture = self.role(binding, client=client)
+        assert blocked and core.evaluate(binding, capture)['status'] == 'violated'
+
     @pytest.mark.skipif(not hasattr(os, 'fork'), reason='requires process fork')
     def test_issued_trajectory_capture_is_not_authoritative_after_fork(self):
         binding = self.bind([required('request')])
