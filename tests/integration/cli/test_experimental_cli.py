@@ -11,7 +11,8 @@ from agent_harness_lab.diagnostics.retrieval import Incident
 
 
 @pytest.mark.parametrize('name', ['interaction-contract-v1-output', 'audit-sampling-receipt-v1',
-    'ahl-definition-validation-v1', 'diagnostic-triage-evaluation-v2'])
+    'ahl-definition-validation-v1', 'diagnostic-triage-evaluation-v2', 'ahl-config-inventory-v1',
+    'ahl-config-recommendations-v1'])
 def test_private_golden_output_rejects_forged_public_benchmark_export(tmp_path, name):
     from pathlib import Path
     from tests.unit.evaluation.test_benchmark_contracts import record

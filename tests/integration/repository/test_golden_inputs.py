@@ -8,9 +8,10 @@ from pathlib import Path
 import pytest
 
 from agent_harness_lab.diagnostics import audit_sampling, drift, triage_policy
+from agent_harness_lab import config_recommendations
 from agent_harness_lab.evaluation import interaction_contract, resource_decision
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
-from agent_harness_lab.sources import agents_validation
+from agent_harness_lab.sources import agents_validation, config_inventory
 from tests.unit.evaluation.test_benchmark_contracts import record as public_record
 
 GOLDENS = Path(__file__).resolve().parents[2] / 'support/golden_profiles'
@@ -90,8 +91,25 @@ def test_triage_evaluation_v2_preserves_private_synthetic_result():
     assert output['publication_allowed'] is False
 
 
+def test_config_inventory_v1_preserves_empty_private_output(tmp_path):
+    profile = dict(schema_version=1, runtime='codex', version='0.166.0', task_cwd='.')
+    output = config_inventory.capture(tmp_path, profile)
+    assert output == sample('ahl-config-inventory-v1')
+    assert output['publication_allowed'] is False and output['effective'] == 'unknown'
+
+
+def test_config_inventory_v1_loads_into_private_recommendation():
+    value = sample('ahl-config-inventory-v1')
+    output = config_recommendations.recommend(value)
+    assert output == sample('ahl-config-recommendations-v1')
+    assert output['exec_policy'] == 'not_inventoried' and output['publication_allowed'] is False
+    with pytest.raises(ValueError, match='expected a ahl-config-inventory-v1 document'):
+        config_recommendations.recommend({**value, 'profile': 'unknown-v999'})
+
+
 @pytest.mark.parametrize('name', ['interaction-contract-v1-output', 'audit-sampling-receipt-v1',
-    'ahl-definition-validation-v1', 'diagnostic-triage-evaluation-v2'])
+    'ahl-definition-validation-v1', 'diagnostic-triage-evaluation-v2', 'ahl-config-inventory-v1',
+    'ahl-config-recommendations-v1'])
 def test_private_golden_output_cannot_be_relabelled_as_a_public_benchmark(name):
     assert not public_export_allowed([sample(name) | public_record() | {'publication_allowed': True}])
 
