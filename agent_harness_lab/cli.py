@@ -199,6 +199,7 @@ def main(argv=None):
             command.add_argument('--codex', default='codex',help='Trusted Codex executable name/path for cooperative agent execution (default: %(default)s; explicit option overrides configuration)')
             command.add_argument('--claude', default='claude',help='Trusted Claude executable name/path for cooperative agent execution (default: %(default)s; explicit option overrides configuration)')
             command.add_argument('--timeout', type=int, default=None, help='Whole improvement budget in positive seconds, including preparation and trials (default: ahl.json limit or 2700)')
+            command.add_argument('--inherit-env', action='store_true', help='Pass the host environment to native trials; exposes unrelated host secrets')
             command.add_argument('--sandbox-graders', action='store_true', help='Require offline frozen grader controls and trial grading; agent CLI remains cooperative')
             command.add_argument('--cgroup-root', type=Path, help='Explicit delegated cgroup v2 subtree for controlled roles or graders')
             command.add_argument('--image-root', type=Path, help='Explicit extracted readonly runtime image for controlled roles or graders')

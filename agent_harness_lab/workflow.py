@@ -809,7 +809,8 @@ All bundles and controls stay outside task fixtures; no grader command is execut
             check_scope(args, proposed, original)
         options = argparse.Namespace(manifest=str(manifest_path), baseline=str(baseline),
             candidate=str(frozen), output=str(output / f'evaluation-{attempt}'),
-            agent=agent, codex=args.codex, claude=args.claude, parent_deadline=started + args.timeout)
+            agent=agent, codex=args.codex, claude=args.claude, parent_deadline=started + args.timeout,
+            inherit_env=getattr(args,'inherit_env',False))
         if bank is not None: options.config = args.project/'ahl.json'
         if grading is not None:
             options.sandbox_graders = True
@@ -1024,7 +1025,7 @@ def watch_configuration(args):
             args._response_references=config.response_references(args.project,vars(resolved))
         args=resolved
     settings = {k: getattr(args, k, None) for k in ('agent', 'codex', 'claude', 'timeout', 'format',
-                'focus', 'max_attempts', 'retry_delay', 'watch_budget', 'sandbox_graders',
+                'focus', 'max_attempts', 'retry_delay', 'watch_budget', 'sandbox_graders', 'inherit_env',
                 'image_sha256', 'disk_bytes', 'permission_audit', 'configuration_sha256', 'trial_limit')}
     for key in ('cgroup_root', 'image_root'):
         value = getattr(args, key, None)

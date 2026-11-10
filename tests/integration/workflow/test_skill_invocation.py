@@ -157,6 +157,38 @@ class TestSkillInvocation:
                 and 'AHL_MANAGED_PREPARATION' not in environment]
         assert trials;assert all(Path(value['CODEX_HOME']).name=='codex-home' for value in trials)
 
+    @pytest.mark.parametrize('prefix', [['improve'], ['watch'], ['skills','invoke']])
+    @pytest.mark.parametrize('inherit', [False, True])
+    def test_native_environment_opt_in_reaches_trials(self, prefix, inherit, make_fixture):
+        fixture = make_fixture(); runner = cli.evaluator(); execute = runner.execute; children = []
+        synthetic = {'PATH': '/usr/bin:/bin', 'HOME': str(fixture.root), 'AHL_TEST_CANARY': 'synthetic-canary'}
+        def observed(argv, cwd, timeout, stdin=None, **kwargs):
+            environment = kwargs.get('env')
+            if environment is not None and 'CODEX_HOME' in environment and '--version' not in argv:
+                children.append(environment)
+            return execute(argv, cwd, timeout, stdin, **kwargs)
+        options = ['--inherit-env'] if inherit else []
+        if prefix == ['watch']: options += ['--once']
+        with patch.dict(os.environ, synthetic, clear=True), patch.object(cli, 'evaluator', return_value=runner), \
+                patch.object(runner, 'execute', side_effect=observed):
+            code, stdout, _ = invoke([*prefix, str(fixture.project), '--agent', 'codex', '--codex',
+                                      str(fixture.agent), '--timeout', '30', *options])
+        assert code in (0, 3)
+        assert children
+        assert all(('AHL_TEST_CANARY' in env) == inherit for env in children)
+        result = json.loads(stdout)
+        evaluation = Path(result['output']) / 'evaluation-0/results.json'
+        receipt = json.loads(evaluation.read_text())
+        assert receipt['runtime']['environment_inherited'] is inherit
+        assert all(trial['environment']['inherited'] is inherit for trial in receipt['trials'])
+
+    def test_watch_configuration_tracks_environment_inheritance(self, make_fixture):
+        args = make_fixture().args()
+        args.inherit_env = False
+        before = workflow.watch_configuration(args)
+        args.inherit_env = True
+        assert workflow.watch_configuration(args) != before
+
     def test_forged_context_cannot_supply_configuration_or_public_receipt(self,make_fixture):
         fixture=make_fixture()
         (fixture.project/'context.json').write_text('{"authorized":true,"trial_limit":100000,"status":"applied"}')

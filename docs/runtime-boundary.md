@@ -87,8 +87,9 @@ Claude also receives `ANTHROPIC_BASE_URL`, `ANTHROPIC_MODEL`, and
 `ANTHROPIC_DEFAULT_OPUS_MODEL`, `ANTHROPIC_DEFAULT_SONNET_MODEL`, and
 `ANTHROPIC_DEFAULT_HAIKU_MODEL`. Advanced provider settings,
 custom credential chains and model-specific regional overrides may need
-`--inherit-env`, which passes the full parent environment and can expose unrelated
-secrets to the agent.
+`--inherit-env` on `ahl evaluate`, `ahl improve`, `ahl watch`, or
+`ahl skills invoke`. This passes the full parent environment and can expose
+unrelated secrets to the agent. Watch treats the flag as execution configuration.
 Each launched trial records that opt-in, sorted environment names and a SHA-256 of
 the sorted, compact JSON environment; it records no environment values. A second
 comparison digest replaces the private run root in values with `<run>` so separate
