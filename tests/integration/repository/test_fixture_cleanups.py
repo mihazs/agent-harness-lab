@@ -31,10 +31,6 @@ ROWS = [
      ['tests.integration.sandbox.test_sandbox_inference.ResponsesEvaluationTests']),
     ('tests.integration.optimization.test_optimization_history', 'owner',
      ['tests.integration.evaluation.test_regression_admission.RegressionAdmissionTests']),
-    ('tests.integration.evaluation.test_regression_review', 'review',
-     ['tests.integration.evaluation.test_regression_review.ReviewFixture']),
-    ('tests.integration.evaluation.test_review_authority', 'authority',
-     ['tests.integration.evaluation.test_review_authority.ReviewAuthorityFixture']),
     ('tests.integration.evaluation.test_repeated_workflow', 'admission',
      ['tests.integration.evaluation.test_repeated_workflow.RepeatedWorkflowAdmission']),
     ('tests.integration.evaluation.test_repeated_workflow', 'kernel_case', [REPEATED_KERNEL]),
@@ -198,3 +194,22 @@ def test_replay_fixture_propagates_cleanup_failure(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match='synthetic replay cleanup failure'):
         with ExitStack() as cleanups:
             test_regression_replay.RegressionReplay(cleanups.callback)
+
+
+@pytest.mark.parametrize('authority', [False, True], ids=['review', 'authority'])
+def test_review_helpers_propagate_nested_cleanup_failure(monkeypatch, authority):
+    from contextlib import ExitStack
+    from tests.integration.evaluation import test_regression_review, test_review_authority
+
+    def fail():
+        raise RuntimeError('synthetic review cleanup failure')
+
+    def broken(add_cleanup):
+        add_cleanup(fail)
+        raise ValueError('synthetic setup failure')
+
+    monkeypatch.setattr(test_regression_review.fixtures, 'RegressionReplay', broken)
+    helper = test_review_authority.ReviewAuthorityFixture if authority else test_regression_review.ReviewFixture
+    with pytest.raises(RuntimeError, match='synthetic review cleanup failure'):
+        with ExitStack() as cleanups:
+            helper(cleanups.callback)

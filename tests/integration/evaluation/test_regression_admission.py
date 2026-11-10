@@ -19,7 +19,7 @@ class RegressionAdmissionTests(unittest.TestCase):
     """Hosts the reviewed-case admission fixture that other modules build on; it defines no tests of its own."""
 
     def setUp(self):
-        self.fixture = fixtures.ReviewFixture(); self.fixture.setUp(); self.addCleanup(run_cleanups,self.fixture)
+        self.fixture = fixtures.ReviewFixture(self.addCleanup)
         f = self.fixture
         f.drafted(); f.store.review(f.case_id,f.review_file())
         self.store, self.case_id = f.store, f.case_id

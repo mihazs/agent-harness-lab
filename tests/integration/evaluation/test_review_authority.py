@@ -1,5 +1,5 @@
 """Synthetic key approvals are actor evidence, never certification authority."""
-from contextlib import redirect_stdout
+from contextlib import ExitStack, redirect_stdout
 import hashlib
 import io
 import json
@@ -19,7 +19,6 @@ from agent_harness_lab.evaluation.benchmark import public_export_allowed
 from agent_harness_lab.evaluation import review_authority
 from agent_harness_lab.private_journal import encoded
 from tests.integration.evaluation import test_regression_review as fixtures
-from tests.support.unittest_cleanups import run_cleanups
 
 
 needs_openssh = pytest.mark.skipif(not Path('/usr/bin/ssh-keygen').is_file(), reason='optional OpenSSH verifier unavailable')
@@ -28,8 +27,8 @@ needs_openssh = pytest.mark.skipif(not Path('/usr/bin/ssh-keygen').is_file(), re
 class ReviewAuthorityFixture(fixtures.ReviewFixture):
     """A drafted review case with a synthetic OpenSSH reviewer key and an owner-only reviewer policy."""
 
-    def setUp(self):
-        super().setUp()
+    def __init__(self, add_cleanup):
+        super().__init__(add_cleanup)
         expected=os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
         if expected:assert Path(agent_harness_lab.__file__).resolve().is_relative_to(Path(expected).resolve())
         self.drafted()
@@ -99,9 +98,8 @@ class ReviewAuthorityFixture(fixtures.ReviewFixture):
 
 @pytest.fixture
 def authority():
-    value = ReviewAuthorityFixture(); value.setUp()
-    yield value
-    run_cleanups(value)
+    with ExitStack() as cleanups:
+        yield ReviewAuthorityFixture(cleanups.callback)
 
 
 @needs_openssh
