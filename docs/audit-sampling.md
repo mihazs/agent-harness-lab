@@ -108,7 +108,10 @@ and plan hashes, policy and model identities, decision timestamp, rates, budget,
 exclusions, per-stratum inclusion probabilities and expected and realized draws.
 It also lists each draw's unit hash, stratum, alert status and inclusion
 probability, plus the maximum and minimum weights and the Kish effective sample
-size. The receipt is created before `estimate` accepts any label. `review_queue(receipt)`
+size. Reopening checks the declared route probabilities, unique draw identities,
+stratum and total counts, and that every unit in a certain stratum is drawn.
+Inconsistent legacy receipts are rejected. These internal checks do not authenticate
+the frame, seed, reviewer labels or author of a self-sealed receipt. The receipt is created before `estimate` accepts any label. `review_queue(receipt)`
 gives reviewers only the drawn unit hashes in hash order, without alert status,
 stratum or score, to reduce anchoring.
 

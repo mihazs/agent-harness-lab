@@ -480,6 +480,30 @@ def test_certainty_stratum_is_sampled_when_hash_float_rounds_to_one():
     assert receipt['drawn'] == 1 and len(receipt['draws']) == 1
 
 
+def test_resealed_certainty_omission_counts_and_undrawn_route_mismatch_are_refused():
+    value = frame([unit('synthetic-a'), unit('synthetic-b')])
+    receipt = audit.draw(value, plan(value, rates=dict(random=1)))
+    body = {key: item for key, item in receipt.items() if key != 'receipt_sha256'}
+    body = json.loads(json.dumps(body)); body['draws'].pop(); body['drawn'] -= 1; body['strata'][0]['drawn'] -= 1
+    body['weights'] = audit._weights([item['inclusion_probability'] for item in body['draws']])
+    with pytest.raises(ValueError, match='counts differ'):
+        audit.review_queue(audit._seal(body))
+    body = json.loads(json.dumps({key: item for key, item in receipt.items() if key != 'receipt_sha256'}))
+    body['draws'][1] = dict(body['draws'][0])
+    with pytest.raises(ValueError, match='duplicate'):
+        audit.review_queue(audit._seal(body))
+    body = json.loads(json.dumps({key: item for key, item in receipt.items() if key != 'receipt_sha256'}))
+    body['drawn'] += 1
+    with pytest.raises(ValueError, match='counts differ'):
+        audit.review_queue(audit._seal(body))
+    value = frame([unit('synthetic')]); receipt = audit.draw(value, plan(value, rates=dict(random=.5)))
+    body = json.loads(json.dumps({key: item for key, item in receipt.items() if key != 'receipt_sha256'}))
+    body['draws'] = []; body['drawn'] = 0; body['strata'][0]['drawn'] = 0
+    body['strata'][0]['inclusion_probability'] = .25
+    with pytest.raises(ValueError, match='inclusion probability'):
+        audit.review_queue(audit._seal(body))
+
+
 def test_uncertain_overlapping_routes_cannot_round_to_certainty():
     value = frame([unit('synthetic', alerted=True)])
     with pytest.raises(ValueError, match='rounds to one'):
