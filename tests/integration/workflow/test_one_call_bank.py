@@ -69,6 +69,31 @@ def invoke(pinned, *arguments):
     return code, json.loads(stdout.getvalue())
 
 
+@pytest.mark.parametrize('runtime', ['codex', 'claude'])
+@pytest.mark.parametrize('entry', [['improve'], ['skills', 'invoke']], ids=['cli', 'skill'])
+def test_configured_native_runtime_reaches_controller_in_one_invocation(pinned, runtime, entry):
+    pinned.value['bank'] = config.defaults()['bank']
+    pinned.value['runtime']['name'] = runtime
+    write_config(pinned)
+    (pinned.project/'mode').write_text('no_change')
+    if runtime == 'claude':
+        script = pinned.fixture.agent.read_text()
+        old = "print(json.dumps(dict(type='turn.completed',usage=dict(output_tokens=1))))"
+        new = "print(json.dumps(dict(type='result',subtype='success',is_error=False,usage=dict(output_tokens=1))))"
+        assert old in script
+        pinned.fixture.agent.write_text(script.replace(old, new))
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        code = main([*entry, str(pinned.project)])
+    result = json.loads(output.getvalue())
+    assert (code, result['status'], result['agent']) == (0, 'no_change', runtime)
+    assert (pinned.project/'AGENTS.md').read_text() == 'bad'
+    assert not (Path(result['output'])/'preparation/evaluation-0/manifest.json').exists()
+    if entry[0] == 'skills':
+        context = json.loads((Path(result['output'])/'invocation.json').read_text())
+        assert context['origin'] == 'skill'
+
+
 def test_full_seven_task_bank_uses_one_preparation_and_exact_shared_budget(pinned):
     code, result = invoke(pinned)
     assert code == 3
