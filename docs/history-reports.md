@@ -35,6 +35,13 @@ per-task/root rates, confidence intervals and their assumptions. Related variant
 and overlapping cohorts do not produce additional independent observations. No
 pooled model effect or verified semantic root independence is claimed.
 
+Task observations pair sealed trials by the frozen task, root, family and repeat.
+They show trial IDs and outcomes without changing the analysis population or
+decision. Incomplete or contradictory outcomes remain unknown; different or
+unavailable measured runtime image or grader identity is not comparable. These
+labels do not explain causes. Event timelines, unplanned records and individual
+resource details are not presented by this table.
+
 This route always refuses `--public`, before opening private input or creating an
 output directory. Synthetic-looking publication labels cannot authorize export.
 HTML escapes untrusted labels and provenance; Markdown keeps them in literal
