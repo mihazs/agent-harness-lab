@@ -16,6 +16,7 @@ RESPONSE_OPTIONS=(*RESPONSE_PATHS,'image_sha256','disk_bytes','permission_audit'
 INVOCATION_OPTIONS=('agent','codex','claude','timeout',*RESPONSE_OPTIONS,'sandbox_graders')
 PLUGIN_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}@[A-Za-z0-9][A-Za-z0-9._-]{0,127}')
 MAX_PLUGIN_CHECKOUTS = 32
+DEFAULT_TRIALS = 20
 
 
 def plugin_checkouts(value):
@@ -44,7 +45,7 @@ def starter():
 def defaults():
     return dict(schema_version=1, profile='offline', runtime=dict(name='none', executable=None),
                 bank=dict(path='starter', sha256=hashlib.sha256(starter().read_bytes()).hexdigest()),
-                harness_paths=[], limits=dict(seconds=2700, trials=20), recommendation_only=True)
+                harness_paths=[], limits=dict(seconds=2700, trials=DEFAULT_TRIALS), recommendation_only=True)
 
 
 def validate(value):
@@ -143,6 +144,21 @@ def execution_options(project,settings,requested,explicit):
     if result.get('agent')=='responses' and settings:
         overlapping_harness(project,[result[name] for name in RESPONSE_PATHS if result.get(name) is not None],settings['harness_paths'])
     return result
+
+
+def resolve(project, requested=None, explicit=(), *, proposed=None):
+    """Resolve validated project settings and invocation defaults without writing or granting authority."""
+    path = Path(project) / 'ahl.json'
+    if proposed is not None:
+        settings, digest, source = validate(proposed), None, 'proposed'
+    elif os.path.lexists(path):
+        settings, digest = load(path)
+        source = 'project'
+    else:
+        settings, digest, source = None, None, 'defaults'
+    return dict(settings=settings, configuration_sha256=digest, source=source,
+                options=execution_options(project, settings, requested, set(explicit)) if requested is not None else {},
+                trial_limit=settings['limits']['trials'] if settings else DEFAULT_TRIALS)
 
 
 def reference_metadata(path,*,private=False,directory=False):
@@ -279,6 +295,8 @@ def evaluation_unchanged(path, receipt):
 
 
 def create(project, config):
+    from .read_only import require_writable
+    require_writable(project)
     if not supported():
         raise NotImplementedError('safe configuration I/O is unavailable')
     validate(config)
@@ -297,6 +315,7 @@ def create(project, config):
                 json.dump(config, stream, indent=2, allow_nan=False); stream.write('\n')
                 stream.flush(); os.fsync(stream.fileno())
             # link is atomic and exclusive: an existing file is never replaced.
+            require_writable(project)
             os.link(temporary, 'ahl.json', src_dir_fd=directory, dst_dir_fd=directory, follow_symlinks=False)
             os.fsync(directory)
         except BaseException:

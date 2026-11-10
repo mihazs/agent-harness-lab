@@ -13,6 +13,33 @@ from tests.support import harness_surface_fixture as fixture
 from tests.unit.surfaces.test_static_audit import WELL_FORMED
 
 
+def test_nested_task_reports_conditional_precedence(tmp_path, monkeypatch, capsys):
+    project = tmp_path / 'project'
+    (project / '.git').mkdir(parents=True)
+    (project / 'src').mkdir()
+    (project / 'AGENTS.md').write_text('Use option A.\n')
+    (project / 'src/AGENTS.md').write_text('Use option B.\n')
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--task-cwd', 'src', '--json']) == 0
+    report = json.loads(capsys.readouterr().out)['instruction_precedence']
+    assert [(r['higher'], r['lower']) for r in report['conditional_relations']] == [('src/AGENTS.md', 'AGENTS.md')]
+    assert report['effective'] == 'unknown'
+    assert report['unchecked']['imports'] == 'not_checked'
+
+
+@pytest.mark.parametrize('task', ['../outside', '/absolute', 'missing', 'link', '.git'])
+def test_unsafe_task_directory_is_refused_before_report(tmp_path, monkeypatch, task):
+    project = tmp_path / 'project'
+    (project / '.git').mkdir(parents=True)
+    (tmp_path / 'outside').mkdir()
+    (project / 'link').symlink_to(tmp_path / 'outside', target_is_directory=True)
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    with pytest.raises(SystemExit) as exc:
+        main(['audit', str(project), '--task-cwd', task])
+    assert exc.value.code == 2
+    assert not (tmp_path / 'state').exists()
+
+
 @pytest.mark.parametrize('files', [{}, {'CLAUDE.md': '# Synthetic\n'}, WELL_FORMED], ids=['empty', 'minimal', 'well-formed'])
 def test_json_report_is_stable_private_and_read_only(tmp_path, monkeypatch, capsys, files):
     project = tmp_path / 'project'

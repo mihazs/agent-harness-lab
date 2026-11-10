@@ -14,7 +14,7 @@ import tempfile
 import time
 import uuid
 
-from agent_harness_lab import surfaces
+from agent_harness_lab import config, surfaces
 from agent_harness_lab.sources import agents_validation, skill_validation
 from agent_harness_lab.evidence import collect
 from tools.diagnose import report
@@ -40,6 +40,9 @@ def write_json(path, value):
 
 def output_dir(args, *, deadline=None):
     parent = state_root() / 'runs' / identity(args.project)
+    from .read_only import require_external_output
+    require_external_output(args.project, parent if args.output is None else args.output)
+    require_external_output(args.project, tempfile.gettempdir())
     if args.output is None:
         parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         output = Path(tempfile.mkdtemp(prefix='run-', dir=parent))
@@ -62,6 +65,8 @@ def output_dir(args, *, deadline=None):
 @contextlib.contextmanager
 def project_lock(project):
     folder = state_root() / 'locks'
+    from .read_only import require_external_output
+    require_external_output(project, folder)
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     path = folder / (identity(project) + '.lock')
     try:
@@ -455,6 +460,7 @@ def _improve(args):
     started = time.monotonic()
     if getattr(args,'_configured_started',None) is not None:started=min(started,args._configured_started)
     started=min(started,getattr(args,'_construction_started',started))
+    args._budget_started = started
     remaining = lambda: args.timeout - (time.monotonic() - started)
     runner = evaluator()
     output = output_dir(args,deadline=started+args.timeout)
@@ -564,7 +570,7 @@ def _improve(args):
     refinement_feedback = []
     single_run = None
     final_attempt = None
-    trials_left = getattr(args, "trial_limit", 24)
+    trials_left = getattr(args, "trial_limit", config.DEFAULT_TRIALS)
     for attempt in range(1 if bank is not None else 2):
         final_attempt = attempt
         instruction = None
@@ -622,7 +628,7 @@ Otherwise modify only these project-owned surfaces in candidate: {surfaces.adopt
 {instruction_validation.PROPOSER_GUIDANCE}
 Do not build evaluation tests, launch model trials, or inspect previous held-out inputs.
 The parent freezes the patch; {'the configured task bank supplies the evaluation' if bank is not None else 'a separate fresh session constructs evaluation without seeing it'}.
-Shared ceiling is {getattr(args, 'trial_limit', 24)} preparation/task roles and {args.timeout} seconds;
+Shared ceiling is {getattr(args, 'trial_limit', config.DEFAULT_TRIALS)} preparation/task roles and {args.timeout} seconds;
 {trials_left} paired task or later preparation roles remain after this attempt's {preparation_trials} reserved preparation roles.
 Write {proposal_path} as {{"status":"candidate","mechanisms":[...],"falsifiers":[...]}} when ready.
 The parent will reject incomplete/changed inputs, regressions, unsupported ties, and concurrent edits.
@@ -933,18 +939,20 @@ All bundles and controls stay outside task fixtures; no grader command is execut
 
 def _run_improvement(args, *, parent_started=None):
     """Persist truthful completion even when a run is interrupted or raises."""
+    from .read_only import require_writable
+    require_writable(args.project)
     issuer=os.getpid(); managed=getattr(args,'evaluation_store',None) is not None
-    from .one_call import pinned_bank
     configured=getattr(args,'_configured_responses',False)
-    started=time.monotonic() if managed or configured or pinned_bank(args) is not None else None
-    if (managed or configured) and parent_started is not None: started=min(started,parent_started)
-    for name in ('_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256','_configured_started'):
+    started=time.monotonic() if parent_started is None else parent_started
+    for name in ('_run_output','_permission_backend','_prerequisite_scope','_construction_access','_construction_started','_evaluation_request_sha256','_configured_started','_budget_started'):
         if hasattr(args,name):delattr(args,name)
-    if started is not None: args._construction_started=started
+    args._construction_started=started
+    args._budget_started=started
     if configured: args._configured_started=started
     try:
-        from .one_call import contracts, preflight, check_configuration
-        check_configuration(args)
+        from .one_call import contracts, preflight, preflight_plan, check_configuration, REMEDIATION, DEFAULT_REMEDIATION
+        check_configuration(args, check_bank=getattr(args, 'repair_contracts', False))
+        if time.monotonic()>=started+args.timeout: raise TimeoutError('configuration exhausted improvement budget')
         if managed:
             from .evaluation.construction_access import selection
             selection(args)
@@ -954,15 +962,16 @@ def _run_improvement(args, *, parent_started=None):
             return contracts(args)
         if hasattr(args, 'project_settings'):
             reason = preflight(args)
-            if configured and time.monotonic()>=started+args.timeout:raise TimeoutError('configured preflight exhausted improvement budget')
+            if time.monotonic()>=started+args.timeout:raise TimeoutError('preflight exhausted improvement budget')
             if reason:
-                output = output_dir(args,deadline=(time.monotonic() if started is None else started)+args.timeout)
-                from .exit_guidance import REMEDIATION
+                output = output_dir(args,deadline=started+args.timeout)
                 result = dict(status='blocked', reason=reason, output=str(output), changed_files=[],
-                              remediation=REMEDIATION.get(reason, 'Review the missing prerequisite in the private receipt.'))
+                              remediation=REMEDIATION.get(reason, DEFAULT_REMEDIATION),
+                              preflight_plan=preflight_plan(args, reason))
                 write_json(output/'workflow.json', result)
                 return result
-        if started is not None and time.monotonic()>=started+args.timeout:
+            check_configuration(args)
+        if time.monotonic()>=started+args.timeout:
             raise TimeoutError('construction preflight exhausted improvement budget')
         return _improve(args)
     except BaseException as exc:
@@ -1015,8 +1024,10 @@ def _run_improvement(args, *, parent_started=None):
 
 
 def improve(args):
+    from .read_only import require_writable
+    require_writable(args.project)
     with project_lock(args.project):
-        return _run_improvement(args)
+        return _run_improvement(args, parent_started=getattr(args, '_entry_started', None))
 
 
 def watch_configuration(args):
@@ -1059,9 +1070,11 @@ def watch_configuration(args):
 
 
 def watch(args):
+    from .read_only import require_writable
+    require_writable(args.project)
     issuer=os.getpid(); managed=getattr(args,'evaluation_store',None) is not None
-    timed=managed or getattr(args,'_configured_responses',False)
-    first_started=time.monotonic() if timed else None
+    first_started=getattr(args, '_entry_started', None)
+    if first_started is None: first_started=time.monotonic()
     attempts = getattr(args, 'max_attempts', 3)
     delay = getattr(args, 'retry_delay', 60)
     budget = getattr(args, 'watch_budget', None)
@@ -1078,9 +1091,10 @@ def watch(args):
             emitted = False
             # The same lock covers scheduling, execution and final checkpoint write.
             with project_lock(args.project):
-                iteration_started=(first_started if first_started is not None else time.monotonic()) if timed else None
+                require_writable(args.project)
+                iteration_started=first_started if first_started is not None else time.monotonic()
                 first_started=None
-                if timed: configuration=watch_configuration(args)
+                configuration=watch_configuration(args)
                 state = checkpoint_state.load(checkpoint)
                 fingerprint = collect(args.project, events=args.events, source_format=args.format)['fingerprint']
                 now = time.time()
@@ -1096,9 +1110,9 @@ def watch(args):
                     state.update(disposition='in_progress', last_attempt=now,
                                  attempt_count=state['attempt_count'] + 1, run_id=uuid.uuid4().hex)
                     write_json(checkpoint, state)
-                    started = iteration_started if timed else time.monotonic()
+                    started = iteration_started
                     try:
-                        result = _run_improvement(options,parent_started=started) if timed else _run_improvement(options)
+                        result = _run_improvement(options,parent_started=started)
                     except (ValueError, OSError, TypeError, KeyError) as exc:
                         if managed and os.getpid()!=issuer: raise
                         result = dict(status='invalid_input' if isinstance(exc, (ValueError, TypeError, KeyError)) else 'execution_error',
