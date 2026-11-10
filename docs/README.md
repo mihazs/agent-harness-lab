@@ -6,13 +6,13 @@ reader purpose.
 ## Learn
 
 - [First diagnosis](getting-started.md): reproduce a safe, synthetic diagnosis and interpret its output.
+- [Offline audit walkthrough](audit-walkthrough.md): inspect a synthetic harness without a model.
 
 ## Complete a task
 
 - [Install](installation.md) and [check readiness or initialize a project](onboarding.md).
 - [Analyze, improve, or monitor a project](workflows.md); [analyze an explicit memory session](analyze-memory-session.md); [inspect CLI help](cli-help.md).
 - [Repair a supported skill header](repair-skill-header.md) or [inspect a private source journal](inspect-source-context.md).
-- [Run a static audit](static-audit.md) without captured traces or a model.
 - [Review source relationships](source-lineage-review.md), [declare a regression](regression-proposals.md), [review a case](regression-review.md), or [admit it to a development bank](regression-admission.md).
 - [Review a conditional final bank](conditional-bank-review.md) or [run fixed repeated-bank improvement](repeated-improvement.md).
 - [Preflight experiment precision](experiment-precision.md), [search with preservation evidence](guarded-search.md), or [review grader corrections](grader-corrections.md).
@@ -21,7 +21,7 @@ reader purpose.
 
 ## Look up behavior and contracts
 
-- [Command overview](command-reference.md), [analysis methods](analysis.md), and [evaluation contracts and prerequisites](evaluation-foundation.md).
+- [Command overview](command-reference.md), [static audit contract](static-audit.md), [analysis methods](analysis.md), and [evaluation contracts and prerequisites](evaluation-foundation.md).
 - [Source contracts](source-contracts.md), [source lineage review](source-lineage-reference.md), [regression review records](regression-review-reference.md), [telemetry](telemetry.md), and [explicit memory page captures](memory-page-capture.md).
 - [Bank qualification](bank-qualification.md), [synthetic adversarial bank](adversarial-bank.md), [content grouping](content-grouping.md), and [evaluation interchange](evaluation-interchange.md).
 - [Controlled experiments](controlled-experiments.md), [controller-loaded instructions](controlled-agents.md), [controller source observations](controller-sources.md), and [implementation prerequisite observations](implementation-prerequisites.md).
