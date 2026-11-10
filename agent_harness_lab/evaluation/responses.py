@@ -300,7 +300,7 @@ class Client:
 
     def report(self):
         value = dict(runtime='controller-responses-executor-v1',request_attempts=self.requests,tool_call_reservations=self.tool_calls,
-            requested_model=self.settings['model'],effective_model_verified=False,provider_reported_usage=list(self.usage),
+            requested_model=self.settings['model'],effective_model_verified=False,provider_reported_usage=deepcopy(self.usage),
             request_bytes=self.request_bytes,response_bytes_observed=self.response_bytes,
             reserved_output_tokens=self.requests*self.settings['max_output_tokens'],
             limits={key:self.settings[key] for key in ('max_requests','max_tool_calls','max_output_tokens','max_request_bytes','max_response_bytes')},
