@@ -19,8 +19,6 @@ ROWS = [
     ('tests.integration.evaluation.test_permission_audit', 'case', [KERNEL]),
     ('tests.integration.evaluation.test_repeated_workflow', 'kernel_case', [REPEATED_KERNEL]),
     ('tests.integration.evaluation.test_repeated_access_companion', 'kernel_case', [ACCESS_KERNEL]),
-    ('tests.integration.sources.test_source_commit_join', 'github_driver',
-     ['tests.integration.sources.test_source_commit_join.GitHubDriver']),
 ]
 TEMPLATE = '''import contextlib, errno, importlib
 
@@ -364,3 +362,13 @@ def test_claude_journal_cleanup_failure_is_raised(tmp_path):
     journal.fixture._cleanups.append(fail)
     with pytest.raises(RuntimeError, match='synthetic per-test cleanup failure'):
         journal.doCleanups()
+def test_github_driver_propagates_cleanup_failure(monkeypatch, tmp_path):
+    (tmp_path/'test_github_cleanup.py').write_text(
+        "from tests.integration.sources.test_source_commit_join import github_driver, GitHubFixture\n"
+        "def fail(): raise RuntimeError('synthetic github cleanup failure')\n"
+        "def setup(self): self.addCleanup(fail)\n"
+        "GitHubFixture.setUp = setup\n"
+        "def test_synthetic(github_driver): pass\n")
+    run = pytest_run(tmp_path, ['test_github_cleanup.py'])
+    assert 'ERROR ' in run.stdout and 'synthetic github cleanup failure' in run.stdout, run.stdout[-4000:]
+    assert '1 passed' in run.stdout, run.stdout[-4000:]
