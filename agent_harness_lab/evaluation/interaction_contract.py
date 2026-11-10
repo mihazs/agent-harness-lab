@@ -1,7 +1,8 @@
 """Three-valued grading of declared clarification, stop and no-change behavior.
 
-A task opts in by declaring a contract; nothing here runs for tasks without one. Absence is
-only ever concluded from a channel the observer declared complete, never from missing events.
+A task opts in by declaring a contract; nothing here runs for tasks without one. Evidence
+and completeness are caller declarations, not authenticated runtime observations. Absence is
+only ever concluded from a channel declared complete, never from missing events.
 """
 import hashlib
 import json
@@ -133,7 +134,7 @@ def _stop(contract, evidence, events):
 
 
 def evaluate(contract, evidence):
-    """Grade declared interaction behavior from observed evidence only."""
+    """Evaluate caller-declared interaction evidence without authenticating its source."""
     result = dict(schema_version=1, profile=PROFILE, interaction_requirement_satisfied=None,
                   whole_task_completed=None, state_preserved=None, passed=None, violations=[], unknowns=[],
                   publication_allowed=False, automatic_promotion=False)

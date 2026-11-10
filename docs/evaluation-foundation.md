@@ -462,7 +462,9 @@ freezes what the binary pass means), `required_clarifications` (a subset of
 or `{"kind":"interaction"}`. `contract_sha256` is the identity to store with the
 task; any change invalidates earlier comparisons.
 
-`evaluate(contract, evidence)` takes runner-observed evidence: `capture` states
+`evaluate(contract, evidence)` takes caller-supplied evidence declarations; it
+does not authenticate their origin or establish that a runner observed them.
+`capture` declares
 whether the `transcript` and side-effect `receipts` are `complete`, `partial` or
 `missing`, and how the run `termination` ended; `events` are `clarification_request`,
 `clarification_reply`, `mutation`, `stop` and `claim` records; `state` holds initial
