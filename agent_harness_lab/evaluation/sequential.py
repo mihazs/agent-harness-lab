@@ -242,6 +242,8 @@ def analyze(spec,records,binding,*,cohort_json=None,include_missing_bounds=False
     if any(r.critical_regression for r in records):
         if {r.trial_id for r in records}!={r['trial_id'] for r in expected[:len(records)]}:return finish('incomplete','nonprefix_critical_record')
         return finish('rejected','critical_regression')
+    if not records and include_missing_bounds is True:
+        return finish('incomplete','partial_or_nonprefix_root',missing_outcome_bounds=_missing_identification(spec,records,binding,cohorts))
     roots={byid[r.trial_id]['root'] for r in records};order=binding['root_order'][:len(roots)]
     if roots!=set(order) or {r.trial_id for r in records}!={r['trial_id'] for r in expected if r['root'] in roots}:
         if include_missing_bounds is True and [r.trial_id for r in records]==[r['trial_id'] for r in expected[:len(records)]]:
