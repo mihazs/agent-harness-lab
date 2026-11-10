@@ -93,11 +93,15 @@ class TestSequentialMath:
         bounds=result['missing_outcome_bounds']
         assert result['status']=='incomplete' and not bounds['automatic_promotion']
         assert bounds['interpretation']=='finite_bank_completion_range_not_a_confidence_sequence'
+        envelope=bounds['anytime_completion_envelope']['primary']
         for values in itertools.product((False,True),repeat=3):
             completed=[*prefix,*[replace(row,outcome=value) for row,value in zip(data[1:],values)]]
             actual=core.analyze(plan,completed,binding)['primary']
             exact=core.unpack(actual['exact_low'])
             assert core.unpack(bounds['primary']['exact_low'])<=exact<=core.unpack(bounds['primary']['exact_high'])
+            first_root=core.analyze(plan,completed[:2],binding)['primary']
+            assert core.unpack(envelope['exact_low'])<=core.unpack(first_root['exact_low'])
+            assert core.unpack(first_root['exact_high'])<=core.unpack(envelope['exact_high'])
 
     def test_missing_identification_refuses_foreign_or_unordered_prefix(self):
         plan=spec(2);binding=core.create_binding(plan,[]);data=records(plan,binding,lambda row: True)
@@ -105,6 +109,19 @@ class TestSequentialMath:
             with pytest.raises(ValueError):core._missing_identification(plan,bad,binding,[])
         result=core.analyze(plan,[data[1]],binding,include_missing_bounds=True)
         assert result['status']=='incomplete' and 'missing_outcome_bounds' not in result
+
+    def test_anytime_envelope_contains_every_completion_of_partial_root(self):
+        plan=spec(4);binding=core.create_binding(plan,[])
+        data=records(plan,binding,lambda row: row['version']=='candidate')
+        for prefix_length in (1,3,5):
+            prefix=data[:prefix_length]
+            envelope=core.analyze(plan,prefix,binding,include_missing_bounds=True)['missing_outcome_bounds']['anytime_completion_envelope']['primary']
+            for value in (False,True):
+                completed=[*prefix,replace(data[prefix_length],outcome=value)]
+                result=core.analyze(plan,completed,binding)
+                if 'primary' not in result:continue
+                assert core.unpack(envelope['exact_low'])<=core.unpack(result['primary']['exact_low'])
+                assert core.unpack(result['primary']['exact_high'])<=core.unpack(envelope['exact_high'])
 
     def test_selected_import_root(self):
         expected=os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
