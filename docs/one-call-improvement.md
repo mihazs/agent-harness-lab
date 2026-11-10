@@ -23,6 +23,26 @@ no nonexecutable subset is applied and all target bytes and modes are preserved.
 Behavioral plans remain review-only with their actual certification prerequisite;
 the shared contract adds no application command or new eligible repair.
 
+A project owner can create a `.ahl-read-only` marker in the project root to
+freeze AHL-driven changes. The marker takes precedence over flags and settings:
+`improve` (including skill invocation and `--repair-contracts`), `watch`,
+`init --write`, skill installation, promotion, recovery and rollback refuse to write. Remove the
+marker to permit those operations again. `analyze` and the static audit remain
+available; analysis output and its state directory must be outside the project.
+A marker also covers descendant projects; their outputs must be outside the
+marked directory. Any marker type, including a dangling symlink, activates the
+freeze. CLI output, export, cache and store destinations inside the marked
+directory are refused, including through symlinks; shared journal and JSON
+writers enforce the same guard. Select an external directory for private state.
+
+The marker is a cooperative guard, not a filesystem sandbox. Keep it in place
+before starting an operation: another process can change it between a check and
+a filesystem operation. If a freeze appears during a multi-file transaction,
+recovery may require removing the marker and manually resolving the recorded
+conflict. If installation is interrupted by a freeze, the error names the backup
+location so the owner can recover the files after removing the marker. Agent
+processes already running and other tools are not controlled.
+
 `ahl improve .` collects scoped evidence, prepares candidate and independent
 evaluation sessions, freezes inputs, executes paired tasks and writes a local
 `workflow.json`. A favorable behavioral comparison now also writes a versioned

@@ -39,6 +39,10 @@ If `ahl` is not on PATH, use `~/.local/bin/ahl --help` or add that directory to 
 
 ## Use on your project
 
+For an offline convention check before collecting traces, run `ahl audit .`.
+It reports static observations, not harness performance; see the
+[static audit contract](docs/static-audit.md).
+
 Start with local evidence discovery; this does not call a model:
 
 ```sh
