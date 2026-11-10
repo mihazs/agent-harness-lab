@@ -373,3 +373,81 @@ def test_github_driver_propagates_cleanup_failure(monkeypatch, tmp_path):
     run = pytest_run(tmp_path, ['test_github_cleanup.py'])
     assert 'ERROR ' in run.stdout and 'synthetic github cleanup failure' in run.stdout, run.stdout[-4000:]
     assert '1 passed' in run.stdout, run.stdout[-4000:]
+
+
+def test_manual_testcase_consumers_fail_on_cleanup_error(tmp_path):
+    (tmp_path/'test_cleanup_consumers.py').write_text('''
+from tests.integration.evaluation import test_interchange_readiness_probe as interchange
+from tests.integration.evaluation import test_derivation as derivation
+from tests.unit.evaluation import test_bank_qualification as bank
+from tests.integration.evaluation import derivation_raw_assessment as raw
+
+def fail(): raise RuntimeError('synthetic manual cleanup failure')
+def setup(self): self.addCleanup(fail)
+def bank_test(self): pass
+def probe_test(self): raise AssertionError('new-byte child of actual retired-input construction received a fresh managed reservation')
+bank.BankQualificationTests.setUp = setup
+bank.BankQualificationTests.test_self_labels_cannot_qualify_actual_cli_or_export = bank_test
+raw.DerivationReadinessProbe.setUp = setup
+raw.DerivationReadinessProbe.test_controlled_new_byte_child_of_retired_input_cannot_gain_a_fresh_managed_reservation = probe_test
+
+def test_interchange(): interchange.test_existing_validated_review_labels_and_export_stay_unqualified()
+def test_derivation(): derivation.TestDerivation.test_original_raw_author_path_remains_an_explicit_unmanaged_scope_gap(None)
+''')
+    run=pytest_run(tmp_path,['test_cleanup_consumers.py'])
+    assert run.returncode != 0
+    assert '2 failed' in run.stdout and 'test_interchange' in run.stdout and 'test_derivation' in run.stdout
+    assert run.stdout.count('synthetic manual cleanup failure') >= 2
+
+
+@pytest.mark.parametrize(('module','name','container'), [
+    ('tests.integration.evaluation.test_controller_actions','ControllerActionTests','_fixture_cleanups'),
+    ('tests.integration.sources.test_source_dispatch','SourceDispatchTests','cleanups'),
+    ('tests.integration.telemetry.test_codex_rollout','CodexRolloutTests','_cleanups'),
+])
+def test_owner_cleanup_failure_propagates_for_each_converted_group(module,name,container):
+    import importlib
+    fixture=getattr(importlib.import_module(module),name)();fixture.setUp()
+    def fail(): raise RuntimeError('synthetic owner cleanup failure')
+    stack=getattr(fixture,container)
+    if isinstance(stack,list):stack.append(fail)
+    else:stack.callback(fail)
+    try:
+        with pytest.raises(RuntimeError,match='synthetic owner cleanup failure'):fixture.doCleanups()
+    finally:fixture.doCleanups()
+
+
+@pytest.mark.parametrize(('module','name'), [
+    ('tests.integration.sources.test_source_claude','ClaudeSourceTests'),
+    ('tests.integration.sources.test_source_codex','NativeSourceTests'),
+])
+def test_native_source_owners_run_all_cleanups_and_report_every_failure(tmp_path,module,name):
+    import importlib
+    owner=getattr(importlib.import_module(module),name)();owner.setUp(tmp_path)
+    calls=[]
+    def fail(message): raise RuntimeError(message)
+    owner.fixture._cleanups.extend([lambda:calls.append('last'),lambda:fail('first'),
+                                    lambda:calls.append('middle'),lambda:fail('second')])
+    with pytest.raises(ExceptionGroup) as caught:
+        owner.doCleanups()
+    assert calls==['middle','last']
+    assert [str(error) for error in caught.value.exceptions]==['second','first']
+    assert owner.fixture._cleanups==[]
+
+
+@pytest.mark.parametrize(('module','name'), [
+    ('tests.integration.sources.test_source_claude','ClaudeSourceTests'),
+    ('tests.integration.sources.test_source_codex','NativeSourceTests'),
+])
+def test_native_source_cleanup_continues_after_base_exception(tmp_path,module,name):
+    import importlib
+    owner=getattr(importlib.import_module(module),name)();owner.setUp(tmp_path)
+    calls=[]
+    def stop(): raise SystemExit('synthetic exit')
+    def fail(): raise RuntimeError('synthetic failure')
+    owner.fixture._cleanups.extend([lambda:calls.append('last'),stop,fail])
+    with pytest.raises(BaseExceptionGroup) as caught:
+        owner.doCleanups()
+    assert calls==['last']
+    assert [type(error) for error in caught.value.exceptions]==[RuntimeError,SystemExit]
+    assert owner.fixture._cleanups==[]

@@ -32,6 +32,20 @@ def test_several_failures_across_cases_raise_one_group_in_order():
     assert [str(error) for error in raised.value.exceptions] == ['first', 'second']
 
 
+def test_base_exception_does_not_prevent_other_cases_or_cleanups():
+    first, second = unittest.TestCase(), unittest.TestCase()
+    calls = []
+    first.addCleanup(calls.append, 'remaining')
+    first.addCleanup(lambda: (_ for _ in ()).throw(SystemExit('synthetic exit')))
+    second.addCleanup(calls.append, 'other case')
+    second.addCleanup(fail, 'synthetic failure')
+    with pytest.raises(BaseExceptionGroup) as raised:
+        run_cleanups(first, second)
+    assert calls == ['remaining', 'other case']
+    assert [type(error) for error in raised.value.exceptions] == [SystemExit, RuntimeError]
+    assert not first._cleanups and not second._cleanups
+
+
 def test_nested_helper_cleanup_failure_reaches_the_outer_case():
     outer, inner = unittest.TestCase(), unittest.TestCase()
     inner.addCleanup(fail, 'inner'); outer.addCleanup(run_cleanups, inner)

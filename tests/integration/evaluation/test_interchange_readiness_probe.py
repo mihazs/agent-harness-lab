@@ -11,6 +11,7 @@ from agent_harness_lab.cli import main
 from agent_harness_lab.evaluation.statistics import analyze
 from tests.integration.evaluation import test_evaluation_foundation as foundation
 from tests.unit.evaluation import test_bank_qualification as bank
+from tests.support.unittest_cleanups import run_cleanups
 
 
 def test_official_foreign_score_truthiness_and_match_equals_mappings_disagree():
@@ -56,4 +57,4 @@ def test_existing_validated_review_labels_and_export_stay_unqualified():
     try:
         fixture.test_self_labels_cannot_qualify_actual_cli_or_export()
     finally:
-        fixture.doCleanups()
+        run_cleanups(fixture)
