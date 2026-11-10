@@ -10,16 +10,13 @@ import pytest
 
 from tests.integration.sources import test_source_store as fixtures
 from tests.integration.evaluation.test_regression_replay import make_replay
-from tests.support.unittest_cleanups import run_cleanups
 
 
 class TestLineageSnapshot:
     @pytest.fixture(autouse=True)
-    def _store(self):
-        self.fixture = fixtures.SourceStoreTests(); self.fixture.setUp()
+    def _store(self, tmp_path):
+        self.fixture = fixtures.StoreFixture(); self.fixture.build(tmp_path)
         self.fixture.store.ingest(self.fixture.source, [self.fixture.record])
-        yield
-        run_cleanups(self.fixture)
 
     def test_snapshot_returns_the_same_bytes_validated_even_when_path_changes(self):
         f = self.fixture; original = f.store.path.read_bytes(); validate = f.store._validate
@@ -98,19 +95,17 @@ print(json.dumps({'files':files, 'summary':result}, sort_keys=True))
 
 class TestLineageReview:
     @pytest.fixture(autouse=True)
-    def _lineage(self):
+    def _lineage(self, tmp_path):
         from dataclasses import replace
         from agent_harness_lab.sources.execution import RecordRef
         from agent_harness_lab.sources.lineage import LineageStore
         from agent_harness_lab.sources.schema import digest
-        self.fixture = fixtures.SourceStoreTests(); self.fixture.setUp()
+        self.fixture = fixtures.StoreFixture(); self.fixture.build(tmp_path)
         f = self.fixture
         self.records = [replace(f.record, native_id_sha256=digest(name), revision_sha256=digest('revision-'+name)) for name in ('a','b','c')]
         f.store.ingest(f.source, self.records)
         self.refs = [RecordRef(r.source_sha256, r.native_id_sha256, r.revision_sha256) for r in self.records]
         self.store = LineageStore(f.root/'lineage', project_sha256=f.source.project_sha256, scope_sha256=f.source.scope_sha256)
-        yield
-        run_cleanups(self.fixture)
 
     def propose(self, left=0, right=1, relation='same_observation'):
         from agent_harness_lab.sources.lineage import LineageClaim

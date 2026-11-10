@@ -215,21 +215,15 @@ class TestSiteEquivalence:
 
 class TestLineageCache:
     @pytest.fixture(autouse=True)
-    def _lineage(self):
+    def _lineage(self, tmp_path):
         from dataclasses import replace
         from agent_harness_lab.sources.lineage import LineageStore
         from agent_harness_lab.sources.schema import digest
-        # The source store fixture is a unittest.TestCase owned by test_source_store; it manages its own files.
-        self.fixture = fixtures.SourceStoreTests()
-        try:
-            self.fixture.setUp()
-            f = self.fixture; self.digest, self.replace = digest, replace
-            self.records = [replace(f.record, native_id_sha256=digest(n), revision_sha256=digest('revision-'+n)) for n in 'ab']
-            f.store.ingest(f.source, self.records)
-            self.store = LineageStore(f.root/'lineage', project_sha256=f.source.project_sha256, scope_sha256=f.source.scope_sha256)
-            yield
-        finally:
-            self.fixture.doCleanups()
+        self.fixture = fixtures.StoreFixture(); self.fixture.build(tmp_path)
+        f = self.fixture; self.digest, self.replace = digest, replace
+        self.records = [replace(f.record, native_id_sha256=digest(n), revision_sha256=digest('revision-'+n)) for n in 'ab']
+        f.store.ingest(f.source, self.records)
+        self.store = LineageStore(f.root/'lineage', project_sha256=f.source.project_sha256, scope_sha256=f.source.scope_sha256)
 
     def claim(self):
         from agent_harness_lab.sources.execution import RecordRef
