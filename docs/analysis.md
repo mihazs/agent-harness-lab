@@ -5,6 +5,12 @@ is its alias. `ahl improve .` collects the same evidence before candidate prepar
 and evaluation. Neither requires a separate mining step. See [workflows](workflows.md)
 for the operating steps.
 
+Evidence and ledger staging use the selected output directory instead of the
+ambient temporary directory. Output paths must remain stable and trusted during
+the run: path-based operations do not prevent a concurrent directory replacement.
+This placement does not establish a no-write guarantee for other input stores or
+enable saved-history analysis.
+
 ## Default methods
 
 | Method | Implementation | What it establishes |

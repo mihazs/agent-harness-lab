@@ -2,4 +2,4 @@
 "agent-harness-lab": patch
 ---
 
-Keep analysis and ledger staging files in their selected private output directory.
+Use the selected output directory for analysis and ledger staging when the output path remains stable.

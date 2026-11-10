@@ -98,7 +98,7 @@ def test_public_analysis_reads_scoped_session_and_reports_evidence_gap(observati
         (repeated / 'analysis.json').read_text())['fingerprint']
 
 
-def test_analysis_scratch_stays_in_selected_private_output(observation_wire, tmp_path, monkeypatch, capsys):
+def test_analysis_scratch_uses_selected_stable_output(observation_wire, tmp_path, monkeypatch, capsys):
     import tempfile
     project = tmp_path / 'project'; project.mkdir()
     ambient = tmp_path / 'ambient'; ambient.mkdir()
