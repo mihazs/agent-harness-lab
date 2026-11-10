@@ -4314,3 +4314,12 @@ read message bodies or validate individual rows. The count describes only the
 caller-supplied backup and does not establish complete capture, producer version,
 lineage, independence or outcomes. V2 uses a separate scope and does not migrate
 or reconcile v1 history.
+
+An optional backup v3 profile uses `schema_version: 3` in the selection and
+`version: "v3"` on the source. In addition to the v2 message count, it counts
+`session_part` rows whose `session_id` exactly matches the selection. It does
+not read part bodies or verify their message relationships. The count is bounded
+to 100,000 rows and shares the worker's existing query budget; missing or
+over-budget input is refused. The count is an unverified claim about the chosen
+backup, not evidence of complete capture, producer version, lineage or outcomes.
+V3 uses a separate scope and does not migrate or reconcile v1 or v2 histories.

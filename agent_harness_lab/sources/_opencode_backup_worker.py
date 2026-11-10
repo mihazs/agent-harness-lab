@@ -39,6 +39,8 @@ def main():
                 return sqlite3.SQLITE_OK
             if (request.get('messages') is True and action == sqlite3.SQLITE_READ and arg1 == 'session_message'
                     and arg2 == 'session_id' and database == 'main' and trigger is None): return sqlite3.SQLITE_OK
+            if (request.get('parts') is True and action == sqlite3.SQLITE_READ and arg1 == 'session_part'
+                    and arg2 == 'session_id' and database == 'main' and trigger is None): return sqlite3.SQLITE_OK
             return sqlite3.SQLITE_DENY
         connection.set_authorizer(authorize)
         deadline = time.monotonic()+1
@@ -63,6 +65,12 @@ def main():
                 count += 1
                 if count > 100000: raise ValueError('message count bound exceeded')
             result['message_count'] = count
+        if request.get('parts') is True:
+            count = 0
+            for _ in connection.execute('SELECT 1 FROM session_part WHERE session_id = ? COLLATE BINARY LIMIT 100001', (session,)):
+                count += 1
+                if count > 100000: raise ValueError('part count bound exceeded')
+            result['part_count'] = count
         sys.stdout.write(json.dumps(result, allow_nan=False))
     finally:
         connection.close()
