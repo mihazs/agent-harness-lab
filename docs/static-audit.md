@@ -362,3 +362,18 @@ scope, evaluation and promotion checks. Closed-input profiles that prohibit
 focus reject it; the hint does not override those profiles. An improvement run
 may invoke a model or agent and supply it with authorized project data, unlike
 the offline audit. The content-free hint does not change that exposure.
+
+### Feedback sensor candidates
+
+`ahl audit PROJECT --feedback-sensors` adds a private filename-only inventory for
+recognized test paths, configuration files, task runners and Git hook configurations.
+A candidate's `stage` is a filename convention, not proof that a check exists,
+runs early or executes successfully. Contents and commands are not read by this
+inventory. `coverage` describes only the metadata walk: refused paths make it
+unknown, and unrecognized filenames mean detection completeness is unknown even
+when the walk completed. The `.github/workflows`, `.circleci`, and `.buildkite`
+subtrees are excluded; other hosted configuration paths may not be recognized.
+Instruction-to-command consistency and stale-target
+detection are not checked in this slice. The inventory is a separate metadata
+observation, not an atomic snapshot with other audit inputs. Without the option,
+the existing report shape is unchanged.

@@ -86,6 +86,7 @@ def main(argv=None):
     parser.add_argument('--runtime', choices=('claude-code', 'codex'), default='codex', help='Runtime profile (default: codex)')
     parser.add_argument('--task-cwd', default='.', help='Existing project-relative task directory (default: project root)')
     parser.add_argument('--json', action='store_true', help='Print the full private JSON report')
+    parser.add_argument('--feedback-sensors', action='store_true', help='Add local filename-only sensor candidates')
     parser.add_argument('--codex-project-doc-max-bytes', type=int,
                         help='Caller-declared Codex byte budget; runtime configuration is not read')
     parser.add_argument('--instruction-soft-lines', type=int, default=200,
@@ -161,6 +162,9 @@ def main(argv=None):
             if shape['procedure_sections']:
                 _instruction_hypothesis(report, 'instruction_procedure_section_detected', 'structural',
                                         'evaluate_moving_procedure_to_skill_or_path_rule')
+        if args.feedback_sensors:
+            from .feedback_sensors import capture as feedback_sensors
+            report['feedback_sensor_candidates'] = feedback_sensors(project)
         from .protected_paths import capture as protected_paths
         report['protected_path_inventory'] = protected_paths(project)
         from .permission_candidates import report as permission_candidates
@@ -196,6 +200,10 @@ def main(argv=None):
             print('Static convention checks; not evidence of harness performance.')
             for row in report['coverage']:
                 print(f"{row['dimension']}: {row['status']}")
+            if args.feedback_sensors:
+                sensors=report['feedback_sensor_candidates']
+                print('Feedback sensor candidates: '+str(len(sensors['candidates']))+
+                      f" (coverage: {sensors['coverage']}; consistency: not checked; execution: unknown)")
             events = report['hook_events']
             print('Declared hook events: ' + (', '.join(events['declared']) or 'none observed') +
                   f" (coverage: {events['coverage']}; execution: unknown)")
