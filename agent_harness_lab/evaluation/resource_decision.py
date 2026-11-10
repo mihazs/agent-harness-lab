@@ -13,6 +13,7 @@ import math
 from .statistics import bound
 
 PROFILE = 'resource-noninferiority-v1'
+PROVENANCE_PROFILE = 'resource-noninferiority-v2'
 KINDS = ('elapsed_wall_seconds', 'measured_tokens')  # currency needs frozen dated rates: not supported yet
 CONTRACT_KEYS = {'schema_version', 'profile', 'alpha', 'min_roots', 'endpoints'}
 ENDPOINT_KEYS = {'name', 'kind', 'unit', 'scope', 'required', 'horizon', 'max_increase'}
@@ -23,10 +24,17 @@ def number(value):
 
 
 def validate(contract):
-    if not isinstance(contract, dict) or set(contract) != CONTRACT_KEYS:
+    if not isinstance(contract, dict):
         raise ValueError('resource contract fields mismatch')
-    if contract['schema_version'] != 1 or type(contract['schema_version']) is not int or contract['profile'] != PROFILE:
+    profile = contract.get('profile')
+    keys = CONTRACT_KEYS | ({'cache_policy'} if profile == PROVENANCE_PROFILE else set())
+    if set(contract) != keys:
+        raise ValueError('resource contract fields mismatch')
+    expected_version = 2 if profile == PROVENANCE_PROFILE else 1
+    if type(contract['schema_version']) is not int or contract['schema_version'] != expected_version or profile not in (PROFILE, PROVENANCE_PROFILE):
         raise ValueError('unsupported resource contract profile')
+    if profile == PROVENANCE_PROFILE and contract['cache_policy'] not in ('uncached_only', 'provider_cache_allowed'):
+        raise ValueError('unsupported resource cache policy')
     if type(contract['alpha']) is not float or not 0 < contract['alpha'] < 1:
         raise ValueError('alpha must be a float in (0, 1)')
     if type(contract['min_roots']) is not int or contract['min_roots'] < 1:
@@ -41,11 +49,22 @@ def validate(contract):
                 or type(e['required']) is not bool or e['scope'] != 'all_assigned'
                 or not number(e['horizon']) or e['horizon'] <= 0 or not number(e['max_increase'])):
             raise ValueError('unsupported resource endpoint declaration')
+        if profile == PROVENANCE_PROFILE and e['unit'] != {'elapsed_wall_seconds': 's', 'measured_tokens': 'tokens'}[e['kind']]:
+            raise ValueError('resource endpoint unit does not match kind')
     return contract
 
 
-def observe(trial, endpoint):
+def observe(trial, endpoint, cache_policy=None):
     """Return (capped value, None) or (None, reason); a timeout below the horizon is censored."""
+    if cache_policy is not None:
+        provenance = trial.get('provenance')
+        if not isinstance(provenance, dict) or provenance.get('execution') != 'new_request':
+            return None, 'execution_not_fresh'
+        allowed = ('uncached',) if cache_policy == 'uncached_only' else ('uncached', 'provider_cache_used')
+        if provenance.get('cache_state') not in allowed:
+            return None, 'cache_state_unverified_or_disallowed'
+        if provenance.get('measurement_scope_complete') is not True:
+            return None, 'measurement_scope_incomplete'
     status, value = trial.get('status'), trial.get('measurements', {}).get(endpoint['name'])
     if status not in ('completed', 'agent_timeout'): return None, 'status_' + str(status)
     if not number(value): return None, 'missing_measurement'
@@ -53,13 +72,17 @@ def observe(trial, endpoint):
     return min(value, endpoint['horizon']), None
 
 
-def evaluate(endpoint, pairs, alpha, min_roots):
+def evaluate(endpoint, pairs, alpha, min_roots, cache_policy=None):
     horizon = endpoint['horizon']
     result = dict(name=endpoint['name'], kind=endpoint['kind'], unit=endpoint['unit'], required=endpoint['required'],
                   scope='all_assigned_capped', horizon=horizon, max_increase=endpoint['max_increase'], per_endpoint_alpha=alpha)
     roots, reasons, capped = defaultdict(list), Counter(), 0
     for pair in pairs:
-        base, cand = (observe(pair[arm], endpoint) for arm in ('baseline', 'candidate'))
+        base, cand = (observe(pair[arm], endpoint, cache_policy) for arm in ('baseline', 'candidate'))
+        if cache_policy is not None and base[1] is None and cand[1] is None:
+            if pair['baseline']['provenance']['cache_state'] != pair['candidate']['provenance']['cache_state']:
+                reasons['asymmetric_cache_state'] += 1
+                continue
         for _, reason in (base, cand):
             if reason: reasons[reason] += 1
         if base[1] is None and cand[1] is None:
@@ -85,7 +108,7 @@ def decide(contract, pairs, quality_status):
         raise ValueError('paired resource rows required')
     required = sum(e['required'] for e in contract['endpoints'])
     alpha = contract['alpha'] / required  # Bonferroni across required endpoints; advisory ones share the same level
-    endpoints = [evaluate(e, pairs, alpha, contract['min_roots']) for e in contract['endpoints']]
+    endpoints = [evaluate(e, pairs, alpha, contract['min_roots'], contract.get('cache_policy')) for e in contract['endpoints']]
     states = {e['status'] for e in endpoints if e['required']}
     if quality_status != 'supported': decision, reason = 'quality_not_verified', 'quality_unknown' if quality_status is None else 'quality_' + str(quality_status)
     elif 'unknown' in states: decision, reason = 'blocked', 'required_measurement_unknown'
@@ -93,6 +116,16 @@ def decide(contract, pairs, quality_status):
     elif 'insufficient_precision' in states: decision, reason = 'inconclusive', 'insufficient_precision'
     else: decision, reason = ('improvement' if states == {'improvement'} else 'noninferior'), 'frozen_resource_criteria_met'
     digest = hashlib.sha256(json.dumps(contract, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
-    return dict(profile=PROFILE, contract_sha256=digest, decision=decision, reason=reason, efficiency_improvement=decision == 'improvement',
-                quality_status=quality_status, endpoints=endpoints, automatic_promotion=False,
-                multiplicity='Bonferroni_required_resource_endpoints', cost_per_success='not_computed')
+    result = dict(profile=contract['profile'], contract_sha256=digest, decision=decision, reason=reason, efficiency_improvement=decision == 'improvement',
+                  quality_status=quality_status, endpoints=endpoints, automatic_promotion=False,
+                  multiplicity='Bonferroni_required_resource_endpoints', cost_per_success='not_computed')
+    if contract['profile'] == PROVENANCE_PROFILE:
+        result.update(provenance_authority='caller_attested_unverified', quality_authority='caller_supplied_unverified',
+                      decision_basis='conditional_on_caller_inputs', conditional_efficiency_improvement=decision == 'improvement',
+                      efficiency_improvement=False)
+        for endpoint in endpoints:
+            endpoint.update(provenance_authority='caller_attested_unverified', quality_authority='caller_supplied_unverified',
+                            inference_basis='conditional_on_caller_inputs')
+        if decision in ('improvement', 'noninferior', 'regression'):
+            result['decision'] = 'conditional_' + decision
+    return result
