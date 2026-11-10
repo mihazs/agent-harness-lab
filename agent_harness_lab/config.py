@@ -16,6 +16,7 @@ RESPONSE_OPTIONS=(*RESPONSE_PATHS,'image_sha256','disk_bytes','permission_audit'
 INVOCATION_OPTIONS=('agent','codex','claude','timeout',*RESPONSE_OPTIONS,'sandbox_graders')
 PLUGIN_ID = re.compile(r'[A-Za-z0-9][A-Za-z0-9._-]{0,127}@[A-Za-z0-9][A-Za-z0-9._-]{0,127}')
 MAX_PLUGIN_CHECKOUTS = 32
+DEFAULT_TRIALS = 20
 
 
 def plugin_checkouts(value):
@@ -44,7 +45,7 @@ def starter():
 def defaults():
     return dict(schema_version=1, profile='offline', runtime=dict(name='none', executable=None),
                 bank=dict(path='starter', sha256=hashlib.sha256(starter().read_bytes()).hexdigest()),
-                harness_paths=[], limits=dict(seconds=2700, trials=20), recommendation_only=True)
+                harness_paths=[], limits=dict(seconds=2700, trials=DEFAULT_TRIALS), recommendation_only=True)
 
 
 def validate(value):

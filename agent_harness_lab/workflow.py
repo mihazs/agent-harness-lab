@@ -13,7 +13,7 @@ import tempfile
 import time
 import uuid
 
-from agent_harness_lab import surfaces
+from agent_harness_lab import config, surfaces
 from agent_harness_lab.sources import agents_validation, skill_validation
 from agent_harness_lab.evidence import collect
 from tools.diagnose import report
@@ -563,7 +563,7 @@ def _improve(args):
     refinement_feedback = []
     single_run = None
     final_attempt = None
-    trials_left = getattr(args, "trial_limit", 24)
+    trials_left = getattr(args, "trial_limit", config.DEFAULT_TRIALS)
     for attempt in range(1 if bank is not None else 2):
         final_attempt = attempt
         instruction = None
@@ -621,7 +621,7 @@ Otherwise modify only these project-owned surfaces in candidate: {surfaces.adopt
 {instruction_validation.PROPOSER_GUIDANCE}
 Do not build evaluation tests, launch model trials, or inspect previous held-out inputs.
 The parent freezes the patch; {'the configured task bank supplies the evaluation' if bank is not None else 'a separate fresh session constructs evaluation without seeing it'}.
-Shared ceiling is {getattr(args, 'trial_limit', 24)} preparation/task roles and {args.timeout} seconds;
+Shared ceiling is {getattr(args, 'trial_limit', config.DEFAULT_TRIALS)} preparation/task roles and {args.timeout} seconds;
 {trials_left} paired task or later preparation roles remain after this attempt's {preparation_trials} reserved preparation roles.
 Write {proposal_path} as {{"status":"candidate","mechanisms":[...],"falsifiers":[...]}} when ready.
 The parent will reject incomplete/changed inputs, regressions, unsupported ties, and concurrent edits.

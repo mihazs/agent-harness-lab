@@ -245,6 +245,15 @@ def test_offline_configuration_blocks_before_inference(one):
     assert result['reason'] == 'configured_profile_does_not_allow_cooperative_improvement'
 
 
+def test_fresh_configuration_uses_documented_trial_default_without_writing(one):
+    from argparse import Namespace
+    from agent_harness_lab.one_call import resolve
+    args=Namespace(project=one.project,timeout=None,agent='auto',codex='codex',claude='claude')
+    resolve(args,set())
+    assert args.trial_limit == config.defaults()['limits']['trials']
+    assert not (one.project/'ahl.json').exists()
+
+
 def test_configuration_and_cli_precedence(one):
     from argparse import Namespace
     from agent_harness_lab.one_call import resolve

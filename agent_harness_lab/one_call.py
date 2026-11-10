@@ -22,9 +22,9 @@ def invocation_context(args,output,deadline,*,remaining_seconds=None,remaining_t
         origin=getattr(args,'_invocation_origin','cli'),parent_run_id=Path(output).name,
         project=str(args.project),runtime=args.agent,configuration_sha256=getattr(args,'configuration_sha256',None),
         policy=application.get('policy'),review_store=application.get('review_store'),authorization_id=application.get('authorization_id'),
-        bank_case_id=application.get('bank_case_id'),deadline=deadline,trial_limit=getattr(args,'trial_limit',24),
+        bank_case_id=application.get('bank_case_id'),deadline=deadline,trial_limit=getattr(args,'trial_limit',config.DEFAULT_TRIALS),
         remaining_seconds=max(0,deadline-time.monotonic()) if remaining_seconds is None else max(0,remaining_seconds),
-        remaining_trials=getattr(args,'trial_limit',24) if remaining_trials is None else remaining_trials,
+        remaining_trials=getattr(args,'trial_limit',config.DEFAULT_TRIALS) if remaining_trials is None else remaining_trials,
         execution_authority=False,publication_allowed=False)
 
 
@@ -38,7 +38,7 @@ def resolve(args, explicit):
     args._configuration_invocation=dict(requested);args._configuration_explicit=frozenset(explicit)
     selected=config.execution_options(args.project,settings,requested,explicit)
     for name,value in selected.items():setattr(args,name,value)
-    args.trial_limit = settings['limits']['trials'] if settings else 24
+    args.trial_limit = settings['limits']['trials'] if settings else config.DEFAULT_TRIALS
     args.project_settings = settings
     args.configuration_sha256 = loaded[1] if loaded else None
     args._configured_responses=bool(settings and settings['runtime']['name']=='responses' and args.agent=='responses')
@@ -78,7 +78,7 @@ def preflight(args):
         args.agent = found[0]
     if args.agent != 'responses' and not shutil.which(getattr(args, args.agent)):
         return 'agent_runtime_unavailable'
-    if pinned_bank(args) is None and getattr(args, 'trial_limit', 24) < 8:
+    if pinned_bank(args) is None and getattr(args, 'trial_limit', config.DEFAULT_TRIALS) < 8:
         return 'trial_budget_requires_two_preparation_and_six_paired_trials'
     if getattr(args,'_configured_responses',False):
         args._response_references=config.response_references(args.project,vars(args))
