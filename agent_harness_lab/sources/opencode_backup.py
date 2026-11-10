@@ -1,10 +1,13 @@
 """One caller-supplied OpenCode SQLite backup, read in memory as unverified metadata."""
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
+import selectors
 import struct
 import subprocess
 import sys
+import time
 from agent_harness_lab.evaluation.integrity import contained, read_regular, regular_sha256, relative
 from .hardened import limits
 from .opencode import PIN
@@ -14,6 +17,7 @@ from .snapshot import LocalExport, claim_snapshot
 PROVIDER = 'opencode-sqlite-backup'
 SOURCE_VERSION = 'v1'
 LIMITS = {'max_backup_bytes': 16*1024*1024}
+MAX_WORKER_OUTPUT = 4096
 
 
 @dataclass(frozen=True)
@@ -26,6 +30,44 @@ class BackupClaim:
     original_at: None = None
 
 
+def _exchange(worker, payload):
+    """Stream input while bounding output and wall time; kill and reap on every failure."""
+    process = subprocess.Popen([sys.executable, '-I', str(worker)], stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env={})
+    deadline, remaining, output = time.monotonic()+4, memoryview(payload), bytearray()
+    try:
+        with selectors.DefaultSelector() as selector:
+            os.set_blocking(process.stdin.fileno(), False); os.set_blocking(process.stdout.fileno(), False)
+            selector.register(process.stdin, selectors.EVENT_WRITE)
+            selector.register(process.stdout, selectors.EVENT_READ)
+            while selector.get_map():
+                wait = deadline-time.monotonic()
+                if wait <= 0: raise TimeoutError()
+                for event, _ in selector.select(wait):
+                    if event.fileobj is process.stdin:
+                        sent = os.write(process.stdin.fileno(), remaining[:65536])
+                        remaining = remaining[sent:]
+                        if not remaining:
+                            selector.unregister(process.stdin); process.stdin.close()
+                    else:
+                        chunk = os.read(process.stdout.fileno(), MAX_WORKER_OUTPUT+1-len(output))
+                        if not chunk:
+                            selector.unregister(process.stdout); process.stdout.close()
+                        else:
+                            output.extend(chunk)
+                            if len(output) > MAX_WORKER_OUTPUT: raise ValueError('OpenCode worker output exceeds limit')
+            wait = deadline-time.monotonic()
+            if wait <= 0: raise TimeoutError()
+            if process.wait(timeout=wait) != 0:
+                raise ValueError('OpenCode backup is unsupported, damaged, ambiguous, or exceeds query bounds')
+            return bytes(output)
+    finally:
+        if process.poll() is None: process.kill()
+        process.wait()
+        if not process.stdin.closed: process.stdin.close()
+        if not process.stdout.closed: process.stdout.close()
+
+
 def _session(raw, session, project):
     """Run native parsing in a Linux child with enforced resource limits and a wall timeout."""
     if sys.platform != 'linux': raise ValueError('isolated OpenCode backup reader unavailable')
@@ -33,14 +75,11 @@ def _session(raw, session, project):
     if len(request) > 16384: raise ValueError('OpenCode selection exceeds IPC bound')
     worker = Path(__file__).with_name('_opencode_backup_worker.py')
     try:
-        result = subprocess.run([sys.executable, '-I', str(worker)], input=struct.pack('!I', len(request))+request+raw,
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=4, env={}, check=False)
-    except (OSError, subprocess.TimeoutExpired):
+        output = _exchange(worker, struct.pack('!I', len(request))+request+raw)
+    except (OSError, TimeoutError, subprocess.TimeoutExpired):
         raise ValueError('isolated OpenCode backup reader unavailable or timed out') from None
-    if result.returncode != 0 or len(result.stdout) > 4096:
-        raise ValueError('OpenCode backup is unsupported, damaged, ambiguous, or exceeds query bounds')
     try:
-        value = json.loads(result.stdout)
+        value = json.loads(output)
         if not isinstance(value, dict) or set(value) != {'parent', 'archived'}: raise ValueError()
         return value['parent'], value['archived']
     except (ValueError, UnicodeDecodeError):
