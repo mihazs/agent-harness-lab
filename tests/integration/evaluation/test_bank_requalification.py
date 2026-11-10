@@ -127,13 +127,16 @@ class BankRequalificationKernelTests(kernel.KernelFixture):
         closed_inputs.bind_scope(handle,scope,baseline)
         views=construction.views(data,assets(),output/'views',deadline,closed_domain=handle)
         counter=[0]
+        from agent_harness_lab.evaluation.reference_grader import PROGRAM
+        author_script=roles.AUTHOR+"\nPath('oracle/grade.py.txt').write_text("+repr(PROGRAM)+")\n" \
+            +"Path('oracle/expected.json').write_text(json.dumps(dict(complete=True,scenario=2)))\n"
         def transport(credential,body,max_bytes,request_deadline):
             assert credential is None;counter[0]+=1;ident=str(counter[0]);payload=json.loads(body)
             if any(item.get('type')=='function_call_output' for item in payload['input']):
                 return wire.reply([wire.message('final-'+ident)])
             developer=payload['input'][0]['content']
             argv=['/usr/bin/python3','-c',roles.PROPOSER,'good'] if 'You are the proposer' in developer else [
-                '/usr/bin/python3','-c',roles.AUTHOR,'1','complete']
+                '/usr/bin/python3','-c',author_script,'2','complete']
             return wire.reply([wire.call(ident,arguments=json.dumps(dict(argv=argv)))])
         client=responses.Client(settings,None,deadline,transport=transport)
         access=WorkflowAccess(args,output,baseline,client,backend,deadline);self.addCleanup(access.retire)
