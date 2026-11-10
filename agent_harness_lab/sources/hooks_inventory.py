@@ -97,9 +97,11 @@ def parse(path, raw, profile):
             unknown = set(document) - {'description', 'hooks'}
             if form == 'plugin_hooks' and 'hooks' not in document: warnings.add('plugin_hooks_wrapper_missing')
             if unknown: warnings.add('unknown_field'); facts['unknown_fields'] = len(unknown)
-        if form == 'claude_settings' and isinstance(document.get('disableAllHooks'), bool):
-            facts['disable_all_hooks'] = document['disableAllHooks']
-            if document['disableAllHooks']: warnings.add('all_hooks_disabled')
+        if form == 'claude_settings':
+            facts['disable_all_hooks_valid'] = 'disableAllHooks' not in document or type(document['disableAllHooks']) is bool
+            if type(document.get('disableAllHooks')) is bool:
+                facts['disable_all_hooks'] = document['disableAllHooks']
+                if document['disableAllHooks']: warnings.add('all_hooks_disabled')
         if not isinstance(events, dict): raise ValueError('hooks must be an object')
     others = sorted(set(document) - {'hooks'})
     facts.update(other_keys=len(others), other_keys_sha256=digest(others))
@@ -127,6 +129,7 @@ def _handlers(events, runtime, warnings):
                 if not isinstance(handler, dict): raise ValueError('hook handler must be an object')
                 row = _handler(handler, runtime, warnings)
                 yield dict(row, event=event if event in known else None, event_known=event in known, matcher_kind=kind,
+                           matcher_group_supported=not bool(set(group) - {'matcher', 'hooks'}),
                            matcher_sha256=digest(group.get('matcher')))
 
 
@@ -155,6 +158,14 @@ def _handler(handler, runtime, warnings):
     if fields is None: warnings.add('unknown_handler_type')
     if kind == 'command' and fields is not None:
         command, args = handler.get('command'), handler.get('args') if runtime == 'claude-code' else None  # exec form
+        supported = {'type', 'command', 'args', 'timeout', 'async', 'once', 'onFailure', 'statusMessage'}
+        row['audit_candidate_supported'] = (runtime == 'claude-code' and set(handler) <= supported
+            and isinstance(command, str) and bool(command.strip())
+            and ('args' not in handler or isinstance(args, list) and all(isinstance(a, str) for a in args))
+            and ('timeout' not in handler or type(timeout) is int and timeout > 0)
+            and all(key not in handler or type(handler[key]) is bool for key in ('async', 'once'))
+            and ('onFailure' not in handler or handler['onFailure'] in ('continue', 'block'))
+            and ('statusMessage' not in handler or isinstance(handler['statusMessage'], str)))
         if isinstance(command, str) and (args is None or isinstance(args, list) and all(isinstance(a, str) for a in args)):
             row['command_sha256'] = digest([command, args])
         row['resolution'], row['script'], row['anchor'] = resolve(command, args, runtime)
