@@ -4276,7 +4276,11 @@ SQLite backup as a bounded byte file and deserializes it into a disposable
 in-memory database in a separate Linux process. Unsupported platforms refuse
 this profile. Before SQLite parses the file, the child sets address-space,
 CPU, file-size and file-descriptor limits; the caller also enforces a wall
-timeout. Its selected `session_v2` columns follow the pinned upstream
+timeout. These resource limits are not syscall, filesystem or network isolation.
+The parent checks the worker's stdout size after collecting the pipe, so this
+does not bound output from arbitrary compromised native code. This reader does
+not claim safety against a SQLite native-code compromise. Its selected
+`session_v2` columns follow the pinned upstream
 [table definition](https://github.com/anomalyco/opencode/blob/98e4b5343e33aafded479b9ff71c12fd760d9d87/packages/core/src/session/sql.ts).
 The declared pin selects the shape to inspect; neither the producer nor its
 version is verified from the file.
