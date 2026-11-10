@@ -297,15 +297,15 @@ def test_actual_runner_keeps_task_success_separate_and_blocks_qualification(case
 @kernel_only
 def test_actual_controlled_workflow_qualifies_all_four_roles(case):
     from tests.integration.sandbox import test_sandbox_construction as construction
-    original=construction.ControlledWorkflowTests.setUp;fixtures=[];runs=[];backends=[]
-    def setup(fixture):
-        original(fixture);fixture.args.permission_audit=PROFILE;fixtures.append(fixture)
+    original=construction.ControlledWorkflow.__init__;fixtures=[];runs=[];backends=[]
+    def setup(fixture, add_cleanup):
+        original(fixture, add_cleanup);fixture.args.permission_audit=PROFILE;fixtures.append(fixture)
     def factory(*args,**options):
         backend=SandboxBackend(*args,**options);backends.append(backend);execute=backend.run
         def capture(*args,**kwargs):
             run=execute(*args,**kwargs);runs.append((args[2],run));return run
         backend.run=capture;return backend
-    with patch.object(construction.ControlledWorkflowTests,'setUp',setup),patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=factory):
+    with patch.object(construction.ControlledWorkflow,'__init__',setup),patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',side_effect=factory):
         kernel.ControlledWorkflowKernelTests.test_controlled_workflow_role_views_deny_source_key_candidate_and_prior_heldout_reads(case)
     report=json.loads((fixtures[0].args._run_output/'workflow.json').read_text())
     assert report['isolation_qualification']['qualification'] == 'qualified', report
@@ -330,7 +330,7 @@ def test_actual_controlled_workflow_qualifies_all_four_roles(case):
 def test_denied_proposer_or_author_stops_provider_continuation(case, role, constant, count):
     from tests.integration.sandbox import test_sandbox_construction as construction
     denied="import pathlib\ntry:pathlib.Path('/inputs/harness/AGENTS.md').write_text('bad')\nexcept OSError:pass\n"
-    fixture=construction.ControlledWorkflowTests();fixture.setUp();case.addCleanup(run_cleanups,fixture)
+    fixture=construction.ControlledWorkflow(case.addCleanup)
     fixture.args.permission_audit=PROFILE;fixture.args.cgroup_root=case.cgroup_root
     fixture.args.image_root=case.root/'image';fixture.args.image_sha256=case.backend.image.sha256
     fixture.args.disk_bytes=67108864;fixture.args.timeout=60

@@ -24,7 +24,6 @@ from agent_harness_lab.evaluation.integrity import artifacts, digest
 from agent_harness_lab.evaluation.sandbox import Limits, SandboxBackend
 from agent_harness_lab.evaluation.image import MOUNT_DIRS, scan
 from tests.integration.evaluation.test_offline_evaluation import OfflineFixture
-from tests.support.unittest_cleanups import run_cleanups
 
 ENABLED = bool(os.environ.get('AHL_TEST_CGROUP_ROOT')) or os.environ.get('AHL_TEST_SYSTEMD_SCOPE') == '1'
 
@@ -693,8 +692,8 @@ class TestControlledWorkflowKernel(KernelCase):
             HistoryStore(selected).reserve_access(path,baseline,candidate)
 
     def test_controlled_workflow_role_views_deny_source_key_candidate_and_prior_heldout_reads(self):
-        from tests.integration.sandbox.test_sandbox_construction import ControlledWorkflowTests, PROPOSER, AUTHOR, EXECUTOR, wire, workflow, responses
-        fixture = ControlledWorkflowTests(); fixture.setUp(); self.addCleanup(run_cleanups, fixture)
+        from tests.integration.sandbox.test_sandbox_construction import ControlledWorkflow, PROPOSER, AUTHOR, EXECUTOR, wire, workflow, responses
+        fixture = ControlledWorkflow(self.addCleanup)
         rootfs = self.root/'runtime'; frozen = pinned_runtime(rootfs)
         fixture.args.cgroup_root = self.cgroup_root; fixture.args.image_root = rootfs
         fixture.args.image_sha256 = frozen['sha256']; fixture.args.disk_bytes = 64*1024*1024; fixture.args.timeout = 60

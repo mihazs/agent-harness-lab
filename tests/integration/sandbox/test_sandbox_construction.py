@@ -7,7 +7,6 @@ import subprocess
 import tempfile
 import time
 from types import SimpleNamespace
-import unittest
 from unittest.mock import Mock, patch
 
 import pytest
@@ -20,7 +19,6 @@ from agent_harness_lab.workflow import improve, watch_configuration
 from agent_harness_lab.evaluation.working_state import WorkingState
 from tests.integration.sandbox import test_sandbox_graders as fixtures
 from tests.integration.sandbox import test_sandbox_inference as wire
-from tests.support.unittest_cleanups import run_cleanups
 
 
 class Preparation(SimpleNamespace):
@@ -161,15 +159,11 @@ Path('result.json').write_text(json.dumps(dict(complete=good or task['split']=='
 '''
 
 
-class ControlledWorkflowTests(unittest.TestCase):
-    """A public improve run whose four roles use a synthetic controller transport and cooperative workers.
+class ControlledWorkflow:
+    """A public improve run with synthetic transport and cooperative workers."""
 
-    Many evaluation, workflow and kernel modules instantiate this class and call setUp, transport, execute,
-    run_controlled and doCleanups, so it keeps that TestCase interface and holds no tests.
-    """
-
-    def setUp(self):
-        self.fixture = fixtures.workflow_fixtures.WorkflowTests(self.addCleanup)
+    def __init__(self, add_cleanup):
+        self.fixture = fixtures.workflow_fixtures.WorkflowTests(add_cleanup)
         self.root,self.project = self.fixture.root,self.fixture.project
         self.args = self.fixture.args(); self.args.agent = 'responses'
         self.args.cgroup_root = self.root/'delegation'; self.args.image_root = self.root/'image'
@@ -249,9 +243,8 @@ class ControlledWorkflowTests(unittest.TestCase):
 
 @pytest.fixture
 def controlled():
-    value = ControlledWorkflowTests(); value.setUp()
-    yield value
-    run_cleanups(value)
+    with ExitStack() as cleanups:
+        yield ControlledWorkflow(cleanups.callback)
 
 
 def test_all_roles_share_one_client_and_budget_without_exposing_candidates_to_author(controlled):

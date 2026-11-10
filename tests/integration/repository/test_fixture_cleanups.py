@@ -23,8 +23,6 @@ ROWS = [
     ('tests.integration.evaluation.test_repeated_access_companion', 'access',
      ['tests.integration.evaluation.test_repeated_access_companion.RepeatedAccessAdmission']),
     ('tests.integration.evaluation.test_repeated_access_companion', 'kernel_case', [ACCESS_KERNEL]),
-    ('tests.integration.sandbox.test_sandbox_construction', 'controlled',
-     ['tests.integration.sandbox.test_sandbox_construction.ControlledWorkflowTests']),
 ]
 TEMPLATE = '''import contextlib, errno, importlib
 
@@ -304,3 +302,20 @@ def test_workflow_helper_propagates_cleanup_failure(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match='synthetic workflow cleanup failure'):
         with ExitStack() as cleanups:
             test_workflow.WorkflowTests(cleanups.callback)
+
+
+def test_controlled_workflow_propagates_nested_cleanup_failure(monkeypatch):
+    from contextlib import ExitStack
+    from tests.integration.sandbox import test_sandbox_construction
+
+    def fail():
+        raise RuntimeError('synthetic controlled workflow cleanup failure')
+
+    def broken(add_cleanup):
+        add_cleanup(fail)
+        raise ValueError('synthetic setup failure')
+
+    monkeypatch.setattr(test_sandbox_construction.fixtures.workflow_fixtures, 'WorkflowTests', broken)
+    with pytest.raises(RuntimeError, match='synthetic controlled workflow cleanup failure'):
+        with ExitStack() as cleanups:
+            test_sandbox_construction.ControlledWorkflow(cleanups.callback)

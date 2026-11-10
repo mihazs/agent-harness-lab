@@ -8,6 +8,7 @@ import json
 import os
 import signal
 from pathlib import Path
+from types import SimpleNamespace
 import time
 from unittest.mock import Mock,patch
 
@@ -113,12 +114,12 @@ class PublicCase:
             stack.enter_context(patch.object(owned,'_kernel_finished',side_effect=finish))
             stack.enter_context(patch.object(Observation,'_completion',completed))
             if mode=='fake':
-                helper=roles.ControlledWorkflowTests();helper.root=case;helper.roles=[]
+                helper=SimpleNamespace(root=case,roles=[])
                 backend=Mock(permission_audit=PROFILE);backend.permission_reports=[]
                 backend.capability.return_value=dict(status='available')
                 backend.permission_qualification.side_effect=lambda:dict(profile=PROFILE,qualification='qualified')
                 def execute(*args,**options):
-                    run=helper.execute(*args,**options)
+                    run=roles.ControlledWorkflow.execute(helper,*args,**options)
                     audit=dict(status='complete',qualification='qualified',profile=PROFILE)
                     run['attestation']['permission_audit']=audit;backend.permission_reports.append(audit)
                     return run

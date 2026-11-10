@@ -79,7 +79,7 @@ class ConstructionAccessHarness:
     """A controlled synthetic workflow with an explicit evaluation store, built by setUp and released by doCleanups."""
     def setUp(self):
         self.cleanups=ExitStack()
-        self.f=fixtures.ControlledWorkflowTests(); self.f.setUp(); self.cleanups.callback(self.f.doCleanups)
+        self.f=fixtures.ControlledWorkflow(self.cleanups.callback)
         self.store=self.f.root/'evaluation-store'
         self.f.args.evaluation_store=self.store
 

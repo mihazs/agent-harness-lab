@@ -9,6 +9,7 @@ import os
 import shutil
 import time
 from pathlib import Path
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch,Mock
 
@@ -133,9 +134,9 @@ class RepeatedWorkflowAdmission(PublicFixture,unittest.TestCase):
         proposer=("from pathlib import Path\nimport json\nPath('candidate/AGENTS.md').write_text('good\\n')\n"+nested+
             "Path('proposal.json').write_text(json.dumps(dict(status='candidate',mechanisms=['synthetic'],falsifiers=['artifact'],"
             "instruction_plan="+repr(plan)+")))\n")
-        helper=roles.ControlledWorkflowTests();helper.root=self.root;helper.roles=[]
+        helper=SimpleNamespace(root=self.root,roles=[])
         backend=Mock(permission_audit=None);backend.capability.return_value=dict(status='available')
-        backend.run.side_effect=helper.execute
+        backend.run.side_effect=roles.ControlledWorkflow.execute.__get__(helper)
         def execute(request,*args):
             self.compared=True
             if drift:(self.project/'app/AGENTS.md').write_text('Synthetic drifted guidance.\n')
@@ -188,9 +189,9 @@ def test_unmet_precision_blocks_before_probe_key_and_model(admission):
 
 
 def test_fully_labeled_cooperative_backend_cannot_seal_a_comparison(admission):
-    helper=roles.ControlledWorkflowTests();helper.root=admission.root;helper.roles=[]
+    helper=SimpleNamespace(root=admission.root,roles=[])
     backend=Mock(permission_audit=None);backend.capability.return_value=dict(status='available')
-    backend.run.side_effect=helper.execute
+    backend.run.side_effect=roles.ControlledWorkflow.execute.__get__(helper)
     with patch.object(roles,'EXECUTOR',EXECUTOR),patch('agent_harness_lab.evaluation.sandbox.SandboxBackend',return_value=backend):
         code,result=admission.invoke(admission.root/'image','a'*64,admission.root/'output')
     assert (code,result['status']) == (1,'incomplete'), result

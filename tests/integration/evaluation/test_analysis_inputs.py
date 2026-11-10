@@ -32,9 +32,8 @@ def controller_inference():
 
 @pytest.fixture
 def controlled_workflow():
-    f=fixture.ControlledWorkflowTests();f.setUp()
-    yield f
-    f.doCleanups()
+    with ExitStack() as cleanups:
+        yield fixture.ControlledWorkflow(cleanups.callback)
 
 
 @pytest.mark.parametrize('kind',['files','directories','bytes','metadata','depth'])
