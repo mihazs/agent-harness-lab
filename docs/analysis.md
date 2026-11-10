@@ -149,6 +149,28 @@ fingerprint includes the fields because they cannot be rederived from the
 ledger. Broader cross-file ordering remains open in
 [#190](https://github.com/mihazs/agent-harness-lab/issues/190).
 
+## Public benchmark report input
+
+`ahl benchmark-report --public` accepts a nonempty JSON list of flat matched-pair
+records. Each record requires `baseline_runtime`, `candidate_runtime`, and
+`provenance`; the only additional record fields are `status`, `execution_kind`,
+and `publication_allowed`. If supplied, `publication_allowed` must be `true`.
+Unknown fields, profiles, and metadata wrappers are rejected before any report
+directory is created.
+
+Each runtime object supplies `provider`, `runtime`, `model_revision`, `reasoning`,
+`task_bank_revision`, `sandbox_image`, `permissions`, and `controller_version`.
+The values must match within a pair. The only additional runtime field is
+`effective_settings_verified`; it must be `true` in both objects for the settings
+to be reported as verified.
+
+The provenance object contains only `source_kind`, `approved_publication`,
+`source_ref`, and `derived_from_private`. Public export requires `source_kind` to
+be `synthetic` or `public`, `approved_publication` to be `true`, a nonempty
+`source_ref`, and `derived_from_private` to be `false`. These are caller assertions;
+the command does not authenticate their origin or prove that data is public.
+Without `--public`, the existing private report input path is unchanged.
+
 ## Optional algorithms and remaining integration
 
 | Capability | Current entrypoint / prerequisite | Default analysis? |
