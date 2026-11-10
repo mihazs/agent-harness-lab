@@ -60,10 +60,10 @@ def write_config(pinned):
     (pinned.project/'ahl.json').write_text(json.dumps(pinned.value))
 
 
-def invoke(pinned, *arguments):
+def invoke(pinned, *arguments, entry=('improve',)):
     stdout = io.StringIO()
     with contextlib.redirect_stdout(stdout):
-        code = main(['improve', str(pinned.project), *arguments])
+        code = main([*entry, str(pinned.project), *arguments])
     return code, json.loads(stdout.getvalue())
 
 
@@ -92,8 +92,9 @@ def test_configured_native_runtime_reaches_controller_in_one_invocation(pinned, 
         assert context['origin'] == 'skill'
 
 
-def test_full_seven_task_bank_uses_one_preparation_and_exact_shared_budget(pinned):
-    code, result = invoke(pinned)
+@pytest.mark.parametrize('entry', [('improve',), ('skills', 'invoke')], ids=['cli', 'skill'])
+def test_full_seven_task_bank_uses_one_preparation_and_exact_shared_budget(pinned, entry):
+    code, result = invoke(pinned, entry=entry)
     assert code == 3
     assert result['status'] == 'inconclusive'
     assert not result['automatic_promotion']
@@ -110,15 +111,20 @@ def test_full_seven_task_bank_uses_one_preparation_and_exact_shared_budget(pinne
     manifest = json.loads((output/'preparation/evaluation-0/manifest.json').read_text())
     assert manifest['max_trials'] == 14
     assert manifest['bank_digest'] == pinned.value['bank']['sha256']
+    if entry[0] == 'skills':
+        context = json.loads((output/'invocation.json').read_text())
+        assert (context['origin'], context['trial_limit']) == ('skill', 15)
 
 
-def test_budget_must_cover_proposal_and_all_paired_tasks_before_dispatch(pinned):
+@pytest.mark.parametrize('entry', [('improve',), ('skills', 'invoke')], ids=['cli', 'skill'])
+def test_budget_must_cover_proposal_and_all_paired_tasks_before_dispatch(pinned, entry):
     pinned.value['limits']['trials'] = 14
     write_config(pinned)
     with patch('agent_harness_lab.cli.evaluator', side_effect=AssertionError('no runtime dispatch')):
-        code, result = invoke(pinned)
+        code, result = invoke(pinned, entry=entry)
     assert code == 3
     assert result['reason'] == 'configured_bank_shared_trial_budget_exhausted'
+    assert (pinned.project/'AGENTS.md').read_text() == 'bad'
 
 
 @pytest.mark.parametrize('change, expected', [
@@ -255,8 +261,9 @@ def test_disappearing_runtime_preserves_its_blocked_reason(pinned, phase):
     if phase=='before_controls': assert len(calls) == 1
 
 
+@pytest.mark.parametrize('entry', [('improve',), ('skills', 'invoke')], ids=['cli', 'skill'])
 @pytest.mark.parametrize('interrupted', [pytest.param(False, id='grader-failure'), pytest.param(True, id='interrupted')])
-def test_grader_failure_and_interruption_preserve_target(pinned, interrupted):
+def test_grader_failure_and_interruption_preserve_target(pinned, interrupted, entry):
     runner = evaluator()
     execute = runner.execute
     calls = []
@@ -268,9 +275,10 @@ def test_grader_failure_and_interruption_preserve_target(pinned, interrupted):
         return dict(exit_code=0, stdout='', stderr='', elapsed_seconds=0, timeout=False)
     with patch('agent_harness_lab.cli.evaluator', return_value=runner), patch.object(runner, 'execute', side_effect=stop):
         if interrupted:
-            code, result = invoke(pinned)
+            code, result = invoke(pinned, entry=entry)
             assert (code, result['status']) == (1, 'interrupted')
+            assert len(calls) == 1
         else:
-            with pytest.raises(SystemExit) as stopped: invoke(pinned)
+            with pytest.raises(SystemExit) as stopped: invoke(pinned, entry=entry)
             assert stopped.value.code == 2
     assert (pinned.project/'AGENTS.md').read_text() == 'bad'
