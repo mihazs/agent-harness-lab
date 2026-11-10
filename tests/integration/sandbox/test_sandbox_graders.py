@@ -116,7 +116,8 @@ def test_preflight_consumption_reduces_cli_version_deadline_and_can_block_it(gra
     def capability(**kwargs):
         clock[0] += consumed
         return dict(status='available')
-    def execute(argv, cwd, seconds):
+    def execute(argv, cwd, seconds, *, env):
+        assert isinstance(env, dict)
         assert argv == [str(grader.agent),'--version']; assert seconds == 2
         clock[0] += seconds
         return dict(exit_code=0,stdout='synthetic-agent')

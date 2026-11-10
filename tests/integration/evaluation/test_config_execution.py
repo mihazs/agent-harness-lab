@@ -149,8 +149,9 @@ class TestConfiguredEvaluation:
         for path, permissions in paths:
             original = path.read_bytes()
             mode = path.stat().st_mode & 0o777
-            def mutate(argv, *args):
+            def mutate(argv, *args, **kwargs):
                 assert argv[1:] == ['--version']
+                assert 'env' in kwargs
                 if permissions:
                     path.chmod(mode ^ 0o100)
                 else:

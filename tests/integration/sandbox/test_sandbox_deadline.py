@@ -42,7 +42,8 @@ def test_inherited_deadline_only_narrows_remaining_capability_and_cli_time(deadl
     def capability(*,seconds):
         assert seconds == 2; clock[0] += 1
         return dict(status='available')
-    def execute(argv,cwd,seconds):
+    def execute(argv,cwd,seconds,*,env):
+        assert isinstance(env,dict)
         assert argv == [str(deadline.fixture.agent),'--version']; assert seconds == 1
         clock[0] += 1
         return dict(exit_code=0,stdout='synthetic-agent')
@@ -82,7 +83,8 @@ def test_parent_cannot_enlarge_manifest_budget(deadline):
     def capability(*,seconds):
         assert seconds == 3
         return dict(status='available')
-    def execute(argv,cwd,seconds):
+    def execute(argv,cwd,seconds,*,env):
+        assert isinstance(env,dict)
         assert seconds == 5; clock[0] += seconds
         return dict(exit_code=0,stdout='synthetic-agent')
     backend.capability.side_effect = capability
