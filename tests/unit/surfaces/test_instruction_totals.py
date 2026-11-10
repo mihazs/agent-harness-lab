@@ -66,3 +66,29 @@ def test_private_launch_file_keeps_total_unknown(tmp_path):
     assert report['status'] == 'unknown'
     assert 'private_launch_file_not_captured' in report['reasons']
     assert report['bytes'] is None
+
+
+def test_shape_hints_include_imported_instructions_and_no_content(tmp_path):
+    report = count(tmp_path, {'CLAUDE.md': '@detail.md\n', 'detail.md': 'Must verify with pytest.\n'})
+    assert report['shape'] == dict(constraints=True, verification_commands=True, procedure_sections=False)
+    assert 'Must verify' not in repr(report)
+
+
+def test_numbered_procedure_is_reported_but_not_quoted(tmp_path):
+    report = count(tmp_path, {'CLAUDE.md': '# Procedure\n' + ''.join(f'{i}. step\n' for i in range(1, 6))})
+    assert report['shape']['procedure_sections'] is True
+    assert '# Procedure' not in repr(report)
+
+
+def test_unknown_closure_does_not_assert_shape(tmp_path):
+    report = count(tmp_path, {'CLAUDE.md': '@missing.md\n'})
+    assert report['shape'] is None
+
+
+def test_oversized_launch_file_does_not_become_zero_total(tmp_path):
+    from agent_harness_lab.sources.claude_instructions import SKIPPED_BYTES
+
+    report = count(tmp_path, {'CLAUDE.md': 'x\n' * (SKIPPED_BYTES // 2 + 1)})
+    assert report['status'] == 'unknown'
+    assert 'launch_file_unsettled' in report['reasons']
+    assert report['bytes'] is None and report['lines'] is None and report['files'] is None

@@ -249,7 +249,10 @@ bounded checkout snapshot under the assumed default instruction-file setting;
 they exclude user and managed instructions and are not evidence of what a
 runtime loaded. Missing or uncertain imports, cycles, excluded private launch
 files, changed matching inventory content, or an unavailable resolver leave the
-totals `unknown`. Contents are not emitted and publication is not allowed.
+totals `unknown`. Contents are not emitted and publication is not allowed. The resolver is a
+separate filesystem observation from the harness inventory. Only recognized
+instruction files are compared across observations; arbitrary imports are not
+in the first inventory. Cross-observation consistency is therefore unknown.
 
 The CLI's `--instruction-soft-lines` sets a checkout launch-line convention
 (default 200). If a settled declared total exceeds it, the report emits a `weak`
@@ -257,3 +260,11 @@ count hypothesis to evaluate, not an instruction to edit. The default extends
 Claude's [per-file rule of thumb](https://code.claude.com/docs/en/features-overview)
 to the captured launch closure; it is not a validated aggregate threshold.
 Unknown totals never produce this hypothesis.
+
+For a settled, nonempty closure, the CLI also emits lexical hypotheses when it
+finds no constraint wording or common verification command, and a structural
+hypothesis for a section with at least five numbered steps or three fenced
+blocks. These are deliberately simple patterns: they can miss equivalent
+wording and match examples. Findings need behavioral evaluation and do not quote
+instruction contents or headings. No shape hypothesis is emitted for an
+unknown closure.

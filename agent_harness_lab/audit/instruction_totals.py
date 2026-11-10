@@ -25,10 +25,14 @@ def claude(profile, folder, checkout, *, expected=None):
                    and expected.get(key) != node.content_sha256 for key, node in active.items())):
         reasons.add('inventory_content_changed')
     parts = PurePosixPath(profile['task_cwd']).parts if profile['task_cwd'] != '.' else ()
-    launch_scopes = {digest(str(PurePosixPath(*parts[:depth]))) for depth in range(len(parts) + 1)}
+    scopes = [PurePosixPath(*parts[:depth]) for depth in range(len(parts) + 1)]
+    launch_scopes = {digest(str(path)) for scope in scopes for path in (scope, scope / '.claude')}
     if any(node.applicability == 'private_excluded' and node.presence != 'missing'
            and node.scope_sha256 in launch_scopes for node in inventory.nodes):
         reasons.add('private_launch_file_not_captured')
+    if any(node.applicability in ('unknown', 'unsupported') and node.presence != 'missing'
+           and node.scope_sha256 in launch_scopes for node in inventory.nodes):
+        reasons.add('launch_file_unsettled')
     if inventory.resolution_status != 'declared':
         reasons.add('resolution_incomplete')
     if any(key not in facts or facts[key][0] != node.content_sha256 for key, node in active.items()):
@@ -45,6 +49,11 @@ def claude(profile, folder, checkout, *, expected=None):
                 bytes=sum(facts[key][1] for key in active) if complete else None,
                 lines=sum(facts[key][2] for key in active) if complete else None,
                 files=len(active) if complete else None,
+                shape=(dict(constraints=any(facts[key][5][0] for key in active),
+                            verification_commands=any(facts[key][5][1] for key in active),
+                            procedure_sections=any(facts[key][5][2] for key in active)) if complete else None),
                 reasons=sorted(reasons), scope='captured_checkout_launch_files',
                 settings='caller_declared' if 'instruction_files' in profile else 'assumed_default',
-                observed_loading='unknown', publication_allowed=False)
+                observed_loading='unknown', snapshot_relation='separate_resolver_observation',
+                inventory_comparison='recognized_instruction_files_only',
+                cross_observation_consistency='unknown', publication_allowed=False)

@@ -68,6 +68,16 @@ def _project(inventory, report, task_cwd):
     return report
 
 
+def _instruction_hypothesis(report, reason, evidence, remediation, measures=()):
+    finding = audit.Finding(audit.digest(['instructions', '.', 'instruction', reason]), 'instructions',
+        'nonconformant', reason, '.', audit.digest('.'), 'instruction', evidence,
+        'behavioral_evaluation_required', remediation, 'https://code.claude.com/docs/en/features-overview',
+        measures=measures)
+    report['findings'].append(dict(asdict(finding), status='weak', observed=reason))
+    for row in report['coverage']:
+        if row['dimension'] == 'instructions' and row['status'] != 'missing': row['status'] = 'weak'
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='ahl audit', description=(
         'Check pinned runtime conventions offline. Findings do not measure performance; '
@@ -106,19 +116,26 @@ def main(argv=None):
             except (ValueError, OSError, TimeoutError):
                 report['declared_instruction_totals'] = dict(status='unknown', bytes=None, lines=None, files=None,
                     reasons=['resolution_unavailable'], scope='captured_checkout_launch_files',
-                    settings='assumed_default', observed_loading='unknown', publication_allowed=False)
+                    settings='assumed_default', observed_loading='unknown', snapshot_relation='separate_resolver_observation',
+                    inventory_comparison='recognized_instruction_files_only', cross_observation_consistency='unknown',
+                    publication_allowed=False)
             total = report['declared_instruction_totals']
             total['soft_line_budget'] = args.instruction_soft_lines
             if total['status'] == 'declared' and total['lines'] > args.instruction_soft_lines:
-                reason = 'instruction_launch_lines_above_soft_budget'
-                finding = audit.Finding(audit.digest(['instructions', '.', 'instruction', reason]), 'instructions',
-                    'nonconformant', reason, '.', audit.digest('.'), 'instruction', 'count',
-                    'behavioral_evaluation_required', 'evaluate_instruction_budget_reduction',
-                    'https://code.claude.com/docs/en/features-overview',
-                    measures=(('lines', total['lines']), ('soft_line_budget', args.instruction_soft_lines)))
-                report['findings'].append(dict(asdict(finding), status='weak', observed=reason))
-                for row in report['coverage']:
-                    if row['dimension'] == 'instructions' and row['status'] != 'missing': row['status'] = 'weak'
+                _instruction_hypothesis(report, 'instruction_launch_lines_above_soft_budget', 'count',
+                    'evaluate_instruction_budget_reduction', (('lines', total['lines']),
+                                                             ('soft_line_budget', args.instruction_soft_lines)))
+            if total['status'] == 'declared' and total['files']:
+                shape = total['shape']
+                if not shape['constraints']:
+                    _instruction_hypothesis(report, 'instruction_constraints_not_detected', 'lexical',
+                                            'evaluate_explicit_instruction_constraints')
+                if not shape['verification_commands']:
+                    _instruction_hypothesis(report, 'instruction_verification_command_not_detected', 'lexical',
+                                            'evaluate_verification_guidance')
+                if shape['procedure_sections']:
+                    _instruction_hypothesis(report, 'instruction_procedure_section_detected', 'structural',
+                                            'evaluate_moving_procedure_to_skill_or_path_rule')
         candidate = next((row for row in report['findings'] if row['remediation']), None)
         if report['status'] != 'completed':
             report['next_action'] = 'Resolve the blocked inventory before using this audit.'

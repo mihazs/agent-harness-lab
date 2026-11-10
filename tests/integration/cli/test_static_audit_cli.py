@@ -239,3 +239,43 @@ def test_claude_line_budget_is_configurable_convention(tmp_path, monkeypatch, ca
         assert finding[0]['status'] == 'weak' and finding[0]['evidence_kind'] == 'count'
         assert dict(finding[0]['measures']) == {'lines': 2, 'soft_line_budget': budget}
         assert finding[0]['notice'] == 'convention_check_not_performance_evidence'
+
+
+def test_claude_shape_hypotheses_and_incomplete_closure(tmp_path, monkeypatch, capsys):
+    project = tmp_path / 'project'
+    project.mkdir()
+    source = project / 'CLAUDE.md'
+    source.write_text('# Procedure\n' + ''.join(f'{i}. step\n' for i in range(1, 6)))
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
+    report = json.loads(capsys.readouterr().out)
+    expected = {'instruction_constraints_not_detected', 'instruction_verification_command_not_detected',
+                'instruction_procedure_section_detected'}
+    assert expected <= {r['reason'] for r in report['findings'] if r['status'] == 'weak'}
+    source.write_text('@missing.md\n')
+    assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report['declared_instruction_totals']['status'] == 'unknown'
+    assert not expected.intersection(r['reason'] for r in report['findings'])
+
+
+def test_import_change_between_inventory_and_resolver_is_an_unbound_observation(tmp_path, monkeypatch, capsys):
+    from agent_harness_lab import audit
+
+    project = tmp_path / 'project'
+    project.mkdir()
+    (project / 'CLAUDE.md').write_text('@details.md\n')
+    imported = project / 'details.md'
+    imported.write_text('old\n')
+    original = audit.audit
+    def change_after_inventory(*args, **kwargs):
+        imported.write_text('new\n' * 10)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(audit, 'audit', change_after_inventory)
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
+    total = json.loads(capsys.readouterr().out)['declared_instruction_totals']
+    assert total['lines'] == 11
+    assert total['snapshot_relation'] == 'separate_resolver_observation'
+    assert total['inventory_comparison'] == 'recognized_instruction_files_only'
+    assert total['cross_observation_consistency'] == 'unknown'
