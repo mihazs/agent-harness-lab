@@ -43,6 +43,10 @@ lexical hard-constraint cues and exact protected-path references, without line
 text. Loading, hook matching and enforcement remain unknown; lexical cues are not
 proof of a rule or its enforcement. Reference hashes and paths are private and may
 be guessable. Inputs are separate observations, not an atomic snapshot.
+The CLI re-reads eligible checkout instruction files through bounded, no-follow
+access and checks their digests against the inventory. The resulting private
+`constraint_references` observation is outside `audit_sha256`; unavailable files
+leave it incomplete, and its coverage, hook matching and enforcement stay unknown.
 
 The `hook_events` field lists known event names from declared hook handlers. Its
 coverage is `unknown` when hook surfaces are unavailable or could not be parsed;
