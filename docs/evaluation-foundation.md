@@ -497,6 +497,21 @@ text, and semantic adjudication remains a separate step. Receipts never authoriz
 publication or promotion. Replay fixtures, scripted user replies and evaluator
 integration remain later work under the same issue.
 
+### Live response facts
+
+`interaction_evidence` provides a private, process-local view of bounded assistant
+text returned by validated Responses transport during a live owned comparison.
+It binds each observation to the current trial and request token; fabricated action
+ledger entries do not supply response text. The view expires with its live trial
+and cannot be recreated from a serialized report. Oversized or credential-bearing
+text makes capture incomplete. Its content-free summary is not for publication.
+
+This is a prerequisite, not input to the interaction grader. The local process and
+transport configuration remain trusted; the fact does not establish provider or
+model identity, user replies, delivery, transient effects, semantic success, or
+certification. Missing observations remain unknown, and the view grants no
+promotion or adoption authority.
+
 ## Offline validation and limits
 
 The [paired adversarial development bank](adversarial-bank.md) adds frozen policies
