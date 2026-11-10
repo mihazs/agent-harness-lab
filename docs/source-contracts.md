@@ -3238,6 +3238,15 @@ pages do not establish absence or permit a checkpoint. Reads are non-atomic,
 and server-reported membership remains unverified. V4 has a separate scope;
 earlier histories are unchanged.
 
+An opt-in `schema_version=5`, `version="v5"` profile adds `files` for selected
+PRs using the [changed-files endpoint](https://docs.gitea.com/api/1.26/operations/repo-get-pull-request-files/).
+It retains private, guessable path fingerprints and server-reported status and
+change counts; it does not follow file URLs or retrieve file content. Missing
+or conflicting pagination totals and unavailable pages block checkpoints.
+Collection is bounded at 10,000 returned files and by transport budgets. Reads
+are non-atomic; reported changes do not verify execution or outcomes. V5 has a
+separate scope, and earlier histories are unchanged.
+
 For v2, a review listing returning 404 remains `not_found` and blocks a
 checkpoint: the response alone does not establish whether the endpoint is
 unsupported or the listing is otherwise unavailable. V1 retains its existing
@@ -3325,7 +3334,7 @@ and each incomplete-page case; repeat import and update; cross-host, sub-path an
 cross-repository number collisions; fork and deleted head identity; missing
 review and version endpoints; 401/403/404/429 coverage; non-HTTPS refusal; and
 GET-only requests. Live Gitea compatibility is not established by these fixtures.
-Still open in #170: verified inline-comment completeness, PR files,
+Still open in #170: verified inline-comment completeness,
 timelines, issue/PR enumeration by state or time window,
 absence tombstones, a relationship graph and native recheck, and CI/job evidence.
 
