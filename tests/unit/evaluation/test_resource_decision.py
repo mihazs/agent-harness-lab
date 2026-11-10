@@ -353,6 +353,34 @@ def test_v4_large_integer_is_capped_and_v3_fractional_behavior_is_preserved():
     assert decide(legacy, rows, 'supported')['endpoints'][0]['status'] != 'unknown'
 
 
+def test_v4_oversized_numbers_fail_closed_without_overflow():
+    rows = token_scope_rows()
+    rows[0]['candidate']['measurements']['tokens'] = 10**400
+    endpoint = decide(token_scope_contract(), rows, 'supported')['endpoints'][0]
+    assert endpoint['unknown_reasons'] == {'invalid_token_count': 1}
+    rows[0]['candidate']['measurements']['tokens'] = 10**15
+    assert decide(token_scope_contract(), rows, 'supported')['endpoints'][0]['status'] != 'unknown'
+    bad = token_scope_contract(); bad['endpoints'][0]['horizon'] = 10**400
+    with pytest.raises(ValueError,match='unsupported resource endpoint'):
+        decide(bad, token_scope_rows(), 'supported')
+
+
+def test_v4_endpoint_and_request_limits_bound_comparison_without_changing_v3():
+    value = token_scope_contract(); endpoint = value['endpoints'][0]
+    value['endpoints'] = [dict(endpoint,name=f'token_{index}') for index in range(64)]
+    assert decide(value, [], 'supported')['decision'] == 'blocked'
+    value['endpoints'].append(dict(endpoint,name='token_64'))
+    with pytest.raises(ValueError,match='endpoint limit'):
+        decide(value, [], 'supported')
+    legacy = timing_contract(); legacy['endpoints'] = [dict(TIME,name=f'time_{index}') for index in range(65)]
+    assert decide(legacy, [], 'supported')['decision'] == 'blocked'
+    rows = token_scope_rows()
+    rows[0]['candidate']['measurement_provenance']['tokens'].update(request_attempts=1000,known_requests=1000)
+    assert decide(token_scope_contract(), rows, 'supported')['endpoints'][0]['status'] != 'unknown'
+    rows[0]['candidate']['measurement_provenance']['tokens'].update(request_attempts=1001,known_requests=1001)
+    assert decide(token_scope_contract(), rows, 'supported')['endpoints'][0]['unknown_reasons'] == {'request_coverage_incomplete': 1}
+
+
 def multi_token_scope():
     names = ('input_tokens','output_tokens','total_tokens','cached_input_tokens')
     contract_v4 = token_scope_contract(); contract_v4['cache_policy'] = 'provider_cache_allowed'

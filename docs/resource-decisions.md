@@ -102,6 +102,8 @@ unknown state must remain unknown; it cannot be represented by either value.
 Token observations must be nonnegative integers. For `cached_input_tokens`, a positive count
 contradicts `uncached`; under `provider_cache_used`, the count cannot be smaller than the
 number of included requests. Contradictory observations remain unknown.
+Version 4 accepts at most 64 endpoints, 1,000 requests per token observation, and 10^15 tokens
+per observation; values outside these bounds are refused or remain unknown.
 When several categories are supplied for the same arm and scope, complete request counts must
 match, cached input cannot exceed input, and total must equal input plus output when all three
 are present. A missing category is not inferred from the others.

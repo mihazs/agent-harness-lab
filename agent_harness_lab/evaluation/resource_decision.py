@@ -20,6 +20,7 @@ ATTESTED_PROFILES = (PROVENANCE_PROFILE, TIMING_PROFILE, TOKEN_PROFILE)
 TIMED_PROFILES = (TIMING_PROFILE, TOKEN_PROFILE)
 TOKEN_CATEGORIES = ('input_tokens', 'output_tokens', 'total_tokens', 'cached_input_tokens')
 TOKEN_SCOPE = 'controller_provider_responses'
+MAX_TOKEN_ENDPOINTS, MAX_TOKEN_REQUESTS, MAX_TOKEN_COUNT = 64, 1000, 10**15
 TIMING_COMPONENTS = {'setup', 'queueing', 'retries', 'tool_calls', 'user_wait', 'extraction', 'grading'}
 TIMING_INTERVAL = 'target_subprocess_launch_through_collection'
 KINDS = ('elapsed_wall_seconds', 'measured_tokens')  # currency needs frozen dated rates: not supported yet
@@ -36,10 +37,15 @@ def number(value):
     return type(value) in (int, float) and math.isfinite(value) and value >= 0
 
 
+def _finite_number(value):
+    try: return number(value)
+    except OverflowError: return False
+
+
 def _complete_requests(details):
     attempts, known, unknown = (details.get(name) for name in ('request_attempts', 'known_requests', 'unknown_requests'))
     if (any(type(value) is not int or value < 0 for value in (attempts, known, unknown))
-            or attempts == 0 or known + unknown != attempts or unknown != 0): return None
+            or attempts == 0 or attempts > MAX_TOKEN_REQUESTS or known + unknown != attempts or unknown != 0): return None
     return attempts
 
 
@@ -51,7 +57,7 @@ def _token_conflicts(trial, endpoints):
         if endpoint['kind'] != 'measured_tokens': continue
         name = endpoint['name']; details = provenance.get(name); value = measurements.get(name)
         if (not isinstance(details, dict) or details.get('token_category') != endpoint['token_category']
-                or details.get('token_scope') != endpoint['token_scope'] or type(value) is not int or value < 0): continue
+                or details.get('token_scope') != endpoint['token_scope'] or type(value) is not int or not 0 <= value <= MAX_TOKEN_COUNT): continue
         attempts = _complete_requests(details)
         if attempts is not None: entries.append((name,endpoint['token_category'],value,attempts))
     conflicts = set()
@@ -100,12 +106,15 @@ def validate(contract):
     if not isinstance(endpoints, list) or not endpoints or not all(isinstance(e, dict) and set(e) == (
             ENDPOINT_KEYS | ({'token_category', 'token_scope'} if profile == TOKEN_PROFILE and e.get('kind') == 'measured_tokens' else set())) for e in endpoints):
         raise ValueError('resource endpoints fields mismatch')
+    if profile == TOKEN_PROFILE and len(endpoints) > MAX_TOKEN_ENDPOINTS:
+        raise ValueError('resource endpoint limit exceeded')
     if len({e['name'] for e in endpoints}) != len(endpoints) or not any(e['required'] is True for e in endpoints):
         raise ValueError('unique endpoint names and one required endpoint needed')
+    numeric = _finite_number if profile == TOKEN_PROFILE else number
     for e in endpoints:
         if (not isinstance(e['name'], str) or not e['name'] or e['kind'] not in KINDS or not isinstance(e['unit'], str)
                 or type(e['required']) is not bool or e['scope'] != 'all_assigned'
-                or not number(e['horizon']) or e['horizon'] <= 0 or not number(e['max_increase'])):
+                or not numeric(e['horizon']) or e['horizon'] <= 0 or not numeric(e['max_increase'])):
             raise ValueError('unsupported resource endpoint declaration')
         if profile in ATTESTED_PROFILES and e['unit'] != {'elapsed_wall_seconds': 's', 'measured_tokens': 'tokens'}[e['kind']]:
             raise ValueError('resource endpoint unit does not match kind')
@@ -140,14 +149,16 @@ def observe(trial, endpoint, cache_policy=None, timing_boundary=None, token_scop
             if attempts is None: return None, 'request_coverage_incomplete'
     status, value = trial.get('status'), trial.get('measurements', {}).get(endpoint['name'])
     if status not in ('completed', 'agent_timeout'): return None, 'status_' + str(status)
-    if not number(value): return None, 'missing_measurement'
     if token_scoped and endpoint['kind'] == 'measured_tokens':
-        if type(value) is not int: return None, 'invalid_token_count'
+        if value is None: return None, 'missing_measurement'
+        if type(value) is not int or not 0 <= value <= MAX_TOKEN_COUNT: return None, 'invalid_token_count'
         if endpoint['token_category'] == 'cached_input_tokens':
             cache_state = provenance['cache_state']
             if (cache_state == 'uncached' and value != 0
                     or cache_state == 'provider_cache_used' and value < attempts):
                 return None, 'cache_count_inconsistent'
+    elif not (_finite_number(value) if token_scoped else number(value)):
+        return None, 'missing_measurement'
     if status == 'agent_timeout' and value < endpoint['horizon']: return None, 'censored_below_horizon'
     return min(value, endpoint['horizon']), None
 
