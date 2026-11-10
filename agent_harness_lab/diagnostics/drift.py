@@ -387,3 +387,64 @@ def assess(plan, reference, runs, window_index):
                 promotion_authority='none', publication_allowed=False, limitations=list(LIMITATIONS))
     body['sha256'] = _digest(body)
     return body
+
+
+def _canonical_stratum(key, fields):
+    if key == OTHER: return True  # The aggregate is recognized but cannot yield a distance.
+    if not isinstance(key, str) or len(key) > 1024: return False
+    try: values = json.loads(key)
+    except (ValueError, TypeError, RecursionError): return False
+    return (isinstance(values, list) and len(values) == len(fields)
+            and all(_known_identity(value) and len(value) <= 128 for value in values)
+            and json.dumps(values) == key)
+
+
+def describe_task_mix(plan, reference, receipt):
+    """Compare declared stratum proportions descriptively; this is not a drift test."""
+    plan_sha = check_plan(plan)
+    _check_reference(reference, plan_sha)
+    if (not isinstance(receipt, dict) or receipt.get('profile') != RECEIPT_PROFILE
+            or type(receipt.get('schema_version')) is not int or receipt['schema_version'] != 1
+            or receipt.get('plan_sha256') != plan_sha or receipt.get('reference_sha256') != reference['sha256']
+            or receipt.get('sha256') != _digest({k: v for k, v in receipt.items() if k != 'sha256'})):
+        raise ValueError('bound drift receipt required')
+    try:
+        capture, mix = receipt['channels']['capture'], receipt['channels']['task_mix']
+        ref_counts, current_counts = reference['strata'], mix['current']
+        ref_unknown, current_unknown = reference['unknown']['stratum_roots'], mix['unknown_stratum_roots']
+        ref_coverage, current_coverage = reference['capture']['coverage'], capture['coverage']
+        window = receipt['window']; index = window['index']
+        if type(index) is not int or not 0 <= index < plan['max_windows']:
+            raise ValueError('drift receipt does not match frozen inputs')
+        start = plan['reference_window'][1] + index * plan['window_length']
+        if (window != dict(index=index, start=start, end=start + plan['window_length'], max_windows=plan['max_windows'])
+                or mix['reference'] != ref_counts or capture['reference_coverage'] != ref_coverage):
+            raise ValueError('drift receipt does not match frozen inputs')
+        if (not all(isinstance(counts, dict) and len(counts) <= MAX_CATEGORIES + 1
+                    and all(_canonical_stratum(key, plan['strata']) and type(value) is int and 0 < value <= MAX_INPUT_RUNS
+                            for key, value in counts.items()) for counts in (ref_counts, current_counts))
+                or type(ref_unknown) is not int or ref_unknown < 0
+                or type(current_unknown) is not int or current_unknown < 0):
+            raise ValueError('invalid task-mix counts')
+    except (KeyError, TypeError, AttributeError):
+        raise ValueError('invalid task-mix inputs') from None
+    ref_total, current_total = sum(ref_counts.values()), sum(current_counts.values())
+    if (type(reference.get('roots')) is not int or ref_total + ref_unknown != reference['roots']
+            or type(capture.get('eligible_runs')) is not int or current_total + current_unknown > capture['eligible_runs']
+            or not 0 <= capture['eligible_runs'] <= MAX_INPUT_RUNS or reference['roots'] > MAX_INPUT_RUNS):
+        raise ValueError('task-mix exposure does not match counts')
+    reasons = []
+    if (capture.get('state') != 'no_alert' or type(ref_coverage) not in (int, float) or ref_coverage != 1
+            or type(current_coverage) not in (int, float) or current_coverage != 1):
+        reasons.append('capture_not_complete')
+    if ref_unknown or current_unknown: reasons.append('unknown_strata')
+    if OTHER in ref_counts or OTHER in current_counts: reasons.append('collapsed_categories')
+    if min(ref_total, current_total) < plan['min_exposure']: reasons.append('root_exposure_below_minimum')
+    distance = None if reasons else 0.5 * math.fsum(abs(ref_counts.get(key, 0) / ref_total
+        - current_counts.get(key, 0) / current_total) for key in set(ref_counts) | set(current_counts))
+    return dict(schema_version=1, profile='drift-task-mix-description-v1', plan_sha256=plan_sha,
+        reference_sha256=reference['sha256'], receipt_sha256=receipt['sha256'],
+        status='insufficient_evidence' if reasons else 'descriptive_only', reasons=reasons,
+        total_variation=distance, reference_roots=ref_total, current_roots=current_total,
+        statistical_tested=False, alert=False, input_authority='unverified', root_independence='unverified',
+        causal_claim=False, promotion_authority='none', publication_allowed=False)
