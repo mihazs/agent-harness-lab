@@ -46,6 +46,68 @@ def test_scoped_export_is_private_partial_metadata(source):
         assert sensitive not in repr((connector.summary, connector.claims, snapshot))
 
 
+def v2(source):
+    export, payload, selection, spec, manifest = source
+    selection['schema_version'] = 2
+    (manifest.parent/'selection.json').write_text(json.dumps(selection))
+    spec = SourceSpec(**{**spec.to_dict(), 'version': 'v2', 'scope_sha256': digest(selection)})
+    manifest.write_text(json.dumps({'schema_version': 1, 'source': spec.to_dict(), 'data': 'selection.json'}))
+    return export, payload, spec, manifest
+
+
+def test_v2_parent_and_archive_are_reported_unverified_claims(source):
+    export, payload, spec, manifest = v2(source)
+    payload['info']['parentID'] = 'ses_synthetic_parent'
+    payload['info']['time'] = {'created': 1, 'updated': 2, 'archived': 3}
+    export.write_text(json.dumps(payload))
+    connector = OpenCodeExport(manifest)
+    snapshot = connector.read(spec)
+    assert connector.summary['parent_sha256'] == digest(('opencode.session', INSTANCE, 'ses_synthetic_parent'))
+    assert connector.summary['archive_state'] == 'reported_archived'
+    assert connector.summary['producer_version'] == 'unverified'
+    assert 'lineage_unknown' in connector.summary['warnings']
+    assert all(r.independence == 'unknown' and r.causal_status == 'unknown' for r in snapshot.records)
+    assert 'ses_synthetic_parent' not in repr((connector.summary, connector.claims, snapshot))
+
+
+@pytest.mark.parametrize('field,value', [('parentID', None), ('parentID', SESSION), ('parentID', ''),
+    ('parentID', '   '), ('parentID', 'other'), ('parentID', 'ses_bad space'),
+    ('time', None), ('time', {'archived': True}), ('time', {'archived': '3'}), ('time', {'archived': 10**400})])
+def test_v2_invalid_parent_or_archive_fails_closed(source, field, value):
+    export, payload, spec, manifest = v2(source)
+    payload['info'][field] = value
+    export.write_text(json.dumps(payload))
+    with pytest.raises(ValueError): OpenCodeExport(manifest).read(spec)
+
+
+def test_v2_absent_parent_and_archive_do_not_assert_root_or_unarchived(source):
+    _, _, spec, manifest = v2(source)
+    connector = OpenCodeExport(manifest)
+    connector.read(spec)
+    assert connector.summary['parent_sha256'] is None
+    assert connector.summary['archive_state'] == 'unknown'
+    assert 'lineage_unknown' in connector.summary['warnings']
+
+
+def test_v2_parent_accepts_upstream_prefix_without_assuming_underscore(source):
+    export, payload, spec, manifest = v2(source)
+    payload['info']['parentID'] = 'ses123'
+    export.write_text(json.dumps(payload))
+    connector = OpenCodeExport(manifest)
+    connector.read(spec)
+    assert connector.summary['parent_sha256'] == digest(('opencode.session', INSTANCE, 'ses123'))
+
+
+def test_v2_cli_preview(source):
+    _, _, spec, manifest = v2(source)
+    output = io.StringIO()
+    with contextlib.redirect_stdout(output):
+        code = main(['sources', 'preview', '--manifest', str(manifest), '--project-sha256', spec.project_sha256,
+                     '--scope-sha256', spec.scope_sha256])
+    assert code == 0
+    assert json.loads(output.getvalue())['opencode_summary']['archive_state'] == 'unknown'
+
+
 @pytest.mark.parametrize('mutation', ['wrong_session', 'wrong_project', 'global_project', 'missing_messages', 'duplicate_id', 'invalid_message'])
 def test_incompatible_or_wrong_scope_fails_closed(source, mutation):
     export, payload, _, spec, manifest = source

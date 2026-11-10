@@ -4259,3 +4259,12 @@ may contain sensitive text, and fingerprints may be guessable: keep the export,
 private cache, and output local. A changed, invalid, out-of-scope or oversized
 export is refused. Cursor and OpenCode SQLite stores are not supported by this
 profile.
+
+An optional v2 profile uses `schema_version: 2` in the selection and source
+`version: "v2"`, creating a separate scope from v1. It also exposes a hash of
+the export's optional `parentID` (requiring the upstream `ses` prefix and no
+whitespace) and reports `reported_archived` when its
+optional `time.archived` is a valid timestamp. These are unverified claims in
+the export, not confirmed lineage or current archive state. An absent parent or
+archive timestamp remains unknown; it does not establish a root session or an
+unarchived session. V2 does not migrate or reconcile v1 histories.
