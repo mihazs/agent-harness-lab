@@ -202,7 +202,11 @@ def _missing_identification(spec, records, binding, cohorts):
         valid=(row.status=='graded' and row.provenance=='executable_grader' and type(row.outcome) is bool
                and type(row.critical_regression) is bool)
         data[(trial['task'],trial['repetition'],trial['version'])]=int(row.outcome) if valid else None
-    def endpoint(task_ids):
+    observed_roots=[]
+    for row in records:
+        root=by_id[row.trial_id]['root']
+        if root not in observed_roots:observed_roots.append(root)
+    def root_ranges(task_ids):
         roots={}
         for task,root,_ in spec.tasks:
             if task not in task_ids:continue
@@ -212,16 +216,31 @@ def _missing_identification(spec, records, binding, cohorts):
                 hi=(candidate if candidate is not None else 1)-(baseline if baseline is not None else 0)
                 roots.setdefault(root,[]).append((lo,hi))
         if not roots:raise ValueError('nonempty endpoint required')
-        low=sum((Fraction(sum(pair[0] for pair in rows),len(rows)) for rows in roots.values()),Fraction())/len(roots)
-        high=sum((Fraction(sum(pair[1] for pair in rows),len(rows)) for rows in roots.values()),Fraction())/len(roots)
-        return low,high
-    channel_defs=channels(spec,cohorts);ranges={name:endpoint(item['tasks']) for name,item in channel_defs.items()}
+        return {root:(Fraction(sum(pair[0] for pair in rows),len(rows)),
+                      Fraction(sum(pair[1] for pair in rows),len(rows))) for root,rows in roots.items()}
+    channel_defs=channels(spec,cohorts)
+    root_values={name:root_ranges(item['tasks']) for name,item in channel_defs.items()}
+    ranges={name:(sum((v[0] for v in roots.values()),Fraction())/len(roots),
+                  sum((v[1] for v in roots.values()),Fraction())/len(roots)) for name,roots in root_values.items()}
     weights={f:rational(w) for f,w in spec.family_weights};total=sum(weights.values())
     low=sum((w*ranges['family:'+f][0] for f,w in weights.items()),Fraction())/total
     high=sum((w*ranges['family:'+f][1] for f,w in weights.items()),Fraction())/total
     def view(pair):return dict(low=outward(pair[0],False),high=outward(pair[1],True),
                                exact_low=packed(pair[0]),exact_high=packed(pair[1]))
+    alpha=rational(spec.alpha)/len(channel_defs); confidence={}; fallback=set()
+    for name,roots in root_values.items():
+        selected=[roots[root] for root in observed_roots if root in roots]
+        lower=endpoint([row[0] for row in selected],len(roots),alpha,binding['lambdas'])
+        upper=endpoint([row[1] for row in selected],len(roots),alpha,binding['lambdas'])
+        if lower is None or upper is None:
+            fallback.add(name);confidence[name]=(Fraction(-1),Fraction(1))
+        else:confidence[name]=(lower[0],upper[1])
+    confidence_primary=(sum((w*confidence['family:'+f][0] for f,w in weights.items()),Fraction())/total,
+                        sum((w*confidence['family:'+f][1] for f,w in weights.items()),Fraction())/total)
     return dict(estimand=ESTIMAND,primary=view((low,high)),endpoints={name:view(pair) for name,pair in ranges.items()},
+        anytime_completion_envelope=dict(primary=dict(view(confidence_primary),fallback=any(name.startswith('family:') for name in fallback)),
+            endpoints={name:dict(view(pair),fallback=name in fallback) for name,pair in confidence.items()},
+            method='wor_hoeffding_extreme_completion_envelope_v1',assumptions_status='declared_unverified'),
         interpretation='finite_bank_completion_range_not_a_confidence_sequence',
         input_authority='caller_declared_unverified',automatic_promotion=False,publication_allowed=False)
 
