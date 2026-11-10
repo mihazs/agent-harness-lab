@@ -4,7 +4,7 @@ Reviewing only classifier alerts cannot show missed incidents, and it cannot
 support prevalence or recall estimates for the episodes the classifier stayed
 silent on. `agent_harness_lab.diagnostics.audit_sampling` plans a review sample
 that includes non-alerted episodes, each drawn with a known positive inclusion
-probability, and turns the reviewed labels into design-aware estimates. It is a
+probability, and turns the reviewed labels into nominal design-aware estimates. It is a
 library API with no CLI. It runs offline and calls no model or hosted service.
 
 ## Frame
@@ -47,13 +47,22 @@ Very small nonzero probabilities
 can still have substantial rounding and weight limitations; this is not a numerical
 precision guarantee. The plan binds the frame by hash, so a changed frame is refused.
 
-`draw(frame, plan)` uses Poisson sampling. A unit reached by several routes is
+`draw(frame, plan)` approximates Poisson sampling with a deterministic hash. A unit reached by several routes is
 drawn at most once, with inclusion probability `1 - prod(1 - rate)` over its
 routes. Its stratum is the set of routes it belongs to. Each unit's uniform
 variate comes from SHA-256 of the seed, frame hash and unit hash, so the same
 frame and plan replay to the same receipt offline. A plan whose expected review
 count exceeds `review_budget` is refused. The realized count varies around the
-expected count and is recorded.
+expected count and is recorded. A genuinely certain route includes all its units.
+If a combination of non-certain routes rounds to one, the plan is refused rather
+than silently treating it as certain. Legacy replay can differ for a certainty
+stratum when a previous floating-point hash value rounded to exactly one; other
+legacy selections keep their prior rule. The finite 64-bit hash and float mapping
+also quantize probabilities below one, so recorded nominal probabilities need not
+match the discrete draw probability exactly. The report carries
+`finite_precision_hash_sampling_approximate`; design-based properties below are
+conditional on the ideal independent-draw model, not exact guarantees for the
+implemented hash mapping.
 
 A plan may add `seed_commitment`: `{"sha256":C,"committed_at":T,"nonce":X}`, where
 `C = commit_seed(seed, X)` is a SHA-256 of the seed and a secret nonce, published
@@ -99,7 +108,10 @@ and plan hashes, policy and model identities, decision timestamp, rates, budget,
 exclusions, per-stratum inclusion probabilities and expected and realized draws.
 It also lists each draw's unit hash, stratum, alert status and inclusion
 probability, plus the maximum and minimum weights and the Kish effective sample
-size. The receipt is created before `estimate` accepts any label. `review_queue(receipt)`
+size. Reopening checks the declared route probabilities, unique draw identities,
+stratum and total counts, and that every unit in a certain stratum is drawn.
+Inconsistent legacy receipts are rejected. These internal checks do not authenticate
+the frame, seed, reviewer labels or author of a self-sealed receipt. The receipt is created before `estimate` accepts any label. `review_queue(receipt)`
 gives reviewers only the drawn unit hashes in hash order, without alert status,
 stratum or score, to reduce anchoring.
 
@@ -121,7 +133,7 @@ convenience reviews with unknown inclusion probability. They are counted as
 `outside_probability_sample` and never enter an estimate.
 
 When every draw is reviewed, the status is `estimated`. The report gives
-Horvitz-Thompson estimates of incident prevalence, missed incidents (non-alerted
+nominal inverse-probability estimates of incident prevalence, missed incidents (non-alerted
 incidents) and missed incidents per class, each as a count and a rate, plus the
 ratio estimate of triage recall. Standard errors use the Poisson design. Recall
 is `null`, with the reason `no_sampled_incidents`, when no incident was sampled.

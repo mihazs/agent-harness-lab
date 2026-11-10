@@ -7,7 +7,8 @@ targeted oversampling routes. Overlapping routes are combined into one draw per
 unit with inclusion probability ``1 - prod(1 - rate)``, so every eligible unit has
 a known positive probability and a unit reached by several routes is drawn once.
 
-Estimates are Horvitz-Thompson totals with the Poisson-design standard error.
+Estimates use nominal inverse-probability weights and Poisson-design standard errors.
+Finite hash and floating-point resolution can differ from the nominal probabilities.
 Their 95% intervals are exact binomial limits per stratum, combined across strata
 by MOVER, so small sampled counts keep nominal coverage. The estimand is captured
 eligible units in the frame, never every real interaction. Missing reviews are
@@ -234,6 +235,8 @@ def _probability(routes, rates):
     probability = 1 - miss
     if not _rate(probability):
         raise ValueError('combined inclusion probability is zero or invalid at available precision')
+    if probability == 1 and not any(rates[route] == 1 for route in routes):
+        raise ValueError('combined inclusion probability rounds to one at available precision')
     return probability
 
 
@@ -274,7 +277,9 @@ def draw(frame, plan, trusted_heads=None):
         name, probability = '+'.join(routes), _probability(routes, rates)
         stratum = strata.setdefault(name, dict(stratum=name, routes=routes, units=0, inclusion_probability=probability, drawn=0))
         stratum['units'] += 1
-        if _uniform(plan['seed'], frozen['frame_sha256'], key) < probability:
+        # A 64-bit integer divided as a float can round up to 1.0. Certainty
+        # strata must still include every eligible unit.
+        if probability == 1 or _uniform(plan['seed'], frozen['frame_sha256'], key) < probability:
             stratum['drawn'] += 1
             draws.append(dict(unit_sha256=key, stratum=name, alerted=unit['alerted'], inclusion_probability=probability))
     expected = sum(s['units'] * s['inclusion_probability'] for s in strata.values())
@@ -311,13 +316,51 @@ def _receipt(receipt, trusted_heads=None):
     # A receipt may claim less than was verified (unanchored limitations) but never more.
     if receipt['limitations'] not in (_limitations(commitment, anchored), _limitations(commitment)):
         raise ValueError('audit receipt limitations do not match its seed commitment')
-    strata = {s['stratum']: s['inclusion_probability'] for s in receipt['strata']}
-    if any(not _rate(probability) for probability in strata.values()):
-        raise ValueError('invalid inclusion probability in audit receipt')
-    for item in receipt['draws']:
-        probability = item['inclusion_probability']
-        if not _rate(probability) or strata.get(item['stratum']) != probability:
+    rates=receipt['rates']; strata=receipt['strata']; draws=receipt['draws']
+    if (not isinstance(rates,dict) or 'random' not in rates or not set(rates)<={'random',*TARGETED_ROUTES}
+            or not all(_rate(value) for value in rates.values()) or not isinstance(strata,list)
+            or not strata or len(strata)>MAX_UNITS or not isinstance(draws,list) or len(draws)>MAX_UNITS):
+        raise ValueError('invalid audit receipt design')
+    indexed={}
+    for stratum in strata:
+        _fields(stratum,'stratum routes units inclusion_probability drawn expected_draws','invalid audit receipt stratum')
+        routes=stratum['routes']; name=stratum['stratum']; probability=stratum['inclusion_probability']
+        if (not isinstance(routes,list) or not routes or routes[0]!='random'
+                or any(not isinstance(route,str) or route not in rates for route in routes)
+                or len(set(routes))!=len(routes) or routes!=['random',*(['alerted'] if 'alerted' in routes else []),
+                    *sorted(route for route in routes if route not in ('random','alerted'))]
+                or name!='+'.join(routes) or name in indexed or not _rate(probability)
+                or probability!=_probability(routes,rates)
+                or type(stratum['units']) is not int or not 0<stratum['units']<=MAX_UNITS
+                or type(stratum['drawn']) is not int or not 0<=stratum['drawn']<=stratum['units']):
+            raise ValueError('invalid inclusion probability or stratum in audit receipt')
+        if stratum['expected_draws']!=stratum['units']*probability:
+            raise ValueError('audit receipt expected draws differ')
+        indexed[name]=stratum
+    counts=Counter(); seen=set()
+    for item in draws:
+        _fields(item,'unit_sha256 stratum alerted inclusion_probability','invalid audit receipt draw')
+        _sha(item['unit_sha256']); name=item['stratum']
+        if (name not in indexed or not _rate(item['inclusion_probability'])
+                or indexed[name]['inclusion_probability']!=item['inclusion_probability']):
             raise ValueError('invalid inclusion probability in audit receipt')
+        if (item['unit_sha256'] in seen or type(item['alerted']) is not bool
+                or 'alerted' in rates and (('alerted' in indexed[name]['routes'])!=item['alerted'])):
+            raise ValueError('invalid or duplicate audit receipt draw')
+        seen.add(item['unit_sha256']); counts[name]+=1
+    expected=sum(s['expected_draws'] for s in strata)
+    if (type(receipt['review_budget']) is not int or receipt['review_budget']<1
+            or type(receipt['expected_draws']) not in (int,float) or not math.isfinite(receipt['expected_draws'])
+            or not math.isclose(receipt['expected_draws'],expected,rel_tol=1e-12,abs_tol=0)
+            or receipt['expected_draws']>receipt['review_budget']
+            or receipt['weights']!=_weights([item['inclusion_probability'] for item in draws])):
+        raise ValueError('audit receipt expected draws or weights differ')
+    if (type(receipt['drawn']) is not int or receipt['drawn']!=len(draws)
+            or type(receipt['frame']['eligible_units']) is not int
+            or sum(s['units'] for s in strata)!=receipt['frame']['eligible_units']
+            or any(s['drawn']!=counts[s['stratum']] or s['inclusion_probability']==1 and s['drawn']!=s['units']
+                   for s in strata)):
+        raise ValueError('audit receipt draw or population counts differ')
 
 
 def _labels(batch, receipt):
@@ -341,7 +384,7 @@ def _labels(batch, receipt):
 
 
 def _total(rows, value):
-    """Horvitz-Thompson total and its Poisson-design variance."""
+    """Nominal inverse-probability total and ideal Poisson-design variance."""
     total = sum(value(r) / r['inclusion_probability'] for r in rows)
     variance = sum((1 - r['inclusion_probability']) * value(r) ** 2 / r['inclusion_probability'] ** 2 for r in rows)
     return total, variance
@@ -522,7 +565,8 @@ def estimate(receipt, batch, trusted_heads=None):
         alert_only=dict(population_support='unsupported', reviewed=len(reviewed_alerts),
                         incidents=sum(r['incident'] for r in reviewed_alerts)),
         observed_false_negatives=sorted(r['unit_sha256'] for r in rows if r['incident'] and not r['alerted']),
-        limitations=list(receipt['limitations']), publication_allowed=False, automatic_policy_update=False)
+        limitations=[*receipt['limitations'], 'finite_precision_hash_sampling_approximate'],
+        publication_allowed=False, automatic_policy_update=False)
     if not rows:
         reasons.append('no_reviewed_draws')
     if reasons:
