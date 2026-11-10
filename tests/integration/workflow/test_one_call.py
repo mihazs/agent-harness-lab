@@ -258,6 +258,27 @@ def test_configuration_and_cli_precedence(one):
     assert (args.agent,args.codex,args.timeout) == ('claude','/explicit/codex',20)
 
 
+@pytest.mark.parametrize('flag', ['--agent', '--ag'])
+def test_explicit_auto_runtime_overrides_config_with_abbreviation(one, flag):
+    settings=config.prepare(dict(profile='cooperative',runtime=dict(name='codex',executable='/synthetic/codex')))
+    config.create(one.project,settings)
+    with patch('agent_harness_lab.workflow.improve', return_value={'status': 'no_change'}) as run:
+        one.invoke(flag, 'auto')
+    assert run.call_args.args[0].agent == 'auto'
+
+
+@pytest.mark.parametrize('route, target', [(['watch'], 'watch'), (['skills', 'invoke'], 'improve')])
+def test_abbreviated_runtime_override_reaches_watch_and_skill(one, route, target):
+    settings=config.prepare(dict(profile='cooperative',runtime=dict(name='codex',executable='/synthetic/codex')))
+    config.create(one.project,settings)
+    result = 0 if target == 'watch' else {'status': 'no_change'}
+    with patch('agent_harness_lab.workflow.'+target, return_value=result) as run:
+        with contextlib.redirect_stdout(io.StringIO()):
+            main([*route, str(one.project), '--ag=auto', '--cod=/synthetic/override'])
+    args=run.call_args.args[0]
+    assert (args.agent, args.codex) == ('auto', '/synthetic/override')
+
+
 def test_selected_layout_is_actual():
     import os
     expected=os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')

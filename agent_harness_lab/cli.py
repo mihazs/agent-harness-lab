@@ -215,6 +215,14 @@ def main(argv=None):
             command.add_argument('--watch-budget', type=int, help='Total execution seconds per evidence/configuration (default: timeout)')
             command.add_argument('--once', action='store_true', help='Check once then exit with its disposition; default is continued watching with unchanged-work suppression')
     args = parser.parse_args(argv)
+    options = sub.choices[args.command]._option_string_actions
+    explicit = set()
+    for token in argv:
+        if token == '--': break
+        option = token.split('=', 1)[0]
+        matches = [name for name in options if name.startswith(option)] if option.startswith('--') else []
+        if option in options: explicit.add(option)
+        elif len(matches) == 1: explicit.add(matches[0])
     args._progress = _progress_reporter()
     if skill_invocation:args._invocation_origin='skill'
     from agent_harness_lab.workflow import analyze_project, improve, watch
@@ -231,11 +239,11 @@ def main(argv=None):
             result = analyze_project(args)
         elif args.command == 'watch':
             from .one_call import resolve
-            resolve(args, {arg.split("=", 1)[0] for arg in argv})
+            resolve(args, explicit)
             return watch(args)
         else:
             from .one_call import resolve
-            resolve(args, {arg.split("=", 1)[0] for arg in argv})
+            resolve(args, explicit)
             if args.timeout <= 0:
                 raise ValueError('timeout must be positive')
             result = improve(args)
