@@ -1,6 +1,8 @@
 """Private exact-response fixture; neither semantic adjudication nor runner authority."""
 import hashlib
 import json
+from threading import Lock
+from weakref import WeakKeyDictionary
 
 from . import interaction_evidence
 from .regressions import sha256
@@ -8,6 +10,8 @@ from .regressions import sha256
 MAX_BYTES = 65536
 MAX_ALTERNATIVES = 16
 PROFILE = 'exact-scripted-interaction-v1'
+_CONSUMED = WeakKeyDictionary()
+_LOCK = Lock()
 
 
 def _bounded_text(value):
@@ -52,4 +56,12 @@ def reply(view, oracle_bytes, expected_sha256):
     part = rows[0]['parts'][0]
     if part['kind'] != 'output_text' or part['text'] not in choices:
         return None
+    # This is only an in-process fixture limit; it is not durable delivery custody.
+    with _LOCK:
+        state = interaction_evidence._state(view)
+        comparison = state[1]()
+        trial = state[2]
+        if trial in _CONSUMED.get(comparison, set()):
+            raise ValueError('fixture reply already returned for this live trial')
+        _CONSUMED.setdefault(comparison, set()).add(trial)
     return oracle['reply']

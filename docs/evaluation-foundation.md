@@ -528,8 +528,9 @@ observation. Its versioned oracle declares task and root identifiers, exact
 accepted text alternatives, and a hidden reply. It checks the oracle bytes against
 a caller-supplied SHA-256, checks the live task and root, and returns the reply
 only when the single retained output-text part exactly matches an alternative.
-It does not expose the reply in a report, deliver it to an agent, or continue a
-run. The oracle bytes and reply must remain private to the trusted caller.
+A successful return can occur once per live trial within this process. This
+limit does not survive a restart and is not delivery custody. It does not expose
+the reply in a report, deliver it to an agent, or continue a run. The oracle bytes and reply must remain private to the trusted caller.
 
 The digest is a caller assertion, not proof of a reviewed task-bank oracle or
 independence; same-process code can access inputs. Exact matching is a fixture

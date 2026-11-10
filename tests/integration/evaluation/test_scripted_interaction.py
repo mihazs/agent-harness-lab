@@ -56,3 +56,12 @@ def test_reply_is_not_exposed_in_summary_or_mismatch(live):
     run(live);view=evidence.current_view()
     assert scripted.reply(view,*oracle(live)) is None
     assert 'SYNTHETIC_HIDDEN_REPLY' not in repr(evidence.summary(view))
+
+
+def test_success_is_single_use_for_live_trial_even_with_another_oracle(live):
+    message=wire.message();message['content'][0]['text']='What target?'
+    live[2].transport=Mock(return_value=wire.reply([message]))
+    run(live);view=evidence.current_view()
+    assert scripted.reply(view,*oracle(live)) == 'SYNTHETIC_HIDDEN_REPLY'
+    with pytest.raises(ValueError):
+        scripted.reply(view,*oracle(live,reply='SYNTHETIC_OTHER_REPLY'))
