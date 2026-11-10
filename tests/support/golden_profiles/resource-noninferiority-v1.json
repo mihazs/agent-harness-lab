@@ -1,0 +1,1 @@
+{"schema_version":1,"profile":"resource-noninferiority-v1","alpha":0.05,"min_roots":10,"endpoints":[{"name":"elapsed","kind":"elapsed_wall_seconds","unit":"s","scope":"all_assigned","required":true,"horizon":100,"max_increase":5}]}

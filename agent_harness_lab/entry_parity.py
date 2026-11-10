@@ -30,7 +30,9 @@ ALLOWED_DIFFERENCES = {
     # stdout receipt and workflow.json: the run directory itself, plus digests
     # of run artifacts that contain the timing and context fields below.
     'workflow.json': ('output', 'plan_sha256', 'decision.bindings.results_sha256',
-                      'decision.bindings.manifest_sha256'),
+                      'decision.bindings.manifest_sha256',
+                      # An application mints a new deployment ID; its rollback command embeds it.
+                      'deployment', 'rollback'),
     'change-plan.json': ('plan_sha256', 'harness_change_plan.affected_controls_sha256',
                          'harness_change_plan.references.evidence'),
     # Measured trial durations, and the digest of a manifest that carries the

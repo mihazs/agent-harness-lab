@@ -23,7 +23,9 @@ The seed may be committed before the window closes: ``commit_seed`` hashes it wi
 nonce, the plan records that commitment and its time, and the draw reveals both. A
 receipt whose seed does not match its commitment, or whose commitment was not
 recorded before the window closed, is refused. Only a receipt that passes drops the
-``seed_selection_unverified`` limitation, and it keeps an unauthenticated-time one.
+``seed_selection_unverified`` limitation, and it keeps an unauthenticated-time one
+unless the commitment carries a hash-chain log anchor that verifies offline against a
+caller-supplied trusted head (``commitment_time_unauthenticated`` is then dropped too).
 """
 import hashlib
 import json
@@ -41,7 +43,8 @@ TARGETED_ROUTES = ('alerted', 'severe', 'uncertain', 'out_of_distribution')
 FLAGS = TARGETED_ROUTES[1:]
 STATUSES = ('reviewed', 'pending', 'nonresponse')
 NO_INCIDENT = 'no_incident'
-MAX_UNITS, MAX_TEXT = 100_000, 256
+MAX_UNITS, MAX_TEXT, MAX_ANCHOR = 100_000, 256, 10_000
+ANCHOR_KIND = 'hash_chain_log'
 COUNT_INTERVAL, RECALL_INTERVAL = 'exact_binomial_mover', 'exact_binomial_mover_log_ratio'
 LIMITATIONS = ('multi_stratum_intervals_approximate', 'unit_independence_declared_not_verified',
                'reviewer_labels_unauthenticated', 'capture_outside_frame_unknown', 'seed_selection_unverified')
@@ -86,6 +89,11 @@ def _time(value):
 def commit_seed(seed, nonce):
     """Hash commitment to a seed: publish this before the window closes, reveal ``seed`` and ``nonce`` after."""
     return hashlib.sha256(f'audit-seed-v1:{seed}:{nonce}'.encode()).hexdigest()
+
+
+def anchor_entry_sha256(entry):
+    """Hash of one log entry; a chain links each entry to the hash of the one before it."""
+    return _digest(entry)
 
 
 def _fields(value, names, message):
@@ -139,17 +147,60 @@ def _rate(value):
     return type(value) in (int, float) and math.isfinite(value) and 0 < value <= 1
 
 
-def _commitment(seed, commitment, window):
-    """Refuse a commitment that does not open to the seed or was not recorded before the window closed."""
-    _fields(commitment, 'sha256 committed_at nonce', 'invalid audit seed commitment')
+def _anchor(anchor, covered, window, trusted_heads):
+    """Verify a recorded hash-chain proof offline; True only when it is checked against a trusted head.
+
+    The proof lists log entries ``{time, payload_sha256, prev_sha256}`` from the one that covers exactly the
+    commitment hash to the entry whose hash is a head the caller obtained from a source the planner does not
+    control (``trusted_heads``: head hash -> time that head was observed). It proves the commitment hash
+    existed in that log no later than the observation, not that the log or its entry times are honest.
+    A proof is refused when malformed, over another hash, broken, ending in an untrusted head, or not
+    strictly before the window end. Without ``trusted_heads`` it is recorded but not verified (False)."""
+    _fields(anchor, 'kind entries', 'invalid audit seed anchor')
+    entries = anchor['entries']
+    if anchor['kind'] != ANCHOR_KIND or not isinstance(entries, list) or not 0 < len(entries) <= MAX_ANCHOR:
+        raise ValueError('invalid audit seed anchor')
+    previous, moment = None, None
+    for entry in entries:
+        _fields(entry, 'time payload_sha256 prev_sha256', 'invalid audit seed anchor entry')
+        _sha(entry['payload_sha256']); _sha(entry['prev_sha256'], True)
+        at = _time(entry['time'])
+        if moment is not None and at < moment:
+            raise ValueError('audit seed anchor entries go back in time')
+        if previous is not None and entry['prev_sha256'] != previous:
+            raise ValueError('audit seed anchor chain is broken')
+        previous, moment = anchor_entry_sha256(entry), at
+    if entries[0]['payload_sha256'] != covered:
+        raise ValueError('audit seed anchor does not cover the commitment hash')
+    if not moment < _time(window['end']):
+        raise ValueError('audit seed anchor postdates the frame window')
+    if not trusted_heads:
+        return False
+    if previous not in trusted_heads:
+        raise ValueError('audit seed anchor does not end in a trusted head')
+    observed = _time(trusted_heads[previous])
+    if not moment <= observed < _time(window['end']):
+        raise ValueError('audit seed anchor head was not observed before the frame window closed')
+    return True
+
+
+def _commitment(seed, commitment, window, trusted_heads=None):
+    """Refuse a commitment that does not open to the seed or was not recorded before the window closed.
+
+    Returns whether its anchor verified; the self-declared ``committed_at`` alone never does."""
+    _fields({k: v for k, v in commitment.items() if k != 'anchor'} if isinstance(commitment, dict) else commitment,
+            'sha256 committed_at nonce', 'invalid audit seed commitment')
     _sha(commitment['sha256']); _text(commitment['nonce'])
     if commit_seed(seed, commitment['nonce']) != commitment['sha256']:
         raise ValueError('audit seed does not match its commitment')
     if not _time(commitment['committed_at']) < _time(window['end']):
         raise ValueError('audit seed commitment postdates the frame window')
+    if commitment.get('anchor') is None:
+        return False
+    return _anchor(commitment['anchor'], commitment['sha256'], window, trusted_heads)
 
 
-def _plan(plan, frozen):
+def _plan(plan, frozen, trusted_heads=None):
     required = 'schema_version profile frame_sha256 seed rates review_budget policy_sha256 model_sha256 decision_timestamp'
     _fields({k: v for k, v in plan.items() if k != 'seed_commitment'} if isinstance(plan, dict) else plan, required,
             'invalid audit plan schema')
@@ -165,9 +216,10 @@ def _plan(plan, frozen):
         raise ValueError('every audit route rate must be in (0, 1]; zero or invalid inclusion probability refused')
     if type(plan['seed']) is not int or plan['seed'] < 0 or type(plan['review_budget']) is not int or plan['review_budget'] < 1:
         raise ValueError('audit seed must be a nonnegative integer and review budget a positive integer')
+    anchored = False
     if plan.get('seed_commitment') is not None:
-        _commitment(plan['seed'], plan['seed_commitment'], frozen['window'])
-    return rates
+        anchored = _commitment(plan['seed'], plan['seed_commitment'], frozen['window'], trusted_heads)
+    return rates, anchored
 
 
 def _routes(unit, rates):
@@ -194,10 +246,12 @@ def _weights(probabilities):
                 effective_sample_size=total * total / sum(w * w for w in weights) if weights else None)
 
 
-def _limitations(commitment):
-    """A passing commitment replaces the unverified-seed limitation; its time is still self-declared."""
+def _limitations(commitment, anchored=False):
+    """A passing commitment replaces the unverified-seed limitation; its time stays self-declared unless anchored."""
     if commitment is None:
         return list(LIMITATIONS)
+    if anchored:
+        return [x for x in LIMITATIONS if x != SEED_UNVERIFIED]
     return [COMMITMENT_TIME if x == SEED_UNVERIFIED else x for x in LIMITATIONS]
 
 
@@ -205,10 +259,12 @@ def _seal(body):
     return dict(body, receipt_sha256=_digest(body))
 
 
-def draw(frame, plan):
-    """Draw a replayable Poisson sample; the receipt is fixed before any label exists."""
+def draw(frame, plan, trusted_heads=None):
+    """Draw a replayable Poisson sample; the receipt is fixed before any label exists.
+
+    ``trusted_heads`` maps log head hashes to the time each was observed, from a source the planner does not control."""
     frozen = freeze(frame)
-    rates = _plan(plan, frozen)
+    rates, anchored = _plan(plan, frozen, trusted_heads)
     strata, draws = {}, []
     for key, unit in frozen['eligible'].items():
         routes = _routes(unit, rates)
@@ -230,27 +286,27 @@ def draw(frame, plan):
         strata=[dict(s, expected_draws=s['units'] * s['inclusion_probability']) for _, s in sorted(strata.items())],
         expected_draws=expected, drawn=len(draws), draws=draws,
         weights=_weights([d['inclusion_probability'] for d in draws]),
-        reviewer_status='pending', limitations=_limitations(plan.get('seed_commitment')), publication_allowed=False,
+        reviewer_status='pending', limitations=_limitations(plan.get('seed_commitment'), anchored), publication_allowed=False,
         automatic_policy_update=False))
 
 
-def review_queue(receipt):
+def review_queue(receipt, trusted_heads=None):
     """Reviewer queue: hashes in hash order, without alert status, stratum or score."""
-    _receipt(receipt)
+    _receipt(receipt, trusted_heads)
     return dict(receipt_sha256=receipt['receipt_sha256'], prediction_masked=True,
                 units=sorted(d['unit_sha256'] for d in receipt['draws']), publication_allowed=False)
 
 
-def _receipt(receipt):
+def _receipt(receipt, trusted_heads=None):
     if not isinstance(receipt, dict) or receipt.get('profile') != RECEIPT_PROFILE:
         raise ValueError('audit sampling receipt required')
     body = {k: v for k, v in receipt.items() if k != 'receipt_sha256'}
     if receipt.get('receipt_sha256') != _digest(body):
         raise ValueError('audit sampling receipt changed after it was sealed')
     commitment = receipt.get('seed_commitment')
-    if commitment is not None:
-        _commitment(receipt['seed'], commitment, receipt['window'])
-    if receipt['limitations'] != _limitations(commitment):
+    anchored = commitment is not None and _commitment(receipt['seed'], commitment, receipt['window'], trusted_heads)
+    # A receipt may claim less than was verified (unanchored limitations) but never more.
+    if receipt['limitations'] not in (_limitations(commitment, anchored), _limitations(commitment)):
         raise ValueError('audit receipt limitations do not match its seed commitment')
     strata = {s['stratum']: s['inclusion_probability'] for s in receipt['strata']}
     for item in receipt['draws']:
@@ -430,9 +486,9 @@ def _composition(receipt, rows, missing, outside):
                 outside_probability_sample=outside)
 
 
-def estimate(receipt, batch):
+def estimate(receipt, batch, trusted_heads=None):
     """Design-aware prevalence, missed-incident and triage-recall estimates for one sealed receipt."""
-    _receipt(receipt)
+    _receipt(receipt, trusted_heads)
     labels = _labels(batch, receipt)
     drawn = {d['unit_sha256']: d for d in receipt['draws']}
     outside = sum(1 for key in labels if key not in drawn)

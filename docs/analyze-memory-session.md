@@ -39,7 +39,9 @@ structured tool name, call ID or result status, so those stay unknown; titles,
 bodies, importance and extension event names are never parsed for them (see
 [observation field contract](source-contracts.md#session-observation-field-contract)).
 These observations cannot certify a no-defect outcome
-or grant permission to apply a candidate. Use an explicitly supported native
-capture when structured diagnostic metadata is needed.
+or grant permission to apply a candidate. The receipt marks the analysis
+`incomplete` with a caveat naming the missing fields as source insufficiency, not a
+no-defect outcome, and `next_action` no longer suggests `ahl improve`. Use an
+explicitly supported native capture when structured diagnostic metadata is needed.
 CLI progress reports aggregate page/observation counts on stderr during retrieval
 and readback; stdout remains the JSON receipt and library calls are silent by default.

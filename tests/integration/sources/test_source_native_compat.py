@@ -9,7 +9,6 @@ import sys
 import pytest
 
 from tests.integration.sources import test_source_codex as fixtures
-from tests.support.unittest_cleanups import run_cleanups
 
 
 @pytest.mark.skipif(not os.environ.get('AHL_NATIVE_BASELINE_ROOT'), reason='frozen native baseline not selected')
@@ -38,4 +37,4 @@ class TestNativeCompatibility:
                 results.append(json.loads(completed.stdout))
             assert results[1] == results[0]
         finally:
-            run_cleanups(fixture)
+            fixture.doCleanups()

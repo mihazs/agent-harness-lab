@@ -1,0 +1,1 @@
+{"schema_version":1,"profile":"interaction-contract-v1","task_id":"synthetic-task","endpoint":"interaction_boundary","required_clarifications":["target"],"allowed_clarifications":["target"],"permitted_mutations":[],"protected_paths":[],"stop_reason":null,"completion":{"kind":"interaction"}}

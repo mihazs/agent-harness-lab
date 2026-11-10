@@ -1,7 +1,9 @@
 """Public CLI tests use independently synthetic projects; no model or network."""
 import contextlib
+import errno
 import io
 import json
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,8 +16,6 @@ from agent_harness_lab import config
 from agent_harness_lab.promotion.journal import Journal
 from agent_harness_lab.one_call import structural_candidate
 from tests.support.one_call import one as one
-
-
 
 
 def test_single_call_applies_verified_contract_and_is_idempotent(one):
@@ -42,6 +42,31 @@ def test_single_call_applies_verified_contract_and_is_idempotent(one):
     assert one.skill.read_bytes() == b'\xef\xbb\xbf'+one.valid
     one.invoke('--repair-contracts')
     assert one.invoke('--repair-contracts')[1]['status'] == 'no_change'
+
+
+@pytest.mark.parametrize('error,expected', [(errno.EROFS, 'target_filesystem_read_only'), (errno.EACCES, None)])
+def test_journal_write_error_preserves_target_and_reports_only_read_only(one, error, expected):
+    original = one.skill.read_bytes(), one.skill.stat().st_mode & 0o777
+    open_file = os.open
+    def fault(path, flags, *args, **kwargs):
+        if str(path).startswith(str(one.skill) + '.ahl-'):
+            raise OSError(error, os.strerror(error), str(path))
+        return open_file(path, flags, *args, **kwargs)
+    with patch('agent_harness_lab.promotion.journal.os.open', side_effect=fault):
+        code, result = one.invoke('--repair-contracts')
+    assert code != 0 and result['status'] == 'execution_error'
+    assert result.get('reason') == expected and result['changed_files'] == []
+    assert (one.skill.read_bytes(), one.skill.stat().st_mode & 0o777) == original
+
+
+def test_read_only_state_directory_is_not_reported_as_target(one):
+    original = one.skill.read_bytes()
+    error = OSError(errno.EROFS, 'read-only', str(one.root/'state/journal'))
+    with patch.object(Journal, 'prepare', side_effect=error):
+        code, result = one.invoke('--repair-contracts')
+    assert code != 0 and result['status'] == 'execution_error'
+    assert 'reason' not in result and result['changed_files'] == []
+    assert one.skill.read_bytes() == original
 
 
 def test_real_repair_reports_measured_budget_after_controller_started(one, capsys):

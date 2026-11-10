@@ -99,8 +99,10 @@ original grader digest and copy raw controls to `controls/TASK_ID/INDEX`. Source
 materialization occurs there, never inside the frozen oracle. All five reviewed
 controls are retained; only broken/partial/complete are mapped into the legacy
 `grader_self_tests` field. Unchanged legacy parent tasks retain their original
-control set. The exported manifest includes `bank_revision_sha256` alongside the
-bank and lexical grouping identities.
+control set. Each accepted revision must also bind its own admitted task in the
+bank and admission catalog; malformed older revisions without that binding are
+rejected for current export. The exported manifest includes `bank_revision_sha256`
+alongside the bank and lexical grouping identities.
 
 Explicit cooperative/sandbox grader audits use the same reviewed controls.
 Wholly legacy banks retain their existing `controls.json` behavior. Acceptance
