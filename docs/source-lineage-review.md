@@ -56,13 +56,15 @@ text, timestamps, embeddings or an agent's explanation.
 | --- | --- |
 | `schema_version` | Integer `1` |
 | `left`, `right` | Two distinct exact `RecordRef` objects |
-| `relation` | `same_observation`, `derived_from`, `same_execution` or `independent_case` |
+| `relation` | `same_observation`, `derived_from`, `same_execution`, `test_result_for` or `independent_case` |
 | `author` | Operator identity label |
 | `evidence` | Nonempty array of distinct cache `RecordRef`s |
 
 `derived_from` is directed: the left record derives from the right record.
-`same_execution` is an operator-reviewed assertion that two records concern the
-same execution. Independent-case assertions do not create links or become transitive.
+`same_execution` asserts that records concern the same execution. A reviewed
+`test_result_for` asserts that one test case belongs to the test suite referenced
+by the other source's report in that execution. These are operator attestations,
+not native proof. Independent-case assertions do not create links or become transitive.
 
 ### Reported and observed outcomes
 
@@ -72,15 +74,16 @@ structured outcomes. Test-result imports record parsed JUnit and pytest case sta
 `passed` and `failed` become success and failure, while skipped, errored or unknown
 cases stay unknown. Normalized `ahl-metadata` sources may carry a schema-2 record
 with an `outcome` object containing `kind: reported`, `value: success|failure|unknown`
-and `provenance_tier: agent_report|memory_summary`. Schema-1 records retain their
+and `provenance_tier: agent_report|memory_summary` and `scope: test_suite|unknown`. Schema-1 records retain their
 original representation and have no outcome. Native capture without a structured
 outcome does not acquire one by parsing message bodies.
 
 The correlation keeps source revision and provenance on `reported_outcome` and
-`observed_outcome`. Only a direct, applicable, reviewed `same_execution` link
-associates the two. A success report and failure observation yield a contradiction
-and retain the observed failure. A report without a linked observation is
-`unverified`; conflicting observations are also `unverified` and contradictory.
+`observed_outcome`. Only a direct, applicable, reviewed `test_result_for` link associates a case with
+its reported test suite; `same_execution` alone does not establish the same target.
+A failed case contradicts an all-passing suite report and yields observed failure,
+even if other cases passed. Passing cases alone do not establish full suite coverage,
+so a passing-only or unknown-scope report remains `unverified`.
 Unknown, stale and ambiguous records never become verified outcomes. This private
 report does not assert independent roots, task success, causation or authorization.
 
@@ -88,9 +91,11 @@ Outcome labels retain source-level meaning: a test result reports one test case 
 a caller-declared commit; it does not prove the result belongs to an agent task.
 The normalized agent report and lineage review are source declarations, not
 authenticated facts. Only reviewed correlations against the same frozen cache are
-shown. A pre-existing cache containing a schema-1 revision of a test case cannot
-be silently rewritten as schema 2: importing that revision again is rejected, and
-a separate fresh cache is needed to retain its structured outcome.
+shown. For an existing schema-1 test case, reimport can enrich outcome metadata only
+when the structured test-result proof hashes to the exact existing revision and its
+status agrees with the outcome. It preserves the original record identity, provenance
+and collection time. Frozen prior cache snapshots and lineage reviews are unchanged;
+the changed current cache makes old reviews stale, requiring a new review.
 
 | Review field | Value |
 | --- | --- |

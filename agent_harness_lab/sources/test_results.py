@@ -245,7 +245,8 @@ class TestResultsExport(LocalExport):
                 results.append(result)
                 declared[case_sha256] = (suite, case)
                 value = asdict(result)
-                observed = dict(kind='observed', value={'passed': 'success', 'failed': 'failure'}.get(status, 'unknown'), provenance_tier='test_result')
+                observed = dict(kind='observed', value={'passed': 'success', 'failed': 'failure'}.get(status, 'unknown'),
+                    provenance_tier='test_result', proof=value)
                 records.append(record('test_case_result', digest(('test_case_result', sha, path_sha256, case_sha256, occurrence)), digest(value), observed))
             records.append(record('test_report', digest(('test_report', sha, path_sha256)), report_sha256))
         self.capture(source, descriptor, selection, [contained(self.manifest.parent, r['path']) for r in reports],

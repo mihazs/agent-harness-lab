@@ -128,12 +128,22 @@ class EvidenceRecord(Contract):
             raise ValueError('outcome requires source record schema 2')
         if self.schema_version == 2:
             value = self.outcome
-            tiers = {'observed': ('test_result',), 'reported': ('agent_report', 'memory_summary')}
-            if (not isinstance(value, dict) or set(value) != {'kind', 'value', 'provenance_tier'}
-                    or not isinstance(value['kind'], str) or value['kind'] not in tiers
-                    or value['provenance_tier'] not in tiers[value['kind']]
-                    or value['value'] not in ('success', 'failure', 'unknown')
-                    or self.state != 'present'):
+            if not isinstance(value, dict) or value.get('kind') not in ('observed', 'reported'):
+                raise ValueError('invalid source outcome metadata')
+            if value['kind'] == 'reported':
+                if (set(value) != {'kind', 'value', 'provenance_tier', 'scope'}
+                        or value['provenance_tier'] not in ('agent_report', 'memory_summary')
+                        or value['scope'] not in ('test_suite', 'unknown')):
+                    raise ValueError('invalid reported outcome metadata')
+            else:
+                if set(value) != {'kind', 'value', 'provenance_tier', 'proof'} or value['provenance_tier'] != 'test_result':
+                    raise ValueError('invalid observed outcome metadata')
+                from .test_results import TestResult
+                proof = TestResult.parse(value['proof'])
+                if (digest(proof.to_dict()) != self.revision_sha256
+                        or value['value'] != {'passed': 'success', 'failed': 'failure'}.get(proof.status, 'unknown')):
+                    raise ValueError('test outcome proof does not match the source revision')
+            if value['value'] not in ('success', 'failure', 'unknown') or self.state != 'present':
                 raise ValueError('invalid source outcome metadata')
         label(self.record_type); timestamp(self.collected_at)
         if self.original_at is not None:

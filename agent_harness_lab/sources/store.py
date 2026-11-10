@@ -372,8 +372,16 @@ class SourceStore:
                         raise ValueError('batch contains another source')
                     prior = existing.get(identity(record))
                     if prior is not None:
-                        if native_metadata(EvidenceRecord.parse(prior)) != native_metadata(record):
-                            raise ValueError('conflicting native revision')
+                        old = EvidenceRecord.parse(prior)
+                        before, after = native_metadata(old), native_metadata(record)
+                        if before != after:
+                            common_before = {k: v for k, v in before.items() if k not in ('schema_version', 'outcome')}
+                            common_after = {k: v for k, v in after.items() if k not in ('schema_version', 'outcome')}
+                            if (common_before != common_after or {old.schema_version, record.schema_version} != {1, 2}
+                                    or (record.outcome or old.outcome or {}).get('kind') != 'observed'):
+                                raise ValueError('conflicting native revision')
+                            if old.schema_version == 1:
+                                prior.update(schema_version=2, outcome=record.outcome)
                         skipped += 1
                     else:
                         existing[identity(record)] = stored = record.to_dict()

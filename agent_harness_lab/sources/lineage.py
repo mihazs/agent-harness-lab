@@ -12,7 +12,7 @@ from .execution import RecordRef, frozen, objects, unpack
 from .schema import Contract, EvidenceRecord, digest, fingerprint, label
 from .store import SourceStore
 
-RELATIONS = ('same_observation', 'derived_from', 'same_execution', 'independent_case')
+RELATIONS = ('same_observation', 'derived_from', 'same_execution', 'test_result_for', 'independent_case')
 
 
 def text(value):
