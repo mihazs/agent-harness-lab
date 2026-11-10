@@ -368,9 +368,10 @@ the offline audit. The content-free hint does not change that exposure.
 For an explicitly requested improvement, `ahl audit PROJECT --improvement-recheck`
 includes the declared runtime, task directory and Codex byte budget in its private
 report. Pass its `report.json` to `ahl improve PROJECT --from-audit REPORT` to
-re-audit the checkout and use an eligible Codex instruction-budget finding as a
-fixed, content-free proposer focus. This currently supports only Codex truncation
-and skipped-file findings; other conventions are not eligible. It cannot be combined
+re-audit the checkout and use an eligible finding as a fixed, content-free
+proposer focus. Codex truncation, skipped-file and skill-description collision
+findings are eligible; other conventions are not. Routing collisions are lexical
+hypotheses, not evidence of a routing failure. It cannot be combined
 with `--focus` or deterministic contract repair.
 
 The supplied report is an untrusted selection and its parameters are caller
