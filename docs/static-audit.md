@@ -11,10 +11,12 @@ directory); the command refuses state storage inside the project. The report
 path is printed to stderr. Exit 0 means completed, 3 means blocked or unsupported,
 and 2 means invalid input or a storage error. `next_action` suggests a behavioral
 evaluation when applicable; it is not an instruction to apply a change.
-The CLI's `coverage` rows summarize the requested audit areas. Instructions and
-enforcement use the inventory's corresponding dimension; skills, sensors, memory
-and state, and the improvement loop remain `not_checked` at this summary level.
-The more detailed `dimensions` and `findings` still include individual skill checks.
+The CLI's `coverage` rows summarize six audit areas. Instructions, skills, and
+enforcement use the corresponding inventory evidence; sensors, memory and state,
+and the improvement loop remain `not_checked`. An absent skill is `unknown`,
+not a pass. CLI findings use `weak`, `unknown`, or `not_checked`; coverage can
+also be `conforms`. The library's separate report retains its documented
+`conformant`, `nonconformant`, and `unknown` vocabulary.
 
 ```python
 from agent_harness_lab import audit

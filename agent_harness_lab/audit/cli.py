@@ -5,15 +5,54 @@ import sys
 import tempfile
 from pathlib import Path
 
-from agent_harness_lab import audit
+from agent_harness_lab import audit, surfaces
 from agent_harness_lab.monitoring.state import atomic_json
+from agent_harness_lab.sources import harness_inventory
 from agent_harness_lab.workflow import state_root
 
 
-def _coverage_status(row):
-    if row['status'] == 'unknown' and any(reason in ('not_checked', 'not_parsed', 'parse_failed', 'unsupported') for reason in row['reasons']):
+def _status(status, reasons=()):
+    if status == 'nonconformant':
+        return 'weak'
+    if status == 'conformant':
+        return 'conforms'
+    if any(reason in ('not_checked', 'not_parsed', 'no_parser', 'parse_failed', 'unsupported',
+                      'skill_frontmatter_unsupported', 'command_frontmatter_unsupported', 'no_pinned_capability') for reason in reasons):
         return 'not_checked'
-    return row['status']
+    return 'unknown'
+
+
+def _project(inventory, report):
+    dimensions = {row['dimension']: row for row in report.pop('dimensions')}
+    findings = []
+    for row in report['findings']:
+        dimension = ('skills' if row['kind'] == 'skill' else
+                     {'instructions': 'instructions', 'hooks': 'enforcement'}.get(row['dimension']))
+        if dimension is None:
+            continue
+        findings.append(dict(row, dimension=dimension, status=_status(row['status'], (row['reason'],)), observed=row['reason']))
+    report['findings'] = findings
+    context = audit.skills.Context(inventory, '.') if inventory.status == 'declared' else None
+    skill_nodes = [node for node in inventory.nodes if node.kind == 'skill' and not context.supporting(node)
+                   and dict(node.facts).get(surfaces.VENDORED_FACET) is not True] if context else []
+    skill_findings = [row for row in findings if row['dimension'] == 'skills']
+    refused = bool(context and any('commands' in audit._refused(row, inventory.runtime, audit.registry())
+                                   for row in inventory.refusals if row.reason != 'vcs_metadata'))
+    skill_states = {row['status'] for row in skill_findings}
+    if 'weak' in skill_states:
+        skill_status = 'weak'
+    elif refused or 'unknown' in skill_states or not skill_nodes:
+        skill_status = 'unknown'
+    elif 'not_checked' in skill_states:
+        skill_status = 'not_checked'
+    else:
+        skill_status = 'conforms'
+    statuses = {'instructions': _status(dimensions['instructions']['status'], dimensions['instructions']['reasons']),
+                'skills': skill_status,
+                'enforcement': _status(dimensions['hooks']['status'], dimensions['hooks']['reasons'])}
+    report['coverage'] = [{'dimension': name, 'status': statuses.get(name, 'not_checked'), 'notice': audit.NOTICE}
+        for name in ('instructions', 'skills', 'sensors', 'enforcement', 'memory_and_state', 'improvement_loop')]
+    return report
 
 
 def main(argv=None):
@@ -31,14 +70,9 @@ def main(argv=None):
         destination = (state_root() / 'audits').resolve()
         if destination == project or project in destination.parents:
             raise ValueError('audit state directory must be outside the project')
-        report = audit.run(project, args.runtime).document()
-        dimensions = {row['dimension']: row for row in report['dimensions']}
-        report['coverage'] = [
-            {'dimension': name, 'status': (_coverage_status(dimensions[source]) if source else 'not_checked'),
-             'notice': audit.NOTICE}
-            for name, source in (('instructions', 'instructions'), ('skills', None), ('sensors', None),
-                ('enforcement', 'hooks'), ('memory_and_state', None), ('improvement_loop', None))
-        ]
+        profile = dict(schema_version=1, runtime=args.runtime, version=surfaces.PINS[args.runtime], task_cwd='.')
+        inventory = harness_inventory.capture(project, profile)
+        report = _project(inventory, audit.audit(inventory, task_cwd='.').document())
         candidate = next((row for row in report['findings'] if row['remediation']), None)
         if report['status'] != 'completed':
             report['next_action'] = 'Resolve the blocked inventory before using this audit.'
