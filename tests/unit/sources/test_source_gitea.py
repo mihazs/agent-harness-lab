@@ -130,6 +130,72 @@ class GiteaFixture:
 
 
 class TestGiteaSource(GiteaFixture):
+    def v4_commits(self):
+        return replace(self.selection, schema_version=4, capture=('commits', 'pulls'), issues=())
+
+    def read_commits(self):
+        selection = self.v4_commits()
+        return self.read(selection, replace(self.spec(selection), version='v4'))
+
+    def commit_target(self, page=1):
+        return self.repo_path+f'/pulls/8/commits?page={page}&limit=50&verification=false&files=false'
+
+    def test_v4_commit_membership_is_reported_not_verified(self):
+        self.routes[self.commit_target()] = lambda: Response([dict(sha='b'*40, message='SYNTHETIC_PRIVATE_BODY')],
+            headers={**self.headers, 'X-Total': '1', 'X-HasMore': 'false', 'X-Page': '1'})
+        client, snapshot = self.read_commits()
+        node, = self.nodes(client, 'gitea_pull_commit')
+        assert node['matches_head'] is True and node['commit_sha256'] == digest('b'*40)
+        assert any(r[0] == 'reported_commit_in_pull' for r in client.summary['relations'])
+        assert ('commits', 'captured', None) in self.states(client)
+        assert snapshot.checkpoint_ready and not client.summary['task_outcomes_verified']
+        assert all(r.causal_status == 'unknown' and r.independence == 'unknown' for r in snapshot.records)
+
+    def test_v4_missing_completion_evidence_blocks_checkpoint(self):
+        self.routes[self.commit_target()] = lambda: Response([], headers=self.headers)
+        client, snapshot = self.read_commits()
+        assert ('commits', 'pagination_incomplete', 'commit_total_unverified') in self.states(client)
+        assert not snapshot.checkpoint_ready
+
+    def test_v4_commit_pages_and_late_denial(self):
+        rows = [dict(sha=f'{i:040x}') for i in range(50)]
+        self.routes[self.commit_target()] = lambda: Response(rows, headers={**self.headers, 'X-Total': '51', 'X-HasMore': 'true', 'X-Page': '1'})
+        self.routes[self.commit_target(2)] = lambda: Response([dict(sha='f'*40)], headers={**self.headers, 'X-Total': '51', 'X-HasMore': 'false', 'X-Page': '2'})
+        client, snapshot = self.read_commits()
+        assert len(self.nodes(client, 'gitea_pull_commit')) == 51 and snapshot.checkpoint_ready
+        self.routes[self.commit_target(2)] = Response(b'SYNTHETIC_SECRET', 403)
+        client, snapshot = self.read_commits()
+        assert ('commits', 'pagination_incomplete', 'forbidden') in self.states(client) and not snapshot.checkpoint_ready
+
+    @pytest.mark.parametrize('case', ['missing_sha', 'invalid_sha', 'duplicate', 'invalid_more', 'wrong_page', 'contradictory_pages'])
+    def test_v4_bad_commit_rows_or_pagination_fail_closed(self, case):
+        rows, headers = [dict(sha='a'*40)], {**self.headers, 'X-Total': '1', 'X-HasMore': 'false', 'X-Page': '1'}
+        if case == 'missing_sha': rows[0].pop('sha')
+        if case == 'invalid_sha': rows[0]['sha'] = 'not-a-sha'
+        if case == 'duplicate': rows.append(dict(rows[0])); headers['X-Total'] = '2'
+        if case == 'invalid_more': headers['X-HasMore'] = 'maybe'
+        if case == 'wrong_page': headers['X-Page'] = '2'
+        if case == 'contradictory_pages': headers['X-PageCount'] = '2'
+        self.routes[self.commit_target()] = lambda: Response(rows, headers=headers)
+        with pytest.raises(TransportError): self.read_commits()
+
+    @pytest.mark.parametrize('blocked', ['repository', 'issue', 'pull', 'commits'])
+    def test_v4_commit_unavailable_is_visible(self, blocked):
+        target = {'repository': self.repo_path, 'issue': self.repo_path+'/issues/8',
+            'pull': self.repo_path+'/pulls/8', 'commits': self.commit_target()}[blocked]
+        self.routes[target] = Response(b'SYNTHETIC_SECRET', 403)
+        client, snapshot = self.read_commits()
+        assert any(c['resource'] == 'commits' and c['state'] != 'captured' for c in client.summary['coverage'])
+        assert not snapshot.checkpoint_ready
+
+    def test_v4_commit_scope_and_limit_are_bounded(self):
+        with pytest.raises(ValueError): replace(self.v4_commits(), schema_version=3)
+        with pytest.raises(ValueError): replace(self.v4_commits(), capture=('commits', 'issues'), issues=(7,), pulls=())
+        self.routes[self.commit_target()] = lambda: Response([dict(sha='a'*40), dict(sha='b'*40)],
+            headers={**self.headers, 'X-Total': '2', 'X-HasMore': 'false'})
+        with patch.object(gitea, 'MAX_PULL_COMMITS', 1):
+            with pytest.raises(TransportError): self.read_commits()
+
     def v3_inline(self):
         return replace(self.selection, schema_version=3,
             capture=('comments', 'issues', 'pulls', 'review_comments', 'reviews'))
@@ -659,6 +725,20 @@ class TestGiteaConfiguration(GiteaFixture):
                 '--project-sha256', self.source.project_sha256, '--scope-sha256', self.source.scope_sha256, *extra])
         for secret in (*SECRETS, self.base, str(self.root)): assert secret not in output.getvalue()+error.getvalue()
         return code, json.loads(output.getvalue()) if output.getvalue() else None
+
+    def test_v4_commit_cli_preview_and_import(self):
+        self.selection = replace(self.selection, schema_version=4, capture=('commits', 'pulls'), issues=())
+        self.source = replace(self.spec(self.selection, auth_mode='configured'), version='v4')
+        target = self.repo_path+'/pulls/8/commits?page=1&limit=50&verification=false&files=false'
+        self.routes[target] = lambda: Response([dict(sha='b'*40)],
+            headers={**self.headers, 'X-Total': '1', 'X-HasMore': 'false'})
+        self.write()
+        env = ('--authorization-env', 'SYNTHETIC_GITEA_AUTHORIZATION')
+        with patch.dict(os.environ, SYNTHETIC_GITEA_AUTHORIZATION='token SYNTHETIC_SECRET'):
+            code, result = self.invoke('preview', *env)
+            assert code == 0 and result['checkpoint_ready']
+            assert result['gitea_summary']['source_version'] == 'v4'
+            assert self.invoke('import', *env)[0] == 0
 
     def test_v3_inline_cli_preview_and_import_remain_blocked(self):
         self.selection = replace(self.selection, schema_version=3,
