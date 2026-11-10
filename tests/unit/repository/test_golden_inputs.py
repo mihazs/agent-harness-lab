@@ -55,6 +55,22 @@ def test_drift_plan_v1_preserves_policy_identity():
     assert drift.check_plan(sample('drift-plan-v1')) == 'e4dd0ff9aebf925aa43dcc667d24a333603925f15327430247d781335cf5c6c2'
 
 
+def test_sampling_plan_and_sealed_receipt_v1_keep_review_custody():
+    frame = sample('audit-sampling-frame-v1')
+    plan = sample('audit-sampling-plan-v1')
+    receipt = sample('audit-sampling-receipt-v1')
+    assert audit_sampling.draw(frame, plan) == receipt
+    queue = audit_sampling.review_queue(receipt)
+    assert queue['prediction_masked'] is True
+    assert queue['receipt_sha256'] == receipt['receipt_sha256']
+    assert len(queue['units']) == 1
+    assert receipt['publication_allowed'] is False
+    with pytest.raises(ValueError, match='audit sampling receipt required'):
+        audit_sampling.review_queue({**receipt, 'profile': 'unknown-v999'})
+    with pytest.raises(ValueError, match='invalid audit plan schema'):
+        audit_sampling.draw(frame, {**plan, 'profile': 'unknown-v999'})
+
+
 @pytest.mark.parametrize(('name', 'validator', 'reason'), [
     ('interaction-contract-v1', interaction_contract.validate, 'unsupported interaction contract'),
     ('resource-noninferiority-v1', resource_decision.validate, 'unsupported resource contract profile'),
