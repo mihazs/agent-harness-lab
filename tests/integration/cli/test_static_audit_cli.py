@@ -125,6 +125,38 @@ def test_unknown_hook_event_without_handlers_keeps_coverage_unknown(tmp_path, mo
     assert events == dict(declared=['SessionStart'], coverage='unknown', observed_execution='unknown')
 
 
+@pytest.mark.parametrize('path', ['.claude/skills/sample/SKILL.md', '.claude/agents/sample.md'])
+def test_embedded_hooks_leave_event_coverage_unknown(tmp_path, monkeypatch, capsys, path):
+    project = tmp_path / 'project'
+    target = project / path
+    target.parent.mkdir(parents=True)
+    target.write_text('---\nname: sample\ndescription: synthetic\nhooks:\n  PreToolUse:\n'
+                      '    - hooks:\n        - type: command\n          command: SYNTHETIC_SECRET\n---\n')
+    settings = project / '.claude/settings.json'
+    settings.write_text(json.dumps({'hooks': {'SessionStart': [{'hooks': [
+        {'type': 'command', 'command': 'never-run'}]}]}}))
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    monkeypatch.setattr(subprocess, 'Popen', lambda *a, **kw: pytest.fail('hook executed'))
+    assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report['hook_events'] == dict(declared=['SessionStart'], coverage='unknown', observed_execution='unknown')
+    assert 'SYNTHETIC_SECRET' not in json.dumps(report) and 'never-run' not in json.dumps(report)
+
+
+def test_codex_agent_hooks_leave_event_coverage_unknown(tmp_path, monkeypatch, capsys):
+    project = tmp_path / 'project'
+    agent = project / '.codex/agents/sample.toml'
+    agent.parent.mkdir(parents=True)
+    agent.write_text('name = "sample"\ndescription = "synthetic"\n'
+                     'developer_instructions = "synthetic"\n[hooks]\nPreToolUse = []\n')
+    (project / '.codex/hooks.json').write_text(json.dumps({'hooks': {'SessionStart': [
+        {'hooks': [{'type': 'command', 'command': 'never-run'}]}]}}))
+    monkeypatch.setenv('XDG_STATE_HOME', str(tmp_path / 'state'))
+    assert main(['audit', str(project), '--runtime', 'codex', '--json']) == 0
+    events = json.loads(capsys.readouterr().out)['hook_events']
+    assert events == dict(declared=['SessionStart'], coverage='unknown', observed_execution='unknown')
+
+
 def test_excluded_hook_source_keeps_known_events_but_coverage_unknown(tmp_path, monkeypatch, capsys):
     project = tmp_path / 'project'
     target = project / '.claude/settings.json'

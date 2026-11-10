@@ -224,6 +224,22 @@ def test_lock_prevents_overlapping_improvements(wf):
             with project_lock(wf.project): pass
 
 
+def test_lock_token_failure_precedes_creation_and_preserves_existing_lock(wf):
+    from agent_harness_lab.workflow import identity
+    folder=wf.root/'state'/'locks';folder.mkdir(parents=True)
+    path=folder/(identity(wf.project)+'.lock');path.write_text('synthetic existing lock')
+    with patch('agent_harness_lab.workflow.uuid.uuid4',side_effect=RuntimeError('synthetic token failure')), \
+            patch('agent_harness_lab.workflow.os.open',side_effect=AssertionError('lock descriptor opened')):
+        with pytest.raises(RuntimeError,match='synthetic token failure'):
+            with project_lock(wf.project):pytest.fail('lock must not be acquired')
+    assert path.read_text()=='synthetic existing lock'
+    path.unlink()
+    with patch('agent_harness_lab.workflow.uuid.uuid4',side_effect=RuntimeError('synthetic token failure')):
+        with pytest.raises(RuntimeError,match='synthetic token failure'):
+            with project_lock(wf.project):pytest.fail('lock must not be acquired')
+    assert list(folder.iterdir())==[]
+
+
 def test_watch_remembers_unchanged_evidence_across_restarts(wf):
     with patch('agent_harness_lab.workflow._run_improvement',return_value={'status':'no_change'}) as run, patch('builtins.print'):
         watch(wf.args()); watch(wf.args())

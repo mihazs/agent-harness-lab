@@ -77,6 +77,8 @@ frontmatter hook mappings. The reader does not validate nested handler structure
 the hook declaration remains unknown, and handler content is not retained. Unsupported
 frontmatter and other hook forms remain unknown. These fingerprints do not establish
 that a skill was loaded or a hook ran, and are not included in `hook_events`.
+Embedded skill or agent hooks that have not been fully inspected leave event
+coverage unknown, even when other declared events are reported.
 Memory contents are not read. Other prose-to-hook matching is not checked.
 Try the [offline walkthrough](audit-walkthrough.md) with a deliberately flawed
 synthetic fixture before auditing a real checkout.

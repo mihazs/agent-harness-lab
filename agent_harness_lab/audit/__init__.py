@@ -225,6 +225,16 @@ def audit(inventory, *, task_cwd=None, collision_threshold=skills.COLLISION_THRE
     if inventory.status == 'declared':
         for node in inventory.nodes:
             if dict(node.facts).get(surfaces.VENDORED_FACET) is True: vendored += 1; continue
+            facts = dict(node.facts)
+            if runtime == 'claude-code' and node.origin == 'checkout':
+                if (node.kind == 'skill' and node.path.endswith('/SKILL.md')
+                        and (node.declared_state != 'present' or node.parse_status != 'parsed'
+                             or facts.get('embedded_hooks') != 'not_declared')):
+                    hook_unknown = True
+            if node.kind == 'agent' and node.origin == 'checkout' and (node.declared_state != 'present'
+                    or node.parse_status != 'parsed' or facts.get('hooks_declared') in (True, 'unknown')
+                    or facts.get('disposition') == 'unknown'):
+                hook_unknown = True
             if context.supporting(node): continue
             for kind, status, facts in _views(node, runtime):
                 if kind not in table: continue
