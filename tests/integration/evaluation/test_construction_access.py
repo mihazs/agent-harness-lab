@@ -79,7 +79,7 @@ class ConstructionAccessHarness:
     """A controlled synthetic workflow with an explicit evaluation store, built by setUp and released by doCleanups."""
     def setUp(self):
         self.cleanups=ExitStack()
-        self.f=fixtures.ControlledWorkflowTests(); self.f.setUp(); self.cleanups.callback(self.f.doCleanups)
+        self.f=fixtures.ControlledWorkflow(self.cleanups.callback)
         self.store=self.f.root/'evaluation-store'
         self.f.args.evaluation_store=self.store
 
@@ -95,6 +95,23 @@ class ConstructionAccessHarness:
                 patch.object(f.runner,'execute',side_effect=AssertionError('no native agent')), \
                 patch.object(f.runner,'agent_command',side_effect=AssertionError('no native command')):
             yield
+
+    @contextmanager
+    def controlled_clock(self):
+        # Offset the controlled clock so an unpatched deadline check fails closed.
+        from agent_harness_lab.evaluation import (comparison_custody, construction_seals,
+            oracle_history, working_state)
+        from agent_harness_lab.promotion import prerequisites
+        class Clock:
+            def __init__(self): self.now=time.monotonic()-60
+            def monotonic(self): return self.now
+            def __getattr__(self,name): return getattr(time,name)
+        clock=Clock()
+        with ExitStack() as stack:
+            for module in (workflow,responses,working_state,oracle_history,ledger,
+                           comparison_custody,construction_seals,prerequisites,self.f.runner):
+                if hasattr(module,'time'): stack.enter_context(patch.object(module,'time',clock))
+            yield clock
 
     def authored_plan(self,result):
         output=Path(result['output']); path=output/'preparation/evaluation-0/manifest.json'
@@ -177,6 +194,14 @@ class TestConstructionAccess(ConstructionAccessHarness):
         assert observed['qualification'] == 'unverified'; assert not observed['publication_allowed']
         assert (f.project/'AGENTS.md').read_text() == 'bad'
 
+    def test_controlled_clock_is_scoped_to_workflow_modules(self):
+        before=time.monotonic()
+        with self.controlled_clock() as clock:
+            assert workflow.time.monotonic() == clock.now
+            assert time.monotonic() - clock.now >= 59
+        assert workflow.time is time
+        assert time.monotonic() >= before
+
     def test_actual_refinement_uses_same_completed_author_feedback_custody(self):
         f=self.f; f.mode='refine'
         execute=f.execute
@@ -195,7 +220,7 @@ class TestConstructionAccess(ConstructionAccessHarness):
                     assert set(pending[0]['parent_assets'])<=set(parent['children'])
             return execute(argv,workspace,inputs,role,limits,**options)
         f.backend.run.side_effect=observe
-        result=f.run_controlled()
+        with self.controlled_clock(): result=f.run_controlled()
         assert result['status'] == 'inconclusive', result
         assert len(result['construction_access']['stages']) == 4
         assert result['construction_access']['stages'][2]['scientific_parentage'] == 'controller_available_feedback'
@@ -316,7 +341,7 @@ class TestConstructionAccess(ConstructionAccessHarness):
         assert result['status'] == 'interrupted'
         state=json.loads((self.store/'protected-access.json').read_bytes())
         assert next(iter(state['constructions'].values()))['state'] == 'unresolved'
-        other=history_fixtures.OracleHistoryTests(); other.setUp(); self.cleanups.callback(other.doCleanups)
+        other=history_fixtures.OracleHistoryTests(self.cleanups.callback)
         actual=HistoryStore(self.store)
         with pytest.raises(ValueError, match='pending or unresolved'):
             actual.reserve_access(other.args.manifest,other.args.baseline,other.args.candidate)
@@ -436,7 +461,7 @@ class TestConstructionAccess(ConstructionAccessHarness):
 
     @pytest.mark.skipif(not hasattr(os,'fork'),reason='requires native process/lock custody control')
     def test_reservation_competitor_cannot_cross_the_locked_stage_admission(self):
-        other=history_fixtures.OracleHistoryTests(); other.setUp(); self.cleanups.callback(other.doCleanups)
+        other=history_fixtures.OracleHistoryTests(self.cleanups.callback)
         save=ledger._save; observed=[]
         def paused(path,state):
             if not observed and any(e['state']=='pending' for e in state.get('constructions',{}).values()):
@@ -517,12 +542,15 @@ class TestConstructionAccess(ConstructionAccessHarness):
     def test_foreign_feedback_scope_or_changed_context_cannot_supply_parentage(self):
         with pytest.raises(ValueError): access.WorkflowAccess.feedback({'profile':access.PROFILE},[])
         from agent_harness_lab.evaluation import construction
-        original=construction.propose; self.f.mode='refine'
+        original=construction.propose; self.f.mode='refine'; tampered=[]
         def changed(*args,**kwargs):
             if self.f.proposals==1:
                 (Path(args[3])/'feedback.json').write_text('{"trials":[]}')
+                tampered.append(True)
             return original(*args,**kwargs)
-        with patch.object(construction,'propose',side_effect=changed),pytest.raises(ValueError): self.f.run_controlled()
+        with self.controlled_clock(),patch.object(construction,'propose',side_effect=changed),pytest.raises(ValueError):
+            self.f.run_controlled()
+        assert tampered == [True]
         state=json.loads((self.store/'protected-access.json').read_bytes())
         assert any(e['role']=='proposer' and e['state']=='unresolved' for e in state['constructions'].values())
 

@@ -3,9 +3,22 @@
 `agent_harness_lab.audit` reports, without a model, whether the harness surfaces
 of one checkout follow the conventions the pinned runtime documents. It is the
 cold-start companion of `ahl analyze`: it needs no captured traces, no credentials
-and no runtime. A command-line entry point is planned under
-[issue #328](https://github.com/mihazs/agent-harness-lab/issues/328); this page
-documents the library contract it will print.
+and no runtime. Run `ahl audit PROJECT --runtime codex --json` for a JSON report,
+or omit `--json` for a human-readable summary. `--runtime claude-code` selects
+the other pinned profile; the default is `codex`. A private JSON copy is stored
+under `$XDG_STATE_HOME/agent-harness-lab/audits` (or the usual local state
+directory); the command refuses state storage inside the project. The report
+path is printed to stderr. Exit 0 means completed, 3 means blocked or unsupported,
+and 2 means invalid input or a storage error. `next_action` suggests a behavioral
+evaluation when applicable; it is not an instruction to apply a change.
+The CLI's `coverage` rows summarize six audit areas. Instructions, skills, and
+enforcement use the corresponding inventory evidence; sensors, memory and state,
+and the improvement loop remain `not_checked`. An absent skill is `unknown`,
+not a pass. CLI findings use `weak`, `unknown`, or `not_checked`; coverage can
+also be `conforms`. The library's separate report retains its documented
+`conformant`, `nonconformant`, and `unknown` vocabulary.
+Try the [offline walkthrough](audit-walkthrough.md) with a deliberately flawed
+synthetic fixture before auditing a real checkout.
 
 ```python
 from agent_harness_lab import audit
@@ -32,7 +45,7 @@ The report has one row per dimension, always in this order:
 | `hooks` | `hook` | unknown events, fields or handler types, a missing plugin `hooks` wrapper, skipped handlers, invalid `onFailure`; a file with no handlers is `unknown` (`no_hooks_declared`) |
 | `workflows` | `workflow` | the static workflow lint (`meta` first, no forbidden calls) |
 | `agents` | `agent` | in a project `.claude/agents` or `.codex/agents` folder: a definition the runtime skips or rejects, unknown fields, fields above the version pin; elsewhere `unknown` (`agent_layer_not_modelled`) |
-| `commands` | `command`, `skill` | ignored `name` or `paths` keys in commands; skill bundles are not checked yet |
+| `commands` | `command`, `skill` | ignored `name` or `paths` keys in commands; each `SKILL.md` against the [skill metadata and routing rules](#skill-metadata-and-routing-collisions) |
 | `plugins` | `plugin` and the plugin part of settings | settings that declare no plugin or marketplace are `unknown` (`no_plugins_declared`); a manifest without `name` and a marketplace without a `plugins` list are checked only in a plugin checkout inventory passed to `audit()` |
 | `config` | `config` and the configuration part of settings | the allowlisted reader decodes the file; values are not judged |
 
@@ -103,6 +116,53 @@ since its loaded and dropped bytes are not settled; files before it keep their
 budget findings. The budget check
 never makes a file or dimension conformant.
 
+## Skill metadata and routing collisions
+
+Each `SKILL.md` in an adoptable skill root is one `skill` surface; the other files of its bundle
+are part of that skill and add no surface of their own. The header goes through the shared
+bounded frontmatter reader (`sources.frontmatter`), never a YAML load, and `SKILL.md` is the only file read:
+no script of the bundle is imported or executed. A block the reader cannot model is `unknown`
+(`skill_frontmatter_unsupported`). One reason is reported per skill, in this order, and each cites a public page:
+
+| Reason | Rule | Source |
+| --- | --- | --- |
+| `skill_name_invalid` | a declared `name` is not lowercase letters, digits and single hyphens, or is over 64 characters | [Agent Skills](https://agentskills.io/specification) |
+| `skill_name_reserved_word` | a Claude Code name contains `anthropic` or `claude` | [skill best practices](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices) |
+| `skill_name_differs_from_directory` | a declared `name` differs from the bundle directory | Agent Skills |
+| `skill_description_missing`, `skill_description_not_text` | no description, or a bare YAML boolean or null, or a list or mapping | Agent Skills |
+| `skill_description_too_long` | over 1024 characters | Agent Skills |
+| `skill_reference_missing` | a relative Markdown link outside code fences names a file or folder the inventory did not list in the bundle; URLs, absolute, anchor-only and `..` links are not judged | Agent Skills (file references) |
+| `skill_description_lacks_trigger_phrasing` | no when/trigger wording (`when`, `whenever`, `trigger`, `invoke`, `activate`, `if the user`, `use this for`, `use to`) | the [Claude](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/best-practices) or [Codex](https://developers.openai.com/codex/skills) page for the audited runtime |
+| `skill_body_without_references` | more than 500 body lines and no `references/` folder | Agent Skills |
+| `skill_routing_collision` | see below | the runtime page above |
+
+A missing `name` is not reported, because both pinned runtimes default it to the directory. The trigger
+rule is a lexical heuristic with known false positives and negatives: `when` in a what-only sentence passes, and a trigger
+phrased without these words is reported, so it carries `evidence_kind: lexical`. Remediation labels
+name the cheapest edit; a header or link fix is `deterministic_edit` or `content_edit`.
+
+A skill with no violation is `conformant` only when the audited runtime's own root holds it: `.claude/skills/<name>` for
+Claude Code (also nested `<dir>/.claude/skills`, which load on demand) and `.agents/skills/<name>` for Codex on
+the `task_cwd` chain. A skill in another runtime's root, a project `skills/` tree no runtime discovers, a Codex
+folder off the chain, or a Codex skill whose chain is unsettled is `unknown`
+(`skill_not_loaded_by_runtime`, `skill_load_scope_unsettled`), never a pass; a violation in it is still reported.
+
+**Routing collisions.** The description is tokenized by `ahl-skill-tokens-v1`: lowercase alphanumeric
+words of three or more characters, minus a fixed stop-word list, no stemming, at most 200. Two skills collide
+when the Jaccard similarity of the token sets is at least the threshold, `0.5` by default
+(`collision_threshold` on `audit.run()` and `audit.audit()`, in `(0, 1]`), under the rule
+`ahl-skill-collision-jaccard-v1`; each side needs at least four tokens. The report records the rule, tokenizer and
+threshold (`skill_collision_rule`, `skill_tokenizer`, `skill_collision_threshold_permille`), so a result can be
+reproduced. Only skills that load together are compared: both in the audited runtime's root, in the same folder or one
+nested below a folder that encloses the other. Sibling directories such as `a/.claude/skills` and `b/.claude/skills`
+are never paired, and neither are skills whose description was not read or not text. Each skill in a colliding pair
+gets a `skill_routing_collision` finding (`behavioral_evaluation_required`) whose `related` field lists at most
+five of the other skill paths (the first in sorted order; `related_total` in `measures` is the full count) and whose
+other `measures` are the strongest pair's `shared_tokens`, `union_tokens`, `similarity_permille` and
+`threshold_permille`. A skill that already has another finding reports that reason first; the collision appears
+once it is fixed. The inventory stores only hashes of the description tokens and of the relative link targets, never the words or paths. A collision is
+a lexical overlap, not evidence that a runtime mis-routes: confirm it with a routing evaluation.
+
 ## Statuses
 
 - `nonconformant`: at least one surface has a fact the pinned public contract
@@ -114,7 +174,7 @@ never makes a file or dimension conformant.
 
 A surface is `unknown`, never `conformant`, when it was not read
 (`private_excluded`, such as `CLAUDE.local.md` or `.claude/settings.local.json`),
-not parsed (`not_parsed`, such as skill files and hook scripts), failed to parse
+not parsed (`not_parsed`, such as hook scripts), failed to parse
 (`parse_failed`), is unsupported for the runtime (`unsupported`), has no parser
 (`no_parser`), has no check yet (`not_checked`) or no capability row at the pin
 (`no_pinned_capability`). An entry the inventory refused, such as a symlink or
@@ -142,6 +202,26 @@ empty unless a check counts something, such as the
 `cost_class`: `deterministic_edit`, `content_edit` or
 `behavioral_evaluation_required`. Nonconformant findings come first, cheapest
 `cost_class` first, followed by unknown findings.
+
+## Instruction precedence
+
+The private report includes `instruction_precedence`, a deterministic list of
+declared instruction files and documented load order. Codex's same-directory
+selection and closer-directory relations are conditional on default root and
+fallback settings and the files being loaded within the budget. A relation names
+the higher and lower file, its rule and its source. The inventory cannot verify
+runtime settings, trust, external user or managed files, imports, or actual loading.
+Refused files and those unchecked layers remain `not_checked`.
+The `--task-cwd` option selects the project-relative task directory's chain;
+the default is the project root. The task directory must exist within the project
+and cannot cross a symlink.
+
+For Codex, [the documented chain](https://developers.openai.com/codex/guides/agents-md)
+checks `AGENTS.override.md` before `AGENTS.md` in each directory and gives later,
+closer files precedence when both load. For Claude Code, [the documented load
+order](https://code.claude.com/docs/en/memory) is managed, user, project, local;
+that order does not guarantee a winner for conflicting instructions. Neither
+report compares instruction content or proves that an agent obeyed a file.
 
 ## What an audit finding does and does not establish
 

@@ -1,15 +1,22 @@
 """One classifier owns the harness-surface allowlist; its callers keep their verdicts."""
+import base64
 import dataclasses
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
+import shutil
 import tempfile
-import unittest
-import unittest.mock
 from unittest.mock import patch
 
+import pytest
+
+from agent_harness_lab import surfaces
+from agent_harness_lab.evaluation import construction
 from agent_harness_lab.harness_change_plan import _operation
 from agent_harness_lab.promotion.journal import Journal
-from agent_harness_lab.workflow import candidate_states, harness_files, skill_roots
+from agent_harness_lab.surfaces import (CAPABILITIES, PINS, RETRIEVED, RUNTIMES, SURFACES, VENDORED_FACET, Capability, Rule,
+                                        adoption, classify, embeds_hooks)
+from agent_harness_lab.telemetry import claude_native
+from agent_harness_lab.workflow import candidate_states, harness_files, skill_roots, snapshot
 
 I, S, H = 'instruction', 'skill', 'hook_contract_required'
 A, P, C, R, U = 'adoptable', 'private_excluded', 'contract_required', 'recommendation_only', 'unsupported'
@@ -109,467 +116,531 @@ UNCONFIRMED = {
 SHA = 'a' * 64
 
 
-class CallerCharacterization(unittest.TestCase):
-    """Pinned against the callers before and after they delegate to surfaces.classify."""
-
-    def setUp(self):
-        temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
-        self.root = Path(temp.name)
-        # Hermetic: a git work tree enclosing the host's TMPDIR must not lend these projects its ignore rules.
-        ignored = patch('agent_harness_lab.promotion.journal.ignored', return_value=False)
-        ignored.start(); self.addCleanup(ignored.stop)
-
-    def candidate(self, name, root_skills):
-        folder = Path(tempfile.mkdtemp(dir=self.root))
-        # A changed agent role is parsed, so a TOML path holds valid synthetic TOML.
-        (folder / name).parent.mkdir(parents=True, exist_ok=True)
-        (folder / name).write_text('name = "synthetic"\n' if name.endswith('.toml') else 'synthetic')
-        original = {'skills/other/SKILL.md': None} if root_skills else {}
-        try: return list(candidate_states(folder, original)) == [name]
-        except ValueError as error:
-            self.assertIn('outside project harness scope', str(error)); return False
-
-    def owned(self, name, root_skills):
-        project = Path(tempfile.mkdtemp(dir=self.root))
-        if root_skills: (project / 'skills').mkdir()
-        journal = Journal(project, Path(tempfile.mkdtemp(dir=self.root)) / 'journal')
-        try: return journal.owned(name) == project.resolve() / name
-        except ValueError as error:
-            self.assertEqual(str(error), 'transaction outside owned harness surface'); return False
-
-    def test_candidate_and_journal_admit_exactly_the_golden_allowlist(self):
-        for name, off, on, *_ in GOLDEN:
-            for root_skills, verdict in ((False, off), (True, on)):
-                with self.subTest(name=name, root_skills=root_skills):
-                    self.assertEqual(self.candidate(name, root_skills), verdict == A)
-                    self.assertEqual(self.owned(name, root_skills), verdict == A)
-
-    def test_plan_surface_and_facets_follow_paths_and_either_mode(self):
-        for name, _, _, surface, plain, executable in GOLDEN:
-            with self.subTest(name=name):
-                created = _operation(name, None, (SHA, 0o644))
-                self.assertEqual((created.action, created.surface, created.facets), ('create', surface, plain))
-                for before, after in (((SHA, 0o644), (SHA, 0o755)), ((SHA, 0o750), None)):
-                    changed = _operation(name, before, after)
-                    self.assertEqual((changed.surface, changed.facets), (surface, executable))
-
-    def test_symlinks_are_refused_by_candidate_and_journal(self):
-        folder = self.root / 'candidate'; (folder / '.claude/skills').mkdir(parents=True)
-        target = self.root / 'outside'; (target / 'demo').mkdir(parents=True)
-        (target / 'demo/SKILL.md').write_text('synthetic')
-        os.symlink(target / 'demo', folder / '.claude/skills/demo')
-        with self.assertRaisesRegex(ValueError, 'symlink'): candidate_states(folder, {})
-        journal = Journal(folder, self.root / 'journal')
-        with self.assertRaisesRegex(ValueError, 'symlink'): journal.owned('.claude/skills/demo/SKILL.md')
-
-    def test_discovery_keeps_root_files_prefixes_and_link_refusal(self):
-        project = self.root / 'project'
-        for name in ('AGENTS.md', 'sub/CLAUDE.md', '.agents/skills/a/SKILL.md', '.claude/skills/b/SKILL.md',
-                     'skills/c/SKILL.md', 'skills/c/__pycache__/m.pyc', 'skills/c/.git/config', 'plugin/skills/d/SKILL.md',
-                     '.claude/skills/nofile/notes.md', '.claude/rules/style.md'):
-            (project / name).parent.mkdir(parents=True, exist_ok=True); (project / name).write_text('synthetic')
-        (self.root / 'linked').mkdir(); (self.root / 'linked/SKILL.md').write_text('synthetic')
-        os.symlink(self.root / 'linked', project / '.agents/skills/linked')
-        self.assertEqual([str(p.relative_to(project)) for p in skill_roots(project)],
-                         ['.agents/skills/a', '.claude/skills/b', 'skills/c'])
-        self.assertEqual([str(p.relative_to(project)) for p in harness_files(project)],
-                         ['.agents/skills/a/SKILL.md', '.claude/skills/b/SKILL.md', 'AGENTS.md',
-                          'skills/c/.git/config', 'skills/c/SKILL.md'])
+def golden_cases(*columns):
+    """One pytest.param per GOLDEN row, id'd by path; columns picks which fields each case receives."""
+    index = dict(name=0, off=1, on=2, surface=3, plain=4, executable=5)
+    return [pytest.param(*(row[index[c]] for c in columns), id=row[0]) for row in GOLDEN]
 
 
-class SurfaceClassifierTests(unittest.TestCase):
-    def test_classify_returns_todays_verdicts_for_every_golden_path(self):
-        from agent_harness_lab.surfaces import classify
-        for name, off, on, surface, plain, executable in GOLDEN:
-            for root_skills, verdict in ((False, off), (True, on)):
-                with self.subTest(name=name, root_skills=root_skills):
-                    staged = classify(name, None, 0o644, root_skills=root_skills, in_checkout=True)
-                    self.assertEqual((staged.writability, staged.kind), (verdict, surface))
-                    found = classify(name, None, 0o644, root_skills=root_skills)
-                    self.assertEqual((found.writability, found.kind), (UNCONFIRMED.get(name, verdict), surface))
-                    self.assertEqual(tuple(f for f in found.facets if f in (I, S, H)), plain)
-                    self.assertEqual(found.executable, name.endswith(('.py', '.sh', '.js', '.ts')))
-                    self.assertEqual(classify(name, None, 0o755, root_skills=root_skills).writability,
-                                     UNCONFIRMED.get(name, verdict))
-
-    def test_scope_runtime_and_input_validation(self):
-        from agent_harness_lab.surfaces import classify, RUNTIMES
-        for name, scope in (('AGENTS.md', '.'), ('.claude/skills/demo/scripts/run.py', '.claude/skills/demo'),
-                            ('sub/CLAUDE.md', 'sub'), ('.agents/skills/demo/SKILL.md', '.agents/skills/demo')):
-            self.assertEqual(classify(name, None, None).scope_dir, scope)
-        self.assertEqual(classify('skills/demo/x/SKILL.md', None, None, root_skills=True).scope_dir, 'skills/demo')
-        for runtime in RUNTIMES:
-            self.assertEqual(classify('.claude/skills/demo/SKILL.md', runtime, None).writability, A)
-        for bad in ('', '/AGENTS.md', '../AGENTS.md', None):
-            with self.assertRaises(ValueError): classify(bad, None, None)
-        with self.assertRaises(ValueError): classify('AGENTS.md', 'unknown-runtime', None)
-        with self.assertRaises(ValueError): classify('AGENTS.md', None, True)
-        self.assertTrue(classify('bin/tool', None, 0o100).executable)
-        self.assertFalse(classify('bin/tool', None, 0o644).executable)
-        for bad in ('', 7):
-            with self.assertRaises(ValueError): classify('AGENTS.md', None, None, declared_root=bad)
-
-    def test_home_memory_layouts_are_private_beneath_any_declared_root(self):
-        from agent_harness_lab.surfaces import classify
-        for path in ('memories/AGENTS.md', 'memories/hooks/pre.sh', 'projects/api/memory/CLAUDE.md'):
-            with self.subTest(path=path):
-                self.assertNotEqual(classify(path, None, None).writability, P)
-                # Labels are free-form, so the memory layout never depends on a magic root name.
-                for root in ('codex_home', 'claude_home', 'codex', 'claude', 'claude_user', 'plugins'):
-                    self.assertEqual(classify(path, None, None, declared_root=root).writability, P)
-
-    def test_root_skills_condition_is_evaluated_lazily(self):
-        from agent_harness_lab.surfaces import classify
-        calls = []
-        probe = lambda: calls.append(1) or True
-        self.assertEqual(classify('AGENTS.md', None, None, root_skills=probe).writability, A)
-        self.assertEqual(calls, [])
-        self.assertEqual(classify('skills/demo/SKILL.md', None, None, root_skills=probe).writability, A)
-        self.assertEqual(calls, [1])
-
-    def test_checkout_containment_is_probed_only_for_a_gated_row_that_names_the_path(self):
-        from agent_harness_lab.surfaces import classify
-        calls = []
-        probe = lambda: calls.append(1) or True
-        for name, verdict in (('AGENTS.md', A), ('.claude/skills/demo/SKILL.md', A), ('.claude/hooks/CLAUDE.md', C)):
-            self.assertEqual(classify(name, None, None, in_checkout=probe).writability, verdict)
-        self.assertEqual(calls, [])
-        self.assertEqual(classify('.claude/rules/x.md', None, None, in_checkout=probe).writability, A)
-        self.assertEqual(calls, [1])
-        self.assertEqual(classify('.claude/rules/x.md', None, None, in_checkout=lambda: False).writability, U)
-        self.assertEqual(classify('app/CLAUDE.md', None, None, in_checkout=True, origin='external_repository').writability, R)
-
-    def test_an_added_table_row_reaches_every_caller(self):
-        from agent_harness_lab import surfaces
-        row = surfaces.Rule('synthetic-notes', 'note', 1, A, lambda path, parts, ctx: parts[:2] == ('.claude', 'notes'),
-                            label='synthetic notes')
-        with patch.object(surfaces, 'RULES', (*surfaces.RULES, row)):
-            self.assertEqual(surfaces.classify('.claude/notes/style.md', None, None).kind, 'note')
-            self.assertTrue(CallerCharacterization.candidate(self.caller(), '.claude/notes/style.md', False))
-            self.assertTrue(CallerCharacterization.owned(self.caller(), '.claude/notes/style.md', False))
-            self.assertEqual(_operation('.claude/notes/style.md', None, (SHA, 0o644)).surface, 'note')
-            self.assertTrue(surfaces.adoptable_surfaces().endswith('; synthetic notes'))
-        self.assertFalse(CallerCharacterization.candidate(self.caller(), '.claude/notes/style.md', False))
-
-    def caller(self):
-        helper = CallerCharacterization('test_symlinks_are_refused_by_candidate_and_journal'); helper.setUp()
-        self.addCleanup(helper.doCleanups); return helper
-
-    def test_rows_reject_unknown_writability_and_runtime(self):
-        from agent_harness_lab.surfaces import Rule
-        with self.assertRaises(ValueError): Rule('x', 'skill', 1, 'writable', lambda *a: True)
-        with self.assertRaises(ValueError): Rule('x', 'skill', 1, A, lambda *a: True, runtimes=frozenset({'other'}), label='x')
-        # Every adoptable row names itself for the proposer prompts; a gated verdict must be a non-adoptable one.
-        with self.assertRaisesRegex(ValueError, 'label'): Rule('x', 'skill', 1, A, lambda *a: True)
-        with self.assertRaisesRegex(ValueError, 'unconfirmed'): Rule('x', 'skill', 1, A, lambda *a: True, label='x', unconfirmed=A)
-        with self.assertRaisesRegex(ValueError, 'unconfirmed'): Rule('x', 'skill', 1, R, lambda *a: True, unconfirmed=U)
+def golden_modes(*columns):
+    """One pytest.param per GOLDEN row and root-skills mode; columns picks the fields each case receives."""
+    return [pytest.param(*(dict(name=name, root_skills=root_skills, verdict=verdict, surface=surface, plain=plain)[c] for c in columns),
+                         id=f'{name}-{"root-skills" if root_skills else "no-root-skills"}')
+            for name, off, on, surface, plain, _ in GOLDEN for root_skills, verdict in ((False, off), (True, on))]
 
 
-class CapabilityTableTests(unittest.TestCase):
-    # Every item the 2026-11-05 surface research left unverified, keyed by matrix surface and runtime.
-    UNVERIFIED = {
-        ('instructions', 'claude-code'), ('hooks', 'codex'), ('workflows', 'claude-code'), ('agents', 'codex'),
-        ('commands_skills', 'codex'), ('plugins', 'claude-code'), ('plugins', 'codex'), ('memory', 'codex'),
-        ('settings', 'claude-code'),
-        ('path_rules', 'claude-code'),  # ancestor launch rules; glob dotfile, case, bracket and negation semantics
-        # Trial isolation requests stay unverified until a native smoke run confirms them.
-        ('mcp', 'claude-code'), ('hooks', 'claude-code'), ('settings', 'codex'),
-    }
-
-    def test_rows_are_frozen_pinned_and_cite_public_docs(self):
-        from agent_harness_lab.surfaces import CAPABILITIES, PINS, RETRIEVED, SURFACES, RUNTIMES
-        self.assertIsInstance(CAPABILITIES, tuple)
-        self.assertEqual({(r.surface, r.runtime) for r in CAPABILITIES if r.status == 'verified'},
-                         {(s, r) for s in SURFACES for r in RUNTIMES})
-        for row in CAPABILITIES:
-            self.assertEqual((row.pinned_version, row.retrieved), (PINS[row.runtime], RETRIEVED))
-            self.assertTrue(row.doc_url.startswith('https://'))
-            with self.assertRaises(dataclasses.FrozenInstanceError): row.status = 'verified'
-        self.assertEqual(len({(r.surface, r.runtime, r.item) for r in CAPABILITIES}), len(CAPABILITIES))
-
-    def test_every_researched_unverified_item_stays_unverified(self):
-        from agent_harness_lab.surfaces import CAPABILITIES
-        unverified = [r for r in CAPABILITIES if r.status == 'unverified']
-        self.assertEqual({(r.surface, r.runtime) for r in unverified}, self.UNVERIFIED)
-        self.assertEqual(len(unverified), 19)
-        items = ' '.join(r.item for r in unverified)
-        for phrase in ('size limit', 'version gates', 'static validator', 'load timing', 'custom prompts', 'description limit',
-                       'cache subpath', 'plugin agents', 'validate command', 'memories layout', 'managed settings',
-                       'claudeMdExcludes', 'dotfile', 'between the root and the cwd',
-                       '--setting-sources', '--strict-mcp-config', 'disableAllHooks', 'temporary CODEX_HOME',
-                       '--dangerously-bypass-hook-trust'):
-            self.assertIn(phrase, items)
-
-    def test_a_row_without_doc_url_pin_or_status_is_rejected(self):
-        from agent_harness_lab.surfaces import CAPABILITIES, Capability
-        row = CAPABILITIES[0]
-        for field in ('doc_url', 'pinned_version', 'status'):
-            for value in ('', None):
-                with self.subTest(field=field, value=value), self.assertRaises(ValueError):
-                    dataclasses.replace(row, **{field: value})
-        for field, value in (('status', 'probably'), ('runtime', 'other'), ('doc_url', 'http://example.invalid/'),
-                             ('pinned_version', '9.9.9'), ('surface', 'unknown'), ('version_gate', '2.1')):
-            with self.subTest(field=field), self.assertRaises(ValueError):
-                dataclasses.replace(row, **{field: value})
-        with self.assertRaises(TypeError):
-            Capability(surface='hooks', runtime='codex', item='synthetic', retrieved='2026-11-05')
+@pytest.fixture
+def project_root(tmp_path):
+    # Hermetic: a git work tree enclosing the host's TMPDIR must not lend these projects its ignore rules.
+    with patch('agent_harness_lab.promotion.journal.ignored', return_value=False):
+        yield tmp_path
 
 
-if __name__ == '__main__':
-    unittest.main()
+def candidate_admits(root, name, root_skills):
+    folder = Path(tempfile.mkdtemp(dir=root))
+    # A changed agent role is parsed, so a TOML path holds valid synthetic TOML.
+    (folder / name).parent.mkdir(parents=True, exist_ok=True)
+    (folder / name).write_text('name = "synthetic"\n' if name.endswith('.toml') else 'synthetic')
+    original = {'skills/other/SKILL.md': None} if root_skills else {}
+    try: return list(candidate_states(folder, original)) == [name]
+    except ValueError as error:
+        assert 'outside project harness scope' in str(error); return False
 
 
-class SurfaceOwnershipTests(unittest.TestCase):
-    def test_classification_does_not_depend_on_row_order(self):
-        from agent_harness_lab import surfaces
-        paths = ('CLAUDE.md', '.claude/skills/demo/SKILL.md', '.claude/skills/demo/hooks/run.sh', 'apps/x/AGENTS.md',
-                 '.claude/rules/a.md', '.git/config', 'skills/demo/SKILL.md')
-        expected = {path: surfaces.classify(path, root_skills=True) for path in paths}
-        with unittest.mock.patch.object(surfaces, 'RULES', tuple(reversed(surfaces.RULES))):
-            for path in paths:
-                with self.subTest(path=path):
-                    self.assertEqual(surfaces.classify(path, root_skills=True), expected[path])
-        # Two added rows that tie on priority must name the same kind whichever branch put its row first.
-        always = lambda path, parts, context: path == 'docs/tied.md'
-        tied = (surfaces.Rule('zeta-added', 'zeta', 40, 'recommendation_only', always),
-                surfaces.Rule('alpha-added', 'alpha', 40, 'recommendation_only', always))
-        results = []
-        for order in (tied, tuple(reversed(tied))):
-            with unittest.mock.patch.object(surfaces, 'RULES', surfaces.RULES + order):
-                results.append(surfaces.classify('docs/tied.md'))
-        self.assertEqual(results[0], results[1])
-        self.assertEqual(results[0].kind, 'alpha')
-
-    def test_construction_proposer_lists_adoptable_surfaces_from_the_classifier(self):
-        from agent_harness_lab import surfaces
-        from agent_harness_lab.evaluation import construction
-        listed = surfaces.adoptable_surfaces()
-        for label in ('root AGENTS.md or CLAUDE.md', 'a nested CLAUDE.md, including .claude/CLAUDE.md',
-                      'a nested AGENTS.md or an AGENTS.override.md', 'files in an existing skills/<name>/ bundle',
-                      '.claude/rules/**/*.md path rules', '.claude/agents/**/*.md agent definitions',
-                      '.codex/agents/**/*.toml agent roles', '.claude/commands/**/*.md commands'):
-            self.assertIn(label, listed)
-        for absent in ('settings', 'hook', 'workflow', 'mcp', '.rules', 'memory', 'local'):
-            self.assertNotIn(absent, listed)
-        seen = []
-        def capture(client, backend, workspace, inputs, role, instructions, *rest):
-            seen.append(instructions); raise RuntimeError('captured')
-        with patch.object(construction, 'run_role', capture), self.assertRaisesRegex(RuntimeError, 'captured'):
-            construction.propose(None, None, Path('/nonexistent'), Path('/nonexistent'), None, None, 0)
-        self.assertIn(f'Modify only these project-owned surfaces under candidate: {listed}.', seen[0])
-        self.assertIn('Never modify settings, permissions, hooks or credentials.', seen[0])
-
-    def test_telemetry_skill_prefixes_come_from_the_classifier(self):
-        from pathlib import PurePosixPath
-        from agent_harness_lab import surfaces
-        from agent_harness_lab.telemetry import claude_native
-        self.assertEqual(claude_native.SKILL_BUNDLE_PREFIXES,
-                         tuple(PurePosixPath(root).parts for root in surfaces.skill_prefixes()))
+def journal_owns(root, name, root_skills):
+    project = Path(tempfile.mkdtemp(dir=root))
+    if root_skills: (project / 'skills').mkdir()
+    journal = Journal(project, Path(tempfile.mkdtemp(dir=root)) / 'journal')
+    try: return journal.owned(name) == project.resolve() / name
+    except ValueError as error:
+        assert str(error) == 'transaction outside owned harness surface'; return False
 
 
-class EmbeddedHookTests(unittest.TestCase):
-    def test_agent_hook_detection_fails_closed(self):
-        from agent_harness_lab.surfaces import adoption, embeds_hooks
-        cases = (('a.md', b'---\nname: a\ndescription: d\n---\nMention hooks in the body only.\n', False),
-                 ('a.md', b'No fence, so Claude skips the file.\nhooks: x\n', False),
-                 ('a.md', b'\xef\xbb\xbf---\nhooks: {}\n---\n', True),
-                 ('a.md', b'---\nname: a\nHOOKS: {}\n', True),
-                 ('a.md', b'---\n"\\u0068ooks": {}\n---\n', True),
-                 ('a.md', b'\xff\xfe', True),
-                 ('a.toml', b'name = "a"\n[nested]\nlist = [{hooks = 1}]\n', True),
-                 ('a.toml', b'"\\u0068ooks" = 1\n', True),
-                 ('a.toml', b'name = "a"\ndeveloper_instructions = "hooks are fine in prose"\n', False),
-                 ('a.toml', b'[unterminated\n', True))
-        for name, raw, expected in cases:
-            with self.subTest(raw=raw): self.assertEqual(embeds_hooks(name, raw), expected)
-        hooked = b'---\nhooks: {}\n---\n'
-        self.assertEqual(adoption('.claude/agents/a.md', 0o644, hooked, in_checkout=True).writability, C)
-        self.assertEqual(adoption('.claude/agents/a.md', 0o644, None, in_checkout=True).writability, A)
-        # Only agent definitions are read; an instruction file may discuss hooks freely.
-        self.assertEqual(adoption('app/CLAUDE.md', 0o644, hooked, in_checkout=True).writability, A)
-        self.assertEqual(adoption('.claude/rules/x.md', 0o755, b'x', in_checkout=True).writability, C)
-
-    def test_every_claude_frontmatter_surface_refuses_hooks_permissions_and_mcp(self):
-        from agent_harness_lab.surfaces import adoption
-        hooked = b'---\ndescription: x\nhooks:\n  PreToolUse:\n    - hooks:\n        - type: command\n' \
-                 b'          command: ./synthetic.sh\n---\n'
-        for name in ('.claude/commands/deploy.md', 'pkg/.claude/skills/x/SKILL.md', '.claude/skills/x/SKILL.md',
-                     '.claude/rules/r.md', '.claude/agents/a.md'):
-            with self.subTest(name=name):
-                self.assertEqual(adoption(name, 0o644, hooked, in_checkout=True).writability, C)
-        for key in (b'permissionMode: bypassPermissions', b'mcpServers:\n  s:\n    command: /bin/sh',
-                    b'PERMISSIONMODE: bypassPermissions', b'allowed-tools: Bash(*)'):
-            with self.subTest(key=key):
-                raw = b'---\nname: a\ndescription: b\n' + key + b'\n---\nbody\n'
-                self.assertEqual(adoption('.claude/agents/a.md', 0o644, raw, in_checkout=True).writability, C)
-                self.assertEqual(adoption('.claude/commands/c.md', 0o644, raw, in_checkout=True).writability, C)
-        plain = b'---\nname: a\ndescription: b\n---\nhooks in the body only\n'
-        for name in ('.claude/commands/c.md', 'pkg/.claude/skills/x/SKILL.md', '.claude/agents/a.md',
-                     'pkg/.claude/skills/x/reference.md'):
-            with self.subTest(name=name): self.assertEqual(adoption(name, 0o644, plain, in_checkout=True).writability, A)
-        # A bundle file that is not SKILL.md is not parsed as frontmatter.
-        self.assertEqual(adoption('pkg/.claude/skills/x/reference.md', 0o644, hooked, in_checkout=True).writability, A)
+# Pinned against the callers before and after they delegate to surfaces.classify.
+@pytest.mark.parametrize('name, root_skills, verdict', golden_modes('name', 'root_skills', 'verdict'))
+def test_candidate_and_journal_admit_exactly_the_golden_allowlist(project_root, name, root_skills, verdict):
+    assert candidate_admits(project_root, name, root_skills) == (verdict == A)
+    assert journal_owns(project_root, name, root_skills) == (verdict == A)
 
 
-class ShellPreExecutionTests(unittest.TestCase):
-    """Claude runs !`cmd` and ```! blocks in command and skill bodies on invocation, so they need the hook contract."""
-    RENDERED = ('.claude/commands/deploy.md', '.claude/commands/frontend/c.md', '.claude/skills/x/SKILL.md',
-                'pkg/.claude/skills/x/SKILL.md', '.agents/skills/x/SKILL.md')
-    HEAD = b'---\ndescription: synthetic\n---\n'
-
-    def verdict(self, name, body, **context):
-        from agent_harness_lab.surfaces import adoption
-        return adoption(name, 0o644, self.HEAD + body, in_checkout=True, **context).writability
-
-    def test_documented_forms_route_commands_and_skills_to_the_hook_contract(self):
-        documented = (b'## Changes\n\n!`git diff HEAD`\n',            # a line that starts with !
-                      b'- PR diff: !`gh pr diff`\n',                    # ! after whitespace
-                      b'## Environment\n```!\nnode --version\n```\n')  # the multi-line fenced form
-        for name in self.RENDERED:
-            for body in documented:
-                with self.subTest(name=name, body=body): self.assertEqual(self.verdict(name, body), C)
-        self.assertEqual(self.verdict('skills/x/SKILL.md', documented[0], root_skills=True), C)
-
-    def test_inline_form_inside_a_fenced_code_block_is_not_excluded(self):
-        # The docs never say a plain fence suppresses the inline form, so a fenced example fails closed.
-        for fence in (b'```\n!`date`\n```\n', b'```bash\necho\n!`date`\n```\n', b'~~~\n!`date`\n~~~\n'):
-            with self.subTest(fence=fence): self.assertEqual(self.verdict('.claude/commands/c.md', fence), C)
-
-    def test_unverified_variants_fail_closed(self):
-        for body in (b'KEY=!`cmd`\n', b'!``cmd``\n', b'! `cmd`\n', b'  ```!\ncmd\n```\n', b'````!\ncmd\n````\n',
-                     b'~~~!\ncmd\n~~~\n', b'``` !\ncmd\n```\n', b'text\r\n!`cmd`\r\n', b'\xff\xfe!'):
-            with self.subTest(body=body): self.assertEqual(self.verdict('.claude/commands/c.md', body), C)
-        # Claude Code matches ```! anywhere, so a fence after other text on the line fails closed too.
-        for body in (b'> ```!\n> node -v\n> ```\n', b'>```!\nid\n```\n', b'- ```!\n  node -v\n  ```\n',
-                     b'1. ```!\n   node -v\n   ```\n', b'Env: ```!\nnode -v\n```\n', b'Use ```!date``` here.\n',
-                     b'|```!id```|\n', b'\xc2\xa0```!\nid\n```\n', b'text\r```!\rnode -v\r```\r',
-                     b'x\r```!\nid\n```\n', 'intro\u2028```!\nid\n```\n'.encode()):
-            for name in self.RENDERED:
-                with self.subTest(name=name, body=body): self.assertEqual(self.verdict(name, body), C)
-        # Even prose that quotes the marker, as in `!`, holds ! before a backtick and therefore fails closed.
-        self.assertEqual(self.verdict('.claude/commands/c.md', b'Use the `!` prefix.\n'), C)
-        # Substitution runs over the original file, so the frontmatter is scanned as well.
-        from agent_harness_lab.surfaces import adoption
-        raw = b'---\ndescription: !`date`\n---\nbody\n'
-        self.assertEqual(adoption('.claude/commands/c.md', 0o644, raw, in_checkout=True).writability, C)
-
-    def test_plain_bodies_stay_adoptable(self):
-        for body in (b'Run `git diff HEAD` and summarize it. Done!\n', b'```bash\ngit status\n```\n',
-                     b'Shout! Then `make test`.\n', b'A line\n!important\n', b'```bash\n!! echo\n```\n'):
-            for name in self.RENDERED:
-                with self.subTest(name=name, body=body): self.assertEqual(self.verdict(name, body), A)
-
-    def test_surfaces_that_do_not_render_shell_keep_their_verdicts(self):
-        body = b'!`git diff HEAD`\n'
-        for name in ('.claude/agents/a.md', '.claude/rules/r.md', 'CLAUDE.md', 'app/CLAUDE.md',
-                     '.claude/skills/x/reference.md'):
-            with self.subTest(name=name): self.assertEqual(self.verdict(name, body), A)
-        from agent_harness_lab.surfaces import adoption
-        self.assertEqual(adoption('.claude/commands/c.md', 0o644, None, in_checkout=True).writability, A)
-
-    def test_both_writers_refuse_a_pre_executing_command(self):
-        import base64
-        temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup)
-        name, raw = '.claude/commands/ship.md', self.HEAD + b'!`git push`\n'
-        folder = Path(temp.name) / 'candidate'; (folder / name).parent.mkdir(parents=True)
-        (folder / name).write_bytes(raw)
-        with self.assertRaisesRegex(ValueError, 'needs a hook contract'): candidate_states(folder, {})
-        (folder / name).write_bytes(self.HEAD + b'Run `git push` after review.\n')
-        self.assertEqual(list(candidate_states(folder, {})), [name])
-        with patch('agent_harness_lab.promotion.journal.ignored', return_value=False):
-            journal = Journal(folder, Path(temp.name) / 'journal')
-            target = {'content': base64.b64encode(raw).decode(), 'mode': 0o644}
-            with self.assertRaisesRegex(ValueError, 'outside owned harness surface'): journal.owned(name, target)
-
-    def test_the_syntax_is_pinned_to_public_docs(self):
-        from agent_harness_lab.surfaces import CAPABILITIES
-        row, = (r for r in CAPABILITIES if 'shell pre-execution' in r.item)
-        self.assertEqual((row.runtime, row.status, row.doc_url),
-                         ('claude-code', 'verified', 'https://code.claude.com/docs/en/skills'))
+@pytest.mark.parametrize('name, surface, plain, executable', golden_cases('name', 'surface', 'plain', 'executable'))
+def test_plan_surface_and_facets_follow_paths_and_either_mode(name, surface, plain, executable):
+    created = _operation(name, None, (SHA, 0o644))
+    assert (created.action, created.surface, created.facets) == ('create', surface, plain)
+    for before, after in (((SHA, 0o644), (SHA, 0o755)), ((SHA, 0o750), None)):
+        changed = _operation(name, before, after)
+        assert (changed.surface, changed.facets) == (surface, executable)
 
 
-class VendoredTreeTests(unittest.TestCase):
-    """Third-party and generated trees hold no .git of their own, yet they are never project-owned surfaces."""
-    VENDORED = ('node_modules/pkg/CLAUDE.md', 'node_modules/pkg/.claude/rules/x.md', 'node_modules/AGENTS.md',
-                '.venv/lib/python3/site-packages/pkg/AGENTS.md', '.venv/.claude/rules/x.md',
-                'vendor/lib/.claude/skills/demo/SKILL.md', 'app/node_modules/pkg/.claude/agents/r.md')
+def test_symlinks_are_refused_by_candidate_and_journal(project_root):
+    folder = project_root / 'candidate'; (folder / '.claude/skills').mkdir(parents=True)
+    target = project_root / 'outside'; (target / 'demo').mkdir(parents=True)
+    (target / 'demo/SKILL.md').write_text('synthetic')
+    os.symlink(target / 'demo', folder / '.claude/skills/demo')
+    with pytest.raises(ValueError, match='symlink'): candidate_states(folder, {})
+    journal = Journal(folder, project_root / 'journal')
+    with pytest.raises(ValueError, match='symlink'): journal.owned('.claude/skills/demo/SKILL.md')
 
-    def test_vendored_paths_keep_their_kind_but_are_never_adoptable(self):
-        from agent_harness_lab.surfaces import VENDORED_FACET, classify
-        for name in self.VENDORED:
-            with self.subTest(name=name):
-                lexical = classify(name)
-                verdict = classify(name, None, 0o644, in_checkout=True, root_skills=True)
-                self.assertEqual(verdict.writability, U)
-                self.assertNotEqual(verdict.kind, 'unsupported')  # inventories still list it as its surface
-                self.assertIn(VENDORED_FACET, verdict.facets)
-                self.assertEqual((lexical.writability, lexical.kind), (U, verdict.kind))
-                self.assertEqual(classify(name, origin='external_repository', in_checkout=True).writability, U)
-                self.assertFalse(CallerCharacterization.candidate(self.caller(), name, False))
-                self.assertFalse(CallerCharacterization.owned(self.caller(), name, False))
-        # Stricter verdicts stay: VCS metadata inside a vendored tree is still private_excluded.
-        self.assertEqual(classify('node_modules/pkg/.git/config').writability, P)
-        self.assertEqual(classify('node_modules/pkg/.claude/hooks/run.sh').writability, U)
-        # Only directories count, and only exact names: project folders and files keep their verdicts.
-        for name in ('vendor.md', 'my_node_modules/CLAUDE.md', 'src/vendored/CLAUDE.md'):
-            with self.subTest(name=name):
-                self.assertNotIn(VENDORED_FACET, classify(name, in_checkout=True).facets)
-        self.assertEqual(classify('src/vendored/CLAUDE.md', in_checkout=True).writability, A)
 
-    def test_ignore_rules_are_probed_only_for_an_otherwise_adoptable_nested_path(self):
-        from agent_harness_lab.surfaces import VENDORED_FACET, classify
-        calls = []
-        probe = lambda: calls.append(1) or True
-        for name, verdict in (('AGENTS.md', A), ('CLAUDE.md', A), ('.claude/hooks/pre.sh', C), ('lefthook.yml', R),
-                              ('CLAUDE.local.md', P), ('node_modules/pkg/CLAUDE.md', U)):
-            self.assertEqual(classify(name, None, None, in_checkout=True, ignored=probe).writability, verdict)
-        # Root harness folders stay the project's own even when ignore rules keep them local.
-        for name in ('.claude/rules/x.md', '.claude/skills/demo/SKILL.md', '.claude/CLAUDE.md', '.agents/skills/a/SKILL.md',
-                     '.codex/agents/r.toml', '.claude/commands/ship.md'):
-            with self.subTest(name=name):
-                self.assertEqual(classify(name, None, None, in_checkout=True, ignored=probe).writability, A)
-        self.assertEqual(classify('skills/demo/SKILL.md', None, None, root_skills=True, in_checkout=True,
-                                  ignored=probe).writability, A)
-        self.assertEqual(calls, [])
-        for name in ('dist/CLAUDE.md', 'generated/.claude/rules/x.md', 'app/.claude/skills/demo/SKILL.md'):
-            with self.subTest(name=name):
-                verdict = classify(name, None, None, in_checkout=True, ignored=probe)
-                self.assertEqual((verdict.writability, VENDORED_FACET in verdict.facets), (U, True))
-        self.assertEqual(len(calls), 3)
-        self.assertEqual(classify('dist/CLAUDE.md', None, None, in_checkout=True, ignored=lambda: False).writability, A)
+def test_discovery_keeps_root_files_prefixes_and_link_refusal(project_root):
+    project = project_root / 'project'
+    for name in ('AGENTS.md', 'sub/CLAUDE.md', '.agents/skills/a/SKILL.md', '.claude/skills/b/SKILL.md',
+                 'skills/c/SKILL.md', 'skills/c/__pycache__/m.pyc', 'skills/c/.git/config', 'plugin/skills/d/SKILL.md',
+                 '.claude/skills/nofile/notes.md', '.claude/rules/style.md'):
+        (project / name).parent.mkdir(parents=True, exist_ok=True); (project / name).write_text('synthetic')
+    (project_root / 'linked').mkdir(); (project_root / 'linked/SKILL.md').write_text('synthetic')
+    os.symlink(project_root / 'linked', project / '.agents/skills/linked')
+    assert [str(p.relative_to(project)) for p in skill_roots(project)] == \
+                     ['.agents/skills/a', '.claude/skills/b', 'skills/c']
+    assert [str(p.relative_to(project)) for p in harness_files(project)] == \
+                     ['.agents/skills/a/SKILL.md', '.claude/skills/b/SKILL.md', 'AGENTS.md',
+                      'skills/c/.git/config', 'skills/c/SKILL.md']
 
-    def test_a_skill_or_agent_named_like_a_vendored_tree_is_still_project_owned(self):
-        from agent_harness_lab.surfaces import VENDORED_FACET, classify
-        for name in ('.claude/skills/vendor/SKILL.md', '.claude/skills/venv/SKILL.md', '.agents/skills/vendor/SKILL.md',
-                     'skills/node_modules/SKILL.md', 'app/.claude/skills/vendor/SKILL.md', '.claude/agents/vendor/r.md'):
-            with self.subTest(name=name):
-                verdict = classify(name, None, 0o644, root_skills=True, in_checkout=True)
-                self.assertEqual((verdict.writability, VENDORED_FACET in verdict.facets), (A, False))
-        # A plugin skill so named stays a recommendation; the bundle's own installed dependencies stay vendored.
-        self.assertEqual(classify('skills/vendor/SKILL.md', origin='external_repository').writability, R)
-        for name in ('.claude/skills/vendor/node_modules/lib/README.md', '.claude/skills/tools/.venv/AGENTS.md',
-                     'vendor/skills/demo/SKILL.md', 'app/skills/x/node_modules/pkg/CLAUDE.md'):
-            with self.subTest(name=name):
-                verdict = classify(name, None, 0o644, root_skills=True, in_checkout=True)
-                self.assertEqual((verdict.writability, VENDORED_FACET in verdict.facets), (U, True))
 
-    def test_skill_bundles_named_vendor_or_holding_dependencies_stage_without_their_dependencies(self):
-        import shutil
-        from agent_harness_lab.workflow import snapshot
-        with tempfile.TemporaryDirectory() as folder:
-            root = Path(folder); project = root / 'project'
-            for name in ('AGENTS.md', '.claude/skills/vendor/SKILL.md', '.claude/skills/venv/SKILL.md',
-                         '.claude/skills/tools/SKILL.md', '.claude/skills/tools/node_modules/lib/index.js',
-                         '.claude/skills/tools/.venv/lib/site.py'):
-                (project / name).parent.mkdir(parents=True, exist_ok=True); (project / name).write_text('synthetic')
-            self.assertEqual([str(p.relative_to(project)) for p in harness_files(project)],
-                             ['.claude/skills/tools/SKILL.md', '.claude/skills/vendor/SKILL.md',
-                              '.claude/skills/venv/SKILL.md', 'AGENTS.md'])
-            original = snapshot(project, root / 'baseline')
-            shutil.copytree(root / 'baseline', root / 'candidate')
-            (root / 'candidate/.claude/skills/vendor/SKILL.md').write_text('after')
-            self.assertEqual(sorted(candidate_states(root / 'candidate', original)), sorted(original))
+@pytest.mark.parametrize('name, root_skills, verdict, surface, plain',
+                         golden_modes('name', 'root_skills', 'verdict', 'surface', 'plain'))
+def test_classify_returns_todays_verdicts_for_every_golden_path(name, root_skills, verdict, surface, plain):
+    staged = classify(name, None, 0o644, root_skills=root_skills, in_checkout=True)
+    assert (staged.writability, staged.kind) == (verdict, surface)
+    found = classify(name, None, 0o644, root_skills=root_skills)
+    assert (found.writability, found.kind) == (UNCONFIRMED.get(name, verdict), surface)
+    assert tuple(f for f in found.facets if f in (I, S, H)) == plain
+    assert found.executable == name.endswith(('.py', '.sh', '.js', '.ts'))
+    assert classify(name, None, 0o755, root_skills=root_skills).writability == \
+                     UNCONFIRMED.get(name, verdict)
 
-    def caller(self):
-        helper = CallerCharacterization('test_symlinks_are_refused_by_candidate_and_journal'); helper.setUp()
-        self.addCleanup(helper.doCleanups); return helper
+
+@pytest.mark.parametrize('name, scope', (('AGENTS.md', '.'), ('.claude/skills/demo/scripts/run.py', '.claude/skills/demo'),
+                                         ('sub/CLAUDE.md', 'sub'), ('.agents/skills/demo/SKILL.md', '.agents/skills/demo')))
+def test_scope_directory_follows_the_surface(name, scope):
+    assert classify(name, None, None).scope_dir == scope
+
+
+def test_root_skills_scope_is_the_skill_folder():
+    assert classify('skills/demo/x/SKILL.md', None, None, root_skills=True).scope_dir == 'skills/demo'
+
+
+def test_every_declared_runtime_admits_a_claude_skill():
+    for runtime in RUNTIMES:
+        assert classify('.claude/skills/demo/SKILL.md', runtime, None).writability == A
+
+
+def test_unsafe_paths_unknown_runtimes_and_boolean_modes_are_refused():
+    for bad in ('', '/AGENTS.md', '../AGENTS.md', None):
+        with pytest.raises(ValueError): classify(bad, None, None)
+    with pytest.raises(ValueError): classify('AGENTS.md', 'unknown-runtime', None)
+    with pytest.raises(ValueError): classify('AGENTS.md', None, True)
+
+
+def test_the_executable_bit_comes_from_the_mode():
+    assert classify('bin/tool', None, 0o100).executable
+    assert not classify('bin/tool', None, 0o644).executable
+
+
+def test_invalid_declared_roots_are_refused():
+    for bad in ('', 7):
+        with pytest.raises(ValueError): classify('AGENTS.md', None, None, declared_root=bad)
+
+
+@pytest.mark.parametrize('path', ('memories/AGENTS.md', 'memories/hooks/pre.sh', 'projects/api/memory/CLAUDE.md'))
+def test_home_memory_layouts_are_private_beneath_any_declared_root(path):
+    assert classify(path, None, None).writability != P
+    # Labels are free-form, so the memory layout never depends on a magic root name.
+    for root in ('codex_home', 'claude_home', 'codex', 'claude', 'claude_user', 'plugins'):
+        assert classify(path, None, None, declared_root=root).writability == P
+
+
+def test_root_skills_condition_is_evaluated_lazily():
+    calls = []
+    probe = lambda: calls.append(1) or True
+    assert classify('AGENTS.md', None, None, root_skills=probe).writability == A
+    assert calls == []
+    assert classify('skills/demo/SKILL.md', None, None, root_skills=probe).writability == A
+    assert calls == [1]
+
+
+def test_checkout_containment_is_probed_only_for_a_gated_row_that_names_the_path():
+    calls = []
+    probe = lambda: calls.append(1) or True
+    for name, verdict in (('AGENTS.md', A), ('.claude/skills/demo/SKILL.md', A), ('.claude/hooks/CLAUDE.md', C)):
+        assert classify(name, None, None, in_checkout=probe).writability == verdict
+    assert calls == []
+    assert classify('.claude/rules/x.md', None, None, in_checkout=probe).writability == A
+    assert calls == [1]
+    assert classify('.claude/rules/x.md', None, None, in_checkout=lambda: False).writability == U
+    assert classify('app/CLAUDE.md', None, None, in_checkout=True, origin='external_repository').writability == R
+
+
+def test_an_added_table_row_reaches_every_caller(project_root):
+    row = surfaces.Rule('synthetic-notes', 'note', 1, A, lambda path, parts, ctx: parts[:2] == ('.claude', 'notes'),
+                        label='synthetic notes')
+    with patch.object(surfaces, 'RULES', (*surfaces.RULES, row)):
+        assert surfaces.classify('.claude/notes/style.md', None, None).kind == 'note'
+        assert candidate_admits(project_root, '.claude/notes/style.md', False)
+        assert journal_owns(project_root, '.claude/notes/style.md', False)
+        assert _operation('.claude/notes/style.md', None, (SHA, 0o644)).surface == 'note'
+        assert surfaces.adoptable_surfaces().endswith('; synthetic notes')
+    assert not candidate_admits(project_root, '.claude/notes/style.md', False)
+
+
+def test_rows_reject_unknown_writability_and_runtime():
+    with pytest.raises(ValueError): Rule('x', 'skill', 1, 'writable', lambda *a: True)
+    with pytest.raises(ValueError): Rule('x', 'skill', 1, A, lambda *a: True, runtimes=frozenset({'other'}), label='x')
+
+
+def test_adoptable_rows_need_a_label_and_gated_verdicts_must_not_be_adoptable():
+    # Every adoptable row names itself for the proposer prompts; a gated verdict must be a non-adoptable one.
+    with pytest.raises(ValueError, match='label'): Rule('x', 'skill', 1, A, lambda *a: True)
+    with pytest.raises(ValueError, match='unconfirmed'): Rule('x', 'skill', 1, A, lambda *a: True, label='x', unconfirmed=A)
+    with pytest.raises(ValueError, match='unconfirmed'): Rule('x', 'skill', 1, R, lambda *a: True, unconfirmed=U)
+
+
+# Every item the 2026-11-05 surface research left unverified, keyed by matrix surface and runtime.
+UNVERIFIED = {
+    ('instructions', 'claude-code'), ('hooks', 'codex'), ('workflows', 'claude-code'), ('agents', 'codex'),
+    ('commands_skills', 'codex'), ('plugins', 'claude-code'), ('plugins', 'codex'), ('memory', 'codex'),
+    ('settings', 'claude-code'),
+    ('path_rules', 'claude-code'),  # ancestor launch rules; glob dotfile, case, bracket and negation semantics
+    # Trial isolation requests stay unverified until a native smoke run confirms them.
+    ('mcp', 'claude-code'), ('hooks', 'claude-code'), ('settings', 'codex'),
+}
+
+
+def test_rows_are_frozen_pinned_and_cite_public_docs():
+    assert isinstance(CAPABILITIES, tuple)
+    assert {(r.surface, r.runtime) for r in CAPABILITIES if r.status == 'verified'} == \
+                     {(s, r) for s in SURFACES for r in RUNTIMES}
+    for row in CAPABILITIES:
+        assert (row.pinned_version, row.retrieved) == (PINS[row.runtime], RETRIEVED)
+        assert row.doc_url.startswith('https://')
+        with pytest.raises(dataclasses.FrozenInstanceError): row.status = 'verified'
+    assert len({(r.surface, r.runtime, r.item) for r in CAPABILITIES}) == len(CAPABILITIES)
+
+
+def test_every_researched_unverified_item_stays_unverified():
+    unverified = [r for r in CAPABILITIES if r.status == 'unverified']
+    assert {(r.surface, r.runtime) for r in unverified} == UNVERIFIED
+    assert len(unverified) == 19
+    items = ' '.join(r.item for r in unverified)
+    for phrase in ('size limit', 'version gates', 'static validator', 'load timing', 'custom prompts', 'description limit',
+                   'cache subpath', 'plugin agents', 'validate command', 'memories layout', 'managed settings',
+                   'claudeMdExcludes', 'dotfile', 'between the root and the cwd',
+                   '--setting-sources', '--strict-mcp-config', 'disableAllHooks', 'temporary CODEX_HOME',
+                   '--dangerously-bypass-hook-trust'):
+        assert phrase in items
+
+
+@pytest.mark.parametrize('field', ('doc_url', 'pinned_version', 'status'))
+@pytest.mark.parametrize('value', ('', None))
+def test_a_row_without_doc_url_pin_or_status_is_rejected(field, value):
+    with pytest.raises(ValueError):
+        dataclasses.replace(CAPABILITIES[0], **{field: value})
+
+
+@pytest.mark.parametrize('field, value', (('status', 'probably'), ('runtime', 'other'), ('doc_url', 'http://example.invalid/'),
+                                          ('pinned_version', '9.9.9'), ('surface', 'unknown'), ('version_gate', '2.1')))
+def test_a_row_with_an_unsupported_field_value_is_rejected(field, value):
+    with pytest.raises(ValueError):
+        dataclasses.replace(CAPABILITIES[0], **{field: value})
+
+
+def test_a_row_must_state_its_doc_url_and_pin():
+    with pytest.raises(TypeError):
+        Capability(surface='hooks', runtime='codex', item='synthetic', retrieved='2026-11-05')
+
+
+ORDER_PATHS = ('CLAUDE.md', '.claude/skills/demo/SKILL.md', '.claude/skills/demo/hooks/run.sh', 'apps/x/AGENTS.md',
+               '.claude/rules/a.md', '.git/config', 'skills/demo/SKILL.md')
+
+
+@pytest.mark.parametrize('path', ORDER_PATHS)
+def test_classification_does_not_depend_on_row_order(path):
+    expected = surfaces.classify(path, root_skills=True)
+    with patch.object(surfaces, 'RULES', tuple(reversed(surfaces.RULES))):
+        assert surfaces.classify(path, root_skills=True) == expected
+
+
+def test_added_rows_that_tie_on_priority_name_the_same_kind_in_either_order():
+    # Two added rows that tie on priority must name the same kind whichever branch put its row first.
+    always = lambda path, parts, context: path == 'docs/tied.md'
+    tied = (surfaces.Rule('zeta-added', 'zeta', 40, 'recommendation_only', always),
+            surfaces.Rule('alpha-added', 'alpha', 40, 'recommendation_only', always))
+    results = []
+    for order in (tied, tuple(reversed(tied))):
+        with patch.object(surfaces, 'RULES', surfaces.RULES + order):
+            results.append(surfaces.classify('docs/tied.md'))
+    assert results[0] == results[1]
+    assert results[0].kind == 'alpha'
+
+
+def test_construction_proposer_lists_adoptable_surfaces_from_the_classifier():
+    listed = surfaces.adoptable_surfaces()
+    for label in ('root AGENTS.md or CLAUDE.md', 'a nested CLAUDE.md, including .claude/CLAUDE.md',
+                  'a nested AGENTS.md or an AGENTS.override.md', 'files in an existing skills/<name>/ bundle',
+                  '.claude/rules/**/*.md path rules', '.claude/agents/**/*.md agent definitions',
+                  '.codex/agents/**/*.toml agent roles', '.claude/commands/**/*.md commands'):
+        assert label in listed
+    for absent in ('settings', 'hook', 'workflow', 'mcp', '.rules', 'memory', 'local'):
+        assert absent not in listed
+    seen = []
+    def capture(client, backend, workspace, inputs, role, instructions, *rest):
+        seen.append(instructions); raise RuntimeError('captured')
+    with patch.object(construction, 'run_role', capture), pytest.raises(RuntimeError, match='captured'):
+        construction.propose(None, None, Path('/nonexistent'), Path('/nonexistent'), None, None, 0)
+    assert f'Modify only these project-owned surfaces under candidate: {listed}.' in seen[0]
+    assert 'Never modify settings, permissions, hooks or credentials.' in seen[0]
+
+
+def test_telemetry_skill_prefixes_come_from_the_classifier():
+    assert claude_native.SKILL_BUNDLE_PREFIXES == \
+                     tuple(PurePosixPath(root).parts for root in surfaces.skill_prefixes())
+
+
+EMBEDDED_HOOK_CASES = (
+    pytest.param('a.md', b'---\nname: a\ndescription: d\n---\nMention hooks in the body only.\n', False, id='md-body-mention'),
+    pytest.param('a.md', b'No fence, so Claude skips the file.\nhooks: x\n', False, id='md-no-fence'),
+    pytest.param('a.md', b'\xef\xbb\xbf---\nhooks: {}\n---\n', True, id='md-bom-fence'),
+    pytest.param('a.md', b'---\nname: a\nHOOKS: {}\n', True, id='md-uppercase-key'),
+    pytest.param('a.md', b'---\n"\\u0068ooks": {}\n---\n', True, id='md-escaped-key'),
+    pytest.param('a.md', b'\xff\xfe', True, id='md-undecodable'),
+    pytest.param('a.toml', b'name = "a"\n[nested]\nlist = [{hooks = 1}]\n', True, id='toml-nested-key'),
+    pytest.param('a.toml', b'"\\u0068ooks" = 1\n', True, id='toml-escaped-key'),
+    pytest.param('a.toml', b'name = "a"\ndeveloper_instructions = "hooks are fine in prose"\n', False, id='toml-prose'),
+    pytest.param('a.toml', b'[unterminated\n', True, id='toml-unparseable'))
+
+
+@pytest.mark.parametrize('name, raw, expected', EMBEDDED_HOOK_CASES)
+def test_agent_hook_detection_fails_closed(name, raw, expected):
+    assert embeds_hooks(name, raw) == expected
+
+
+def test_agent_hook_detection_sets_the_adoption_verdict():
+    hooked = b'---\nhooks: {}\n---\n'
+    assert adoption('.claude/agents/a.md', 0o644, hooked, in_checkout=True).writability == C
+    assert adoption('.claude/agents/a.md', 0o644, None, in_checkout=True).writability == A
+    # Only agent definitions are read; an instruction file may discuss hooks freely.
+    assert adoption('app/CLAUDE.md', 0o644, hooked, in_checkout=True).writability == A
+    assert adoption('.claude/rules/x.md', 0o755, b'x', in_checkout=True).writability == C
+
+
+FRONTMATTER_HOOKED = b'---\ndescription: x\nhooks:\n  PreToolUse:\n    - hooks:\n        - type: command\n' \
+                     b'          command: ./synthetic.sh\n---\n'
+
+
+@pytest.mark.parametrize('name', ('.claude/commands/deploy.md', 'pkg/.claude/skills/x/SKILL.md', '.claude/skills/x/SKILL.md',
+                                  '.claude/rules/r.md', '.claude/agents/a.md'))
+def test_every_claude_frontmatter_surface_refuses_hooks(name):
+    assert adoption(name, 0o644, FRONTMATTER_HOOKED, in_checkout=True).writability == C
+
+
+@pytest.mark.parametrize('key', (b'permissionMode: bypassPermissions', b'mcpServers:\n  s:\n    command: /bin/sh',
+                                 b'PERMISSIONMODE: bypassPermissions', b'allowed-tools: Bash(*)'),
+                         ids=('permission-mode', 'mcp-servers', 'uppercase-permission-mode', 'allowed-tools'))
+def test_every_claude_frontmatter_surface_refuses_permissions_and_mcp(key):
+    raw = b'---\nname: a\ndescription: b\n' + key + b'\n---\nbody\n'
+    assert adoption('.claude/agents/a.md', 0o644, raw, in_checkout=True).writability == C
+    assert adoption('.claude/commands/c.md', 0o644, raw, in_checkout=True).writability == C
+
+
+@pytest.mark.parametrize('name', ('.claude/commands/c.md', 'pkg/.claude/skills/x/SKILL.md', '.claude/agents/a.md',
+                                  'pkg/.claude/skills/x/reference.md'))
+def test_frontmatter_surfaces_stay_adoptable_when_hooks_appear_only_in_the_body(name):
+    plain = b'---\nname: a\ndescription: b\n---\nhooks in the body only\n'
+    assert adoption(name, 0o644, plain, in_checkout=True).writability == A
+
+
+def test_a_bundle_file_that_is_not_skill_md_is_not_parsed_as_frontmatter():
+    assert adoption('pkg/.claude/skills/x/reference.md', 0o644, FRONTMATTER_HOOKED, in_checkout=True).writability == A
+
+
+# Claude runs !`cmd` and ```! blocks in command and skill bodies on invocation, so they need the hook contract.
+RENDERED = ('.claude/commands/deploy.md', '.claude/commands/frontend/c.md', '.claude/skills/x/SKILL.md',
+            'pkg/.claude/skills/x/SKILL.md', '.agents/skills/x/SKILL.md')
+HEAD = b'---\ndescription: synthetic\n---\n'
+
+
+def shell_verdict(name, body, **context):
+    return adoption(name, 0o644, HEAD + body, in_checkout=True, **context).writability
+
+
+def rendered_with(*bodies):
+    """One pytest.param per rendered surface and body."""
+    return [pytest.param(name, body, id=f'{name}-{index}') for name in RENDERED for index, body in enumerate(bodies)]
+
+
+DOCUMENTED_FORMS = (b'## Changes\n\n!`git diff HEAD`\n',            # a line that starts with !
+                    b'- PR diff: !`gh pr diff`\n',                    # ! after whitespace
+                    b'## Environment\n```!\nnode --version\n```\n')  # the multi-line fenced form
+
+
+@pytest.mark.parametrize('name, body', rendered_with(*DOCUMENTED_FORMS))
+def test_documented_forms_route_commands_and_skills_to_the_hook_contract(name, body):
+    assert shell_verdict(name, body) == C
+
+
+def test_documented_form_in_a_root_skills_bundle_routes_to_the_hook_contract():
+    assert shell_verdict('skills/x/SKILL.md', DOCUMENTED_FORMS[0], root_skills=True) == C
+
+
+@pytest.mark.parametrize('fence', (b'```\n!`date`\n```\n', b'```bash\necho\n!`date`\n```\n', b'~~~\n!`date`\n~~~\n'),
+                         ids=('plain-fence', 'language-fence', 'tilde-fence'))
+def test_inline_form_inside_a_fenced_code_block_is_not_excluded(fence):
+    # The docs never say a plain fence suppresses the inline form, so a fenced example fails closed.
+    assert shell_verdict('.claude/commands/c.md', fence) == C
+
+
+@pytest.mark.parametrize('body', (b'KEY=!`cmd`\n', b'!``cmd``\n', b'! `cmd`\n', b'  ```!\ncmd\n```\n', b'````!\ncmd\n````\n',
+                                  b'~~~!\ncmd\n~~~\n', b'``` !\ncmd\n```\n', b'text\r\n!`cmd`\r\n', b'\xff\xfe!'),
+                         ids=('assignment', 'double-backtick', 'spaced-backtick', 'indented-fence', 'long-fence',
+                              'tilde-marker', 'spaced-fence', 'crlf', 'undecodable'))
+def test_unverified_variants_fail_closed(body):
+    assert shell_verdict('.claude/commands/c.md', body) == C
+
+
+# Claude Code matches ```! anywhere, so a fence after other text on the line fails closed too.
+FENCE_AFTER_TEXT = (b'> ```!\n> node -v\n> ```\n', b'>```!\nid\n```\n', b'- ```!\n  node -v\n  ```\n',
+                    b'1. ```!\n   node -v\n   ```\n', b'Env: ```!\nnode -v\n```\n', b'Use ```!date``` here.\n',
+                    b'|```!id```|\n', b'\xc2\xa0```!\nid\n```\n', b'text\r```!\rnode -v\r```\r',
+                    b'x\r```!\nid\n```\n', 'intro\u2028```!\nid\n```\n'.encode())
+
+
+@pytest.mark.parametrize('name, body', rendered_with(*FENCE_AFTER_TEXT))
+def test_a_fence_after_other_text_on_the_line_fails_closed(name, body):
+    assert shell_verdict(name, body) == C
+
+
+def test_prose_quoting_the_marker_fails_closed():
+    # Even prose that quotes the marker, as in `!`, holds ! before a backtick and therefore fails closed.
+    assert shell_verdict('.claude/commands/c.md', b'Use the `!` prefix.\n') == C
+    # Substitution runs over the original file, so the frontmatter is scanned as well.
+    raw = b'---\ndescription: !`date`\n---\nbody\n'
+    assert adoption('.claude/commands/c.md', 0o644, raw, in_checkout=True).writability == C
+
+
+@pytest.mark.parametrize('name, body', rendered_with(b'Run `git diff HEAD` and summarize it. Done!\n', b'```bash\ngit status\n```\n',
+                                                     b'Shout! Then `make test`.\n', b'A line\n!important\n', b'```bash\n!! echo\n```\n'))
+def test_plain_bodies_stay_adoptable(name, body):
+    assert shell_verdict(name, body) == A
+
+
+@pytest.mark.parametrize('name', ('.claude/agents/a.md', '.claude/rules/r.md', 'CLAUDE.md', 'app/CLAUDE.md',
+                                  '.claude/skills/x/reference.md'))
+def test_surfaces_that_do_not_render_shell_keep_their_verdicts(name):
+    assert shell_verdict(name, b'!`git diff HEAD`\n') == A
+
+
+def test_a_command_without_content_keeps_its_verdict():
+    assert adoption('.claude/commands/c.md', 0o644, None, in_checkout=True).writability == A
+
+
+def test_both_writers_refuse_a_pre_executing_command(tmp_path):
+    name, raw = '.claude/commands/ship.md', HEAD + b'!`git push`\n'
+    folder = tmp_path / 'candidate'; (folder / name).parent.mkdir(parents=True)
+    (folder / name).write_bytes(raw)
+    with pytest.raises(ValueError, match='needs a hook contract'): candidate_states(folder, {})
+    (folder / name).write_bytes(HEAD + b'Run `git push` after review.\n')
+    assert list(candidate_states(folder, {})) == [name]
+    with patch('agent_harness_lab.promotion.journal.ignored', return_value=False):
+        journal = Journal(folder, tmp_path / 'journal')
+        target = {'content': base64.b64encode(raw).decode(), 'mode': 0o644}
+        with pytest.raises(ValueError, match='outside owned harness surface'): journal.owned(name, target)
+
+
+def test_the_syntax_is_pinned_to_public_docs():
+    row, = (r for r in CAPABILITIES if 'shell pre-execution' in r.item)
+    assert (row.runtime, row.status, row.doc_url) == \
+                     ('claude-code', 'verified', 'https://code.claude.com/docs/en/skills')
+
+
+# Third-party and generated trees hold no .git of their own, yet they are never project-owned surfaces.
+VENDORED = ('node_modules/pkg/CLAUDE.md', 'node_modules/pkg/.claude/rules/x.md', 'node_modules/AGENTS.md',
+            '.venv/lib/python3/site-packages/pkg/AGENTS.md', '.venv/.claude/rules/x.md',
+            'vendor/lib/.claude/skills/demo/SKILL.md', 'app/node_modules/pkg/.claude/agents/r.md')
+
+
+@pytest.mark.parametrize('name', VENDORED)
+def test_vendored_paths_keep_their_kind_but_are_never_adoptable(project_root, name):
+    lexical = classify(name)
+    found = classify(name, None, 0o644, in_checkout=True, root_skills=True)
+    assert found.writability == U
+    assert found.kind != 'unsupported'  # inventories still list it as its surface
+    assert VENDORED_FACET in found.facets
+    assert (lexical.writability, lexical.kind) == (U, found.kind)
+    assert classify(name, origin='external_repository', in_checkout=True).writability == U
+    assert not candidate_admits(project_root, name, False)
+    assert not journal_owns(project_root, name, False)
+
+
+def test_vcs_metadata_and_hooks_inside_a_vendored_tree_keep_their_stricter_verdicts():
+    # Stricter verdicts stay: VCS metadata inside a vendored tree is still private_excluded.
+    assert classify('node_modules/pkg/.git/config').writability == P
+    assert classify('node_modules/pkg/.claude/hooks/run.sh').writability == U
+
+
+@pytest.mark.parametrize('name', ('vendor.md', 'my_node_modules/CLAUDE.md', 'src/vendored/CLAUDE.md'))
+def test_only_exact_vendored_directory_names_count(name):
+    # Only directories count, and only exact names: project folders and files keep their verdicts.
+    assert VENDORED_FACET not in classify(name, in_checkout=True).facets
+
+
+def test_a_project_folder_that_resembles_a_vendored_name_stays_adoptable():
+    assert classify('src/vendored/CLAUDE.md', in_checkout=True).writability == A
+
+
+@pytest.mark.parametrize('name', ('.claude/rules/x.md', '.claude/skills/demo/SKILL.md', '.claude/CLAUDE.md', '.agents/skills/a/SKILL.md',
+                                  '.codex/agents/r.toml', '.claude/commands/ship.md'))
+def test_root_harness_folders_stay_the_projects_own_even_when_ignored(name):
+    assert classify(name, None, None, in_checkout=True, ignored=lambda: True).writability == A
+
+
+def test_ignore_rules_are_probed_only_for_an_otherwise_adoptable_nested_path():
+    calls = []
+    probe = lambda: calls.append(1) or True
+    for name, expected in (('AGENTS.md', A), ('CLAUDE.md', A), ('.claude/hooks/pre.sh', C), ('lefthook.yml', R),
+                           ('CLAUDE.local.md', P), ('node_modules/pkg/CLAUDE.md', U)):
+        assert classify(name, None, None, in_checkout=True, ignored=probe).writability == expected
+    for name in ('.claude/rules/x.md', '.claude/skills/demo/SKILL.md', '.claude/CLAUDE.md', '.agents/skills/a/SKILL.md',
+                 '.codex/agents/r.toml', '.claude/commands/ship.md'):
+        assert classify(name, None, None, in_checkout=True, ignored=probe).writability == A
+    assert classify('skills/demo/SKILL.md', None, None, root_skills=True, in_checkout=True,
+                              ignored=probe).writability == A
+    assert calls == []
+    for name in ('dist/CLAUDE.md', 'generated/.claude/rules/x.md', 'app/.claude/skills/demo/SKILL.md'):
+        found = classify(name, None, None, in_checkout=True, ignored=probe)
+        assert (found.writability, VENDORED_FACET in found.facets) == (U, True)
+    assert len(calls) == 3
+    assert classify('dist/CLAUDE.md', None, None, in_checkout=True, ignored=lambda: False).writability == A
+
+
+@pytest.mark.parametrize('name', ('.claude/skills/vendor/SKILL.md', '.claude/skills/venv/SKILL.md', '.agents/skills/vendor/SKILL.md',
+                                  'skills/node_modules/SKILL.md', 'app/.claude/skills/vendor/SKILL.md', '.claude/agents/vendor/r.md'))
+def test_a_skill_or_agent_named_like_a_vendored_tree_is_still_project_owned(name):
+    found = classify(name, None, 0o644, root_skills=True, in_checkout=True)
+    assert (found.writability, VENDORED_FACET in found.facets) == (A, False)
+
+
+def test_a_plugin_skill_named_like_a_vendored_tree_stays_a_recommendation():
+    assert classify('skills/vendor/SKILL.md', origin='external_repository').writability == R
+
+
+@pytest.mark.parametrize('name', ('.claude/skills/vendor/node_modules/lib/README.md', '.claude/skills/tools/.venv/AGENTS.md',
+                                  'vendor/skills/demo/SKILL.md', 'app/skills/x/node_modules/pkg/CLAUDE.md'))
+def test_the_installed_dependencies_of_a_bundle_stay_vendored(name):
+    # A plugin skill so named stays a recommendation; the bundle's own installed dependencies stay vendored.
+    found = classify(name, None, 0o644, root_skills=True, in_checkout=True)
+    assert (found.writability, VENDORED_FACET in found.facets) == (U, True)
+
+
+def test_skill_bundles_named_vendor_or_holding_dependencies_stage_without_their_dependencies(tmp_path):
+    root = tmp_path; project = root / 'project'
+    for name in ('AGENTS.md', '.claude/skills/vendor/SKILL.md', '.claude/skills/venv/SKILL.md',
+                 '.claude/skills/tools/SKILL.md', '.claude/skills/tools/node_modules/lib/index.js',
+                 '.claude/skills/tools/.venv/lib/site.py'):
+        (project / name).parent.mkdir(parents=True, exist_ok=True); (project / name).write_text('synthetic')
+    assert [str(p.relative_to(project)) for p in harness_files(project)] == \
+                     ['.claude/skills/tools/SKILL.md', '.claude/skills/vendor/SKILL.md',
+                      '.claude/skills/venv/SKILL.md', 'AGENTS.md']
+    original = snapshot(project, root / 'baseline')
+    shutil.copytree(root / 'baseline', root / 'candidate')
+    (root / 'candidate/.claude/skills/vendor/SKILL.md').write_text('after')
+    assert sorted(candidate_states(root / 'candidate', original)) == sorted(original)

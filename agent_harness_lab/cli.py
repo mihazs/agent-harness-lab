@@ -28,6 +28,21 @@ def _progress_reporter(stream=None, clock=None):
     return emit
 
 
+def _improve_summary(result, elapsed, budget=None):
+    from .exit_guidance import guidance
+    status = result['status']
+    changes = result.get('changed_files')
+    changed = str(len(changes)) if isinstance(changes, list) else 'unknown'
+    output = result.get('output')
+    artifact = json.dumps(str(output), ensure_ascii=True) if isinstance(output, (str, Path)) else 'unavailable'
+    category, coverage, action = guidance(result)
+    spent, remaining = (f'{budget[0]:.1f}', f'{budget[1]:.1f}') if budget is not None else ('unknown', 'unknown')
+    print(f'ahl: outcome={status} changed_files={changed} artifacts={artifact} '
+          f'elapsed={elapsed:.1f}s budget_spent_seconds={spent} remaining_seconds={remaining} '
+          f'trials_spent=unknown cost=unknown category={json.dumps(category)} '
+          f'coverage={json.dumps(coverage)} next={action}', file=sys.stderr, flush=True)
+
+
 def assets():
     checkout = Path(__file__).resolve().parents[1]
     if (checkout / 'skills').is_dir():
@@ -57,6 +72,14 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if 'AHL_MANAGED_PREPARATION' in os.environ:
         argparse.ArgumentParser(prog='ahl').exit(3,'ahl: managed preparation cannot start a CLI operation\n')
+    from .read_only import require_safe_cli_destinations, FrozenProjectError
+    try:
+        require_safe_cli_destinations(argv)
+    except FrozenProjectError as exc:
+        argparse.ArgumentParser(prog='ahl').exit(2, f'ahl: {exc}\n')
+    if argv[:2] == ['skills', 'activation-receipt']:
+        from .evaluation.skills import activation_receipt_main
+        return activation_receipt_main(argv[2:])
     skill_invocation=argv[:2]==['skills','invoke']
     if skill_invocation:argv=['improve',*argv[2:]]
     if argv and argv[0] == 'analysis':
@@ -67,6 +90,9 @@ def main(argv=None):
     if argv and argv[0] == 'rollback':
         from .one_call import rollback_main
         return rollback_main(argv[1:])
+    if argv and argv[0] == 'audit':
+        from .audit.cli import main as audit_main
+        return audit_main(argv[1:])
     if argv and argv[0] == 'sources':
         from agent_harness_lab.sources.cli import main as source_main
         return source_main(argv[1:])
@@ -138,6 +164,7 @@ def main(argv=None):
         'promotion':'Preview rollback, manually roll back or recover an owned journal transaction',
         'benchmark-report':'Summarize explicit benchmark artifacts without inventing missing outcomes',
         'doctor':'Inspect local readiness; probes require opt-in and authentication stays unverified',
+        'audit':'Inspect static harness conventions without execution, network or a model',
         'init':'Preview configuration or exclusively create ahl.json with explicit --write',
         'sources':'Inspect, import and project explicitly selected private source journals',
     }
@@ -199,6 +226,7 @@ def main(argv=None):
             command.add_argument('--codex', default='codex',help='Trusted Codex executable name/path for cooperative agent execution (default: %(default)s; explicit option overrides configuration)')
             command.add_argument('--claude', default='claude',help='Trusted Claude executable name/path for cooperative agent execution (default: %(default)s; explicit option overrides configuration)')
             command.add_argument('--timeout', type=int, default=None, help='Whole improvement budget in positive seconds, including preparation and trials (default: ahl.json limit or 2700)')
+            command.add_argument('--inherit-env', action='store_true', help='Pass the host environment to native preparation and trials; exposes unrelated host secrets')
             command.add_argument('--sandbox-graders', action='store_true', help='Require offline frozen grader controls and trial grading; agent CLI remains cooperative')
             command.add_argument('--cgroup-root', type=Path, help='Explicit delegated cgroup v2 subtree for controlled roles or graders')
             command.add_argument('--image-root', type=Path, help='Explicit extracted readonly runtime image for controlled roles or graders')
@@ -215,13 +243,30 @@ def main(argv=None):
             command.add_argument('--watch-budget', type=int, help='Total execution seconds per evidence/configuration (default: timeout)')
             command.add_argument('--once', action='store_true', help='Check once then exit with its disposition; default is continued watching with unchanged-work suppression')
     args = parser.parse_args(argv)
+    options = sub.choices[args.command]._option_string_actions
+    explicit = set()
+    for token in argv:
+        if token == '--': break
+        option = token.split('=', 1)[0]
+        matches = [name for name in options if name.startswith(option)] if option.startswith('--') else []
+        if option in options: explicit.add(option)
+        elif len(matches) == 1: explicit.add(matches[0])
     args._progress = _progress_reporter()
+    started = None
+    def summarize(result):
+        now = time.monotonic()
+        budget_start = getattr(args, '_budget_started', None)
+        budget = (max(0, now-budget_start), max(0, args.timeout-(now-budget_start))) if budget_start is not None and isinstance(args.timeout, (int, float)) else None
+        _improve_summary(result, now-started, budget)
     if skill_invocation:args._invocation_origin='skill'
     from agent_harness_lab.workflow import analyze_project, improve, watch
     try:
         if not args.project.is_dir():
             raise ValueError('project must be an existing directory')
         args.project = args.project.resolve()
+        if args.command != 'analyze':
+            from .read_only import require_writable
+            require_writable(args.project)
         if args.command == 'analyze':
             if args.memory_manifest is not None:
                 if args.authorization_file is None or args.format != 'normalized' or args.source_version is not None or args.session is not None:
@@ -231,24 +276,46 @@ def main(argv=None):
             result = analyze_project(args)
         elif args.command == 'watch':
             from .one_call import resolve
-            resolve(args, {arg.split("=", 1)[0] for arg in argv})
+            args._entry_started = time.monotonic()
+            resolve(args, explicit)
             return watch(args)
         else:
             from .one_call import resolve
-            resolve(args, {arg.split("=", 1)[0] for arg in argv})
+            started = time.monotonic()
+            args._entry_started = started
+            resolve(args, explicit)
             if args.timeout <= 0:
                 raise ValueError('timeout must be positive')
             result = improve(args)
         args._progress(result['status'])
+        if args.command == 'improve':
+            summarize(result)
+        else:
+            from .exit_guidance import summary
+            print('ahl: ' + summary(result), file=sys.stderr)
         print(json.dumps(result, indent=2))
         from agent_harness_lab.monitoring.state import exit_code
         return exit_code(result['status'])
     except NotImplementedError:
+        if started is not None:
+            summarize(dict(status='blocked', output=getattr(args, '_run_output', None)))
+        else:
+            from .exit_guidance import summary
+            print('ahl: ' + summary({'status': 'blocked'}), file=sys.stderr)
         parser.exit(3, 'ahl: required filesystem capabilities unavailable; no unsafe fallback\n')
     except KeyboardInterrupt:
+        if started is not None: summarize(dict(status='interrupted', output=getattr(args, '_run_output', None)))
         args._progress('interrupted')
+        if started is None:
+            from .exit_guidance import summary
+            print('ahl: ' + summary({'status': 'interrupted'}), file=sys.stderr)
         parser.exit(1, 'ahl: interrupted\n')
     except (ValueError, OSError, TypeError, KeyError) as exc:
+        if started is not None:
+            summarize(dict(status='execution_error' if isinstance(exc, OSError) else 'invalid_input', output=getattr(args, '_run_output', None)))
+        else:
+            from .exit_guidance import summary
+            print('ahl: ' + summary({'status': 'invalid_input'}), file=sys.stderr)
         parser.exit(2, f'ahl: {exc}\n')
 
 

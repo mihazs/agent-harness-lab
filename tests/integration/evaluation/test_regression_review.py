@@ -3,7 +3,7 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
-import unittest
+from contextlib import ExitStack
 from unittest.mock import patch
 
 import pytest
@@ -12,19 +12,13 @@ from agent_harness_lab.cli import main
 from agent_harness_lab.evaluation.integrity import digest
 from agent_harness_lab.evaluation.regression_review import ReviewStore
 from tests.integration.evaluation import test_regression_replay as fixtures
-from tests.support.unittest_cleanups import run_cleanups
 
 
-class ReviewFixture(unittest.TestCase):
-    """A ReviewStore holding one reported synthetic replay case.
+class ReviewFixture:
+    """A ReviewStore holding one reported synthetic replay case."""
 
-    test_interchange, test_regression_admission and test_review_authority instantiate this class and call setUp,
-    its helpers and doCleanups, so it keeps that TestCase interface and holds no tests.
-    """
-
-    def setUp(self):
-        self.fixture = fixtures.RegressionReplayTests(); self.fixture.setUp()
-        self.addCleanup(run_cleanups, self.fixture)
+    def __init__(self, add_cleanup):
+        self.fixture = fixtures.RegressionReplay(add_cleanup)
         self.root, self.backend = self.fixture.root, self.fixture.backend
         self.store = ReviewStore(self.root/'private-store')
         self.initial = self.store.propose(self.fixture.source, self.fixture.draft, self.fixture.spec, 'synthetic-author')
@@ -59,9 +53,8 @@ class ReviewFixture(unittest.TestCase):
 
 @pytest.fixture
 def review():
-    value = ReviewFixture(); value.setUp()
-    yield value
-    run_cleanups(value)
+    with ExitStack() as cleanups:
+        yield ReviewFixture(cleanups.callback)
 
 
 def test_reported_reproduced_drafted_reviewed_chain_preserves_limits_and_original_inputs(review):

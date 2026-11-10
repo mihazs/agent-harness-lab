@@ -39,6 +39,10 @@ If `ahl` is not on PATH, use `~/.local/bin/ahl --help` or add that directory to 
 
 ## Use on your project
 
+For an offline convention check before collecting traces, run `ahl audit .`.
+It reports static observations, not harness performance; see the
+[static audit contract](docs/static-audit.md).
+
 Start with local evidence discovery; this does not call a model:
 
 ```sh
@@ -165,7 +169,7 @@ Read the [full output, controls and interpretation](docs/getting-started.md).
 | Goal | Start here |
 | --- | --- |
 | Understand the example and its limits | [First diagnosis walkthrough](docs/getting-started.md) |
-| Analyze traces or compare a candidate | [Commands and workflows](docs/workflows.md) |
+| Analyze traces or compare a candidate | [Commands and workflows](docs/workflows.md) · [Command overview](docs/command-reference.md) |
 | Understand what a result establishes | [Evaluation contracts](docs/evaluation-foundation.md) |
 | Explore task banks and experiments | [Controlled experiments](docs/controlled-experiments.md) |
 | Report a problem or ask a question | [Support](SUPPORT.md) |

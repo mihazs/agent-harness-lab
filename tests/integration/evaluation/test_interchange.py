@@ -1,5 +1,5 @@
 """Independently synthetic local data; no foreign evaluators/providers are executed."""
-from contextlib import redirect_stdout
+from contextlib import ExitStack, redirect_stdout
 from copy import deepcopy
 import hashlib
 import io
@@ -140,8 +140,8 @@ def test_both_case_profiles_require_supplied_reproduction_then_existing_review_a
     from agent_harness_lab.evaluation.regression_review import ReviewStore
     from agent_harness_lab.evaluation.bank_tools import export_manifest
     from agent_harness_lab.evaluation.task_bank import validate
-    fixture=review_fixtures.ReviewFixture(); fixture.setUp()
-    try:
+    with ExitStack() as cleanups:
+        fixture=review_fixtures.ReviewFixture(cleanups.callback)
         replay=fixture.fixture; provided=json.loads(replay.source.read_bytes())
         descriptor=json.loads(replay.draft.read_bytes()); task=descriptor['task']
         ix.value['items'][0].update(task_id=task['task_id'],root_id=task['root_id'],family=task['family'],
@@ -196,7 +196,6 @@ def test_both_case_profiles_require_supplied_reproduction_then_existing_review_a
         assert not validate(admitted)['certification_eligible']; assert not exported['independence_verified']
         assert imported.read_bytes() == raw_imported
         assert observed['historical_verification'] == 'unverified'
-    finally: fixture.doCleanups()
 
 
 @pytest.mark.parametrize('edit',[

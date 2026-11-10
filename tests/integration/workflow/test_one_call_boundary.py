@@ -5,19 +5,11 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from agent_harness_lab import config, one_call
 from agent_harness_lab.promotion.journal import Journal
-from tests.integration.workflow import test_one_call as fixtures
-from tests.support.unittest_cleanups import run_cleanups
+from tests.support.one_call import one as one
 
 
-@pytest.fixture
-def one():
-    fixture = fixtures.OneCallTests(); fixture.setUp()
-    yield fixture
-    run_cleanups(fixture)
 
 
 def test_new_recommendation_only_config_inside_commit_check_prevents_target_write(one):

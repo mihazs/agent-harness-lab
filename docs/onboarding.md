@@ -64,6 +64,12 @@ digest, no harness paths, 2700 seconds and 20 trials. Never put tokens, private
 transcript paths or executable configuration in this file. Reads are bounded and
 reject symlinks, hardlinks and non-regular files.
 
+When improvement preflight blocks, `workflow.json` includes a `preflight_plan`
+with the requested runtime, observed executable names (or null when not checked),
+configured harness scope (or null when unconfigured), limits and next step. It
+explicitly records that no candidate or evidence was prepared and grants no
+execution authority. Executable presence does not establish authentication.
+
 ## Current integration boundary
 
 `ahl evaluate --config /path/to/ahl.json` explicitly consumes configuration in
@@ -148,6 +154,13 @@ this runtime, including when `--probe-runtime` is supplied. Actual improvement
 owns the existing full-profile capability preflight and credential read, once,
 under the shared parent budget. It creates the evaluation internally; no manual
 manifest or experiment-request sequence is required.
+
+When no project configuration exists, improve resolves bounded limits in memory
+and discovers a single supported native runtime; it does not create `ahl.json`.
+`ahl init` previews an offline template intended for explicit persistence, so
+writing that template disables behavioral improvement until a cooperative
+profile and trusted runtime are configured. Doctor inspects the offline template
+when no project configuration is present and never certifies runtime authentication.
 
 Explicit invocation options override configured defaults. A native runtime
 override does not inherit Responses configuration references. Shared image,

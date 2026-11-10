@@ -2,7 +2,7 @@
 from copy import deepcopy
 import hashlib
 import json
-import unittest
+from contextlib import ExitStack
 from unittest.mock import patch
 
 import pytest
@@ -12,16 +12,13 @@ from agent_harness_lab.evaluation.integrity import digest
 from agent_harness_lab.evaluation.oracle_history import HistoryStore
 from agent_harness_lab.private_journal import record
 from tests.integration.evaluation import test_oracle_bank_authority as authority
-from tests.support.unittest_cleanups import run_cleanups
 
 
-class PreservationCohortTests(unittest.TestCase):
+class PreservationCohort:
     """Hosts the qualified cohort fixture that other modules build on; it defines no tests of its own."""
 
-    def setUp(self):
-        self.fixture = authority.OracleBankAuthorityTests()
-        self.fixture.setUp()
-        self.addCleanup(run_cleanups, self.fixture)
+    def __init__(self, add_cleanup):
+        self.fixture = authority.OracleBankAuthority(add_cleanup)
         f = self.fixture
         self.root = f.root
         self.prior_run = f.run_history()[0]
@@ -63,23 +60,15 @@ class PreservationCohortTests(unittest.TestCase):
 
 @pytest.fixture
 def cohort():
-    case = PreservationCohortTests()
-    try:
-        case.setUp()
-        yield case
-    finally:
-        run_cleanups(case)
+    with ExitStack() as cleanups:
+        yield PreservationCohort(cleanups.callback)
 
 
 @pytest.fixture(scope='module')
 def shared_cohort():
     """One qualified fixture for cases that only capture a deep-copied manifest and expect a refusal."""
-    case = PreservationCohortTests()
-    try:
-        case.setUp()
-        yield case
-    finally:
-        run_cleanups(case)
+    with ExitStack() as cleanups:
+        yield PreservationCohort(cleanups.callback)
 
 
 def test_actual_sealed_qualification_pins_and_same_store_lock_revalidation(cohort):
@@ -275,8 +264,8 @@ def test_oracle_quarantine_invalidates_qualification(cohort):
         cohorts.revalidate(binding, cohort.planned, cohort.baseline_hash)
 
 
-def test_bound_v3_unknown_behavior_cannot_qualify_typed_pass(cohort):
-    original = authority.admissions.RegressionAdmissionTests.accept
+def test_bound_v3_unknown_behavior_cannot_qualify_typed_pass():
+    original = authority.admissions.RegressionAdmission.accept
     def add_policy(admission, **changes):
         bank = record(admission.parent)[0]
         task = bank['tasks'][0]
@@ -291,12 +280,13 @@ def test_bound_v3_unknown_behavior_cannot_qualify_typed_pass(cohort):
         task['grader_digest'] = digest(folder)
         admission.parent.write_text(json.dumps(bank))
         return original(admission, **changes)
-    with patch.object(authority.admissions.RegressionAdmissionTests, 'accept', add_policy):
-        cohort.setUp()
-    inputs = record(cohort.fixture.store.case(cohort.prior_run['run_id']) / 'inputs.json')[0]
-    assert inputs['schema_version'] == 3
-    with pytest.raises(ValueError, match='behavior observations'):
-        cohort.capture()
+    with ExitStack() as cleanups:
+        with patch.object(authority.admissions.RegressionAdmission, 'accept', add_policy):
+            cohort = PreservationCohort(cleanups.callback)
+        inputs = record(cohort.fixture.store.case(cohort.prior_run['run_id']) / 'inputs.json')[0]
+        assert inputs['schema_version'] == 3
+        with pytest.raises(ValueError, match='behavior observations'):
+            cohort.capture()
 
 
 def test_ambiguous_actual_grader_stdout_cannot_be_counted(cohort):

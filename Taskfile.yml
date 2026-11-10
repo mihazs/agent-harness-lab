@@ -505,7 +505,7 @@ tasks:
       PYTHONPATH: ''
       AHL_EXPECTED_PACKAGE_ROOT: '{{default "" .EXPECTED_PACKAGE_ROOT}}'
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n 4 --dist worksteal -k ControllerSourceTests'
+      - '{{.PYTHON | shellQuote}} -m pytest -c {{.ROOT_DIR | shellQuote}}/pyproject.toml {{.ROOT_DIR | shellQuote}}/tests {{.ROOT_DIR | shellQuote}}/skills/harness-evaluation/scripts -n 4 --dist worksteal -k TestControllerSource'
   test:sources:harness-binding:
     desc: Run synthetic Git harness snapshot binding, ownership and location controls
     dir: '{{default .ROOT_DIR .LAYOUT_DIR}}'
@@ -678,7 +678,7 @@ tasks:
       AHL_TEST_GITHUB_REPO_ID: '{{.GITHUB_REPO_ID}}'
       AHL_TEST_GITHUB_COMMIT: '{{.GITHUB_COMMIT}}'
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_github_live.py::GitHubLiveTests::test_explicit_public_commit_contract -v'
+      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_github_live.py::TestGitHubLive::test_explicit_public_commit_contract -v'
   test:sources:github:recheck:live:
     desc: Run one explicit anonymous public PR import and read-only relationship recheck
     requires:
@@ -690,7 +690,7 @@ tasks:
       AHL_TEST_GITHUB_REPO_ID: '{{.GITHUB_REPO_ID}}'
       AHL_TEST_GITHUB_PULL: '{{.GITHUB_PULL}}'
     cmds:
-      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_github_live.py::GitHubLiveTests::test_explicit_cli_native_relationship_recheck -v'
+      - '{{.PYTHON | shellQuote}} -m pytest tests/unit/sources/test_source_github_live.py::TestGitHubLive::test_explicit_cli_native_relationship_recheck -v'
   test:hooks:
     desc: Run native Lefthook and staged-index integration tests
     cmds:

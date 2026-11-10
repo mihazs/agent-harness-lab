@@ -1,4 +1,5 @@
 """Controller history controls with synthetic execution, not containment proof."""
+from contextlib import ExitStack
 from dataclasses import asdict
 import json
 from unittest.mock import patch
@@ -11,19 +12,14 @@ from agent_harness_lab.evaluation.oracle_history import HistoryStore
 from tests.integration.evaluation.test_offline_evaluation import OfflineFixture
 # derivation_raw_assessment.py, run with python -m unittest, imports OracleHistoryTests from here.
 from tests.support.optional_pytest import pytest
-from tests.support.unittest_cleanups import run_cleanups
 
 
 class OracleHistoryTests(OfflineFixture):
-    """A two-task offline plan with a HistoryStore and synthetic attested workers.
-
-    Many evaluation, optimization and sandbox modules instantiate this class and call setUp, its helpers and
-    doCleanups, so it keeps that TestCase interface and holds no tests.
-    """
+    """A two-task offline plan with synthetic attested workers."""
     image_hash = 'e'*64
 
-    def setUp(self):
-        super().setUp()
+    def __init__(self, add_cleanup):
+        super().__init__(add_cleanup)
         self.store_root = self.root/'history'
         self.store = HistoryStore(self.store_root)
         self.all_tasks = [self.manifest['tasks'][0],self.manifest['tasks'][-1]]
@@ -86,9 +82,8 @@ class OracleHistoryTests(OfflineFixture):
 
 @pytest.fixture
 def history():
-    value = OracleHistoryTests(); value.setUp()
-    yield value
-    run_cleanups(value)
+    with ExitStack() as cleanups:
+        yield OracleHistoryTests(cleanups.callback)
 
 
 def assert_not_current(operation):

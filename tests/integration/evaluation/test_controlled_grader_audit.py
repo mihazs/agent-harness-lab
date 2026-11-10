@@ -16,9 +16,7 @@ class TestControlledGraderAudit:
 
     def evaluate(self, observed):
         from tests.integration.sandbox import test_sandbox_inference as fixtures
-        fixture = fixtures.ResponsesEvaluationTests()
-        fixture.setUp()
-        self.cleanups.callback(fixture.doCleanups)
+        fixture = fixtures.ResponsesEvaluation(self.cleanups.callback)
         (fixture.root/'baseline/solve.py').write_bytes((fixture.root/'candidate/solve.py').read_bytes())
         fixture.args.permission_audit = permission_audit.PROFILE
         fixture.backend.permission_audit = permission_audit.PROFILE

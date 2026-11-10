@@ -1,4 +1,5 @@
 """Public synthetic managed diagnostics; cooperative attestations are not containment proof."""
+from contextlib import ExitStack
 from contextlib import contextmanager, redirect_stdout
 from copy import deepcopy
 import io
@@ -37,12 +38,9 @@ def test_private_access_profiles_and_bindings_cannot_be_relabelled_public(values
 class TestCertificationAccess:
     @pytest.fixture(autouse=True)
     def _history(self):
-        # The oracle history fixture is a unittest.TestCase owned by test_oracle_history; it manages its own files.
-        self.f = fixtures.OracleHistoryTests()
-        try:
-            self.f.setUp(); yield
-        finally:
-            self.f.doCleanups()
+        with ExitStack() as cleanups:
+            self.f = fixtures.OracleHistoryTests(cleanups.callback)
+            yield
 
     def reserve(self):
         f = self.f

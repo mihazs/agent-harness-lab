@@ -1,4 +1,5 @@
 """Frozen oracle pins bind actual repeated executions, using synthetic offline work."""
+from contextlib import ExitStack
 from dataclasses import asdict, replace
 from unittest.mock import patch
 
@@ -9,7 +10,6 @@ from agent_harness_lab.evaluation.plan import ExperimentSpec, schedule
 from agent_harness_lab.evaluation.sandbox import SandboxBackend
 from agent_harness_lab.evaluation.statistics import TrialRecord, analyze
 from tests.integration.evaluation.test_offline_evaluation import OfflineFixture
-from tests.support.unittest_cleanups import run_cleanups
 
 
 class OraclePlanTests(OfflineFixture):
@@ -31,9 +31,8 @@ class OraclePlanTests(OfflineFixture):
 
 @pytest.fixture
 def oracle():
-    value = OraclePlanTests(); value.setUp()
-    yield value
-    run_cleanups(value)
+    with ExitStack() as cleanups:
+        yield OraclePlanTests(cleanups.callback)
 
 
 def test_stale_oracle_pin_rejects_before_probe_or_output(oracle):

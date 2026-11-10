@@ -1,0 +1,1 @@
+{"adoption_authority":false,"findings":[{"action":"create","flags":[],"kind":"agent","path":".codex/agents/synthetic.toml","reasons":["missing_required_field"],"recommendations":[],"runtime":"codex","verdict":"blocked"}],"loading_evidence":false,"profile":"ahl-definition-validation-v1","publication_allowed":false,"verdict":"blocked"}

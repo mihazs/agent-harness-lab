@@ -12,6 +12,7 @@ import shlex
 import time
 
 from . import config, surfaces
+from .exit_guidance import REMEDIATION as REMEDIATION
 
 
 def invocation_context(args,output,deadline,*,remaining_seconds=None,remaining_trials=None):
@@ -22,34 +23,39 @@ def invocation_context(args,output,deadline,*,remaining_seconds=None,remaining_t
         origin=getattr(args,'_invocation_origin','cli'),parent_run_id=Path(output).name,
         project=str(args.project),runtime=args.agent,configuration_sha256=getattr(args,'configuration_sha256',None),
         policy=application.get('policy'),review_store=application.get('review_store'),authorization_id=application.get('authorization_id'),
-        bank_case_id=application.get('bank_case_id'),deadline=deadline,trial_limit=getattr(args,'trial_limit',24),
+        bank_case_id=application.get('bank_case_id'),deadline=deadline,trial_limit=getattr(args,'trial_limit',config.DEFAULT_TRIALS),
         remaining_seconds=max(0,deadline-time.monotonic()) if remaining_seconds is None else max(0,remaining_seconds),
-        remaining_trials=getattr(args,'trial_limit',24) if remaining_trials is None else remaining_trials,
+        remaining_trials=getattr(args,'trial_limit',config.DEFAULT_TRIALS) if remaining_trials is None else remaining_trials,
         execution_authority=False,publication_allowed=False)
 
 
 def resolve(args, explicit):
     """Resolve execution intent without treating project data as authorization."""
-    path = args.project / 'ahl.json'
-    loaded = config.load(path) if os.path.lexists(path) else None
-    settings = loaded[0] if loaded else None
     requested=getattr(args,'_configuration_invocation',None)
     if requested is None:requested={name:getattr(args,name,None) for name in config.INVOCATION_OPTIONS}
     args._configuration_invocation=dict(requested);args._configuration_explicit=frozenset(explicit)
-    selected=config.execution_options(args.project,settings,requested,explicit)
-    for name,value in selected.items():setattr(args,name,value)
-    args.trial_limit = settings['limits']['trials'] if settings else 24
+    resolved=config.resolve(args.project,requested,explicit)
+    settings=resolved['settings']
+    for name,value in resolved['options'].items():setattr(args,name,value)
+    args.trial_limit = resolved['trial_limit']
     args.project_settings = settings
-    args.configuration_sha256 = loaded[1] if loaded else None
+    args.configuration_sha256 = resolved['configuration_sha256']
     args._configured_responses=bool(settings and settings['runtime']['name']=='responses' and args.agent=='responses')
     return settings
 
 
 def preflight(args):
+    args._preflight_requested_runtime = args.agent
+    args._preflight_runtimes = None
+    if args.agent == 'responses' and getattr(args, 'inherit_env', False):
+        return 'responses_inherit_env_unsupported'
     settings = getattr(args, 'project_settings', None)
     if settings:
         from .evaluation.task_bank import validate
-        reviewed = validate(config.bank_path(args.project, settings))
+        try:
+            reviewed = validate(config.bank_path(args.project, settings))
+        except (ValueError, OSError, TypeError, KeyError):
+            return 'configured_bank_invalid_or_unavailable'
         if reviewed['bank_sha256'] != settings['bank']['sha256']:
             return 'configured_bank_digest_mismatch'
         if settings['profile'] != 'cooperative':
@@ -73,16 +79,33 @@ def preflight(args):
                 return 'configured_bank_shared_trial_budget_exhausted'
     if args.agent == 'auto':
         found = [name for name in ('codex', 'claude') if shutil.which(getattr(args, name))]
+        args._preflight_runtimes = found
         if len(found) != 1:
             return 'select_one_runtime_with_agent' if found else 'agent_runtime_unavailable'
         args.agent = found[0]
-    if args.agent != 'responses' and not shutil.which(getattr(args, args.agent)):
-        return 'agent_runtime_unavailable'
-    if pinned_bank(args) is None and getattr(args, 'trial_limit', 24) < 8:
+    if args.agent != 'responses':
+        available = bool(shutil.which(getattr(args, args.agent)))
+        args._preflight_runtimes = [args.agent] if available else []
+        if not available:
+            return 'agent_runtime_unavailable'
+    if pinned_bank(args) is None and getattr(args, 'trial_limit', config.DEFAULT_TRIALS) < 8:
         return 'trial_budget_requires_two_preparation_and_six_paired_trials'
     if getattr(args,'_configured_responses',False):
         args._response_references=config.response_references(args.project,vars(args))
     return None
+
+
+# One actionable step per preflight reason; no step grants authorization or changes a setting itself.
+DEFAULT_REMEDIATION = 'Select a supported runtime/profile and budget; see ahl improve --help'
+
+
+def preflight_plan(args, reason):
+    settings = getattr(args, 'project_settings', None)
+    return dict(requested_runtime=args._preflight_requested_runtime, observed_runtimes=args._preflight_runtimes,
+        configured_scope=settings['harness_paths'] if settings else None,
+        limits=dict(seconds=args.timeout, trials=args.trial_limit),
+        next_step=REMEDIATION.get(reason, DEFAULT_REMEDIATION),
+        candidate_prepared=False, evidence_prepared=False, execution_authority=False)
 
 
 def pinned_bank(args):
@@ -90,20 +113,20 @@ def pinned_bank(args):
     return config.bank_path(args.project, settings) if settings and settings['bank']['path'] != 'starter' else None
 
 
-def unchanged(args):
+def unchanged(args, *, check_bank=True):
     path = args.project / 'ahl.json'
     expected = getattr(args, 'configuration_sha256', None)
     if not (config.load(path)[1] == expected if expected else not os.path.lexists(path)):
         return False
-    bank = pinned_bank(args)
+    bank = pinned_bank(args) if check_bank else None
     if bank is not None:
         from .evaluation.task_bank import validate
         return validate(bank)['bank_sha256'] == args.project_settings['bank']['sha256']
     return True
 
 
-def check_configuration(args):
-    if hasattr(args, 'project_settings') and not unchanged(args):
+def check_configuration(args, *, check_bank=True):
+    if hasattr(args, 'project_settings') and not unchanged(args, check_bank=check_bank):
         raise ValueError('project configuration changed during improvement')
     references=getattr(args,'_response_references',None)
     if references is not None and config.response_references(args.project,vars(args))!=references:
@@ -167,7 +190,9 @@ def contracts(args):
     from .promotion.journal import Journal, file_record
     if getattr(args, 'experiment_request', None) is not None:
         raise ValueError('contract repair and repeated experiment requests are separate modes')
-    started = time.monotonic()
+    started = getattr(args, '_construction_started', None)
+    if started is None: started = time.monotonic()
+    args._budget_started = started
     output = output_dir(args, deadline=started + args.timeout)
     baseline, candidate = output/'baseline', output/'candidate'
     original = snapshot(args.project, baseline, allowed_paths=allowed_paths(args))

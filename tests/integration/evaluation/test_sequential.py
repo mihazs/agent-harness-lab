@@ -30,7 +30,6 @@ from tests.integration.evaluation import test_offline_evaluation as offline
 from tests.integration.sandbox import test_sandbox_inference as inference
 from tests.unit.evaluation import test_preservation_analysis as preservation
 from tests.integration.evaluation import test_preservation_history as qualified
-from tests.support.unittest_cleanups import run_cleanups
 
 
 # Synthetic offline arms are real subprocesses, so their quotas are generous enough
@@ -250,7 +249,7 @@ class SequentialOnline:
     """Fresh synthetic sequential history builder; test_sequential_kernel builds it through setUp() and doCleanups()."""
     def setUp(self):
         self._cleanups=ExitStack()
-        self.f=offline.OfflineFixture();self.f.setUp();self._cleanups.callback(run_cleanups,self.f)
+        self.f=offline.OfflineFixture(self._cleanups.callback)
         all_tasks=self.f.manifest['tasks'];seen=set();tasks=[]
         for task in all_tasks:
             if task['root'] not in seen:tasks.append(task);seen.add(task['root'])
@@ -501,8 +500,8 @@ class TestSequentialOnline(SequentialOnline):
         with pytest.raises(ValueError):self.store.show(result['run_id'])
 
     def test_qualified_cohort_uses_schema5_and_live_revocation_still_blocks(self):
-        f=qualified.PreservationHistoryTests();f.setUp()
-        try:
+        with ExitStack() as cleanups:
+            f=qualified.PreservationHistory(cleanups)
             plan=replace(f.spec,sequential=core.config(2,10,1))
             f.f.manifest['experiment']=plan.to_dict();f.f.write_manifest()
             result,_=f.f.run_history();assert result['state'] == 'sealed', result
@@ -512,7 +511,6 @@ class TestSequentialOnline(SequentialOnline):
             assert 'cohort:preserved' in receipt['receipt']['analysis_disposition']['required_endpoints']
             f.f.revoke()
             with pytest.raises(ValueError):f.f.store.verify_decision(result['run_id'],receipt['receipt_sha256'])
-        finally:run_cleanups(f)
 
     def test_legacy_workflow_refuses_before_controls(self):
         from agent_harness_lab.workflow import validate_manifest
@@ -544,8 +542,8 @@ class TestSequentialOnline(SequentialOnline):
         with pytest.raises(ValueError):alias.claim(self.plan,'0'*64)
 
     def test_actual_responses_uses_fresh_calls_but_never_authenticates_model_or_assumptions(self):
-        f=inference.ResponsesEvaluationTests();f.setUp()
-        try:
+        with ExitStack() as cleanups:
+            f=inference.ResponsesEvaluation(cleanups.callback)
             selected=self.f.manifest['tasks'];f.fixture.manifest['tasks']=[deepcopy(t) for t in selected]
             # Use its own complete export paths, not another fixture's absolute oracle locators.
             for task in f.fixture.manifest['tasks']:
@@ -559,5 +557,4 @@ class TestSequentialOnline(SequentialOnline):
             result=f.fixture.results();assert (f.requests,f.commands,f.grades) == (8,4,4)
             assert result['sequential_analysis']['assumptions_status'] == 'declared_unverified'
             assert result['sequential_analysis']['future_expected_quality'] == 'unknown'
-        finally:run_cleanups(f)
 

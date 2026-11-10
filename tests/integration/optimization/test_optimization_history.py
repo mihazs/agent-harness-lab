@@ -1,4 +1,5 @@
 """Actual synthetic offline comparisons; no native identity or model claims."""
+from contextlib import ExitStack
 from copy import deepcopy
 from dataclasses import replace
 import hashlib
@@ -26,7 +27,6 @@ from tests.integration.evaluation import test_preservation_history as fixtures
 from tests.unit.evaluation import test_preservation_analysis as math_fixtures
 from tests.integration.evaluation import test_oracle_history as histories
 from tests.integration.evaluation import test_regression_admission as admissions
-from tests.support.unittest_cleanups import run_cleanups
 
 
 def candidate(name,changes):
@@ -41,9 +41,8 @@ def resources(fixture):
 
 @pytest.fixture
 def history():
-    source=fixtures.PreservationHistoryTests(); source.setUp()
-    yield source.f
-    run_cleanups(source)
+    with ExitStack() as cleanups:
+        yield fixtures.PreservationHistory(cleanups).f
 
 
 def search_context(fixture,allowed=('solve.py','nested/new.txt')):
@@ -209,16 +208,14 @@ def test_baseline_changed_during_last_numeric_verify_cannot_return_fresh(history
 
 @pytest.fixture
 def owner():
-    owner=admissions.RegressionAdmissionTests(); owner.setUp()
-    yield owner
-    run_cleanups(owner)
+    with ExitStack() as cleanups:
+        yield admissions.RegressionAdmission(cleanups.callback)
 
 
 @pytest.fixture
 def oracle_history(owner):
-    fixture=histories.OracleHistoryTests(); fixture.setUp()
-    yield fixture
-    run_cleanups(fixture)
+    with ExitStack() as cleanups:
+        yield histories.OracleHistoryTests(cleanups.callback)
 
 
 def test_actual_fresh_both_arms_can_qualify_under_explicit_synthetic_power_policy(owner, oracle_history):

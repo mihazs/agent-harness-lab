@@ -1,13 +1,13 @@
 [project]
 name = "agent-harness-lab"
-version = "0.148.0"
+version = "0.151.0"
 description = "Evidence-based agent harness diagnosis, process mining, and paired evaluation"
 requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
 test = ["pytest==9.2.0", "pytest-xdist==3.8.0"]
-lint = ["ruff==0.17.2"]
+lint = ["ruff==0.17.3"]
 okf = ["PyYAML==6.0.3"]
 ml = ["scikit-learn>=1.3", "sentence-transformers>=3", "transformers>=4.40", "torch>=2", "sentencepiece>=0.2"]
 

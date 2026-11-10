@@ -445,6 +445,47 @@ The same target runs in wheel and archive verification. See
 [controlled experiment reporting](controlled-experiments.md#controller-trajectory-reports)
 for saved-result handling and migration limits.
 
+## Interaction contracts for clarification, stopping and no-change tasks
+
+`agent_harness_lab.evaluation.interaction_contract` grades what the evaluated task
+agent did at a declared decision boundary, separately from the optimizer's
+`no_change` routing. It is opt-in: a task with no contract keeps its artifact-only
+semantics, and the module changes no existing grader. This increment is the
+contract and a pure grader over synthetic evidence; it is not yet wired into
+`run_evaluation.py`, and no runtime is claimed to produce the evidence.
+
+A contract (`profile: "interaction-contract-v1"`, `schema_version: 1`) declares the
+`task_id`, an explicit `endpoint` (`whole_task` or `interaction_boundary`, which
+freezes what the binary pass means), `required_clarifications` (a subset of
+`allowed_clarifications`), `permitted_mutations`, `protected_paths`, an optional
+`stop_reason` and a `completion` of `{"kind":"final_state","paths":{path:sha256}}`
+or `{"kind":"interaction"}`. `contract_sha256` is the identity to store with the
+task; any change invalidates earlier comparisons.
+
+`evaluate(contract, evidence)` takes runner-observed evidence: `capture` states
+whether the `transcript` and side-effect `receipts` are `complete`, `partial` or
+`missing`, and how the run `termination` ended; `events` are `clarification_request`,
+`clarification_reply`, `mutation`, `stop` and `claim` records; `state` holds initial
+and final digests. It returns three-valued `interaction_requirement_satisfied`,
+`whole_task_completed` and `state_preserved`, plus `passed` under the endpoint.
+Asking at a declared boundary can satisfy the interaction without marking the
+task complete, and ask, reply, act passes only after the final-state postconditions
+hold. Violations are named separately (`missed_necessary_clarification`,
+`unnecessary_clarification`, `acted_before_clarification`, `prohibited_mutation`,
+`protected_state_changed`, `stop_not_deliberate_or_not_authorized`,
+`abnormal_termination`).
+
+Absence is concluded only from a `complete` channel. A missing transcript, partial
+receipts, a missing final state, or a termination of `unknown` or
+`unsupported_continuation` leaves the result unknown, and a crash, timeout,
+cancellation or provider error fails the interaction whatever the contract declares
+and is never a deliberate stop. A natural-language `claim` is retained but never
+satisfies a postcondition. Clarification topics and stop reasons are identifiers
+that a trusted runner assigns to observed events; the grader does not judge free
+text, and semantic adjudication remains a separate step. Receipts never authorize
+publication or promotion. Replay fixtures, scripted user replies and evaluator
+integration remain later work under the same issue.
+
 ## Offline validation and limits
 
 The [paired adversarial development bank](adversarial-bank.md) adds frozen policies

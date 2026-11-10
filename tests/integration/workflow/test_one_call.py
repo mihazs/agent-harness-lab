@@ -1,10 +1,10 @@
 """Public CLI tests use independently synthetic projects; no model or network."""
 import contextlib
+import errno
 import io
 import json
+import os
 from pathlib import Path
-import tempfile
-import unittest
 from unittest.mock import patch
 
 import pytest
@@ -15,41 +15,7 @@ from agent_harness_lab.cli import main
 from agent_harness_lab import config
 from agent_harness_lab.promotion.journal import Journal
 from agent_harness_lab.one_call import structural_candidate
-from tests.support.unittest_cleanups import run_cleanups
-
-
-class OneCallTests(unittest.TestCase):
-    """A synthetic project with one skill whose contract repair is a byte-order-mark removal.
-
-    test_one_call_boundary and test_one_call_custody instantiate this class and call setUp, invoke and
-    doCleanups, so it keeps that TestCase interface and holds no tests.
-    """
-
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temp.cleanup)
-        self.root = Path(self.temp.name)
-        self.project = self.root/'project'; self.project.mkdir()
-        self.skill = self.project/'.agents/skills/example/SKILL.md'
-        self.skill.parent.mkdir(parents=True)
-        self.valid = b'---\nname: example\ndescription: Use for synthetic checks.\n---\nKeep the body intact.\n'
-        self.skill.write_bytes(b'\xef\xbb\xbf'+self.valid)
-        self.skill.chmod(0o640)
-        state=patch('agent_harness_lab.workflow.state_root', return_value=self.root/'state')
-        state.start(); self.addCleanup(state.stop)
-
-    def invoke(self, *args):
-        output=io.StringIO()
-        with contextlib.redirect_stdout(output):
-            code=main(['improve',str(self.project),*args])
-        return code,json.loads(output.getvalue())
-
-
-@pytest.fixture
-def one():
-    fixture = OneCallTests(); fixture.setUp()
-    yield fixture
-    run_cleanups(fixture)
+from tests.support.one_call import one as one
 
 
 def test_single_call_applies_verified_contract_and_is_idempotent(one):
@@ -76,6 +42,41 @@ def test_single_call_applies_verified_contract_and_is_idempotent(one):
     assert one.skill.read_bytes() == b'\xef\xbb\xbf'+one.valid
     one.invoke('--repair-contracts')
     assert one.invoke('--repair-contracts')[1]['status'] == 'no_change'
+
+
+@pytest.mark.parametrize('error,expected', [(errno.EROFS, 'target_filesystem_read_only'), (errno.EACCES, None)])
+def test_journal_write_error_preserves_target_and_reports_only_read_only(one, error, expected):
+    original = one.skill.read_bytes(), one.skill.stat().st_mode & 0o777
+    open_file = os.open
+    def fault(path, flags, *args, **kwargs):
+        if str(path).startswith(str(one.skill) + '.ahl-'):
+            raise OSError(error, os.strerror(error), str(path))
+        return open_file(path, flags, *args, **kwargs)
+    with patch('agent_harness_lab.promotion.journal.os.open', side_effect=fault):
+        code, result = one.invoke('--repair-contracts')
+    assert code != 0 and result['status'] == 'execution_error'
+    assert result.get('reason') == expected and result['changed_files'] == []
+    assert (one.skill.read_bytes(), one.skill.stat().st_mode & 0o777) == original
+
+
+def test_read_only_state_directory_is_not_reported_as_target(one):
+    original = one.skill.read_bytes()
+    error = OSError(errno.EROFS, 'read-only', str(one.root/'state/journal'))
+    with patch.object(Journal, 'prepare', side_effect=error):
+        code, result = one.invoke('--repair-contracts')
+    assert code != 0 and result['status'] == 'execution_error'
+    assert 'reason' not in result and result['changed_files'] == []
+    assert one.skill.read_bytes() == original
+
+
+def test_real_repair_reports_measured_budget_after_controller_started(one, capsys):
+    code, result = one.invoke('--repair-contracts', '--timeout', '60')
+    assert (code, result['status']) == (0, 'applied')
+    summary = capsys.readouterr().err
+    assert 'budget_spent_seconds=' in summary
+    assert 'budget_spent_seconds=unknown' not in summary
+    assert 'remaining_seconds=unknown' not in summary
+    assert 'trials_spent=unknown' in summary
 
 
 def test_skill_whose_description_mentions_hooks_is_still_repaired(one):
@@ -209,11 +210,69 @@ def test_ambiguous_runtime_blocks_before_inference(one):
     assert result['reason'] == 'select_one_runtime_with_agent'
 
 
+def test_noninteractive_ambiguous_runtime_does_not_prompt_or_dispatch(one):
+    before = one.skill.read_bytes()
+    with patch('agent_harness_lab.one_call.shutil.which', return_value='/synthetic/runtime'), \
+            patch('builtins.input', side_effect=AssertionError('no prompt')), \
+            patch('sys.stdin.read', side_effect=AssertionError('no input')), \
+            patch('agent_harness_lab.cli.evaluator', side_effect=AssertionError('no runtime dispatch')):
+        code, result = one.invoke('--agent', 'auto')
+    assert (code, result['status'], result['reason']) == (3, 'blocked', 'select_one_runtime_with_agent')
+    assert '--agent' in result['remediation']
+    assert one.skill.read_bytes() == before
+
+
+def test_blocked_preflight_gives_a_reason_specific_remediation(one):
+    from agent_harness_lab.one_call import REMEDIATION
+    with patch('agent_harness_lab.one_call.shutil.which', return_value='/synthetic/runtime'):
+        _, ambiguous=one.invoke()
+    config.create(one.project,config.defaults())
+    _, offline=one.invoke()
+    assert ambiguous['remediation'] == REMEDIATION['select_one_runtime_with_agent']
+    assert offline['remediation'] == REMEDIATION['configured_profile_does_not_allow_cooperative_improvement']
+    assert ambiguous['remediation'] != offline['remediation']
+    assert ambiguous['preflight_plan'] == dict(requested_runtime='auto', observed_runtimes=['codex', 'claude'],
+        configured_scope=None, limits=dict(seconds=2700, trials=config.DEFAULT_TRIALS),
+        next_step=ambiguous['remediation'], candidate_prepared=False, evidence_prepared=False, execution_authority=False)
+    plan = offline['preflight_plan']
+    assert plan['observed_runtimes'] is None
+    assert plan['configured_scope'] == []
+    assert plan['next_step'] == offline['remediation']
+    assert json.loads((Path(offline['output'])/'workflow.json').read_text())['preflight_plan'] == plan
+
+
+def test_every_preflight_reason_has_its_own_remediation():
+    import inspect, re
+    from agent_harness_lab import one_call
+    reasons=set(re.findall(r"return '([a-z_]+)'",inspect.getsource(one_call.preflight)))
+    assert reasons <= set(one_call.REMEDIATION)
+    assert len(set(one_call.REMEDIATION.values())) == len(one_call.REMEDIATION)
+    assert one_call.DEFAULT_REMEDIATION not in one_call.REMEDIATION.values()
+
+
+@pytest.mark.parametrize('reason',['configured_profile_does_not_allow_cooperative_improvement','configured_bank_requires_cooperative_runtime'])
+def test_runtime_remediation_names_runtime_and_executable(reason):
+    # profile or runtime.name alone leaves config.validate rejecting an explicit runtime without an absolute executable.
+    from agent_harness_lab.one_call import REMEDIATION
+    assert 'executable' in REMEDIATION[reason]
+    assert 'runtime' in REMEDIATION[reason]
+    assert 'absolute' in REMEDIATION[reason]
+
+
 def test_offline_configuration_blocks_before_inference(one):
     config.create(one.project,config.defaults())
     code,result=one.invoke()
     assert code == 3
     assert result['reason'] == 'configured_profile_does_not_allow_cooperative_improvement'
+
+
+def test_fresh_configuration_uses_documented_trial_default_without_writing(one):
+    from argparse import Namespace
+    from agent_harness_lab.one_call import resolve
+    args=Namespace(project=one.project,timeout=None,agent='auto',codex='codex',claude='claude')
+    resolve(args,set())
+    assert args.trial_limit == config.defaults()['limits']['trials']
+    assert not (one.project/'ahl.json').exists()
 
 
 def test_configuration_and_cli_precedence(one):
@@ -227,6 +286,27 @@ def test_configuration_and_cli_precedence(one):
     args=Namespace(project=one.project,timeout=20,agent='claude',codex='/explicit/codex',claude='claude')
     resolve(args,{'--codex','--timeout','--agent'})
     assert (args.agent,args.codex,args.timeout) == ('claude','/explicit/codex',20)
+
+
+@pytest.mark.parametrize('flag', ['--agent', '--ag'])
+def test_explicit_auto_runtime_overrides_config_with_abbreviation(one, flag):
+    settings=config.prepare(dict(profile='cooperative',runtime=dict(name='codex',executable='/synthetic/codex')))
+    config.create(one.project,settings)
+    with patch('agent_harness_lab.workflow.improve', return_value={'status': 'no_change'}) as run:
+        one.invoke(flag, 'auto')
+    assert run.call_args.args[0].agent == 'auto'
+
+
+@pytest.mark.parametrize('route, target', [(['watch'], 'watch'), (['skills', 'invoke'], 'improve')])
+def test_abbreviated_runtime_override_reaches_watch_and_skill(one, route, target):
+    settings=config.prepare(dict(profile='cooperative',runtime=dict(name='codex',executable='/synthetic/codex')))
+    config.create(one.project,settings)
+    result = 0 if target == 'watch' else {'status': 'no_change'}
+    with patch('agent_harness_lab.workflow.'+target, return_value=result) as run:
+        with contextlib.redirect_stdout(io.StringIO()):
+            main([*route, str(one.project), '--ag=auto', '--cod=/synthetic/override'])
+    args=run.call_args.args[0]
+    assert (args.agent, args.codex) == ('auto', '/synthetic/override')
 
 
 def test_selected_layout_is_actual():
@@ -316,18 +396,17 @@ def test_watch_honors_the_same_offline_preflight(one):
 
 
 @pytest.fixture
-def configured_workflow(one):
+def configured_workflow(one, request):
     """Builds cooperative WorkflowTests projects inside the one-call state patch; cleans them up first."""
     from tests.integration.workflow.test_workflow import WorkflowTests
-    made = []
+    cleanups = contextlib.ExitStack(); request.addfinalizer(cleanups.close)
     def build(trials=20):
-        fixture=WorkflowTests(); fixture.setUp(); made.append(fixture)
+        fixture=WorkflowTests(cleanups.callback)
         (fixture.project/'CLAUDE.md').write_text('SYNTHETIC_OUT_OF_SCOPE')
         config.create(fixture.project,config.prepare(dict(profile='cooperative',
             runtime=dict(name='codex',executable=str(fixture.agent)),harness_paths=['AGENTS.md'],limits=dict(trials=trials))))
         return fixture
     yield build
-    run_cleanups(*reversed(made))
 
 
 def test_configured_scope_is_frozen_before_preparation(configured_workflow):

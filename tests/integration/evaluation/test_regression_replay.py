@@ -6,7 +6,7 @@ import shutil
 import subprocess
 import tempfile
 from types import SimpleNamespace
-import unittest
+from contextlib import ExitStack
 from unittest.mock import Mock, patch
 
 import pytest
@@ -17,7 +17,6 @@ from agent_harness_lab.evaluation import regression_replay as replay_module
 from agent_harness_lab.evaluation.regression_replay import outcome_rows, replay
 from agent_harness_lab.evaluation.regression_controls import read_draft
 from tests.integration.evaluation.test_regression_controls import make_draft
-from tests.support.unittest_cleanups import run_cleanups
 
 SOLVER = '''import json,pathlib
 w=pathlib.Path.cwd(); view=pathlib.Path(__file__).parent.parent
@@ -56,15 +55,11 @@ def make_replay(root, image_sha256='e'*64, solver=SOLVER):
     return source, draft, spec
 
 
-class RegressionReplayTests(unittest.TestCase):
-    """A synthetic replay proposal, draft and spec with a cooperative emulated backend.
+class RegressionReplay:
+    """A synthetic replay proposal, draft and spec with a cooperative emulated backend."""
 
-    test_regression_review's ReviewFixture instantiates this class and calls setUp and doCleanups, so it keeps
-    that TestCase interface and holds no tests.
-    """
-
-    def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+    def __init__(self, add_cleanup):
+        self.temp = tempfile.TemporaryDirectory(); add_cleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.source, self.draft, self.spec = make_replay(self.root)
         self.output = self.root/'output'
@@ -105,9 +100,8 @@ class RegressionReplayTests(unittest.TestCase):
 
 @pytest.fixture
 def replay_case():
-    value = RegressionReplayTests(); value.setUp()
-    yield value
-    run_cleanups(value)
+    with ExitStack() as cleanups:
+        yield RegressionReplay(cleanups.callback)
 
 
 def test_recorded_and_minimized_aa_ab_observe_repair_without_admitting_or_authenticating_history(replay_case):
@@ -302,13 +296,11 @@ def test_control_outside_oracle_is_frozen_through_replay(replay_case):
 @pytest.fixture(scope='module')
 def completed_rows():
     """The aa results.json text and task of one completed replay, shared by the malformed-row cases."""
-    case = RegressionReplayTests(); case.setUp()
-    try:
+    with ExitStack() as cleanups:
+        case = RegressionReplay(cleanups.callback)
         assert case.run_replay()['status'] == 'replay_completed'
         _, task, _ = read_draft(case.draft)
         yield (case.output/'aa/results.json').read_text(), task
-    finally:
-        run_cleanups(case)
 
 
 def edited(change):
