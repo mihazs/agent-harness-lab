@@ -131,3 +131,33 @@ def test_unsupported_matcher_group_field_is_unknown(tmp_path, monkeypatch, capsy
     assert main(['audit', str(project), '--runtime', 'claude-code', '--json']) == 0
     row = json.loads(capsys.readouterr().out)['constraint_references']['files'][0]['constraints'][0]
     assert row['hook_match'] == row['enforcement'] == 'unknown'
+
+
+@pytest.mark.parametrize(('runtime','instruction','settings_path','matcher','expected'), [
+    ('claude-code','CLAUDE.md','.claude/settings.json','Edit','hook_candidate_present'),
+    ('claude-code','CLAUDE.md','.claude/settings.json','Bash','unknown'),
+    ('codex','AGENTS.md','.codex/hooks.json','apply_patch','hook_candidate_present'),
+    ('codex','AGENTS.md','.codex/hooks.json','shell','unknown'),
+])
+def test_weaken_config_constraint_only_identifies_tool_hook_candidate(
+        tmp_path, monkeypatch, capsys, runtime, instruction, settings_path, matcher, expected):
+    project=tmp_path/'project';settings=project/settings_path;settings.parent.mkdir(parents=True)
+    settings.write_text(json.dumps({'hooks': {'PreToolUse': [
+        {'matcher': matcher, 'hooks': [{'type': 'command', 'command': 'SYNTHETIC_HOOK_SECRET'}]}]}}))
+    (project/instruction).write_text('Do not weaken eslint.config.js.\nNever read eslint.config.js.\n')
+    (project/'eslint.config.js').write_text('SYNTHETIC_CONFIG_SECRET')
+    monkeypatch.setenv('XDG_STATE_HOME',str(tmp_path/'state'))
+    monkeypatch.setattr(subprocess,'Popen',lambda *a,**kw:pytest.fail('hook executed'))
+    monkeypatch.setattr(socket,'socket',lambda *a,**kw:pytest.fail('network used'))
+    assert main(['audit',str(project),'--runtime',runtime,'--json'])==0
+    output=json.loads(capsys.readouterr().out)
+    rows=output['constraint_references']['files'][0]['constraints']
+    assert rows[0]['hook_match']==expected
+    if expected=='hook_candidate_present':
+        assert rows[0]['hook_candidate']['matcher_scope']=='tool_name_only'
+        assert rows[0]['hook_candidate']['path_enforcement']=='unknown'
+    else: assert rows[0]['hook_candidate'] is None
+    assert rows[1]['hook_match']=='unknown'
+    assert all(row['enforcement']=='unknown' for row in rows)
+    assert 'SYNTHETIC_HOOK_SECRET' not in json.dumps(output)
+    assert 'SYNTHETIC_CONFIG_SECRET' not in json.dumps(output)
