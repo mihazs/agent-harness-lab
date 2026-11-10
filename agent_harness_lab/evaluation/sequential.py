@@ -189,7 +189,44 @@ def endpoint(values,N,alpha,lambdas):
         sample_mean=float(s/len(values)) if values else None,half_width=float(width) if width is not None else None)
 
 
-def analyze(spec,records,binding,*,cohort_json=None):
+def _missing_identification(spec, records, binding, cohorts):
+    """Descriptive finite-bank completion range, never a confidence sequence or authority."""
+    expected=schedule(spec,binding); by_id={row['trial_id']:row for row in expected}
+    if ([row.trial_id for row in records] != [row['trial_id'] for row in expected[:len(records)]]
+            or any((row.baseline_hash,row.candidate_hash,row.grader_hash,row.runtime_hash) !=
+                   (spec.baseline_hash,spec.candidate_hash,spec.grader_hash,spec.runtime_hash) for row in records)):
+        raise ValueError('ordered, matching sequential prefix required')
+    data={}
+    for row in records:
+        trial=by_id[row.trial_id]
+        valid=(row.status=='graded' and row.provenance=='executable_grader' and type(row.outcome) is bool
+               and type(row.critical_regression) is bool)
+        data[(trial['task'],trial['repetition'],trial['version'])]=int(row.outcome) if valid else None
+    def endpoint(task_ids):
+        roots={}
+        for task,root,_ in spec.tasks:
+            if task not in task_ids:continue
+            for repeat in range(spec.repeats):
+                baseline=data.get((task,repeat,'baseline'));candidate=data.get((task,repeat,'candidate'))
+                lo=(candidate if candidate is not None else 0)-(baseline if baseline is not None else 1)
+                hi=(candidate if candidate is not None else 1)-(baseline if baseline is not None else 0)
+                roots.setdefault(root,[]).append((lo,hi))
+        if not roots:raise ValueError('nonempty endpoint required')
+        low=sum((Fraction(sum(pair[0] for pair in rows),len(rows)) for rows in roots.values()),Fraction())/len(roots)
+        high=sum((Fraction(sum(pair[1] for pair in rows),len(rows)) for rows in roots.values()),Fraction())/len(roots)
+        return low,high
+    channel_defs=channels(spec,cohorts);ranges={name:endpoint(item['tasks']) for name,item in channel_defs.items()}
+    weights={f:rational(w) for f,w in spec.family_weights};total=sum(weights.values())
+    low=sum((w*ranges['family:'+f][0] for f,w in weights.items()),Fraction())/total
+    high=sum((w*ranges['family:'+f][1] for f,w in weights.items()),Fraction())/total
+    def view(pair):return dict(low=outward(pair[0],False),high=outward(pair[1],True),
+                               exact_low=packed(pair[0]),exact_high=packed(pair[1]))
+    return dict(estimand=ESTIMAND,primary=view((low,high)),endpoints={name:view(pair) for name,pair in ranges.items()},
+        interpretation='finite_bank_completion_range_not_a_confidence_sequence',
+        input_authority='caller_declared_unverified',automatic_promotion=False,publication_allowed=False)
+
+
+def analyze(spec,records,binding,*,cohort_json=None,include_missing_bounds=False):
     spec.validate();validate_binding(spec,binding,current_engine=False)
     cohorts=membership(spec,cohort_json);groups=channels(spec,cohorts)
     expected=schedule(spec,binding);byid={r['trial_id']:r for r in expected}
@@ -207,8 +244,12 @@ def analyze(spec,records,binding,*,cohort_json=None):
         return finish('rejected','critical_regression')
     roots={byid[r.trial_id]['root'] for r in records};order=binding['root_order'][:len(roots)]
     if roots!=set(order) or {r.trial_id for r in records}!={r['trial_id'] for r in expected if r['root'] in roots}:
+        if include_missing_bounds is True and [r.trial_id for r in records]==[r['trial_id'] for r in expected[:len(records)]]:
+            return finish('incomplete','partial_or_nonprefix_root',missing_outcome_bounds=_missing_identification(spec,records,binding,cohorts))
         return finish('incomplete','partial_or_nonprefix_root')
     if any(type(r.outcome) is not bool or r.status!='graded' or r.provenance!='executable_grader' for r in records):
+        if include_missing_bounds is True and [r.trial_id for r in records]==[r['trial_id'] for r in expected[:len(records)]]:
+            return finish('incomplete','unknown_root_outcome',missing_outcome_bounds=_missing_identification(spec,records,binding,cohorts))
         return finish('incomplete','unknown_root_outcome')
     data={(byid[r.trial_id]['task'],byid[r.trial_id]['repetition'],byid[r.trial_id]['version']):r.outcome for r in records}
     alpha=rational(spec.alpha)/len(groups);observed={};exact={}
