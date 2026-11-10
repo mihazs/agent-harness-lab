@@ -16,7 +16,7 @@ GOLDEN = Path(__file__).resolve().parents[2] / 'support/golden_profiles/git-evid
 
 
 def synthetic_snapshot():
-    source = SourceSpec('local_git', 'git', 'v1', 'a' * 64, 'b' * 64, 'c' * 64,
+    source = SourceSpec('local_git', 'git', 'v2', 'a' * 64, 'b' * 64, 'c' * 64,
                         identity_provenance='source_declared_id', enabled=True)
     def record(kind, native, revision, content):
         return EvidenceRecord(source.source_key, digest(native), revision, content,
