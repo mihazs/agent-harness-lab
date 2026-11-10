@@ -40,6 +40,7 @@ def fixture_content(root, expected, remaining=None):
 
 
 def inspect_bank(root, tasks, bank_sha256):
+    from .root_similarity import shingles
     buckets = {}; receipts = []; issues = []; identities = []; total = 0; overlaps = 0; prompts = []
     for task in sorted(tasks, key=lambda task:task.task_id):
         content, prompt, consumed = fixture_content(contained(root, task.fixture), task.fixture_digest, None)
@@ -50,7 +51,8 @@ def inspect_bank(root, tasks, bank_sha256):
             parsed = json.loads(raw.decode('utf-8'), object_pairs_hook=unique_object)
             if text_fingerprint(parsed['prompt']) != prompt or digest(fixture, max_files=None, max_bytes=None, max_entries=None, max_depth=None) != task.fixture_digest:
                 raise ValueError('fixture changed during similarity inspection')
-            prompts.append((task.root_id, parsed['prompt']))
+            if shingles(parsed['prompt']):
+                prompts.append((task.root_id, parsed['prompt']))
         ref = RecordRef(bank_sha256, metadata_digest(task.task_id), task.fixture_digest)
         identities.append(dict(subject=ref.to_dict(), fixture=content.to_dict(), prompt=None if prompt is None else prompt.to_dict()))
         for kind, fingerprint in (('fixture', content), ('prompt', prompt)):

@@ -111,10 +111,11 @@ planning count, not a verified count of independent incidents. Paraphrases and
 other dependencies can be missed; an absent flag does not establish independence.
 
 This check reads prompts locally and does not send them to a service. If any task
-has no explicit `task.json` prompt, its report is incomplete and the effective
-count and evidence are unavailable. The report flags the incomplete inspection
-and still reports candidates found among the prompts that were available. Counts and evidence are private bank-derived
-outputs. The lexical candidate is not an authenticated lineage finding.
+has no explicit `task.json` prompt, or a prompt has fewer than three tokenizer
+tokens and produces no shingle, its report is incomplete and the effective count
+and evidence are unavailable. Exact prompt overlaps and candidates among usable
+prompts are still reported. Empty shingle sets do not establish non-similarity.
+Counts and evidence are private bank-derived outputs. The lexical candidate is not an authenticated lineage finding.
 
 To prepare an explicit selected plan before collecting trials, run:
 

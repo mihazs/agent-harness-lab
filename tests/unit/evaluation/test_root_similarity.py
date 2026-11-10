@@ -139,7 +139,7 @@ def test_projected_snapshot_hides_other_task_ids_and_retains_transitive_group(mo
 
     plan = spec({'a': 4})
     rows = [(task, root) for task, root, _ in plan.tasks]
-    full = evidence('1'*64, '2'*64, rows, [(root, f'prompt {i}') for i, (_, root) in enumerate(rows)])
+    full = evidence('1'*64, '2'*64, rows, [(root, f'distinct prompt {i}') for i, (_, root) in enumerate(rows)])
     full['groups'] = [[rows[0][1], rows[1][1], rows[2][1]]]
     selected = [rows[0], rows[2], rows[3]]
     projected = project_evidence(full, selected)
