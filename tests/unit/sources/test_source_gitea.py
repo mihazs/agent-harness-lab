@@ -130,6 +130,25 @@ class GiteaFixture:
 
 
 class TestGiteaSource(GiteaFixture):
+    def test_v2_unavailable_repository_reports_selected_dependencies_without_requests(self):
+        selection = replace(self.selection, schema_version=2)
+        source = replace(self.spec(selection), version='v2')
+        self.routes[self.repo_path] = Response(b'SYNTHETIC_SECRET', 403)
+        client, snapshot = self.read(selection, source)
+        entries = client.summary['coverage']
+        for number in (7, 8):
+            parent = digest(('gitea-v2-selection', 'gitea_issue', selection.project_sha256, number))
+            assert ('issue', 'not_observed', 'repository_unavailable', parent) in {
+                (c['resource'], c['state'], c['basis'], c['parent_sha256']) for c in entries}
+            assert ('comments', 'not_observed', 'issue_unavailable', parent) in {
+                (c['resource'], c['state'], c['basis'], c['parent_sha256']) for c in entries}
+        parent = digest(('gitea-v2-selection', 'gitea_pull', selection.project_sha256, 8))
+        for kind in ('pull', 'reviews'):
+            assert (kind, 'not_observed', 'issue_unavailable', parent) in {
+                (c['resource'], c['state'], c['basis'], c['parent_sha256']) for c in entries}
+        assert self.targets == ['/api/v1/version', self.repo_path]
+        assert not snapshot.checkpoint_ready
+
     @pytest.mark.parametrize('blocked', ('issue', 'pull'))
     def test_v2_blocked_pull_retains_selected_coverage(self, blocked):
         selection = replace(self.selection, schema_version=2)

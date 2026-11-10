@@ -278,6 +278,15 @@ class GiteaAPI:
                 after = ledger.read('readback', f'{self.repo_path}/pulls/{number}', lambda raw, n=number: self._pull(raw, n, repository['id_sha256']), key('gitea_pull', number, before))
                 if after not in (None, before): raise ValueError('Gitea PR changed during capture')
             if ledger.read('readback', self.repo_path, self._repository) not in (None, repository): raise ValueError('Gitea repository changed during capture')
+        elif selection.schema_version == 2:
+            for number in sorted(selection.issues+selection.pulls):
+                parent = selected('gitea_issue', number)
+                ledger.note('issue', ('not_observed', 'repository_unavailable'), parent)
+                if 'comments' in selection.capture: ledger.note('comments', ('not_observed', 'issue_unavailable'), parent)
+            for number in selection.pulls:
+                parent = selected('gitea_pull', number)
+                ledger.note('pull', ('not_observed', 'issue_unavailable'), parent)
+                if 'reviews' in selection.capture: ledger.note('reviews', ('not_observed', 'issue_unavailable'), parent)
         ready = ledger.ready
         warnings = ['selected_resources_only', 'closure_merge_approval_not_task_outcome', 'readbacks_non_atomic',
             'inline_review_comments_not_captured', 'execution_binding_unknown']
