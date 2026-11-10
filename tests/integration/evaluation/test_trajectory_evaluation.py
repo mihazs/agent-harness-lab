@@ -83,6 +83,20 @@ def test_live_capture_from_another_scheduled_trial_or_raw_json_cannot_pass(fx):
     assert result['trajectory_analysis']['status'] == 'incomplete'
 
 
+def test_unowned_critical_trajectory_does_not_reject(fx):
+    fx.freeze('forbidden', severity='critical')
+    original = responses.run_trial
+    def unowned(*args, **kwargs):
+        result = original(*args, **kwargs)
+        if kwargs.get('trajectory') is not None:
+            result['_trajectory_capture'] = result['_trajectory_capture'].snapshot()
+        return result
+    with patch.object(responses, 'run_trial', side_effect=unowned):
+        result = fx.run_evaluation()
+    assert result['trajectory_analysis']['reason'] == 'unknown_or_invalid_grade'
+    assert all(not trial['controller_grade']['critical_violation'] for trial in fx.controlled_trials(result))
+
+
 def test_changed_assertions_require_new_oracle_plan_before_any_worker(fx):
     fx.freeze(); old = fx.fixture.manifest['experiment']
     fx.freeze('forbidden'); fx.fixture.manifest['experiment'] = old; fx.fixture.write_manifest()
