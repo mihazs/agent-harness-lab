@@ -146,7 +146,7 @@ def test_export_uses_all_frozen_controls_without_mutating_the_oracle(admission):
     checked = audit_graders(bank,cooperative=True)
     assert checked['status'] == 'controls_passed'
     added = [row for row in checked['checks'] if row['task'].startswith('regression-')]
-    assert {row['control'] for row in added} == {'broken','partial','complete','alternative_valid','superficial'}
+    assert {row['control'] for row in added} == {'no_op','broken','partial','complete','alternative_valid','superficial'}
 
 
 def test_retry_of_the_same_committed_request_is_idempotent(admission):
