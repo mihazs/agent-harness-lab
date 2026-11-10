@@ -68,8 +68,8 @@ def prepare(receipt, frame, store_path, mapping, rubric_value, trusted_heads=Non
             audit._sha(row['unit_sha256']);audit._sha(row['case_id'])
             if row['case_id'] not in current:raise ValueError('corpus case is not current')
             case,inputs,events,_,_=current[row['case_id']]
-            if (len(events) not in (1,2) or events[-1][0]['state']!='pending'
-                    or len(events)==2 and events[1][0]['kind']!='audit_assigned'
+            assigned=len(events)>1 and events[1][0]['kind']=='audit_assigned'
+            if ((not assigned and (len(events)!=1 or events[-1][0]['state']!='pending'))
                     or inputs['rubric_sha256']!=rubric_sha
                     or store._retirement(row['case_id'],inputs,events) is not None
                     or audit.unit_sha256(inputs['root_id'])!=row['unit_sha256']):
@@ -87,7 +87,7 @@ def prepare(receipt, frame, store_path, mapping, rubric_value, trusted_heads=Non
             case,events=opened[row['case_id']]
             payload=dict(assignment_sha256=result['assignment_sha256'],receipt_sha256=receipt['receipt_sha256'],
                          rubric_sha256=rubric_sha,unit_sha256=row['unit_sha256'])
-            if len(events)==2:
+            if len(events)>1:
                 if events[1][0]['payload']!=payload:raise ValueError('different existing audit assignment')
             else:pending.append((case,events,payload))
         for case,events,payload in pending:store.append(case,events,'audit_assigned','pending',payload)

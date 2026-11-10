@@ -37,8 +37,7 @@ def test_pending_assignment_observes_late_reviews_without_mapping_labels(tmp_pat
     after=audit_corpus.inspect(receipt,value,store.root,binding)
     assert after['observations'][0]['disposition']=='agreement' and after['labels_for_estimation'] is None
     assert 'synthetic-reviewer' not in json.dumps(after) and 'SUGGESTED_LABEL' not in json.dumps(after)
-    with pytest.raises(ValueError,match='pending corpus'):
-        audit_corpus.prepare(receipt,value,store.root,mapping,rubric)
+    assert audit_corpus.prepare(receipt,value,store.root,mapping,rubric)==binding
     store.update(case['case_id'],case['event_sha256'],'exposed',reason='synthetic exposure')
     with pytest.raises(ValueError,match='exposed'):
         audit_corpus.inspect(receipt,value,store.root,binding)
@@ -132,8 +131,20 @@ def test_interrupted_assignment_is_unusable_and_identical_batch_resumes(tmp_path
             audit_corpus.prepare(receipt,value,store.root,mapping,rubric)
     with pytest.raises(ValueError,match='complete corpus assignment'):
         audit_corpus.estimate(receipt,value,store.root,binding,rubric)
+    first=binding['assignments'][0]['case_id']
+    packet=store.packet(first,'synthetic-reviewer')
+    store.update(first,packet['event_sha256'],'claimed',reviewer='synthetic-reviewer')
+    other=audit.draw(value,plan(value,seed=8,rates=dict(random=1),schema_version=2,profile=audit.PLAN_PROFILE_V2))
+    with pytest.raises(ValueError,match='different existing audit assignment'):
+        audit_corpus.prepare(other,value,store.root,mapping,rubric)
+    remaining=binding['assignments'][1]['case_id']
+    assert len(store.history(store.case(remaining)))==1
+    with pytest.raises(ValueError,match='complete corpus assignment'):
+        audit_corpus.estimate(receipt,value,store.root,binding,rubric)
     resumed=audit_corpus.prepare(receipt,value,store.root,mapping,rubric)
     assert resumed==binding
+    observation=audit_corpus.inspect(receipt,value,store.root,resumed)
+    assert next(row for row in observation['observations'] if row['case_id']==first)['state']=='claimed'
     assert audit_corpus.estimate(receipt,value,store.root,resumed,rubric)['estimates'] is None
 
 
