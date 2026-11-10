@@ -45,6 +45,7 @@ not need to read it. Rejection and retirement are terminal. Quarantine retains
 prior decisions and can be followed by rejection or retirement. A changed claim or
 cache requires a new proposal rather than overwriting the earlier one.
 
+<a id="reported-and-observed-outcomes"></a>
 <a id="exact-json-contracts"></a>
 <a id="applicability-and-conflict-handling"></a>
 <a id="persistence-limits-and-privacy"></a>
@@ -52,7 +53,8 @@ cache requires a new proposal rather than overwriting the earlier one.
 ## Reference and related material
 
 The [source lineage reference](source-lineage-reference.md) describes the exact JSON
-contracts, applicability, persistence, exit statuses and privacy limits.
+contracts, [reported and observed outcomes](source-lineage-reference.md#reported-and-observed-outcomes),
+applicability, persistence, exit statuses and privacy limits.
 
 Run `task test:sources:lineage`. The opt-in
 `task test:sources:lineage:compat BASELINE=/path/to/frozen/baseline` compares exact

@@ -10,6 +10,26 @@ from agent_harness_lab.cli import main
 from agent_harness_lab.diagnostics.retrieval import Incident
 
 
+@pytest.mark.parametrize('marker', ['profile', 'ambiguous_sources', 'outcome_correlation', 'grouping_revision_sha256'])
+def test_private_source_outcomes_cannot_be_exported_by_relabeling(tmp_path, marker):
+    from agent_harness_lab.evaluation.benchmark import MATCH_FIELDS
+    from agent_harness_lab.sources.outcomes import correlate
+    report = correlate(dict(records=[], supersessions=[]), [])
+    settings = dict.fromkeys(MATCH_FIELDS, 'synthetic'); settings['effective_settings_verified'] = True
+    report.update(publication_allowed=True, baseline_runtime=settings, candidate_runtime=settings,
+        provenance=dict(source_kind='synthetic', approved_publication=True, source_ref='synthetic', derived_from_private=False))
+    if marker != 'profile': report['profile'] = 'forged'
+    if marker != 'ambiguous_sources': report.pop('ambiguous_sources')
+    if marker == 'outcome_correlation': report['outcome_correlation'] = {}
+    if marker == 'grouping_revision_sha256': report['grouping_revision_sha256'] = 'synthetic'
+    source = tmp_path/'input.json'; source.write_text(json.dumps([report]))
+    output = tmp_path/'public'
+    with pytest.raises(SystemExit) as exc:
+        main(['benchmark-report', '--input', str(source), '--output', str(output), '--public'])
+    assert exc.value.code == 2
+    assert not output.exists()
+
+
 def test_public_benchmark_accepts_only_known_flat_records(tmp_path):
     from agent_harness_lab.evaluation.benchmark import MATCH_FIELDS
     from agent_harness_lab.evaluation.interaction_contract import evaluate
