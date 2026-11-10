@@ -77,7 +77,8 @@ class OpenCodeExport(LocalExport):
         self.claims = [SessionClaim('session', native, project_hash, len(messages))]
         if source.version == 'v2':
             parent = info.get('parentID')
-            if 'parentID' in info and (not isinstance(parent, str) or not parent or len(parent) > 256 or parent == session):
+            if 'parentID' in info and (not isinstance(parent, str) or not parent.startswith('ses')
+                    or any(char.isspace() for char in parent) or len(parent) > 256 or parent == session):
                 raise ValueError('invalid OpenCode parent claim')
             time = info.get('time')
             if 'time' in info and not isinstance(time, dict): raise ValueError('invalid OpenCode time claim')

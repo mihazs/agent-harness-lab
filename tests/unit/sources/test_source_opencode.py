@@ -71,6 +71,7 @@ def test_v2_parent_and_archive_are_reported_unverified_claims(source):
 
 
 @pytest.mark.parametrize('field,value', [('parentID', None), ('parentID', SESSION), ('parentID', ''),
+    ('parentID', '   '), ('parentID', 'other'), ('parentID', 'ses_bad space'),
     ('time', None), ('time', {'archived': True}), ('time', {'archived': '3'}), ('time', {'archived': 10**400})])
 def test_v2_invalid_parent_or_archive_fails_closed(source, field, value):
     export, payload, spec, manifest = v2(source)
@@ -86,6 +87,15 @@ def test_v2_absent_parent_and_archive_do_not_assert_root_or_unarchived(source):
     assert connector.summary['parent_sha256'] is None
     assert connector.summary['archive_state'] == 'unknown'
     assert 'lineage_unknown' in connector.summary['warnings']
+
+
+def test_v2_parent_accepts_upstream_prefix_without_assuming_underscore(source):
+    export, payload, spec, manifest = v2(source)
+    payload['info']['parentID'] = 'ses123'
+    export.write_text(json.dumps(payload))
+    connector = OpenCodeExport(manifest)
+    connector.read(spec)
+    assert connector.summary['parent_sha256'] == digest(('opencode.session', INSTANCE, 'ses123'))
 
 
 def test_v2_cli_preview(source):
