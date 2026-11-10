@@ -159,8 +159,9 @@ state; exposed or superseded cases are refused.
 An `audit-corpus-rubric-v1` maps explicit annotation symptom markers to audit
 classes and must declare both an incident class and `no_incident`.
 `audit_corpus.estimate` uses only an adjudicated annotation with exactly one
-mapped class. Missing or conflicting markers stay pending and make estimation
-inconclusive. Corpus outcome categories are never implicitly mapped to audit
+mapped class from a corpus case with complete capture, approved permission and
+no declared ambiguity. Missing or conflicting markers and ineligible or ambiguous
+cases stay pending for estimation and make it inconclusive. Corpus outcome categories are never implicitly mapped to audit
 classes. Results reuse the existing sampling estimator and remain private.
 
 These local events and checksums do not authenticate assignment timing, source
