@@ -412,3 +412,18 @@ Instruction-to-command consistency and stale-target
 detection are not checked in this slice. The inventory is a separate metadata
 observation, not an atomic snapshot with other audit inputs. Without the option,
 the existing report shape is unchanged.
+
+### Root npm test observation
+
+`ahl audit PROJECT --npm-test-observation` adds a private, bounded comparison of
+literal `npm test` or `npm run test` mentions in the checkout-root instruction
+file with the presence of `scripts.test` in the root `package.json`. It does not
+return instruction or script text, execute npm, or establish whether a command is
+valid, stale, applicable or effective. A mention can occur in a negated sentence.
+A declared script can be empty, and a missing declaration concerns only that root
+file, not workspaces, inherited settings or other runners. Loading and execution
+remain unknown. The instruction file must match its inventory digest; the files
+are separately observed rather than an atomic snapshot. Missing, changed,
+malformed, oversized or linked files and nested task directories leave the
+comparison unknown. Without the option the existing audit report shape is
+unchanged.
