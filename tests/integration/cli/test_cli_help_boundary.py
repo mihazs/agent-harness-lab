@@ -36,7 +36,7 @@ BOUNDARIES = {
 COMMON = ('--help', '--events', '--source-root', '--session', '--max-captures', '--max-capture-scan', '--max-events',
           '--sequence-length')
 RUNTIME = ('--format', '--source-version', '--output')
-EXECUTION = ('--focus', '--agent', '--inference-settings', '--codex', '--claude', '--timeout', '--sandbox-graders',
+EXECUTION = ('--focus', '--agent', '--inference-settings', '--codex', '--claude', '--timeout', '--inherit-env', '--sandbox-graders',
              '--cgroup-root', '--image-root', '--image-sha256', '--permission-audit', '--evaluation-store', '--disk-bytes')
 OPTIONS = {
     'improve': (*COMMON, '--incident-corpus', '--incident-query', *RUNTIME, '--experiment-request', *EXECUTION,

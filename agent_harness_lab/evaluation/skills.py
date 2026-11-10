@@ -8,6 +8,95 @@ def activation(*, injected=False, signal=None, provenance=None, evidence_ref=Non
                 missing_reason=None if explicit else 'runtime_activation_unobserved')
 
 
+ACTIVATION_RECEIPT_PROFILE = 'ahl-skill-activation-receipt-v1'
+
+
+def activation_receipt(events, *, case_id, skill_id=None):
+    """Summarize one case's declared signals, never infer execution from requests.
+
+    Negative evidence requires a complete declared capture, an explicit skill
+    target, and at least one captured skill signal. Current native adapters mark
+    their capture partial, so they cannot establish non-observation.
+    """
+    from ..telemetry.claude_native import VERSION as CLAUDE_NATIVE_VERSION
+    from ..telemetry.schema import event
+    if case_id is not None and (not isinstance(case_id, str) or not case_id):
+        raise ValueError('case identity must be nonempty text when supplied')
+    if skill_id is not None and (not isinstance(skill_id, str) or not skill_id):
+        raise ValueError('skill identity must be nonempty text')
+    signals, all_complete, seen_signal = [], True, False
+    for raw in events:
+        row = event(raw)
+        if case_id is None or row['case_id'] != case_id:
+            raise ValueError('activation receipt requires one case')
+        all_complete &= row.get('capture_complete') is True
+        kind, confidence, identity = row.get('skill_signal'), row.get('skill_signal_confidence'), row.get('skill_id')
+        source = (row.get('source_format'), row.get('source_version'))
+        if (source[0] not in (None, 'normalized') and source != ('claude', CLAUDE_NATIVE_VERSION)):
+            continue
+        if row['activity'] != 'tool_call' or not identity or (kind, confidence) not in (
+                ('declared_invocation', 'declared_name'), ('file_read', 'full_read_request'),
+                ('file_read', 'partial_read_request')):
+            continue
+        seen_signal = True
+        if skill_id is None or skill_id == identity:
+            signals.append(dict(event_id=row['event_id'], skill_id=identity, signal=kind, confidence=confidence))
+    state = ('activated' if signals else 'not_observed' if skill_id is not None and seen_signal and all_complete
+             else 'unknown')
+    return dict(profile=ACTIVATION_RECEIPT_PROFILE, case_id=case_id, skill_id=skill_id, state=state, signals=signals,
+                interpretation='declared_request_not_execution_proof', estimand='skill_availability_intent_to_treat',
+                publication_allowed=False)
+
+
+def attach_activation_receipt(trial, events, *, case_id, skill_id=None):
+    """Return a trial with an explicitly attributed, unverified normalized capture.
+
+    The caller owns the trial-to-case linkage; the normalized events cannot prove
+    that the runtime emitted them for the supplied trial.
+    """
+    if not isinstance(trial, dict) or not isinstance(trial.get('task'), str) or not trial['task']:
+        raise ValueError('trial with task identity required')
+    if not isinstance(trial.get('version'), str) or not trial['version']:
+        raise ValueError('trial with version identity required')
+    receipt = activation_receipt(events, case_id=case_id, skill_id=skill_id)
+    receipt['trial_binding'] = 'caller_declared_unverified'
+    return dict(trial, skill_activation_receipt=receipt)
+
+
+def activation_receipt_main(argv=None):
+    """Inspect a caller-declared link between a saved trial and normalized case."""
+    import argparse
+    import json
+    from pathlib import Path
+    from .integrity import read_regular
+    parser = argparse.ArgumentParser(prog='ahl skills activation-receipt',
+        description='Derive a private receipt from a caller-declared trial and normalized capture; the association is unverified.')
+    parser.add_argument('--results', required=True, type=Path, help='Private evaluator results.json')
+    parser.add_argument('--events', required=True, type=Path, help='Private normalized event JSONL')
+    parser.add_argument('--task', required=True, help='Exact trial task')
+    parser.add_argument('--version', required=True, choices=('baseline', 'candidate'), help='Exact trial arm')
+    parser.add_argument('--repetition', type=int, default=0, help='Exact trial repetition (default: 0)')
+    parser.add_argument('--case-id', required=True, help='Caller-selected normalized case identity')
+    parser.add_argument('--skill-id', help='Optional pseudonymous skill identity')
+    args = parser.parse_args(argv)
+    try:
+        results = json.loads(read_regular(args.results, 64*1024*1024))
+        trials = results['trials']
+        if not isinstance(trials, list): raise ValueError('results trials must be a list')
+        matches = [t for t in trials if isinstance(t, dict) and t.get('task') == args.task
+                   and t.get('version') == args.version and t.get('repetition', 0) == args.repetition]
+        if len(matches) != 1: raise ValueError('trial selection must match exactly one result')
+        rows = [json.loads(line) for line in read_regular(args.events, 64*1024*1024).splitlines() if line.strip()]
+        if any(not isinstance(row, dict) for row in rows): raise ValueError('event records must be objects')
+        events = [row for row in rows if row.get('case_id') == args.case_id]
+        linked = attach_activation_receipt(matches[0], events, case_id=args.case_id, skill_id=args.skill_id)
+    except (ValueError, KeyError, OSError, TypeError) as error:
+        parser.error(str(error))
+    print(json.dumps(dict(trial=dict(task=args.task, version=args.version, repetition=args.repetition),
+                          skill_activation_receipt=linked['skill_activation_receipt']), sort_keys=True))
+    return 0
+
+
 def utility(records):
     groups={}; tasks={}; roots={}
     for record in records:
