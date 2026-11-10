@@ -40,3 +40,9 @@ derived from private histories. Keep memory routing configuration local and igno
 Public examples and validation reports must use public research or reproducible
 synthetic fixtures only. Inspect staged content before every publication; ignored
 local artifacts do not authorize copying their contents into documentation.
+
+## Documentation
+
+Use Diátaxis: tutorials teach through learning, how-to guides solve tasks,
+reference describes exact behavior, and explanation provides context and why.
+Give each page one purpose and link to related content.
