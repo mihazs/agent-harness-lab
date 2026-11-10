@@ -20,8 +20,11 @@ class ControllerActionTests:
         self.fixture = fixtures.ControllerInference(self._fixture_cleanups.callback)
         self.root,self.deadline = self.fixture.root,self.fixture.deadline
 
-    def doCleanups(self):
+    def close(self):
         self._fixture_cleanups.close()
+
+    def doCleanups(self):
+        self.close()
 
     def client(self,items,**limits):
         transport = Mock(side_effect=[fixtures.reply(output) for output in items])

@@ -21,4 +21,4 @@ def test_controller_generated_accepted_and_denied_actions_are_projected():
         timeline=action_timeline(client.action_report(),'synthetic-trial')
         assert next(row for row in timeline['events'] if row['kind']=='tool_request')['decision']=='denied'
     finally:
-        fixture.doCleanups()
+        fixture.close()
