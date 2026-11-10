@@ -15,14 +15,6 @@ from tests.support.unittest_cleanups import run_cleanups
 
 
 @pytest.fixture
-def trajectory():
-    from tests.integration.evaluation import test_trajectory_evaluation as fixtures
-    f=fixtures.TrajectoryEvaluationTests(); f.setUp()
-    try: yield f
-    finally: run_cleanups(f)
-
-
-@pytest.fixture
 def responses_evaluation():
     from tests.integration.sandbox import test_sandbox_inference as fixtures
     f=fixtures.ResponsesEvaluationTests(); f.setUp()

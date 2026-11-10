@@ -807,11 +807,10 @@ SOURCE_MODES = ('valid', 'artifact_swap', 'copy', 'mutation', 'input_digest', 'n
 
 @pytest.mark.skipif(not ENABLED, reason='requires explicit delegated kernel canaries; use task test:sandbox:kernel')
 class TestTrajectoryKernel(KernelCase):
-    def test_trajectory_assertions_use_real_workers_and_independent_artifact_grades(self):
+    def test_trajectory_assertions_use_real_workers_and_independent_artifact_grades(self, trajectory):
         from dataclasses import replace
-        from tests.integration.evaluation.test_trajectory_evaluation import TrajectoryEvaluationTests
         from agent_harness_lab.evaluation import responses
-        fixture = TrajectoryEvaluationTests(); fixture.setUp(); self.addCleanup(run_cleanups, fixture)
+        fixture = trajectory
         runtime = self.root/'runtime'; frozen = pinned_runtime(runtime)
         fixture.plan = replace(fixture.plan,runtime_hash=frozen['sha256'])
         fixture.freeze()
@@ -856,13 +855,12 @@ class TestTrajectoryKernel(KernelCase):
             assert action['backend_invoked']; assert action['containment_validated']
         assert 'SYNTHETIC_CONTROLLER_KEY' not in json.dumps(result)
 
-    def test_live_controller_sources_join_actual_workers_to_fresh_graders(self):
+    def test_live_controller_sources_join_actual_workers_to_fresh_graders(self, trajectory):
         from dataclasses import replace
-        from tests.integration.evaluation.test_trajectory_evaluation import TrajectoryEvaluationTests
         from agent_harness_lab.evaluation import responses
         from agent_harness_lab.sources.controller import SourceSink
         from agent_harness_lab.sources.schema import digest as source_digest
-        fixture=TrajectoryEvaluationTests(); fixture.setUp(); self.addCleanup(run_cleanups, fixture)
+        fixture = trajectory
         runtime=self.root/'runtime'; frozen=pinned_runtime(runtime)
         fixture.plan=replace(fixture.plan,runtime_hash=frozen['sha256']); fixture.freeze()
         args=fixture.f.args
