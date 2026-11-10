@@ -202,6 +202,11 @@ class HistoryStore(PrivateJournal):
         spec = ExperimentSpec.parse(source['experiment']); spec.validate()
         if manifest_hash != inputs['source_manifest_sha256'] or spec.digest != inputs['plan_sha256'] or spec.grader_hash != inputs['oracle_sha256']:
             raise ValueError('stored experiment declaration changed')
+        if spec.resource_quality_policy_sha256 is not None:
+            from .resource_quality_policy import bind as bind_quality_policy
+            policy,_ = record(case/'resource-quality-policy.json',1024*1024)
+            if (spec.root_similarity_sha256 is None or bind_quality_policy(spec,policy)['status'] != 'matched'):
+                raise ValueError('stored resource quality policy or root grouping binding changed')
         if version in (7,8) and (spec.resource_contract_sha256 is None or inputs['resource_contract_sha256'] != spec.resource_contract_sha256):
             raise ValueError('stored resource contract binding changed')
         if spec.root_similarity_sha256 is not None:
@@ -626,7 +631,7 @@ class HistoryStore(PrivateJournal):
         return self.access_ledger().reserve_managed(binding,deadline=deadline)
 
     def run(self, manifest, baseline, candidate, *, cgroup_root, image_root, image_sha256, disk_bytes, budget_seconds=60,parent_deadline=None,on_started=None,access_reservation=None,
-            inference_client=None,inference_settings=None,sandbox_backend=None,source_sink=None,workflow_request=None,permission_profile=None,resource_contract=None,resource_coverage=False):
+            inference_client=None,inference_settings=None,sandbox_backend=None,source_sink=None,workflow_request=None,permission_profile=None,resource_contract=None,resource_coverage=False,resource_quality_policy=None):
         from agent_harness_lab.cli import evaluator
         from .bank_tools import frozen_grader
         from .bank_revisions import sync_tree
@@ -655,6 +660,15 @@ class HistoryStore(PrivateJournal):
             from .root_similarity import controller_evidence
             controller_evidence(spec, source, manifest, export_root=manifest.parent)
         controlled=inference_client is not None
+        if spec.resource_quality_policy_sha256 is not None:
+            from .resource_quality_policy import bind as bind_quality_policy
+            resource_quality_policy=deepcopy(resource_quality_policy)
+            if (not controlled or resource_contract is None or resource_quality_policy is None
+                    or spec.root_similarity_sha256 is None
+                    or bind_quality_policy(spec,resource_quality_policy)['status'] != 'matched'):
+                raise ValueError('resource quality policy requires matching pretrial policy and root grouping')
+        elif resource_quality_policy is not None:
+            raise ValueError('resource quality policy must be pinned in the plan')
         if type(resource_coverage) is not bool or (resource_coverage and resource_contract is None):
             raise ValueError('resource coverage requires a resource contract')
         if resource_contract is not None:
@@ -795,6 +809,8 @@ class HistoryStore(PrivateJournal):
                 if resource_contract is not None:
                     inputs.update(schema_version=8 if resource_coverage else 7,resource_contract_sha256=spec.resource_contract_sha256)
             if len(encoded(inputs))>256*1024: raise ValueError('history input metadata limit exceeded')
+            if resource_quality_policy is not None:
+                write_bytes(case/'resource-quality-policy.json',encoded(resource_quality_policy))
             write_bytes(case/'manifest.json',raw); write_bytes(case/'inputs.json',encoded(inputs)); sync_tree(case)
             events = []; self.append(case,events,'run_started','running',dict(inputs_sha256=record(case/'inputs.json')[1]))
             sync_directory(case.parent); sync_directory(self.root)

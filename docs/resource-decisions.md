@@ -242,3 +242,20 @@ The resulting private versioned view is not persisted or authenticated. Its cach
 states are caller-attested and unverified; token counts do not establish them. It
 makes no quality, resource-decision, billing, or promotion claim and must not be
 published. Earlier history versions are not accepted by this API.
+
+## Pretrial resource quality policy binding
+
+A new plan may include `resource_quality_policy_sha256` alongside the resource
+contract pin and a root-similarity evidence pin. It is the SHA-256 of the canonical
+JSON form of a `resource-quality-policy-v1` object, which declares a private
+`quality_criteria_sha256` and requires a `supported` quality status. The operator
+supplies that policy before a controlled history run; the controller checks its pin
+and root-similarity evidence before dispatch, stores the policy privately, and
+checks it again on reopen. Existing plans that omit the field retain their identity.
+
+The criteria digest is an opaque caller declaration: this binding does not inspect
+criteria contents, validate a quality result, authenticate the caller, or establish
+root independence. Similarity detection is heuristic. The private binding helper
+reports quality as unknown, grouping as unchecked, and the resource decision and
+gate as not evaluated. No favorable decision or automatic promotion follows from
+this policy binding.
