@@ -11,7 +11,7 @@ def _raise(errors, label):
     if len(errors) == 1:
         raise errors[0]
     if errors:
-        raise ExceptionGroup(f'{label} failed', errors)
+        raise BaseExceptionGroup(f'{label} failed', errors)
 
 
 def run_cleanups(*cases):
@@ -22,9 +22,20 @@ def run_cleanups(*cases):
             function, args, kwargs = case._cleanups.pop()
             try:
                 function(*args, **kwargs)
-            except Exception as error:
+            except BaseException as error:
                 errors.append(error)
     _raise(errors, 'unittest cleanups')
+
+
+def run_callbacks(callbacks):
+    """Run an owner's no-argument cleanup callbacks, continuing after failures."""
+    errors = []
+    while callbacks:
+        try:
+            callbacks.pop()()
+        except BaseException as error:
+            errors.append(error)
+    _raise(errors, 'fixture cleanups')
 
 
 def run_class_cleanups(cls):
