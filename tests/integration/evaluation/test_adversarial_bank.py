@@ -75,7 +75,7 @@ def test_rebuild_bytes_modes_and_frozen_contract(pack):
 def test_every_control_passes_the_cooperative_grader_audit():
     audit = audit_graders(BANK, cooperative=True, budget_seconds=30)
     assert audit['status'] == 'controls_passed'
-    assert len(audit['checks']) == 70
+    assert len(audit['checks']) == 84
 
 
 @pytest.mark.parametrize(('task', 'state'), [

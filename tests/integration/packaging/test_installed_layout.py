@@ -54,7 +54,8 @@ def test_packaged_adversarial_controls_remain_exposed_and_ineligible():
     assert not value['certification_eligible']
     assert value['tasks'] == 14
     assert value['grader_audit']['status'] == 'controls_passed'
-    assert len(value['grader_audit']['checks']) == 70
+    assert len(value['grader_audit']['checks']) == 84
+    assert sum(c['control']=='no_op' and c['status']=='passed' for c in value['grader_audit']['checks']) == 14
 
 
 def test_offline_onboarding_preview_and_exclusive_creation(tmp_path):

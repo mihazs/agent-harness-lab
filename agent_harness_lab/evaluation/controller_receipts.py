@@ -310,7 +310,8 @@ def _kernel_finished(ticket, run, argv, exports):
 
 
 def _matches_grade(run,event,oracle_sha256,fixture_sha256,outcome):
-    return (event['role']=='grader' and event['requested_argv_sha256']==_hash(GRADER_ARGV)
+    return (event['role']=='grader' and event['requested_argv_sha256'] in
+        (_hash(GRADER_ARGV),_hash(GRADER_ARGV[:2]+['-S']+GRADER_ARGV[2:]))
         and event['result_sha256']==_hash(run) and event['input_digests']==dict(oracle=oracle_sha256,fixture=fixture_sha256)
         and type(outcome) is bool)
 
