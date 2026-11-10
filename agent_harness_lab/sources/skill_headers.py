@@ -12,6 +12,7 @@ import posixpath
 import re
 from pathlib import PurePosixPath
 from agent_harness_lab.sources import commands_inventory, frontmatter as shared
+from agent_harness_lab.sources.schema import digest
 
 TOKENIZER = 'ahl-skill-tokens-v1'
 NAME_MAX, DESCRIPTION_MAX, MAX_TOKENS = 64, 1024, 200
@@ -68,7 +69,7 @@ def parse(path, raw, profile):
     try: fields = commands_inventory.frontmatter(raw)
     except shared.FrontmatterError as error:
         if error.reason in commands_inventory.DEFINITE: raise
-        return 'parsed', dict(frontmatter='unsupported')
+        return 'parsed', dict(frontmatter='unsupported', embedded_hooks='unknown')
     keys = fields or {}
     name, description = keys.get('name'), keys.get('description')
     text = description if isinstance(description, str) else ''
@@ -80,6 +81,16 @@ def parse(path, raw, profile):
         name_valid=isinstance(name, str) and len(name) <= NAME_MAX and _NAME.fullmatch(name) is not None,
         name_reserved=isinstance(name, str) and any(word in name.lower() for word in RESERVED_WORDS),
         name_matches_directory=name == path.parent.name)
+    if profile['runtime'] == 'claude-code':
+        facts['embedded_hooks'] = 'unknown'
+        if fields is not None:
+            header = shared.read(raw.removeprefix(b'\xef\xbb\xbf'))
+            if 'hooks' not in header:
+                facts['embedded_hooks'] = 'not_declared'
+            elif isinstance(header['hooks'], shared.Mapping):
+                events = header['hooks'].keys
+                facts.update(embedded_hooks='declared', embedded_hook_events=len(events),
+                             embedded_hook_event_hashes=' '.join(sorted(digest(event) for event in events)))
     if state == 'text':
         facts.update(description_trigger=_TRIGGER.search(text.lower()) is not None, description_tokenizer=TOKENIZER,
             description_tokens=' '.join(hashlib.sha256(word.encode()).hexdigest()[:8] for word in tokens(text)))
