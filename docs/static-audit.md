@@ -278,13 +278,14 @@ Claude's [per-file rule of thumb](https://code.claude.com/docs/en/features-overv
 to the captured launch closure; it is not a validated aggregate threshold.
 Unknown totals never produce this hypothesis.
 
-For a settled, nonempty closure, the CLI also emits lexical hypotheses when it
+For a settled, nonempty Claude or Codex checkout closure, the CLI also emits lexical hypotheses when it
 finds no constraint wording or common verification command, and a structural
 hypothesis for a section with at least five numbered steps or three fenced
 blocks. These are deliberately simple patterns: they can miss equivalent
 wording and match examples. Findings need behavioral evaluation and do not quote
 instruction contents or headings. No shape hypothesis is emitted for an
-unknown closure.
+unknown closure. An empty resolved Claude import also produces a weak
+hypothesis; missing imports and cycles leave totals unknown with a reason.
 
 
 ## Codex declared instruction totals

@@ -92,3 +92,9 @@ def test_oversized_launch_file_does_not_become_zero_total(tmp_path):
     assert report['status'] == 'unknown'
     assert 'launch_file_unsettled' in report['reasons']
     assert report['bytes'] is None and report['lines'] is None and report['files'] is None
+
+
+@pytest.mark.parametrize('command', ['npm run build', 'cargo check', 'make verify', 'go build'])
+def test_common_build_and_verification_commands_are_detected(tmp_path, command):
+    report = count(tmp_path, {'CLAUDE.md': f'Must run {command}.\n'})
+    assert report['shape']['verification_commands'] is True
