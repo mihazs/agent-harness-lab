@@ -3727,6 +3727,18 @@ not a verified task outcome. The adapter does not interpret the Markdown export,
 whose unescaped fields cannot safely delimit arbitrary drawer contents. Live
 retrieval and complete palace coverage remain outside this profile.
 
+`local_file/mempalace-list/v1` separately reads one caller-supplied page shaped
+like the pinned `mempalace_list_drawers` result. Its descriptor contains the
+same `schema_version`, `upstream_commit`, `instance` and `export` fields, plus
+`wing_sha256`, `offset` and `limit`; the wing fingerprint must equal the source
+project fingerprint described above. Each returned row must name that wing,
+and the reported offset, limit, count and total must be internally consistent.
+The page contains at most 100 rows. Its private item identities and preview
+fingerprints are distinct from full-drawer records. A preview is not full
+content; reported counts, filtering, producer, version, completeness and
+lineage remain unverified. An empty page does not establish an empty wing.
+Local file import checkpoints do not establish complete source coverage.
+
 ## Offline Claude-Mem exports
 
 Select `local_file/claude-mem-export/v1` in the existing local source declaration,
