@@ -280,6 +280,8 @@ The CLI writes one short summary to stderr and preserves the JSON receipt on std
 | `instruction_validation_blocked` | Review the instruction validation findings before retrying. |
 | `isolation_qualification_unverified` | Verify the required isolation qualification before retrying. |
 | `missing_or_duplicate_trials` | Review the trial records and restore complete, unique trial coverage. |
+| `evaluation_manifest_changed` | Review the changed evaluation manifest before starting a fresh evaluation. |
+| `trial_split_mismatch` | Review the trial records and manifest partitions before starting a fresh evaluation. |
 | `no_data` | Run ahl audit . for a zero-model-cost static convention check; ahl improve may incur model costs. |
 | `offline_configuration_forbids_model_execution` | Use an offline operation or explicitly configure a supported runtime. |
 | `offline_sandbox_unavailable` | Provide the required offline sandbox capabilities. |

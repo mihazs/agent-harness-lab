@@ -34,6 +34,8 @@ REMEDIATION = {
     'evaluation_no_improvement': 'Review the evaluation results before proposing another candidate.',
     'permission_qualification_not_met': 'Review the permission qualification and restore the required isolation.',
     'missing_or_duplicate_trials': 'Review the trial records and restore complete, unique trial coverage.',
+    'evaluation_manifest_changed': 'Review the changed evaluation manifest before starting a fresh evaluation.',
+    'trial_split_mismatch': 'Review the trial records and manifest partitions before starting a fresh evaluation.',
     'restricted_process_protocol_unqualified': 'Restore the required restricted-process qualification.',
     'unresolved_operation_requires_hook_contract': 'Supply the required hook contract before considering the operation.',
     'hook_adoption_requires_explicit_authorization': 'Review the hook change and its authorization requirements.',
