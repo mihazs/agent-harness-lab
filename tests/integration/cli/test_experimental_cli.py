@@ -90,3 +90,26 @@ def test_benchmark_report_end_to_end_and_private_export_refusal(tmp_path):
             main(['benchmark-report','--input',str(source),'--output',str(output),'--public'])
         assert exit.value.code == 2
         assert not output.exists()
+
+
+@pytest.mark.parametrize('forgery', ['profile', 'marker', 'inventory', 'precedence'])
+def test_synthetic_static_audit_cannot_be_exported_by_relabeling(tmp_path, forgery):
+    from agent_harness_lab import audit
+    from agent_harness_lab.evaluation.benchmark import MATCH_FIELDS
+    project = tmp_path / 'project'; project.mkdir()
+    (project / 'AGENTS.md').write_text('Synthetic instruction.\n')
+    report = audit.run(project, 'codex').document()
+    report.setdefault('instruction_precedence', {'publication_allowed': False})
+    settings = dict.fromkeys(MATCH_FIELDS, 'synthetic'); settings['effective_settings_verified'] = True
+    report.update(publication_allowed=True, baseline_runtime=settings, candidate_runtime=settings,
+        provenance=dict(source_kind='synthetic', approved_publication=True, source_ref='synthetic', derived_from_private=False))
+    if forgery != 'profile': report['profile'] = 'forged'
+    for name, case in (('audit_sha256', 'marker'), ('harness_inventory_sha256', 'inventory'),
+                       ('instruction_precedence', 'precedence')):
+        if forgery != case: report.pop(name)
+    source = tmp_path / 'report.json'; source.write_text(json.dumps([report]))
+    output = tmp_path / 'public'
+    with pytest.raises(SystemExit) as exc:
+        main(['benchmark-report', '--input', str(source), '--output', str(output), '--public'])
+    assert exc.value.code == 2
+    assert not output.exists()
