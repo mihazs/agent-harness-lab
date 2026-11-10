@@ -1,5 +1,5 @@
 """Fresh fixed-bank public improvement; synthetic transport, actual opt-in kernel workers."""
-from contextlib import redirect_stderr,redirect_stdout
+from contextlib import ExitStack,redirect_stderr,redirect_stdout
 from copy import copy
 import gc
 import hashlib
@@ -10,7 +10,6 @@ import shutil
 import time
 from pathlib import Path
 from types import SimpleNamespace
-import unittest
 from unittest.mock import patch,Mock
 
 import pytest
@@ -117,11 +116,12 @@ class PublicFixture:
         return code,json.loads((output/'workflow.json').read_text())
 
 
-class RepeatedWorkflowAdmission(PublicFixture,unittest.TestCase):
+class RepeatedWorkflowAdmission(PublicFixture):
     """Hosts PublicFixture without kernel workers for the admission cases below; it defines no tests."""
 
-    def setUp(self):
+    def __init__(self, add_cleanup):
         import tempfile
+        self.addCleanup=add_cleanup
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name);self.cgroup_root=self.root/'no-cgroup';self.configure()
 
@@ -157,9 +157,8 @@ class RepeatedWorkflowAdmission(PublicFixture,unittest.TestCase):
 
 @pytest.fixture
 def admission():
-    value=RepeatedWorkflowAdmission();value.setUp()
-    yield value
-    run_cleanups(value)
+    with ExitStack() as cleanups:
+        yield RepeatedWorkflowAdmission(cleanups.callback)
 
 
 @pytest.mark.parametrize('index, malform', [

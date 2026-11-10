@@ -17,11 +17,7 @@ ACCESS_KERNEL = 'tests.integration.evaluation.test_repeated_access_companion.Rep
 KERNELS = [KERNEL, REPEATED_KERNEL, ACCESS_KERNEL]
 ROWS = [
     ('tests.integration.evaluation.test_permission_audit', 'case', [KERNEL]),
-    ('tests.integration.evaluation.test_repeated_workflow', 'admission',
-     ['tests.integration.evaluation.test_repeated_workflow.RepeatedWorkflowAdmission']),
     ('tests.integration.evaluation.test_repeated_workflow', 'kernel_case', [REPEATED_KERNEL]),
-    ('tests.integration.evaluation.test_repeated_access_companion', 'access',
-     ['tests.integration.evaluation.test_repeated_access_companion.RepeatedAccessAdmission']),
     ('tests.integration.evaluation.test_repeated_access_companion', 'kernel_case', [ACCESS_KERNEL]),
 ]
 TEMPLATE = '''import contextlib, errno, importlib
@@ -334,3 +330,25 @@ def test_task_bank_propagates_cleanup_failure(monkeypatch, tmp_path):
     with pytest.raises(RuntimeError, match='synthetic task bank cleanup failure'):
         with ExitStack() as cleanups:
             test_evaluation_foundation.TaskBank(cleanups.callback)
+
+
+@pytest.mark.parametrize('module,helper', [
+    ('tests.integration.evaluation.test_repeated_workflow', 'RepeatedWorkflowAdmission'),
+    ('tests.integration.evaluation.test_repeated_access_companion', 'RepeatedAccessAdmission'),
+])
+def test_repeated_admission_propagates_cleanup_failure(monkeypatch, module, helper):
+    from contextlib import ExitStack
+    import importlib
+    from tests.integration.evaluation import test_repeated_workflow
+
+    def fail():
+        raise RuntimeError('synthetic repeated cleanup failure')
+
+    def broken(self):
+        self.addCleanup(fail)
+        raise ValueError('synthetic setup failure')
+
+    monkeypatch.setattr(test_repeated_workflow.PublicFixture, 'configure', broken)
+    with pytest.raises(RuntimeError, match='synthetic repeated cleanup failure'):
+        with ExitStack() as cleanups:
+            getattr(importlib.import_module(module), helper)(cleanups.callback)
