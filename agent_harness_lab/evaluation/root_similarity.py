@@ -88,6 +88,29 @@ def project_evidence(full, task_roots):
     return dict(full, task_roots=rows, groups=sorted(group for group in groups if len(group) > 1))
 
 
+def manifest_evidence(source):
+    """Derive private candidates from the exact task prompts in a workflow manifest."""
+    import hashlib
+    from agent_harness_lab.sources.schema import digest
+    tasks = source.get('tasks') if isinstance(source, dict) else None
+    if not isinstance(tasks, list) or not 0 < len(tasks) <= 1000:
+        raise ValueError('workflow similarity needs a bounded set of explicit task prompts')
+    items = []
+    for task in tasks:
+        if not isinstance(task, dict) or any(not isinstance(task.get(key), str) or not task[key]
+                                             for key in ('id', 'root', 'prompt')):
+            raise ValueError('workflow similarity needs explicit task identities and prompts')
+        items.append((task['id'], task['root'], task['prompt']))
+    if len({task for task, _, _ in items}) != len(items):
+        raise ValueError('workflow similarity task identities must be unique')
+    identities = sorted([task, root, hashlib.sha256(prompt.encode('utf-8')).hexdigest()]
+                        for task, root, prompt in items)
+    bank = digest(dict(profile='workflow-prompt-similarity-v1', tasks=identities))
+    value = evidence(bank, digest(dict(algorithm=ALGORITHM, bank_sha256=bank)),
+                     [(task, root) for task, root, _ in items], [(root, prompt) for _, root, prompt in items])
+    return dict(value, source_kind='workflow-prompt-similarity-v1')
+
+
 def binding(spec, supplied, bank_path=None):
     """Validate the plan-pinned snapshot; it is evidence of candidates, not independence."""
     from agent_harness_lab.sources.schema import digest
@@ -100,7 +123,12 @@ def binding(spec, supplied, bank_path=None):
         raise ValueError('current bank required for frozen root similarity evidence')
     if not isinstance(supplied, dict) or digest(supplied) != pin:
         raise ValueError('missing or changed frozen root similarity evidence')
-    if set(supplied) != {'schema_version', 'algorithm', 'bank_sha256', 'grouping_revision_sha256', 'task_roots', 'groups'}:
+    manifest_kind = supplied.get('source_kind')
+    allowed = {'schema_version', 'algorithm', 'bank_sha256', 'grouping_revision_sha256', 'task_roots', 'groups'}
+    if manifest_kind is not None:
+        allowed.add('source_kind')
+        if manifest_kind != 'workflow-prompt-similarity-v1': raise ValueError('unsupported similarity evidence source')
+    if set(supplied) != allowed:
         raise ValueError('invalid root similarity evidence fields')
     if supplied['schema_version'] != 1 or supplied['algorithm'] != ALGORITHM:
         raise ValueError('unsupported root similarity evidence')
@@ -117,12 +145,16 @@ def binding(spec, supplied, bank_path=None):
         raise ValueError('invalid root similarity groups')
     if groups != sorted(groups) or sum(map(len, groups)) != len({root for group in groups for root in group}):
         raise ValueError('root similarity groups must be disjoint and ordered')
-    from .task_bank import inspect
-    checked = inspect(bank_path)
-    actual = checked['content_grouping']['root_similarity']['evidence']
-    if actual is None:
-        raise ValueError('current bank lacks complete root similarity evidence')
-    actual = project_evidence(actual, [(task, root) for task, root, _ in spec.tasks])
+    if manifest_kind is not None:
+        from agent_harness_lab.private_journal import record
+        actual = manifest_evidence(record(bank_path, 1024 * 1024)[0])
+    else:
+        from .task_bank import inspect
+        checked = inspect(bank_path)
+        actual = checked['content_grouping']['root_similarity']['evidence']
+        if actual is None:
+            raise ValueError('current bank lacks complete root similarity evidence')
+        actual = project_evidence(actual, [(task, root) for task, root, _ in spec.tasks])
     if actual != supplied:
         raise ValueError('current bank differs from frozen root similarity evidence')
     return {root: group[0] for group in groups for root in group}

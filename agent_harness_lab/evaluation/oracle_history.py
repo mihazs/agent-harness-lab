@@ -200,6 +200,9 @@ class HistoryStore(PrivateJournal):
         spec = ExperimentSpec.parse(source['experiment']); spec.validate()
         if manifest_hash != inputs['source_manifest_sha256'] or spec.digest != inputs['plan_sha256'] or spec.grader_hash != inputs['oracle_sha256']:
             raise ValueError('stored experiment declaration changed')
+        if spec.root_similarity_sha256 is not None:
+            from .root_similarity import binding as similarity_binding, manifest_evidence
+            similarity_binding(spec, manifest_evidence(source), case/'manifest.json')
         if 'derivation_binding_sha256' in inputs:
             from .certification_access import validate_derivations
             derivation,derivation_pin=record(case/'derivation.json',1024*1024)
@@ -495,7 +498,13 @@ class HistoryStore(PrivateJournal):
         if validity != 'current':
             value = dict(status='blocked' if validity=='invalidated' else 'incomplete',reason='oracle_quarantined' if validity=='invalidated' else 'controller_run_not_sealed')
         elif spec.sequential is not None:value=dict(result['sequential_analysis'])
-        else: value = analyze(spec,self.trials(inputs,spec,result),cohort_binding=membership)
+        else:
+            similarity = None
+            if spec.root_similarity_sha256 is not None:
+                from .root_similarity import manifest_evidence
+                similarity = manifest_evidence(record(case/'manifest.json',1024*1024)[0])
+            value = analyze(spec,self.trials(inputs,spec,result),cohort_binding=membership,
+                root_similarity_evidence=similarity,root_similarity_bank=case/'manifest.json' if similarity is not None else None)
         retained=dict(preservation=value['preservation']) if 'preservation' in value else {}
         if validity=='current' and effects is not None:
             if effects['critical_candidate_effect']:
@@ -587,6 +596,9 @@ class HistoryStore(PrivateJournal):
         raw = read_regular(manifest,1024*1024); source,manifest_hash = record(manifest,1024*1024)
         if hashlib.sha256(raw).hexdigest() != manifest_hash: raise ValueError('manifest changed during history preflight')
         spec = ExperimentSpec.parse(source['experiment']); spec.validate()
+        if spec.root_similarity_sha256 is not None:
+            from .root_similarity import binding as similarity_binding, manifest_evidence
+            similarity_binding(spec, manifest_evidence(source), manifest)
         controlled=inference_client is not None
         if controlled:
             from .comparison_custody import Comparison,PROFILE,fixture_seed,bundle_binding
