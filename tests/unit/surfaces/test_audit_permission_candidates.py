@@ -15,7 +15,7 @@ def test_exact_project_deny_is_a_private_candidate_only(tmp_path):
     (tmp_path / 'eslint.config.js').write_text('synthetic')
     profile = dict(schema_version=1, runtime='claude-code', version=surfaces.PINS['claude-code'], task_cwd='.')
     with patch.object(protected_paths._MetadataWalk, 'read', side_effect=AssertionError('no protected contents')):
-        inventory = harness_inventory.capture(tmp_path, profile)
+        inventory = harness_inventory.capture(tmp_path, profile, schema_version=2)
         protected = protected_paths.capture(tmp_path)
     result = permission_candidates.report(inventory, protected)
     rows = {row['path']: row for row in result['paths']}
@@ -33,7 +33,7 @@ def test_unsupported_or_malformed_denies_never_imply_no_guard(tmp_path):
     profile = dict(schema_version=1, runtime='claude-code', version=surfaces.PINS['claude-code'], task_cwd='.')
     for deny in (['Edit(**/.env)'], [42], 'Edit(.env)'):
         settings.write_text(json.dumps({'permissions': {'deny': deny}}))
-        result = permission_candidates.report(harness_inventory.capture(tmp_path, profile), protected_paths.capture(tmp_path))
+        result = permission_candidates.report(harness_inventory.capture(tmp_path, profile, schema_version=2), protected_paths.capture(tmp_path))
         assert result['paths'][0]['status'] == 'unknown'
         assert result['coverage'] == 'unknown'
 
@@ -44,6 +44,23 @@ def test_excluded_local_settings_do_not_become_evidence(tmp_path):
     settings.write_text(json.dumps({'permissions': {'deny': ['Edit(.env)']}}))
     (tmp_path / '.env').write_text('synthetic')
     profile = dict(schema_version=1, runtime='claude-code', version=surfaces.PINS['claude-code'], task_cwd='.')
-    result = permission_candidates.report(harness_inventory.capture(tmp_path, profile), protected_paths.capture(tmp_path))
+    result = permission_candidates.report(harness_inventory.capture(tmp_path, profile, schema_version=2), protected_paths.capture(tmp_path))
     assert result['paths'][0]['status'] == 'unknown'
     assert result['effective'] == 'unknown'
+
+
+def test_inventory_versions_preserve_v1_and_bind_v2_evidence(tmp_path):
+    settings = tmp_path / '.claude/settings.json'
+    settings.parent.mkdir()
+    settings.write_text(json.dumps({'permissions': {'deny': ['Edit(.env)']}}))
+    (tmp_path / '.env').write_text('synthetic')
+    profile = dict(schema_version=1, runtime='claude-code', version=surfaces.PINS['claude-code'], task_cwd='.')
+    old = harness_inventory.capture(tmp_path, profile)
+    new = harness_inventory.capture(tmp_path, profile, schema_version=2)
+    assert old.document()['profile'] == 'ahl-harness-inventory-v1'
+    assert new.document()['profile'] == 'ahl-harness-inventory-v2' and old.sha256 != new.sha256
+    protected = protected_paths.capture(tmp_path)
+    assert permission_candidates.report(old, protected)['paths'][0]['status'] == 'unknown'
+    assert permission_candidates.report(new, protected)['paths'][0]['status'] == 'permission_candidate_present'
+    settings.write_text(json.dumps({'permissions': {'deny': ['Write(.env)']}}))
+    assert harness_inventory.capture(tmp_path, profile, schema_version=2).sha256 != new.sha256

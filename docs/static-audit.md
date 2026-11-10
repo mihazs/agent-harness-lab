@@ -35,6 +35,10 @@ private local settings and other runtime layers remain unknown. The two inputs
 are independently captured snapshots. Rule hashes and paths are private metadata.
 The CLI includes this comparison under `permission_candidates`; it is outside
 `audit_sha256` and does not change the enforcement coverage verdict.
+The audit CLI and audit convenience capture use harness inventory schema version 2
+for these facts. Direct `harness_inventory.capture()` calls default to version 1
+for compatibility; pass `schema_version=2` to include the newer evidence in the
+versioned inventory and its hash. A version 1 inventory leaves these candidates unknown.
 The CLI also reports `protected_path_hook_review`, a checkout write-tool hook
 candidate and a prompt to review applicable permissions and hooks for each path.
 The hook matcher concerns tool names alone; it does not establish that a handler
