@@ -3191,7 +3191,10 @@ native identity. Each PR side keeps its own repository identity: a fork head is
 `head_repository_state: "other_repository"` with the fork's repository hash, even
 when its branch name and commit match the base; a deleted head repository is
 `unknown`. Issue repository, PR base repository and native comment/review parent
-links are checked against the selection; a foreign parent, a plain issue
+links are checked against the selection. Issue and PR base repository IDs must
+also match the selected repository response; a PR head's name and ID must agree
+on whether it is the same repository. Missing or inconsistent IDs fail the
+capture. A foreign parent, a plain issue
 selected as a PR, or an issue/PR/repository that changes between its read and
 its readback fails the whole capture.
 

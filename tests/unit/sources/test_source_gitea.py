@@ -130,6 +130,24 @@ class GiteaFixture:
 
 
 class TestGiteaSource(GiteaFixture):
+    @pytest.mark.parametrize('part', ('issue', 'pull_issue', 'base', 'head'))
+    def test_same_name_different_repository_id_fails_closed(self, part):
+        if part in ('issue', 'pull_issue'):
+            issue = getattr(self, part)
+            issue['repository'] = {**issue['repository'], 'id': 999}
+        else:
+            branch = self.pull[part]
+            branch['repo'] = {**branch['repo'], 'id': 999}
+            branch['repo_id'] = 999
+        with pytest.raises(TransportError):
+            self.read()
+
+    def test_same_repository_id_with_different_head_name_fails_closed(self):
+        head = self.pull['head']
+        head['repo'] = {**head['repo'], 'full_name': 'synthetic-owner/other'}
+        with pytest.raises(TransportError):
+            self.read()
+
     def test_capture_keeps_issues_pulls_comments_and_reviews_without_grading_them(self):
         client, snapshot = self.read()
         assert ({r.record_type for r in snapshot.records} == {'gitea_instance', 'gitea_repository', 'gitea_issue',
