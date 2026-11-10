@@ -51,6 +51,9 @@ else: print(json.dumps({'type':'turn.completed','usage':{'output_tokens':1}}))
         result, data = self.run_case()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual([t['status'] for t in data['trials']], ['passed', 'passed'])
+        self.assertTrue(all(t['skill_activation_receipt']['state'] == 'unknown' and
+                            not t['skill_activation_receipt']['publication_allowed'] and
+                            t['skill_activation_receipt']['case_id'] is None for t in data['trials']))
         self.assertTrue(data['inputs_unchanged'])
         self.assertFalse((self.root / 'fixture/artifact').exists())
         self.assertEqual((self.root / 'fixture/original').read_text(), 'preserve')

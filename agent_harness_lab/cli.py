@@ -57,6 +57,9 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     if 'AHL_MANAGED_PREPARATION' in os.environ:
         argparse.ArgumentParser(prog='ahl').exit(3,'ahl: managed preparation cannot start a CLI operation\n')
+    if argv[:2] == ['skills', 'activation-receipt']:
+        from .evaluation.skills import activation_receipt_main
+        return activation_receipt_main(argv[2:])
     skill_invocation=argv[:2]==['skills','invoke']
     if skill_invocation:argv=['improve',*argv[2:]]
     if argv and argv[0] == 'analysis':
