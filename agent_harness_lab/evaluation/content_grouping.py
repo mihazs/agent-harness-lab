@@ -39,8 +39,10 @@ def fixture_content(root, expected, remaining=None):
     return TextFingerprint(expected, metadata_digest(normalized), tokens, algorithm=FIXTURE_ALGORITHM), prompt, total
 
 
-def inspect_bank(root, tasks, bank_sha256):
-    from .root_similarity import shingles
+def inspect_bank(root, tasks, bank_sha256, *, similarity_algorithm=None):
+    from .root_similarity import ALGORITHM, ALGORITHMS, shingles
+    algorithm = ALGORITHM if similarity_algorithm is None else similarity_algorithm
+    if algorithm not in ALGORITHMS: raise ValueError('unsupported root similarity algorithm')
     buckets = {}; receipts = []; issues = []; identities = []; total = 0; overlaps = 0; prompts = []
     for task in sorted(tasks, key=lambda task:task.task_id):
         content, prompt, consumed = fixture_content(contained(root, task.fixture), task.fixture_digest, None)
@@ -51,7 +53,7 @@ def inspect_bank(root, tasks, bank_sha256):
             parsed = json.loads(raw.decode('utf-8'), object_pairs_hook=unique_object)
             if text_fingerprint(parsed['prompt']) != prompt or digest(fixture, max_files=None, max_bytes=None, max_entries=None, max_depth=None) != task.fixture_digest:
                 raise ValueError('fixture changed during similarity inspection')
-            if shingles(parsed['prompt']):
+            if shingles(parsed['prompt'], algorithm=algorithm):
                 prompts.append((task.root_id, parsed['prompt']))
         ref = RecordRef(bank_sha256, metadata_digest(task.task_id), task.fixture_digest)
         identities.append(dict(subject=ref.to_dict(), fixture=content.to_dict(), prompt=None if prompt is None else prompt.to_dict()))
@@ -69,9 +71,9 @@ def inspect_bank(root, tasks, bank_sha256):
     revision = metadata_digest(dict(algorithm=FIXTURE_ALGORITHM, bank_sha256=bank_sha256, fingerprints=identities))
     from .root_similarity import evidence as similarity_evidence, suspected_components
     roots_available = all(hasattr(t, 'root_id') for t in tasks)
-    similarity = similarity_evidence(bank_sha256, revision, [(t.task_id, t.root_id) for t in tasks], prompts) if roots_available and len(prompts) == len(tasks) else None
+    similarity = similarity_evidence(bank_sha256, revision, [(t.task_id, t.root_id) for t in tasks], prompts, algorithm=algorithm) if roots_available and len(prompts) == len(tasks) else None
     roots = {t.root_id for t in tasks} if roots_available else set()
-    groups = suspected_components(prompts) if similarity is None else similarity['groups']
+    groups = suspected_components(prompts, algorithm=algorithm) if similarity is None else similarity['groups']
     if roots_available and similarity is None:
         issues.append(dict(status='independence_unverified', reason='prompt_similarity_incomplete'))
     flagged = {root for group in groups for root in group}
