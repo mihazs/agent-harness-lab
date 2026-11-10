@@ -216,3 +216,14 @@ unknown request coverage and final totals; it does not authenticate provider dat
 complete billing, compute a resource decision, or authorize promotion. V7 history summaries
 and analyses explicitly report the resource gate as not evaluated. The history seal is not a
 security boundary against code with access to the same process or private store.
+
+## Optional completed-trial category coverage
+
+With a pinned resource contract, `HistoryStore.run(..., resource_contract=contract,
+resource_coverage=True)` opts into v8 history and a v2 private resource artifact. For
+an accepted completed trial, a category total is present only when at least one request
+was attempted, every attempt is bound to the trial, and every attempt reported that
+category. Otherwise the total is unknown. An absent cached-input detail remains unknown;
+no cache state or quality status is inferred. Provider-reported counts are unverified,
+may omit billing outside the controlled Responses requests, and are not a resource
+decision or promotion authority. Calls without this option preserve v6 and v7 behavior.
