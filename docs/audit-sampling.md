@@ -145,6 +145,23 @@ submitted in a later batch against the same receipt; pending labels remain
 inconclusive and reviewer labels remain unauthenticated. The default
 v1 plan, receipts and selection rule remain unchanged by this opt-in design.
 
+## Local review lifecycle linkage
+
+`audit_corpus.prepare(receipt, frame, store_path, mapping)` links every v2
+sampled unit to one current, pending diagnostic corpus case whose root identifier
+hashes to that unit. It requires a matching caller-supplied frame and limits the
+assignment to 128 cases. `audit_corpus.inspect` reopens the current private corpus,
+checks the original pending event and reports later local review state and
+disposition; exposed or superseded cases are refused. Both the binding and
+observation are private.
+
+This is an operator-supplied linkage, not a trusted assignment authority. Its
+checksum does not authenticate the assignment or prove when it was made; the
+frame, reviewer identities, review independence and labels remain unverified.
+The corpus outcome categories do not by themselves define audit incident labels.
+No labels or population estimates are produced by this linkage, and no automatic
+policy update is authorized.
+
 ## Estimates
 
 `estimate(receipt, batch)` takes labels bound to one receipt:
