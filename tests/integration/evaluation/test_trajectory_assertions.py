@@ -167,6 +167,20 @@ class TestTrajectoryAssertions:
         _, capture = self.role(binding,backend=backend,trial='backend-failed')
         assert [r['status'] for r in core.evaluate(binding,capture)['assertions']] == ['violated','violated','unknown']
 
+    @pytest.mark.parametrize('problem', [dict(status='incomplete'), dict(error={'message': 'synthetic'}),
+                                         dict(incomplete_details={'reason': 'synthetic'})])
+    def test_incomplete_response_does_not_prove_missing_requests(self, problem):
+        binding = self.bind([forbidden('request', tool='unseen'), forbidden('request', tool='run'),
+                             forbidden('dispatch', tool='run')])
+        client, _ = self.f.client([])
+        response = dict(status='completed', output=[fixtures.call()],
+                        usage=dict(input_tokens=5, output_tokens=2, total_tokens=7)) | problem
+        client.transport = Mock(return_value=json.dumps(response).encode())
+        _, capture = self.role(binding, client=client)
+        receipt = core.evaluate(binding, capture)
+        assert [row['status'] for row in receipt['assertions']] == ['unknown', 'violated', 'satisfied']
+        assert not receipt['assertions'][0]['coverage_complete']
+
     def test_partial_argv_compares_only_selected_visible_indices(self):
         exact = dict(mode='exact',argv=['/usr/bin/true','SYNTHETIC_CONTROLLER_KEY'])
         partial = dict(mode='partial',argv={'0':'/usr/bin/true'})
