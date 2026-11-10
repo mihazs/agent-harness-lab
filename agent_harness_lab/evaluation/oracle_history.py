@@ -323,7 +323,8 @@ class HistoryStore(PrivateJournal):
                     or custody.get('bundles')!=inputs['responses_binding']['bundles']
                     or custody.get('instruction_protocol')!=inputs['responses_binding'].get('instruction_protocol')):
                 raise ValueError('sealed Responses custody changed')
-            validate(custody,spec,result)
+            protected=record(case/'protected-access.json',1024*1024)[0] if 'protected_access_sha256' in inputs else None
+            validate(custody,spec,result,protected)
         if inputs['schema_version']==5:
             from .sequential_state import replay
             if tree_hash(case/'sequential')!=evidence['sequential_tree_sha256']:raise ValueError('sequential ledger seal changed')
@@ -646,9 +647,6 @@ class HistoryStore(PrivateJournal):
         membership=cohort_history.capture(manifest.parent,source,spec,bound_tasks)
         if time.monotonic()>=deadline: raise TimeoutError('history qualification preflight budget exhausted')
         run_id = hashlib.sha256(('run:'+secrets.token_hex(32)).encode()).hexdigest()
-        if controlled:
-            custody=Comparison(spec,fixtures,inference_client,deadline,trajectories,seeds,permission_profile=permission_profile,
-                bundles=bundles,journal_binding=dict(run_id=run_id,source_manifest_sha256=manifest_hash))
         from .certification_access import capture as capture_access, exposure
         binding = None
         def check_access_budget():
@@ -735,6 +733,10 @@ class HistoryStore(PrivateJournal):
                 if record(manifest,1024*1024)[1]!=manifest_hash:raise ValueError('sequential source manifest changed')
             sequential_controller.checker=validate_rows;sequential_controller.guard=live_guard
         try:
+            if controlled:
+                reviewed=access_handle if access_receipt and 'bank_qualification' in access_receipt['binding'] else None
+                custody=Comparison(spec,fixtures,inference_client,deadline,trajectories,seeds,permission_profile=permission_profile,
+                    bundles=bundles,journal_binding=dict(run_id=run_id,source_manifest_sha256=manifest_hash),protected_access=reviewed)
             if on_started is not None:
                 try: on_started(run_id)
                 except Exception: raise ValueError('history start observation failed') from None

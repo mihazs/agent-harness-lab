@@ -160,6 +160,14 @@ block a bank conservatively. This comparison cannot detect embedded substrings,
 semantic transformations or external exposure; it does not establish global
 non-exposure or complete role isolation.
 
+When a controlled Responses comparison uses an owned, reviewed-bank reservation,
+its private custody record binds the retired reservation to the run and plan.
+The controller checks the bank review and reservation at comparison admission and
+completion. This record is execution evidence only: external and pretraining
+exposure remain unknown, native identity remains unverified, and it grants neither
+certification nor adoption authority. A stored record cannot recreate the live
+reservation handle.
+
 Descriptive audits remain available and do not confer certification or automatic
 promotion authority. The controlled author workflow requires its configured model;
 the bank audit itself makes no model calls.

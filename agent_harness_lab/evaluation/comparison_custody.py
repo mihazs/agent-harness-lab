@@ -22,6 +22,12 @@ MAX_BYTES=8*1024*1024
 def hashed(value):return hashlib.sha256(encoded(value)).hexdigest()
 
 
+def _reservation_view(receipt):
+    return dict(reservation_id=receipt['reservation_id'],run_id=receipt['run_id'],
+        binding_sha256=hashed(receipt['binding']),external_exposure='unknown',pretraining_exposure='unknown',
+        native_identity='unverified',certification_authority=False,adoption_authority=False)
+
+
 def current():return _ACTIVE.get()
 
 
@@ -55,7 +61,7 @@ def fixture_seed(path,deadline):
 
 
 class Comparison:
-    def __init__(self,spec,fixtures,client,deadline,trajectories=None,seeds=None,*,permission_profile=None,controls=False,bundles=None,journal_binding=None):
+    def __init__(self,spec,fixtures,client,deadline,trajectories=None,seeds=None,*,permission_profile=None,controls=False,bundles=None,journal_binding=None,protected_access=None):
         from .responses import Client
         if type(client) is not Client or _ACTIVE.get() is not None or spec.sequential is not None:
             raise ValueError('one fresh fixed Responses comparison required')
@@ -65,6 +71,20 @@ class Comparison:
         self.bundles=deepcopy(bundles or {})
         self.journal_binding=deepcopy(journal_binding)
         self.spec,self.fixtures,self.client,self.deadline=spec,dict(fixtures),client,deadline
+        self.protected_access=None
+        if protected_access is not None:
+            from .certification_access import _Access, _OWNED
+            owner=_OWNED.get(protected_access) if type(protected_access) is _Access else None
+            if owner is None or owner[2]!=os.getpid():raise ValueError('live owned reservation required')
+            path,receipt,_=owner
+            binding=receipt['binding']
+            if (not journal_binding or receipt['run_id']!=journal_binding['run_id']
+                    or binding['plan_sha256']!=spec.digest or binding['runtime_sha256']!=spec.runtime_hash
+                    or binding['manifest_sha256']!=journal_binding['source_manifest_sha256']
+                    or 'bank_qualification' not in binding):
+                raise ValueError('reviewed bank reservation differs from live comparison')
+            self.protected_access=(path,deepcopy(receipt))
+            self._check_access()
         self.trajectories=trajectories or {};self.seeds=seeds or {}
         self.settings_pin=hashed(client.settings)
         self.expected=schedule(spec);self.rows=[];self.active=None;self.pending=[]
@@ -73,7 +93,7 @@ class Comparison:
 
     def _state(self):
         return encoded(dict(spec=self.spec.digest,fixtures=self.fixtures,client=id(self.client),settings_pin=self.settings_pin,deadline=self.deadline,
-            permission_profile=self.permission_profile,controls=self.controls,bundles=self.bundles,journal_binding=self.journal_binding,trajectories=self.trajectories,seeds=self.seeds,expected=self.expected,rows=self.rows,active=self.active,pending=self.pending,latest=None if self.latest is None else id(self.latest),
+            permission_profile=self.permission_profile,controls=self.controls,bundles=self.bundles,journal_binding=self.journal_binding,protected_access=self.protected_access,trajectories=self.trajectories,seeds=self.seeds,expected=self.expected,rows=self.rows,active=self.active,pending=self.pending,latest=None if self.latest is None else id(self.latest),
             lost=self.lost,closed=self.closed))
 
     def _save(self):
@@ -263,19 +283,40 @@ class Comparison:
             raise ValueError('comparison transport remained pending or changed outside admitted trials')
         if [value['trial_sha256'] for value in self.rows]!=[hashed(row) for row in result['trials']]:
             raise ValueError('fresh comparison final trial bytes changed')
+        if self.protected_access is not None:self._check_access()
         value=dict(profile=PROFILE,plan_sha256=self.spec.digest,result_sha256=hashed(result),
             permission_profile=self.permission_profile,bundles=self.bundles,fixtures=self.fixtures,seed_states=self.seeds,rows=deepcopy(self.rows),served_model='unverified',native_identity='unverified',
             independence='unverified',publication_allowed=False,adoption_authority=False)
         if self.client.settings.get('instruction_protocol') is not None:value['instruction_protocol']=self.client.settings['instruction_protocol']
+        if self.protected_access is not None:
+            _,receipt=self.protected_access
+            value['reviewed_bank_reservation']=_reservation_view(receipt)
         return value
 
+    def _check_access(self):
+        from .certification_access import _locked, check_deadline
+        from .bank_qualification import access_guard
+        path,receipt=self.protected_access
+        check_deadline(self.deadline)
+        with _locked(path) as (_,state):
+            expected=dict(binding=receipt['binding'],state='retired',run_id=receipt['run_id'])
+            if state['reservations'].get(receipt['reservation_id'])!=expected:
+                raise ValueError('reviewed bank reservation changed')
+            access_guard(receipt['binding'],state,reservation_id=receipt['reservation_id'],deadline=self.deadline)
+        check_deadline(self.deadline)
 
-def validate(value,spec,result):
+
+def validate(value,spec,result,protected_access=None):
     if (not isinstance(value,dict) or value.get('profile')!=PROFILE or value.get('plan_sha256')!=spec.digest
             or value.get('result_sha256')!=hashed(result)
             or len(value.get('rows',[]))!=len(schedule(spec))
             or [row.get('trial_sha256') for row in value['rows']]!=[hashed(row) for row in result['trials']]):
         raise ValueError('sealed fresh comparison binding changed')
+
+    if 'reviewed_bank_reservation' in value:
+        if (not isinstance(protected_access,dict) or 'bank_qualification' not in protected_access.get('binding',{})
+                or value['reviewed_bank_reservation']!=_reservation_view(protected_access)):
+            raise ValueError('sealed reviewed bank reservation differs')
 
     expected=value.get('permission_profile')
     if expected not in (None,'permission-results-v1'):raise ValueError('unsupported sealed permission profile')
