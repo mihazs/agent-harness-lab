@@ -3718,6 +3718,7 @@ local export manifest, select a descriptor containing:
 The source project fingerprint is `digest(("mempalace.wing", instance, wing))`;
 the selected drawer fingerprint is `digest(("mempalace.drawer", instance, wing,
 drawer_id))`. They are caller-declared scope checks, not producer authentication.
+An empty or absent wing is refused even though the upstream result can omit it.
 The resulting private record contains body, wing, room and drawer fingerprints;
 these can be guessable and must remain private. Raw content and metadata are
 excluded. Chunk metadata does not establish origin or independent cases. The

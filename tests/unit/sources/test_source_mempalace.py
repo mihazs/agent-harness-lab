@@ -57,6 +57,15 @@ def test_inconsistent_location_rejected(source):
     with pytest.raises(ValueError): MemPalaceDrawer(manifest).read(spec)
 
 
+@pytest.mark.parametrize('wing', ['', None])
+def test_absent_or_empty_wing_is_refused(source, wing):
+    export, payload, _, spec, manifest = source
+    if wing is None: del payload['wing']
+    else: payload['wing'] = wing
+    export.write_text(json.dumps(payload))
+    with pytest.raises(ValueError): MemPalaceDrawer(manifest).read(spec)
+
+
 def test_changed_drawer_content_changes_revision_without_independence(source):
     export, payload, _, spec, manifest = source
     first = MemPalaceDrawer(manifest).read(spec)
