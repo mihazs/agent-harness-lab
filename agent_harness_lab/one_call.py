@@ -12,6 +12,7 @@ import shlex
 import time
 
 from . import config, surfaces
+from .exit_guidance import REMEDIATION as REMEDIATION
 
 
 def invocation_context(args,output,deadline,*,remaining_seconds=None,remaining_trials=None):

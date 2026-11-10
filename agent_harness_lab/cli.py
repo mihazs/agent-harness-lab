@@ -244,15 +244,23 @@ def main(argv=None):
                 raise ValueError('timeout must be positive')
             result = improve(args)
         args._progress(result['status'])
+        from .exit_guidance import summary
+        print('ahl: ' + summary(result), file=sys.stderr)
         print(json.dumps(result, indent=2))
         from agent_harness_lab.monitoring.state import exit_code
         return exit_code(result['status'])
     except NotImplementedError:
+        from .exit_guidance import summary
+        print('ahl: ' + summary({'status': 'blocked'}), file=sys.stderr)
         parser.exit(3, 'ahl: required filesystem capabilities unavailable; no unsafe fallback\n')
     except KeyboardInterrupt:
         args._progress('interrupted')
+        from .exit_guidance import summary
+        print('ahl: ' + summary({'status': 'interrupted'}), file=sys.stderr)
         parser.exit(1, 'ahl: interrupted\n')
     except (ValueError, OSError, TypeError, KeyError) as exc:
+        from .exit_guidance import summary
+        print('ahl: ' + summary({'status': 'invalid_input'}), file=sys.stderr)
         parser.exit(2, f'ahl: {exc}\n')
 
 

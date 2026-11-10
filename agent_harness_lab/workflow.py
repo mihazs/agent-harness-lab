@@ -956,8 +956,9 @@ def _run_improvement(args, *, parent_started=None):
             if configured and time.monotonic()>=started+args.timeout:raise TimeoutError('configured preflight exhausted improvement budget')
             if reason:
                 output = output_dir(args,deadline=(time.monotonic() if started is None else started)+args.timeout)
+                from .exit_guidance import REMEDIATION
                 result = dict(status='blocked', reason=reason, output=str(output), changed_files=[],
-                              remediation='Select a supported runtime/profile and budget; see ahl improve --help')
+                              remediation=REMEDIATION.get(reason, 'Review the missing prerequisite in the private receipt.'))
                 write_json(output/'workflow.json', result)
                 return result
         if started is not None and time.monotonic()>=started+args.timeout:
@@ -1070,6 +1071,7 @@ def watch(args):
     configuration = watch_configuration(args)
     try:
         while True:
+            emitted = False
             # The same lock covers scheduling, execution and final checkpoint write.
             with project_lock(args.project):
                 iteration_started=(first_started if first_started is not None else time.monotonic()) if timed else None
@@ -1100,10 +1102,16 @@ def watch(args):
                     if managed and os.getpid()!=issuer: raise ValueError('watch completion requires its actual issuer process')
                     state = checkpoint_state.finish(state, result, time.time(), time.monotonic() - started, delay, random.random())
                     write_json(checkpoint, state)
+                    from .exit_guidance import summary
+                    print('ahl: ' + summary(result), file=sys.stderr)
                     print(json.dumps(result), flush=True)
+                    emitted = True
                 status = state['disposition'] if state else 'incomplete'
             if args.once or status == 'interrupted':
+                if not emitted:
+                    print('ahl: No fresh run. Evidence coverage: unavailable. Next: Review the private watch checkpoint.', file=sys.stderr)
                 return exit_code(status)
             time.sleep(args.interval)
     except KeyboardInterrupt:
+        print('ahl: Inconclusive. Evidence coverage: unavailable. Next: Review the interrupted run before starting another.', file=sys.stderr)
         return exit_code('interrupted')
