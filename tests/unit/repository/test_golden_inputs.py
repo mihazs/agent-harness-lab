@@ -10,6 +10,7 @@ import pytest
 from agent_harness_lab.diagnostics import audit_sampling, drift, triage_policy
 from agent_harness_lab.evaluation import interaction_contract, resource_decision
 from agent_harness_lab.evaluation.benchmark import public_export_allowed
+from agent_harness_lab.sources import agents_validation
 from tests.unit.evaluation.test_benchmark_contracts import record as public_record
 
 GOLDENS = Path(__file__).resolve().parents[2] / 'support/golden_profiles'
@@ -73,7 +74,15 @@ def test_sampling_plan_and_sealed_receipt_v1_keep_review_custody():
         audit_sampling.draw(frame, {**plan, 'profile': 'unknown-v999'})
 
 
-@pytest.mark.parametrize('name', ['interaction-contract-v1-output', 'audit-sampling-receipt-v1'])
+def test_definition_validation_output_v1_keeps_blocked_private_verdict():
+    finding = agents_validation.Finding(path='.codex/agents/synthetic.toml', runtime='codex', kind='agent',
+        action='create', verdict='blocked', reasons=('missing_required_field',))
+    output = agents_validation.Review((finding,)).document()
+    assert json.loads(json.dumps(output)) == sample('ahl-definition-validation-v1')
+    assert output['verdict'] == 'blocked' and output['publication_allowed'] is False
+
+
+@pytest.mark.parametrize('name', ['interaction-contract-v1-output', 'audit-sampling-receipt-v1', 'ahl-definition-validation-v1'])
 def test_private_golden_output_cannot_be_relabelled_as_a_public_benchmark(name):
     assert not public_export_allowed([sample(name) | public_record() | {'publication_allowed': True}])
 

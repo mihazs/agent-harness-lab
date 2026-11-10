@@ -10,7 +10,7 @@ from agent_harness_lab.cli import main
 from agent_harness_lab.diagnostics.retrieval import Incident
 
 
-@pytest.mark.parametrize('name', ['interaction-contract-v1-output', 'audit-sampling-receipt-v1'])
+@pytest.mark.parametrize('name', ['interaction-contract-v1-output', 'audit-sampling-receipt-v1', 'ahl-definition-validation-v1'])
 def test_private_golden_output_rejects_forged_public_benchmark_export(tmp_path, name):
     from pathlib import Path
     from tests.unit.evaluation.test_benchmark_contracts import record
