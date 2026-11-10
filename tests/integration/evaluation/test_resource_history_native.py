@@ -133,3 +133,28 @@ def test_resource_artifact_byte_change_before_seal_stays_incomplete(kernel_case)
     store = HistoryStore(kernel_case.root/'output/private-history'); run_id = result['controller_run_id']
     assert store.checked(run_id)[-1] == 'incomplete'
     with pytest.raises(ValueError,match='current sealed'): store.resource_evidence(run_id)
+
+
+@kernel_only
+def test_versioned_coverage_seals_and_reopens_without_authority(kernel_case):
+    contract = token_scope_contract(); pin = resource_decision.decide(contract, [], 'supported')['contract_sha256']
+    original_spec,original_run = repeated_workflow.ExperimentSpec,HistoryStore.run
+    def plan(*args,**kwargs): return original_spec(*args,**kwargs,resource_contract_sha256=pin)
+    def run(store,*args,**kwargs): return original_run(store,*args,**kwargs,resource_contract=contract,resource_coverage=True)
+    runtime = kernel_case.root/'runtime'; image = kernel.pinned_runtime(runtime)['sha256']
+    with patch.object(repeated_workflow,'ExperimentSpec',plan), patch.object(HistoryStore,'run',run):
+        code,result = kernel_case.invoke(runtime,image,kernel_case.root/'output',source=True)
+    assert code == 3 and result['analysis']['status'] == 'supported'
+    store = HistoryStore(kernel_case.root/'output/private-history'); run_id = result['controller_run_id']
+    assert store.checked(run_id)[2]['schema_version'] == 8
+    readback = store.resource_evidence(run_id); artifact = readback['artifact']
+    assert artifact['schema_version'] == 2 and readback['provider'] == 'unverified'
+    assert not readback['automatic_promotion'] and not readback['publication_allowed']
+    for sample in artifact['candidate']['samples']:
+        usage = sample['usage']; attempts = usage['request_attempts']
+        for category in usage['usage'].values():
+            if usage['request_binding_coverage'] == 'matched' and attempts and category['known_requests'] == attempts:
+                assert category['total'] == category['known_subtotal']
+            else:
+                assert category['total'] is None
+    assert store.analyze(run_id)['resource_decision'] == 'not_computed'

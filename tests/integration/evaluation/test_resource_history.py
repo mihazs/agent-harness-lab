@@ -53,3 +53,30 @@ def test_resource_history_requires_controlled_pinned_comparison_before_writes():
             fixture.store.run(fixture.args.manifest,fixture.args.baseline,fixture.args.candidate,
                 cgroup_root=fixture.root/'delegation',image_root=fixture.root/'image',image_sha256=fixture.image_hash,
                 disk_bytes=64*1024*1024,resource_contract=contract)
+
+
+def test_versioned_coverage_requires_each_bound_attempt_and_category(tmp_path):
+    legacy,spec,result,custody = artifact_fixture(tmp_path)
+    artifact = resource_history.coverage_artifact(legacy)
+    assert resource_history.validate(artifact,spec,result,custody) == artifact
+    first = artifact['candidate']['samples'][0]['usage']['usage']
+    assert first['input_tokens']['total'] == 5
+    assert first['output_tokens']['total'] == 2
+    assert first['cached_input_tokens']['total'] is None
+    missing = artifact['candidate']['samples'][1]['usage']['usage']
+    assert all(entry['total'] is None for entry in missing.values())
+    assert all(entry['total'] is None for entry in legacy['candidate']['samples'][0]['usage']['usage'].values())
+    altered = deepcopy(artifact)
+    altered['candidate']['samples'][1]['usage']['usage']['input_tokens']['total'] = 0
+    with pytest.raises(ValueError,match='coverage changed'):
+        resource_history.validate(altered,spec,result,custody)
+
+
+def test_coverage_rejects_boolean_totals_and_float_version(tmp_path):
+    legacy,spec,result,custody = artifact_fixture(tmp_path)
+    artifact = resource_history.coverage_artifact(legacy)
+    artifact['candidate']['samples'][0]['usage']['usage']['input_tokens']['total'] = True
+    with pytest.raises(ValueError): resource_history.validate(artifact,spec,result,custody)
+    artifact = resource_history.coverage_artifact(legacy)
+    artifact['schema_version'] = 2.0
+    with pytest.raises(ValueError): resource_history.validate(artifact,spec,result,custody)

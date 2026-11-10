@@ -1,11 +1,43 @@
 """Validation of private sealed resource artifacts; provider data remain unverified."""
+from copy import deepcopy
+
 from .comparison_custody import hashed
 from .resource_decision import verify_plan_resource_contract
 
 PROFILE = 'ahl-sealed-resource-evidence-v1'
+COVERAGE_PROFILE = 'ahl-sealed-resource-coverage-v2'
+
+
+def coverage_artifact(value):
+    artifact = deepcopy(value)
+    artifact.update(schema_version=2, profile=COVERAGE_PROFILE)
+    for sample in artifact['candidate']['samples']:
+        usage = sample['usage']
+        attempts = usage['request_attempts']
+        for category in usage['usage'].values():
+            category['total'] = (category['known_subtotal'] if attempts > 0
+                and usage['request_binding_coverage'] == 'matched'
+                and category['known_requests'] == attempts and category['unknown_requests'] == 0 else None)
+    return artifact
 
 
 def validate(value, spec, result, custody):
+    if isinstance(value,dict) and type(value.get('schema_version')) is int and value.get('schema_version') == 2:
+        if value.get('profile') != COVERAGE_PROFILE: raise ValueError('unsupported sealed resource coverage')
+        original = deepcopy(value)
+        original.update(schema_version=1, profile=PROFILE)
+        try:
+            for sample in original['candidate']['samples']:
+                for category in sample['usage']['usage'].values(): category['total'] = None
+        except (KeyError, TypeError, AttributeError): raise ValueError('invalid resource coverage') from None
+        validate(original,spec,result,custody)
+        expected = coverage_artifact(original)
+        for actual_sample, expected_sample in zip(value['candidate']['samples'],expected['candidate']['samples']):
+            for name, entry in actual_sample['usage']['usage'].items():
+                total, wanted = entry['total'], expected_sample['usage']['usage'][name]['total']
+                if total != wanted or type(total) is not type(wanted): raise ValueError('resource category coverage changed')
+        if expected != value: raise ValueError('resource category coverage changed')
+        return value
     if not isinstance(value,dict) or set(value) != {'schema_version','profile','candidate','publication_allowed','certification_authority','automatic_promotion'}:
         raise ValueError('invalid sealed resource artifact')
     if (type(value['schema_version']) is not int or value['schema_version'] != 1 or value['profile'] != PROFILE
