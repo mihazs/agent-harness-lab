@@ -39,7 +39,7 @@ def test_bank_backed_final_analysis_rechecks_authority_and_detects_stale_bank(tm
         manifest = case/'manifest.json'; manifest.write_bytes(encoded(source))
         history = HistoryStore(tmp_path/'history')
         trials = records(plan, lambda row: row['version'] == 'candidate')
-        checked = (case, [], {'run_id':'synthetic'}, plan, {}, 'current')
+        checked = (case, [], {'schema_version':2, 'run_id':'synthetic'}, plan, {}, 'current')
         # Authority validation has separate admission tests; use an explicit test double here.
         with patch('agent_harness_lab.evaluation.oracle_history.bank_authority', return_value={}) as authority, \
                 patch.object(history, 'trials', return_value=trials):
