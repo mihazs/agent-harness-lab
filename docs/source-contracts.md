@@ -4079,6 +4079,23 @@ contract validation, checkpoint behavior and a side-effect-free registry, not
 real-source compatibility, containment, diagnostic usefulness or certification.
 ## Offline Hindsight bank archives
 
+`local_file/hindsight-bank-zip/v1` accepts the same selection descriptor shape
+as the extracted archive profile below, with `archive` naming one explicitly
+selected ZIP file. It reads the ZIP in memory without extracting files. The
+classic ZIP directory is bounded to 20,000 entries and scanned before library
+parsing; duplicate or unsafe member names, links, encryption, unsupported
+compression and malformed member sizes or checksums are refused. Only stored or
+deflated members are supported. Compressed archive bytes, selected uncompressed
+bytes, JSON structure and rows are bounded by the selection limits. The selected
+bank in `manifest.json` is checked before any document member is read, and the
+archive is rehashed after capture. Unselected member contents are not read.
+
+The caller-supplied archive's producer and origin are unverified. A local file
+checkpoint does not verify source coverage, independent origins or outcomes.
+This profile neither downloads nor creates an archive and does not contact a
+Hindsight server or backend. ZIP64, multi-disk and nonstandard directory layouts
+are refused; use the extracted profile when the selected ZIP is unsupported.
+
 Select `local_file/hindsight-bank-archive/v1` in the existing local source
 declaration, with `data` naming a selection descriptor next to the manifest:
 
