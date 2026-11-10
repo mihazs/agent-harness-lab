@@ -166,21 +166,36 @@ class TestGitLabSource(GitLabFixture):
         second, _ = self.read(replace(selection, project=other_path))
         assert self.nodes(first, 'gitlab_mr_closing_issue')[0]['native_id_sha256'] != self.nodes(second, 'gitlab_mr_closing_issue')[0]['native_id_sha256']
 
-    @pytest.mark.parametrize('foreign', [dict(id=701, iid=7, project_id=43), dict(id=701, title='SYNTHETIC_PRIVATE_TITLE')])
+    @pytest.mark.parametrize('foreign', [dict(id=701, iid=7, project_id=43), dict(id=701, title='SYNTHETIC_PRIVATE_TITLE'),
+                                         dict(id='PROJECT-123', title='SYNTHETIC_PRIVATE_TITLE')])
     def test_v5_foreign_or_external_reference_is_omitted_and_incomplete(self, foreign):
         self.routes[self.mr_path+'/closes_issues?page=1&per_page=100'] = self.closing_rows()+[foreign]
         client, snapshot = self.read(self.v5_closing_selection())
         assert ('closing_issues', 'pagination_incomplete', 'unscoped_references_omitted') in self.states(client)
         assert len(self.nodes(client, 'gitlab_mr_closing_issue')) == 1 and not snapshot.checkpoint_ready
         assert not any('/projects/43' in target for target in self.targets)
+        assert 'PROJECT-123' not in repr(client.summary)
 
-    @pytest.mark.parametrize('case', ['selected_identity_conflict', 'duplicate', 'invalid_project', 'confidential_without_auth',
+    def test_v5_duplicate_external_string_identity_fails_closed(self):
+        external = dict(id='PROJECT-123', title='SYNTHETIC_PRIVATE_TITLE')
+        self.routes[self.mr_path+'/closes_issues?page=1&per_page=100'] = [dict(external), dict(external)]
+        with pytest.raises(TransportError): self.read(self.v5_closing_selection())
+
+    def test_v5_duplicate_external_string_identity_across_pages_fails_closed(self):
+        target = self.mr_path+'/closes_issues'
+        first = [dict(id=f'PROJECT-{index}', title='SYNTHETIC_PRIVATE_TITLE') for index in range(100)]
+        self.routes[target+'?page=1&per_page=100'] = self.page(first, **{'X-Total': '101', 'X-Page': '1', 'X-Next-Page': '2'})
+        self.routes[target+'?page=2&per_page=100'] = self.page([dict(first[0])], **{'X-Total': '101', 'X-Page': '2', 'X-Next-Page': ''})
+        with pytest.raises(TransportError): self.read(self.v5_closing_selection())
+
+    @pytest.mark.parametrize('case', ['selected_identity_conflict', 'duplicate', 'invalid_project', 'same_project_string_id', 'confidential_without_auth',
                                      'unknown_visibility_without_auth', 'invalid_visibility'])
     def test_v5_invalid_or_unauthorized_reference_fails_closed(self, case):
         rows = self.closing_rows()
         if case == 'selected_identity_conflict': rows[0]['id'] = 701
         if case == 'duplicate': rows.append(dict(rows[0]))
         if case == 'invalid_project': rows[0]['project_id'] = True
+        if case == 'same_project_string_id': rows[0]['id'] = 'PROJECT-123'
         if case == 'confidential_without_auth': rows[0]['confidential'] = True
         if case == 'unknown_visibility_without_auth': del rows[0]['confidential']
         if case == 'invalid_visibility': rows[0]['confidential'] = 'true'

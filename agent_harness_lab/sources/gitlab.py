@@ -306,7 +306,17 @@ class GitLabAPI:
     def _closing_issues(self, ledger, key, iid, parent, budget):
         """Capture scoped references to issues the server says may close on merge."""
         target = f'{self.project_root}/merge_requests/{iid}/closes_issues'
-        def identity(row): return self._native('Issue', row.get('id'))
+        def identity(row):
+            project_id = row.get('project_id')
+            if project_id is not None: project_id = integer(project_id, minimum=1)
+            if project_id == self.project_id: return self._native('Issue', row.get('id'))
+            # External trackers may supply string IDs and omit project_id; these rows are never emitted.
+            native = row.get('id')
+            if type(native) is int: integer(native, minimum=1)
+            elif (not isinstance(native, str) or not native or len(native) > 256 or
+                    any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in native)):
+                raise ValueError('invalid unscoped GitLab issue reference identity')
+            return digest(('gitlab.unscoped_closing_issue', self.selection.instance_sha256, project_id, native))
         def project(row):
             budget[0] += 1
             if budget[0] > MAX_MR_CLOSING_ISSUES: raise ValueError('excessive GitLab closing issue references')
