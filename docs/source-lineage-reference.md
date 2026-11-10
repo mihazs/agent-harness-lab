@@ -70,7 +70,12 @@ the changed current cache makes old reviews stale, requiring a new review.
 Labels retain the source-label character rules without a length ceiling. Different author and
 reviewer strings do not authenticate different people. Evidence references and
 review provenance remain declared citations; they are not independently checked
-against live upstream sources by this operation.
+against live upstream sources by this operation. Within the selected cache, claim
+and approval evidence must be present, unsuperseded and unambiguous, just like the
+linked endpoints. A historical claim or review that cites an unavailable revision
+remains inspectable, but a current query reports it as stale and excludes its link.
+This stricter check can make previously applicable reviews stale; it does not
+assert that the historical material was false or verify upstream freshness.
 
 ## Applicability and conflict handling
 
