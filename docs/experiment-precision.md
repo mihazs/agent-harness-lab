@@ -143,7 +143,11 @@ Preservation analysis also reports bounds for each required frozen cohort, using
 equal selected-root weights and the required-cohort Bonferroni allocation. It
 does so only with valid frozen membership and unambiguous records; qualification
 and independence remain unverified. Optional cohorts remain descriptive. Sequential
-analysis does not yet provide these bounds.
+analysis does not yet provide inferential missing-outcome bounds. Its numeric API
+can opt in to a descriptive finite-bank completion range for a matching partial
+prefix; unobserved arms remain unknown and no confidence-sequence or promotion
+claim follows. This range is unavailable through the CLI and is not a replayable
+controller inspection.
 
 The power simulator's roots are independent by construction, so its result says nothing about
 real task dependence. No worker, model or grader runs, nothing is observed,

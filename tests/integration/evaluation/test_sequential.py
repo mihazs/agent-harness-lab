@@ -52,6 +52,29 @@ def records(plan,binding,outcome):
 
 
 class TestSequentialMath:
+    def test_partial_prefix_identifies_finite_bank_without_filling_outcomes(self):
+        plan=spec(2);binding=core.create_binding(plan,[])
+        data=records(plan,binding,lambda row: row['version']=='candidate')
+        prefix=data[:1]
+        legacy=core.analyze(plan,prefix,binding)
+        result=core.analyze(plan,prefix,binding,include_missing_bounds=True)
+        assert legacy['reason']==result['reason']=='partial_or_nonprefix_root'
+        bounds=result['missing_outcome_bounds']
+        assert result['status']=='incomplete' and not bounds['automatic_promotion']
+        assert bounds['interpretation']=='finite_bank_completion_range_not_a_confidence_sequence'
+        for values in itertools.product((False,True),repeat=3):
+            completed=[*prefix,*[replace(row,outcome=value) for row,value in zip(data[1:],values)]]
+            actual=core.analyze(plan,completed,binding)['primary']
+            exact=core.unpack(actual['exact_low'])
+            assert core.unpack(bounds['primary']['exact_low'])<=exact<=core.unpack(bounds['primary']['exact_high'])
+
+    def test_missing_identification_refuses_foreign_or_unordered_prefix(self):
+        plan=spec(2);binding=core.create_binding(plan,[]);data=records(plan,binding,lambda row: True)
+        for bad in ([data[1]], [replace(data[0],runtime_hash='different')]):
+            with pytest.raises(ValueError):core._missing_identification(plan,bad,binding,[])
+        result=core.analyze(plan,[data[1]],binding,include_missing_bounds=True)
+        assert result['status']=='incomplete' and 'missing_outcome_bounds' not in result
+
     def test_selected_import_root(self):
         expected=os.environ.get('AHL_EXPECTED_PACKAGE_ROOT')
         if expected:assert Path(agent_harness_lab.__file__).resolve().is_relative_to(Path(expected).resolve())
