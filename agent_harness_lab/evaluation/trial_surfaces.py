@@ -153,6 +153,22 @@ def stage_harness(root, workspace, paths):
     return dict(profile=PROFILE, included=included, absent=absent, observed_loading='unknown')
 
 
+def harness_skill_availability(record):
+    """Skill bundles named by a stage_harness record: present with the staged files' hashes, or absent when
+    the version lacks the entry point. Only `.claude/skills/<name>/` and `.agents/skills/<name>/` count."""
+    from agent_harness_lab.evaluation.skills import skill_availability
+    bundles = {}
+    for relative, digest in [(row['path'], row['sha256']) for row in record['included']] + [(p, None) for p in record['absent']]:
+        parts = Path(relative).parts
+        for j in range(len(parts) - 3):
+            if parts[j:j + 2] in ((('.claude', 'skills')), (('.agents', 'skills'))):
+                files = bundles.setdefault(Path(*parts[:j + 3]), {})
+                files[Path(*parts[j + 3:]).as_posix()] = digest
+                break
+    return [skill_availability('harness_paths', scope.name, {k: v for k, v in files.items() if v})
+            for scope, files in sorted(bundles.items())]
+
+
 def home_skills(environ):
     """User skill roots that still load under the temporary CODEX_HOME."""
     return (Path(environ['HOME'] if environ.get('HOME') else os.path.expanduser('~')) / '.agents/skills',)

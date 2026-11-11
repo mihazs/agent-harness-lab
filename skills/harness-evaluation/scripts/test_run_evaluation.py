@@ -510,6 +510,34 @@ class TrialWorkspaceTests(unittest.TestCase):
             self.assertEqual(surfaces['absent'], ['app/.claude/rules/absent.md'])
             self.assertEqual(surfaces['observed_loading'], 'unknown')
 
+    def test_identical_skill_bundle_has_comparable_availability_through_either_route(self):
+        files = {'SKILL.md': 'example skill', 'reference.md': 'extra'}
+        paths = [f'.claude/skills/example/{name}' for name in files]
+        for version in ('baseline', 'candidate'):
+            (self.root / version / 'example').mkdir()
+            for name, text in files.items():
+                (self.root / version / 'example' / name).write_text(text)
+        # Only the candidate carries the harness-path copy; the baseline lacks it, which is removal.
+        (self.root / 'candidate/.claude/skills/example').mkdir(parents=True)
+        for name, text in files.items():
+            (self.root / 'candidate/.claude/skills/example' / name).write_text(text)
+        by_route = {}
+        for route, options in (('skills', dict(skills=['example'])), ('harness_paths', dict(harness_paths=paths))):
+            shutil.rmtree(self.root / 'out', ignore_errors=True)
+            result, data = self.run_isolated(**options)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            by_route[route] = {t['version']: t['skill_availability'] for t in data['trials']}
+            for trial in data['trials']:
+                self.assertTrue(all(row['activated'] is None for row in trial['skill_availability']))
+                self.assertEqual(trial['skill_activation_receipt']['state'], 'unknown')
+        via_skills, via_paths = by_route['skills']['candidate'][0], by_route['harness_paths']['candidate'][0]
+        self.assertEqual((via_skills['route'], via_paths['route']), ('skills', 'harness_paths'))
+        self.assertEqual((via_skills['name'], via_skills['state']), ('example', 'present'))
+        self.assertEqual({k: via_skills[k] for k in ('bundle_sha256', 'entry_sha256')},
+                         {k: via_paths[k] for k in ('bundle_sha256', 'entry_sha256')})
+        self.assertEqual([(v['name'], v['state'], v['bundle_sha256'], v['activated'])
+                          for v in by_route['harness_paths']['baseline']], [('example', 'absent', None, None)])
+
     def test_codex_run_records_unverified_isolation_and_uses_only_the_trial_home(self):
         result, data = self.run_isolated()
         self.assertEqual(result.returncode, 0, result.stderr)

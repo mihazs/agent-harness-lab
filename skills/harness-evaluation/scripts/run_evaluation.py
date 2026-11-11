@@ -748,6 +748,10 @@ def _evaluate(args):
             application_modules()
             from agent_harness_lab.evaluation.trial_surfaces import stage_harness
             record['workspace_surfaces'] = stage_harness(root, workspace, harness_paths)
+            from agent_harness_lab.evaluation.trial_surfaces import harness_skill_availability
+            availability = harness_skill_availability(record['workspace_surfaces'])
+        else:
+            availability = []
         loaded = []
         plugin = workspace / '.harness-trial'
         if agent == 'claude':
@@ -760,6 +764,10 @@ def _evaluate(args):
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(root / skill, target)
             loaded.append(str(target / 'SKILL.md'))
+            from agent_harness_lab.evaluation.skills import skill_availability
+            availability.append(skill_availability('skills', skill, {
+                f.relative_to(target).as_posix(): hashlib.sha256(f.read_bytes()).hexdigest()
+                for f in target.rglob('*') if f.is_file()}))
         environment = None
         if offline or controlled:
             argv = task['offline_executor'] if offline else None
@@ -770,6 +778,7 @@ def _evaluate(args):
         if manifest.get('no_nested_agents', False):
             prompt += 'Do not launch child agents or nested model trials; the parent owns the evaluation budget.\n'
         prompt += 'Operate only in this fixture workspace. Do not modify external files.\n' + task['prompt']
+        record['skill_availability'] = availability
         record['injected_skill_hashes'] = {p: hashlib.sha256(Path(p).read_bytes()).hexdigest() for p in loaded}
         remaining = (sequential_controller.root_deadline-time.monotonic() if sequential_controller is not None
                      else budget - (time.monotonic() - started))

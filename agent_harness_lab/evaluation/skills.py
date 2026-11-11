@@ -1,4 +1,6 @@
 """Keep injection, observable activation and independently graded utility separate."""
+import hashlib
+import json
 
 
 def activation(*, injected=False, signal=None, provenance=None, evidence_ref=None):
@@ -6,6 +8,20 @@ def activation(*, injected=False, signal=None, provenance=None, evidence_ref=Non
     return dict(available=True if injected or explicit else None,activated=True if explicit else None,
                 activation_evidence=evidence_ref if explicit else None,
                 missing_reason=None if explicit else 'runtime_activation_unobserved')
+
+
+def skill_availability(route, name, files):
+    """Availability provenance for one staged skill, whatever route delivered it.
+
+    files maps a path inside the bundle to its SHA-256; None marks the entry point as removed. Identical
+    staged content gives equal hashes through the `skills` and `harness_paths` routes, so only `route`
+    differs. This is placement evidence: it never says the skill was discovered, read or used."""
+    entry = files.get('SKILL.md')
+    if not entry:
+        return dict(name=name, route=route, state='absent', entry_sha256=None, bundle_sha256=None, activated=None)
+    bundle = json.dumps(sorted(files.items()), separators=(',', ':')).encode()
+    return dict(name=name, route=route, state='present', entry_sha256=entry,
+                bundle_sha256=hashlib.sha256(bundle).hexdigest(), activated=None)
 
 
 ACTIVATION_RECEIPT_PROFILE = 'ahl-skill-activation-receipt-v1'
