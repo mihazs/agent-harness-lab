@@ -245,6 +245,25 @@ class TestGitSource:
             assert self.invoke('preview')[0] == 2
             with pytest.raises(TimeoutError): listener.accept()
 
+    def test_diff_past_the_former_output_ceiling_keeps_exact_statistics_and_a_streamed_patch_digest(self):
+        lines = 200000
+        (self.repo/'bulk.txt').write_text(''.join(f'synthetic line {n:08d}\n' for n in range(lines)))
+        self.commit()
+        patch_bytes = self.git('diff-tree', '--root', '--no-commit-id', '-r', '--no-renames', '--no-ext-diff', '--no-textconv',
+            '--patch', '--binary', '--full-index', '--no-color', 'HEAD~1', 'HEAD')
+        assert len(patch_bytes) > 4*1024*1024
+        node = self.read()[0].summary['commits'][0]
+        assert node['diff_sha256'] == hashlib.sha256(patch_bytes).hexdigest()
+        assert [c['added'] for c in node['changes']] == [lines]
+
+    def test_missing_trusted_git_binary_fails_closed_before_any_capture_or_journal_change(self):
+        cache = self.root/'cache.json'
+        with patch.object(git_view.GitView.__init__, '__defaults__', (str(self.root/'absent-git'), )):
+            with pytest.raises(NotImplementedError, match='trusted Git binary unavailable'):
+                GitExport(self.manifest).read(self.source)
+            assert self.invoke('import', '--cache', str(cache))[0] == 3  # unsupported, not a capture failure
+        assert not cache.exists()
+
     def test_git_command_timeout_cleans_up_a_process_that_closed_stdout(self):
         binary = self.root/'controlled-git'
         binary.write_text("#!/usr/bin/python3 -I\nimport os,sys,time\nif '--version' in sys.argv: print('git version 2.56.0')\nelse: os.close(1); time.sleep(60)\n")
