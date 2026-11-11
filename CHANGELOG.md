@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.157.0
+
+### Minor Changes
+
+- cc9ddfa: Add an opt-in strict triage evaluation profile that refuses overlapping declared role roots and out-of-scope model revisions.
+
 ## 0.156.0
 
 ### Minor Changes
