@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.154.1
+
+### Patch Changes
+
+- 85c1b47: Pin missing-Git and oversized-diff controls for offline Git evidence and update the source contract to say which reconciliation work remains open.
+
 ## 0.154.0
 
 ### Minor Changes
