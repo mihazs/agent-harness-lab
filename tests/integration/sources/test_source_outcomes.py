@@ -317,3 +317,43 @@ def test_coverage_cli_prints_private_json(sources, capsys):
     review_link(sources)
     code = main(['--store', str(root/'lineage'), '--project-sha256', store.project, '--scope-sha256', store.scope, 'coverage', '--cache', str(cache.path)])
     assert code == 0 and json.loads(capsys.readouterr().out)['profile'] == 'evidence-coverage-v1'
+
+
+def ingest_with_metadata(sources, kind, coverage_change, *, tombstone=False):
+    from tests.unit.sources.test_source_execution import metadata_for
+    root, cache, *_ = sources
+    spec = SourceSpec('local_file', kind, 'v1', digest(str(root)), cache.project, cache.scope, identity_provenance='source_declared_id', enabled=True)
+    record = EvidenceRecord(spec.source_key, digest(kind), digest(('revision', kind)), digest('content'), 'behavioral_event', 'synthetic_claim', '2026-01-01T00:00:00Z')
+    metadata = metadata_for(spec, record)
+    cache.ingest(spec, [replace(record, state='tombstone') if tombstone else record], snapshot_sha256=digest(kind),
+        metadata=replace(metadata, coverage=coverage_change(metadata.coverage)))
+    return spec.source_key
+
+
+def test_coverage_report_flags_undeclared_capture_coverage_and_keeps_unknown_labels(sources):
+    _, cache, store, *_ = sources
+    with store.locked(create=True): pass
+    key = ingest_with_metadata(sources, 'undeclared', lambda c: None)
+    report = store.coverage(cache.path)
+    row, = [m for m in report['missing_data'] if m['source_sha256'] == key]
+    assert row['reasons'] == ['no_evidence_graph', 'capture_coverage_undeclared']
+    assert report['capture_completeness'] == 'unknown' and report['target_project_binding'] == 'unverified'
+
+
+def test_coverage_report_surfaces_truncated_and_tombstoned_capture(sources):
+    _, cache, store, *_ = sources
+    with store.locked(create=True): pass
+    truncated = ingest_with_metadata(sources, 'truncated', lambda c: replace(c, truncated=True, limit_reached=True, gaps=('not_captured',)))
+    tombstoned = ingest_with_metadata(sources, 'tombstoned', lambda c: c, tombstone=True)
+    reasons = {m['source_sha256']: m['reasons'] for m in store.coverage(cache.path)['missing_data']}
+    assert 'capture_truncated_or_limited' in reasons[truncated] and 'capture_coverage_undeclared' not in reasons[truncated]
+    assert 'tombstoned_records' in reasons[tombstoned]
+
+
+def test_coverage_cli_exits_3_when_stale_cases_remain_visible(sources, capsys):
+    from agent_harness_lab.sources.lineage import main
+    root, cache, store, _, reported, _, agent = sources
+    proposed = review_link(sources)
+    cache.ingest(agent, [replace(reported, native_id_sha256=digest('later'))])
+    code = main(['--store', str(root/'lineage'), '--project-sha256', store.project, '--scope-sha256', store.scope, 'coverage', '--cache', str(cache.path)])
+    assert code == 3 and json.loads(capsys.readouterr().out)['claims']['stale_cases'] == [proposed['case_id']]

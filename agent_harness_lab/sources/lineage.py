@@ -309,13 +309,15 @@ class LineageStore(PrivateJournal):
             if s['evidence_graph'] is not None: joins.update(s['evidence_graph']['statuses'])
         missing = [dict(source_sha256=s['source_sha256'], reasons=[reason for reason, absent in (
             ('no_active_snapshot', not s['active_snapshot']), ('no_execution_metadata', s['execution_metadata'] is None),
-            ('no_evidence_graph', s['evidence_graph'] is None), ('tombstoned_records', s['tombstones'] > 0),
+            ('no_evidence_graph', s['evidence_graph'] is None), ('capture_coverage_undeclared', s['declared_coverage'] is None),
+            ('tombstoned_records', s['tombstones'] > 0),
             ('capture_truncated_or_limited', bool(s['declared_coverage'] and (s['declared_coverage']['truncated'] or s['declared_coverage']['limit_reached']
                 or s['declared_coverage']['gaps'])))) if absent]) for s in inventory['sources']]
         rows = result.get('outcome_correlation', {}).get('records', [])
         return dict(schema_version=1, profile='evidence-coverage-v1', project_sha256=self.project, scope_sha256=self.scope,
             cache_sha256=cache_hash, grouping_revision_sha256=result['grouping_revision_sha256'],
             applicability=result['applicability'], native_freshness='unverified',
+            capture_completeness=inventory['capture_completeness'], target_project_binding=inventory['target_project_binding'],
             source_kinds=sorted({s['kind'] for s in inventory['sources']}), source_count=inventory['source_count'],
             adapter_versions_sha256=sorted({v for s in inventory['sources'] for v in s['adapter_versions_sha256']}),
             record_types=dict(sorted(types.items())), missing_data=[m for m in missing if m['reasons']],
