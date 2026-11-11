@@ -2,7 +2,9 @@
 
 Use this routing for an explicit request in an existing Codex or Claude session.
 The outer host selects the skill; the project's trusted `ahl.json` configuration
-selects the AHL runtime. Do not force the host's native evaluation runtime.
+selects the AHL runtime. Without `ahl.json`, AHL's documented policy picks the
+single installed runtime or the invoking host's runtime, else asks once. Do not
+force the host's native evaluation runtime; never choose one yourself.
 
 ## Standalone project invocation
 
@@ -61,6 +63,14 @@ Stdout is the receipt and also `workflow.json`. Stderr matches except for the
 run directory and elapsed times. A managed-preparation marker denies both routes
 with identical output. Treat any other difference as a defect to report. The
 synthetic parity tests do not establish native-host compliance.
+
+A zero-spend `blocked` preflight whose `remediation` is a user choice (the
+`choice` field of `preflight_plan` lists the options) is the one allowed
+re-dispatch: ask the user the single question, then rerun the same
+`ahl skills invoke` once with the answer appended (`--agent <choice>`), without a
+second configuration step. Relay `remediation` verbatim. A request the command
+cannot satisfy, such as a historical-session evidence input, must be reported as
+unsupported, not silently dropped.
 
 After this attempt, do not retry through `improve`, another adapter or manual
 model trials. Never fall back after a charged or ambiguous attempt. Retain its

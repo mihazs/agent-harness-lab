@@ -20,7 +20,13 @@ Choose the mode before following the manual steps below. Read
   budget. PROJECT defaults to the current directory. Preserve the command's
   stdout, stderr and exit status, then report its actual result. After dispatch,
   do not start a manual loop or repeat the invocation to bypass a blocked,
-  failed, exhausted or ambiguous result.
+  failed, exhausted or ambiguous result. One exception: a `blocked` preflight
+  that spent nothing and whose `remediation` is a user choice (for example
+  `select_one_runtime_with_agent`) is not a failed run. Ask the user that one
+  question, then re-dispatch once with the answer using the exact command in
+  `remediation`; a second block is final. Say that an explicit invocation
+  authorizes the bounded default run and that `execution_authority: false`
+  on a blocked plan means only that nothing was dispatched.
 - Automated global improvement is unsupported. An explicit global request or
   named global location retains the manual scope and authorization rules below;
   do not route it through the project adapter.

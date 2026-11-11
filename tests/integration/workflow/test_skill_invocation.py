@@ -68,6 +68,21 @@ class TestSkillInvocation:
         assert context['parent_run_id'] == Path(result['output']).name
         assert not context['execution_authority']
 
+    def test_zero_config_ambiguous_runtime_blocks_identically_on_both_routes(self,make_fixture,monkeypatch,tmp_path):
+        for name in ('codex','claude'):
+            stub=tmp_path/'bin'/name;stub.parent.mkdir(exist_ok=True);stub.write_text('#!/bin/sh\n');stub.chmod(0o755)
+        monkeypatch.setenv('PATH',str(tmp_path/'bin'))
+        for marker in ('CLAUDECODE','CODEX_THREAD_ID','CODEX_CI','CODEX_SANDBOX','CODEX_SANDBOX_NETWORK_DISABLED'):monkeypatch.delenv(marker,raising=False)
+        results=[]
+        for prefix in (['improve'],['skills','invoke']):
+            fixture=make_fixture()
+            code,stdout,_=invoke([*prefix,str(fixture.project),'--timeout','10'])
+            result=json.loads(stdout);result.pop('output');results.append((code,result))
+        assert results[0] == results[1]
+        code,result=results[0]
+        assert (code,result['reason']) == (3,'select_one_runtime_with_agent')
+        assert result['preflight_plan']['choice']['values'] == ['codex','claude']
+
     def test_cli_and_skill_receipts_share_no_change_contract(self,make_fixture):
         results=[]
         for prefix in (['improve'],['skills','invoke']):

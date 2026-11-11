@@ -333,7 +333,7 @@ The CLI writes one short summary to stderr and preserves the JSON receipt on std
 | `proposer_no_change` | Review the evidence and proposal before deciding whether another candidate is needed. |
 | `restricted_process_protocol_unqualified` | Restore the required restricted-process qualification. |
 | `responses_inherit_env_unsupported` | Remove --inherit-env when using the Responses runtime. |
-| `select_one_runtime_with_agent` | Several supported runtimes were found; rerun with --agent codex or --agent claude (or set runtime in ahl.json). |
+| `select_one_runtime_with_agent` | Several supported runtimes are installed and the invoking host is unknown; ask the user once to choose, then rerun the same command with --agent codex or --agent claude. |
 | `shared_trial_budget_exhausted` | Review and increase the shared trial budget if appropriate. |
 | `target_filesystem_read_only` | Use a separately authorized writable execution context or keep analysis read-only. |
 | `status:applied` | Review the recorded deployment and its rollback information. |

@@ -29,7 +29,10 @@ class OneCallProject:
 
 
 @pytest.fixture
-def one():
+def one(monkeypatch):
+    from agent_harness_lab.one_call import HOST_MARKERS
+    for _, markers in HOST_MARKERS:
+        for marker in markers: monkeypatch.delenv(marker, raising=False)
     with TemporaryDirectory() as folder:
         root = Path(folder)
         with patch('agent_harness_lab.workflow.state_root', return_value=root/'state'):
