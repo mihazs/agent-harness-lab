@@ -203,7 +203,9 @@ changeset with each releasable change. Do not manually edit release versions.
 
 The version workflow creates a PR using `npm run version-packages`, which runs
 Changesets and synchronizes Python metadata. Merging that PR publishes the release
-archive, installer and SHA256SUMS through `npm run release`. Releases include only
+archive, installer and SHA256SUMS through `npm run release`, even when other
+changesets are pending (see [release publication](docs/release-publication.md)).
+Releases include only
 tracked application code and skills; never add private examples to those trees.
 Run the two README test suites before publication. Review Changesets-generated
 notes for privacy just like any other staged content.

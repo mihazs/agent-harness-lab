@@ -44,3 +44,9 @@ jobs:
           commit-message: 'chore: version packages'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Changesets publishes only when no changeset is pending; this step releases any
+      # version commit it skipped (idempotent: a no-op when every version is released).
+      - name: Publish unreleased version commits
+        run: python3 scripts/publish_pending_releases.py --commit "$GITHUB_SHA"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
