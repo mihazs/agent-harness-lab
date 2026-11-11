@@ -673,6 +673,17 @@ enforcement against unrelated host writers that ignore the project lock.
 An interruption after the commit record, active pointer and exact target snapshots
 are all verified is reported as the actual committed result.
 
+## Change matrix coverage
+
+`tests/integration/workflow/test_change_matrix.py` pins, on synthetic projects, the terminal state of
+each surface operation that the journal can currently apply: skill create, update and remove, instruction
+rewrite and removal, and Claude hook create and update through a passed `hook_contract_v1`. Each applied row
+checks the target bytes, a committed journal receipt and rollback to the original bytes. The same file pins the
+rows that must not apply and must leave the target untouched: a no-change candidate, a mixed set holding an
+unresolved operation, a blocked skill bundle, a blocked hook contract, a source edit after review and a
+candidate modified after review. These rows exercise `adopt()` and the journal directly, with explicit
+authorization; they do not make `ahl improve` apply behavioral candidates.
+
 ## Remaining implementation
 
 This is the first deterministic application slice of #77, not completion of its
