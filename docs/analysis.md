@@ -367,6 +367,8 @@ the command to run. Neither reason claims the harness is correct beyond the exam
 | `inference_sandbox_unavailable` | Provide the required inference sandbox capabilities. |
 | `inference_tool_count_exhausted` | Review the configured inference tool-call limit. |
 | `inference_transport_failed_no_retry` | Inspect the recorded inference transport failure before any retry. |
+| `history_no_matching_sessions` | No captured events matched this project and --since; rerun with --since first, point CODEX_HOME or CLAUDE_CONFIG_DIR at the session store, or run ahl improve . without --history. |
+| `history_source_ai_memory_unsupported` | ahl improve reads native Codex and Claude sessions only; rerun with --source native, or run ahl analyze . --memory-manifest MANIFEST --authorization-file FILE for a read-only ai-memory analysis. |
 | `instruction_removal_inconclusive` | Restore the missing behavioral controls before evaluating the removal. |
 | `instruction_removal_rejected` | Review the failed behavioral controls before revising the removal. |
 | `instruction_validation_blocked` | Review the instruction validation findings before retrying. |

@@ -232,6 +232,10 @@ def main(argv=None):
             if name=='improve':
                 command.add_argument('--experiment-request',type=Path,help='Explicit private fixed development/regression bank request; recommendation only')
                 command.add_argument('--from-audit',type=Path,help='Private audit report with recheck parameters; re-audits before proposing a convention hypothesis')
+            if name=='improve':
+                command.add_argument('--history', action='store_true', help='Use captured past project sessions as read-only evidence; the receipt reports what was captured and what stays unknown')
+                command.add_argument('--since', help="With --history: 'first' (default, every available session) or an ISO 8601 date; selects capture files modified on or after it (UTC without an offset)")
+                command.add_argument('--source', dest='history_source', choices=('native', 'ai-memory'), help='With --history: native Codex/Claude sessions (default); ai-memory is reported as unsupported with its next step')
             command.add_argument('--focus', help='Optional focus hint; discovery does not require one')
             command.add_argument('--agent', choices=('auto', 'codex', 'claude', 'responses'), default='auto',help='Execution backend; auto resolves the supported configured or unambiguous local runtime; Responses needs explicit settings and isolation')
             command.add_argument('--inference-settings', type=Path, help='Schema-1 controlled Responses settings JSON, including credential_file and shared request/tool/output caps; requires the explicit isolated worker configuration')
@@ -293,6 +297,9 @@ def main(argv=None):
             return watch(args)
         else:
             from .one_call import resolve
+            if args.command == 'improve':
+                from .history import prepare
+                prepare(args)
             started = time.monotonic()
             args._entry_started = started
             resolve(args, explicit)

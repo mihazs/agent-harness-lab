@@ -5,6 +5,7 @@
 | Command | Purpose |
 | --- | --- |
 | `ahl improve [project]` | Discover issues, stage repairs and evaluate; behavioral adoption is blocked |
+| `ahl improve [project] --history [--since DATE\|first]` | Use captured past project sessions as read-only evidence; see [improve from past sessions](improve-from-past-sessions.md) |
 | `ahl watch [project]` | Rerun recommendation-only evaluation when evidence or configuration changes; AHL never writes harness files |
 | `ahl analyze [project]` | Automatically collect and analyze evidence without an agent |
 | `ahl diagnose --events FILE --output DIR` | Diagnose an explicit event file |

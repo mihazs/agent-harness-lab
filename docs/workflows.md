@@ -113,7 +113,7 @@ it does not run behavioral optimization or certify native activation.
 The command does not commit, publish, deploy, or install a background service.
 
 Private analysis, candidate snapshots, evaluator traces, and original files remain
-under the user state directory (`~/.local/state/agent-harness-lab/runs/` by default).
+under the user state directory (`~/.local/state/agent-harness-lab/runs/` by default; `AHL_STATE_HOME` selects another state root).
 The command prints the run directory and disposition. Use a new `--output` directory
 if you need another location; keep it out of version control.
 

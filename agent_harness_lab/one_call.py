@@ -47,6 +47,8 @@ def resolve(args, explicit):
 def preflight(args):
     args._preflight_requested_runtime = args.agent
     args._preflight_runtimes = None
+    if getattr(args, 'history', False) and args.history_source == 'ai-memory':
+        return 'history_source_ai_memory_unsupported'
     if args.agent == 'responses' and getattr(args, 'inherit_env', False):
         return 'responses_inherit_env_unsupported'
     settings = getattr(args, 'project_settings', None)
@@ -118,13 +120,15 @@ DEFAULT_REMEDIATION = 'Select a supported runtime/profile and budget; see ahl im
 
 def preflight_plan(args, reason):
     settings = getattr(args, 'project_settings', None)
-    return dict(requested_runtime=args._preflight_requested_runtime, observed_runtimes=args._preflight_runtimes,
+    plan = dict(requested_runtime=args._preflight_requested_runtime, observed_runtimes=args._preflight_runtimes,
         configured_scope=settings['harness_paths'] if settings else None,
         limits=dict(seconds=args.timeout, trials=args.trial_limit),
         runtime_selection=getattr(args, '_runtime_selection', None),
         choice=dict(option='--agent', values=args._preflight_runtimes) if reason == 'select_one_runtime_with_agent' else None,
         next_step=REMEDIATION.get(reason, DEFAULT_REMEDIATION), authorization=AUTHORIZATION,
         candidate_prepared=False, evidence_prepared=False, execution_authority=False)
+    if getattr(args, 'history', False): plan['history'] = dict(since=args.since or 'first', source=args.history_source or 'native')
+    return plan
 
 
 def pinned_bank(args):
