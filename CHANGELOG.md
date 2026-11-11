@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.162.0
+
+### Minor Changes
+
+- 35e374b: Add `ahl annotation-plan`, a frozen per-class precision/recall interval plan that reports additional annotation needs and keeps sparse or unreported classes inconclusive.
+
 ## 0.161.0
 
 ### Minor Changes
