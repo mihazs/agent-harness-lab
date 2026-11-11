@@ -3245,7 +3245,9 @@ not a grader reference or a verified task outcome.
 The reader sends only these fixed GET listings. It never re-runs, cancels or
 dispatches a workflow, follows a log or artifact URL, or reads secrets. Runs for
 explicitly selected commits outside a PR, artifact metadata, annotations and
-authorized structured test artifacts remain open in #53. Synthetic fixtures cover
+authorized structured test artifacts remain open in #53; the
+[test-result join](#joining-test-results-to-actions-jobs) relates a failing job
+step to offline test reports. Synthetic fixtures cover
 a flaky rerun, a failing step, skipped and cancelled jobs, a detached head, foreign
 references, pagination and budget exhaustion. They do not establish live Actions
 API compatibility.
@@ -3841,11 +3843,42 @@ byte bound.
 billion-laughs and external-entity documents, hidden encodings, element/depth/
 attribute/case/byte bounds with early abort, duplicate JSON keys, non-finite
 numbers, deep nesting, duplicate case names, commit-identity validation and CLI
-journals that hold hashes only. Still open in #53: GitHub Actions workflow-run/job/
-attempt ingestion and job-step linkage; artifact download or zip handling; TAP,
-SARIF, coverage and lint reports; joins from a result to a Git/GitHub commit or
-PR-head record; correlated rerun replicates; expired-artifact coverage warnings;
-and cross-source reporting.
+journals that hold hashes only. Still open in #53: artifact download or zip
+handling; TAP, SARIF, coverage and lint reports; and expired-artifact coverage
+warnings from a live read.
+
+### Joining test results to Actions jobs
+
+`sources.ci_join.join_ci_evidence(results, actions, *, repository_id, commit_sha,
+origins=())` relates one exact commit's offline test results to the workflow jobs a
+`GitHubSelection(..., schema_version=7, details=("actions",))` capture read for the
+same head. `results` is a read `TestResultsExport`; `actions` is the GitHub reader's
+`summary`. The join reads no file or network and runs nothing. It returns profile
+`ci-evidence-commit-join-v1` (rejected by public export) with a `status`:
+
+| Status | Reason |
+| --- | --- |
+| `matched` | `exact_commit_identity`: the declared commit equals the captured head |
+| `stale` | `test_results_declare_another_commit` |
+| `unknown` | `no_workflow_run_for_commit` |
+| `unlinked` | `repository_identity_not_shared` |
+
+A match lists `failed_jobs` (run, attempt, native conclusion `failure` or `timed_out`,
+and the failing step numbers), `failed_cases` (`failed` or `error`, report and case
+fingerprints), job conclusion counts and rerun attempts. Cancelled, skipped and
+unfinished jobs and `unknown` cases are not folded into failures, and green jobs
+are not task grades. JUnit and pytest reports name no job, so a case is linked to a
+job and step only when the caller declares `origins=[{"path": ..., "job_id": ...,
+"step": ...}]` (`step` optional, one origin per selected report). A declaration
+that names a job or step the capture lacks is `unmatched`, never guessed. A malformed
+or duplicate declaration, or one for an unselected report, raises. An origin carries
+`origin_binding: caller_declared` and `origin_verified: false`; the same case name
+in two reports keeps one origin per report. Reruns stay correlated replicates
+(`independent_trials: null`), `causal_status` is `unknown`, and
+`task_outcomes_verified` is `false`, so neither a failed job nor a failing case says
+a model caused it. Warnings from both sides, including the unread logs, artifacts and
+annotations, stay in the report, and `capture_completeness` is `partial`.
+`task test:sources:test-results` runs the synthetic controls.
 
 ## Offline MemPalace drawer result
 
