@@ -288,3 +288,32 @@ def test_cli_source_status_reports_unverified_agent_claim_without_lineage_store(
     assert code == 0
     row, = result['outcome_correlation']['records']
     assert row['reported_outcome']['provenance_tier'] == 'agent_report' and row['outcome'] == 'unverified'
+
+
+def test_coverage_report_keeps_contradiction_missing_data_and_unknown_independence_visible(sources):
+    _, cache, store, refs, *_ = sources
+    proposed = review_link(sources)
+    report = store.coverage(cache.path)
+    assert report['profile'] == 'evidence-coverage-v1' and report['source_count'] == 2
+    assert report['source_kinds'] == ['local_file'] and report['claims']['contradicted_reports'] == 1
+    assert report['attempted_joins']['reviewed_links'] == {'test_result_for': 1} and report['correlated_components'] == 1
+    assert report['record_types']['agent_outcome_report'] == 1 and len(report['missing_data']) == 2
+    assert all('no_evidence_graph' in m['reasons'] for m in report['missing_data'])
+    assert report['independent_roots'] is None and not report['task_outcomes_verified'] and not report['publication_allowed']
+    assert 'SYNTHETIC_SECRET' not in json.dumps(report) and proposed['case_id'] not in json.dumps(report['claims']['stale_cases'])
+
+
+def test_coverage_report_does_not_manufacture_a_label_without_reviewed_links(sources):
+    _, cache, store, *_ = sources
+    with store.locked(create=True): pass
+    report = store.coverage(cache.path)
+    assert report['claims']['contradicted_reports'] == 0 and report['claims']['unverified_outcomes'] >= 1
+    assert report['attempted_joins']['reviewed_links'] == {} and report['independent_roots'] is None
+
+
+def test_coverage_cli_prints_private_json(sources, capsys):
+    from agent_harness_lab.sources.lineage import main
+    root, cache, store, *_ = sources
+    review_link(sources)
+    code = main(['--store', str(root/'lineage'), '--project-sha256', store.project, '--scope-sha256', store.scope, 'coverage', '--cache', str(cache.path)])
+    assert code == 0 and json.loads(capsys.readouterr().out)['profile'] == 'evidence-coverage-v1'
