@@ -3,13 +3,34 @@ import argparse
 import json
 from pathlib import Path
 import runpy
+import urllib.request
+
+REPOSITORY = 'mihazs/agent-harness-lab'
+
+
+def check(parser):
+    """Read-only comparison against the latest release; works for any installation kind."""
+    from .cli import version
+    from .installation import FIX, key
+    request = urllib.request.Request(f'https://api.github.com/repos/{REPOSITORY}/releases/latest', headers={'User-Agent': 'agent-harness-lab-update-check'})
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            latest = json.load(response)['tag_name'].removeprefix('v')
+        newer = key(latest) > key(version())
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        parser.exit(2, f'update check error: {exc}\n')
+    print(f'installed {version()}; latest published {latest}; ' + (f'update available, run: {FIX}' if newer else 'up to date'))
+    return 0
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='ahl update', description=__doc__,
-        epilog='Example: ahl update --version 0.76.0. Requires an active archive installation and its owned installation.json/launcher; source and pip installs are rejected. Downloads and verifies release assets, then updates the existing launcher/skill links through the bundled installer. Exit 0 on success; invalid ownership or setup exits 2.')
+        epilog='Example: ahl update --version 0.76.0; ahl update --check only reports whether a newer release is published (exit 0, nothing changed; 2 if the metadata cannot be fetched). Requires an active archive installation and its owned installation.json/launcher; source and pip installs are rejected. Downloads and verifies release assets, then updates the existing launcher/skill links through the bundled installer. Exit 0 on success; invalid ownership or setup exits 2.')
     parser.add_argument('--version', default='latest', help='Published release tag/version to download and verify, such as 0.76.0; latest resolves the latest release (default: %(default)s)')
+    parser.add_argument('--check', action='store_true', help='Only compare the installed version with the latest published release (one HTTPS metadata request); download and change nothing')
     args = parser.parse_args(argv)
+    if args.check:
+        return check(parser)
     from .cli import assets
     current = assets().resolve()
     root = current.parent.parent

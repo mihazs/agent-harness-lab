@@ -60,7 +60,7 @@ class Sandbox:
         path.chmod(0o755)
 
     def env(self, **extra):
-        base = dict(PATH=str(self.bin), HOME=str(self.home), XDG_STATE_HOME=str(self.state),
+        base = dict(PATH=f'{self.bin}{os.pathsep}{self.installed.root / "bin"}', HOME=str(self.home), XDG_STATE_HOME=str(self.state),
                     CODEX_HOME=str(self.codex_home), CLAUDE_CONFIG_DIR=str(self.root / 'claude'), TMPDIR=str(self.root))
         return {**base, **extra}
 
@@ -172,6 +172,19 @@ def scenario_no_change_dispositions_are_honest(installed, sb):
     code, result, _ = sb.ahl('improve', sb.project, '--agent', 'codex', '--timeout', '60')
     assert (result['status'], result['reason']) == ('no_change', 'no_change_harness_supported')
     assert 'next_steps' not in result
+    sb.assert_isolated()
+
+
+def scenario_doctor_finds_a_consistent_installation(installed, sb):
+    code, report, _ = sb.ahl('doctor', sb.project, '--json')
+    state = report['installation']
+    assert code == 0 and state['warnings'] == [] and state['network_used'] is False
+    assert state['version'] == state['launcher_release'] == installed.version
+    assert Path(state['launcher_resolves_to']) == installed.release / 'ahl'
+    assert len(state['skill_links']) == 4 and {link['release'] for link in state['skill_links']} == {installed.version}
+    assert all(link['minimum_cli'] is None or link['minimum_cli'] <= installed.version for link in state['skill_links'])  # same-width X.Y.Z
+    assert next(c['status'] for c in report['checks'] if c['check_id'] == 'installation') == 'pass'
+    assert next(c['status'] for c in report['checks'] if c['check_id'] == 'authentication') == 'unknown'
     sb.assert_isolated()
 
 

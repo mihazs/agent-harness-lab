@@ -5,6 +5,8 @@ description: Build and run baseline/candidate evaluations for agent instructions
 
 # Harness evaluation
 
+Requires `ahl` 0.169.0 or later; `ahl doctor` warns when the CLI or these skill links are stale (fix: `ahl update`).
+
 Evaluation is an executable part of harness improvement. Construct missing tests,
 run them, inspect outcomes, and repair the evaluation when necessary. Do not require
 an existing benchmark, perfect labels, complete history, or statistical significance
