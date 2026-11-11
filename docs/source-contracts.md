@@ -692,8 +692,9 @@ prove that an agent loaded them. Preview includes these metadata in `git_summary
 import keeps normalized development-artifact records in the journal. Collector
 checkpoints describe committed captures, not the current live source or a historical
 execution's version. Declared Codex and Claude Code instruction inventories are
-described below, as are the static hook inventory and path-scoped rules. Observed
-loading, independently evidenced execution bindings and GitLab or Gitea commit
+described below, as are the static hook inventory and path-scoped rules. Managed
+and global instruction capture remains open in #46. Observed loading,
+independently evidenced execution bindings and GitLab or Gitea commit
 reconciliation (the Git/GitHub joins are below) remain open in #58/#77–#80.
 
 Git analysis does not impose default source-byte, entry, directory-depth, ref,
@@ -1129,9 +1130,9 @@ in-checkout files reached within four hops, up to eight unresolved-reference
 nodes per expanded file, one per unresolved reason, and the selected files. The
 receipt uses the existing `InstructionInventory` shape and `instruction_inventory`
 record. Observed loading stays `unknown`, and the receipt grants no edit authority.
-Content, import, cwd and profile changes invalidate it. Native
-`InstructionsLoaded` evidence, managed and global capture, rules and on-demand
-modeling, and execution binding remain open in #58/#77–#80.
+Content, import, cwd and profile changes invalidate it. Managed
+and global capture remains open in #46; native `InstructionsLoaded` evidence, rules
+and on-demand modeling, and execution binding remain open in #58/#77–#80.
 
 ### Whole-tree instruction inventory and declared instruction settings
 
