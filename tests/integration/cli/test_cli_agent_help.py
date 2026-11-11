@@ -15,14 +15,14 @@ from agent_harness_lab import cli
 
 ROOT=Path(__file__).resolve().parents[3]
 ROUTES=((),('rollback',),('update',),('sources',),('sources','lineage'),('sources','inventory'),('sources','github','quota'),
-    ('campaign',),('regression-review',),('bank-review',),('bank-interchange',),('experiment-history',),('grader-correction',),('annotation-plan',),
+    ('campaign',),('regression-review',),('bank-review',),('bank-interchange',),('experiment-history',),('grader-correction',),('annotation-plan',),('compare',),
     ('doctor',),('audit',),('research-simulate',),('bank',),('mine',),('evaluate',),('evaluate','hooks'),('diagnose',),('benchmark',),('skills',),('skills','activation-receipt'))
 SCRIPTS=('scripts/sync_project.py','scripts/build_release.py','scripts/publish_pending_releases.py','scripts/check_commit_message.py','install.py')
 PARSER_FILES={
     'agent_harness_lab/'+name for name in ('cli.py','onboarding.py','one_call.py','updater.py','experiments/cli.py',
         'sources/cli.py','sources/lineage.py','sources/harness_inventory.py','sources/github_quota.py','evaluation/cli.py','evaluation/regression_review.py',
         'evaluation/bank_qualification.py','evaluation/oracle_history.py','evaluation/grader_correction.py',
-        'diagnostics/annotation_plan.py','evaluation/interchange.py','evaluation/image.py','evaluation/skills.py','audit/cli.py','campaigns/cli.py')}
+        'diagnostics/annotation_plan.py','evaluation/compare.py','evaluation/interchange.py','evaluation/image.py','evaluation/skills.py','audit/cli.py','campaigns/cli.py')}
 PARSER_FILES.update(('tools/diagnose.py','tools/benchmark_models.py','tools/link_skills.py',
     'skills/harness-evaluation/scripts/mine_traces.py','skills/harness-evaluation/scripts/run_evaluation.py',*SCRIPTS))
 

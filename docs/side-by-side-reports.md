@@ -3,8 +3,8 @@
 `agent_harness_lab.evaluation.side_by_side.build(experiment)` turns one
 baseline/candidate experiment record into a read-only, private review model for
 [issue #37](https://github.com/mihazs/agent-harness-lab/issues/37). This is the
-first stage: the model, pairing and per-pair status. There is no `ahl compare`
-command or HTML viewer yet; nothing calls this API by default.
+first stage: the model, pairing and per-pair status. The [static viewer](#static-viewer-ahl-compare)
+renders it; nothing else calls this API by default.
 
 ## Input
 
@@ -78,3 +78,28 @@ and never recomputed. The model sets `pooled_treatment_effect` to `null`,
 `automatic_promotion` to `false`. `public=True` is refused, and the public
 benchmark exporter rejects the report. Synthetic and replay runs carry
 `capability_claim: none`; a real-model run is `unverified`.
+
+## Static viewer: `ahl compare`
+
+```sh
+ahl compare --experiment experiment.json --output NEW_DIRECTORY
+```
+
+This renders the model above as one offline page. `--experiment` is a regular
+JSON file (a symlink is refused, 16 MiB maximum). `--output` must not exist; it is
+created mode 0700 and holds `report.html` and `report.json`, both mode 0600. The
+input is never modified. There is no server, browser launch, network access or
+model call, and there is no public mode: the report stays private.
+
+The page leads with the supplied backend analysis (status, reason and the full
+object, verbatim) and the planned, root, comparable and missing counts, so an
+`inconclusive` disposition is the first thing read. Per-pair verdicts, including a
+planned pair with no trial shown as `missing`, are text labels in a table; nothing
+is coloured by the direction of a point difference, and no decision is computed in
+the page. Each pair has a collapsible timeline with its alignment mode. Usage that
+is unknown is shown as `unknown`, never zero.
+
+All values are HTML-escaped. The page carries no script, no external asset or link,
+and a `default-src 'none'` Content-Security-Policy, and it is usable without
+JavaScript. Not yet covered: browser-driven keyboard and network-interception
+checks, packaging checks of the viewer inside the wheel, and a public-export mode.

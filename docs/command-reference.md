@@ -12,6 +12,7 @@
 | `ahl mine FILE` | Mine event transitions and recurring root-case support |
 | `ahl evaluate --manifest FILE --baseline DIR --candidate DIR --output DIR` | Execute a prepared baseline/candidate experiment |
 | `ahl benchmark FILE --method baseline` | Compare incident-classifier predictions (`--reject-leakage` fails on [shared projects or texts](validation.md#benchmark-leakage-disclosure)); optional [frozen triage policy](diagnostic-triage.md) or `--profile diagnostic-corpus` for a [corpus development export](diagnostic-corpus.md#benchmark-input-profile) |
+| `ahl compare --experiment FILE --output DIR` | Render a private baseline/candidate experiment record as a static offline HTML review page ([details](side-by-side-reports.md#static-viewer-ahl-compare)) |
 | `ahl skills --agent claude` | Link installed skills into a selected runtime's skill directory |
 
 Run `ahl COMMAND --help` for the complete options. Low-level evaluation supports
