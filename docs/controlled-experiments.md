@@ -8,7 +8,7 @@ model. Existing cooperative evaluation remains recommendation-only.
 
 | Issue | Implemented and tested | Still required before issue closure |
 | --- | --- | --- |
-| #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral; bounded admission of proposer `mechanisms`/`falsifiers` JSON as unverified records with per-entry rejection reasons; pure planned route dispositions; private `mechanism-coverage-v1` JSON/Markdown coverage report separating observed patterns, supported diagnoses, development recommendations and validated improvements | Attach admission, dispositions and the coverage report to the `ahl improve` receipt and queue; integrate real proposal sessions and versioned evidence; evaluate composed repairs |
+| #10 mechanisms | Versioned coverage records, reviewed routing, severity-first queue, distinct dispositions and budget deferral; bounded admission of proposer `mechanisms`/`falsifiers` JSON as unverified records with per-entry rejection reasons; pure planned route dispositions; private `mechanism-coverage-v1` JSON/Markdown coverage report separating observed patterns, supported diagnoses, development recommendations and validated improvements; immutable `PredictionRecord` with an append-only hash-chained freeze ledger and pure `prediction-reconciliation-v1` reconciliation (`diagnostics/predictions.py`) | Attach admission, dispositions and the coverage report to the `ahl improve` receipt and queue; integrate real proposal sessions and versioned evidence; evaluate composed repairs; wire predictions into proposal sessions and the coverage report |
 | #11 skills | Injection/observable activation separation, routing-condition reports, negative-transfer rejection, paired skill-present/absent transfer report under a predeclared target/control policy (`paired_transfer`), approved procedure hypothesis API; pinned Claude 2.1.316 declared `Skill` names and exact project `SKILL.md` read requests as content-free `declared_invocation`/`file_read` signals with confidence labels (`observed_declared`, never activation) | Observed activation evidence, Codex skill signals, shadowing/effective-path detection, wiring signals into trial records and reports, independently graded routing/transfer pack, live utility and compiler evaluation |
 | #12 search | Candidate identity/scope/hash checks, deduplication, hard safety feasibility, Pareto frontier, bounded development callbacks, final reserve, durable state, single final callback, conflict-checked composition | Version-verified reflective CLI proposer, actual inference resource accounting, full resume/recovery and algorithm comparisons; optional halving is not implemented |
 | #13 adapters | Explicit typed authorization, bounded deterministic error presentation, immutable original status/payload, unsupported-runtime reporting; declarative `AdapterSpec` capability contract with a non-executing candidate review (`review_candidate_spec`) that rejects expanded authority | An actually supported tool proxy/interception runtime and independently graded adapter effectiveness; no runtime flags are invented |
@@ -76,6 +76,26 @@ is listed as a conflict and keeps the key open (`conflicting_records_for_key`)
 in either order. Unknown exposure denominators, suppressed duplicate keys and
 mechanism IDs recorded under several evidence/component versions are listed. Routes and claim levels are hypotheses,
 not causal proof.
+
+`PredictionRecord` freezes a candidate's expected observable effect, regression
+risks, competing explanation, falsifier and comparison criterion before its
+outcomes are read. `PredictionLedger.register` keeps hash-chained receipts; the
+same content is idempotent, changed content under the same ID is rejected and a
+changed candidate, bank or grader identity needs a new record. A prediction
+registered after its candidate's outcomes were read is recorded with
+`preregistered: false` and reconciles as `not_comparable`. Records may name only
+development task IDs; protected tests are described by family/property text and
+protected IDs are rejected. `reconcile` returns one row per registered
+prediction with status `supported_under_test`, `contradicted_under_test`,
+`inconclusive`, `not_tested` or `not_comparable`. Missing, duplicate, unknown,
+stale or invalid-evaluator evidence never becomes support (an invalid grader or
+runtime is routed to evaluator/runtime work, not blamed on the agent); a
+baseline-already-passes pair is `non_discriminative`; a control regression
+contradicts the prediction. A stochastic prediction is `inconclusive` unless the
+paired-analysis verdict from the evaluation owner is supplied; no statistics are
+computed here. A multi-component prediction without an ablation design reports
+`attribution: unresolved`. Predictions are self-selected hypotheses: the report
+states its eligible denominator, never certifies and is not diagnostic accuracy.
 
 `run_queue` treats a record's component as its reviewed route and checks it
 through `route()` with the same held dispositions as `dispositions`. A
