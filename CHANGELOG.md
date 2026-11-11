@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.154.0
+
+### Minor Changes
+
+- 07e6d33: Correlate ai-memory session pages, handoffs and native Claude or Codex journals offline so one session is counted once and ambiguous claims stay separate.
+
+### Patch Changes
+
+- d976aa8: Pin the GitHub task-linkage acceptance case: one synthetic PR, review decision, thread, commit and issue join in the selected repository while a same-numbered foreign issue stays unlinked.
+- 2ed3695: Document a per-runtime capability matrix for the pinned Codex and Claude native capture profiles, checked against the adapters' declared constants.
+
 ## 0.153.1
 
 ### Patch Changes
