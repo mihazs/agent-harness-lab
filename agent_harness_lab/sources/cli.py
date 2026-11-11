@@ -44,6 +44,9 @@ def main(argv):
     if argv and argv[0] == 'inventory':
         from .harness_inventory import main as inventory_main
         return inventory_main(argv[1:])
+    if argv and argv[0] == 'github':
+        from .github_quota import main as quota_main
+        return quota_main(argv[1:])
     parser = argparse.ArgumentParser(prog='ahl sources',
         description='Inspect explicitly configured sources and maintain a private metadata cache; no source is enabled by default.',
         epilog='Without --manifest, only the default probe is valid and reports zero enabled sources. '
@@ -58,6 +61,7 @@ def main(argv):
         'cognee-export (one selected Cognee v1.6.5 graph JSON export of one dataset; no recall, inference or store). '
         'opencode-export (one selected pinned-shape JSON session export; metadata only). '
         'opencode-sqlite-backup (one selected caller-supplied backup; metadata only). '
+        'Rate limits: forge reads share a reserve, budget and quota state; see ahl sources github quota --help. '
         'API configurations select github, gitea or gitlab (api/gitlab/v4: named issue and merge request IIDs of one '
         'project on an explicit HTTPS instance, GET only, no enumeration). '
         'Example: ahl sources preview --manifest export.json --project-sha256 PROJECT_HASH --scope-sha256 SCOPE_HASH. '
@@ -73,6 +77,7 @@ def main(argv):
     parser.add_argument('--authorization-env',metavar='NAME',help='Name of one environment variable holding the complete Authorization header value for a configured Gitea or GitLab source; '
         'only this named variable is read, never by probe; excludes --authorization-file')
     args = parser.parse_args(argv)
+    connector = None
     try:
         if args.manifest is None:
             if args.operation != 'probe' or any((args.project_sha256, args.scope_sha256, args.cache, args.authorization_file, args.authorization_env)):
@@ -224,6 +229,7 @@ def main(argv):
                 else:
                     result = registry.status(source, store, **scope)
                     if remote: result['network_used'] = False
+        if remote and getattr(connector, 'limiter', None) is not None: result['rate_limit'] = connector.limiter.receipt()
         print(json.dumps(result, sort_keys=True))
         return 0
     except MissingOKFDependency:
@@ -233,5 +239,11 @@ def main(argv):
         print('source operation blocked by unavailable filesystem capabilities/access', file=sys.stderr)
         return 3
     except (ValueError, OSError, TypeError, KeyError, RecursionError, subprocess.SubprocessError):
+        limiter = getattr(connector, 'limiter', None)
+        if limiter is not None and limiter.run['halt'] is not None and args.operation in ('preview', 'import'):
+            # A rate-limit halt is blocked access with its reset time, never a permission problem or a checkpoint.
+            print(json.dumps({'schema_version': 1, 'status': 'blocked', 'checkpoint_committed': False, 'source_read': True,
+                'network_used': True, 'rate_limit': limiter.receipt()}, sort_keys=True))
+            return 3
         print('source operation rejected; inspect scope, declaration and metadata; no automatic retry', file=sys.stderr)
         return 2

@@ -28,11 +28,22 @@ class TransportError(ValueError):
 
 
 class HTTPStatusError(TransportError):
-    """A non-200 response; only the status code is retained, never the body or headers."""
+    """A non-200 response; only the status code and rate-limit evidence are retained, never the body or other headers."""
 
-    def __init__(self, status):
+    def __init__(self, status, evidence=None, hint=False):
         super().__init__('unsupported HTTP status or encoding')
-        self.status = status
+        self.status, self.evidence, self.hint = status, evidence or {}, hint
+
+
+class RateLimited(HTTPStatusError):
+    """A rate limit (observed or enforced locally) that halts the read: never a permission denial, never retried blindly.
+
+    ``reason`` is primary_limit, secondary_limit, reserve_floor, request_budget or cancelled; ``reset`` is epoch seconds or None.
+    """
+
+    def __init__(self, reason, reset=None, resource=None):
+        super().__init__(429)
+        self.reason, self.reset, self.resource = reason, reset, resource
 
 
 class BudgetError(TransportError):
@@ -65,6 +76,16 @@ def next_link(link):
     return following
 
 
+def _limit_evidence(response):
+    """Rate-limit headers and whether a short error body names a rate limit; nothing else is kept."""
+    try:
+        hint = response.status in (403, 429) and b'rate limit' in response.read(2048).lower()
+        return {k.lower(): v for k, v in response.getheaders()
+            if k.lower().startswith('x-ratelimit-') or k.lower() == 'retry-after'}, hint
+    except Exception:
+        return {}, False
+
+
 def _json_exchange(origin, target, headers, *, timeout, deadline, max_bytes, body=None, not_modified=False):
     capped = False
     if deadline is not None:
@@ -82,7 +103,7 @@ def _json_exchange(origin, target, headers, *, timeout, deadline, max_bytes, bod
             # Only a caller that sent a validator may receive 304; it carries no body to parse or charge.
             return NOT_MODIFIED, dict(response.getheaders()), 0
         if response.status != 200:
-            raise HTTPStatusError(response.status)
+            raise HTTPStatusError(response.status, *_limit_evidence(response))
         if response.getheader('Content-Encoding', 'identity') != 'identity':
             raise TransportError('unsupported HTTP status or encoding')
         length = response.getheader('Content-Length')
@@ -146,6 +167,7 @@ def instance_root(base_url, api_prefix):
 
 def capture_state(api):
     """One capture's shared request, byte and deadline budget over a JsonAPI."""
+    api.limiter.begin_run()
     return dict(requests=0, used=0, halted=None,
         deadline=time.monotonic()+api.seconds if api.seconds is not None else None)
 
@@ -161,16 +183,35 @@ def metered_exchange(api, target, headers, state, *, authorization=None, body=No
 
     ``ceiling`` caps this one response below whatever remains of the cumulative byte budget.
     ``not_modified`` admits a 304 answer as ``NOT_MODIFIED``; only a caller that sent a validator sets it.
+    The limiter may refuse the request (RateLimited), and a rate-limited GET is retried only after a short allowed wait.
     """
+    from .ratelimit import classify, identity_digest, resource_for, signals
     headers = {'Accept-Encoding': 'identity', 'User-Agent': 'agent-harness-lab-reader', **headers}
     if authorization is not None: headers['Authorization'] = authorization
-    state['requests'] += 1
-    remaining = None if api.max_bytes is None else api.max_bytes-state['used']
-    limit = remaining if ceiling is None else ceiling if remaining is None else min(ceiling, remaining)
-    value, metadata, size = _json_exchange(api.origin, target, headers, body=body, timeout=api.timeout,
-        deadline=state['deadline'], max_bytes=limit, not_modified=not_modified)
-    state['used'] += size
-    return value, {k.lower(): v for k, v in metadata.items()}
+    limiter, host, who, bucket = api.limiter, api.origin[0], identity_digest(authorization), resource_for(target)
+    attempt = 0
+    while True:
+        limiter.before(host, bucket, who, patience=None if state['deadline'] is None else state['deadline']-time.monotonic())
+        state['requests'] += 1
+        remaining = None if api.max_bytes is None else api.max_bytes-state['used']
+        limit = remaining if ceiling is None else ceiling if remaining is None else min(ceiling, remaining)
+        try:
+            value, metadata, size = _json_exchange(api.origin, target, headers, body=body, timeout=api.timeout,
+                deadline=state['deadline'], max_bytes=limit, not_modified=not_modified)
+        except HTTPStatusError as error:
+            found = signals(error.evidence)
+            kind = classify(error.status, found, error.hint)
+            limiter.observe(host, who, bucket, error.status, found)
+            if kind is None: raise
+            # Only an idempotent GET is retried; the limiter shares the cooldown either way and halts when the wait is long.
+            limiter.wait(limiter.retry_delay(host, who, bucket, kind, found, attempt, retry=body is None,
+                patience=None if state['deadline'] is None else state['deadline']-time.monotonic()))
+            attempt += 1
+            continue
+        lowered = {k.lower(): v for k, v in metadata.items()}
+        limiter.observe(host, who, bucket, 304 if value is NOT_MODIFIED else 200, signals(lowered))
+        state['used'] += size
+        return value, lowered
 
 
 def guarded_get(api, target, state, *, authorization=None):
@@ -183,6 +224,9 @@ def guarded_get(api, target, state, *, authorization=None):
     try:
         value, metadata = metered_exchange(api, api.path+target, {'Accept': 'application/json'}, state,
             authorization=authorization, ceiling=MAX_RESPONSE_BYTES)
+    except RateLimited:
+        state['halted'] = 'rate_limited'
+        raise Unavailable('rate_limited') from None
     except HTTPStatusError as error:
         if error.status not in DENIED: raise
         if error.status == 429: state['halted'] = 'rate_limited'
@@ -222,7 +266,7 @@ def bounded_api(base_url, limits):
 
 
 class JsonAPI:
-    def __init__(self, base_url, *, max_pages=None, max_bytes=None, timeout=None, seconds=None):
+    def __init__(self, base_url, *, max_pages=None, max_bytes=None, timeout=None, seconds=None, limiter=None, **quota):
         parsed, path = endpoint(base_url)
         if parsed.query:
             raise TransportError('base endpoint must omit query parameters')
@@ -236,6 +280,12 @@ class JsonAPI:
         self.origin = (parsed.hostname, parsed.port or 443)
         self.max_pages, self.max_bytes = max_pages, max_bytes
         self.timeout, self.seconds = timeout, seconds
+        if limiter is None:
+            from .ratelimit import Limiter
+            # request_budget, reserve_fraction, max_wait and path (the shared state file) configure the limiter.
+            try: limiter = Limiter(**quota)
+            except (TypeError, ValueError): raise TransportError('invalid transport bound') from None
+        self.limiter = limiter
 
     def _target(self, url):
         parsed, path = endpoint(url)

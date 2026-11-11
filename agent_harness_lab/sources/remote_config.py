@@ -4,10 +4,11 @@ from pathlib import Path
 import re
 from agent_harness_lab.config import read_json
 from agent_harness_lab.evaluation.integrity import read_regular
+from .ratelimit import state_path as shared_state_path
 from .schema import SourceSpec, digest, fingerprint
 
 FIELDS = frozenset(('schema_version', 'source', 'endpoint', 'selection'))
-LIMITS = frozenset(('max_pages', 'max_bytes', 'timeout', 'seconds'))
+LIMITS = frozenset(('max_pages', 'max_bytes', 'timeout', 'seconds', 'request_budget', 'reserve_fraction', 'max_wait'))
 
 
 class ConfiguredAPI:
@@ -58,7 +59,8 @@ class ConfiguredAPI:
         current, value = self.declaration(project_sha256=source.project_sha256, scope_sha256=source.scope_sha256)
         if current != source or not current.enabled: raise ValueError('API configuration changed or is disabled')
         reader = self.reader(value['endpoint'], self.selection_type.parse(value['selection']),
-            authorization=self._authorization(source), **value.get('limits', {}))
+            authorization=self._authorization(source), **{'path': shared_state_path(), **value.get('limits', {})})
+        self.limiter = reader.transport.limiter
         snapshot = reader.read(source, prior=prior)
         self.summary = reader.summary
         return snapshot
