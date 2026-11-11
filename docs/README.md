@@ -17,7 +17,7 @@ reader purpose.
 - [Review a conditional final bank](conditional-bank-review.md) or [run fixed repeated-bank improvement](repeated-improvement.md).
 - [Preflight experiment precision](experiment-precision.md), [search with preservation evidence](guarded-search.md), or [review grader corrections](grader-corrections.md).
 - [Record comparisons and quarantine graders](oracle-history.md) or [generate private history reports](history-reports.md).
-- [Manage repository work](project-management.md) or [contribute](../CONTRIBUTING.md).
+- [Manage repository work](project-management.md), [verify release publication](release-publication.md), or [contribute](../CONTRIBUTING.md).
 
 ## Look up behavior and contracts
 
