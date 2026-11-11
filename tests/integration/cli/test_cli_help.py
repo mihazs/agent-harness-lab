@@ -9,7 +9,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[3]
 COMMANDS = ('audit', 'analysis', 'mine', 'diagnose', 'evaluate', 'benchmark', 'skills', 'bank', 'experiment', 'experiment-history', 'grader-correction', 'regression', 'regression-review', 'sandbox-check',
-            'research-simulate', 'incident-search', 'promotion', 'benchmark-report', 'analyze', 'improve', 'watch', 'doctor', 'init', 'sources')
+            'research-simulate', 'incident-search', 'promotion', 'annotation-plan', 'benchmark-report', 'analyze', 'improve', 'watch', 'doctor', 'init', 'sources')
 
 
 def run_cli(folder, *args):
