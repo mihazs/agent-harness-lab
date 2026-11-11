@@ -281,7 +281,7 @@ def disposition(data):
     def verified(record, outcome):
         return record.get('outcome') == outcome and record.get('outcome_provenance') == 'executable_grader'
     outcomes = data.get('evaluation_outcomes', [])
-    supported = (any(verified(record, 'success') for record in outcomes)
-                 and not any(record.get('outcome') == 'failure' for record in outcomes)
+    # Every examined trial must be a verified success: failed, errored or unverifiable trials stay unknown, never absent.
+    supported = (bool(outcomes) and all(verified(record, 'success') for record in outcomes)
                  and not data.get('caveats'))
     return 'no_change_harness_supported' if supported else 'no_change_evidence_insufficient'

@@ -105,6 +105,8 @@ def test_positive_evidence_is_required_for_supported():
     assert briefing.disposition(data(evaluation_outcomes=[])) == 'no_change_evidence_insufficient'
     assert briefing.disposition(data(evaluation_outcomes=[dict(outcome='unknown', outcome_provenance='unknown')])) == 'no_change_evidence_insufficient'
     assert briefing.disposition(data(evaluation_outcomes=[success, dict(outcome='failure', outcome_provenance='executable_grader')])) == 'no_change_evidence_insufficient'
+    for status in ('execution_error', 'grader_error', 'budget_exhausted'):
+        assert briefing.disposition(data(evaluation_outcomes=[success, dict(outcome='unknown', outcome_provenance='unknown', status=status)])) == 'no_change_evidence_insufficient'
     assert briefing.disposition(dict(data(evaluation_outcomes=[success]), caveats=['incomplete'])) == 'no_change_evidence_insufficient'
 
 
