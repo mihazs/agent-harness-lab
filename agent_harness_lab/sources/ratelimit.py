@@ -35,7 +35,7 @@ def state_path():
 def _number(value):
     try:
         number = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     return number if 0 <= number < 2**40 else None
 
@@ -82,14 +82,14 @@ def identity_digest(authorization):
     return hashlib.sha256(b'ahl-forge-identity-v1\0'+authorization.encode()).hexdigest()[:16]
 
 
-def _clean(value):
-    """The validated bucket map of a loaded state value, or {}."""
+def _clean(value, now):
+    """The validated bucket map of a loaded state value, or {}; times past a day ahead are clamped as observe() does."""
     if not isinstance(value, dict) or value.get('v') != 1 or not isinstance(value.get('buckets'), dict): return {}
     clean = {}
     for key, entry in value['buckets'].items():
         if (isinstance(key, str) and len(key) <= 200 and isinstance(entry, dict) and len(clean) < MAX_BUCKETS
-                and all(f in LIMIT_FIELDS and _number(v) is not None for f, v in entry.items())):
-            clean[key] = {f: int(v) for f, v in entry.items()}
+                and all(f in LIMIT_FIELDS and type(v) is int and _number(v) is not None for f, v in entry.items())):
+            clean[key] = {f: min(v, int(now)+MAX_SECONDS) if f in ('reset', 'cooldown', 'next_at') else v for f, v in entry.items()}
     return clean
 
 
@@ -150,8 +150,8 @@ class Limiter:
             descriptor = os.open(self.path, os.O_RDONLY | getattr(os, 'O_NOFOLLOW', 0))
             with os.fdopen(descriptor, 'rb') as stream:
                 data = stream.read(MAX_STATE_BYTES+1)
-            return _clean(json.loads(data)) if len(data) <= MAX_STATE_BYTES else {}
-        except (OSError, ValueError, RecursionError):
+            return _clean(json.loads(data), self.clock()) if len(data) <= MAX_STATE_BYTES else {}
+        except (OSError, ValueError, RecursionError, OverflowError):
             return {}
 
     def _save(self, buckets):
@@ -228,7 +228,7 @@ class Limiter:
         if 'remaining' not in found or 'reset' not in found: return
         key = self.key(host, resource, identity)
         # A reset beyond a day is not a plausible window; bounding it keeps one bad response from blocking for long.
-        found = dict(found, reset=min(found['reset'], self.clock()+MAX_SECONDS))
+        found = dict(found, reset=min(found['reset'], int(self.clock())+MAX_SECONDS))
 
         def merge(buckets):
             entry = buckets.setdefault(key, {})

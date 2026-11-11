@@ -90,6 +90,18 @@ class LimiterStateTests(unittest.TestCase):
                 limiter.observe('h', 'id', 'core', 200, dict(limit=100, remaining=50, reset=NOW+60))
                 self.assertEqual(json.loads(open(self.path).read())['buckets']['h|core|id']['remaining'], 50)
 
+    def test_non_integer_state_values_are_ignored_and_implausible_resets_are_clamped(self):
+        os.makedirs(os.path.dirname(self.path))
+        for value in ('1e999', '-1e999', 'NaN', 'Infinity', '1.5', 'true', '2e40'):
+            with self.subTest(value=value):
+                open(self.path, 'w').write('{"v":1,"buckets":{"h|core|id":{"remaining":%s,"reset":%d}}}' % (value, NOW+60))
+                limiter = self.limiter()
+                limiter.before('h', 'core', 'id')
+                limiter.observe('h', 'id', 'core', 200, dict(limit=100, remaining=50, reset=NOW+60))
+                self.assertEqual(json.loads(open(self.path).read())['buckets']['h|core|id']['remaining'], 50)
+        open(self.path, 'w').write('{"v":1,"buckets":{"h|core|id":{"remaining":0,"reset":%d}}}' % (2**40-1))
+        self.assertEqual(self.limiter()._load()['h|core|id']['reset'], NOW+86400)
+
     def test_entries_expire_after_reset_and_the_file_is_bounded(self):
         limiter = self.limiter()
         for index in range(100):
