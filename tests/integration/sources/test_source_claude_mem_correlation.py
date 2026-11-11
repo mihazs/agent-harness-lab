@@ -74,6 +74,15 @@ class TestClaudeMemCorrelation:
         linked = [c for c in report['clusters'] if c['status'] == 'linked']
         assert len(linked) == 1 and len(linked[0]['native_sessions']) == 2
 
+    def test_same_session_in_two_same_runtime_journals_at_different_projects_stays_ambiguous(self, tmp_path):
+        other = ClaudeSourceTests(); (tmp_path/'other').mkdir(); other.setUp(tmp_path/'other')
+        assert other.invoke('import')[0] == 0
+        natives = [(h.source, h.store(), str(h.project.resolve())) for h in (self.claude, other)]
+        report = self.correlate(natives=natives)
+        assert not report['receipts']
+        assert [c['status'] for c in report['clusters'] if c['reasons'] == ['ambiguous_native_runtime']] == ['memory_only']
+        assert not any(c['status'] == 'linked' for c in report['clusters'])
+
     def test_duplicates_wrong_platform_and_unstated_platform_stay_unlinked(self):
         self.declare([session(1, 'synthetic-session', 'claude'), session(2, 'synthetic-session', 'claude'),
                       session(3, 'synthetic-thread', 'claude'), session(4, 'synthetic-thread', None), session(5, 'x', 'cursor')])

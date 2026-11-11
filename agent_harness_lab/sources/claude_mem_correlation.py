@@ -55,7 +55,7 @@ def correlate_native_sessions(connector, source, store, natives):
         hits = {(rt, fn(p, content)) for _, p, rt, fn, sessions in observed if fn(p, content) in sessions}
         reason = ('platform_unstated' if claim.platform_source is None else 'no_native_runtime' if runtime is None
                   else 'duplicate_session_id' if ids[(claim.platform_source, content)] > 1
-                  else 'ambiguous_native_runtime' if len({rt for rt, _ in hits}) > 1
+                  else 'ambiguous_native_runtime' if len(hits) > 1
                   else 'no_native_match' if not hits else None)
         hit = next(iter(hits)) if reason is None else None
         if hit is not None and RUNTIMES[runtime][0] != hit[0]: reason, hit = 'platform_runtime_mismatch', None
@@ -64,7 +64,7 @@ def correlate_native_sessions(connector, source, store, natives):
         if hit is None: entry['reasons'].add(reason); continue
         bound.add(hit)
         for native, _, rt, _, sessions in observed:
-            if (rt, hit[1]) == hit:
+            if rt == hit[0] and hit[1] in sessions:
                 receipt = JoinReceipt(ref, sessions[hit[1]], 'memory_session_native', 'claude-mem.session', RESOLVER_VERSION,
                     (ref, sessions[hit[1]]))
                 receipts[receipt.sha256] = receipt

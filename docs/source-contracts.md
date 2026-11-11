@@ -4105,7 +4105,7 @@ observations, summaries and prompts keep their own claims.
 | --- | --- |
 | Session row and one native journal of its platform's runtime share one identity | One `linked` cluster; a second capture of the same session adds a native entry and receipt, not a cluster |
 | Several session rows share a platform and content session id | Each stays its own `memory_only` cluster, reason `duplicate_session_id` |
-| The identity matches both a Claude and a Codex journal | Own `memory_only` cluster, reason `ambiguous_native_runtime` |
+| The identity matches more than one native session, in different runtimes or in journals of one runtime declared against different projects | Own `memory_only` cluster, reason `ambiguous_native_runtime`; no native session is linked |
 | The identity matches only the other runtime's journal | `memory_only`, reason `platform_runtime_mismatch` |
 | `platform_source` is absent, or names a runtime with no native journal here | `platform_unstated` or `no_native_runtime` |
 | No native record matches, or the project differs | `memory_only`, reason `no_native_match`; the native session stays its own `native_only` cluster |
