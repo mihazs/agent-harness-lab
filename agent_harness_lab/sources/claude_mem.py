@@ -158,12 +158,14 @@ class ClaudeMemExport(LocalExport):
         export_sha256, = self.capture(source, descriptor, selection, [contained(self.manifest.parent, selection['export'])],
             bounds['max_export_bytes'], consume, 'Claude-Mem export changed during capture', read_regular, regular_sha256)
         # The export's bytes are released before rows are mapped; the decoded tree is all that parse holds.
-        self.claims, self.summary = parse(decoded.pop(), selection['instance'], version, bounds)
+        # Raw content session IDs stay in memory for exact native correlation only; they are never persisted or reported.
+        self.content_sessions = []
+        self.claims, self.summary = parse(decoded.pop(), selection['instance'], version, bounds, self.content_sessions)
         return claim_snapshot(source, 'claude_mem_', self.claims, lambda c: RECORD_PROVENANCE[c.claim_type],
             digest(('claude_mem_export', selection['instance'], selection['export'])), export_sha256, self.summary)
 
 
-def parse(value, instance, version, bounds):
+def parse(value, instance, version, bounds, content_sessions=None):
     """Map one decoded export to claims plus a coverage summary; refuses shapes the pin does not describe."""
     if not isinstance(value, dict) or any(not isinstance(value.get(kind), list) for kind in KINDS):
         raise ValueError('Claude-Mem export requires observations, sessions, summaries and prompts lists')
@@ -236,6 +238,7 @@ def parse(value, instance, version, bounds):
                 number if type(number) is int and number >= 0 else None, original, status,
                 synthesizes_multiple_origins=claim_type == 'generated_summary')
             claims.append(claim)
+            if content_sessions is not None and kind == 'sessions': content_sessions.append((claim, content))
             if kind != 'sessions':
                 # The export is a query projection: each selected row is also a separate hit claim.
                 claims.append(MemoryClaim('search_hit', scoped('search_hit', digest(query), claim_type, identity, occurrence),

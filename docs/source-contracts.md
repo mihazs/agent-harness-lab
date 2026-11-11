@@ -4079,8 +4079,45 @@ changes, repeat import, edits and CLI output with no body, ID or path. Still ope
 in #48: a capability-checked read of a configured worker or MCP server (tool
 schema and version, bounded `search`/`timeline`, batched `get_observations`), an
 authorized read-only SQLite snapshot mode with a verified schema, `tool_uses`
-rows, multi-agent duplication checks against native Claude/Codex journals on
-verified IDs, verifying the shape against a real export, and further releases.
+rows, verifying the shape against a real export, and further releases.
+
+### Native session correlation (Claude-Mem)
+
+`sources.claude_mem_correlation.correlate_native_sessions(connector, source, store, natives)`
+counts one session once across an imported export and native Claude or Codex
+journals. `natives` is a sequence of `(source, store, project)` tuples, `project`
+being the absolute directory the native capture was declared against. It is an
+offline Python API with no CLI exposure; it reads the export and the journals and
+writes, fetches and starts nothing. The export must still equal the latest
+checkpoint of `store`, otherwise the status is `unknown` with no clusters.
+
+A `memory_session` binds a native session when its `content_session_id`,
+fingerprinted exactly as the runtime named by its `platform_source` does for
+`project` (`claude` to a Claude journal, `codex` to a Codex journal), equals the
+`session` identity of a present record in that journal's latest active checkpoint
+whose declared `worktree` is `project`. The pinned export format does not document
+that Claude-Mem's content session id is the host session id, so a match is a
+`candidate` `memory_session_native` receipt with basis `source_declaration`, never
+`verified`. No timestamp or content is compared. Only session rows are correlated;
+observations, summaries and prompts keep their own claims.
+
+| Situation | Result |
+| --- | --- |
+| Session row and one native journal of its platform's runtime share one identity | One `linked` cluster; a second capture of the same session adds a native entry and receipt, not a cluster |
+| Several session rows share a platform and content session id | Each stays its own `memory_only` cluster, reason `duplicate_session_id` |
+| The identity matches both a Claude and a Codex journal | Own `memory_only` cluster, reason `ambiguous_native_runtime` |
+| The identity matches only the other runtime's journal | `memory_only`, reason `platform_runtime_mismatch` |
+| `platform_source` is absent, or names a runtime with no native journal here | `platform_unstated` or `no_native_runtime` |
+| No native record matches, or the project differs | `memory_only`, reason `no_native_match`; the native session stays its own `native_only` cluster |
+
+The report holds fingerprints, record references and counts only. It sets
+`independent_roots: null`, `task_outcomes_verified`, `evidence_of_use` and
+`publication_allowed` false and `persisted: false`. A cluster count is a
+duplicate-collapsed session count, not proof of independence, of use, or that
+either side's content is true. The import summary still reports
+`native_session_correlation: not_attempted`. Synthetic fixtures establish this
+contract: `tests/integration/sources/test_source_claude_mem_correlation.py`, run by
+`task test:sources:claude-mem`.
 
 ## Offline Mem0 OSS memory and history exports
 
